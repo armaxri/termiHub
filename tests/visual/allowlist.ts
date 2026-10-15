@@ -22,8 +22,8 @@ export interface AllowEntry {
   match: RegExp;
 }
 
-/** The narrow-sidebar surfaces #4709 owns. */
-const NARROW_SIDEBARS = /^sidebar\/(connections|macros|workflows|workspaces)@/;
+/** The sidebars whose ResponsiveToolbar never collapses in dev builds (#4736). */
+const TOOLBAR_SIDEBARS = /^sidebar\/(macros|workspaces)@/;
 
 export const ALLOWLIST: AllowEntry[] = [
   // #4708: shared settings field CSS lives in the lazy ConnectionEditor chunk.
@@ -34,20 +34,20 @@ export const ALLOWLIST: AllowEntry[] = [
     surface: /^settings\/appearance$/,
     match: /settings-form__hint/,
   },
-  // #4709: sidebar toolbars clip, names truncate, the Schedules header overflows.
-  { issue: 4709, kind: "clipped-control", surface: NARROW_SIDEBARS, match: /./ },
-  { issue: 4709, kind: "overflow", surface: NARROW_SIDEBARS, match: /./ },
-  { issue: 4709, kind: "truncated-text", surface: NARROW_SIDEBARS, match: /./ },
-  // #4710: the description sits on the password field's focus ring.
+  // #4736: useElementWidth loses its observer under StrictMode, so the
+  // Workspaces and Macros toolbars keep their full labels and clip.
   {
-    issue: 4710,
-    kind: "text-overlap",
-    surface: /^dialog\/(unlock|password-prompt)$/,
-    match: /focus ring/,
+    issue: 4736,
+    kind: "clipped-control",
+    surface: TOOLBAR_SIDEBARS,
+    match: /-(import|export|export-all|save-current)-btn/,
   },
-  // #4711: two platform columns, and the overlay's unkeyed fragments warn at boot.
-  { issue: 4711, kind: "expectation", surface: /^dialog\/shortcuts$/, match: /shortcut column/ },
-  { issue: 4711, kind: "console-error", surface: /./, match: /unique "key" prop/ },
+  {
+    issue: 4736,
+    kind: "overflow",
+    surface: TOOLBAR_SIDEBARS,
+    match: /-(import|export|export-all|save-current)-btn/,
+  },
   // #4728: the External Files header pushes its add button off-screen at 800x600.
   {
     issue: 4728,
