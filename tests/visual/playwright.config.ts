@@ -18,6 +18,7 @@ export default defineConfig({
   testDir: ".",
   testMatch: /.*\.spec\.ts$/,
   outputDir: "test-results",
+  globalTeardown: "./globalTeardown.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,

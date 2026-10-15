@@ -535,9 +535,10 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
   exactly the #4708 failure mode.
 - **Surfaces** (`surfaces.spec.ts`). Each surface runs at 1280x800 (the default
   window), 1024x700 and 800x600 (the minimum window):
-  - every Settings category on a fresh start, with no connection editor opened
-    first;
-  - every sidebar at the default width (260px) and the minimum width (170px);
+  - every Settings category the nav lists, on a fresh start with no connection
+    editor opened first;
+  - every sidebar at the default width (260px) and at the minimum the resize
+    handle allows (its `aria-valuemin`, 170px today);
   - the unlock, password-prompt, shortcuts, command-palette, customize-layout
     and export dialogs.
 
@@ -569,9 +570,12 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
 `tests/visual/allowlist.ts` lists the layout bugs that are known and still
 open. Each entry names the issue that owns the fix and matches the issue kind,
 the surface and the message. The fix PR deletes its entry, which turns the
-check into that fix's regression guard. An entry that no longer matches
-anything shows up as a `warning` annotation. Never add an entry without an open
-issue. `VISUAL_STRICT=1` ignores the list and shows everything it hides. `VISUAL_STRICT=4708` ignores only the entries for #4708, which is how a fix PR shows that its fix passes before it deletes them.
+check into that fix's regression guard. After a complete run,
+`globalTeardown.ts` warns about every entry no test used (a GitHub warning
+annotation in CI), because its bug looks fixed. Never add an entry without an
+open issue. `VISUAL_STRICT=1` ignores the list and shows everything it hides.
+`VISUAL_STRICT=4708` ignores only the entries for #4708, which is how a fix PR
+shows that its fix passes before it deletes them.
 
 ### CI
 

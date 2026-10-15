@@ -1,8 +1,8 @@
 /**
  * Known layout bugs the rendered visual checks (#4712) tolerate until their fix
  * lands. Every entry MUST name the open issue that owns the fix; that fix's PR
- * deletes the entry. An entry that no longer matches anything is reported as a
- * `warning` annotation, so stale entries are easy to spot.
+ * deletes the entry. After a full run, globalTeardown.ts warns about every entry
+ * no test used, so stale entries are easy to spot.
  *
  * `VISUAL_STRICT=1 pnpm test:visual` ignores this list, which shows exactly
  * what each entry is hiding; `VISUAL_STRICT=4708,4710` ignores only the entries
