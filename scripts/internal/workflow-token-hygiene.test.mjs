@@ -12,7 +12,10 @@
 //     outputs on as workflow artifacts to small write-scoped upload jobs that
 //     check nothing out and run no package manager (#4730);
 //   - a dispatched dry run of release.yml builds and checks every asset but can
-//     never reach a write-scoped job (#4746).
+//     never reach a write-scoped job (#4746);
+//   - the split debug symbols take the same path: packaged by the read-only
+//     build jobs, checked by check-release-assets, published by
+//     upload-debug-symbols (#4504).
 // Text-based like release-draft.test.mjs: the workflow layout is the contract.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -250,30 +253,36 @@ describe("release.yml token scope (CI2-007, #4730)", () => {
     ["upload-agent-binaries", "agent-binaries-macos"],
     ["upload-agent-binaries", "agent-binaries-windows"],
     ["upload-third-party-notices", "third-party-notices"],
+    ["upload-debug-symbols", "build-app"],
+    ["upload-debug-symbols", "agent-binaries-linux"],
+    ["upload-debug-symbols", "agent-binaries-macos"],
+    ["upload-debug-symbols", "agent-binaries-windows"],
   ])("%s publishes what %s built", (upload, build) => {
     expect(releaseJobs().get(upload)?.needs ?? []).toContain(build);
   });
 
-  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
-    "%s checks nothing out and runs no repository or package-manager code",
-    (id) => {
-      const body = jobBody(RELEASE, id);
-      expect(jobPermissions(body)).toEqual({
-        contents: "write",
-        "id-token": "write",
-        attestations: "write",
-      });
-      const code = stripComments(body);
-      const uses = [...code.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((m) => m[1]);
-      expect(uses.some((u) => u.startsWith("actions/download-artifact@"))).toBe(true);
-      expect(uses.some((u) => u.startsWith("actions/attest-build-provenance@"))).toBe(true);
-      for (const u of uses) expect(u, u).toMatch(/^actions\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/);
-      expect(uses.some((u) => u.startsWith("actions/checkout@"))).toBe(false);
-      expect(code).not.toMatch(RUNS_DEPENDENCY_CODE);
-      expect(code).not.toMatch(/\b(node|curl|wget)\b|\.\/|scripts\//);
-      expect(code).toMatch(/gh release upload\b/);
-    }
-  );
+  it.each([
+    "upload-app",
+    "upload-agent-binaries",
+    "upload-third-party-notices",
+    "upload-debug-symbols",
+  ])("%s checks nothing out and runs no repository or package-manager code", (id) => {
+    const body = jobBody(RELEASE, id);
+    expect(jobPermissions(body)).toEqual({
+      contents: "write",
+      "id-token": "write",
+      attestations: "write",
+    });
+    const code = stripComments(body);
+    const uses = [...code.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((m) => m[1]);
+    expect(uses.some((u) => u.startsWith("actions/download-artifact@"))).toBe(true);
+    expect(uses.some((u) => u.startsWith("actions/attest-build-provenance@"))).toBe(true);
+    for (const u of uses) expect(u, u).toMatch(/^actions\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/);
+    expect(uses.some((u) => u.startsWith("actions/checkout@"))).toBe(false);
+    expect(code).not.toMatch(RUNS_DEPENDENCY_CODE);
+    expect(code).not.toMatch(/\b(node|curl|wget)\b|\.\/|scripts\//);
+    expect(code).toMatch(/gh release upload\b/);
+  });
 
   it("only the publishing jobs hold contents: write", () => {
     const writers = jobs.filter((id) =>
@@ -288,6 +297,7 @@ describe("release.yml token scope (CI2-007, #4730)", () => {
         "sign-agent-binaries",
         "upload-agent-binaries",
         "upload-app",
+        "upload-debug-symbols",
         "upload-third-party-notices",
         "verify-release",
       ].sort()
@@ -408,10 +418,35 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
     expect(jobs.get("sbom").needs).toContain("create-release");
   });
 
-  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices", "sbom"])(
-    "%s publishes only an asset set check-release-assets passed",
-    (id) => {
-      expect(jobs.get(id).needs).toContain("check-release-assets");
+  it("a dry run packages and checks the debug symbols read-only (#4504)", () => {
+    for (const id of [
+      "build-app",
+      "agent-binaries-linux",
+      "agent-binaries-macos",
+      "agent-binaries-windows",
+    ]) {
+      const body = stripComments(jobBody(RELEASE, id));
+      expect(body, id).toMatch(/name: release-symbols-/);
+      expect(body, id).toMatch(/debug-symbols\.mjs stage/);
+      expect(jobs.get("upload-debug-symbols").needs).toContain(id);
     }
-  );
+    const check = stripComments(jobBody(RELEASE, "check-release-assets"));
+    expect(check).toMatch(/pattern: release-symbols-\*\n/);
+    expect(check).toMatch(/debug-symbols\.mjs check /);
+    expect(check).toMatch(/persist-credentials: false/);
+    // Attest + upload stay tag-only.
+    expect(dryRunJobs).not.toContain("upload-debug-symbols");
+    expect(jobs.get("upload-debug-symbols").needs).toContain("create-release");
+    expect(jobs.get("verify-release").needs).toContain("upload-debug-symbols");
+  });
+
+  it.each([
+    "upload-app",
+    "upload-agent-binaries",
+    "upload-third-party-notices",
+    "upload-debug-symbols",
+    "sbom",
+  ])("%s publishes only an asset set check-release-assets passed", (id) => {
+    expect(jobs.get(id).needs).toContain("check-release-assets");
+  });
 });
