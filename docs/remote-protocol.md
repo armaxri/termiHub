@@ -1502,7 +1502,7 @@ own redactor before writing it into the bundle.
   no path separators) **and** one of the names the current, capped listing returns. There is no
   way to express a path, so the method cannot read outside the crash-report directory; symlinked
   entries are never listed.
-- The text is capped at 96 KiB (`MAX_REMOTE_REPORT_BYTES`); a longer file is cut and flagged
+- The text is capped at 160 KiB (`MAX_REMOTE_REPORT_BYTES`); a longer file is cut and flagged
   `truncated`. The desktop re-applies this cap and a 1 MiB total cap per export.
 
 **Request:**

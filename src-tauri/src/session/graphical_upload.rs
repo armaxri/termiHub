@@ -790,8 +790,8 @@ pub(crate) fn start_uploads(
 /// session cancels its queued uploads (the concept's "session closed" rule).
 /// Returns how many were signalled.
 pub(crate) fn cancel_session_transfers(registry: &TransferRegistry, session_id: &str) -> usize {
-    // `cancel` signals only live handles; retained terminal snapshots answer
-    // `false` and are not counted.
+    // `list` holds only live entries; one dropped between the list and the
+    // cancel answers `false` and is not counted.
     registry
         .list(Some(session_id))
         .into_iter()

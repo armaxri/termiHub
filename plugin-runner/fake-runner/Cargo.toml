@@ -1,0 +1,35 @@
+[package]
+name = "termihub-plugin-fake-runner"
+version = "0.0.0"
+description = "Test-only stand-in for termihub-plugin-runner that plays a scripted handshake (#4550)"
+edition = "2021"
+rust-version.workspace = true
+# Test-only: never published, never bundled. The core plugin tests build it into
+# their own scratch target directory (`cargo build -p termihub-plugin-fake-runner`)
+# and copy it into each test's temporary folder; no packaging script, Tauri
+# `externalBin` or release workflow names it.
+publish = false
+
+# The fake runner takes the real runner's command line (`--protocol <n>`, plus
+# `--ipc-handle <value>` on Windows), opens the channel the host passed it (fd 3
+# on Unix, the inherited named-pipe handle on Windows), records what the host
+# handed it, plays a handshake, and then waits to be killed. One cross-platform
+# binary replaces the Unix-only shell script of #4335, so the host-side process
+# checks (null stdout, failed safety-thread start, forged `Loaded`) run on every
+# OS (#4550).
+[[bin]]
+name = "termihub-plugin-fake-runner"
+path = "src/main.rs"
+
+[dependencies]
+# Only the IPC protocol and the sandbox report types: never the `runner` half
+# (dlopen + self-confinement), exactly as termihub-core depends on it.
+termihub-plugin-runner = { path = "..", default-features = false }
+termihub-plugin-api = { path = "../../plugin-api" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+] }

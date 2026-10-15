@@ -284,6 +284,9 @@ windows-sys = { version = "0.59", features = [
     # re-verifies the handle's final path (`GetFinalPathNameByHandleW`) is under
     # the canonical root (#4391).
     "Win32_Storage_FileSystem",
+    # Crash reports list every loaded module (#4795): `GetModuleHandleExW` pins
+    # a module while its PE headers are read for the PDB id.
+    "Win32_System_LibraryLoader",
 ] }
 # Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
 # Git Bash is discoverable regardless of install location — see

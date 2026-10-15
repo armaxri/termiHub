@@ -9,8 +9,10 @@
 //! What a report contains: the app name, version, git commit, OS /
 //! architecture, a UTC timestamp, the panicking thread and source location, the
 //! panic message (capped at [`MAX_MESSAGE_BYTES`]), the module's load address
-//! and build id (for offline symbolization, #4504) and a backtrace with frame
-//! addresses (capped at [`MAX_BACKTRACE_BYTES`]). Everything is run through [`Redactor`] first. It
+//! and build id (for offline symbolization, #4504), a backtrace with frame
+//! addresses (capped at [`MAX_BACKTRACE_BYTES`]) and every loaded module's file
+//! name, base, size and build id (capped at [`MAX_MODULES`] /
+//! [`MAX_MODULES_BYTES`], #4795). Everything is run through [`Redactor`] first. It
 //! never contains terminal session content, connection configs, or credentials
 //! by construction — only the panic payload, which is size-capped and redacted
 //! in case a caller interpolated something it should not have.
@@ -23,7 +25,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::module_image::ModuleImage;
+use super::module_image::{loaded_modules, LoadedModule, ModuleImage};
 use super::redact::Redactor;
 
 /// Name of the crash-report directory inside an app's log directory.
@@ -42,11 +44,20 @@ pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
 /// Cap on the rendered backtrace.
 pub const MAX_BACKTRACE_BYTES: usize = 64 * 1024;
 
+/// Most loaded modules listed in a report's `modules:` section (#4795).
+pub const MAX_MODULES: usize = 1024;
+
+/// Cap on the rendered `modules:` section. A macOS desktop process maps several
+/// hundred system images; when the list does not fit, the modules that hold a
+/// backtrace frame are kept first.
+pub const MAX_MODULES_BYTES: usize = 64 * 1024;
+
 /// Largest single crash report served to a remote reader (the desktop pulling a
 /// connected agent's reports into a diagnostics bundle, #3574). A rendered report
-/// is bounded by [`MAX_MESSAGE_BYTES`] + [`MAX_BACKTRACE_BYTES`] plus a small
-/// header, so a larger file was not written by the panic hook and is cut here.
-pub const MAX_REMOTE_REPORT_BYTES: u64 = 96 * 1024;
+/// is bounded by [`MAX_MESSAGE_BYTES`] + [`MAX_BACKTRACE_BYTES`] +
+/// [`MAX_MODULES_BYTES`] plus a small header, so a larger file was not written by
+/// the panic hook and is cut here.
+pub const MAX_REMOTE_REPORT_BYTES: u64 = 160 * 1024;
 
 /// Most crash reports a remote listing returns ([`MAX_REPORTS`], newest first).
 pub const MAX_REMOTE_REPORTS: usize = MAX_REPORTS;
@@ -81,6 +92,10 @@ pub struct CrashDetails {
     /// addresses in [`backtrace`](Self::backtrace) are ASLR-shifted, and this
     /// is what a `.dSYM` / `.debug` / `.pdb` release asset is matched against.
     pub image: Option<ModuleImage>,
+    /// Every module loaded into the process (#4795), so a backtrace address
+    /// outside termiHub's own image (libc, the WebView, a native plugin) can be
+    /// attributed to a module and an offset too.
+    pub modules: Vec<LoadedModule>,
 }
 
 impl CrashDetails {
@@ -132,6 +147,9 @@ impl CrashDetails {
             // (possibly unresolved) name.
             backtrace: format!("{:#}", std::backtrace::Backtrace::force_capture()),
             image: ModuleImage::current(),
+            // Read here, inside the panic hook (not a signal handler), so a
+            // library loaded since startup is listed too; see module_image.
+            modules: loaded_modules(),
         }
     }
 }
@@ -180,6 +198,8 @@ pub fn render_report(details: &CrashDetails, now: SystemTime, redactor: &Redacto
          \n\
          backtrace:\n{backtrace}\n\
          \n\
+         {modules}\n\
+         \n\
          This report was written locally and never sent anywhere. Hostnames, IP\n\
          addresses, usernames, home paths and anything credential-shaped were\n\
          redacted. Terminal session content is never recorded.\n",
@@ -200,8 +220,68 @@ pub fn render_report(details: &CrashDetails, now: SystemTime, redactor: &Redacto
             .image
             .as_ref()
             .map_or_else(|| "unknown".to_string(), ModuleImage::render),
+        modules = render_modules(&details.modules, &details.backtrace),
     );
     redactor.redact(&text)
+}
+
+/// The report's `modules:` section (#4795): a header line, then one
+/// [`LoadedModule::render`] line per module sorted by base address, a module
+/// holding at least one backtrace address marked `*`.
+///
+/// Bounded by [`MAX_MODULES`] lines and [`MAX_MODULES_BYTES`]. When the list
+/// does not fit, modules holding a backtrace frame are kept before the rest
+/// (in load order), and a final line counts the omitted ones.
+pub fn render_modules(modules: &[LoadedModule], backtrace: &str) -> String {
+    if modules.is_empty() {
+        return "modules:   unknown".to_string();
+    }
+    let frames = frame_addresses(backtrace);
+    let hit = |m: &LoadedModule| frames.iter().any(|&a| m.contains(a));
+    let lines: Vec<(bool, &LoadedModule, String)> = modules
+        .iter()
+        .map(|m| {
+            let mark = hit(m);
+            let line = format!("{} {}", if mark { '*' } else { ' ' }, m.render());
+            (mark, m, line)
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..lines.len()).collect();
+    // Stable: frame-holding modules first, otherwise the loader's order.
+    order.sort_by_key(|&i| !lines[i].0);
+    let mut kept = Vec::new();
+    let mut bytes = 0;
+    for i in order {
+        let len = lines[i].2.len() + 1;
+        if kept.len() >= MAX_MODULES || bytes + len > MAX_MODULES_BYTES {
+            continue;
+        }
+        bytes += len;
+        kept.push(i);
+    }
+    kept.sort_by_key(|&i| (lines[i].1.base, i));
+    let mut out = format!(
+        "modules:   {} loaded (base, size, name, build id; * = holds a backtrace frame)",
+        modules.len()
+    );
+    for i in &kept {
+        out.push('\n');
+        out.push_str(&lines[*i].2);
+    }
+    let omitted = modules.len() - kept.len();
+    if omitted > 0 {
+        out.push_str(&format!("\n… [{omitted} more modules omitted]"));
+    }
+    out
+}
+
+/// Every `0x…` hex number in a rendered backtrace: the frame addresses.
+fn frame_addresses(backtrace: &str) -> Vec<usize> {
+    backtrace
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter_map(|t| t.strip_prefix("0x"))
+        .filter_map(|h| usize::from_str_radix(h, 16).ok())
+        .collect()
 }
 
 /// Write a crash report into `dir` (created if needed), then prune the

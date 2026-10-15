@@ -7926,6 +7926,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "termihub-plugin-fake-runner"
+version = "0.0.0"
+dependencies = [
+ "termihub-plugin-api",
+ "termihub-plugin-runner",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "termihub-plugin-runner"
 version = "0.1.0"
 dependencies = [
