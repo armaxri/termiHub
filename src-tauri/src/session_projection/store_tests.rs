@@ -1455,3 +1455,83 @@ fn reconnect_still_arms_after_an_unexpected_drop_or_a_failure() {
         assert_eq!(life.reconnect.phase, ReconnectPhase::Waiting, "{tab}");
     }
 }
+
+// ── #4713: an agent reconnect give-up stays Failed until the user acts ───────
+
+/// A tab whose agent's in-task reconnect gave up (`Reconnecting` → `Failed`).
+fn agent_gave_up_tab(store: &SessionLifecycleStore, tab: &str) {
+    store.connect(tab);
+    store.connected(tab);
+    store.agent_transport_reconnecting(tab, Some("transport closed".to_string()));
+    assert!(store.connect_failed_if_reconnecting(tab, Some("gave up".to_string())));
+    assert_eq!(store.status(tab), Some(SessionStatus::Failed));
+}
+
+#[test]
+fn a_late_resilient_drop_never_rearms_an_agent_give_up() {
+    let store = deterministic_store();
+    agent_gave_up_tab(&store, "tab");
+    let before = store.get("tab").unwrap();
+    store.reconnect("tab");
+    assert_eq!(store.get("tab").unwrap(), before, "no redrive armed");
+    assert_eq!(before.error.as_deref(), Some("gave up"));
+    assert_eq!(before.reconnect.phase, ReconnectPhase::Idle);
+}
+
+#[test]
+fn a_late_plain_drop_never_overwrites_an_agent_give_up() {
+    let store = deterministic_store();
+    agent_gave_up_tab(&store, "tab");
+    let before = store.get("tab").unwrap();
+    store.dropped("tab", None);
+    assert_eq!(
+        store.get("tab").unwrap(),
+        before,
+        "still Failed with its error"
+    );
+}
+
+#[test]
+fn a_user_reconnect_leaves_an_agent_give_up_and_later_drops_fold_again() {
+    let store = deterministic_store();
+    agent_gave_up_tab(&store, "tab");
+    // The user's Reconnect is a fresh `connect`.
+    store.connect("tab");
+    assert_eq!(store.status("tab"), Some(SessionStatus::Connecting));
+    store.connected("tab");
+    // A genuine drop of the new session arms the redrive as usual.
+    store.reconnect("tab");
+    let life = store.get("tab").unwrap();
+    assert_eq!(life.status, SessionStatus::Reconnecting);
+    assert_eq!(life.reconnect.phase, ReconnectPhase::Waiting);
+
+    agent_gave_up_tab(&store, "plain");
+    store.connect("plain");
+    store.connected("plain");
+    store.dropped("plain", None);
+    assert_eq!(store.status("plain"), Some(SessionStatus::Disconnected));
+}
+
+#[test]
+fn a_plain_connect_failure_after_a_give_up_is_reconnectable_again() {
+    let store = deterministic_store();
+    agent_gave_up_tab(&store, "tab");
+    // A later plain connect failure is not a give-up: the existing behaviour
+    // (a drop may arm the loop from `Failed`) holds for it.
+    store.connect_failed("tab", None);
+    store.reconnect("tab");
+    assert_eq!(store.status("tab"), Some(SessionStatus::Reconnecting));
+}
+
+#[test]
+fn removing_a_gave_up_tab_forgets_the_give_up() {
+    let store = deterministic_store();
+    agent_gave_up_tab(&store, "tab");
+    store.remove("tab");
+    store.connect_failed("tab", None);
+    assert!(store.get("tab").is_none(), "no phantom entry");
+    store.connect("tab");
+    store.connect_failed("tab", None);
+    store.reconnect("tab");
+    assert_eq!(store.status("tab"), Some(SessionStatus::Reconnecting));
+}
