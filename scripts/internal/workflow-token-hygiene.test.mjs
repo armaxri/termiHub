@@ -376,6 +376,7 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
         "agent-binaries-macos",
         "agent-binaries-windows",
         "third-party-notices",
+        "sbom-generate",
         "check-release-assets",
       ])
     );
@@ -393,7 +394,21 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
     expect(body).toContain("version=0.0.0-dryrun");
   });
 
-  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
+  it("a dry run generates the SBOMs read-only and checks they are well-formed (#4484)", () => {
+    expect(jobs.get("sbom-generate").needs).toContain("release-version");
+    expect(jobs.get("sbom-generate").needs).not.toContain("create-release");
+    expect(jobPermissions(jobBody(RELEASE, "sbom-generate"))).toEqual({ contents: "read" });
+    expect(jobs.get("check-release-assets").needs).toContain("sbom-generate");
+    const check = stripComments(jobBody(RELEASE, "check-release-assets"));
+    expect(check).toMatch(/name: release-sboms\n/);
+    expect(check).toMatch(/for c in desktop agent rdp-sidecar frontend; do/);
+    expect(check).toMatch(/jq -e '\.bomFormat == "CycloneDX"/);
+    // Attest + upload stay tag-only: sbom needs create-release, so a dry run skips it.
+    expect(dryRunJobs).not.toContain("sbom");
+    expect(jobs.get("sbom").needs).toContain("create-release");
+  });
+
+  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices", "sbom"])(
     "%s publishes only an asset set check-release-assets passed",
     (id) => {
       expect(jobs.get(id).needs).toContain("check-release-assets");
