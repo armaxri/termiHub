@@ -292,11 +292,17 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       contentType: "settings" as const,
       movable: true,
     };
+    const stuckTab = {
+      tabId: "nd",
+      title: "Ping",
+      contentType: "network-diagnostic" as const,
+      movable: false,
+    };
     const transferView = {
       tabId: "tv",
-      title: "Transfers",
+      title: "Transfer: build",
       contentType: "transfer-view" as const,
-      movable: false,
+      movable: true,
     };
 
     it("names the tabs that move and the ones that close", () => {
@@ -304,12 +310,60 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       act(() =>
         useAppStore
           .getState()
-          .setPendingWindowClose(request({ otherTabs: [savedEditor, settings, transferView] }))
+          .setPendingWindowClose(request({ otherTabs: [savedEditor, settings, stuckTab] }))
       );
 
       expect(q("close-window-decision-move-summary").textContent).toBe(
         'Moving also reopens these tabs there: "hosts" and "Settings". ' +
-          '"Transfers" can\'t be moved and closes with the window.'
+          '"Ping" can\'t be moved and closes with the window.'
+      );
+    });
+
+    it("moves a paired transfer view without an unpaired note (#4751)", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ otherTabs: [transferView] }))
+      );
+
+      expect(q("close-window-decision-move-summary").textContent).toBe(
+        'Moving also reopens this tab there: "Transfer: build".'
+      );
+      expect(q("close-window-decision-unpaired-note")).toBeNull();
+    });
+
+    it("says a transfer view whose terminal stays behind opens unpaired (#4751)", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(
+            request({ otherTabs: [settings, { ...transferView, unpaired: true }] })
+          )
+      );
+
+      expect(q("close-window-decision-move-summary").textContent).toBe(
+        'Moving also reopens these tabs there: "Settings" and "Transfer: build". ' +
+          '"Transfer: build" opens unpaired there, since its terminal doesn\'t move; ' +
+          "the local side stays as it is."
+      );
+    });
+
+    it("uses the plural for several unpaired transfer views (#4751)", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            otherTabs: [
+              { ...transferView, unpaired: true },
+              { ...transferView, tabId: "tv2", title: "Transfer: db", unpaired: true },
+            ],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-unpaired-note")?.textContent).toBe(
+        ' "Transfer: build" and "Transfer: db" open unpaired there, since their terminals ' +
+          "don't move; the local side stays as it is."
       );
     });
 
