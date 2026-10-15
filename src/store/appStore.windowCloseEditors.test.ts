@@ -383,16 +383,11 @@ describe("appStore — Move tabs carries clean non-session tabs (#4501)", () => 
     await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
 
     const kinds = sentRecords().map((r) => r.tab.contentType);
-    expect(kinds).toEqual(["terminal", ...MOVABLE_TABS.map((tab) => tab.contentType)]);
-  });
-
-  it("leaves a transfer view behind, since its remote pane is bound to a source tab", async () => {
-    seedTabs([TRANSFER_VIEW]);
-
-    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
-
-    expect(sendHandoffToWindow).not.toHaveBeenCalled();
-    expect(openWindow).not.toHaveBeenCalled();
+    expect(kinds).toEqual([
+      "terminal",
+      ...MOVABLE_TABS.map((tab) => tab.contentType),
+      "transfer-view",
+    ]);
   });
 
   it("still refuses the move while a dirty form editor has no readable draft", async () => {
@@ -415,7 +410,13 @@ describe("appStore — Move tabs carries clean non-session tabs (#4501)", () => 
 
     expect(useAppStore.getState().pendingWindowClose?.otherTabs).toEqual([
       { tabId: "st", title: "Settings", contentType: "settings", movable: true },
-      { tabId: "tv", title: "Transfers", contentType: "transfer-view", movable: false },
+      {
+        tabId: "tv",
+        title: "Transfers",
+        contentType: "transfer-view",
+        movable: true,
+        unpaired: true,
+      },
     ]);
   });
 
@@ -476,6 +477,115 @@ describe("appStore — Move tabs carries clean non-session tabs (#4501)", () => 
       );
       expect(editors).toHaveLength(2);
     });
+  });
+});
+
+describe("appStore — Move tabs carries the transfer view (#4751)", () => {
+  const TERMINAL = staticTab("t-term", "build", { contentType: "terminal", sessionId: "s1" });
+  const PAIRED_VIEW = staticTab("tv", "Transfer: build", {
+    contentType: "transfer-view",
+    transferViewMeta: { remoteTabId: "t-term", localPath: "/home/me", remotePath: "/srv/app" },
+  });
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    clearEditorBuffers();
+    openWindow.mockReset().mockResolvedValue("win-9");
+    sendHandoffToWindow.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("keeps a transfer view paired with its moved terminal in the target window", async () => {
+    // The view sits before its terminal in the window; the move still hands the
+    // terminal over first.
+    seedTabs([PAIRED_VIEW, TERMINAL]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const records = sentRecords();
+    expect(records.map((r) => r.tab.contentType)).toEqual(["terminal", "transfer-view"]);
+    expect(records[1].tab.transferViewMeta?.remoteTabId).toBe("t-term");
+
+    const tabs = hydrateInFreshWindow(records);
+    const terminal = tabs.find((t) => t.contentType === "terminal");
+    const view = tabs.find((t) => t.contentType === "transfer-view");
+    expect(terminal?.sessionId).toBe("s1");
+    expect(terminal?.id).not.toBe("t-term");
+    expect(view?.transferViewMeta).toEqual({
+      remoteTabId: terminal!.id,
+      localPath: "/home/me",
+      remotePath: "/srv/app",
+    });
+    expect(view?.title).toBe("Transfer: build");
+  });
+
+  it("keeps the pairing when the move opens a new window seeded with the terminal", async () => {
+    seedTabs([TERMINAL, PAIRED_VIEW]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "new" });
+
+    const records = [openWindow.mock.calls[0][0] as TabHandoffRecord, ...sentRecords()];
+    const tabs = hydrateInFreshWindow(records);
+    const terminal = tabs.find((t) => t.contentType === "terminal");
+    const view = tabs.find((t) => t.contentType === "transfer-view");
+    expect(view?.transferViewMeta?.remoteTabId).toBe(terminal!.id);
+  });
+
+  it("opens the view unpaired, local side intact, when its terminal does not move", async () => {
+    // A terminal without a live session stays behind.
+    seedTabs([{ ...TERMINAL, sessionId: null }, PAIRED_VIEW]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const records = sentRecords();
+    expect(records.map((r) => r.tab.contentType)).toEqual(["transfer-view"]);
+    expect(records[0].tab.transferViewMeta?.remoteTabId).toBeNull();
+
+    const [view] = hydrateInFreshWindow(records);
+    expect(view.transferViewMeta).toEqual({
+      remoteTabId: null,
+      localPath: "/home/me",
+      remotePath: "/srv/app",
+    });
+    expect(view.title).toBe("File Transfer");
+  });
+
+  it("flags only a transfer view whose terminal stays behind as unpaired", async () => {
+    const orphan = staticTab("tv2", "Transfer: gone", {
+      contentType: "transfer-view",
+      transferViewMeta: { remoteTabId: "t-gone" },
+    });
+    const free = staticTab("tv3", "File Transfer", {
+      contentType: "transfer-view",
+      transferViewMeta: { remoteTabId: null },
+    });
+    seedTabs([TERMINAL, PAIRED_VIEW, orphan, free]);
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+
+    const rows = useAppStore.getState().pendingWindowClose?.otherTabs;
+    expect(rows?.map((row) => [row.tabId, row.movable, row.unpaired])).toEqual([
+      ["tv", true, undefined],
+      ["tv2", true, true],
+      ["tv3", true, undefined],
+    ]);
+  });
+
+  it("never pairs a view with a terminal from another move batch", async () => {
+    seedTabs([TERMINAL, PAIRED_VIEW]);
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+    const [terminalRecord, viewRecord] = sentRecords();
+
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.getState().hydrateHandoffTab(terminalRecord);
+    // The same view arriving outside its batch (a single-tab move carries none).
+    const { moveBatchId: _batch, sourceTabId: _source, ...lone } = viewRecord.tab;
+    useAppStore.getState().hydrateHandoffTab({ tab: lone });
+
+    const view = collectWindowTabs(useAppStore.getState()).find(
+      (t) => t.contentType === "transfer-view"
+    );
+    expect(view?.transferViewMeta?.remoteTabId).toBeNull();
+    expect(view?.transferViewMeta?.localPath).toBe("/home/me");
   });
 });
 
