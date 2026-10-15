@@ -85,7 +85,7 @@ describe("createFramePaintQueue", () => {
 
     // With the queue empty, a raw frame is synchronous again.
     queue.push(frame(raw(50)));
-    expect(painted.at(-1)).toEqual([50]);
+    expect(painted[painted.length - 1]).toEqual([50]);
   });
 
   it("hands each JPEG rect its decoded bitmap", async () => {
