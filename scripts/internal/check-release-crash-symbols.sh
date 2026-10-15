@@ -38,7 +38,7 @@
 #
 # It also checks the report's `modules:` section (#4795): it must list a module
 # marked `*` (holding a backtrace frame), and with split symbols that module must
-# be the probe itself, at the `image:` base.
+# be the probe itself, at the `image:` base. On macOS it must list dyld (#4806).
 #
 # Usage:
 #   scripts/internal/check-release-crash-symbols.sh [<probe-binary>]
@@ -158,6 +158,12 @@ else
     exit 1
   fi
   echo "OK: the crash report lists the loaded modules."
+  # dyld is not in its own image list; the report adds it on macOS (#4806).
+  if [ "$(uname -s)" = "Darwin" ] &&
+    ! printf '%s\n' "$modules" | grep -Eq '^[* ] 0x[0-9a-f]+ 0x[0-9a-f]+ dyld uuid '; then
+    echo "::error::the macOS crash report does not list dyld among its modules (#4806)" >&2
+    exit 1
+  fi
 fi
 
 # --- Offline symbolization with split debug symbols (#4504) ---------------
