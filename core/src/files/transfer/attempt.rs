@@ -1005,13 +1005,7 @@ mod tests {
         assert!(message.starts_with(CRASH_MESSAGE), "{message}");
         assert!(message.contains("stint exploded"), "{message}");
         assert!(reg.get("t1").is_none(), "the crashed entry is dropped");
-        let retained = reg
-            .list(Some("s1"))
-            .into_iter()
-            .find(|s| s.transfer_id == "t1")
-            .expect("settled snapshot retained");
-        assert!(retained.settled);
-        assert_eq!(retained.state, TransferStateTag::Failed);
+        assert_eq!(h.snapshot().state, TransferStateTag::Failed);
         assert!(
             peer.state().is_active(),
             "the released slot promotes the queued peer"
@@ -1474,10 +1468,11 @@ mod tests {
 
     // ── drive_transfer termination paths (#4387) ─────────────────────────────
     //
-    // The frontend no longer polls `transfer_list` to heal rows stuck
-    // non-terminal: every way a transfer ends must emit its terminal state
-    // through the sink (which the app folds into the authoritative transfer
-    // store) *before* the registry entry is dropped. These pin each path.
+    // Nothing heals a row stuck non-terminal, and the registry keeps no record
+    // of a finished transfer: every way a transfer ends must emit its terminal
+    // state through the sink (which the app folds into the authoritative
+    // transfers projection) *before* the registry entry is dropped. These pin
+    // each path.
 
     /// A sink recording every emitted `(phase, state)` pair.
     type Recorded = Arc<Mutex<Vec<(TransferPhase, TransferStateTag)>>>;

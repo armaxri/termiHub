@@ -3,7 +3,8 @@
  *
  * When `get_statuses()` returns a persisted `Error`, the sidebar row must:
  *   - replace the Play/Start button with a **Retry** control that fires
- *     `onStart` (Error → Connecting, clears the stored error via `start_tunnel`),
+ *     `onStart` (Error → Connecting; the `tunnel.start` intent clears the
+ *     stored error),
  *   - offer a **View last error** control that surfaces the persisted message,
  *   - render the persisted error text inline, and
  *   - carry the red `status-dot--error` resting dot (the shared shell maps the
@@ -122,7 +123,7 @@ describe("TunnelListItem — errored resting state (#1240)", () => {
     expect(viewErr?.getAttribute("aria-label")).toBeTruthy();
   });
 
-  it("fires onStart when Retry is clicked (Error → Connecting via start_tunnel)", async () => {
+  it("fires onStart when Retry is clicked (Error → Connecting via tunnel.start)", async () => {
     const onStart = vi.fn();
     renderItem(ERROR_STATE, { onStart });
     await flush();

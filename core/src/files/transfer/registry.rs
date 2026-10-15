@@ -3,18 +3,17 @@
 //! A `transfer_id → `[`TransferHandle`]` map plus a per-session
 //! [`SessionScheduler`], implementing the queue/concurrency/pause/resume/retry
 //! model driven by the SFTP and FTP executors and the generic `transfer_*`
-//! commands. Recently-terminal transfers are retained briefly so a frontend
-//! reconcile can settle a row whose terminal event was dropped (#1645).
+//! commands. A transfer's entry is dropped once its copy loop finishes; the
+//! transfers projection region (fed by `transfer-progress`) is the authoritative
+//! record of finished transfers, so the registry keeps no terminal history.
 //!
 //! The legacy cancel-only SFTP token map (#1245) was removed in #3188 once no
 //! production path registered legacy transfers any more.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
-use serde::Serialize;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -22,48 +21,20 @@ use super::scheduler::{Admission, SessionScheduler, DEFAULT_MAX_CONCURRENT};
 use super::state::{TransferEvent, TransferState, TransferStateTag};
 use super::TransferDirection;
 
-/// How long a recently-terminal transfer is retained in the registry so a
-/// frontend reconcile can still observe its final state after its live entry is
-/// gone (#1645).
+/// A point-in-time view of one rich transfer: the source of a
+/// `transfer-progress` payload ([`TransferProgress::from_snapshot`]) and of
+/// [`TransferRegistry::list`].
 ///
-/// The frontend polls `transfer_list` on a few-second tick while it holds any
-/// non-terminal row, so a window an order of magnitude larger than that tick
-/// comfortably catches a transfer whose terminal `transfer-progress` event was
-/// dropped, without holding completed transfers indefinitely.
-const TERMINAL_RETENTION: Duration = Duration::from_secs(60);
-
-/// Hard cap on the number of retained terminal transfers, so a burst of
-/// completions cannot grow the history without bound between TTL sweeps. Each
-/// retained entry is a small [`TransferSnapshot`]; 64 bounds the memory while
-/// still covering a realistic backlog.
-const TERMINAL_RETENTION_MAX: usize = 64;
-
-/// A point-in-time, serialisable view of one rich transfer, returned by
-/// `transfer_list`.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// [`TransferProgress::from_snapshot`]: super::TransferProgress::from_snapshot
+#[derive(Debug, Clone)]
 pub struct TransferSnapshot {
     pub transfer_id: String,
     pub session_id: String,
     pub direction: TransferDirection,
     pub file_name: String,
     /// Remote path of the transferred file (#1531), for the Transfer Queue row.
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub path: String,
     pub state: TransferStateTag,
-    /// Whether this snapshot is a *genuinely* settled outcome the frontend
-    /// reconcile may fold into a stuck row (#1657).
-    ///
-    /// This is stricter than [`TransferStateTag::is_terminal`]. A **live** rich
-    /// (FTP) handle in a `failed` state is not settled: it may still auto-retry
-    /// after backoff, or sit awaiting a manual retry — so it reports
-    /// `state: failed` with `settled: false`. Only [`TransferState::is_terminal`]
-    /// states from a live handle (`completed`/`cancelled`) and
-    /// [retained-terminal](Self) snapshots (a dropped, genuinely-final
-    /// transfer) are `settled`. This stops a
-    /// transient mid-retry failure from being reconciled into a terminal
-    /// `failed` row (which the reconcile guard would then never re-settle).
-    pub settled: bool,
     pub transferred: u64,
     pub total: u64,
     pub speed: u64,
@@ -226,7 +197,7 @@ impl TransferHandle {
         self.lock().source_mtime
     }
 
-    /// A point-in-time serialisable view of this transfer.
+    /// A point-in-time view of this transfer.
     pub fn snapshot(&self) -> TransferSnapshot {
         let c = self.lock();
         TransferSnapshot {
@@ -236,10 +207,6 @@ impl TransferHandle {
             file_name: self.file_name.clone(),
             path: self.path.clone(),
             state: c.state.tag(),
-            // A live rich handle is settled only when genuinely terminal
-            // (completed/cancelled). A live `failed` handle may still auto-retry
-            // or await a manual retry, so it is *not* settled (#1657).
-            settled: c.state.is_terminal(),
             transferred: c.transferred,
             total: c.total,
             speed: c.speed,
@@ -249,14 +216,6 @@ impl TransferHandle {
     }
 }
 
-/// A recently-terminal transfer retained for a bounded window so a reconcile
-/// can still observe its final state after its live entry is dropped (#1645).
-#[derive(Debug)]
-struct RetainedTerminal {
-    snapshot: TransferSnapshot,
-    at: Instant,
-}
-
 /// Inner, lock-guarded registry state.
 #[derive(Default)]
 struct RegistryState {
@@ -264,10 +223,6 @@ struct RegistryState {
     rich: HashMap<String, Arc<TransferHandle>>,
     /// Per-session slot accounting for the rich model.
     schedulers: HashMap<String, SessionScheduler>,
-    /// Recently-terminal transfers, retained briefly so a reconcile can settle a
-    /// stuck row whose terminal event was dropped (#1645). Ordered oldest-first
-    /// (push_back), bounded by [`TERMINAL_RETENTION`] and [`TERMINAL_RETENTION_MAX`].
-    terminal: VecDeque<RetainedTerminal>,
 }
 
 /// Tracks in-flight transfers by `transfer_id`.
@@ -364,48 +319,13 @@ impl TransferRegistry {
     }
 
     /// Drop a transfer's registry entry once its copy loop has finished. This
-    /// also releases any slot it still holds so a queued peer can be promoted,
-    /// and — when the transfer reached a terminal state — retains a snapshot
-    /// briefly so a reconcile can still settle a stuck row whose terminal event
-    /// was dropped (#1645).
+    /// also releases any slot it still holds so a queued peer can be promoted.
+    /// Nothing of the transfer is retained: its final state has already reached
+    /// the transfers projection through its terminal `transfer-progress` emit.
     pub fn drop_entry(&self, transfer_id: &str) {
         let mut state = self.lock();
         if let Some(handle) = state.rich.remove(transfer_id) {
-            let snapshot = handle.snapshot();
             Self::release_slot_locked(&mut state, &handle);
-            if snapshot.state.is_terminal() {
-                Self::record_terminal_locked(&mut state, snapshot);
-            }
-        }
-    }
-
-    /// Push a terminal snapshot into the retention history, then evict anything
-    /// past the capacity or TTL bound. Callers hold the state lock.
-    fn record_terminal_locked(state: &mut RegistryState, mut snapshot: TransferSnapshot) {
-        // A retained terminal is, by definition, a genuinely-final outcome the
-        // reconcile may settle a stuck row to — including a dropped failure
-        // (which, unlike a live `failed` handle, can no longer retry) (#1657).
-        snapshot.settled = true;
-        let now = Instant::now();
-        state
-            .terminal
-            .push_back(RetainedTerminal { snapshot, at: now });
-        Self::evict_terminal_locked(state, now);
-    }
-
-    /// Drop retained terminal entries beyond the capacity cap (oldest first) or
-    /// older than the TTL. The deque is oldest-first, so both bounds evict from
-    /// the front.
-    fn evict_terminal_locked(state: &mut RegistryState, now: Instant) {
-        while state.terminal.len() > TERMINAL_RETENTION_MAX {
-            state.terminal.pop_front();
-        }
-        while let Some(front) = state.terminal.front() {
-            if now.duration_since(front.at) > TERMINAL_RETENTION {
-                state.terminal.pop_front();
-            } else {
-                break;
-            }
         }
     }
 
@@ -599,35 +519,15 @@ impl TransferRegistry {
         self.lock().rich.get(transfer_id).cloned()
     }
 
-    /// Snapshot every transfer for `transfer_list` (optionally filtered by
-    /// session): live transfers, and recently-terminal transfers retained for the reconcile window (#1645).
-    ///
-    /// A live entry always shadows a retained snapshot for the same id, so an id
-    /// that (impossibly, given UUIDs) reappeared live would never be reported as
-    /// both live and terminal.
+    /// Snapshot every live transfer, optionally filtered by session. A
+    /// transfer whose entry was dropped ([`Self::drop_entry`]) is not listed.
     pub fn list(&self, session_id: Option<&str>) -> Vec<TransferSnapshot> {
-        let mut state = self.lock();
-        Self::evict_terminal_locked(&mut state, Instant::now());
-
-        let matches = |s: &str| session_id.is_none_or(|f| s == f);
-        let mut live_ids: HashSet<String> = HashSet::new();
-        let mut out = Vec::new();
-
-        for handle in state.rich.values() {
-            if matches(&handle.session_id) {
-                let snap = handle.snapshot();
-                live_ids.insert(snap.transfer_id.clone());
-                out.push(snap);
-            }
-        }
-        for retained in &state.terminal {
-            if matches(&retained.snapshot.session_id)
-                && !live_ids.contains(&retained.snapshot.transfer_id)
-            {
-                out.push(retained.snapshot.clone());
-            }
-        }
-        out
+        self.lock()
+            .rich
+            .values()
+            .filter(|handle| session_id.is_none_or(|f| handle.session_id == f))
+            .map(|handle| handle.snapshot())
+            .collect()
     }
 
     /// Whether the given session currently has any active or queued rich
@@ -639,21 +539,6 @@ impl TransferRegistry {
             .get(session_id)
             .map(|s| s.active())
             .unwrap_or(0)
-    }
-
-    /// Number of retained terminal snapshots (#1645 tests).
-    #[cfg(test)]
-    fn retained_len(&self) -> usize {
-        self.lock().terminal.len()
-    }
-
-    /// Force a TTL eviction pass as if the clock were `now` (#1645 tests). Using
-    /// a future `now` avoids backdating an `Instant` into the past (which can
-    /// underflow on a freshly-booted monotonic clock).
-    #[cfg(test)]
-    fn evict_at(&self, now: Instant) {
-        let mut state = self.lock();
-        Self::evict_terminal_locked(&mut state, now);
     }
 }
 
@@ -914,169 +799,48 @@ mod tests {
         assert!(!reg.retry("nope"));
     }
 
-    // --- Terminal retention (#1645) ---
+    // --- No terminal history (#4798) ---
 
-    /// Drive a fresh transfer to `Completed` and drop it, so its terminal
-    /// snapshot lands in the retention history.
-    fn complete_and_drop(reg: &TransferRegistry, id: &str, session: &str) {
-        let h = enq(reg, id, session);
-        reg.request_slot(&h); // Active
-        h.transition(TransferEvent::Complete); // Active → Completed
-        reg.drop_entry(id);
+    #[test]
+    fn dropping_a_terminal_transfer_leaves_nothing_listed() {
+        // The registry keeps no history of finished transfers: once its entry
+        // is dropped, a completed, cancelled or failed transfer is gone. Its
+        // final state lives in the transfers projection, not here.
+        for event in [
+            TransferEvent::Complete,
+            TransferEvent::Cancel,
+            TransferEvent::Fail {
+                attempt: MAX_RETRIES,
+            },
+        ] {
+            let reg = TransferRegistry::new();
+            let h = enq(&reg, "r1", "sess-a");
+            reg.request_slot(&h); // Active
+            h.transition(event);
+            reg.drop_entry("r1");
+
+            assert!(reg.get("r1").is_none(), "the entry is dropped");
+            assert!(
+                reg.list(None).is_empty(),
+                "no terminal snapshot is retained"
+            );
+            assert!(reg.list(Some("sess-a")).is_empty());
+        }
     }
 
     #[test]
-    fn dropping_a_cancelled_transfer_retains_its_terminal_state() {
-        let reg = TransferRegistry::new();
-        let h = enq(&reg, "r1", "sess-a");
-        reg.request_slot(&h); // Active
-        h.set_metrics(42, 100, 0);
-        h.transition(TransferEvent::Cancel); // Active → Cancelled
-        reg.drop_entry("r1");
-
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].state, TransferStateTag::Cancelled);
-        assert_eq!(list[0].transferred, 42);
-        assert!(list[0].settled);
-    }
-
-    #[test]
-    fn dropping_an_unknown_id_retains_nothing() {
-        let reg = TransferRegistry::new();
-        reg.drop_entry("nope");
-        assert_eq!(reg.list(None).len(), 0);
-        assert_eq!(reg.retained_len(), 0);
-    }
-
-    #[test]
-    fn dropping_a_completed_rich_transfer_retains_its_terminal_snapshot() {
-        let reg = TransferRegistry::new();
-        let h = enq(&reg, "r1", "sess-a");
-        reg.request_slot(&h); // Active
-        h.transition(TransferEvent::Complete); // Active → Completed
-        reg.drop_entry("r1");
-
-        assert!(reg.get("r1").is_none(), "the live rich entry is dropped");
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1, "the completed transfer is retained");
-        assert_eq!(list[0].transfer_id, "r1");
-        assert_eq!(list[0].state, TransferStateTag::Completed);
-        assert!(list[0].settled, "a retained completed transfer is settled");
-    }
-
-    // --- Genuinely-settled vs transient rich `failed` (#1657) ---
-
-    #[test]
-    fn a_live_rich_failed_handle_is_listed_failed_but_not_settled() {
+    fn a_live_rich_failed_handle_is_still_listed_as_failed() {
         // A rich (FTP) transfer that failed an attempt but may still auto-retry
-        // (retryable) — or has exhausted retries and sits awaiting a manual
-        // retry (non-retryable) — is a *live* handle. It must surface its
-        // `failed` state for display, but must NOT be `settled`, so a reconcile
-        // never folds a still-recoverable transfer into a terminal `failed` row
-        // (#1657).
+        // (or awaits a manual retry) keeps its live entry and reports `failed`.
         for attempt in [1, MAX_RETRIES] {
             let reg = TransferRegistry::new();
             let h = enq(&reg, "r1", "sess-a");
             reg.request_slot(&h); // Queued → Active
             h.transition(TransferEvent::Fail { attempt }); // Active → Failed
-            assert!(
-                matches!(h.state(), TransferState::Failed { .. }),
-                "the handle is in a failed state"
-            );
 
             let list = reg.list(None);
             assert_eq!(list.len(), 1, "the live failed handle is still listed");
             assert_eq!(list[0].state, TransferStateTag::Failed);
-            assert!(
-                !list[0].settled,
-                "a live rich `failed` handle (attempt {attempt}) is not settled — it may still retry"
-            );
         }
-    }
-
-    #[test]
-    fn a_retained_failure_is_settled() {
-        // Unlike a live `failed` handle, a failed transfer whose entry has been
-        // dropped can no longer retry, so its retained snapshot is settled and a
-        // reconcile may fold it in (#1657).
-        let reg = TransferRegistry::new();
-        let h = enq(&reg, "r1", "sess-a");
-        reg.request_slot(&h); // Active
-        h.transition(TransferEvent::Fail {
-            attempt: MAX_RETRIES,
-        });
-        reg.drop_entry("r1");
-
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].state, TransferStateTag::Failed);
-        assert!(list[0].settled, "a retained failure is genuinely settled");
-    }
-
-    #[test]
-    fn a_live_active_rich_handle_is_not_settled() {
-        let reg = TransferRegistry::new();
-        let h = enq(&reg, "r1", "sess-a");
-        reg.request_slot(&h); // Active
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].state, TransferStateTag::Active);
-        assert!(!list[0].settled, "a live active transfer is not settled");
-    }
-
-    #[test]
-    fn a_live_entry_shadows_a_retained_snapshot_for_the_same_id() {
-        // Retain a terminal snapshot, then enqueue a *live* transfer reusing the
-        // id: the live entry must win (no duplicate, no stale terminal row).
-        let reg = TransferRegistry::new();
-        complete_and_drop(&reg, "s1", "sess-a");
-        assert_eq!(reg.retained_len(), 1);
-
-        let h = enq(&reg, "s1", "sess-a");
-        reg.request_slot(&h); // Active
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1, "no duplicate for the reused id");
-        assert_eq!(
-            list[0].state,
-            TransferStateTag::Active,
-            "the live entry shadows the retained terminal snapshot"
-        );
-    }
-
-    #[test]
-    fn retained_terminals_are_evicted_past_the_capacity_cap() {
-        let reg = TransferRegistry::new();
-        for i in 0..(TERMINAL_RETENTION_MAX + 10) {
-            complete_and_drop(&reg, &format!("s{i}"), "sess-a");
-        }
-        assert_eq!(
-            reg.retained_len(),
-            TERMINAL_RETENTION_MAX,
-            "history is bounded by the capacity cap"
-        );
-    }
-
-    #[test]
-    fn retained_terminals_are_evicted_after_the_ttl() {
-        let reg = TransferRegistry::new();
-        complete_and_drop(&reg, "s1", "sess-a");
-        assert_eq!(reg.retained_len(), 1);
-
-        // As if the clock advanced well past the retention window.
-        reg.evict_at(Instant::now() + TERMINAL_RETENTION + Duration::from_secs(5));
-        assert_eq!(reg.retained_len(), 0, "expired terminals are dropped");
-        assert_eq!(reg.list(None).len(), 0);
-    }
-
-    #[test]
-    fn retained_terminals_respect_the_session_filter() {
-        let reg = TransferRegistry::new();
-        complete_and_drop(&reg, "s1", "sess-a");
-        complete_and_drop(&reg, "s2", "sess-b");
-
-        assert_eq!(reg.list(Some("sess-a")).len(), 1);
-        assert_eq!(reg.list(Some("sess-b")).len(), 1);
-        assert_eq!(reg.list(None).len(), 2);
     }
 }

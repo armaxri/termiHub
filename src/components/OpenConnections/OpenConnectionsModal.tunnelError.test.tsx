@@ -4,8 +4,8 @@
  *
  * The canonical kill panel must list an `error` tunnel (its leaked
  * `active_tunnels` entry is still holding resources) and offer a working
- * force-**Stop** that calls `stop_tunnel` (which, per #1238, also clears the
- * persisted error).
+ * force-**Stop** that dispatches a `tunnel.stop` intent (which, per #1238, also
+ * clears the persisted error).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -16,8 +16,8 @@ import { TooltipProvider } from "@/components/ui";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 
 // Post-#2150 the store's `stopTunnel` action dispatches a `tunnel.stop` intent
-// over the projection transport rather than calling the typed `stop_tunnel`
-// command; capture the dispatched intent to assert the force-Stop wiring.
+// over the projection transport (the typed `stop_tunnel` command is gone);
+// capture the dispatched intent to assert the force-Stop wiring.
 const { dispatchMock } = vi.hoisted(() => ({ dispatchMock: vi.fn() }));
 vi.mock("@/services/transport", () => ({
   createTransport: () => ({ dispatch: dispatchMock, subscribe: vi.fn(), resync: vi.fn() }),

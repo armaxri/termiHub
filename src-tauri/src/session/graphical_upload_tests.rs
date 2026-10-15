@@ -405,19 +405,37 @@ fn quiet_sink() -> ProgressSink {
     Arc::new(|_: &termihub_core::files::transfer::TransferProgress| {})
 }
 
-/// Wait until every transfer of `session` has settled; returns their states.
-async fn settled(registry: &TransferRegistry, session: &str) -> Vec<TransferStateTag> {
+/// The last state each transfer reported through the sink, by transfer id.
+type FinalStates = Arc<Mutex<HashMap<String, TransferStateTag>>>;
+
+/// A sink recording each transfer's latest reported state. The registry keeps
+/// no record of a finished transfer, so the sink is where its outcome shows.
+fn recording_sink() -> (ProgressSink, FinalStates) {
+    let states: FinalStates = Arc::new(Mutex::new(HashMap::new()));
+    let rec = states.clone();
+    let sink: ProgressSink = Arc::new(
+        move |p: &termihub_core::files::transfer::TransferProgress| {
+            rec.lock().unwrap().insert(p.transfer_id.clone(), p.state);
+        },
+    );
+    (sink, states)
+}
+
+/// Wait until `count` transfers have reported a terminal state; returns their
+/// states ordered by transfer id.
+async fn settled(states: &FinalStates, count: usize) -> Vec<TransferStateTag> {
     for _ in 0..200 {
-        let snaps = registry.list(Some(session));
-        if !snaps.is_empty() && snaps.iter().all(|s| s.state.is_terminal()) {
-            return snaps.into_iter().map(|s| s.state).collect();
+        {
+            let states = states.lock().unwrap();
+            if states.len() == count && states.values().all(|s| s.is_terminal()) {
+                let mut ids: Vec<_> = states.iter().collect();
+                ids.sort_by(|a, b| a.0.cmp(b.0));
+                return ids.into_iter().map(|(_, s)| *s).collect();
+            }
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!(
-        "transfers did not settle: {:?}",
-        registry.list(Some(session))
-    );
+    panic!("transfers did not settle: {:?}", states.lock().unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -445,19 +463,13 @@ async fn agent_carrier_uploads_through_the_queue_to_the_agent_host() {
         .unwrap();
     let placement = place(dest.as_ref(), &dir, plan).await;
     let registry = TransferRegistry::new();
-    let started = start_uploads(
-        &carrier,
-        "rd-1",
-        placement.files,
-        &registry,
-        &quiet_sink(),
-        None,
-    );
+    let (sink, states) = recording_sink();
+    let started = start_uploads(&carrier, "rd-1", placement.files, &registry, &sink, None);
 
     assert_eq!(started.len(), 2);
     assert_eq!(started[1].remote_path, "/home/pi/Desktop/notes (1).md");
     assert_eq!(
-        settled(&registry, "rd-1").await,
+        settled(&states, 2).await,
         vec![TransferStateTag::Completed; 2]
     );
     assert_eq!(host.file("/home/pi/Desktop/big.bin").unwrap(), big);
@@ -526,8 +538,9 @@ async fn persisted_uploads_record_the_side_channel_identity() {
     let persist = TransferPersistenceManager::new_test(tmp.path());
     let target = graphical_target();
     let registry = TransferRegistry::new();
+    let (sink, states) = recording_sink();
 
-    // The quiet sink does not fold progress into the durable queue, so the
+    // The recording sink does not fold progress into the durable queue, so the
     // record is still there to inspect after the upload finished.
     let files = vec![PlacedFile {
         local: tmp.path().join("a.txt"),
@@ -538,7 +551,7 @@ async fn persisted_uploads_record_the_side_channel_identity() {
         "rd-1",
         files,
         &registry,
-        &quiet_sink(),
+        &sink,
         Some((&persist, &target)),
     );
     let record = persist
@@ -553,10 +566,7 @@ async fn persisted_uploads_record_the_side_channel_identity() {
         Some(s(&tmp.path().join("a.txt")).as_str())
     );
 
-    assert_eq!(
-        settled(&registry, "rd-1").await,
-        vec![TransferStateTag::Completed]
-    );
+    assert_eq!(settled(&states, 1).await, vec![TransferStateTag::Completed]);
     assert_eq!(host.file("/home/pi/Desktop/a.txt").unwrap(), b"alpha");
 }
 
@@ -598,16 +608,13 @@ async fn resume_upload(host: &Arc<FakeHost>, local: &Path, offset: u64) {
         TransferDirection::Upload,
         "/home/pi/Desktop/big.bin".to_string(),
         s(local),
-        handle,
+        handle.clone(),
         registry.clone(),
         quiet_sink(),
         offset,
     )
     .await;
-    assert_eq!(
-        settled(&registry, "rd-new").await,
-        vec![TransferStateTag::Completed]
-    );
+    assert_eq!(handle.snapshot().state, TransferStateTag::Completed);
 }
 
 fn write_offsets(host: &FakeHost) -> Vec<u64> {

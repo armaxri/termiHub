@@ -325,8 +325,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   // Include errored / reconnecting tunnels, not just connected/connecting: an
   // errored tunnel still holds a leaked `active_tunnels` entry + pool guards, so
-  // it must be force-Stoppable from the canonical kill panel (#1240). stop_tunnel
-  // releases the leak and clears the persisted error (#1238).
+  // it must be force-Stoppable from the canonical kill panel (#1240). The
+  // `tunnel.stop` intent releases the leak and clears the persisted error (#1238).
   const activeTunnels = tunnels.filter((t) => {
     const state = tunnelStates[t.id];
     return (

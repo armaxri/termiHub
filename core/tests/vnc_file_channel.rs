@@ -179,7 +179,7 @@ async fn vnc_ft_03_queued_upload_runs_over_the_tunnel_sftp_channel() {
         TransferDirection::Upload,
         remote.clone(),
         local.to_string_lossy().into_owned(),
-        handle,
+        handle.clone(),
         registry.clone(),
         sink,
         DEFAULT_RESUME_MODE,
@@ -187,12 +187,7 @@ async fn vnc_ft_03_queued_upload_runs_over_the_tunnel_sftp_channel() {
     )
     .await;
 
-    let state = registry
-        .list(Some("rd-session"))
-        .into_iter()
-        .find(|s| s.transfer_id == "vnc-ft-03")
-        .map(|s| s.state);
-    assert_eq!(state, Some(TransferStateTag::Completed));
+    assert_eq!(handle.snapshot().state, TransferStateTag::Completed);
     assert_eq!(
         sftp.read_file(&remote).await.expect("read back"),
         payload,
@@ -270,7 +265,7 @@ async fn vnc_ft_04_browse_and_queued_download_over_the_tunnel_sftp_channel() {
         TransferDirection::Download,
         remote.clone(),
         local.to_string_lossy().into_owned(),
-        handle,
+        handle.clone(),
         registry.clone(),
         sink,
         DEFAULT_RESUME_MODE,
@@ -278,12 +273,7 @@ async fn vnc_ft_04_browse_and_queued_download_over_the_tunnel_sftp_channel() {
     )
     .await;
 
-    let state = registry
-        .list(Some("rd-session"))
-        .into_iter()
-        .find(|s| s.transfer_id == "vnc-ft-04")
-        .map(|s| s.state);
-    assert_eq!(state, Some(TransferStateTag::Completed));
+    assert_eq!(handle.snapshot().state, TransferStateTag::Completed);
     assert_eq!(
         std::fs::read(&local).expect("read the download"),
         payload,
@@ -313,19 +303,14 @@ async fn vnc_ft_04_browse_and_queued_download_over_the_tunnel_sftp_channel() {
             .join("cancelled.bin")
             .to_string_lossy()
             .into_owned(),
-        cancelled,
+        cancelled.clone(),
         registry.clone(),
         Arc::new(|_: &TransferProgress| {}),
         DEFAULT_RESUME_MODE,
         0,
     )
     .await;
-    let state = registry
-        .list(Some("rd-session"))
-        .into_iter()
-        .find(|s| s.transfer_id == "vnc-ft-04-cancel")
-        .map(|s| s.state);
-    assert_eq!(state, Some(TransferStateTag::Cancelled));
+    assert_eq!(cancelled.snapshot().state, TransferStateTag::Cancelled);
 
     sftp.delete(&remote).await.expect("cleanup");
     vnc.disconnect().await.expect("disconnect");
@@ -398,7 +383,7 @@ async fn vnc_ft_05_quit_interrupted_upload_resumes_over_a_reconnected_tunnel() {
         TransferDirection::Upload,
         remote.clone(),
         local.to_string_lossy().into_owned(),
-        handle,
+        handle.clone(),
         registry.clone(),
         sink,
         DEFAULT_RESUME_MODE,
@@ -406,12 +391,7 @@ async fn vnc_ft_05_quit_interrupted_upload_resumes_over_a_reconnected_tunnel() {
     )
     .await;
 
-    let state = registry
-        .list(Some("rd-reopened"))
-        .into_iter()
-        .find(|s| s.transfer_id == "vnc-ft-05")
-        .map(|s| s.state);
-    assert_eq!(state, Some(TransferStateTag::Completed));
+    assert_eq!(handle.snapshot().state, TransferStateTag::Completed);
     assert_eq!(
         sftp.read_file(&remote).await.expect("read back"),
         payload,
