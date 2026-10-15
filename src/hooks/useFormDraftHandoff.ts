@@ -2,10 +2,12 @@
  * Form editor side of carrying unsaved form state across a window move (#4500).
  *
  * "Move tabs" on window close hands every tab to another window. A form editor
- * (connection, tunnel, workspace) keeps its draft in component state, so it
- * registers a provider the move reads ({@link useFormDraftProvider}), and the
- * editor mounted for the moved tab in the destination window picks the draft up
- * again ({@link useCarriedFormDraft}) and stays dirty, never saved.
+ * (connection, tunnel, workspace, Settings) keeps its draft in component state,
+ * so it registers a provider the move reads ({@link useFormDraftProvider}), and
+ * the editor mounted for the moved tab in the destination window picks the
+ * draft up again ({@link useCarriedFormDraft}) and stays dirty. The form editors
+ * never save it on the way; the Settings panel auto-saves it as it would have
+ * in the source window (#4758).
  */
 import { useEffect, useRef, useState } from "react";
 import {

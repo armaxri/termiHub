@@ -93,3 +93,63 @@ export function clearDraftSecrets<T>(values: T, schema?: SettingsSchema): Cleare
 
   return { values: walk(values, true, false) as T, cleared };
 }
+
+/**
+ * Labels of the secrets in `values` that differ from `baseline`: the secrets
+ * the user typed (or cleared) and has not saved yet. A form that holds a whole
+ * persisted document, such as the Settings panel, carries saved secrets in its
+ * draft too; only the unsaved ones are lost by a move, so only they are named.
+ */
+export function changedSecretLabels(values: unknown, baseline: unknown): string[] {
+  const labels: string[] = [];
+  const walk = (value: unknown, base: unknown) => {
+    if (typeof value !== "object" || value === null) return;
+    const baseObj = typeof base === "object" && base !== null ? base : {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      const baseEntry = (baseObj as Record<string, unknown>)[key];
+      if (typeof entry === "string" && isSecretKeyName(key)) {
+        const label = keyLabel(key);
+        if (entry !== (baseEntry ?? "") && !labels.includes(label)) labels.push(label);
+        continue;
+      }
+      walk(entry, baseEntry);
+    }
+  };
+  walk(values, baseline);
+  return labels;
+}
+
+/**
+ * A copy of a carried draft whose secret strings are taken from `base` (the
+ * receiving window's saved document) instead of staying empty. Used where the
+ * restored draft is saved straight away (the Settings panel auto-saves), so a
+ * secret cleared for the move never overwrites the saved one with `""`: the
+ * unsaved secret is dropped and the saved value stays (or the key stays absent
+ * when nothing is saved for it).
+ */
+export function restoreDraftSecrets<T>(values: T, base: unknown): T {
+  const walk = (value: unknown, baseValue: unknown): unknown => {
+    const baseObj =
+      typeof baseValue === "object" && baseValue !== null
+        ? (baseValue as Record<string, unknown>)
+        : {};
+    if (Array.isArray(value)) {
+      return value.map((item, index) =>
+        walk(item, Array.isArray(baseValue) ? baseValue[index] : undefined)
+      );
+    }
+    if (typeof value !== "object" || value === null) return value;
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof entry === "string" && isSecretKeyName(key)) {
+        // No saved value: leave the key out, as the saved document does.
+        const saved = baseObj[key];
+        if (typeof saved === "string") out[key] = saved;
+        continue;
+      }
+      out[key] = walk(entry, baseObj[key]);
+    }
+    return out;
+  };
+  return walk(values, base) as T;
+}

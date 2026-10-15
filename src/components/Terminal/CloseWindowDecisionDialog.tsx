@@ -48,16 +48,15 @@ import "./CloseWindowDecisionDialog.css";
  *
  * A window holding an editor with unsaved changes always reaches it (UX2-003),
  * so the close is never silent. "Move tabs" carries dirty file editors with
- * their unsaved buffer (#4412). An editor that cannot carry its unsaved state
- * (the connection, tunnel, workspace and settings forms) blocks the move until
- * the user explicitly discards it here or opens it to save or discard. Without a
+ * their unsaved buffer (#4412), and unsaved connection, tunnel and workspace
+ * editors and an unsaved Settings panel with their form values (#4500, #4758),
+ * so no editor kind blocks the move any more. A secret typed into one (a
+ * password, a key passphrase) is never copied to another window: the dialog
+ * names the typed secrets that do not move. Only an editor whose unsaved state
+ * cannot be read at all (it is not mounted) still blocks the move, until the
+ * user explicitly discards it here or opens it to save or discard. Without a
  * window to move to, unsaved editors are listed as discarded and the choices are
  * Cancel or "Discard & close".
- *
- * Unsaved connection, tunnel and workspace editors move with their form values
- * (#4500), but a secret typed into one (a password, a key passphrase) is never
- * copied to another window: the dialog names the fields that reopen empty.
- * Only an unsaved Settings panel still blocks the move.
  *
  * The window's other tabs (saved file editors, Settings, the log viewer and so
  * on) move too when the destination can reopen them (#4501); the dialog names
@@ -347,10 +346,10 @@ function quotedTitles(tabs: ReadonlyArray<{ title: string }>): string {
 }
 
 /**
- * Says which secrets typed into a moving form editor stay behind (#4500): a
- * password or key passphrase is never copied out of its editor, so the editor
- * reopens in the destination window with that field empty, and the user types
- * it again there before saving.
+ * Says which secrets typed into a moving form editor stay behind (#4500,
+ * #4758): a password or key passphrase is never copied out of its editor, so a
+ * form editor reopens in the destination window with that field empty and the
+ * Settings panel with its saved value, and the user types it again there.
  */
 function SecretsNote({ editors }: { editors: ReadonlyArray<WindowCloseDirtyEditor> }) {
   return (
@@ -364,9 +363,9 @@ function SecretsNote({ editors }: { editors: ReadonlyArray<WindowCloseDirtyEdito
           const secrets = editor.clearedSecrets ?? [];
           return (
             <p key={editor.tabId} data-testid="close-window-decision-secrets-row">
-              &quot;{editor.title}&quot; moves with {joinWords(secrets)} left empty, since typed
-              secrets are never copied to another window. Type{" "}
-              {secrets.length === 1 ? "it" : "them"} again there before saving.
+              &quot;{editor.title}&quot; moves without the {joinWords(secrets)} typed into it, since
+              typed secrets are never copied to another window. Type{" "}
+              {secrets.length === 1 ? "it" : "them"} again there.
             </p>
           );
         })}

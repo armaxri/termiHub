@@ -85,8 +85,11 @@ export interface HandoffTab {
   formDraft?: FormDraftSnapshot;
 }
 
-/** The form editors that can hand their unsaved draft to another window (#4500). */
-export type FormDraftKind = "connection-editor" | "tunnel-editor" | "workspace-editor";
+/**
+ * The form editors that can hand their unsaved draft to another window: the
+ * connection, tunnel and workspace editors (#4500) and the Settings panel (#4758).
+ */
+export type FormDraftKind = "connection-editor" | "tunnel-editor" | "workspace-editor" | "settings";
 
 /**
  * A snapshot of one form editor's unsaved draft at the moment it is read
@@ -205,8 +208,9 @@ export interface WindowCloseDirtyEditor {
   /**
    * Whether "Move tabs" can carry this editor's unsaved state to another
    * window: a file editor's buffer (#4412), or a connection, tunnel or
-   * workspace editor's form draft (#4500). The Settings panel cannot, so it
-   * blocks the move until saved or discarded. Absent means not movable.
+   * workspace editor's or the Settings panel's form draft (#4500, #4758). An
+   * editor whose state cannot be read (it is not mounted) blocks the move until
+   * saved or discarded. Absent means not movable.
    */
   movable?: boolean;
   /**
