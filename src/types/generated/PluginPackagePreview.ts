@@ -27,4 +27,18 @@ platformSupported: boolean,
  * folder each resolves to on this computer (#4533), so the install dialog
  * shows the real folder next to the declared form. Omitted when none.
  */
-resolvedFilesystemPaths?: Array<import("./ResolvedFilesystemPath").ResolvedFilesystemPath>, };
+resolvedFilesystemPaths?: Array<import("./ResolvedFilesystemPath").ResolvedFilesystemPath>, 
+/**
+ * The installed copy's version when a plugin with this id is already
+ * installed — an update, downgrade or re-install (#4418). Omitted for a
+ * fresh install.
+ */
+installedVersion?: string, 
+/**
+ * What this package changes in the access the installed copy requests
+ * (#4418): permissions, resolved filesystem folders and connection policy
+ * added or removed, from the same canonical access a native trust
+ * acknowledgment binds to. Present (and possibly empty) whenever
+ * `installedVersion` is; omitted for a fresh install.
+ */
+accessDiff?: import("./PluginAccessDiff").PluginAccessDiff, };

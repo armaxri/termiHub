@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Cpu, MonitorX, Package, ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type {
+  PluginAccessDiff,
   PluginInstallConfirmations,
   PluginInstallPendingConfirmation,
   PluginManifest,
@@ -18,6 +19,7 @@ import {
   trustBanner,
 } from "./pluginPresentation";
 import { platformLabel, pluginPlatformSupport } from "./pluginPlatforms";
+import { PluginAccessDiffSection } from "./PluginAccessDiffSection";
 import { PluginPlatformList } from "./PluginPlatformList";
 import { PluginSignerChangeDialog } from "./PluginSignerChangeDialog";
 import { PluginVersionChangeDialog } from "./PluginVersionChangeDialog";
@@ -49,6 +51,17 @@ export interface PluginInstallDialogProps {
    * form so the user consents to the real folder.
    */
   resolvedFilesystemPaths?: ResolvedFilesystemPath[];
+  /**
+   * The installed copy's version when the package would replace it — an update,
+   * downgrade or re-install (from `preview_plugin`, #4418).
+   */
+  installedVersion?: string;
+  /**
+   * What the package changes in the access the installed copy requests (from
+   * `preview_plugin`, #4418). Shown as an "asks for more access" banner with
+   * the added access, plus a secondary list of what it no longer requests.
+   */
+  accessDiff?: PluginAccessDiff;
   /** Called after a successful install, or on cancel/close. */
   onClose: () => void;
 }
@@ -97,6 +110,10 @@ function installButtonLabel(level: PluginTrustInfo["level"], trustPublisher: boo
  * single explicit confirmation re-issues the install with both flags. This
  * applies equally to manual installs and to update-check installs, which hand
  * the downloaded package to this dialog.
+ *
+ * On an update or re-install the dialog also shows the access diff against the
+ * installed copy (#4418): what the package asks for that the installed version
+ * did not, and what it no longer requests.
  */
 export function PluginInstallDialog({
   filePath,
@@ -105,6 +122,8 @@ export function PluginInstallDialog({
   hostPlatform = null,
   platformSupported = true,
   resolvedFilesystemPaths,
+  installedVersion,
+  accessDiff,
   onClose,
 }: PluginInstallDialogProps) {
   const installPlugin = useAppStore((s) => s.installPlugin);
@@ -264,6 +283,14 @@ export function PluginInstallDialog({
         </div>
       )}
 
+      {!blocked && accessDiff && installedVersion !== undefined && (
+        <PluginAccessDiffSection
+          diff={accessDiff}
+          installedVersion={installedVersion}
+          incomingVersion={manifest.version}
+        />
+      )}
+
       {!blocked && (
         <>
           <div className="plugin-install__meta">
@@ -280,7 +307,11 @@ export function PluginInstallDialog({
             </div>
             <div className="plugin-install__row">
               <span className="plugin-install__label">Version</span>
-              <span>{manifest.version}</span>
+              <span data-testid="plugin-install-version">
+                {installedVersion !== undefined && installedVersion !== manifest.version
+                  ? `${installedVersion} → ${manifest.version}`
+                  : manifest.version}
+              </span>
             </div>
             <div className="plugin-install__row">
               <span className="plugin-install__label">Author</span>

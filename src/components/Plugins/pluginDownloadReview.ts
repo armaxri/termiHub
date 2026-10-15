@@ -1,5 +1,10 @@
 import { assessPluginTrust, previewPlugin } from "@/services/api";
-import type { PluginManifest, PluginTrustInfo, ResolvedFilesystemPath } from "@/types/plugin";
+import type {
+  PluginAccessDiff,
+  PluginManifest,
+  PluginTrustInfo,
+  ResolvedFilesystemPath,
+} from "@/types/plugin";
 
 /**
  * A downloaded, checksum-verified package awaiting the install dialog — the
@@ -16,6 +21,10 @@ export interface DownloadedPackageReview {
   platformSupported: boolean;
   /** `${home}`/`${config}` folders resolved on this computer (#4533). */
   resolvedFilesystemPaths?: ResolvedFilesystemPath[];
+  /** The installed copy's version on an update or re-install (#4418). */
+  installedVersion?: string;
+  /** The access diff against the installed copy on an update or re-install (#4418). */
+  accessDiff?: PluginAccessDiff;
 }
 
 /**
@@ -28,6 +37,22 @@ export async function reviewDownloadedPackage(filePath: string): Promise<Downloa
     previewPlugin(filePath),
     assessPluginTrust(filePath),
   ]);
-  const { manifest, hostPlatform, platformSupported, resolvedFilesystemPaths } = preview;
-  return { filePath, manifest, trust, hostPlatform, platformSupported, resolvedFilesystemPaths };
+  const {
+    manifest,
+    hostPlatform,
+    platformSupported,
+    resolvedFilesystemPaths,
+    installedVersion,
+    accessDiff,
+  } = preview;
+  return {
+    filePath,
+    manifest,
+    trust,
+    hostPlatform,
+    platformSupported,
+    resolvedFilesystemPaths,
+    installedVersion,
+    accessDiff,
+  };
 }

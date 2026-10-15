@@ -23,6 +23,7 @@ import {
   isUnboundCombo,
   getOverrides,
   UNBOUND_COMBO,
+  getActionScope,
 } from "./keybindings";
 import { KeyCombo } from "@/types/keybindings";
 
@@ -943,5 +944,76 @@ describe("isEventFromTerminal", () => {
     expect(isEventFromTerminal(event)).toBe(false);
 
     document.body.removeChild(outside);
+  });
+});
+
+describe("landmark focus cycling (F6 / Shift+F6, #4773)", () => {
+  beforeEach(() => {
+    clearOverrides();
+  });
+
+  it("binds F6 to focus-next-region and Shift+F6 to focus-prev-region", () => {
+    expect(findMatchingAction(makeKeyEvent("F6"))).toBe("focus-next-region");
+    expect(findMatchingAction(makeKeyEvent("F6", { shift: true }))).toBe("focus-prev-region");
+  });
+
+  it("binds Ctrl+F6 / Ctrl+Shift+F6 to the terminal-capable variants", () => {
+    expect(findMatchingAction(makeKeyEvent("F6", { ctrl: true }))).toBe(
+      "focus-next-region-anywhere"
+    );
+    expect(findMatchingAction(makeKeyEvent("F6", { ctrl: true, shift: true }))).toBe(
+      "focus-prev-region-anywhere"
+    );
+  });
+
+  it("ships the same bare F6 defaults on macOS and Win/Linux", () => {
+    for (const action of ["focus-next-region", "focus-prev-region"]) {
+      const binding = DEFAULT_BINDINGS.find((b) => b.action === action);
+      expect(binding?.configurable).toBe(true);
+      expect(binding?.category).toBe("navigation");
+      expect(binding?.macDefault).toEqual(binding?.winLinuxDefault);
+    }
+  });
+
+  it("uses Cmd rather than Ctrl for the terminal-capable variants on macOS", () => {
+    // Ctrl+F6 is macOS's own "move focus to the floating window" key.
+    const next = DEFAULT_BINDINGS.find((b) => b.action === "focus-next-region-anywhere");
+    const prev = DEFAULT_BINDINGS.find((b) => b.action === "focus-prev-region-anywhere");
+    expect(next?.macDefault).toEqual({ key: "F6", meta: true });
+    expect(prev?.macDefault).toEqual({ key: "F6", meta: true, shift: true });
+    expect(next?.configurable && prev?.configurable).toBe(true);
+  });
+
+  it("yields bare F6 / Shift+F6 to a focused terminal, but not the Ctrl variants", () => {
+    expect(getActionScope("focus-next-region")).toBe("yields-to-terminal");
+    expect(getActionScope("focus-prev-region")).toBe("yields-to-terminal");
+    expect(getActionScope("focus-next-region-anywhere")).toBe("global");
+    expect(getActionScope("focus-prev-region-anywhere")).toBe("global");
+  });
+
+  it("does not collide with any other default binding", () => {
+    expect(checkConflict({ key: "F6" }, "focus-next-region")).toBeNull();
+    expect(checkConflict({ key: "F6", shift: true }, "focus-prev-region")).toBeNull();
+    expect(checkConflict({ key: "F6", ctrl: true }, "focus-next-region-anywhere")).toBeNull();
+    expect(
+      checkConflict({ key: "F6", ctrl: true, shift: true }, "focus-prev-region-anywhere")
+    ).toBeNull();
+  });
+
+  it("is not shell-reserved", () => {
+    expect(isShellReservedKey(makeKeyEvent("F6"))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("F6", { ctrl: true }))).toBe(false);
+    expect(isAppShortcut(makeKeyEvent("F6", { ctrl: true }))).toBe(true);
+  });
+
+  it("is rebindable, and the old key is released", () => {
+    setOverride("focus-next-region", { key: "F7" });
+    expect(findMatchingAction(makeKeyEvent("F7"))).toBe("focus-next-region");
+    expect(findMatchingAction(makeKeyEvent("F6"))).toBeNull();
+  });
+
+  it("can be unbound so F6 reaches the terminal", () => {
+    unbindAction("focus-next-region");
+    expect(isAppShortcut(makeKeyEvent("F6"))).toBe(false);
   });
 });

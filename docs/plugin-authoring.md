@@ -1113,6 +1113,16 @@ All three end in the same install dialog. Installing a newer file over an
 installed plugin upgrades it; an older version or a different build of the same
 version asks for confirmation first.
 
+When the package replaces an installed copy (an update or a re-install), the
+install dialog compares its access with the installed version's: what it asks
+for that the installed version did not — permissions, `filesystemPaths` folders
+(declared form and resolved folder) and `connectionPolicy` — appears under a
+_"This update asks for more access"_ banner, and what it no longer requests is
+listed below. The comparison uses the same canonical access a native plugin's
+trust is bound to, so a folder written differently but resolving to the same
+place is not a change. Ask only for what a release needs: every addition is
+shown to the user on update.
+
 A plugin can additionally publish an **update check** by setting `updateUrl` in
 its manifest to an HTTPS URL serving this JSON document:
 

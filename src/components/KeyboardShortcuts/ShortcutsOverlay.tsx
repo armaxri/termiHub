@@ -27,6 +27,7 @@ const SCOPE_HINTS: Record<ShortcutScope, string> = {
   global: "All tabs",
   terminal: "Terminal tabs",
   "editor-delegated": "Yields to editors & inputs",
+  "yields-to-terminal": "Outside terminals",
   "remote-desktop": "Focused remote desktop",
 };
 
