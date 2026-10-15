@@ -26,8 +26,10 @@
 //! namespace layer masks the home folder), the process table and other
 //! processes' arguments and paths (macOS) — and, as positive controls, the
 //! TLS trust store: the distribution CA bundle on Linux, the CA bundle and
-//! the platform certificate verifier (`trustd`) on macOS, the `ROOT` system
-//! store and the CryptoAPI chain engine on Windows (#4606).
+//! the platform certificate verifier (`trustd`) on macOS. On Windows the
+//! LPAC cannot reach the trust store; that known gap is asserted (#4606,
+//! fix tracked as #4811), together with negative controls for the user's
+//! CNG keys and certificate-store registry keys.
 //!
 //! The resource limits are switched off here so that every denial is the
 //! sandbox's own (macOS `RLIMIT_NPROC = 0` would deny `spawn` / `fork` too).
@@ -155,18 +157,28 @@ fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Windows (#4606): the CryptoAPI chain engine (`CertGetCertificateChain` +
-/// `CertVerifyCertificateChainPolicy` on the default engine), the path
-/// `rustls-platform-verifier` and `native-tls` take, from inside the
-/// Less-Privileged AppContainer. The probe gets the certificates the way a
-/// TLS client does — as bytes, here the machine's roots exported by this
-/// (unconfined) test into the plugin's data folder — and must find one of
-/// them trusted by the system trust store.
+/// Windows: none yet. The Less-Privileged AppContainer cannot reach the
+/// system trust store (#4606; see [`windows_trust_store_gap`]), tracked as
+/// #4811.
 #[cfg(windows)]
-fn trust_store_reads(data_dir: &Path) -> Vec<(&'static str, String)> {
+fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
+    Vec::new()
+}
+
+/// Windows (#4606): the CryptoAPI chain engine (`CertGetCertificateChain` +
+/// `CertVerifyCertificateChainPolicy` on the default engine — the path
+/// `rustls-platform-verifier` and `native-tls` take) fed the machine's roots
+/// as bytes, exported by this (unconfined) test into the plugin's data
+/// folder. Inside the LPAC it is denied (`ERROR_ACCESS_DENIED`), and so are
+/// both `ROOT` system stores; no capability opens them without also opening
+/// `HKCU\Software` (`registryRead`), and `lpacCryptoServices` alone does
+/// not. This asserts that known gap so a change is noticed: once the host
+/// provides a root snapshot (#4811) this becomes a positive control.
+#[cfg(windows)]
+fn windows_trust_store_gap(data_dir: &Path) -> (&'static str, String) {
     let folder = data_dir.join("trust-roots");
     export_machine_roots(&folder);
-    vec![("trust", folder.display().to_string())]
+    ("trust", folder.display().to_string())
 }
 
 /// Write up to 64 roots of the local machine's `ROOT` store into `folder`,
@@ -275,7 +287,7 @@ struct Canaries {
     #[cfg(windows)]
     pipe: CanaryPipe,
     /// Windows: a persisted CNG key of the test's user (#4606), standing in
-    /// for the user's private keys, which `lpacCryptoServices` must not open.
+    /// for the user's private keys, which no trust-store access may expose.
     #[cfg(windows)]
     cng_key: CanaryCngKey,
 }
@@ -730,6 +742,17 @@ async fn escape_attempts_fail_and_positive_controls_work() {
             println!("{line}");
             assert!(allowed, "trust-store control failed: {line}");
         }
+        #[cfg(windows)]
+        {
+            let (op, arg) = windows_trust_store_gap(&data_dir);
+            let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
+            println!("{line}");
+            assert!(
+                !allowed,
+                "the LPAC now reaches the trust store: make this a positive control and \
+                 update the docs (#4811): {line}"
+            );
+        }
     }
     if expect_confined() {
         // HOME and TMPDIR point into the data folder.
@@ -853,8 +876,9 @@ fn linux_host_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
 /// The escape attempts only Windows has: `HKCU\Software`, where other
 /// applications keep saved sessions (an LPAC must not open it, a plain
 /// AppContainer could), the stand-in ADR-13 pipe, and a serial device. And
-/// what `lpacCryptoServices` (#4606) must not extend to: the user's private
-/// keys (a persisted CNG key) and writing the user's certificate stores.
+/// the crypto assets next to the trust store (#4606) that any TLS root
+/// access (#4811) must not extend to: the user's private keys (a persisted
+/// CNG key) and writing the user's certificate stores.
 #[cfg(windows)]
 fn os_escape_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
     ensure_user_cert_store_key();

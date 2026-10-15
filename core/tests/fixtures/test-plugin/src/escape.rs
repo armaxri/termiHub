@@ -167,7 +167,7 @@ fn verify_a_system_root(_roots: &str) -> Result<String, String> {
 
 /// Windows: the system trust store through CryptoAPI, the path
 /// `rustls-platform-verifier`, `native-tls` (SChannel) and
-/// `rustls-native-certs` take (#4606).
+/// `rustls-native-certs` take (#4606). Denied inside the LPAC today (#4811).
 #[cfg(windows)]
 mod windows_trust {
     use std::ffi::{c_char, c_void};
@@ -479,9 +479,8 @@ mod windows_trust {
     }
 }
 
-/// Open the user's persisted CNG key `name` (#4606): `lpacCryptoServices`
-/// opens the certificate stores, which must not extend to the user's private
-/// keys.
+/// Open the user's persisted CNG key `name` (#4606): whatever TLS root
+/// access a sandboxed plugin gets must not extend to the user's private keys.
 #[cfg(windows)]
 fn open_cng_key(name: &str) -> Result<String, String> {
     #[link(name = "ncrypt")]

@@ -4,14 +4,11 @@
 //! from its id ([`app_container_name`]), created on first use and reused
 //! afterwards ([`AppContainer::ensure`]), and removed on uninstall
 //! ([`delete_profile`]). The runner is started inside it as a
-//! **less-privileged** AppContainer (LPAC) with **one capability**,
-//! [`LPAC_CRYPTO_SERVICES`] ([`RUNNER_CAPABILITIES`],
-//! [`crate::process::RunnerCommand::app_container`]). The phase-0 spike
-//! (#4181) chose an LPAC: no network, no user profile, no `HKCU\Software`, no
-//! child processes, and no access to anything that grants only "ALL
-//! APPLICATION PACKAGES". The one capability opens the system certificate
-//! stores and the CryptoAPI chain engine, which TLS certificate verification
-//! needs (#4606): with none, `CertOpenSystemStore("ROOT")` is denied.
+//! **less-privileged** AppContainer (LPAC) with **zero capabilities**
+//! ([`crate::process::RunnerCommand::app_container`]), which the phase-0 spike
+//! (#4181) chose: no network, no user profile, no `HKCU\Software`, no child
+//! processes, and no access to anything that grants only "ALL APPLICATION
+//! PACKAGES".
 //!
 //! Such a process reaches only what grants its SID explicitly, so the host adds
 //! allow entries for it ([`AppContainer::grant_tree`],
@@ -39,13 +36,12 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    CopySid, DeleteAce, DeriveCapabilitySidsFromName, EqualSid, FreeSid, GetAce, GetFileSecurityW,
-    GetLengthSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-    InitializeSecurityDescriptor, SetFileSecurityW, SetSecurityDescriptorControl,
-    SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION,
-    INHERITED_ACE, NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_DESCRIPTOR, SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED,
-    SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    CopySid, DeleteAce, EqualSid, FreeSid, GetAce, GetFileSecurityW, GetLengthSid,
+    GetSecurityDescriptorControl, GetSecurityDescriptorDacl, InitializeSecurityDescriptor,
+    SetFileSecurityW, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE,
+    ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION, INHERITED_ACE, NO_INHERITANCE,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
+    SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
@@ -65,76 +61,6 @@ pub const MODIFY: u32 = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 /// `SECURITY_DESCRIPTOR_REVISION` (`winnt.h`).
 const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
-
-/// `lpacCryptoServices`: the LPAC capability that grants read access to the
-/// system certificate stores and the cryptographic services certificate
-/// chain verification uses (the `ROOT` / `CA` stores, the CryptoAPI chain
-/// engine). Chromium's LPAC network service holds it for the same reason.
-/// Without it a sandboxed plugin cannot verify a TLS server certificate
-/// against the system roots (#4606).
-pub const LPAC_CRYPTO_SERVICES: &str = "lpacCryptoServices";
-
-/// The capabilities the runner's LPAC holds — exactly these, nothing more.
-/// The host starts the runner with them ([`crate::process`]) and the runner
-/// refuses to load a plugin when its token holds any other set
-/// ([`crate::sandbox`]). No network capability (`internetClient`, loopback)
-/// and no user-profile capability is ever added: the network goes through
-/// the capability bridge.
-pub const RUNNER_CAPABILITIES: &[&str] = &[LPAC_CRYPTO_SERVICES, "registryRead"];
-
-/// The capability SID of the named capability (`S-1-15-3-1024-…`), derived
-/// with `DeriveCapabilitySidsFromName` (a hash of the name, no lookup).
-pub fn capability_sid(name: &str) -> io::Result<Box<[u32]>> {
-    let wide = to_wide(name.as_ref())?;
-    let (mut groups, mut group_count): (*mut PSID, u32) = (std::ptr::null_mut(), 0);
-    let (mut sids, mut sid_count): (*mut PSID, u32) = (std::ptr::null_mut(), 0);
-    // SAFETY: a NUL-terminated name and out-pointers for two `LocalAlloc`ed
-    // SID arrays, freed below.
-    let ok = unsafe {
-        DeriveCapabilitySidsFromName(
-            wide.as_ptr(),
-            &mut groups,
-            &mut group_count,
-            &mut sids,
-            &mut sid_count,
-        )
-    };
-    if ok == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let sid = if sid_count == 1 && !sids.is_null() {
-        // SAFETY: `sids` holds `sid_count` (= 1) valid SIDs.
-        copy_sid(unsafe { *sids })
-    } else {
-        Err(io::Error::other(format!(
-            "DeriveCapabilitySidsFromName({name}) returned {sid_count} capability SIDs"
-        )))
-    };
-    // SAFETY: both arrays and their SIDs come from the call above (each SID
-    // and each array `LocalAlloc`ed, per its documentation), freed once.
-    unsafe {
-        free_sid_array(groups, group_count);
-        free_sid_array(sids, sid_count);
-    }
-    sid
-}
-
-/// Free a `LocalAlloc`ed array of `count` `LocalAlloc`ed SIDs.
-///
-/// # Safety
-///
-/// `array` is NULL or such an array, not used afterwards.
-unsafe fn free_sid_array(array: *mut PSID, count: u32) {
-    if array.is_null() {
-        return;
-    }
-    for i in 0..count as usize {
-        // SAFETY: `i < count`; each entry is a `LocalAlloc`ed SID.
-        unsafe { LocalFree(*array.add(i) as HLOCAL) };
-    }
-    // SAFETY: the array itself, `LocalAlloc`ed.
-    unsafe { LocalFree(array as HLOCAL) };
-}
 
 /// Serialises this process's read-modify-write of ACLs, so two plugins
 /// granting the shared runner folder at once cannot lose each other's entry.
@@ -437,7 +363,7 @@ impl Drop for FreedSid {
 
 /// An owned copy of `sid`, in `u32` storage (aligned like a SID's
 /// sub-authorities).
-pub(crate) fn copy_sid(sid: PSID) -> io::Result<Box<[u32]>> {
+fn copy_sid(sid: PSID) -> io::Result<Box<[u32]>> {
     // SAFETY: `sid` is a valid SID.
     let len = unsafe { GetLengthSid(sid) };
     let mut buffer = vec![0u32; (len as usize).div_ceil(4)].into_boxed_slice();
@@ -757,21 +683,6 @@ mod tests {
             .collect();
         delete_profile(&id).unwrap();
         assert!(containers.windows(2).all(|pair| pair[0] == pair[1]));
-    }
-
-    /// A named capability derives to a deterministic capability SID
-    /// (`S-1-15-3-1024-…`), distinct per name.
-    #[test]
-    fn named_capabilities_derive_to_capability_sids() {
-        let text = |name: &str| {
-            let sid = capability_sid(name).unwrap();
-            // SAFETY: `sid` holds a valid SID.
-            unsafe { sid_to_string(sid.as_ptr().cast_mut().cast()) }.unwrap()
-        };
-        let crypto = text(LPAC_CRYPTO_SERVICES);
-        assert!(crypto.starts_with("S-1-15-3-1024-"), "{crypto}");
-        assert_eq!(crypto, text(LPAC_CRYPTO_SERVICES));
-        assert_ne!(crypto, text("internetClient"));
     }
 
     /// A profile is created once, reused with the same SID, granted on a

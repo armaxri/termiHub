@@ -3,15 +3,12 @@
 //! A process cannot move itself into an AppContainer, so the host does the
 //! confining: it creates the plugin's AppContainer profile, grants its SID the
 //! runner, install and data folders, and starts the runner as a
-//! **less-privileged** AppContainer (LPAC) holding only the
-//! `lpacCryptoServices` capability (TLS certificate verification, #4606), the
+//! **less-privileged** AppContainer (LPAC) with zero capabilities, the
 //! child-process mitigation policy, and inside a kill-on-close job object
 //! (`crate::appcontainer`, `crate::process`). The runner only checks, before
 //! any plugin code is mapped, that this is really so:
 //!
-//! * its token is an AppContainer token whose capabilities are **exactly**
-//!   [`RUNNER_CAPABILITIES`] (only `lpacCryptoServices`): no network, no user
-//!   profile, nothing a host could add by mistake;
+//! * its token is an AppContainer token with **no capabilities**;
 //! * it is **less-privileged**: `HKCU\Software` (where other applications keep
 //!   saved sessions) cannot be opened. A plain AppContainer can open it; LPAC
 //!   cannot (spike #4181). This is a direct probe of the property that matters
@@ -22,16 +19,13 @@
 //! (required: without it the setup failed); the third the
 //! [`JOB_OBJECT`](super::layer::JOB_OBJECT) layer (reported missing, i.e.
 //! reduced isolation, when absent).
-//!
-//! [`RUNNER_CAPABILITIES`]: crate::appcontainer::RUNNER_CAPABILITIES
 
 use std::io;
 use std::os::windows::io::AsRawHandle;
 
 use windows_sys::Win32::Foundation::{HANDLE, TRUE};
 use windows_sys::Win32::Security::{
-    EqualSid, GetTokenInformation, TokenCapabilities, TokenIsAppContainer, SID_AND_ATTRIBUTES,
-    TOKEN_GROUPS, TOKEN_QUERY,
+    GetTokenInformation, TokenCapabilities, TokenIsAppContainer, TOKEN_GROUPS, TOKEN_QUERY,
 };
 use windows_sys::Win32::System::JobObjects::IsProcessInJob;
 use windows_sys::Win32::System::Registry::{
@@ -40,7 +34,6 @@ use windows_sys::Win32::System::Registry::{
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 use super::{layer, SandboxError};
-use crate::appcontainer::{capability_sid, copy_sid, RUNNER_CAPABILITIES};
 use crate::ipc::SandboxReport;
 use crate::win::{owned, to_wide};
 
@@ -59,18 +52,12 @@ pub fn verify() -> Result<SandboxReport, SandboxError> {
             "the runner is not inside an AppContainer".to_owned(),
         ));
     }
-    let held = token
-        .capabilities()
+    let capabilities = token
+        .capability_count()
         .map_err(|e| failed(format!("reading the token capabilities: {e}")))?;
-    let expected = RUNNER_CAPABILITIES
-        .iter()
-        .map(|name| capability_sid(name))
-        .collect::<io::Result<Vec<_>>>()
-        .map_err(|e| failed(format!("deriving the expected capabilities: {e}")))?;
-    if !same_sids(&held, &expected) {
+    if capabilities != 0 {
         return Err(failed(format!(
-            "the AppContainer holds {} capabilities, expected exactly {RUNNER_CAPABILITIES:?}",
-            held.len()
+            "the AppContainer holds {capabilities} capabilities, expected none"
         )));
     }
     if can_open_hkcu_software() {
@@ -85,18 +72,6 @@ pub fn verify() -> Result<SandboxReport, SandboxError> {
         report.missing.push(layer::JOB_OBJECT.to_owned());
     }
     Ok(report)
-}
-
-/// Whether `held` and `expected` are the same set of SIDs (no duplicates on
-/// either side: a token lists each capability once).
-fn same_sids(held: &[Box<[u32]>], expected: &[Box<[u32]>]) -> bool {
-    let sid = |s: &[u32]| s.as_ptr().cast_mut().cast();
-    held.len() == expected.len()
-        && expected.iter().all(|e| {
-            held.iter()
-                // SAFETY: both are valid SIDs copied with `CopySid`.
-                .any(|h| unsafe { EqualSid(sid(h), sid(e)) } != 0)
-        })
 }
 
 /// Whether `HKCU\Software` opens for reading (it must not under LPAC).
@@ -158,8 +133,7 @@ impl Token {
         Ok(value != 0)
     }
 
-    /// Copies of the token's capability SIDs.
-    fn capabilities(&self) -> io::Result<Vec<Box<[u32]>>> {
+    fn capability_count(&self) -> io::Result<u32> {
         let raw = self.0.as_raw_handle();
         let mut len = 0u32;
         // Sizing call: expected to fail with the needed length.
@@ -183,14 +157,8 @@ impl Token {
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
-        let groups = buf.as_ptr().cast::<TOKEN_GROUPS>();
-        // SAFETY: the call filled `buf` with a `TOKEN_GROUPS` (aligned) whose
-        // `Groups` array holds `GroupCount` entries pointing into `buf`.
-        unsafe {
-            let count = (*groups).GroupCount as usize;
-            let first = std::ptr::addr_of!((*groups).Groups).cast::<SID_AND_ATTRIBUTES>();
-            (0..count).map(|i| copy_sid((*first.add(i)).Sid)).collect()
-        }
+        // SAFETY: the call filled `buf` with a `TOKEN_GROUPS` (aligned).
+        Ok(unsafe { (*buf.as_ptr().cast::<TOKEN_GROUPS>()).GroupCount })
     }
 }
 
@@ -214,21 +182,5 @@ mod tests {
         }
         // An ordinary process can read HKCU\Software: the LPAC probe is real.
         assert!(can_open_hkcu_software());
-    }
-
-    /// The capability check is an exact set comparison: a missing, an extra
-    /// or a different capability fails it.
-    #[test]
-    fn the_capability_set_must_match_exactly() {
-        let crypto = capability_sid("lpacCryptoServices").unwrap();
-        let internet = capability_sid("internetClient").unwrap();
-        let copy = |s: &[u32]| Box::<[u32]>::from(s);
-        assert!(same_sids(&[copy(&crypto)], &[copy(&crypto)]));
-        assert!(!same_sids(&[], &[copy(&crypto)]));
-        assert!(!same_sids(&[copy(&internet)], &[copy(&crypto)]));
-        assert!(!same_sids(
-            &[copy(&crypto), copy(&internet)],
-            &[copy(&crypto)]
-        ));
     }
 }
