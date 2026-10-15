@@ -72,6 +72,9 @@ mod threads;
 mod watchdog;
 mod writer;
 
+#[cfg(test)]
+mod fake_runner_tests;
+
 #[cfg(windows)]
 pub(crate) use appcontainer::remove_profile as remove_app_container_profile;
 pub use bridge::{BridgeDenial, BridgeGrant, DenialReason};
