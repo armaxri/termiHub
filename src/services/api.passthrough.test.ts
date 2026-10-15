@@ -15,6 +15,8 @@ import type { AgentSettings, ShellIntegrationSettings } from "@/types/connection
 
 // Import after mock setup.
 import {
+  testTerminal,
+  testConnectionCertDecision,
   // multi-window
   openWindow,
   claimSession,
@@ -549,6 +551,41 @@ describe("api pass-through wrappers (#2975)", () => {
         accept: true,
         remember: false,
       });
+    });
+
+    it("testTerminal stays non-interactive unless asked to review certificates (#4510)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await testTerminal({ type: "rdp", config: { host: "h" } }, "test:1");
+      await testTerminal({ type: "rdp", config: { host: "h" } }, "test:2", { reviewCert: true });
+
+      expect(mockedInvoke).toHaveBeenNthCalledWith(1, "test_connection", {
+        typeId: "rdp",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "test:1",
+        reviewCert: false,
+      });
+      expect(mockedInvoke).toHaveBeenNthCalledWith(2, "test_connection", {
+        typeId: "rdp",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "test:2",
+        reviewCert: true,
+      });
+    });
+
+    it("testConnectionCertDecision forwards the verdict and reports delivery", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const delivered = await testConnectionCertDecision("test:1", true, true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("test_connection_cert_decision", {
+        connectId: "test:1",
+        accept: true,
+        remember: true,
+      });
+      expect(delivered).toBe(true);
     });
 
     it("remoteDesktopDisconnect forwards the session id", async () => {

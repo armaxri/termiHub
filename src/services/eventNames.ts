@@ -12,6 +12,7 @@ export const TAURI_EVENT = {
   remoteDesktopClipboard: "remote-desktop-clipboard",
   remoteDesktopState: "remote-desktop-state",
   remoteDesktopCertPrompt: "remote-desktop-cert-prompt",
+  connectionTestCertPrompt: "connection-test-cert-prompt",
   sshHostKeyPrompt: "ssh-host-key-prompt",
   sshKeyboardInteractivePrompt: "ssh-keyboard-interactive-prompt",
   sshKeyboardInteractivePromptClosed: "ssh-keyboard-interactive-prompt-closed",

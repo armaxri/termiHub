@@ -4194,7 +4194,14 @@ async fn test_connection_succeeds_tears_down_and_leaves_no_session() {
     let manager = SessionManager::new(registry, Arc::new(NullAgent));
 
     let result = manager
-        .test_connection("spy", serde_json::json!({}), None, Some("test-1:0"), None)
+        .test_connection(
+            "spy",
+            serde_json::json!({}),
+            None,
+            Some("test-1:0"),
+            None,
+            None,
+        )
         .await;
 
     assert!(
@@ -4228,7 +4235,14 @@ async fn test_connection_classifies_auth_failure() {
     let manager = SessionManager::new(registry, Arc::new(NullAgent));
 
     let result = manager
-        .test_connection("auth-failing", serde_json::json!({}), None, None, None)
+        .test_connection(
+            "auth-failing",
+            serde_json::json!({}),
+            None,
+            None,
+            None,
+            None,
+        )
         .await;
 
     assert!(
@@ -4259,7 +4273,7 @@ async fn test_connection_classifies_unreachable_host() {
     let manager = SessionManager::new(registry, Arc::new(NullAgent));
 
     let result = manager
-        .test_connection("unreachable", serde_json::json!({}), None, None, None)
+        .test_connection("unreachable", serde_json::json!({}), None, None, None, None)
         .await;
 
     assert!(
@@ -4299,6 +4313,7 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
                 serde_json::json!({}),
                 None,
                 Some("test-c:0"),
+                None,
                 None,
             )
             .await
@@ -5108,6 +5123,7 @@ async fn test_connection_times_out_a_graphical_backend_that_never_establishes() 
             None,
             Some("test-g:0"),
             None,
+            None,
         )
         .await;
 
@@ -5135,7 +5151,7 @@ async fn test_connection_reports_an_unreachable_graphical_backend() {
     )));
 
     let err = manager
-        .test_connection(PROBE_FAKE, serde_json::json!({}), None, None, None)
+        .test_connection(PROBE_FAKE, serde_json::json!({}), None, None, None, None)
         .await
         .expect_err("a refused connect must fail");
     let ipc = serde_json::to_value(TerminalError::from_session_spawn(err)).unwrap();
@@ -5148,8 +5164,63 @@ async fn test_connection_passes_an_established_graphical_backend() {
     use crate::session::graphical_probe::tests::{Outcome, PROBE_FAKE};
     let manager = probe_manager(Outcome::Established);
     let result = manager
-        .test_connection(PROBE_FAKE, serde_json::json!({}), None, None, None)
+        .test_connection(PROBE_FAKE, serde_json::json!({}), None, None, None, None)
         .await;
     assert!(result.is_ok(), "{result:?}");
     assert!(manager.sessions.lock().await.is_empty());
+}
+
+/// Test connection's interactive certificate review (#4510): with a reviewer
+/// (the connection editor's Test) an accepted untrusted certificate lets the
+/// probe reach the real verdict and still leaves no session behind.
+#[tokio::test]
+async fn test_connection_with_a_reviewer_continues_after_an_accepted_certificate() {
+    use crate::session::graphical_probe::tests::{Outcome, ScriptedReviewer, PROBE_FAKE};
+    use crate::session::rdp_trust_store::RdpTrustStore;
+    let manager = probe_manager(Outcome::CertPrompt("CC:DD".to_string()));
+    let trust = RdpTrustStore::in_memory();
+    let reviewer = ScriptedReviewer::answering(true, false);
+
+    let result = manager
+        .test_connection(
+            PROBE_FAKE,
+            serde_json::json!({ "host": "rdp.example" }),
+            None,
+            Some("test:review"),
+            Some(&trust),
+            Some(&reviewer),
+        )
+        .await;
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(reviewer.asked.lock().unwrap().len(), 1);
+    assert!(manager.sessions.lock().await.is_empty());
+}
+
+/// Unattended callers pass no reviewer: an untrusted certificate is still
+/// declined without asking and reported as `host_key_untrusted`.
+#[tokio::test]
+async fn test_connection_without_a_reviewer_stays_non_interactive() {
+    use crate::session::graphical_probe::tests::{Outcome, PROBE_FAKE};
+    use crate::session::rdp_trust_store::RdpTrustStore;
+    let manager = probe_manager(Outcome::CertPrompt("CC:DD".to_string()));
+    let trust = RdpTrustStore::in_memory();
+
+    let err = manager
+        .test_connection(
+            PROBE_FAKE,
+            serde_json::json!({ "host": "rdp.example" }),
+            None,
+            Some("test:unattended"),
+            Some(&trust),
+            None,
+        )
+        .await
+        .expect_err("an untrusted certificate must fail an unattended probe");
+    let ipc = serde_json::to_value(TerminalError::from_session_spawn(err)).unwrap();
+    assert_eq!(ipc["code"], "host_key_untrusted", "{ipc}");
+    assert!(
+        ipc["message"].as_str().unwrap().contains("not trusted yet"),
+        "{ipc}"
+    );
 }

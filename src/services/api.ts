@@ -250,19 +250,35 @@ export async function createConnection(
  *
  * Pass a UNIQUE per-attempt `connectId` (e.g. `test:${crypto.randomUUID()}`) to
  * make a hung test abortable via {@link cancelConnecting} (#952).
+ *
+ * `reviewCert` (#4510) makes an RDP test interactive: a certificate the trust
+ * store does not trust yet raises `connection-test-cert-prompt` for this
+ * `connectId` instead of failing as "not trusted". Leave it off for any
+ * unattended caller.
  */
 async function testConnection(
   typeId: string,
   settings: Record<string, unknown>,
   agentId?: string,
-  connectId?: string
+  connectId?: string,
+  reviewCert = false
 ): Promise<void> {
   await invoke("test_connection", {
     typeId,
     settings,
     agentId: agentId ?? null,
     connectId: connectId ?? null,
+    reviewCert,
   });
+}
+
+/** Options for {@link testTerminal}. */
+export interface TestTerminalOptions {
+  /**
+   * Let the user review an untrusted RDP certificate during the test (#4510).
+   * Requires a `connectId`; unattended callers leave it off.
+   */
+  reviewCert?: boolean;
 }
 
 /**
@@ -271,16 +287,39 @@ async function testConnection(
  * its `agentId` + `sessionType` exactly as {@link createTerminal} does; a direct
  * config tests its `type` + `config`. See {@link testConnection}.
  */
-export async function testTerminal(config: ConnectionConfig, connectId?: string): Promise<void> {
+export async function testTerminal(
+  config: ConnectionConfig,
+  connectId?: string,
+  options: TestTerminalOptions = {}
+): Promise<void> {
+  const reviewCert = options.reviewCert ?? false;
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
       agentId: string;
       sessionType: string;
       [key: string]: unknown;
     };
-    return await testConnection(sessionType, rest, agentId, connectId);
+    return await testConnection(sessionType, rest, agentId, connectId, reviewCert);
   }
-  return await testConnection(config.type, config.config, undefined, connectId);
+  return await testConnection(config.type, config.config, undefined, connectId, reviewCert);
+}
+
+/**
+ * Deliver the user's verdict on a Test connection's certificate review
+ * (#4510). `accept` lets the test continue to the credential check;
+ * `remember` also trusts the certificate for the host, exactly like "Accept
+ * for host" on a real connect. Resolves `false` when the test was no longer
+ * waiting (the review timed out or the test was cancelled).
+ */
+export async function testConnectionCertDecision(
+  connectId: string,
+  accept: boolean,
+  remember: boolean
+): Promise<boolean> {
+  return (
+    (await invoke<boolean>("test_connection_cert_decision", { connectId, accept, remember })) ??
+    false
+  );
 }
 
 /**
