@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.30.0
+**Version**: 0.31.0
 **Status**: Draft
 **Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416, #4433
 
@@ -335,83 +335,86 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                                                                          |
-| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.24.0          | 0.30.0        | Yes (the desktop requests 0.24.0; `fileCreateNew` lets a remote-desktop upload claim its name without truncating a file)             |
-| 0.24.0          | 0.29.0        | Yes (the desktop requests 0.24.0; `hostFileAttributeOps` hides chmod / chown / symlink a Windows agent host cannot perform)          |
-| 0.24.0          | 0.28.0        | Yes (the desktop requests 0.24.0; `forwardFlow` credit-windows VNC/RDP streams carried by the agent)                                 |
-| 0.24.0          | 0.27.0        | Yes (the desktop requests 0.24.0; `outputFlow` lets a lagging terminal pause the agent-hosted session's output)                      |
-| 0.24.0          | 0.26.0        | Yes (the desktop requests 0.24.0; `fileRanges` puts agent-hosted transfers in the Transfer Queue)                                    |
-| 0.24.0          | 0.25.0        | Yes (the desktop requests 0.24.0; `connection.filesOnly` is routed)                                                                  |
-| 0.24.0          | 0.24.0        | Yes                                                                                                                                  |
-| 0.24.0          | 0.9.0–0.23.0  | Yes (the older agent answers `initialize` in snake_case, which the desktop still reads)                                              |
-| 0.23.0          | 0.24.0        | Yes (the agent answers a pre-0.24.0 `protocolVersion` in the legacy snake_case)                                                      |
-| 0.23.0          | 0.23.0        | Yes                                                                                                                                  |
-| 0.23.0          | 0.9.0–0.22.0  | Yes (no `unattendedConnect` — a scheduled run skips an agent-hosted target: "agent too old for unattended connect")                  |
-| 0.22.0          | 0.23.0        | Yes (`unattendedConnect` ignored; `unattended` never sent)                                                                           |
-| 0.22.0          | 0.22.0        | Yes                                                                                                                                  |
-| 0.22.0          | 0.9.0–0.21.0  | Yes (no `sessionFiles` — the file browser of an agent-hosted SSH/Docker/FTP/WSL session says to update the agent)                    |
-| 0.21.0          | 0.22.0        | Yes (`sessionFiles` ignored)                                                                                                         |
-| 0.21.0          | 0.21.0        | Yes                                                                                                                                  |
-| 0.21.0          | 0.9.0–0.20.0  | Yes (no `sessionMonitoring` — the status bar of an agent-hosted SSH/Docker/WSL session says to update the agent)                     |
-| 0.20.0          | 0.21.0        | Yes (`sessionMonitoring` ignored)                                                                                                    |
-| 0.20.0          | 0.20.0        | Yes                                                                                                                                  |
-| 0.20.0          | 0.9.0–0.19.0  | Yes (no `sessionProcesses` — the process table of an agent-hosted SSH/Docker/WSL session says to update the agent)                   |
-| 0.19.0          | 0.20.0        | Yes (`sessionProcesses` ignored)                                                                                                     |
-| 0.19.0          | 0.19.0        | Yes                                                                                                                                  |
-| 0.19.0          | 0.9.0–0.18.0  | Yes (no `auth_failed` connect failure — an agent-hosted credential rejection stays a generic remote error)                           |
-| 0.18.0          | 0.19.0        | Yes (`connect_failure: "auth_failed"` is unknown and ignored — generic remote error)                                                 |
-| 0.18.0          | 0.18.0        | Yes                                                                                                                                  |
-| 0.18.0          | 0.9.0–0.17.0  | Yes (no `connect_failure` in `connection.create` errors — an agent-hosted connect failure shows no per-backend hint)                 |
-| 0.17.0          | 0.18.0        | Yes (`error.data.connect_failure` ignored)                                                                                           |
-| 0.17.0          | 0.17.0        | Yes                                                                                                                                  |
-| 0.17.0          | 0.9.0–0.16.0  | Yes (no `agent.forward.connect` — a VNC/RDP connection under the agent fails with "update the agent")                                |
-| 0.16.0          | 0.17.0        | Yes (new method ignored)                                                                                                             |
-| 0.16.0          | 0.16.0        | Yes                                                                                                                                  |
-| 0.16.0          | 0.9.0–0.15.0  | Yes (`correlation_id` ignored — the agent's logs for a session are not keyed by the desktop's session id)                            |
-| 0.15.0          | 0.16.0        | Yes (no `correlation_id` — the agent logs the session without a desktop id)                                                          |
-| 0.15.0          | 0.15.0        | Yes                                                                                                                                  |
-| 0.15.0          | 0.14.0        | Yes (no `composeProject` / `composeService` — the container picker lists an agent's containers ungrouped)                            |
-| 0.14.0          | 0.15.0        | Yes (unknown `docker.list_containers` entry fields ignored)                                                                          |
-| 0.14.0          | 0.14.0        | Yes                                                                                                                                  |
-| 0.14.0          | 0.9.0–0.13.0  | Yes (no `docker.list_containers` — the Docker container picker of an agent-hosted connection keeps a typed name/ID)                  |
-| 0.13.0          | 0.14.0        | Yes (new method ignored)                                                                                                             |
-| 0.13.0          | 0.13.0        | Yes                                                                                                                                  |
-| 0.13.0          | 0.9.0–0.12.0  | Yes (no `update_auth_token_path` — the desktop sends no `authToken`, which a pre-0.13.0 agent does not require)                      |
-| 0.12.0          | 0.13.0        | Partly (everything except agent updates: the update RPCs are refused with `-32026` because no `authToken` is sent)                   |
-| 0.12.0          | 0.12.0        | Yes                                                                                                                                  |
-| 0.12.0          | 0.9.0–0.11.0  | Yes (network tools run through `tool.*`, which these agents already offer)                                                           |
-| 0.12.0          | < 0.9.0       | Partly (no `toolStreaming` — network tools refuse with "update the agent to use network tools"; everything else works)               |
-| 0.11.0          | 0.12.0        | Partly (agent-run DNS / Wake-on-LAN / open ports fail with `-32601` — they still call the removed `network.*`; streaming tools work) |
-| 0.11.0          | 0.11.0        | Yes                                                                                                                                  |
-| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version)        |
-| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                               |
-| 0.10.0          | 0.10.0        | Yes                                                                                                                                  |
-| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                             |
-| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                       |
-| 0.9.0           | 0.9.0         | Yes                                                                                                                                  |
-| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                          |
-| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                               |
-| 0.8.0           | 0.8.0         | Yes                                                                                                                                  |
-| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                       |
-| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                            |
-| 0.7.0           | 0.7.0         | Yes                                                                                                                                  |
-| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                             |
-| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                            |
-| 0.6.0           | 0.6.0         | Yes                                                                                                                                  |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                                 |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                            |
-| 0.5.0           | 0.5.0         | Yes                                                                                                                                  |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                                    |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                            |
-| 0.4.0           | 0.4.0         | Yes                                                                                                                                  |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                                      |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                              |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                                  |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                                     |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+| Desktop Version | Agent Version | Compatible?                                                                                                                           |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.31.0        | Yes (the desktop requests 0.24.0; `clientCapabilities.fractionalLatency` gets it sub-millisecond `latencyMs` in network tool results) |
+| 0.24.0          | 0.30.0        | Yes (the desktop requests 0.24.0; `fileCreateNew` lets a remote-desktop upload claim its name without truncating a file)              |
+| 0.24.0          | 0.29.0        | Yes (the desktop requests 0.24.0; `hostFileAttributeOps` hides chmod / chown / symlink a Windows agent host cannot perform)           |
+| 0.24.0          | 0.28.0        | Yes (the desktop requests 0.24.0; `forwardFlow` credit-windows VNC/RDP streams carried by the agent)                                  |
+| 0.24.0          | 0.27.0        | Yes (the desktop requests 0.24.0; `outputFlow` lets a lagging terminal pause the agent-hosted session's output)                       |
+| 0.24.0          | 0.26.0        | Yes (the desktop requests 0.24.0; `fileRanges` puts agent-hosted transfers in the Transfer Queue)                                     |
+| 0.24.0          | 0.25.0        | Yes (the desktop requests 0.24.0; `connection.filesOnly` is routed)                                                                   |
+| 0.24.0          | 0.24.0        | Yes                                                                                                                                   |
+| 0.24.0          | 0.9.0–0.23.0  | Yes (the older agent answers `initialize` in snake_case, which the desktop still reads)                                               |
+| 0.23.0          | 0.24.0        | Yes (the agent answers a pre-0.24.0 `protocolVersion` in the legacy snake_case)                                                       |
+| 0.23.0          | 0.23.0        | Yes                                                                                                                                   |
+| 0.23.0          | 0.9.0–0.22.0  | Yes (no `unattendedConnect` — a scheduled run skips an agent-hosted target: "agent too old for unattended connect")                   |
+| 0.22.0          | 0.23.0        | Yes (`unattendedConnect` ignored; `unattended` never sent)                                                                            |
+| 0.22.0          | 0.22.0        | Yes                                                                                                                                   |
+| 0.22.0          | 0.9.0–0.21.0  | Yes (no `sessionFiles` — the file browser of an agent-hosted SSH/Docker/FTP/WSL session says to update the agent)                     |
+| 0.21.0          | 0.22.0        | Yes (`sessionFiles` ignored)                                                                                                          |
+| 0.21.0          | 0.21.0        | Yes                                                                                                                                   |
+| 0.21.0          | 0.9.0–0.20.0  | Yes (no `sessionMonitoring` — the status bar of an agent-hosted SSH/Docker/WSL session says to update the agent)                      |
+| 0.20.0          | 0.21.0        | Yes (`sessionMonitoring` ignored)                                                                                                     |
+| 0.20.0          | 0.20.0        | Yes                                                                                                                                   |
+| 0.20.0          | 0.9.0–0.19.0  | Yes (no `sessionProcesses` — the process table of an agent-hosted SSH/Docker/WSL session says to update the agent)                    |
+| 0.19.0          | 0.20.0        | Yes (`sessionProcesses` ignored)                                                                                                      |
+| 0.19.0          | 0.19.0        | Yes                                                                                                                                   |
+| 0.19.0          | 0.9.0–0.18.0  | Yes (no `auth_failed` connect failure — an agent-hosted credential rejection stays a generic remote error)                            |
+| 0.18.0          | 0.19.0        | Yes (`connect_failure: "auth_failed"` is unknown and ignored — generic remote error)                                                  |
+| 0.18.0          | 0.18.0        | Yes                                                                                                                                   |
+| 0.18.0          | 0.9.0–0.17.0  | Yes (no `connect_failure` in `connection.create` errors — an agent-hosted connect failure shows no per-backend hint)                  |
+| 0.17.0          | 0.18.0        | Yes (`error.data.connect_failure` ignored)                                                                                            |
+| 0.17.0          | 0.17.0        | Yes                                                                                                                                   |
+| 0.17.0          | 0.9.0–0.16.0  | Yes (no `agent.forward.connect` — a VNC/RDP connection under the agent fails with "update the agent")                                 |
+| 0.16.0          | 0.17.0        | Yes (new method ignored)                                                                                                              |
+| 0.16.0          | 0.16.0        | Yes                                                                                                                                   |
+| 0.16.0          | 0.9.0–0.15.0  | Yes (`correlation_id` ignored — the agent's logs for a session are not keyed by the desktop's session id)                             |
+| 0.15.0          | 0.16.0        | Yes (no `correlation_id` — the agent logs the session without a desktop id)                                                           |
+| 0.15.0          | 0.15.0        | Yes                                                                                                                                   |
+| 0.15.0          | 0.14.0        | Yes (no `composeProject` / `composeService` — the container picker lists an agent's containers ungrouped)                             |
+| 0.14.0          | 0.15.0        | Yes (unknown `docker.list_containers` entry fields ignored)                                                                           |
+| 0.14.0          | 0.14.0        | Yes                                                                                                                                   |
+| 0.14.0          | 0.9.0–0.13.0  | Yes (no `docker.list_containers` — the Docker container picker of an agent-hosted connection keeps a typed name/ID)                   |
+| 0.13.0          | 0.14.0        | Yes (new method ignored)                                                                                                              |
+| 0.13.0          | 0.13.0        | Yes                                                                                                                                   |
+| 0.13.0          | 0.9.0–0.12.0  | Yes (no `update_auth_token_path` — the desktop sends no `authToken`, which a pre-0.13.0 agent does not require)                       |
+| 0.12.0          | 0.13.0        | Partly (everything except agent updates: the update RPCs are refused with `-32026` because no `authToken` is sent)                    |
+| 0.12.0          | 0.12.0        | Yes                                                                                                                                   |
+| 0.12.0          | 0.9.0–0.11.0  | Yes (network tools run through `tool.*`, which these agents already offer)                                                            |
+| 0.12.0          | < 0.9.0       | Partly (no `toolStreaming` — network tools refuse with "update the agent to use network tools"; everything else works)                |
+| 0.11.0          | 0.12.0        | Partly (agent-run DNS / Wake-on-LAN / open ports fail with `-32601` — they still call the removed `network.*`; streaming tools work)  |
+| 0.11.0          | 0.11.0        | Yes                                                                                                                                   |
+| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version)         |
+| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                                |
+| 0.10.0          | 0.10.0        | Yes                                                                                                                                   |
+| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                              |
+| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                        |
+| 0.9.0           | 0.9.0         | Yes                                                                                                                                   |
+| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                           |
+| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                                |
+| 0.8.0           | 0.8.0         | Yes                                                                                                                                   |
+| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                        |
+| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                             |
+| 0.7.0           | 0.7.0         | Yes                                                                                                                                   |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                              |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                             |
+| 0.6.0           | 0.6.0         | Yes                                                                                                                                   |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                                  |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                             |
+| 0.5.0           | 0.5.0         | Yes                                                                                                                                   |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                                     |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                             |
+| 0.4.0           | 0.4.0         | Yes                                                                                                                                   |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                                       |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                               |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                                   |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                                      |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.31.0 (additive, minor)** — network tool results carry **fractional** milliseconds (#4542): `latencyMs` in a `ping` / `port_scan` / `ping_sweep` `result` event is now a number with microsecond precision (`0.42`) rather than a whole number, so a sub-millisecond LAN reply no longer reads `0`. The `initialize` **params** gain `clientCapabilities.fractionalLatency`. Negotiation is by **capability** from the desktop side, like `keyboardInteractivePrompts`: an older desktop parses `latencyMs` as an unsigned integer and would reject `0.42`, so the agent rounds every streamed (`tool.event`) and collected (`tool.run`) `latencyMs` to the nearest whole millisecond unless the desktop sent `fractionalLatency: true`. An older agent ignores the member and always sends whole milliseconds, which the desktop reads as the same number. The aggregate `PingStats` (`minMs`, `avgMs`, …) and traceroute `rttMs` were already fractional and are unchanged. The desktop still requests `0.24.0`.
 
 **0.30.0 (additive, minor)** — [`connection.files.write_range`](#connectionfileswrite_range) takes an optional `create_new` flag (#4433): with `offset: 0` it is an exclusive create, which creates the file only if nothing holds the path yet (`O_CREAT | O_EXCL`; an existing file, directory or symlink is never followed or truncated) and otherwise answers the new [`-32030` File already exists](#application-errors) without writing. The `initialize` result gains `capabilities.fileCreateNew: true` to say the agent host's **own** file system performs it — the requests without a `connection_id` that the remote-desktop file channel uses. A target without an atomic exclusive create answers `-32013` instead of emulating one. The desktop claims a remote-desktop upload's name with an empty `create_new` write before the upload starts, so a file that appears on the agent host after the name check is never truncated; a clash moves on to the next "keep both" name. Negotiation is by **capability**, not by method-not-found: an older agent would ignore the unknown field and truncate, so the desktop sends `create_new` only to an agent that advertises the flag, and for an older agent keeps relying on the name check alone. An older desktop never sends the flag. The desktop still requests `0.24.0`.
 
@@ -487,7 +490,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
     "protocolVersion": "0.24.0",
     "client": "termihub-desktop",
     "clientVersion": "0.1.0",
-    "clientCapabilities": { "keyboardInteractivePrompts": true }
+    "clientCapabilities": { "keyboardInteractivePrompts": true, "fractionalLatency": true }
   },
   "id": 1
 }
@@ -534,6 +537,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
 | `client`                                        | `string`   | Client identifier                                                                                                                                                                              |
 | `clientVersion`                                 | `string`   | Client application version                                                                                                                                                                     |
 | `clientCapabilities.keyboardInteractivePrompts` | `boolean`  | The desktop shows agent-relayed SSH keyboard-interactive prompts (0.10.0+; absent = `false`) — see [Interactive SSH Authentication on the Agent](#interactive-ssh-authentication-on-the-agent) |
+| `clientCapabilities.fractionalLatency`          | `boolean`  | The desktop reads fractional `latencyMs` in network tool results (0.31.0+; absent = `false`, the agent rounds to whole milliseconds)                                                           |
 | `externalConnectionFiles`                       | `string[]` | Paths on the agent host loaded as read-only external connection files; absent = none                                                                                                           |
 | `agentSettings`                                 | `object`   | Runtime settings, the same object [`agent.settingsUpdate`](#agentsettingsupdate) replaces later; absent = all defaults                                                                         |
 
@@ -3369,7 +3373,7 @@ Result: `{"runId": "<runId>"}`.
 
 Errors: [`-32602` Invalid params](#standard-json-rpc-errors) for a malformed request or an empty/over-long `runId`; [`-32022` Tool run rejected](#application-errors) for an unknown tool, a duplicate `runId`, the concurrency limit, or a connection that cannot stream.
 
-The streamed events per tool: `ping` → `result` (a `PingResult`), `port_scan` → `result` (a `PortScanResult`), `ping_sweep` → `result` (`{host, latencyMs, hostname}`), `traceroute` → `hop` (a `TracerouteHop`). One-shot tools (`dns`, `open_ports`, `wol`) emit no events; their whole result is `tool.done`'s `result`.
+The streamed events per tool: `ping` → `result` (a `PingResult`), `port_scan` → `result` (a `PortScanResult`), `ping_sweep` → `result` (`{host, latencyMs, hostname}`), `traceroute` → `hop` (a `TracerouteHop`). `latencyMs` is fractional milliseconds for a desktop that sent `clientCapabilities.fractionalLatency` and whole milliseconds otherwise (0.31.0+, #4542). One-shot tools (`dns`, `open_ports`, `wol`) emit no events; their whole result is `tool.done`'s `result`.
 
 ### `tool.cancel`
 

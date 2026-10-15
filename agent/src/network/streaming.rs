@@ -23,6 +23,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -32,6 +33,7 @@ use tokio::time::{MissedTickBehavior, Sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+use termihub_core::network::round_latency_for_legacy_client;
 use termihub_core::tool::{ToolError, ToolEvent, ToolHost, ToolRegistry};
 
 use crate::io::transport::NotificationSender;
@@ -173,6 +175,19 @@ pub struct ToolRunManager {
     /// Parent of every run's token; cancelled when the client disconnects.
     connection: CancellationToken,
     limits: RunLimits,
+    /// Whether the client reads fractional `latencyMs` (it advertised
+    /// `clientCapabilities.fractionalLatency`, #4542). Until it does, every
+    /// streamed latency is rounded to whole milliseconds for it.
+    fractional_latency: AtomicBool,
+}
+
+/// Round every event's `latencyMs` to whole milliseconds for a client that
+/// predates fractional latencies (#4542); see
+/// [`round_latency_for_legacy_client`].
+pub fn round_events_for_legacy_client(events: &mut [ToolEvent]) {
+    for event in events {
+        round_latency_for_legacy_client(&mut event.payload);
+    }
 }
 
 impl ToolRunManager {
@@ -182,7 +197,19 @@ impl ToolRunManager {
             runs: Mutex::new(HashMap::new()),
             connection: CancellationToken::new(),
             limits,
+            fractional_latency: AtomicBool::new(false),
         })
+    }
+
+    /// Record whether the client reads fractional latencies (set from its
+    /// `initialize` client capabilities, #4542).
+    pub fn set_fractional_latency(&self, supported: bool) {
+        self.fractional_latency.store(supported, Ordering::Relaxed);
+    }
+
+    /// Whether the client reads fractional latencies (#4542).
+    pub fn fractional_latency(&self) -> bool {
+        self.fractional_latency.load(Ordering::Relaxed)
     }
 
     /// Wire the connection's notification channel. Only the first call wins.
@@ -283,9 +310,12 @@ impl ToolRunManager {
     /// Flush every queued event as `tool.event` batches.
     fn flush(&self, run_id: &str, host: &StreamingHost) {
         loop {
-            let events = host.take_batch();
+            let mut events = host.take_batch();
             if events.is_empty() {
                 return;
+            }
+            if !self.fractional_latency() {
+                round_events_for_legacy_client(&mut events);
             }
             self.notify(
                 TOOL_EVENT,
@@ -470,6 +500,72 @@ mod tests {
                 }
                 other => panic!("unexpected notification {other}"),
             }
+        }
+    }
+
+    /// Emits one ping-shaped result with a sub-millisecond latency (#4542).
+    struct LatencyTool;
+
+    #[async_trait]
+    impl Tool for LatencyTool {
+        fn tool_id(&self) -> &str {
+            "latency"
+        }
+        fn display_name(&self) -> &str {
+            "Latency"
+        }
+        async fn run(
+            &self,
+            _params: Value,
+            host: Arc<dyn ToolHost>,
+            _cancel: CancellationToken,
+        ) -> Result<Value, ToolError> {
+            host.emit(ToolEvent::new(
+                "result",
+                json!({ "seq": 1, "latencyMs": 0.42, "timedOut": false, "tcpFallback": false }),
+            ));
+            host.emit(ToolEvent::new(
+                "result",
+                json!({ "seq": 2, "latencyMs": 1.6, "timedOut": false, "tcpFallback": false }),
+            ));
+            Ok(json!({ "minMs": 0.42 }))
+        }
+    }
+
+    async fn latency_run(fractional: Option<bool>) -> Vec<Value> {
+        let (m, mut rx) = manager(RunLimits::default());
+        if let Some(f) = fractional {
+            m.set_fractional_latency(f);
+        }
+        let mut r = ToolRegistry::new();
+        r.register(Arc::new(LatencyTool));
+        m.start(Arc::new(r), "lat".into(), "latency".into(), json!({}))
+            .unwrap();
+        let (events, _, done) = collect(&mut rx).await;
+        // The aggregate stats were always fractional and are never rounded.
+        assert_eq!(done.result, Some(json!({ "minMs": 0.42 })));
+        events
+            .into_iter()
+            .map(|e| e.payload["latencyMs"].clone())
+            .collect()
+    }
+
+    /// #4542: a desktop that advertised `fractionalLatency` gets the latency
+    /// as measured.
+    #[tokio::test(start_paused = true)]
+    async fn fractional_latency_streams_to_a_capable_client() {
+        assert_eq!(latency_run(Some(true)).await, vec![json!(0.42), json!(1.6)]);
+    }
+
+    /// #4542: a client that never advertised the capability (an older
+    /// desktop, which parses `latencyMs` as an integer) gets whole
+    /// milliseconds, rounded to nearest.
+    #[tokio::test(start_paused = true)]
+    async fn latency_is_rounded_for_a_legacy_client() {
+        for fractional in [None, Some(false)] {
+            let latencies = latency_run(fractional).await;
+            assert_eq!(latencies, vec![json!(0), json!(2)]);
+            assert!(latencies.iter().all(Value::is_u64));
         }
     }
 

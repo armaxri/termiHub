@@ -33,7 +33,7 @@ pub mod wol;
 pub use error::NetworkError;
 pub use port_scan::{parse_port_spec, parse_target_spec, resolve_targets, MAX_EXPANDED_TARGETS};
 pub use types::{
-    DnsRecord, DnsRecordType, DnsResult, OpenPort, ParseDnsRecordTypeError, PingResult, PingStats,
-    PingSweepResult, PingSweepSummary, PortScanResult, PortScanSummary, PortState, Protocol,
-    TracerouteHop, WolDevice,
+    duration_to_latency_ms, round_latency_for_legacy_client, DnsRecord, DnsRecordType, DnsResult,
+    OpenPort, ParseDnsRecordTypeError, PingResult, PingStats, PingSweepResult, PingSweepSummary,
+    PortScanResult, PortScanSummary, PortState, Protocol, TracerouteHop, WolDevice,
 };
