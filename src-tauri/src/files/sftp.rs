@@ -117,10 +117,15 @@ mod tests {
 
     /// Password-auth config for a fixture container on `127.0.0.1:port`.
     fn testuser_config(port: u16, password: &str) -> SshConfig {
+        user_config(port, "testuser", password)
+    }
+
+    /// Password-auth config for `username` on a fixture container.
+    fn user_config(port: u16, username: &str, password: &str) -> SshConfig {
         SshConfig {
             host: "127.0.0.1".to_string(),
             port,
-            username: "testuser".to_string(),
+            username: username.to_string(),
             auth_method: "password".to_string(),
             password: Some(password.to_string()),
             ..Default::default()
@@ -308,6 +313,181 @@ mod tests {
             after, before,
             "file must be unchanged when sudo is unavailable"
         );
+        assert_eq!(leftover, 0, "temp upload must be cleaned up on failure");
+    }
+
+    // ── Elevated save on a German login locale (#4437) ─────────────────────
+    //
+    // #4290 made the elevated save classify sudo's outcome without reading
+    // translated text (sudo is pinned to the C locale, and the result comes from
+    // the prompt count, the exit status and an authorization marker). These run
+    // the same live path as `deuser` / `denosudo` on `ssh-sudo`, whose sshd login
+    // environment is `LANG=de_DE.UTF-8`, and first prove that locale is really
+    // German — so a fixture that silently fell back to English cannot pass.
+
+    /// `ssh-sudo` sudoer whose login locale is German (`tests/docker/ssh-sudo`).
+    const DE_SUDO_USER: &str = "deuser";
+    /// `ssh-sudo` non-sudoer whose login locale is German.
+    const DE_NOSUDO_USER: &str = "denosudo";
+    /// Account password of both German-locale fixture users.
+    const DE_PASSWORD: &str = "testpass";
+
+    /// Prove `config`'s remote login locale is German: `locale` reports
+    /// `de_DE.UTF-8` cleanly, and sudo — run *without* the C override — prints
+    /// its German translation rather than the English "Sorry, try again."
+    async fn assert_remote_locale_is_german(config: SshConfig) {
+        let (locale, probe) = with_verify(config, |v| {
+            let locale = run_remote_command(v, "locale 2>&1")?;
+            // One wrong password line, then EOF: sudo rejects it, re-prompts and
+            // gives up. `-k` drops any cached credential; `; true` keeps the
+            // non-zero exit from mattering. stderr is folded into stdout.
+            let probe = run_remote_command(
+                v,
+                "printf 'definitely-wrong\\n' | sudo -k -S -p '[termihub-de-probe]' true 2>&1; true",
+            )?;
+            Ok((locale, probe))
+        })
+        .await
+        .expect("locale probe should run");
+
+        assert!(
+            locale.contains("LANG=de_DE.UTF-8") && locale.contains("LC_MESSAGES=\"de_DE.UTF-8\""),
+            "the fixture login locale must be de_DE.UTF-8, got:\n{locale}"
+        );
+        assert!(
+            !locale.contains("Cannot set"),
+            "the de_DE.UTF-8 locale must be generated on the fixture, got:\n{locale}"
+        );
+        let lower = probe.to_lowercase();
+        assert!(
+            probe.contains("[termihub-de-probe]"),
+            "the sudo probe must have prompted, got:\n{probe}"
+        );
+        assert!(
+            !lower.contains("sorry, try again") && !lower.contains("incorrect password"),
+            "sudo must not answer in English on the German fixture, got:\n{probe}"
+        );
+        assert!(
+            lower.contains("versuchen") || lower.contains("passwort") || lower.contains("fehl"),
+            "sudo must answer in German without the C override, got:\n{probe}"
+        );
+    }
+
+    /// Read the elevated target back as `config`'s user.
+    async fn read_target(config: SshConfig) -> String {
+        with_verify(config, |v| {
+            run_remote_command(v, &format!("cat {ELEVATED_TARGET}"))
+        })
+        .await
+        .expect("read the elevated target")
+    }
+
+    /// German locale, wrong password → `IncorrectPassword` and the file is
+    /// unchanged; then the right password → `Success` and the file is rewritten.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
+    async fn elevated_save_classifies_password_on_a_german_locale() {
+        let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
+        if !fixture_ready("ssh-sudo", port) {
+            return;
+        }
+
+        trust_fixture_host_keys();
+        let config = user_config(port, DE_SUDO_USER, DE_PASSWORD);
+        assert_remote_locale_is_german(config.clone()).await;
+
+        let browser = SftpFileBrowser::new(config.clone());
+        let before = read_target(config.clone()).await;
+
+        let rejected = format!("should-not-land-{}\n", uuid::Uuid::new_v4());
+        let wrong = browser
+            .write_file_content_elevated(
+                ELEVATED_TARGET,
+                &rejected,
+                "definitely-the-wrong-password",
+            )
+            .await
+            .expect("elevated save (wrong password) should complete");
+        let after_wrong = read_target(config.clone()).await;
+        assert_eq!(
+            wrong,
+            ElevatedWriteResult::IncorrectPassword,
+            "a rejected sudo password on a German locale must classify as IncorrectPassword"
+        );
+        assert_eq!(
+            after_wrong, before,
+            "file must be unchanged on a rejected password"
+        );
+
+        let accepted = format!("elevated-rewrite-de-{}\n", uuid::Uuid::new_v4());
+        let right = browser
+            .write_file_content_elevated(ELEVATED_TARGET, &accepted, DE_PASSWORD)
+            .await
+            .expect("elevated save (right password) should complete");
+        let (after_right, stat, leftover) = with_verify(config.clone(), |v| {
+            let after = run_remote_command(v, &format!("cat {ELEVATED_TARGET}"))?;
+            let stat = run_remote_command(v, &format!("stat -c '%U %G %a' {ELEVATED_TARGET}"))?;
+            let leftover = temp_leftover_count(v)?;
+            Ok((after, stat, leftover))
+        })
+        .await
+        .expect("readback after should succeed");
+        assert_eq!(
+            right,
+            ElevatedWriteResult::Success,
+            "the right sudo password on a German locale must classify as Success"
+        );
+        assert_eq!(
+            after_right,
+            accepted.trim(),
+            "root-owned file should hold the newly written content"
+        );
+        assert_eq!(
+            stat, "root root 644",
+            "target must stay root-owned, mode 644"
+        );
+        assert_eq!(leftover, 0, "no /tmp/termihub-* temp should remain");
+    }
+
+    /// German locale, a user outside sudoers with the right password → the
+    /// not-in-sudoers `Other` outcome, and the file is unchanged.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
+    async fn elevated_save_reports_not_in_sudoers_on_a_german_locale() {
+        let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
+        if !fixture_ready("ssh-sudo", port) {
+            return;
+        }
+
+        trust_fixture_host_keys();
+        let config = user_config(port, DE_NOSUDO_USER, DE_PASSWORD);
+        assert_remote_locale_is_german(config.clone()).await;
+
+        let before = read_target(config.clone()).await;
+        let browser = SftpFileBrowser::new(config.clone());
+        let outcome = browser
+            .write_file_content_elevated(
+                ELEVATED_TARGET,
+                &format!("should-not-land-{}\n", uuid::Uuid::new_v4()),
+                DE_PASSWORD,
+            )
+            .await
+            .expect("elevated save (not in sudoers) should complete");
+        let (after, leftover) = with_verify(config.clone(), |v| {
+            let after = run_remote_command(v, &format!("cat {ELEVATED_TARGET}"))?;
+            Ok((after, temp_leftover_count(v)?))
+        })
+        .await
+        .expect("readback after should succeed");
+
+        match outcome {
+            ElevatedWriteResult::Other(msg) => assert!(
+                msg.contains("sudoers"),
+                "expected the not-in-sudoers message, got: {msg}"
+            ),
+            other => panic!("expected Other (not in sudoers), got {other:?}"),
+        }
+        assert_eq!(after, before, "file must be unchanged when sudo refuses");
         assert_eq!(leftover, 0, "temp upload must be cleaned up on failure");
     }
 
