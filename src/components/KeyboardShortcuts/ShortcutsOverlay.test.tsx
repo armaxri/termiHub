@@ -278,6 +278,19 @@ describe("ShortcutsOverlay", () => {
       expect(prev?.textContent).toContain("Focus Previous Region");
       expect(kbds("focus-next-region")).toEqual(["F6"]);
       expect(kbds("focus-prev-region")).toEqual(["Shift+F6"]);
+      expect(kbds("focus-next-region-anywhere")).toEqual(["Ctrl+F6"]);
+      expect(kbds("focus-prev-region-anywhere")).toEqual(["Ctrl+Shift+F6"]);
+    });
+
+    it("marks bare F6 as active outside terminals only", () => {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const scope = (action: string) =>
+        document.querySelector(`[data-testid="shortcut-row-${action}"] .shortcuts-overlay__scope`)
+          ?.textContent;
+      expect(scope("focus-next-region")).toBe("Outside terminals");
+      expect(scope("focus-next-region-anywhere")).toBe("All tabs");
     });
 
     it("shows a user override instead of the default", () => {
