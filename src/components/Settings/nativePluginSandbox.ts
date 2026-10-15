@@ -9,6 +9,7 @@
 
 import type { PluginSandboxStatus } from "@/store/pluginSandboxBridge";
 import type { InstalledPlugin } from "@/types/plugin";
+import { describeFilesystemPath } from "@/components/Plugins/pluginPresentation";
 
 /** The tone of a status indicator (maps to `settings-panel__status-indicator--*`). */
 export type IndicatorTone = "ok" | "warning" | "error" | "checking";
@@ -290,7 +291,10 @@ export function accessChips(plugin: InstalledPlugin, status?: PluginSandboxStatu
       id: "declared-files",
       label: "Declared folders",
       // One folder per line, so every granted path is visible as declared.
-      rule: ["Through termiHub only:", ...declared].join("\n"),
+      rule: [
+        "Through termiHub only:",
+        ...declared.map((path) => describeFilesystemPath(path, plugin.resolvedFilesystemPaths)),
+      ].join("\n"),
       denied: false,
     });
   }

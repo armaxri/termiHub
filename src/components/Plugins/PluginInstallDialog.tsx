@@ -6,9 +6,11 @@ import type {
   PluginInstallPendingConfirmation,
   PluginManifest,
   PluginTrustInfo,
+  ResolvedFilesystemPath,
 } from "@/types/plugin";
 import { Button, Checkbox, Modal } from "@/components/ui";
 import {
+  describeFilesystemPath,
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
   pluginHasNativeCode,
@@ -41,6 +43,12 @@ export interface PluginInstallDialogProps {
    * platforms it does support, and offers no install action. Defaults to `true`.
    */
   platformSupported?: boolean;
+  /**
+   * The manifest's `${home}`/`${config}` folders with what each resolves to on
+   * this computer (from `preview_plugin`, #4533), shown next to the declared
+   * form so the user consents to the real folder.
+   */
+  resolvedFilesystemPaths?: ResolvedFilesystemPath[];
   /** Called after a successful install, or on cancel/close. */
   onClose: () => void;
 }
@@ -96,6 +104,7 @@ export function PluginInstallDialog({
   trust,
   hostPlatform = null,
   platformSupported = true,
+  resolvedFilesystemPaths,
   onClose,
 }: PluginInstallDialogProps) {
   const installPlugin = useAppStore((s) => s.installPlugin);
@@ -315,7 +324,7 @@ export function PluginInstallDialog({
                       data-testid="plugin-install-filesystem-paths"
                     >
                       {manifest.filesystemPaths?.map((path) => (
-                        <li key={path}>{path}</li>
+                        <li key={path}>{describeFilesystemPath(path, resolvedFilesystemPaths)}</li>
                       ))}
                     </ul>
                   )}

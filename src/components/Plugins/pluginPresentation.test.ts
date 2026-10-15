@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import type { PluginExtensions, PluginManifest } from "@/types/plugin";
 import type { PluginTrustInfo } from "@/types/plugin";
 import {
+  describeFilesystemPath,
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
   extensionPoints,
@@ -188,5 +189,29 @@ describe("trustBanner", () => {
     const t = trustBanner(trust({ level: "tampered", warning: "blocked", isBlocked: true }));
     expect(t.tone).toBe("danger");
     expect(t.title).toBe("Signature invalid");
+  });
+});
+
+describe("describeFilesystemPath (#4533)", () => {
+  const resolved = [
+    { declared: "${home}/.kube", resolved: "/Users/alice/.kube" },
+    { declared: "${config}/k8s", resolved: null },
+  ];
+
+  it("shows a placeholder entry with the folder it resolves to", () => {
+    expect(describeFilesystemPath("${home}/.kube", resolved)).toBe(
+      "${home}/.kube → /Users/alice/.kube"
+    );
+  });
+
+  it("says when a placeholder cannot be resolved on this computer", () => {
+    expect(describeFilesystemPath("${config}/k8s", resolved)).toBe(
+      "${config}/k8s (not available on this computer)"
+    );
+  });
+
+  it("shows a plain absolute entry verbatim", () => {
+    expect(describeFilesystemPath("/var/log/app", resolved)).toBe("/var/log/app");
+    expect(describeFilesystemPath("/var/log/app", undefined)).toBe("/var/log/app");
   });
 });

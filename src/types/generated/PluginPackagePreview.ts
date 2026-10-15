@@ -21,4 +21,10 @@ hostPlatform: string,
 /**
  * Whether the package can be installed on this host's platform.
  */
-platformSupported: boolean, };
+platformSupported: boolean, 
+/**
+ * The manifest's `${home}`/`${config}` `filesystemPaths` entries with the
+ * folder each resolves to on this computer (#4533), so the install dialog
+ * shows the real folder next to the declared form. Omitted when none.
+ */
+resolvedFilesystemPaths?: Array<import("./ResolvedFilesystemPath").ResolvedFilesystemPath>, };
