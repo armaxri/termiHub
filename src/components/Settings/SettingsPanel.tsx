@@ -36,6 +36,12 @@ import { useAppStore } from "@/store/appStore";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
+import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
+import {
+  changedSecretLabels,
+  clearDraftSecrets,
+  restoreDraftSecrets,
+} from "@/utils/formDraftSecrets";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
@@ -281,6 +287,35 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     },
     [tabId, setEditorDirty, debouncedSave]
   );
+
+  // Hand the unsaved settings to "Move tabs" on window close (#4758), so a
+  // pending edit no longer blocks the move. Only while a debounced save is
+  // pending: once it has run the panel is clean and moves as a plain tab. Any
+  // secret-named string is cleared, as for the form editors (#4500), and only
+  // the secrets that differ from the saved document are named in the dialog.
+  useFormDraftProvider(tabId, () => {
+    const pending = pendingSettingsRef.current;
+    if (!pending || !dirtyRef.current) return null;
+    const { values } = clearDraftSecrets(pending);
+    const cleared = changedSecretLabels(pending, savedSettingsRef.current);
+    return {
+      kind: "settings",
+      values: values as unknown as Record<string, unknown>,
+      ...(cleared.length > 0 ? { clearedSecrets: cleared } : {}),
+    };
+  });
+
+  // Pending settings carried in from another window by "Move tabs" (#4758):
+  // apply them as an edit made here, so the panel is dirty and auto-saves them
+  // as the source window would have. A secret cleared for the move keeps this
+  // window's saved value rather than saving an empty one over it. Applied once.
+  const carriedDraft = useCarriedFormDraft<AppSettings>(tabId, "settings");
+  const carriedAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!carriedDraft || carriedAppliedRef.current) return;
+    carriedAppliedRef.current = true;
+    handleSettingsChange(restoreDraftSecrets(carriedDraft, savedSettingsRef.current));
+  }, [carriedDraft, handleSettingsChange]);
 
   // Settings auto-save, so a close request never needs a confirmation dialog.
   // Flush any pending debounced write (so the last <=300ms of edits aren't lost)

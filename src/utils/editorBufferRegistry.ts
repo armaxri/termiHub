@@ -6,11 +6,12 @@
  * "Move tabs" choice when closing a window) must carry that text along, so every
  * mounted file editor registers a provider here that returns its current buffer.
  *
- * The connection, tunnel and workspace form editors register a form draft
- * provider instead (#4500): it returns the editor's unsaved form values with any
- * typed secret cleared (see `src/utils/formDraftSecrets.ts`). An editor that
- * registers neither (the Settings panel) cannot hand over its unsaved state: a
- * dirty one blocks the move until the user explicitly saves or discards it.
+ * The connection, tunnel and workspace form editors and the Settings panel
+ * register a form draft provider instead (#4500, #4758): it returns the editor's
+ * unsaved form values with any typed secret cleared (see
+ * `src/utils/formDraftSecrets.ts`). A dirty editor with no provider registered
+ * (it is not mounted) cannot hand over its unsaved state: it blocks the move
+ * until the user explicitly saves or discards it.
  */
 
 /** A snapshot of one file editor's buffer at the moment it is read. */
