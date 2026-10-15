@@ -4,12 +4,10 @@ import {
   RECONNECT_GIVE_UP_WINDOW_MS,
   RECONNECT_POLICY,
   backoffDelay,
-  worstCaseTotalBackoffMs,
   nextReconnectDelay,
   shouldGiveUp,
   reconnectReducer,
   initialReconnectState,
-  isActiveReconnectPhase,
   type BackoffConfig,
   type ReconnectState,
 } from "./reconnectBackoff";
@@ -113,11 +111,7 @@ describe("reconnectBackoff — shared policy (#3730)", () => {
     expect(delays).toEqual([
       1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000,
     ]);
-    expect(worstCaseTotalBackoffMs(RECONNECT_POLICY)).toBe(RECONNECT_GIVE_UP_WINDOW_MS);
-  });
-
-  it("reports no worst case for an unbounded config", () => {
-    expect(worstCaseTotalBackoffMs({ ...NO_JITTER, maxAttempts: 0 })).toBeNull();
+    expect(delays.reduce((sum, d) => sum + d, 0)).toBe(RECONNECT_GIVE_UP_WINDOW_MS);
   });
 });
 
@@ -228,18 +222,5 @@ describe("reconnectBackoff — reconnectReducer transitions", () => {
     }
     // Only Cancel stops an unbounded loop.
     expect(reconnectReducer(s, "cancel", cfg, rand).phase).toBe("gaveup");
-  });
-});
-
-describe("reconnectBackoff — isActiveReconnectPhase", () => {
-  it("is true while waiting or connecting", () => {
-    expect(isActiveReconnectPhase("waiting")).toBe(true);
-    expect(isActiveReconnectPhase("connecting")).toBe(true);
-  });
-
-  it("is false when idle, connected, or gaveup", () => {
-    expect(isActiveReconnectPhase("idle")).toBe(false);
-    expect(isActiveReconnectPhase("connected")).toBe(false);
-    expect(isActiveReconnectPhase("gaveup")).toBe(false);
   });
 });
