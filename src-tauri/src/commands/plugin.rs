@@ -20,9 +20,9 @@ use termihub_core::plugin::{
     check_host_platform, host_target_triple, native_trust_binding,
     native_trust_binding_with_snapshot, resolve_filesystem_paths_for_host, validate_package,
     AckAcceptances, AckStatus, InstallOptions, InstalledPlugin, NativeAck, NativeTrustSnapshot,
-    NativeTrustStore, PluginHost, PluginManager, PluginManagerError, PluginManifest,
-    ResolvedFilesystemPath, SignerChange, TrustAssessment, TrustBinding, TrustLevel,
-    TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
+    NativeTrustStore, PluginAccessDiff, PluginHost, PluginManager, PluginManagerError,
+    PluginManifest, ResolvedFilesystemPath, SignerChange, TrustAssessment, TrustBinding,
+    TrustLevel, TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -75,13 +75,37 @@ pub struct PluginPackagePreview {
         )
     )]
     pub resolved_filesystem_paths: Vec<ResolvedFilesystemPath>,
+    /// The installed copy's version when a plugin with this id is already
+    /// installed — an update, downgrade or re-install (#4418). Omitted for a
+    /// fresh install.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub installed_version: Option<String>,
+    /// What this package changes in the access the installed copy requests
+    /// (#4418): permissions, resolved filesystem folders and connection policy
+    /// added or removed, from the same canonical access a native trust
+    /// acknowledgment binds to. Present (and possibly empty) whenever
+    /// `installedVersion` is; omitted for a fresh install.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(optional, type = "import(\"./PluginAccessDiff\").PluginAccessDiff")
+    )]
+    pub access_diff: Option<PluginAccessDiff>,
 }
 
-/// Build the [`PluginPackagePreview`] for an already-validated manifest.
-fn package_preview(manifest: PluginManifest) -> PluginPackagePreview {
+/// Build the [`PluginPackagePreview`] for an already-validated manifest,
+/// comparing its access against `installed` (the manifest of the copy it would
+/// replace) when there is one.
+fn package_preview(
+    manifest: PluginManifest,
+    installed: Option<&PluginManifest>,
+) -> PluginPackagePreview {
     let platform_supported = check_host_platform(&manifest).is_ok();
     let resolved_filesystem_paths = resolve_filesystem_paths_for_host(&manifest.filesystem_paths);
     PluginPackagePreview {
+        installed_version: installed.map(|i| i.version.clone()),
+        access_diff: installed.map(|i| PluginAccessDiff::between(i, &manifest)),
         manifest,
         host_platform: host_target_triple().to_owned(),
         platform_supported,
@@ -89,15 +113,41 @@ fn package_preview(manifest: PluginManifest) -> PluginPackagePreview {
     }
 }
 
+/// The manifest of the installed plugin `id`, if one is installed with a
+/// manifest that still validates. A plugin listed under a placeholder manifest
+/// (#4392) has no access to compare against, so it reads as a fresh install.
+fn installed_manifest(manager: &PluginManager, id: &str) -> Option<PluginManifest> {
+    manager
+        .get(id)
+        .ok()
+        .filter(|p| !p.invalid_manifest)
+        .map(|p| p.manifest)
+}
+
+/// [`preview_plugin`] against an explicit manager.
+fn preview_package(
+    path: &std::path::Path,
+    manager: &PluginManager,
+) -> Result<PluginPackagePreview, String> {
+    let manifest = validate_package(path).map_err(|e| e.to_string())?;
+    let installed = installed_manifest(manager, &manifest.id);
+    Ok(package_preview(manifest, installed.as_ref()))
+}
+
 /// Validate a `.termihub-plugin` package at `path` for the install dialog,
 /// returning its manifest and this host's platform support (#3507). A malformed
 /// or incompatible package is an error; a package merely lacking this platform
 /// is not (see [`PluginPackagePreview`]).
+///
+/// When a plugin with the same id is installed, the preview also carries its
+/// version and the access diff against it (#4418), so the dialog shows what an
+/// update adds or removes.
 #[tauri::command]
-pub fn preview_plugin(path: String) -> Result<PluginPackagePreview, String> {
-    validate_package(std::path::Path::new(&path))
-        .map(package_preview)
-        .map_err(|e| e.to_string())
+pub fn preview_plugin(
+    path: String,
+    manager: State<'_, PluginManager>,
+) -> Result<PluginPackagePreview, String> {
+    preview_package(std::path::Path::new(&path), &manager)
 }
 
 /// This host's Rust target triple, used by the UI to mark "this computer" in a
@@ -1070,7 +1120,7 @@ mod tests {
         let manifest = backend_manifest(
             r#", "libraries": { "riscv64gc-unknown-linux-gnu": "backend/riscv64gc-unknown-linux-gnu/libecho.so" }"#,
         );
-        let preview = package_preview(manifest);
+        let preview = package_preview(manifest, None);
         assert!(!preview.platform_supported);
         assert_eq!(preview.host_platform, host_target_triple());
 
@@ -1090,8 +1140,87 @@ mod tests {
         let with_host = backend_manifest(&format!(
             r#", "libraries": {{ "{host}": "backend/{host}/lib" }}"#
         ));
-        assert!(package_preview(with_host).platform_supported);
-        assert!(package_preview(backend_manifest("")).platform_supported);
+        assert!(package_preview(with_host, None).platform_supported);
+        assert!(package_preview(backend_manifest(""), None).platform_supported);
         assert_eq!(get_plugin_host_platform(), host);
+    }
+
+    /// Pack an unsigned theme plugin `acme-tool` at `version` requesting
+    /// `permissions` and `filesystem_paths`, returning the package path.
+    fn pack_access(
+        tmp: &std::path::Path,
+        version: &str,
+        permissions: serde_json::Value,
+        filesystem_paths: serde_json::Value,
+    ) -> std::path::PathBuf {
+        let src = tmp.join(format!("src-{version}"));
+        std::fs::create_dir_all(src.join("themes")).unwrap();
+        std::fs::write(src.join("themes/dark.json"), "{}").unwrap();
+        let manifest = serde_json::json!({
+            "id": "acme-tool", "name": "Acme Tool", "version": version,
+            "author": "t", "description": "d", "license": "MIT", "apiVersion": "1.0",
+            "platforms": ["linux", "macos", "windows"], "permissions": permissions,
+            "filesystemPaths": filesystem_paths,
+            "extensions": { "theme": { "themes": [
+                { "id": "dark", "name": "Dark", "file": "themes/dark.json" }
+            ] } }
+        });
+        std::fs::write(src.join("manifest.json"), manifest.to_string()).unwrap();
+        let out = tmp.join(format!("out-{version}"));
+        std::fs::create_dir_all(&out).unwrap();
+        termihub_core::plugin::pack_plugin(&src, &out).unwrap()
+    }
+
+    /// #4418: the install preview carries the installed version and the access
+    /// diff against it on an update or re-install, and neither on a fresh one.
+    #[test]
+    fn preview_carries_the_access_diff_against_the_installed_copy() {
+        use serde_json::json;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mgr = PluginManager::new(tmp.path().join("plugins"));
+        let v1 = pack_access(tmp.path(), "1.0.0", json!(["ui", "network"]), json!([]));
+
+        let fresh = preview_package(&v1, &mgr).unwrap();
+        assert!(fresh.installed_version.is_none() && fresh.access_diff.is_none());
+        let json = serde_json::to_value(&fresh).unwrap();
+        assert!(json.get("installedVersion").is_none());
+        assert!(json.get("accessDiff").is_none());
+
+        let opts = InstallOptions {
+            accept_untrusted: true,
+            ..InstallOptions::default()
+        };
+        mgr.install_with(&v1, opts).unwrap();
+
+        // Re-installing the same version: compared, and nothing changed.
+        let same = preview_package(&v1, &mgr).unwrap();
+        assert_eq!(same.installed_version.as_deref(), Some("1.0.0"));
+        assert!(same.access_diff.as_ref().unwrap().is_empty());
+
+        let v2 = pack_access(
+            tmp.path(),
+            "2.0.0",
+            json!(["ui", "filesystem"]),
+            json!(["/srv/acme/"]),
+        );
+        let update = preview_package(&v2, &mgr).unwrap();
+        assert_eq!(update.installed_version.as_deref(), Some("1.0.0"));
+        let diff = update.access_diff.as_ref().unwrap();
+        assert!(diff.adds_access());
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json["installedVersion"], "1.0.0");
+        assert_eq!(
+            json["accessDiff"]["added"]["permissions"],
+            json!(["filesystem"])
+        );
+        assert_eq!(
+            json["accessDiff"]["added"]["filesystemPaths"],
+            json!([{ "declared": "/srv/acme/", "folder": "/srv/acme" }])
+        );
+        assert_eq!(
+            json["accessDiff"]["removed"]["permissions"],
+            json!(["network"])
+        );
+        assert!(json["accessDiff"]["connectionPolicy"].is_null());
     }
 }
