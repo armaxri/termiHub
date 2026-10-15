@@ -45,6 +45,3 @@ export const TAURI_EVENT = {
   xServerConsentNeeded: "x-server-consent-needed",
   agentStateChange: "agent-state-change",
 } as const;
-
-/** One of the Tauri event names in {@link TAURI_EVENT}. */
-export type TauriEventName = (typeof TAURI_EVENT)[keyof typeof TAURI_EVENT];

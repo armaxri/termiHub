@@ -108,7 +108,10 @@ let regionClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription. */
+ * drops any active subscription.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setConnectionTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -249,7 +252,11 @@ export function ensureConnectionsSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopConnectionsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -267,6 +274,8 @@ export function currentConnectionsView(): ConnectionsView {
  * through the same guarded path a real diff takes, so a test can drive the
  * stale-drop / apply behaviour without standing up a transport double. Never call
  * from production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitConnectionsViewForTest(view: ConnectionsView, version: number): void {
   commitConnectionsView(view, version);
@@ -276,6 +285,8 @@ export function __emitConnectionsViewForTest(view: ConnectionsView, version: num
  * Test seam: synchronously set the cached region view and fan it to listeners,
  * standing in for the server-side fold so a unit/component test can drive the
  * authoritative region without a live backend. Not used in production.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function setConnectionsViewForTest(view: ConnectionsView): void {
   baseView = { folders: view.folders, connections: view.connections };
@@ -293,7 +304,11 @@ export function setConnectionsViewForTest(view: ConnectionsView): void {
  */
 let persistedFoldSinkForTest: ((fold: ConnectionsFold) => void) | null = null;
 
-/** Install (or clear, with `null`) the {@link persistedFoldSinkForTest} seam. */
+/**
+ * Install (or clear, with `null`) the {@link persistedFoldSinkForTest} seam.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setPersistedFoldSinkForTest(sink: ((fold: ConnectionsFold) => void) | null): void {
   persistedFoldSinkForTest = sink;
 }

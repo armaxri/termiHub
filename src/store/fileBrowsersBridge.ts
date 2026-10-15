@@ -126,7 +126,10 @@ const clientId = newClientId();
 export const FILE_BROWSERS_REGION = `file-browser@${clientId}`;
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / cached view. */
+ * drops any active subscription / cached view.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setFileBrowsersTransportForTest(t: Transport | null): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -266,7 +269,11 @@ export function ensureFileBrowsersSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopFileBrowsersSubscription(): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -293,6 +300,8 @@ export function currentFileBrowsersView(): FileBrowsersView {
  * the async transport subscribe round-trip. The file-browsers region test harness
  * uses this to seed the region so a reader that renders (or re-renders) sees the
  * view without an explicit flush. Never call this from production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitFileBrowsersViewForTest(view: FileBrowsersView, version: number): void {
   commitFileBrowsersView(normalizeView(view), version);

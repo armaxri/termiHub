@@ -106,12 +106,20 @@ export function dispatchOnConnectTriggers({
   }
 }
 
-/** Forget a session's dispatch record (e.g. when its tab disconnects/closes). */
+/**
+ * Forget a session's dispatch record (e.g. when its tab disconnects/closes).
+ *
+ * @internal No production caller yet (dispatch records are never pruned; see #4784).
+ */
 export function forgetOnConnectSession(sessionId: string): void {
   dispatchedSessions.delete(sessionId);
 }
 
-/** Clear all on-connect dispatch state. Intended for tests. */
+/**
+ * Clear all on-connect dispatch state. Intended for tests.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetOnConnectDispatchState(): void {
   dispatchedSessions.clear();
 }
@@ -208,7 +216,11 @@ export function armSessionEnd(tabId: string): void {
   endedTabs.delete(tabId);
 }
 
-/** Clear all on-disconnect dispatch state. Intended for tests. */
+/**
+ * Clear all on-disconnect dispatch state. Intended for tests.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetOnDisconnectDispatchState(): void {
   endedTabs.clear();
 }

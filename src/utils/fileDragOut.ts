@@ -268,7 +268,11 @@ export function isOwnDragOut(paths: string[], now: number = Date.now()): boolean
   return paths.every((p) => own.has(pathKey(p)));
 }
 
-/** Reset the drag-out tracking (tests only). */
+/**
+ * Reset the drag-out tracking (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetDragOutTracking(): void {
   activeDragOut = null;
 }

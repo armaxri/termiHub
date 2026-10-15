@@ -216,7 +216,11 @@ export function ensureTermiHubApi(target: TermiHubGlobals): TermiHubPluginAPI {
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-/** True when at least one protocol parser is registered. */
+/**
+ * True when at least one protocol parser is registered.
+ *
+ * @internal Test-only introspection.
+ */
 export function hasProtocolParsers(): boolean {
   return parsers.length > 0;
 }
@@ -306,7 +310,11 @@ export function unregisterPlugin(pluginId: string): void {
   }
 }
 
-/** Drop all registered parsers and widgets (used on teardown / in tests). */
+/**
+ * Drop all registered parsers and widgets (used on teardown / in tests).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function clearRegistry(): void {
   const removed = widgets.map((w) => ({ pluginId: w.pluginId, id: w.widget.id }));
   parsers = [];

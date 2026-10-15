@@ -4,8 +4,6 @@
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { TAURI_EVENT } from "./eventNames";
-
-export { TAURI_EVENT, type TauriEventName } from "./eventNames";
 import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";

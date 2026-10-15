@@ -99,7 +99,7 @@ export type {
 export { Tooltip, TooltipProvider } from "./Tooltip";
 export type { TooltipProps, TooltipProviderProps } from "./Tooltip";
 
-export { ResponsiveToolbar, computeToolbarLayout } from "./ResponsiveToolbar";
+export { ResponsiveToolbar } from "./ResponsiveToolbar";
 export type {
   ResponsiveToolbarProps,
   ToolbarAction,

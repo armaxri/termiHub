@@ -215,7 +215,11 @@ export function looksLikeSecretName(name: string): boolean {
   return SECRET_NAME_RE.test(name);
 }
 
-/** Test-only: reset module state. */
+/**
+ * Test-only: reset module state.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function __resetActiveWorkspaceForTest(): void {
   active = null;
   listeners.clear();

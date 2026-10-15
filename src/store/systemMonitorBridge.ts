@@ -80,7 +80,10 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription. */
+ * drops any active subscription.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setMonitorTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -172,7 +175,11 @@ export function ensureMonitorsSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopMonitorsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -186,6 +193,8 @@ export function stopMonitorsSubscription(): void {
  * through the same guarded path a real diff takes, so a test can drive the
  * stale-drop / apply behaviour without a transport double. Never call from
  * production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitMonitorsViewForTest(view: SystemMonitorsView, version: number): void {
   commitMonitorsView(view, version);

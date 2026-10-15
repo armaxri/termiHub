@@ -46,6 +46,11 @@ const config: KnipConfig = {
   // are not reported. In default mode values are still reported: an exported
   // constant or function only used in its own file should lose its `export`.
   ignoreExportsUsedInFile: production ? true : { interface: true, type: true },
+  // Production mode reports runtime code only: a type compiles to nothing, and
+  // the type facades (src/types/*.ts re-exporting the ts-rs DTO set) export
+  // types a test may be the only one to name. Default mode still reports
+  // unused types.
+  ...(production ? { exclude: ["types", "nsTypes"] as const } : {}),
   vite: {
     config: ["vite.config.ts", "vitest.config.ts"],
   },

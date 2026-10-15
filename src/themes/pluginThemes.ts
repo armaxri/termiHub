@@ -207,7 +207,11 @@ export function findRegisteredPluginTheme(id: string): ThemeDefinition | undefin
   return registeredThemes.find((t) => t.id === id);
 }
 
-/** Drop all registered plugin themes (used on teardown / in tests). */
+/**
+ * Drop all registered plugin themes (used on teardown / in tests).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function clearRegisteredPluginThemes(): void {
   registeredThemes = [];
 }

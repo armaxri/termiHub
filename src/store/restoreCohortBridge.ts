@@ -112,7 +112,10 @@ let lastView: RestoreCohortView = EMPTY_RESTORE_COHORT_VIEW;
 const versionGuard = makeVersionGuard();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription and cached view. */
+ * drops any active subscription and cached view.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setRestoreTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -157,7 +160,11 @@ function ensureRestoreSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopRestoreSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -283,6 +290,8 @@ function onRegionChange(state: ProjectionCacheState): void {
  * through the same guarded path a real diff takes, so a test can drive the
  * stale-drop / apply behaviour without a transport double. Never call from
  * production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitRestoreCohortViewForTest(view: RestoreCohortView, version: number): void {
   commitRestoreCohortView(view, version);

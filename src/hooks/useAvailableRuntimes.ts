@@ -57,6 +57,8 @@ export function useAvailableRuntimes(): AvailableRuntimes {
 /**
  * Reset the cached runtime probe result.
  * Exposed for testing only.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function resetRuntimeCache(): void {
   cachedResult = null;

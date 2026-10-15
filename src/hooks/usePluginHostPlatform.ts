@@ -10,7 +10,11 @@ import { errorMessage } from "@/utils/errorMessage";
 let cachedPlatform: string | null = null;
 let inflight: Promise<string> | null = null;
 
-/** Reset the module cache. Test-only. */
+/**
+ * Reset the module cache. Test-only.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetPluginHostPlatformCache(): void {
   cachedPlatform = null;
   inflight = null;

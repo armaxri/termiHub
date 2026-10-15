@@ -29,7 +29,11 @@ const languagePackageFields: ListFilterFields<LanguagePackageInfo> = (pkg) => [p
  */
 const pendingUninstallIds = new Set<string>();
 
-/** Test hook: forget every pending uninstall. */
+/**
+ * Test hook: forget every pending uninstall.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetPendingLanguagePackageUninstalls(): void {
   pendingUninstallIds.clear();
 }
