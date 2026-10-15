@@ -22,40 +22,7 @@ export interface AllowEntry {
   match: RegExp;
 }
 
-/** The sidebars whose ResponsiveToolbar never collapses in dev builds (#4736). */
-const TOOLBAR_SIDEBARS = /^sidebar\/(macros|workspaces)@/;
-
-export const ALLOWLIST: AllowEntry[] = [
-  // #4708: shared settings field CSS lives in the lazy ConnectionEditor chunk.
-  { issue: 4708, kind: "unstyled-class", surface: /^settings\//, match: /\.settings-form__/ },
-  {
-    issue: 4708,
-    kind: "text-overlap",
-    surface: /^settings\/appearance$/,
-    match: /settings-form__hint/,
-  },
-  // #4736: useElementWidth loses its observer under StrictMode, so the
-  // Workspaces and Macros toolbars keep their full labels and clip.
-  {
-    issue: 4736,
-    kind: "clipped-control",
-    surface: TOOLBAR_SIDEBARS,
-    match: /-(import|export|export-all|save-current)-btn/,
-  },
-  {
-    issue: 4736,
-    kind: "overflow",
-    surface: TOOLBAR_SIDEBARS,
-    match: /-(import|export|export-all|save-current)-btn/,
-  },
-  // #4728: the External Files header pushes its add button off-screen at 800x600.
-  {
-    issue: 4728,
-    kind: "clipped-control",
-    surface: /^settings\/external-files$/,
-    match: /external-files-add/,
-  },
-];
+export const ALLOWLIST: AllowEntry[] = [];
 
 const STRICT = (process.env.VISUAL_STRICT ?? "").split(",").filter(Boolean);
 
