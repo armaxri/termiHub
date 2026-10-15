@@ -8,7 +8,7 @@
  * the container width through a controllable ResizeObserver.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Plus, Save, Download, Upload } from "lucide-react";
 import { ResponsiveToolbar, computeToolbarLayout } from "./ResponsiveToolbar";
@@ -70,20 +70,17 @@ function makeActions(handlers: Record<string, () => void> = {}): ToolbarAction[]
   ];
 }
 
-function render(actions: ToolbarAction[] = makeActions()) {
-  act(() =>
-    root.render(
-      withTooltip(
-        <ResponsiveToolbar
-          actions={actions}
-          aria-label="Workspace actions"
-          overflowLabel="More workspace actions"
-          overflowTestId="tb-overflow"
-          data-testid="tb"
-        />
-      )
-    )
+function render(actions: ToolbarAction[] = makeActions(), { strict = false } = {}) {
+  const toolbar = (
+    <ResponsiveToolbar
+      actions={actions}
+      aria-label="Workspace actions"
+      overflowLabel="More workspace actions"
+      overflowTestId="tb-overflow"
+      data-testid="tb"
+    />
   );
+  act(() => root.render(withTooltip(strict ? <StrictMode>{toolbar}</StrictMode> : toolbar)));
 }
 
 /** The live (non-measuring) buttons of the toolbar, by accessible name. */
@@ -190,6 +187,16 @@ describe("ResponsiveToolbar", () => {
       liveButton("Save Current Layout")
     );
     expect(container.querySelector('[data-testid="tb-overflow"]')).toBeNull();
+  });
+
+  it("still collapses under React StrictMode's double mount (#4736)", () => {
+    render(makeActions(), { strict: true });
+    ro.resize(184);
+    expect(layout()).toBe("icons");
+    ro.resize(92);
+    expect(container.querySelector('[data-testid="tb-overflow"]')).not.toBeNull();
+    ro.resize(400);
+    expect(layout()).toBe("full");
   });
 
   it("moves the trailing actions into an overflow menu when even icons do not fit", () => {
