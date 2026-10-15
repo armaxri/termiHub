@@ -4,6 +4,20 @@ on:
   push:
     tags:
       - 'v*.*.*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
+  # Dry run (#4746): `gh workflow run release.yml --ref <branch> -f dry_run=true`
+  # builds every release artifact under the stand-in version 0.0.0-dryrun and
+  # checks the full asset set (check-release-assets), with read-only tokens
+  # only. A dispatched run is ALWAYS a dry run: create-release is gated on the
+  # tag push, and every write-scoped job needs create-release, so none of them
+  # can start. verify-integration's gate and coverage-summary are skipped too
+  # (no release commit to grade). workflow-token-hygiene.test.mjs pins this.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: build and check every release artifact, publish nothing (a dispatch is always a dry run)'
+        type: boolean
+        required: true
+        default: true
 
 # Read-only by default (CI2-007, #4730). Only the jobs that publish write: they
 # check nothing out (or only run first-party scripts) and install nothing. The
@@ -30,6 +44,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # A dispatched run can never publish (#4746); refuse a dispatch that asks
+      # for anything else rather than silently running a dry run.
+      - name: Refuse a non-dry-run dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
+        run: |
+          echo "::error::A dispatched Release run is dry-run only. Push a v*.*.* tag to release."
+          exit 1
+
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -50,11 +72,17 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Check tag and version sources agree
+        if: github.event_name == 'push'
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           scripts/release-check.sh --versions-only --expect-version "${TAG_NAME#v}"
+
+      # Dry run: no tag, so check only that the version sources agree.
+      - name: Check version sources agree (dry run)
+        if: github.event_name != 'push'
+        run: scripts/release-check.sh --versions-only
 
       # The Windows leg builds an MSI, whose version must be numeric
       # (major.minor.patch.revision); Tauri's WiX bundler rejects a semver
@@ -63,11 +91,17 @@ jobs:
       # tag has a shape that mapping cannot represent (only -beta.N / -rc.N
       # prereleases, WiX field limits).
       - name: Check the tag maps to a Windows MSI version
+        if: github.event_name == 'push'
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           node scripts/internal/msi-version.mjs --check "${TAG_NAME#v}"
+
+      # Dry run: build-app maps the in-repo version instead (see its wix step).
+      - name: Check the in-repo version maps to a Windows MSI version (dry run)
+        if: github.event_name != 'push'
+        run: node scripts/internal/msi-version.mjs --check "$(node -p "require('./package.json').version")"
 
       # Strict production audit (WA-CI-008): the Security Audit lane soft-passes an
       # unreachable npm registry, which is fine for develop but must never let an
@@ -152,14 +186,18 @@ jobs:
       actions: read
       contents: read
 
+    # A dry run has no release commit to grade (#4746): both steps are skipped
+    # and the job succeeds, so the builds still hang off it in a real release.
     steps:
       - name: Checkout code
+        if: github.event_name == 'push'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
       # node is preinstalled on the runner (as for emit-release-notes.mjs below).
       - name: Require green full integration lanes on the release commit
+        if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ github.sha }}
@@ -175,6 +213,8 @@ jobs:
   # missing input, so coverage can never block or red a release.
   coverage-summary:
     name: Release Coverage Summary (advisory)
+    # Nothing to summarise for a dry run (#4746).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 15
@@ -210,9 +250,44 @@ jobs:
             coverage-release/merged.lcov
           if-no-files-found: warn
 
+  # The gate junction and the version every asset name carries (#4746): the tag
+  # without its leading v on a tag push, the stand-in 0.0.0-dryrun on a dry run.
+  # Every build job needs this job, not create-release, so a dry run builds
+  # everything while create-release (and so every write-scoped job) is skipped.
+  release-version:
+    name: Resolve Release Version
+    needs: [verify-version, verify-supply-chain, verify-integration]
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+
+    steps:
+      - name: Resolve the version
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = push ]; then
+            version="${REF_NAME#v}"
+            dry_run=false
+          else
+            version=0.0.0-dryrun
+            dry_run=true
+          fi
+          echo "Release version: ${version} (dry run: ${dry_run})"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "dry_run=${dry_run}" >> "$GITHUB_OUTPUT"
+
   create-release:
     name: Create Release
-    needs: [verify-version, verify-supply-chain, verify-integration]
+    needs: [verify-version, verify-supply-chain, verify-integration, release-version]
+    # Never on a dry run (#4746). Every write-scoped job needs this job, so this
+    # one condition keeps a dispatched run from reaching any write token.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Creates the draft release. Runs only first-party scripts with the
     # preinstalled node; installs nothing.
@@ -251,7 +326,9 @@ jobs:
 
       - name: Get version from tag
         id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+        run: echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
@@ -354,7 +431,7 @@ jobs:
     name: Build App - ${{ matrix.platform }}
     # third-party-notices generates the THIRD_PARTY_NOTICES.txt every installer
     # bundles (PKG-009) — generated once so all platforms ship the same file.
-    needs: [verify-version, verify-supply-chain, create-release, third-party-notices]
+    needs: [verify-version, verify-supply-chain, release-version, third-party-notices]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -500,16 +577,19 @@ jobs:
       # through a generated fragment (PKG2-003, #4283). Final releases are mapped
       # too, so the MSI version stays monotonic across beta -> rc -> final.
       # verify-version already ran --check, so this cannot reject the tag.
+      # A dry run maps the in-repo version: 0.0.0-dryrun has no MSI form.
       - name: Generate the Windows MSI version fragment
         id: wix_version
         if: runner.os == 'Windows'
         shell: bash
         env:
-          TAG_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.release-version.outputs.version }}
+          DRY_RUN: ${{ needs.release-version.outputs.dry_run }}
         run: |
           set -euo pipefail
           fragment=src-tauri/tauri.wix-version.conf.json
-          node scripts/internal/msi-version.mjs --config-out "$fragment" "${TAG_NAME#v}"
+          if [ "$DRY_RUN" = true ]; then VERSION="$(node -p "require('./package.json').version")"; fi
+          node scripts/internal/msi-version.mjs --config-out "$fragment" "$VERSION"
           cat "$fragment"
           echo "config=--config $fragment" >> "$GITHUB_OUTPUT"
 
@@ -752,7 +832,7 @@ jobs:
           fi
 
           # Rename to include platform
-          FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
+          FILENAME="termiHub-${{ needs.release-version.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
           mv "$ARTIFACT" "release-assets/$FILENAME"
 
       # Also stage .deb for Linux (skip ARM64 where .deb is already the primary artifact)
@@ -761,7 +841,7 @@ jobs:
         run: |
           DEB_FILE=$(find target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
           if [ -n "$DEB_FILE" ]; then
-            DEB_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.deb"
+            DEB_FILENAME="termiHub-${{ needs.release-version.outputs.version }}-${{ matrix.platform }}.deb"
             mv "$DEB_FILE" "release-assets/$DEB_FILENAME"
           fi
 
@@ -772,7 +852,7 @@ jobs:
         run: |
           RPM_FILE=$(find target/${{ matrix.rust_target }}/release/bundle/rpm -name "*.rpm" | head -n 1)
           if [ -n "$RPM_FILE" ]; then
-            RPM_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.rpm"
+            RPM_FILENAME="termiHub-${{ needs.release-version.outputs.version }}-${{ matrix.platform }}.rpm"
             mv "$RPM_FILE" "release-assets/$RPM_FILENAME"
           fi
 
@@ -784,13 +864,94 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Check the full release asset set before anything is published (#4746). Runs
+  # in a real release AND in a dry run: it downloads every build job's artifact
+  # and asserts every expected file is present and non-empty, and every agent
+  # binary matches its .sha256 sidecar. Read-only, no checkout. The upload-*
+  # jobs need it, so they only ever publish a checked set.
+  check-release-assets:
+    name: Check Release Assets
+    needs:
+      [
+        verify-version,
+        verify-supply-chain,
+        release-version,
+        build-app,
+        agent-binaries-linux,
+        agent-binaries-macos,
+        agent-binaries-windows,
+        third-party-notices,
+      ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download app bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-app-*
+          merge-multiple: true
+
+      - name: Download agent binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-agent-*
+          merge-multiple: true
+
+      - name: Download third-party notices
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: third-party-notices
+
+      # Names mirror build-app's rename logic, the agent-binaries-* matrices
+      # and verify-release's expected list.
+      - name: Check the asset set
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected=(THIRD_PARTY_NOTICES.txt)
+          for a in macos-x64.dmg macos-arm64.dmg windows-x64.msi linux-x64.AppImage \
+            linux-x64.deb linux-arm64.deb linux-arm64.rpm; do
+            expected+=("termiHub-${VERSION}-${a}")
+          done
+          agents=(termihub-agent-linux-x64 termihub-agent-linux-arm64
+            termihub-agent-linux-armv7 termihub-agent-macos-arm64 termihub-agent-macos-x64
+            termihub-agent-windows-x64.exe termihub-agent-windows-arm64.exe)
+          for a in "${agents[@]}"; do
+            expected+=("$a" "${a}.sha256")
+          done
+          missing=0
+          {
+            echo "### Release assets (v${VERSION})"
+            echo
+            echo "| Asset | Bytes | SHA-256 |"
+            echo "| --- | ---: | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in "${expected[@]}"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Missing or empty release asset: ${f}"
+              missing=1
+              continue
+            fi
+            echo "| ${f} | $(stat -c %s "$f") | $(sha256sum "$f" | cut -d' ' -f1) |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          [ "$missing" -eq 0 ]
+          # Publish only bytes that match their checksum sidecar.
+          for a in "${agents[@]}"; do
+            sha256sum -c "${a}.sha256"
+          done
+          echo "All ${#expected[@]} expected assets are present."
+
   # Privileged half of the app publish (#4730), shaped like the sbom job: no
   # checkout and no third-party code, so the write, OIDC and attestation tokens
   # never share a runner with the build. It downloads every build-app leg's
-  # bundles, checks the set, attests build provenance (CI-022) and uploads.
+  # bundles (checked by check-release-assets), attests build provenance (CI-022)
+  # and uploads.
   upload-app:
     name: Attest and Upload App Bundles
-    needs: [verify-version, verify-supply-chain, create-release, build-app]
+    needs: [verify-version, verify-supply-chain, create-release, check-release-assets, build-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -806,20 +967,6 @@ jobs:
         with:
           pattern: release-app-*
           merge-multiple: true
-
-      - name: Check the app bundle set
-        env:
-          VERSION: ${{ needs.create-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          for a in macos-x64.dmg macos-arm64.dmg windows-x64.msi linux-x64.AppImage \
-            linux-x64.deb linux-arm64.deb linux-arm64.rpm; do
-            f="termiHub-${VERSION}-${a}"
-            if [ ! -s "$f" ]; then
-              echo "::error::Missing or empty app bundle: ${f}"
-              exit 1
-            fi
-          done
 
       # Build provenance (CI-022): a Sigstore-signed SLSA statement binding each
       # published bundle's SHA-256 to this workflow run, commit and tag. Users
@@ -840,7 +987,7 @@ jobs:
   # binaries + .sha256 sidecars go to upload-agent-binaries as workflow artifacts.
   agent-binaries-linux:
     name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, verify-supply-chain, create-release]
+    needs: [verify-version, verify-supply-chain, release-version]
     runs-on: ubuntu-latest
     # Read-only (#4730): upload-agent-binaries attests and publishes.
     permissions:
@@ -910,7 +1057,7 @@ jobs:
   # Build the macOS agent binaries (native build); published by upload-agent-binaries.
   agent-binaries-macos:
     name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, verify-supply-chain, create-release]
+    needs: [verify-version, verify-supply-chain, release-version]
     runs-on: macos-latest
     # Read-only (#4730): upload-agent-binaries attests and publishes.
     permissions:
@@ -975,7 +1122,7 @@ jobs:
   # must ship for those hosts to install the agent (#3060).
   agent-binaries-windows:
     name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, verify-supply-chain, create-release]
+    needs: [verify-version, verify-supply-chain, release-version]
     runs-on: windows-latest
     # Read-only (#4730): upload-agent-binaries attests and publishes.
     permissions:
@@ -1042,8 +1189,8 @@ jobs:
           retention-days: 7
 
   # Privileged half of the agent publish (#4730): no checkout and no third-party
-  # code. Downloads every agent-binaries-* leg's binary + .sha256 sidecar, checks
-  # each binary against its sidecar, attests the binaries and uploads all of it.
+  # code. Downloads every agent-binaries-* leg's binary + .sha256 sidecar
+  # (checked by check-release-assets), attests the binaries and uploads all of it.
   upload-agent-binaries:
     name: Attest and Upload Agent Binaries
     needs:
@@ -1051,6 +1198,7 @@ jobs:
         verify-version,
         verify-supply-chain,
         create-release,
+        check-release-assets,
         agent-binaries-linux,
         agent-binaries-macos,
         agent-binaries-windows,
@@ -1070,23 +1218,6 @@ jobs:
         with:
           pattern: release-agent-*
           merge-multiple: true
-
-      # Names mirror the agent-binaries-* matrices (and sign-agent-binaries /
-      # verify-release). Publish only bytes that match their checksum sidecar.
-      - name: Check the agent binary set
-        run: |
-          set -euo pipefail
-          for a in termihub-agent-linux-x64 termihub-agent-linux-arm64 \
-            termihub-agent-linux-armv7 termihub-agent-macos-arm64 termihub-agent-macos-x64 \
-            termihub-agent-windows-x64.exe termihub-agent-windows-arm64.exe; do
-            for f in "$a" "${a}.sha256"; do
-              if [ ! -s "$f" ]; then
-                echo "::error::Missing or empty agent asset: ${f}"
-                exit 1
-              fi
-            done
-            sha256sum -c "${a}.sha256"
-          done
 
       # Provenance for the agent binaries themselves (CI-022). The .sha256 and
       # .sig sidecars are not attested: the attestation already binds each
@@ -1121,7 +1252,7 @@ jobs:
   # Read-only (#4730): it installs npm packages and runs cargo-about.
   third-party-notices:
     name: Generate Third-Party Notices
-    needs: [verify-version, verify-supply-chain, create-release]
+    needs: [verify-version, verify-supply-chain, release-version]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1169,7 +1300,7 @@ jobs:
   # versioned release-asset name, attested.
   upload-third-party-notices:
     name: Attest and Upload Third-Party Notices
-    needs: [verify-version, verify-supply-chain, create-release, third-party-notices]
+    needs: [verify-version, verify-supply-chain, create-release, check-release-assets, third-party-notices]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1190,10 +1321,6 @@ jobs:
           VERSION: ${{ needs.create-release.outputs.version }}
         run: |
           set -euo pipefail
-          if [ ! -s THIRD_PARTY_NOTICES.txt ]; then
-            echo "::error::Missing or empty THIRD_PARTY_NOTICES.txt"
-            exit 1
-          fi
           cp THIRD_PARTY_NOTICES.txt "termiHub-${VERSION}-THIRD_PARTY_NOTICES.txt"
 
       - name: Attest notices provenance
@@ -1230,6 +1357,9 @@ jobs:
   #   - sbom only downloads that artifact, attests it and uploads it with
   #     first-party actions and `gh`; it checks nothing out and runs no npm code.
   # release-sbom-split.test.mjs pins both halves.
+  # Not part of the dry run yet: it needs create-release for the version. #4484
+  # moves it into the lane by needing release-version instead (and the version
+  # from needs.release-version.outputs.version).
   sbom-generate:
     name: Generate SBOMs
     needs: [verify-version, verify-supply-chain, create-release]
