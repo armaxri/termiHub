@@ -95,6 +95,7 @@ SCRIPTS=(
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/plugin-index-signing.sh"
   "scripts/internal/plugin-ipc-fuzz.sh"
+  "scripts/internal/real-keychain-tests.sh"
   "scripts/internal/registry-mirror.sh"
   "scripts/internal/release-draft.sh"
   "scripts/internal/release-smoke-app-lifecycle.sh"
