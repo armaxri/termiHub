@@ -189,7 +189,7 @@ describe("CustomRuleEditor", () => {
       setInput(byTestId("custom-rule-pattern"), "ERROR");
 
       expect(compileRules).toHaveBeenCalled();
-      const rules = vi.mocked(compileRules).mock.calls.at(-1)![0];
+      const rules = vi.mocked(compileRules).mock.lastCall![0];
       expect(rules[0].pattern).toBe("ERROR");
     });
 
