@@ -298,6 +298,31 @@ tests:
 
   - id: MT-UI-53
     release_gate: true
+    manual_reason: "real layout and hover paint at a dragged sidebar width; the collapse logic is unit-tested with a mocked ResizeObserver"
+    name: "Every sidebar works at the default and the minimum sidebar width"
+    pr: 4720
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Turn on Settings > General > Experimental Features. Create a workspace 'test', one named 'ssh-production-cluster', a macro, a workflow with a schedule, a tunnel, a service, an HTTP monitor and a remote agent."
+      - "At the default sidebar width (260px) open each sidebar in turn: Connections (with Remote Agents), File Browser, SSH Tunnels, Services, Workspaces, Macros, Workflows (with Schedules and History), Network Tools, Recent Sessions and Plugins."
+      - "Drag the sidebar edge fully left to its minimum width (200px; or focus the resize handle and press Home) and open every sidebar again."
+      - "In each sidebar hover a list row, then Tab onto it with the keyboard."
+      - "At the minimum width open any '…' overflow menu in a toolbar or header and pick an action from it."
+    expected:
+      - "At the default width toolbars show their labels where they fit (e.g. '+ New Workspace'); nothing is clipped."
+      - "At the minimum width toolbar buttons become icons with tooltips or move into a '…' menu; no button is cut off or missing, and import/export stay reachable."
+      - "Row names use the full row ('ssh-production-cluster', not 'ss…'); a name that really does not fit ends in '…' and shows the full name in a tooltip."
+      - "Hovering or focusing a row shows its actions over the end of the row; all of them are visible (a long set wraps), and they disappear again on leave."
+      - "The Schedules header keeps 'Pause all' on one line or hides it behind the toggle's tooltip; the toggle and '+' are never clipped. History headers keep their buttons."
+      - "Agent header buttons wrap rather than clip; HTTP monitor rows keep the URL readable with status and age below it when narrow."
+      - "The overflow menu action runs exactly like its toolbar button."
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-54
+    release_gate: true
     manual_reason: "fresh-start lazy-chunk CSS loading and settings row layout are visual; the stylesheet placement is pinned by ui/uiCssCoverage.test.ts"
     name: "Settings fields render styled on a fresh start (no connection editor opened)"
     pr: 4708

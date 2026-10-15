@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { Circle, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, SearchInput, toast, Tooltip, EmptyState } from "@/components/ui";
+import { SearchInput, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
-import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
+import { exportImportActions } from "@/components/Sidebar/ExportImportButtons";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useListFilter, nameDescriptionTagsFields } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
@@ -215,41 +215,39 @@ export function MacroSidebar() {
 
   return (
     <div className="macro-sidebar" data-testid="macro-sidebar">
-      <SidebarToolbar>
-        <Tooltip content="New Macro (author by hand)" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Plus size={12} />}
-            onClick={handleNew}
-            aria-label="New Macro"
-            data-testid="macro-new-btn"
-          >
-            New
-          </Button>
-        </Tooltip>
-        <Tooltip content="Record New Macro" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Circle size={12} />}
-            onClick={handleRecord}
-            aria-label="Record New Macro"
-            data-testid="macro-record-btn"
-          >
-            Record New
-          </Button>
-        </Tooltip>
-        <ExportImportButtons
-          onExport={handleExportAll}
-          onImport={handleImport}
-          exportLabel="Export All Macros"
-          importLabel="Import Macros"
-          exportDisabled={macros.length === 0}
-          exportTestId="macro-export-all-btn"
-          importTestId="macro-import-btn"
-        />
-      </SidebarToolbar>
+      <SidebarToolbar
+        aria-label="Macro actions"
+        overflowLabel="More macro actions"
+        overflowTestId="macro-toolbar-overflow"
+        actions={[
+          {
+            id: "new",
+            label: "New Macro",
+            shortLabel: "New",
+            tooltip: "New Macro (author by hand)",
+            icon: <Plus size={12} />,
+            onClick: handleNew,
+            testId: "macro-new-btn",
+          },
+          {
+            id: "record",
+            label: "Record New Macro",
+            shortLabel: "Record New",
+            icon: <Circle size={12} />,
+            onClick: handleRecord,
+            testId: "macro-record-btn",
+          },
+          ...exportImportActions({
+            onExport: handleExportAll,
+            onImport: handleImport,
+            exportLabel: "Export All Macros",
+            importLabel: "Import Macros",
+            exportDisabled: macros.length === 0,
+            exportTestId: "macro-export-all-btn",
+            importTestId: "macro-import-btn",
+          }),
+        ]}
+      />
       <div className="macro-sidebar__search">
         <SearchInput
           value={query}

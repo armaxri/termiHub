@@ -4,7 +4,7 @@ import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manage
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { Button, ConfirmDialog, SearchInput, Tooltip, toast, EmptyState } from "@/components/ui";
+import { ConfirmDialog, SearchInput, toast, EmptyState } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -144,20 +144,21 @@ export function RecentSessionsSidebar() {
   return (
     <div className="recent-sessions" data-testid="recent-sessions-sidebar">
       <QuickConnectBar history={history} defaultUser={defaultUser} onConnect={openConnection} />
-      <SidebarToolbar justify="end">
-        <Tooltip content="Clear all history" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Trash2 size={14} />}
-            onClick={() => setConfirmClear(true)}
-            disabled={history.length === 0}
-            aria-label="Clear all history"
-            data-testid="recent-sessions-clear"
-          />
-        </Tooltip>
-      </SidebarToolbar>
+      <SidebarToolbar
+        justify="end"
+        aria-label="Recent session actions"
+        actions={[
+          {
+            id: "clear",
+            label: "Clear all history",
+            icon: <Trash2 size={14} />,
+            onClick: () => setConfirmClear(true),
+            disabled: history.length === 0,
+            iconOnly: true,
+            testId: "recent-sessions-clear",
+          },
+        ]}
+      />
       {history.length > 0 && (
         <div className="recent-sessions__search">
           <SearchInput
