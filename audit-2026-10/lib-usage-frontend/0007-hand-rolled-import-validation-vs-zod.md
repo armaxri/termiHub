@@ -6,8 +6,8 @@ severity: info
 category: arch
 is_workaround: false
 subsystem: "src/services/workflowIo, macroIo, keybindingIo"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4386 — workflow/macro/keybinding imports validate with zod schemas (workflowSchema.ts, shared retry shape with the editor), exact-type drift guards, same error messages"
 audit: 2026-10
 commit: "663465d52"
 relation: new

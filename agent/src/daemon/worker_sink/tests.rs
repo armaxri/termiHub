@@ -189,3 +189,39 @@ async fn dropping_the_sink_closes_the_socket_at_once() {
         .expect("EOF without waiting for any deadline")
         .unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn drain_and_close_delivers_every_frame_to_a_slow_reader() {
+    let (sink, mut client) = sink_pair();
+    let sent: Vec<Vec<u8>> = (0..20).map(|i| chunk(i, 1500)).collect();
+    for payload in &sent {
+        sink.send(MSG_OUTPUT, payload);
+    }
+    // A worker that reads one frame every 2 s — far slower in total than any
+    // wall-clock cap on the queue, but never stalled for the stall bound.
+    let reader = tokio::spawn(async move {
+        let mut got = Vec::new();
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            match protocol::read_frame_async(&mut client).await.unwrap() {
+                Some(frame) => got.push(frame.payload),
+                None => return got,
+            }
+        }
+    });
+    sink.drain_and_close().await;
+    assert_eq!(reader.await.unwrap(), sent, "nothing is cut off");
+}
+
+#[tokio::test(start_paused = true)]
+async fn drain_and_close_on_a_worker_that_is_not_reading_ends_at_the_stall_bound() {
+    let (sink, mut client) = sink_pair();
+    sink.send(MSG_OUTPUT, &chunk(0, 64 * 1024));
+    let start = Instant::now();
+    sink.drain_and_close().await;
+    assert_eq!(start.elapsed(), WRITE_STALL_TIMEOUT);
+
+    let mut rest = Vec::new();
+    client.read_to_end(&mut rest).await.unwrap();
+    assert!(rest.len() <= PIPE);
+}

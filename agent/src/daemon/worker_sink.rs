@@ -156,6 +156,10 @@ impl WorkerSink {
 
     /// Stop accepting frames, let the queued ones drain for at most `limit`,
     /// then close the socket.
+    ///
+    /// `limit` is wall-clock time for the whole queue, so a scheduler stall can
+    /// use it up while the worker is still reading. Where the queued frames
+    /// must reach a reading worker, use [`drain_and_close`](Self::drain_and_close).
     pub async fn close(mut self, limit: Duration) {
         let Some(mut task) = self.task.take() else {
             return;
@@ -165,6 +169,26 @@ impl WorkerSink {
         if tokio::time::timeout(limit, &mut task).await.is_err() {
             task.abort();
         }
+    }
+}
+
+impl WorkerSink {
+    /// Stop accepting frames, let every queued frame reach the worker, then
+    /// close the socket (SM-003 eviction, #4409).
+    ///
+    /// Bounded by progress, not by wall-clock time: the writer task gives up only
+    /// when one write goes [`WRITE_STALL_TIMEOUT`] without the worker taking a
+    /// byte, the same bound that drops an attached worker that stopped reading.
+    /// A wall-clock cap on the whole queue instead counts the time the runtime
+    /// spends elsewhere, and on a loaded host a short one aborted the queue of a
+    /// worker that was reading — with its handshake still in it (#4409).
+    pub async fn drain_and_close(mut self) {
+        let Some(task) = self.task.take() else {
+            return;
+        };
+        // Dropping the sink drops the sender: the task drains and returns.
+        drop(self);
+        let _ = task.await;
     }
 }
 

@@ -1,14 +1,24 @@
 /**
  * Import/export of macros as portable JSON files (#1677).
  *
- * These are pure, dependency-free helpers: serialising a set of macros into a
- * small versioned envelope, validating/parsing an envelope back into macros, and
+ * These are pure helpers: serialising a set of macros into a small versioned
+ * envelope, validating/parsing an envelope back into macros (with zod, #4386), and
  * resolving id/name collisions when merging imported macros into an existing
  * library. File IO (the save/open dialogs) lives in the UI layer; keeping the
  * serialise/validate/collision logic here makes it unit-testable in isolation.
  */
 
-import type { Macro, MacroStep } from "@/types/macro";
+import { z } from "zod";
+
+import type { Macro } from "@/types/macro";
+import {
+  type AssertExact,
+  type ImportIssue,
+  isNonBlankString,
+  isRecord,
+  nonBlankStringSchema,
+  parseImportEnvelope,
+} from "@/services/importEnvelope";
 import { newId } from "@/services/transport/ids";
 
 /**
@@ -45,62 +55,53 @@ export function serializeMacros(macros: Macro[]): string {
   return `${JSON.stringify(envelope, null, 2)}\n`;
 }
 
-/** Type guard: a JSON value is a non-null, non-array object. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/**
+ * Schema for one macro entry of an imported file (#4386). Tolerant of a missing
+ * or non-string `description`/`id`/timestamps and of missing `tags` (the
+ * importer re-stamps those), but strict about the load-bearing `name`, `steps`
+ * and — when present — `tags`. Unknown keys are stripped. Key order is the
+ * order errors are reported in.
+ */
+const importedMacroSchema = z.object({
+  name: nonBlankStringSchema(),
+  steps: z.array(z.object({ data: z.string(), delayMs: z.number().min(0) })),
+  tags: z.array(z.string()).default([]),
+  id: z.string().catch(""),
+  description: z.string().optional().catch(undefined),
+  createdAt: z.string().catch(""),
+  updatedAt: z.string().catch(""),
+});
+/* Drift guard: a new Macro / MacroStep field fails `tsc` until the schema covers it. */
+const _macroExact: AssertExact<z.output<typeof importedMacroSchema>, Macro> = true;
+void _macroExact;
 
 /**
- * Validate one raw macro entry from an imported file, throwing a clear error
- * that names the offending macro (by index) when a field is missing or the
- * wrong type. Returns a normalised {@link Macro} — tolerant of a missing
- * `description`/`tags`/`id`/timestamps since the importer re-stamps those, but
- * strict about the load-bearing `name` and `steps`.
+ * Describe an issue inside macro `index` as `<location> <problem>`, naming the
+ * macro by index and — once its name is valid — by name.
  */
-function validateMacro(raw: unknown, index: number): Macro {
+function describeMacroIssue(
+  _issue: ImportIssue,
+  raw: unknown,
+  index: number,
+  path: PropertyKey[]
+): string {
   const where = `macro at index ${index}`;
-  if (!isRecord(raw)) {
-    throw new Error(`Invalid macro file: ${where} is not an object.`);
+  if (!isRecord(raw)) return `${where} is not an object.`;
+  const label = isNonBlankString(raw.name) ? `${where} ("${raw.name}")` : where;
+  const [field, step, stepField] = path;
+  switch (field) {
+    case "name":
+      return `${where} is missing a name.`;
+    case "steps":
+      if (typeof step !== "number") return `${label} is missing its steps.`;
+      return stepField === "delayMs"
+        ? `step ${step} of ${label} has an invalid delay.`
+        : `step ${step} of ${label} is malformed.`;
+    case "tags":
+      return `${label} has malformed tags.`;
+    default:
+      return `${label} is malformed.`;
   }
-  if (typeof raw.name !== "string" || raw.name.trim() === "") {
-    throw new Error(`Invalid macro file: ${where} is missing a name.`);
-  }
-  if (!Array.isArray(raw.steps)) {
-    throw new Error(`Invalid macro file: ${where} ("${raw.name}") is missing its steps.`);
-  }
-
-  const steps: MacroStep[] = raw.steps.map((step, stepIndex) => {
-    if (!isRecord(step) || typeof step.data !== "string") {
-      throw new Error(
-        `Invalid macro file: step ${stepIndex} of ${where} ("${raw.name}") is malformed.`
-      );
-    }
-    const delayMs = step.delayMs;
-    if (typeof delayMs !== "number" || !Number.isFinite(delayMs) || delayMs < 0) {
-      throw new Error(
-        `Invalid macro file: step ${stepIndex} of ${where} ("${raw.name}") has an invalid delay.`
-      );
-    }
-    return { data: step.data, delayMs };
-  });
-
-  let tags: string[] = [];
-  if (raw.tags !== undefined) {
-    if (!Array.isArray(raw.tags) || raw.tags.some((tag) => typeof tag !== "string")) {
-      throw new Error(`Invalid macro file: ${where} ("${raw.name}") has malformed tags.`);
-    }
-    tags = raw.tags as string[];
-  }
-
-  return {
-    id: typeof raw.id === "string" ? raw.id : "",
-    name: raw.name,
-    description: typeof raw.description === "string" ? raw.description : undefined,
-    tags,
-    steps,
-    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
-    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
-  };
 }
 
 /**
@@ -110,26 +111,23 @@ function validateMacro(raw: unknown, index: number): Macro {
  * bad file never corrupts the library, it just surfaces a toast.
  */
 export function parseMacroEnvelope(json: string): Macro[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new Error("Invalid macro file: the file is not valid JSON.");
-  }
-
-  if (!isRecord(parsed)) {
-    throw new Error("Invalid macro file: expected a macro export object.");
-  }
-  if (parsed.version !== MACRO_EXPORT_VERSION) {
-    throw new Error(
-      `Unsupported macro file version: ${String(parsed.version)} (expected ${MACRO_EXPORT_VERSION}).`
-    );
-  }
-  if (!Array.isArray(parsed.macros)) {
-    throw new Error('Invalid macro file: missing "macros" array.');
-  }
-
-  return parsed.macros.map((macro, index) => validateMacro(macro, index));
+  const macros = parseImportEnvelope(json, {
+    label: "macro",
+    version: MACRO_EXPORT_VERSION,
+    listKey: "macros",
+    entry: importedMacroSchema,
+    describeEntryIssue: describeMacroIssue,
+  });
+  // Normalise to the stable key order.
+  return macros.map(({ id, name, description, tags, steps, createdAt, updatedAt }) => ({
+    id,
+    name,
+    description,
+    tags,
+    steps,
+    createdAt,
+    updatedAt,
+  }));
 }
 
 /** Default fresh-id generator; mirrors the store's `generateMacroId`. */
