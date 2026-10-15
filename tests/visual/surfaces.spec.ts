@@ -100,9 +100,9 @@ class SurfaceReport {
   async check(surface: string, root: string, extra: LayoutIssue[] = []): Promise<void> {
     await settle(this.page);
     const found = await this.page.evaluate(auditLayout, { root, styledClasses: STYLED_CLASSES });
-    const consoleIssues = this.consoleErrors.splice(0).map(
-      (text): LayoutIssue => ({ kind: "console-error", where: "console", detail: text })
-    );
+    const consoleIssues = this.consoleErrors
+      .splice(0)
+      .map((text): LayoutIssue => ({ kind: "console-error", where: "console", detail: text }));
     const unexpected: string[] = [];
     for (const issue of [...found, ...extra, ...consoleIssues]) {
       const entry = allowedBy(surface, issue);
@@ -120,7 +120,9 @@ class SurfaceReport {
   /** Note allowlist entries that matched nothing, and IPC the mock left unanswered. */
   async finish(surfacePattern: RegExp): Promise<void> {
     for (const entry of ALLOWLIST) {
-      const relevant = [...SURFACE_IDS].some((s) => surfacePattern.test(s) && entry.surface.test(s));
+      const relevant = [...SURFACE_IDS].some(
+        (s) => surfacePattern.test(s) && entry.surface.test(s)
+      );
       if (relevant && !this.used.has(entry)) {
         this.testInfo.annotations.push({
           type: "warning",
@@ -142,9 +144,14 @@ class SurfaceReport {
 const SURFACE_IDS = new Set<string>([
   ...SETTINGS_CATEGORIES.map((c) => `settings/${c}`),
   ...SIDEBARS.flatMap((s) => SIDEBAR_WIDTHS.map((w) => `sidebar/${s}@${w.name}`)),
-  ...["unlock", "shortcuts", "command-palette", "customize-layout", "export", "password-prompt"].map(
-    (d) => `dialog/${d}`
-  ),
+  ...[
+    "unlock",
+    "shortcuts",
+    "command-palette",
+    "customize-layout",
+    "export",
+    "password-prompt",
+  ].map((d) => `dialog/${d}`),
 ]);
 
 /** Wait for React to commit and the browser to lay out the change. */

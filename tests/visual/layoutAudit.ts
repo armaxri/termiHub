@@ -75,7 +75,9 @@ export function auditLayout({ root, styledClasses }: AuditArgs): LayoutIssue[] {
       el.getAttribute("title") ??
       (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
     const cls = typeof el.className === "string" ? el.className.trim().split(/\s+/)[0] : "";
-    const id = testId ? `[data-testid=${testId}]` : `${el.tagName.toLowerCase()}${cls ? `.${cls}` : ""}`;
+    const id = testId
+      ? `[data-testid=${testId}]`
+      : `${el.tagName.toLowerCase()}${cls ? `.${cls}` : ""}`;
     return label ? `${id} "${label}"` : id;
   };
 
@@ -155,7 +157,9 @@ export function auditLayout({ root, styledClasses }: AuditArgs): LayoutIssue[] {
   }
 
   // ── clipped-control: every control is fully visible ──
-  const controls = all.filter((el) => el.matches(CONTROL_SELECTOR) && !isVisuallyHiddenOnPurpose(el));
+  const controls = all.filter(
+    (el) => el.matches(CONTROL_SELECTOR) && !isVisuallyHiddenOnPurpose(el)
+  );
   for (const el of controls) {
     const b = r(el);
     if (b.width < 2 || b.height < 2) {
@@ -210,11 +214,16 @@ export function auditLayout({ root, styledClasses }: AuditArgs): LayoutIssue[] {
     const b = r(el);
     const cs = getComputedStyle(el);
     let grow = 0;
-    if (cs.outlineStyle !== "none") grow = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset);
-    for (const m of cs.boxShadow.matchAll(/(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px(?![^,]*inset)/g)) {
+    if (cs.outlineStyle !== "none")
+      grow = parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset);
+    for (const m of cs.boxShadow.matchAll(
+      /(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px(?![^,]*inset)/g
+    )) {
       grow = Math.max(grow, parseFloat(m[4]));
     }
-    return grow > 0 ? new DOMRect(b.x - grow, b.y - grow, b.width + 2 * grow, b.height + 2 * grow) : b;
+    return grow > 0
+      ? new DOMRect(b.x - grow, b.y - grow, b.width + 2 * grow, b.height + 2 * grow)
+      : b;
   };
   /** Not painted at rest: some ancestor is fully transparent (hover-revealed). */
   const transparent = (el: Element): boolean => {
@@ -224,9 +233,9 @@ export function auditLayout({ root, styledClasses }: AuditArgs): LayoutIssue[] {
     return false;
   };
   /** The part of `rect` its ancestors let through (scrollers clip too), or null. */
-  const visiblePart = (el: Element, rect: DOMRect): DOMRect | null => {
+  const visiblePart = (el: Element, rect: DOMRect, includeSelf = false): DOMRect | null => {
     let { left, top, right, bottom } = rect;
-    for (const a of clippingAncestors(el)) {
+    for (const a of includeSelf ? [el, ...clippingAncestors(el)] : clippingAncestors(el)) {
       const cs = getComputedStyle(a);
       const ab = r(a);
       if (cs.overflowX !== "visible") {
@@ -260,7 +269,8 @@ export function auditLayout({ root, styledClasses }: AuditArgs): LayoutIssue[] {
     const range = document.createRange();
     range.selectNodeContents(node);
     for (const raw of Array.from(range.getClientRects())) {
-      const rect = visiblePart(owner, raw);
+      // The owner clips its own text too (an ellipsis-truncated label).
+      const rect = visiblePart(owner, raw, true);
       if (rect) lines.push({ owner, rect, text: text.slice(0, 30) });
     }
   }
