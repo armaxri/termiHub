@@ -41,6 +41,10 @@
 //! |           | build + verify the chain of a root from the folder `<arg>`|
 //! |           | (or of the `ROOT` store) with `CertGetCertificateChain`, |
 //! |           | as `rustls-platform-verifier` does (Windows; #4606)      |
+//! | `roots`   | load TLS roots the way a Windows plugin does (#4811):    |
+//! |           | `rustls_native_certs::load_native_certs()` (which reads  |
+//! |           | the host's `SSL_CERT_FILE` snapshot), each parsed as a   |
+//! |           | webpki trust anchor (Windows)                            |
 //! | `proclist`| size the process table, `sysctl(KERN_PROC_ALL)` (macOS)  |
 //! | `procargs`| read `KERN_PROCARGS2` of the process `<arg>` (macOS)     |
 //! | `pidpath` | `proc_pidpath` of the process `<arg>` (macOS)            |
@@ -135,6 +139,7 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
             .map_err(io),
         "inotify" => inotify_watch(arg),
         "trust" => verify_a_system_root(arg),
+        "roots" => load_tls_roots(),
         "proclist" => macos::process_table_size(),
         "procargs" => macos::process_arguments(arg),
         "pidpath" => macos::process_path(arg),
@@ -165,9 +170,39 @@ fn verify_a_system_root(_roots: &str) -> Result<String, String> {
     macos::verify_a_system_root()
 }
 
+/// Windows (#4811): the TLS roots a sandboxed plugin gets — the host's root
+/// snapshot, found through `SSL_CERT_FILE` by `rustls-native-certs`, every
+/// certificate of which must parse as a webpki trust anchor. ALLOWED with the
+/// number of anchors; DENIED without `SSL_CERT_FILE`, on any load error, or
+/// with no anchor at all.
+#[cfg(windows)]
+fn load_tls_roots() -> Result<String, String> {
+    let file = std::env::var("SSL_CERT_FILE").map_err(|e| format!("SSL_CERT_FILE: {e}"))?;
+    let loaded = rustls_native_certs::load_native_certs();
+    if !loaded.errors.is_empty() {
+        return Err(format!("loading the roots: {:?}", loaded.errors));
+    }
+    let mut anchors = 0usize;
+    for cert in &loaded.certs {
+        webpki::anchor_from_trusted_cert(cert)
+            .map_err(|e| format!("root #{anchors} is no trust anchor: {e}"))?;
+        anchors += 1;
+    }
+    if anchors == 0 {
+        return Err(format!("no root in {file}"));
+    }
+    Ok(format!("{anchors} trust anchors from {file}"))
+}
+
+#[cfg(not(windows))]
+fn load_tls_roots() -> Result<String, String> {
+    Err("the root snapshot is Windows-only".to_owned())
+}
+
 /// Windows: the system trust store through CryptoAPI, the path
 /// `rustls-platform-verifier`, `native-tls` (SChannel) and
-/// `rustls-native-certs` take (#4606). Denied inside the LPAC today (#4811).
+/// `rustls-native-certs` take (#4606). Denied inside the LPAC: a sandboxed
+/// plugin gets the host's root snapshot instead (#4811, `roots`).
 #[cfg(windows)]
 mod windows_trust {
     use std::ffi::{c_char, c_void};

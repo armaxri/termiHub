@@ -26,10 +26,13 @@
 //! namespace layer masks the home folder), the process table and other
 //! processes' arguments and paths (macOS) — and, as positive controls, the
 //! TLS trust store: the distribution CA bundle on Linux, the CA bundle and
-//! the platform certificate verifier (`trustd`) on macOS. On Windows the
-//! LPAC cannot reach the trust store; that known gap is asserted (#4606,
-//! fix tracked as #4811), together with negative controls for the user's
-//! CNG keys and certificate-store registry keys.
+//! the platform certificate verifier (`trustd`) on macOS, and on Windows the
+//! host's TLS root snapshot (#4811): `rustls-native-certs` loads it through
+//! `SSL_CERT_FILE` and every root parses as a webpki trust anchor. The LPAC
+//! still cannot reach the system trust store itself (#4606; the platform
+//! verifier stays unavailable), and that is asserted too, together with
+//! negative controls for the user's CNG keys, certificate-store registry
+//! keys and writing the snapshot.
 //!
 //! The resource limits are switched off here so that every denial is the
 //! sandbox's own (macOS `RLIMIT_NPROC = 0` would deny `spawn` / `fork` too).
@@ -157,12 +160,42 @@ fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Windows: none yet. The Less-Privileged AppContainer cannot reach the
-/// system trust store (#4606; see [`windows_trust_store_gap`]), tracked as
-/// #4811.
+/// Windows (#4811): the host's TLS root snapshot. `roots` loads it the way a
+/// plugin does (`rustls-native-certs` through `SSL_CERT_FILE`, each root a
+/// webpki trust anchor), and the file is readable.
 #[cfg(windows)]
-fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
-    Vec::new()
+fn trust_store_reads(data_dir: &Path) -> Vec<(&'static str, String)> {
+    vec![
+        ("roots", String::new()),
+        ("read", snapshot_file(data_dir).display().to_string()),
+    ]
+}
+
+/// Windows: the host's TLS root snapshot of the plugin whose data folder is
+/// `data_dir` (`<root>/.data/<id>` → `<root>/.tls-roots/<id>/system-roots.pem`).
+#[cfg(windows)]
+fn snapshot_file(data_dir: &Path) -> PathBuf {
+    let id = data_dir.file_name().unwrap();
+    let root = data_dir.parent().and_then(Path::parent).unwrap();
+    root.join(".tls-roots").join(id).join("system-roots.pem")
+}
+
+/// Windows (#4811): the snapshot holds public certificates only, and the
+/// plugin's `SSL_CERT_FILE` names it.
+#[cfg(windows)]
+fn check_snapshot(data_dir: &Path, ssl_cert_file: &str) {
+    let file = snapshot_file(data_dir);
+    let pem = std::fs::read_to_string(&file).expect("the host wrote the snapshot");
+    let begins = pem.matches("-----BEGIN ").count();
+    let certs = pem.matches("-----BEGIN CERTIFICATE-----").count();
+    assert!(certs > 0, "an empty snapshot");
+    assert_eq!(begins, certs, "only CERTIFICATE blocks");
+    assert!(!pem.contains("PRIVATE KEY"));
+    println!("snapshot: {certs} roots in {}", file.display());
+    assert!(
+        ssl_cert_file.ends_with(&file.display().to_string()),
+        "SSL_CERT_FILE: {ssl_cert_file}"
+    );
 }
 
 /// Windows (#4606): the CryptoAPI chain engine (`CertGetCertificateChain` +
@@ -172,8 +205,9 @@ fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
 /// folder. Inside the LPAC it is denied (`ERROR_ACCESS_DENIED`), and so are
 /// both `ROOT` system stores; no capability opens them without also opening
 /// `HKCU\Software` (`registryRead`), and `lpacCryptoServices` alone does
-/// not. This asserts that known gap so a change is noticed: once the host
-/// provides a root snapshot (#4811) this becomes a positive control.
+/// not. The host's root snapshot (#4811) is how a plugin gets roots instead;
+/// the platform verifier stays unavailable, and this asserts it so a change
+/// is noticed (and the docs updated).
 #[cfg(windows)]
 fn windows_trust_store_gap(data_dir: &Path) -> (&'static str, String) {
     let folder = data_dir.join("trust-roots");
@@ -749,9 +783,12 @@ async fn escape_attempts_fail_and_positive_controls_work() {
             println!("{line}");
             assert!(
                 !allowed,
-                "the LPAC now reaches the trust store: make this a positive control and \
-                 update the docs (#4811): {line}"
+                "the LPAC now reaches the system trust store: the platform verifier \
+                 works, update the docs (#4811): {line}"
             );
+            let (allowed, line) = probe(conn.as_ref(), &mut rx, "env", "SSL_CERT_FILE").await;
+            assert!(allowed, "{line}");
+            check_snapshot(&data_dir, &line);
         }
     }
     if expect_confined() {
@@ -781,6 +818,17 @@ async fn escape_attempts_fail_and_positive_controls_work() {
         ("env", "SSH_AUTH_SOCK".to_owned()),
     ];
     attempts.extend(os_escape_attempts(&canary));
+    // The TLS root snapshot is read-only to the plugin (#4811): it can neither
+    // rewrite it (to trust its own root) nor plant a file next to it.
+    #[cfg(windows)]
+    if expect_confined() {
+        let snapshot = snapshot_file(&data_dir);
+        attempts.push(("write", snapshot.display().to_string()));
+        attempts.push((
+            "write",
+            snapshot.with_file_name("planted.pem").display().to_string(),
+        ));
+    }
     // The metadata of a file in the home folder (#4342, SEC2-006): Seatbelt
     // denies it; on Linux landlock does not mediate `stat`, so it is hidden
     // only where the namespace layer masks the home folder.

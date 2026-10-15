@@ -287,6 +287,9 @@ windows-sys = { version = "0.59", features = [
     # Crash reports list every loaded module (#4795): `GetModuleHandleExW` pins
     # a module while its PE headers are read for the PDB id.
     "Win32_System_LibraryLoader",
+    # The TLS root snapshot of a sandboxed plugin (#4811): the host reads the
+    # system `ROOT` / `AuthRoot` / `Disallowed` certificate stores.
+    "Win32_Security_Cryptography",
 ] }
 # Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
 # Git Bash is discoverable regardless of install location — see

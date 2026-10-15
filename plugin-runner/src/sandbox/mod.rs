@@ -128,6 +128,15 @@ pub struct SandboxPolicy {
     /// reachable when they lie inside one of these.
     #[serde(default)]
     pub denied_dirs: Vec<String>,
+    /// Windows only (#4811): the host's read-only snapshot of the system TLS
+    /// roots for this plugin, a PEM file outside the data folder. The
+    /// Less-Privileged AppContainer cannot open the system trust store, so the
+    /// unconfined host exports the roots there before each runner start,
+    /// grants the AppContainer read access only and points the runner's
+    /// `SSL_CERT_FILE` at it. `None` elsewhere: Seatbelt and landlock let the
+    /// plugin read the system bundle itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_roots_file: Option<String>,
     /// Test hook: layers the runner must treat as unavailable on this system
     /// (`landlock` and `netns` are understood, on Linux), to exercise the
     /// reduced-isolation path and the no-namespace path on any kernel. Set by a debug-build host from
@@ -193,6 +202,9 @@ impl SandboxPolicy {
         check(&self.install_dir)?;
         if let Some(data) = &self.data_dir {
             check(data)?;
+        }
+        if let Some(roots) = &self.tls_roots_file {
+            check(roots)?;
         }
         self.denied_dirs.iter().try_for_each(|d| check(d))
     }

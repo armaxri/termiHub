@@ -11,6 +11,7 @@
 //! | the runner executable and its folder   | read + execute      |
 //! | the plugin's install folder (tree)     | read + execute      |
 //! | the plugin's data folder (tree)        | modify              |
+//! | its TLS root snapshot folder (tree)    | read (#4811)        |
 //!
 //! Nothing else: no user profile, no network, no `HKCU\Software`, no other
 //! plugin's folders. The runner's folder entry is the folder itself only (not
@@ -36,13 +37,21 @@ use termihub_plugin_runner::sandbox::SandboxPolicy;
 
 use crate::plugin::HostError;
 
-/// Create or reuse plugin `plugin_id`'s AppContainer and grant it the runner
-/// `exec_path` and the folders of `policy`.
+/// A runner's confinement: the plugin's AppContainer, and the TLS root
+/// snapshot it may read when the export succeeded (#4811).
+#[derive(Debug, Clone)]
+pub(super) struct Confinement {
+    pub(super) container: AppContainer,
+    pub(super) tls_roots: Option<PathBuf>,
+}
+
+/// Create or reuse plugin `plugin_id`'s AppContainer, grant it the runner
+/// `exec_path` and the folders of `policy`, and refresh its TLS root snapshot.
 pub(super) fn prepare(
     exec_path: &Path,
     plugin_id: &str,
     policy: &SandboxPolicy,
-) -> Result<AppContainer, HostError> {
+) -> Result<Confinement, HostError> {
     let failed = |what: &str, e: &dyn std::fmt::Display| {
         HostError::SandboxSetupFailed(format!("{what}: {e}"))
     };
@@ -65,7 +74,20 @@ pub(super) fn prepare(
                 .map_err(|e| failed(&format!("granting `{}`", data.display()), &e))?;
         }
     }
-    Ok(container)
+    let tls_roots = policy.tls_roots_file.as_deref().and_then(|file| {
+        super::tls_roots::refresh(&container, Path::new(file))
+            .inspect_err(|e| {
+                tracing::warn!(
+                    target: crate::plugin::PLUGIN_LOG_TARGET,
+                    "plugin `{plugin_id}` starts without system TLS roots: {e}"
+                );
+            })
+            .ok()
+    });
+    Ok(Confinement {
+        container,
+        tls_roots,
+    })
 }
 
 /// Every runner executable this process granted a plugin, so an uninstall

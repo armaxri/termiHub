@@ -669,7 +669,8 @@ your code is mapped, the runner is confined by the operating system:
 **What your plugin may do directly:**
 
 - read its install folder, the system libraries and the system's TLS trust
-  store (see [TLS and certificate roots](#tls-and-certificate-roots));
+  store (on Windows a read-only snapshot of it, see
+  [TLS and certificate roots](#tls-and-certificate-roots));
 - read and write its private data folder (`<plugins>/.data/<id>`, the
   `data_dir` of the [host context](#the-host-context-abi-11)). `HOME` and
   `TMPDIR` point inside it (on Windows also `TMP`, `TEMP` and `USERPROFILE`), so
@@ -723,17 +724,36 @@ verification:
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Linux   | Read-only: the distribution CA bundles and hashed folders (`/etc/ssl/certs`, `/etc/ssl/cert.pem`, `/etc/pki/tls/certs`, `/etc/pki/ca-trust/extracted`, `/etc/ca-certificates`, `/usr/share/ca-certificates`, `/usr/local/share/ca-certificates`, `/var/lib/ca-certificates`) and the OpenSSL / crypto-policies files | `rustls-native-certs`, `rustls-platform-verifier`, or OpenSSL's default verify paths      |
 | macOS   | The platform verifier: `SecTrustEvaluateWithError` reaches the per-user trust daemon (`trustd`), which applies the system, admin and user trust settings. Read-only: `/etc/ssl/cert.pem` (the system roots only)                                                                                                     | `rustls-platform-verifier`, `native-tls`, or `security-framework`'s `SecTrust` evaluation |
-| Windows | Nothing yet: inside the Less-Privileged AppContainer the system certificate stores and the CryptoAPI chain engine are denied, so the platform verifier and store enumeration both fail ([#4811](https://github.com/armaxri/termiHub/issues/4811) tracks a host-provided root snapshot)                               | Until #4811: ship the roots your plugin needs (for example `webpki-roots`)                |
+| Windows | A read-only snapshot of the system roots, written by termiHub before each start and named by `SSL_CERT_FILE`. The system certificate stores and the CryptoAPI chain engine stay denied inside the Less-Privileged AppContainer, so the platform verifier does not work                                               | `rustls-native-certs` (reads `SSL_CERT_FILE`), or OpenSSL with `SSL_CERT_FILE`            |
 
 On Windows the sandbox was probed directly (#4606): `CertOpenSystemStore("ROOT")`,
 the local-machine `ROOT` store and `CertGetCertificateChain` all fail with
 `ERROR_ACCESS_DENIED` inside the Less-Privileged AppContainer. The
 `lpacCryptoServices` capability does not change that, and `registryRead` would
 also open `HKCU\Software` (other applications' saved sessions), so termiHub
-grants neither. Until the host provides a snapshot of the system roots
-([#4811](https://github.com/armaxri/termiHub/issues/4811)), a Windows plugin
-that needs TLS must carry its own roots, which means a user's corporate CA is
-not trusted there.
+grants neither. Instead, termiHub (outside the sandbox) exports the system roots
+into a PEM file before every start of your plugin (#4811), grants your plugin
+read access to it and sets `SSL_CERT_FILE` to its path:
+
+- **What it holds:** the certificates of the current-user and local-machine
+  `ROOT` and `AuthRoot` stores that are valid for server authentication and not
+  expired, minus everything in the `Disallowed` stores (matched by certificate
+  or by public key). Public certificates only; intermediates (the `CA` store)
+  are not included, since every certificate in the file becomes a trust anchor.
+- **Where:** `<plugins>/.tls-roots/<id>/system-roots.pem`, outside your data
+  folder. Your plugin can read it but not change it or add files next to it.
+- **How to use it:** call `rustls_native_certs::load_native_certs()` — it reads
+  `SSL_CERT_FILE` instead of the system store — and add the certificates to a
+  `rustls::RootCertStore`. OpenSSL-based code honours `SSL_CERT_FILE` too.
+  `rustls-platform-verifier`, `native-tls` (SChannel) and `webpki-roots`-only
+  setups do not use it; the first two fail inside the sandbox.
+- **Freshness:** a root the user adds takes effect at the next start of your
+  plugin (re-enabling it, an idle restart, or restarting termiHub). Roots that
+  Windows has not downloaded yet (automatic root update fetches some on first
+  use) are not in the file.
+
+If the export fails, your plugin starts without `SSL_CERT_FILE` and termiHub
+logs a warning; `load_native_certs()` then reports an error.
 
 On macOS, enumerating the trust anchors (`SecTrustCopyAnchorCertificates`,
 `SecTrustSettingsCopyCertificates`, which `rustls-native-certs` uses) needs the

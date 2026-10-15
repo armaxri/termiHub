@@ -771,6 +771,8 @@ impl PluginManager {
         // The plugin's private data directory (ABI 1.1 host context, #3576)
         // survives updates but not an uninstall.
         super::host_context::remove_plugin_data_dir(&self.root, id)?;
+        // Its TLS root snapshot (Windows, #4811), regenerated at every start.
+        super::sandbox::remove_tls_roots_snapshot(&self.root, id)?;
         // Its Windows sandbox profile (the per-plugin AppContainer, #4187).
         #[cfg(windows)]
         super::sandbox::remove_app_container_profile(id);

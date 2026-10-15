@@ -3614,9 +3614,23 @@ sandbox is a pre-v1.0 requirement and approved the concept
   other processes' arguments and environment. On Windows the LPAC cannot reach the trust store
   (#4606, probed on the hosted runner): both `ROOT` system stores and `CertGetCertificateChain`
   are denied, `lpacCryptoServices` does not open them, and `registryRead` would re-open
-  `HKCU\Software` (the runner then refuses to start). No capability is added; a host-provided root
-  snapshot is the planned fix (#4811). The escape probe asserts the gap and that the user's CNG
-  keys and certificate-store keys stay unreachable.
+  `HKCU\Software` (the runner then refuses to start). No capability is added.
+- **Windows TLS root snapshot (#4811).** Because the LPAC cannot reach the trust store, the
+  unconfined host exports the roots before every runner start (load, idle respawn, crash
+  recovery): current-user and local-machine `ROOT` and `AuthRoot` certificates valid for server
+  authentication and within their validity period, minus the `Disallowed` stores (by certificate
+  or public key), sorted and de-duplicated, as `CERTIFICATE` PEM blocks into
+  `<plugins>/.tls-roots/<id>/system-roots.pem` (`SandboxPolicy::tls_roots_file`). The folder lies
+  outside the data folder and grants the AppContainer `FILE_GENERIC_READ` only; the file is
+  rewritten through a renamed temporary file only when its content changed, removed when an
+  export fails, and deleted on uninstall. The host sets `SSL_CERT_FILE` to it in the runner's
+  environment; the scrubbed environment never passes the host's own value. Intermediates are
+  excluded (every certificate in the file is a trust anchor). Policy: Windows plugins load roots
+  through `SSL_CERT_FILE` (`rustls-native-certs`, OpenSSL); the platform verifier stays
+  unavailable. The escape probe asserts that `rustls-native-certs` loads the snapshot and every
+  root parses as a webpki anchor, that the plugin cannot write the snapshot or its folder, that
+  the CryptoAPI chain engine stays denied, and that the user's CNG keys and certificate-store keys
+  stay unreachable.
 - **Fail closed.** The runner reports the layers it actually enforced before `dlopen`. If a layer is
   missing (mostly a Linux kernel without landlock) the plugin loads only with the hash-bound
   `reducedIsolationAccepted` acknowledgement; if setup fails, it does not load. Linux reduced
@@ -3648,8 +3662,8 @@ sandbox is a pre-v1.0 requirement and approved the concept
   outside the data folder fails with a permission error (use the bridge), no process spawning, and
   `HOME` / `TMPDIR` point into the data folder. Since #4342 also: inotify is unavailable on Linux,
   and TLS roots load through the platform verifier on macOS (anchor enumeration needs the keychain,
-  which stays closed) or the CA bundles on Linux; on Windows a plugin must bring its own roots
-  until #4811. No third-party plugin had shipped, so there was no
+  which stays closed) or the CA bundles on Linux; on Windows from the host's root snapshot through
+  `SSL_CERT_FILE` (#4811). No third-party plugin had shipped, so there was no
   dual-mode period.
 - Each enabled plugin costs one process; terminal I/O crosses a socket (budget: at most +0.5 ms p99
   echo latency, an absolute throughput floor instead of a ratio, #4190).
