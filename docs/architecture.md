@@ -2404,6 +2404,7 @@ equivalence tests over each fold shape, and the pre-existing projection tests.
 | `agents`            | hybrid (#2888)              | keyed maps reduced per agent id; ordered `agents` list whole   |
 | `connections`       | whole-snapshot, by decision | single whole-view writer from disk; ordered arrays (see below) |
 | `plugin-sandbox`    | whole-snapshot, polled      | read-only; re-snapshots the plugin host every second (#4188)   |
+| `tunnels`           | hybrid (#4574)              | 1 Hz stats tick patches `states.<id>.stats`; rest whole        |
 
 - **`agents` (hybrid).** The view holds the ordered `agents` list plus the `sessions`,
   `definitions` and `folders` maps. The three maps are keyed by agent id, so a definition, folder
@@ -2417,6 +2418,12 @@ equivalence tests over each fold shape, and the pre-existing projection tests.
   diff. Both collections are ordered arrays, the `savedAs` echo map (#3961) is small and bounded,
   the disk re-read dominates the in-memory diff, and the fold runs once per user-driven persist
   rather than on a per-entry stream. Incrementalizing it would add risk for no measurable win.
+- **`tunnels` (hybrid).** Status and config changes rebuild and diff the whole view
+  (`publish_tunnels`). The 1 Hz live-stats tick (desktop stats emitter and agent `tunnel.status`
+  poller) changes only per-tunnel counters, so `publish_tunnel_stats` reads the samples under the
+  region lock and patches just `states.<id>.stats` for tunnels the view already shows as
+  `connected` — the only status that carries live stats — leaving everything else to the next
+  full publish.
 - **`plugin-sandbox` (polled whole-snapshot).** Each native plugin's sandbox status (isolation,
   runner process state, recent bridge denials) lives in the plugin host and changes on runner
   threads (a crash, a respawn, an idle reap, a denial). A background publisher re-snapshots the host
