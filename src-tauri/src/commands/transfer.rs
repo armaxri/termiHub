@@ -13,7 +13,7 @@ use crate::files::transfer::persist::{
     FolderPasteEndpoint, FolderPasteOperation, PersistedAgentTarget, PersistedFolderPaste,
 };
 use crate::files::transfer::remote_copy::RemoteCopyEndpoint;
-use crate::files::transfer::{TransferPersistenceManager, TransferRegistry, TransferSnapshot};
+use crate::files::transfer::{TransferPersistenceManager, TransferRegistry};
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
 
@@ -364,13 +364,4 @@ pub fn folder_paste_take_interrupted(app_handle: tauri::AppHandle) -> Vec<Persis
         .try_state::<TransferPersistenceManager>()
         .map(|pm| pm.take_interrupted_folder_pastes())
         .unwrap_or_default()
-}
-
-/// List the rich (queued) transfers, optionally filtered by session.
-#[tauri::command]
-pub fn transfer_list(
-    session_id: Option<String>,
-    registry: State<'_, TransferRegistry>,
-) -> Vec<TransferSnapshot> {
-    registry.list(session_id.as_deref())
 }

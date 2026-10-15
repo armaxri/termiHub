@@ -81,7 +81,7 @@ pub use termihub_core::files::transfer::{
 
 pub use persist::{PersistedTransfer, PersistedTransferStatus, PersistedTransferStore};
 pub use persist_manager::TransferPersistenceManager;
-pub use registry::{TransferRegistry, TransferSnapshot};
+pub use registry::TransferRegistry;
 pub use retry::{backoff_delay, resume_offset, ThroughputMeter, BASE_BACKOFF};
 pub use scheduler::{Admission, SessionScheduler, DEFAULT_MAX_CONCURRENT};
 pub use state::{InvalidTransition, TransferEvent, TransferState, TransferStateTag, MAX_RETRIES};

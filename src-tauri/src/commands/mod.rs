@@ -46,7 +46,6 @@ pub mod test_dialog;
 #[cfg(test)]
 mod test_http_server;
 pub mod transfer;
-pub mod tunnel;
 pub mod update;
 pub mod window;
 // Static guard: no synchronous command may reach window creation (#4024).
