@@ -101,6 +101,7 @@ jobs:
           sparse-checkout: |
             scripts/internal
             src-tauri/packaging/windows
+          persist-credentials: false
 
       - name: Download MSI and agent binary
         id: download

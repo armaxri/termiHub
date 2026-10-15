@@ -92,6 +92,8 @@ jobs:
       - name: Checkout code
         # smoke-test.sh cd's to the git top-level, so a checkout must be present.
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Install headless runtime dependencies
         # Runtime WebKitGTK/GTK libs the app links against plus Xvfb for a virtual

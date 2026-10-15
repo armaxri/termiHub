@@ -66,6 +66,8 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: develop
+          # "Fetch main" below needs no token: the repo is public (#4729).
+          persist-credentials: false
 
       # The scripts read main's workflow files to decide whether a lane's own
       # schedule is live (and the drift guard compares on: blocks).

@@ -74,6 +74,7 @@ jobs:
           # The nightly grades develop: a scheduled run fires from the default
           # branch (main), so without this it would only re-test main's code.
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false
 
       - name: Install WSL and a Debian distribution
         uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
