@@ -364,3 +364,26 @@ tests:
       - "Once wide enough, title and buttons sit on one row again, buttons on the right."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-56
+    release_gate: true
+    manual_reason: "real import, settings file and relaunch on the desktop shell; listing, revoke and re-hold logic are pinned by ImportedWorkspaceConfirmations.test.tsx and the 800x600 layout by the visual lane"
+    name: "Imported workspace confirmations can be reviewed and revoked in Settings"
+    pr: 4445
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Import a workspace file whose tab has an initialCommand (e.g. echo hello), open it in the workspace editor and click Confirm on the command."
+      - "Open Settings > Security and scroll to 'Imported Workspace Confirmations' (or search settings for 'allowlist')."
+      - "Click the trash icon next to the command, then Revoke in the dialog."
+      - "Reopen the workspace editor for that workspace, then launch the workspace."
+      - "Confirm the command again, return to Settings > Security, click Revoke All and confirm."
+    expected:
+      - "The section shows '1 imported item is confirmed on this machine' and lists the command under the workspace's name with its tab."
+      - "After revoking, the count reads that nothing is confirmed and settings.json no longer contains the key."
+      - "The workspace editor shows the command with a Confirm button again, and launching does not run it until confirmed."
+      - "Revoke All empties the list and hides the Revoke All button."
+      - "At 800x600 the section header, long commands and trash buttons stay fully visible."
+    verification: manual
+    tags: [visual]
