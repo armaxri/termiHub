@@ -7,7 +7,17 @@
  * tab hand-off queue expose. See `docs/concepts/implemented/multi-window.html`.
  */
 
-import type { ConnectionConfig, EditorTabMeta, TabContentType } from "@/types/terminal";
+import type {
+  AgentErrorMeta,
+  ConnectionConfig,
+  ConnectionEditorMeta,
+  EditorTabMeta,
+  NetworkDiagnosticMeta,
+  PluginDetailMeta,
+  TabContentType,
+  TunnelEditorMeta,
+  WorkspaceEditorMeta,
+} from "@/types/terminal";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import type { WindowInfo } from "./generated/WindowInfo";
 
@@ -54,6 +64,20 @@ export interface HandoffTab {
   editorBuffer?: string;
   /** The moved editor held unsaved changes; the destination marks it dirty. */
   editorDirty?: boolean;
+  /**
+   * The metadata a moved non-session tab needs to reopen in the destination
+   * window (#4501). Only the tab's target travels (which connection, tunnel,
+   * workspace, plugin or diagnostic tool), never unsaved form state: a form
+   * editor with unsaved changes blocks the move instead (see #4500).
+   */
+  connectionEditorMeta?: ConnectionEditorMeta;
+  tunnelEditorMeta?: TunnelEditorMeta;
+  workspaceEditorMeta?: WorkspaceEditorMeta;
+  networkDiagnosticMeta?: NetworkDiagnosticMeta;
+  pluginDetailMeta?: PluginDetailMeta;
+  agentErrorMeta?: AgentErrorMeta;
+  /** The agent definition a workspace-restored agent tab points at. */
+  workspaceAgentRef?: { agentId: string; definitionId: string };
 }
 
 /**
@@ -136,6 +160,13 @@ export interface WindowCloseRequest {
    */
   dirtyEditors?: WindowCloseDirtyEditor[];
   /**
+   * The window's other tabs: no live session and no unsaved changes, such as
+   * a saved file editor, Settings or the log viewer (#4501). Each says whether
+   * "Move tabs" reopens it in the destination window; the rest close with the
+   * window. Absent or empty when there are none.
+   */
+  otherTabs?: WindowCloseOtherTab[];
+  /**
    * Why the dialog is up (#4296). `"close"` (the default when absent) closes
    * this window; `"quit"` answers an app-wide quit (Cmd+Q / menu Quit), which
    * the backend completes once every window agreed, so moving tabs to another
@@ -155,6 +186,15 @@ export interface WindowCloseDirtyEditor {
    * discarded. Absent means not movable.
    */
   movable?: boolean;
+}
+
+/** One tab without a session or unsaved changes in a closing window (#4501). */
+export interface WindowCloseOtherTab {
+  tabId: string;
+  title: string;
+  contentType: TabContentType;
+  /** Whether "Move tabs" reopens this tab in the destination window. */
+  movable: boolean;
 }
 
 /**

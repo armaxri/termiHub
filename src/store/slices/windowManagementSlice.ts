@@ -4,6 +4,7 @@ import type { AppState } from "../appStore";
 import {
   buildTransferAwareHandoff,
   canCarryEditorBuffer,
+  canMoveTabWithoutSession,
   currentWindowLabel,
   pruneForeignTransfers,
 } from "../windowHelpers";
@@ -25,6 +26,7 @@ import type {
   TabHandoffRecord,
   WindowInfo,
   WindowCloseDirtyEditor,
+  WindowCloseOtherTab,
   WindowCloseRequest,
 } from "@/types/window";
 import type { TerminalTab } from "@/types/terminal";
@@ -185,8 +187,11 @@ export interface WindowManagementSlice {
   /**
    * Safe close outcome (#1903): re-parent every owned live session tab into
    * another window so nothing is lost, reusing the #1900 hand-off seam. Dirty
-   * file editors move too, carrying their unsaved buffer (#4412). Rejects,
-   * moving nothing, while a dirty editor cannot carry its unsaved state.
+   * file editors move too, carrying their unsaved buffer (#4412), and so does
+   * every other tab a hand-off can describe, such as saved file editors,
+   * Settings or the log viewer (#4501, {@link canMoveTabWithoutSession}).
+   * Rejects, moving nothing, while a dirty editor cannot carry its unsaved
+   * state.
    */
   moveWindowSessionsToWindow: (target: MoveWindowTarget) => Promise<void>;
 }
@@ -204,6 +209,34 @@ function dirtyEditorRows(
     title: tab.title,
     movable: canCarryEditorBuffer(tab),
   }));
+}
+
+/**
+ * The window-close dialog rows for this window's tabs that have neither a live
+ * session nor unsaved changes (#4501), each flagged with whether "Move tabs"
+ * reopens it in the destination window.
+ */
+function otherTabRows(
+  tabs: TerminalTab[],
+  editorDirty: Readonly<Record<string, boolean>>
+): WindowCloseOtherTab[] {
+  return tabs
+    .filter((tab) => !tab.sessionId && editorDirty[tab.id] !== true)
+    .map((tab) => ({
+      tabId: tab.id,
+      title: tab.title,
+      contentType: tab.contentType,
+      movable: canMoveTabWithoutSession(tab),
+    }));
+}
+
+/** `otherTabs` for a {@link WindowCloseRequest}, omitted when there are none. */
+function otherTabsField(
+  tabs: TerminalTab[],
+  editorDirty: Readonly<Record<string, boolean>>
+): Pick<WindowCloseRequest, "otherTabs"> {
+  const otherTabs = otherTabRows(tabs, editorDirty);
+  return otherTabs.length > 0 ? { otherTabs } : {};
 }
 
 export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowManagementSlice> = (
@@ -338,8 +371,9 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     // Unsaved editors carry no session, so the session classification never
     // sees them; a dirty editor alone must still stop the close (UX2-003).
     const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
+    const otherTabs = otherTabsField(tabs, get().editorDirtyTabs);
     if (dirtyEditors.length > 0) {
-      set({ pendingWindowClose: { sessions, otherWindows, dirtyEditors } });
+      set({ pendingWindowClose: { sessions, otherWindows, dirtyEditors, ...otherTabs } });
       return "prompt";
     }
     if (sessions.length === 0) {
@@ -358,7 +392,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     }
     // At least one non-persistent session would be terminated — raise the
     // detach-vs-terminate decision surface.
-    set({ pendingWindowClose: { sessions, otherWindows } });
+    set({ pendingWindowClose: { sessions, otherWindows, ...otherTabs } });
     return "prompt";
   },
 
@@ -410,10 +444,11 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
       );
     }
     // Session tabs first, so a remote editor's backing session is already in
-    // the destination when the editor reloads its file there.
+    // the destination when the editor reloads its file there. Then every other
+    // tab the destination can reopen, dirty file editors included (#4501).
     const tabs = [
       ...windowTabs.filter((tab) => tab.sessionId),
-      ...dirty.filter((tab) => !tab.sessionId),
+      ...windowTabs.filter(canMoveTabWithoutSession),
     ];
     if (tabs.length === 0) return;
 

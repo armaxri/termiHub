@@ -141,8 +141,68 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
     ...(tab.persistentConnectionId ? { persistentConnectionId: tab.persistentConnectionId } : {}),
     ...(tab.connectionId ? { connectionId: tab.connectionId } : {}),
     ...(tab.spawned ? { spawned: true } : {}),
+    ...(tab.workspaceAgentRef ? { workspaceAgentRef: tab.workspaceAgentRef } : {}),
     ...editorHandoffFields(tab),
+    ...tabMetaHandoffFields(tab),
   };
+}
+
+/** The non-editor tab metadata a hand-off record carries (#4501). */
+function tabMetaHandoffFields(
+  tab: TerminalTab
+): Pick<
+  HandoffTab,
+  | "connectionEditorMeta"
+  | "tunnelEditorMeta"
+  | "workspaceEditorMeta"
+  | "networkDiagnosticMeta"
+  | "pluginDetailMeta"
+  | "agentErrorMeta"
+> {
+  return {
+    ...(tab.connectionEditorMeta ? { connectionEditorMeta: tab.connectionEditorMeta } : {}),
+    ...(tab.tunnelEditorMeta ? { tunnelEditorMeta: tab.tunnelEditorMeta } : {}),
+    ...(tab.workspaceEditorMeta ? { workspaceEditorMeta: tab.workspaceEditorMeta } : {}),
+    ...(tab.networkDiagnosticMeta ? { networkDiagnosticMeta: tab.networkDiagnosticMeta } : {}),
+    ...(tab.pluginDetailMeta ? { pluginDetailMeta: tab.pluginDetailMeta } : {}),
+    ...(tab.agentErrorMeta ? { agentErrorMeta: tab.agentErrorMeta } : {}),
+  };
+}
+
+/**
+ * Whether a tab without a live session reopens in another window when "Move
+ * tabs" closes its window (#4501): everything a hand-off record can describe
+ * in full. File editors, Settings, the log viewer, network diagnostics, plugin
+ * details, the agent-error placeholder and the connection, tunnel and
+ * workspace forms move. The transfer view does not: its remote pane is bound
+ * to a terminal tab id of the closing window, which the move replaces.
+ *
+ * This says nothing about unsaved changes. A dirty tab moves only when
+ * {@link canCarryEditorBuffer} holds, and the caller checks that first.
+ */
+export function canMoveTabWithoutSession(tab: TerminalTab): boolean {
+  if (tab.sessionId) return false;
+  switch (tab.contentType) {
+    case "editor":
+      return !!tab.editorMeta;
+    case "settings":
+    case "log-viewer":
+      return true;
+    case "network-diagnostic":
+      return !!tab.networkDiagnosticMeta;
+    case "plugin-detail":
+      return !!tab.pluginDetailMeta;
+    case "connection-editor":
+      return !!tab.connectionEditorMeta;
+    case "tunnel-editor":
+      return !!tab.tunnelEditorMeta;
+    case "workspace-editor":
+      return !!tab.workspaceEditorMeta;
+    case "agent-error":
+      return !!tab.agentErrorMeta;
+    default:
+      return false;
+  }
 }
 
 /**
