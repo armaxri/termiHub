@@ -17,7 +17,7 @@
 //! files, deletion and vault export like the password does. It is put back
 //! into the settings at connect time ([`restore_saved_field_secrets`]).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
@@ -150,13 +150,20 @@ pub(crate) fn read_field_secrets(store: &dyn CredentialStore, owner: &str) -> Re
 /// The serialized entry for `owner` holding its stored field secrets with
 /// `newer` merged over them — for a write the caller makes (alone or in a
 /// batch). `newer` is zeroized.
+///
+/// With `keep_hops`, only the hop secrets whose identity is in it are kept:
+/// a stored hop secret whose hop no longer exists is dropped (#4792).
 pub(crate) fn merged_entry(
     store: &dyn CredentialStore,
     owner: &str,
     mut newer: TakenSecrets,
+    keep_hops: Option<&BTreeSet<String>>,
 ) -> Result<(CredentialKey, String)> {
     let mut merged = read_field_secrets(store, owner)?;
     merged.merge(std::mem::take(&mut newer));
+    if let Some(keep) = keep_hops {
+        retain_hops(&mut merged, keep);
+    }
     let value = serde_json::to_string(&merged).context("Failed to serialize field secrets");
     zeroize_secrets(&mut merged);
     Ok((field_secrets_key(owner), value?))
@@ -168,7 +175,7 @@ pub(crate) fn store_field_secrets(
     owner: &str,
     newer: TakenSecrets,
 ) -> Result<()> {
-    let (key, mut value) = merged_entry(store, owner, newer)?;
+    let (key, mut value) = merged_entry(store, owner, newer, None)?;
     let written = store.set(&key, &value);
     value.zeroize();
     written.with_context(|| format!("Failed to store credential {key}"))
@@ -239,6 +246,41 @@ pub(crate) fn remove_field_secrets(
     let written = store.set(&key, &value);
     value.zeroize();
     written.with_context(|| format!("Failed to store credential {key}"))
+}
+
+/// Drop (zeroized) every hop secret of `taken` whose identity is not in `keep`.
+fn retain_hops(taken: &mut TakenSecrets, keep: &BTreeSet<String>) {
+    taken.hops.retain(|identity, value| {
+        let kept = keep.contains(identity);
+        if !kept {
+            value.zeroize();
+        }
+        kept
+    });
+}
+
+/// Remove the hop secrets stored for `owner` whose identity matches no inline
+/// jump-host hop of `settings` — the connection as saved (#4792). A removed
+/// or re-addressed hop (host, username or port edited) leaves its secret under
+/// an identity nothing reads again. Top-level field secrets are never touched,
+/// and a hop that is still present (reordered or duplicated) keeps its secret.
+/// Returns the identities removed (empty when nothing was orphaned, in which
+/// case nothing is written).
+pub(crate) fn prune_orphan_hop_secrets(
+    store: &dyn CredentialStore,
+    owner: &str,
+    settings: &Value,
+) -> Result<Vec<String>> {
+    let keep = secrets::hop_identities(settings);
+    let orphans: Vec<String> = stored_field_secret_keys(store, owner)?
+        .hops
+        .into_iter()
+        .filter(|identity| !keep.contains(identity))
+        .collect();
+    if !orphans.is_empty() {
+        remove_field_secrets(store, owner, &[], &orphans)?;
+    }
+    Ok(orphans)
 }
 
 /// Overwrite every secret in `taken` with zeros and empty it.

@@ -33,6 +33,13 @@ use crate::credential::{CredentialKey, CredentialStore, CredentialStoreStatus};
 /// whose credential scope is `file_scope` (`None` for the main store) — into
 /// the credential store, stripping them from `connections`.
 ///
+/// With `prune_hops`, each moved entry also drops the stored hop secrets whose
+/// hop is not in the file any more (#4792): a file edited outside termiHub
+/// (a hop re-addressed, with its new password in plaintext) would otherwise
+/// leave the old hop's secret behind. The caller passes it only when the
+/// entry belongs to this file alone — see
+/// [`ConnectionManager::may_prune_hop_secrets`](super::ConnectionManager::may_prune_hop_secrets).
+///
 /// Returns `Ok(true)` when `connections` changed and the file must be
 /// rewritten, `Ok(false)` when there was nothing to move or the store is not
 /// unlocked (nothing changed), and an error — with nothing written and nothing
@@ -41,6 +48,7 @@ pub(crate) fn migrate_plaintext_field_secrets(
     connections: &mut [SavedConnection],
     file_scope: Option<&str>,
     store: &dyn CredentialStore,
+    prune_hops: bool,
 ) -> Result<bool> {
     let candidates: Vec<usize> = connections
         .iter()
@@ -69,6 +77,7 @@ pub(crate) fn migrate_plaintext_field_secrets(
         &candidates,
         file_scope,
         store,
+        prune_hops,
         &mut stripped,
         &mut writes,
     );
@@ -104,6 +113,7 @@ fn collect_writes(
     candidates: &[usize],
     file_scope: Option<&str>,
     store: &dyn CredentialStore,
+    prune_hops: bool,
     stripped: &mut Vec<(usize, serde_json::Value)>,
     writes: &mut Vec<(CredentialKey, String)>,
 ) -> Result<()> {
@@ -116,7 +126,13 @@ fn collect_writes(
         let taken = secrets::take_secrets(&keys, &mut settings);
         if !taken.is_empty() {
             let owner = owner_id(&connection.id, file_scope);
-            writes.push(secret_fields::merged_entry(store, &owner, taken)?);
+            let keep = prune_hops.then(|| secrets::hop_identities(&settings));
+            writes.push(secret_fields::merged_entry(
+                store,
+                &owner,
+                taken,
+                keep.as_ref(),
+            )?);
         }
         stripped.push((index, settings));
     }

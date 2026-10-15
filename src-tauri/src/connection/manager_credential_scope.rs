@@ -28,7 +28,7 @@ use termihub_core::connection::secrets::TakenSecrets;
 
 impl ConnectionManager {
     /// Paths of every configured external file, enabled or not.
-    fn configured_external_paths(&self) -> Vec<String> {
+    pub(super) fn configured_external_paths(&self) -> Vec<String> {
         self.get_settings()
             .external_connection_files
             .into_iter()
@@ -207,6 +207,7 @@ impl ConnectionManager {
             }
         }
         self.clean_up_kept_bare_keys();
+        self.sweep_orphan_hop_secrets();
     }
 
     /// Move the main store's plaintext schema secrets other than `password`
@@ -220,10 +221,18 @@ impl ConnectionManager {
         if self.main_field_secrets_moved.load(Ordering::SeqCst) {
             return;
         }
+        // Only drop the bare entry's stale hop secrets when no external file may
+        // still read it (#4792); the sweep catches the rest later.
+        let prune_hops = self.may_prune_hop_secrets(None);
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let mut connections = store.connections.clone();
-        match migrate_plaintext_field_secrets(&mut connections, None, &*self.credential_store) {
+        match migrate_plaintext_field_secrets(
+            &mut connections,
+            None,
+            &*self.credential_store,
+            prune_hops,
+        ) {
             Ok(false) => {
                 let pending = connections
                     .iter()
@@ -321,7 +330,7 @@ impl ConnectionManager {
 
     /// Whether every configured external file exists, can be read and was
     /// migrated, so none of them may still need a bare key.
-    fn all_external_files_migrated(&self) -> bool {
+    pub(super) fn all_external_files_migrated(&self) -> bool {
         self.configured_external_paths().iter().all(|path| {
             Path::new(path).exists()
                 && read_external_store(path).is_ok()

@@ -186,3 +186,23 @@ fn fallback_secret_keys_are_shared_secret_names() {
         assert!(is_secret_name(key), "{key}");
     }
 }
+
+/// The identities a saved connection can still use come from both hop lists,
+/// ignore order and duplicates, and skip referenced or host-less hops (#4792).
+#[test]
+fn hop_identities_cover_both_lists_and_skip_non_inline_hops() {
+    let settings = json!({
+        "proxyJump": [
+            { "host": "b", "username": "u", "port": 2200 },
+            { "host": "a", "username": "u" },
+            { "host": "a", "username": "u" },
+            { "connectionId": "saved", "host": "ref" },
+            { "username": "nohost" }
+        ],
+        "jumpHosts": [{ "host": "legacy" }]
+    });
+    let ids: Vec<String> = hop_identities(&settings).into_iter().collect();
+    assert_eq!(ids, vec!["@legacy:22", "u@a:22", "u@b:2200"]);
+    assert!(hop_identities(&json!({ "host": "x" })).is_empty());
+    assert!(hop_identities(&json!(null)).is_empty());
+}
