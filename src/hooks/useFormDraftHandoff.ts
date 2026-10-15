@@ -14,6 +14,7 @@ import {
   forgetCarriedFormDraft,
   peekCarriedFormDraft,
   registerFormDraft,
+  subscribeCarriedFormDraft,
   type FormDraftKind,
   type FormDraftSnapshot,
 } from "@/utils/editorBufferRegistry";
@@ -38,4 +39,26 @@ export function useCarriedFormDraft<T>(tabId: string, kind: FormDraftKind): T | 
   const [draft] = useState(() => peekCarriedFormDraft(tabId, kind) as T | null);
   useEffect(() => forgetCarriedFormDraft(tabId), [tabId]);
   return draft;
+}
+
+/**
+ * Call `onDraft` with a draft of `kind` carried in for `tabId` while the editor
+ * is already mounted (#4760): a moved dirty Settings panel merged into the
+ * destination window's existing Settings tab. Read through a ref so the
+ * callback always sees the editor's current state.
+ */
+export function useLateCarriedFormDraft<T>(
+  tabId: string,
+  kind: FormDraftKind,
+  onDraft: (values: T) => void
+) {
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
+  useEffect(
+    () =>
+      subscribeCarriedFormDraft(tabId, (draft) => {
+        if (draft.kind === kind) onDraftRef.current(draft.values as T);
+      }),
+    [tabId, kind]
+  );
 }
