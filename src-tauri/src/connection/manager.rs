@@ -689,6 +689,7 @@ impl ConnectionManager {
         // Replace or add, re-home when its folder is gone, recompute the id from
         // folder + name and deduplicate sibling names (which may rename it or a
         // sibling). A move by drag-and-drop only updates `folder_id`, not `id`.
+        let previous = connections.iter().find(|c| c.id == connection.id).cloned();
         let placement = place_connection(
             connections,
             folders,
@@ -711,7 +712,7 @@ impl ConnectionManager {
         );
         let saved = store.connections[placement.index].clone();
         drop(store);
-        self.prune_hop_secrets_after_save(&saved, None);
+        self.prune_hop_secrets_after_save(&saved, previous.as_ref(), None);
         drop(_pruning);
         self.follow_references(&placement.changes, ChangeOrigin::MainStore);
         self.notify_id_changes(&placement.changes);
@@ -1027,6 +1028,7 @@ impl ConnectionManager {
                 let conn_id = connection.id.clone();
                 let scope = self.external_scope(&file_path);
                 let pruning = self.hop_prune.lock().unwrap_or_else(|e| e.into_inner());
+                let previous = self.read_connection(&conn_id, Some(&file_path)).ok();
                 let mut conn =
                     prepare_for_storage(connection, Some(&scope), &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
@@ -1047,6 +1049,7 @@ impl ConnectionManager {
                 );
                 self.prune_hop_secrets_after_save(
                     &written.connections[written.index],
+                    previous.as_ref(),
                     Some(&scope),
                 );
                 drop(pruning);
@@ -1343,6 +1346,7 @@ impl ConnectionManager {
         // A password typed in the editor is stored where the connection is now;
         // it follows the connection below like every other secret.
         let pruning = self.hop_prune.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = self.read_connection(&connection_id, current_source).ok();
         let mut disk_conn =
             prepare_for_storage(connection, source_scope.as_deref(), &*self.credential_store)?;
         disk_conn.source_file = None; // Strip before writing to disk
@@ -1396,6 +1400,7 @@ impl ConnectionManager {
         );
         self.prune_hop_secrets_after_save(
             &written.connections[written.index],
+            previous.as_ref(),
             target_scope.as_deref(),
         );
         drop(pruning);

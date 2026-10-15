@@ -31,9 +31,10 @@ use std::sync::atomic::Ordering;
 use super::{read_external_store, ConnectionManager};
 use crate::connection::config::SavedConnection;
 use crate::connection::credential_scope::owner_id;
-use crate::connection::secret_fields::prune_orphan_hop_secrets;
+use crate::connection::secret_fields::{may_have_field_secrets, prune_orphan_hop_secrets};
 use crate::connection::tree::flatten_tree;
 use crate::credential::{CredentialStoreStatus, CredentialType};
+use termihub_core::connection::secrets::hop_identities;
 
 impl ConnectionManager {
     /// Whether the field-secrets entry of a connection in the file with
@@ -48,11 +49,22 @@ impl ConnectionManager {
     /// with credential scope `scope` — whose hop it no longer has. Never fails
     /// the save: a locked store, a shared legacy key or a store error defers
     /// the prune to the next sweep (see the module docs).
+    ///
+    /// `previous` is the connection as it was stored before the save, if any.
+    /// A connection that cannot own field secrets now and had no inline hop
+    /// before (e.g. a local shell) never touches the store.
     pub(crate) fn prune_hop_secrets_after_save(
         &self,
         connection: &SavedConnection,
+        previous: Option<&SavedConnection>,
         scope: Option<&str>,
     ) {
+        let had_hops = previous.is_some_and(|p| !hop_identities(&p.config.settings).is_empty());
+        if !had_hops
+            && !may_have_field_secrets(&connection.config.type_id, &connection.config.settings)
+        {
+            return;
+        }
         match self.credential_store.status() {
             CredentialStoreStatus::Unlocked => {}
             // Nothing can be stored without a store, so nothing is orphaned.
@@ -88,11 +100,8 @@ impl ConnectionManager {
 
     /// Prune the field-secrets entry of `owner` against `connection`'s settings.
     fn prune_owner(&self, owner: &str, connection: &SavedConnection) -> anyhow::Result<()> {
-        let removed = prune_orphan_hop_secrets(
-            &*self.credential_store,
-            owner,
-            &connection.config.settings,
-        )?;
+        let removed =
+            prune_orphan_hop_secrets(&*self.credential_store, owner, &connection.config.settings)?;
         if !removed.is_empty() {
             tracing::info!(
                 connection_id = %connection.id,
