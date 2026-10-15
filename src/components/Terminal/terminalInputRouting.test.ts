@@ -5,6 +5,11 @@ const keybindings = vi.hoisted(() => ({
   isChordPending: vi.fn<() => boolean>(() => false),
   processKeyEvent: vi.fn<(e: KeyboardEvent) => string | null>(() => null),
   isAppShortcut: vi.fn<(e: KeyboardEvent) => boolean>(() => false),
+  getActionScope: vi.fn((action: string) =>
+    action === "focus-next-region" || action === "focus-prev-region"
+      ? "yields-to-terminal"
+      : "global"
+  ),
 }));
 
 vi.mock("@/services/keybindings", () => keybindings);
@@ -125,6 +130,16 @@ const ROUTING_CASES: RoutingCase[] = [
     keys: { action: "select-all" },
     expected: false,
     calls: ["selectAll"],
+  },
+  {
+    name: "a terminal-yielding shortcut (F6 region cycling) reaches the PTY",
+    keys: { action: "focus-next-region", appShortcut: true },
+    expected: true,
+  },
+  {
+    name: "the terminal-capable region shortcut (Ctrl+F6) is blocked from the PTY",
+    keys: { action: "focus-next-region-anywhere", appShortcut: true },
+    expected: false,
   },
   {
     name: "prompt navigation falls through to the shell without OSC 133 marks",

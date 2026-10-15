@@ -13,8 +13,15 @@ vi.mock("@/services/keybindings", () => ({
     if (action === "copy" || action === "paste" || action === "select-all") {
       return "editor-delegated";
     }
+    if (action === "focus-next-region" || action === "focus-prev-region") {
+      return "yields-to-terminal";
+    }
     return "global";
   }),
+}));
+
+vi.mock("@/services/landmarkFocus", () => ({
+  cycleLandmarkFocus: vi.fn(() => null),
 }));
 
 vi.mock("@/services/workflowTriggers", async (importOriginal) => ({
@@ -59,6 +66,7 @@ import {
   isEventFromTerminal,
 } from "@/services/keybindings";
 import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
+import { cycleLandmarkFocus } from "@/services/landmarkFocus";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
@@ -248,6 +256,61 @@ describe("useKeyboardShortcuts", () => {
       fireKey("w", { ctrlKey: true });
 
       expect(mockProcessKeyEvent).toHaveBeenCalled();
+    });
+  });
+
+  describe("landmark focus cycling (#4773)", () => {
+    it("cycles forward on focus-next-region and consumes the key", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("focus-next-region");
+
+      expect(fireKey("F6")).toBe(true);
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(1);
+    });
+
+    it("cycles backward on focus-prev-region and consumes the key", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("focus-prev-region");
+
+      expect(fireKey("F6", { shiftKey: true })).toBe(true);
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(-1);
+    });
+
+    it("leaves F6 to a focused terminal: no focus move, key not consumed", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue("focus-next-region");
+
+      expect(fireKey("F6")).toBe(false);
+      expect(vi.mocked(cycleLandmarkFocus)).not.toHaveBeenCalled();
+    });
+
+    it("cycles on Ctrl+F6 from a focused terminal", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue("focus-next-region-anywhere");
+
+      expect(fireKey("F6", { ctrlKey: true })).toBe(true);
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(1);
+    });
+
+    it("cycles backward on Ctrl+Shift+F6 from a focused terminal", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue("focus-prev-region-anywhere");
+
+      expect(fireKey("F6", { ctrlKey: true, shiftKey: true })).toBe(true);
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(-1);
     });
   });
 

@@ -67,6 +67,8 @@ export function isEventFromTextInput(e: KeyboardEvent): boolean {
  * - `terminal` fires only on a terminal tab when focus is not inside a text input.
  * - `editor-delegated` steps aside (returns `false`) whenever an editor/form is
  *   active or focus is inside a text input; otherwise it may fire.
+ * - `yields-to-terminal` fires in every context: the terminal yield depends on
+ *   the event's origin, which the key routers check themselves (#4773).
  * - `remote-desktop` never fires here: the remote-desktop canvas reads that
  *   binding itself (#4524).
  */
@@ -75,7 +77,7 @@ export function isScopeCompatible(
   ctx: ActiveContext,
   fromTextInput: boolean
 ): boolean {
-  if (scope === "global") return true;
+  if (scope === "global" || scope === "yields-to-terminal") return true;
   if (scope === "terminal") return ctx === "terminal" && !fromTextInput;
   if (scope === "remote-desktop") return false;
   // editor-delegated

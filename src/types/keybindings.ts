@@ -29,11 +29,19 @@ export type ShortcutCategory =
  * - `editor-delegated` — when an editor or input surface is focused the global
  *   handler steps aside so the focused widget receives the key (copy, paste,
  *   select-all, …); it may still fire in non-editor contexts.
+ * - `yields-to-terminal` — fires everywhere except while a terminal has focus:
+ *   there the key is passed through to the running program instead (F6 for
+ *   Midnight Commander and friends, #4773). Elsewhere it behaves like `global`.
  * - `remote-desktop` — never fires through the global shortcut engine; the
  *   focused remote-desktop canvas reads the binding directly (the keyboard
  *   release chord, #4524), because the canvas swallows every key first.
  */
-export type ShortcutScope = "global" | "terminal" | "editor-delegated" | "remote-desktop";
+export type ShortcutScope =
+  | "global"
+  | "terminal"
+  | "editor-delegated"
+  | "yields-to-terminal"
+  | "remote-desktop";
 
 /** A default keybinding definition with platform-specific defaults. */
 export interface KeyBinding {
