@@ -3,7 +3,12 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { cssVar, useUplot } from "@/components/charts/uplot";
 import { formatLatencyMs } from "@/utils/formatters";
-import { buildLatencyChartData } from "./latencyChartData";
+import {
+  buildLatencyChartData,
+  computeLatencyTicks,
+  computeYMax,
+  formatLatencyTicks,
+} from "./latencyChartData";
 
 interface LatencyChartProps {
   /** Array of latency values (ms). Null entries represent timeouts/drops. */
@@ -76,6 +81,9 @@ function latestValuePlugin(): uPlot.Plugin {
 export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: LatencyChartProps) {
   // Latest drops, read by the plugin closure without recreating the chart.
   const dropsRef = useRef<number[]>([]);
+  // Y bound currently on screen, so the axis shrinks with hysteresis instead of
+  // flapping between two nice bounds as values jitter (#4734).
+  const yMaxRef = useRef<number | undefined>(undefined);
 
   const chart = useMemo(() => buildLatencyChartData(points, intervalMs), [points, intervalMs]);
 
@@ -89,6 +97,8 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
     const dropColor = cssVar(styles, "--color-error");
 
     const timeAxis = intervalMs != null;
+    const yMax = computeYMax(chart.peak, yMaxRef.current);
+    yMaxRef.current = yMax;
     const axisBase = {
       stroke: axisText,
       grid: { stroke: grid, width: 1 },
@@ -103,7 +113,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       padding: [12, 18, 8, 12],
       cursor: { y: false, points: { size: 5 } },
       legend: { show: true },
-      scales: { x: { time: false }, y: { range: [chart.yMin, chart.yMax] } },
+      scales: { x: { time: false }, y: { range: [chart.yMin, yMax] } },
       axes: [
         {
           ...axisBase,
@@ -112,8 +122,11 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
         },
         {
           ...axisBase,
-          size: 46,
-          values: (_u, splits) => splits.map((v) => `${v}ms`),
+          // Wide enough for labels like "0.25ms" / "1,000ms".
+          size: 58,
+          // Nice ticks from 0 to the bound, so sub-ms axes read 0.1/0.2/… (#4734).
+          splits: (_u, _axisIdx, _min, max) => computeLatencyTicks(max),
+          values: (_u, splits) => formatLatencyTicks(splits),
         },
       ],
       series: [
@@ -139,7 +152,9 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
     onUpdate: (plot) => {
       // Refresh drop positions before setData triggers the plugin's redraw.
       dropsRef.current = chart.drops;
-      plot.setScale("y", { min: chart.yMin, max: chart.yMax });
+      const yMax = computeYMax(chart.peak, yMaxRef.current);
+      yMaxRef.current = yMax;
+      plot.setScale("y", { min: chart.yMin, max: yMax });
     },
   });
 
