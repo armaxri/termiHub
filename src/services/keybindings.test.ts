@@ -945,3 +945,45 @@ describe("isEventFromTerminal", () => {
     document.body.removeChild(outside);
   });
 });
+
+describe("landmark focus cycling (F6 / Shift+F6, #4773)", () => {
+  beforeEach(() => {
+    clearOverrides();
+  });
+
+  it("binds F6 to focus-next-region and Shift+F6 to focus-prev-region", () => {
+    expect(findMatchingAction(makeKeyEvent("F6"))).toBe("focus-next-region");
+    expect(findMatchingAction(makeKeyEvent("F6", { shift: true }))).toBe("focus-prev-region");
+  });
+
+  it("ships the same F6 defaults on macOS and Win/Linux", () => {
+    for (const action of ["focus-next-region", "focus-prev-region"]) {
+      const binding = DEFAULT_BINDINGS.find((b) => b.action === action);
+      expect(binding?.configurable).toBe(true);
+      expect(binding?.category).toBe("navigation");
+      expect(binding?.macDefault).toEqual(binding?.winLinuxDefault);
+    }
+  });
+
+  it("does not collide with any other default binding", () => {
+    expect(checkConflict({ key: "F6" }, "focus-next-region")).toBeNull();
+    expect(checkConflict({ key: "F6", shift: true }, "focus-prev-region")).toBeNull();
+  });
+
+  it("is not shell-reserved, so a focused terminal yields it to the app", () => {
+    expect(isShellReservedKey(makeKeyEvent("F6"))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("F6", { shift: true }))).toBe(false);
+    expect(isAppShortcut(makeKeyEvent("F6"))).toBe(true);
+  });
+
+  it("is rebindable, and the old key is released", () => {
+    setOverride("focus-next-region", { key: "F7" });
+    expect(findMatchingAction(makeKeyEvent("F7"))).toBe("focus-next-region");
+    expect(findMatchingAction(makeKeyEvent("F6"))).toBeNull();
+  });
+
+  it("can be unbound so F6 reaches the terminal", () => {
+    unbindAction("focus-next-region");
+    expect(isAppShortcut(makeKeyEvent("F6"))).toBe(false);
+  });
+});

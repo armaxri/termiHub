@@ -17,6 +17,10 @@ vi.mock("@/services/keybindings", () => ({
   }),
 }));
 
+vi.mock("@/services/landmarkFocus", () => ({
+  cycleLandmarkFocus: vi.fn(() => null),
+}));
+
 vi.mock("@/services/workflowTriggers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/workflowTriggers")>()),
   matchHotkeyWorkflow: vi.fn(() => null),
@@ -59,6 +63,7 @@ import {
   isEventFromTerminal,
 } from "@/services/keybindings";
 import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
+import { cycleLandmarkFocus } from "@/services/landmarkFocus";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
@@ -248,6 +253,39 @@ describe("useKeyboardShortcuts", () => {
       fireKey("w", { ctrlKey: true });
 
       expect(mockProcessKeyEvent).toHaveBeenCalled();
+    });
+  });
+
+  describe("landmark focus cycling (#4773)", () => {
+    it("cycles forward on focus-next-region and consumes the key", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("focus-next-region");
+
+      expect(fireKey("F6")).toBe(true);
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(1);
+    });
+
+    it("cycles backward on focus-prev-region and consumes the key", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("focus-prev-region");
+
+      expect(fireKey("F6", { shiftKey: true })).toBe(true);
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(-1);
+    });
+
+    it("still cycles when the key comes from a focused terminal", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue("focus-next-region");
+
+      fireKey("F6");
+      expect(vi.mocked(cycleLandmarkFocus)).toHaveBeenCalledWith(1);
     });
   });
 
