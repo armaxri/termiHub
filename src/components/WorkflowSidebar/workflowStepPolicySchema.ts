@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import { MAX_RETRY_DELAY_MS, MAX_STEP_RETRIES } from "@/services/workflowRunner";
+import { workflowStepRetryShape } from "@/services/workflowSchema";
 import type { WorkflowStep, WorkflowStepRetry } from "@/types/workflow";
 
 /** The retry policy a freshly enabled "Retry on failure" toggle starts with. */
@@ -23,13 +24,9 @@ export const DEFAULT_STEP_RETRY: WorkflowStepRetry = { count: 3, delayMs: 1000, 
 const workflowStepPolicySchema = z
   .object({
     continueOnError: z.boolean().optional(),
-    retry: z
-      .object({
-        count: z.number(),
-        delayMs: z.number().optional(),
-        backoff: z.enum(["fixed", "exponential"]).optional(),
-      })
-      .optional(),
+    // The retry shape is shared with the import schema (#4386); the editor adds
+    // its own user-facing bounds below.
+    retry: z.object(workflowStepRetryShape).optional(),
   })
   .superRefine((policy, ctx) => {
     const retry = policy.retry;
