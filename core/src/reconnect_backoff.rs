@@ -201,21 +201,6 @@ impl SeededJitter {
     }
 }
 
-/// The worst-case total backoff, in whole ms, a loop following `config` waits
-/// across its whole attempt budget: the sum of the nominal (un-jittered, rounded)
-/// delays for attempts `1..=max_attempts`. Jitter only shortens a window, so no
-/// run waits longer. `None` for an unbounded config (`max_attempts <= 0`).
-pub fn worst_case_total_backoff_ms(config: &BackoffConfig) -> Option<i64> {
-    if config.max_attempts <= 0 {
-        return None;
-    }
-    Some(
-        (1..=config.max_attempts)
-            .map(|n| backoff_delay(n, config).round() as i64)
-            .sum(),
-    )
-}
-
 /// Phase of the auto-reconnect loop for one tab.
 ///
 /// - `Idle`       — not auto-reconnecting.
@@ -448,11 +433,6 @@ pub fn reconnect_reducer(
             }
         }
     }
-}
-
-/// Whether a phase is one where the loop is actively trying (spinner/countdown).
-pub fn is_active_reconnect_phase(phase: ReconnectPhase) -> bool {
-    matches!(phase, ReconnectPhase::Waiting | ReconnectPhase::Connecting)
 }
 
 #[cfg(test)]

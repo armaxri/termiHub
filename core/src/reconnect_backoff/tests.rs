@@ -20,6 +20,21 @@ fn rng(v: f64) -> impl FnMut() -> f64 {
     move || v
 }
 
+/// The worst-case total backoff, in whole ms, a loop following `config` waits
+/// across its whole attempt budget: the sum of the nominal (un-jittered, rounded)
+/// delays for attempts `1..=max_attempts`. Jitter only shortens a window, so no
+/// run waits longer. `None` for an unbounded config (`max_attempts <= 0`).
+fn worst_case_total_backoff_ms(config: &BackoffConfig) -> Option<i64> {
+    if config.max_attempts <= 0 {
+        return None;
+    }
+    Some(
+        (1..=config.max_attempts)
+            .map(|n| backoff_delay(n, config).round() as i64)
+            .sum(),
+    )
+}
+
 // ── backoffDelay ────────────────────────────────────────────────────────────
 
 #[test]
@@ -494,21 +509,6 @@ fn unbounded_retries_never_reach_gaveup_on_failure() {
         reconnect_reducer(&s, ReconnectEvent::Cancel, &cfg, &mut rng(0.5)).phase,
         ReconnectPhase::Gaveup
     );
-}
-
-// ── isActiveReconnectPhase ──────────────────────────────────────────────────
-
-#[test]
-fn is_active_true_while_waiting_or_connecting() {
-    assert!(is_active_reconnect_phase(ReconnectPhase::Waiting));
-    assert!(is_active_reconnect_phase(ReconnectPhase::Connecting));
-}
-
-#[test]
-fn is_active_false_when_idle_connected_or_gaveup() {
-    assert!(!is_active_reconnect_phase(ReconnectPhase::Idle));
-    assert!(!is_active_reconnect_phase(ReconnectPhase::Connected));
-    assert!(!is_active_reconnect_phase(ReconnectPhase::Gaveup));
 }
 
 // ── Property tests ──────────────────────────────────────────────────────────

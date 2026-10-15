@@ -124,24 +124,6 @@ export function nextReconnectDelay(
 }
 
 /**
- * The worst-case total backoff, in whole ms, a loop following `config` waits
- * across its whole attempt budget: the sum of the nominal (rounded) delays for
- * attempts `1..maxAttempts`. `null` for an unbounded config (`maxAttempts <= 0`).
- * Twin of the Rust `worst_case_total_backoff_ms`.
- *
- * @internal Only tests (incl. the golden-fixture parity suite) call it; kept
- * until the Rust twin is removed with it (#4783).
- */
-export function worstCaseTotalBackoffMs(config: BackoffConfig): number | null {
-  if (config.maxAttempts <= 0) return null;
-  let total = 0;
-  for (let n = 1; n <= config.maxAttempts; n++) {
-    total += Math.round(backoffDelay(n, config));
-  }
-  return total;
-}
-
-/**
  * Whether the loop should give up rather than start another attempt. With
  * `maxAttempts === 0` the loop never gives up on its own (unbounded retry). Once
  * `attempt` attempts have already been made, a further failure gives up when
@@ -217,15 +199,4 @@ export function reconnectReducer(
     default:
       return state;
   }
-}
-
-/**
- * Whether a phase is one where the loop is actively trying (spinner/countdown).
- * Twin of the Rust `is_active_reconnect_phase`.
- *
- * @internal Only tests (incl. the golden-fixture parity suite) call it; kept
- * until the Rust twin is removed with it (#4783).
- */
-export function isActiveReconnectPhase(phase: ReconnectPhase): boolean {
-  return phase === "waiting" || phase === "connecting";
 }

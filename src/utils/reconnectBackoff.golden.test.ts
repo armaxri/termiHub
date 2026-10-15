@@ -15,14 +15,11 @@ import {
   RECONNECT_GIVE_UP_WINDOW_MS,
   RECONNECT_POLICY,
   backoffDelay,
-  isActiveReconnectPhase,
   nextReconnectDelay,
   reconnectReducer,
   shouldGiveUp,
-  worstCaseTotalBackoffMs,
   type BackoffConfig,
   type ReconnectEvent,
-  type ReconnectPhase,
   type ReconnectState,
 } from "./reconnectBackoff";
 
@@ -65,10 +62,6 @@ function runCase(operation: string, c: GoldenCase): unknown {
         config,
         rand
       );
-    case "isActiveReconnectPhase":
-      return isActiveReconnectPhase(c.input as ReconnectPhase);
-    case "worstCaseTotalBackoffMs":
-      return worstCaseTotalBackoffMs(c.input as BackoffConfig);
     case "reconnectPolicy":
       switch (c.input) {
         case null:
@@ -93,7 +86,7 @@ describe("reconnectBackoff — golden vectors shared with the Rust port", () => 
 
   it("loads a meaningful body of cases", () => {
     const total = fixtures.reduce((n, f) => n + f.cases.length, 0);
-    expect(total).toBeGreaterThanOrEqual(45);
+    expect(total).toBeGreaterThanOrEqual(39);
   });
 
   for (const fixture of fixtures) {
