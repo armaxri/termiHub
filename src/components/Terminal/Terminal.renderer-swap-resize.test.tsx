@@ -16,13 +16,16 @@
  * #4863: a real container change while a tab is hidden is fitted once, on the
  * next show, to the grid the tab is shown with — not to the DOM grid while
  * hidden and again to the WebGL grid on show.
+ *
+ * #4872: the same holds when TerminalSlot re-adopts a hidden tab's element into
+ * a resized slot (split / move / merge) and calls the registry's fitTerminal.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
-import { TerminalPortalProvider } from "./TerminalRegistry";
+import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
 
 // Shared state reachable from the hoisted vi.mock factories below.
 const h = vi.hoisted(() => {
@@ -192,10 +195,19 @@ let root: Root;
 
 const LOCAL_CONFIG = { type: "local" as const, config: {} };
 
+let registry: ReturnType<typeof useTerminalRegistry> | null = null;
+
+/** Captures the registry so a test can drive TerminalSlot's adopt path. */
+function RegistryProbe() {
+  registry = useTerminalRegistry();
+  return null;
+}
+
 function renderTerminal(isVisible: boolean, isOnScreen: boolean = isVisible) {
   act(() => {
     root.render(
       <TerminalPortalProvider>
+        <RegistryProbe />
         <Terminal
           tabId="tab-swap"
           config={LOCAL_CONFIG}
@@ -233,7 +245,29 @@ function resizeContainer(width: number, height: number) {
   act(() => h.resizeObserverCallbacks.forEach((cb) => cb([entry])));
 }
 
+/**
+ * Mirror TerminalSlot's `tryAdopt`: reparent the terminal element into a new
+ * slot laid out at `width`×`height`, then fit synchronously and again on the
+ * next frame through the registry.
+ */
+function adoptIntoResizedSlot(width: number, height: number) {
+  const reg = registry;
+  if (!reg) throw new Error("registry not captured");
+  const el = reg.getElement("tab-swap");
+  if (!el) throw new Error("terminal element not registered");
+  const slot = document.createElement("div");
+  container.appendChild(slot);
+  h.state.containerWidth = width;
+  h.state.containerHeight = height;
+  act(() => {
+    slot.appendChild(el);
+    reg.fitTerminal("tab-swap");
+    requestAnimationFrame(() => reg.fitTerminal("tab-swap"));
+  });
+}
+
 beforeEach(() => {
+  registry = null;
   rafCallbacks = [];
   let rafId = 0;
   globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
@@ -419,6 +453,64 @@ describe("Terminal renderer swap keeps the PTY grid (#4858)", () => {
     await settle();
     expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
     expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("defers the slot-adopt fit of a hidden tab to one resize on show (#4872)", async () => {
+    await mountConnected();
+    renderTerminal(false);
+    await settle();
+
+    // A split re-creates the panel's slots: the hidden tab's element is adopted
+    // into a slot of a new size, and the adopt path fits it (sync + frame).
+    adoptIntoResizedSlot(800, 600);
+    await settle();
+
+    // Hidden: the PTY is not resized to the DOM grid.
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    renderTerminal(true);
+    await settle();
+
+    // Shown: exactly one resize, to the WebGL grid the tab is shown with.
+    expect(h.state.liveWebgl).toBe(1);
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("defers the slot-adopt fit when only isOnScreen is false (#4872)", async () => {
+    // An inactive tab group's active tab: visible in its group, not on screen.
+    // Showing it flips only isOnScreen, so the deferred fit is the one resize.
+    await mountConnected();
+    renderTerminal(true, false);
+    await settle();
+
+    adoptIntoResizedSlot(800, 600);
+    await settle();
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    renderTerminal(true, true);
+    await settle();
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("still fits a visible tab immediately on slot adoption (#4872)", async () => {
+    await mountConnected();
+
+    adoptIntoResizedSlot(800, 600);
+    await settle();
+
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("keeps the degenerate-fit guard on slot adoption of a visible tab (#2693)", async () => {
+    await mountConnected();
+
+    // Adopted into a panel that is not laid out yet: no fit, no PTY resize.
+    adoptIntoResizedSlot(0, 0);
+    await settle();
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
   });
 
   it("re-fits and resizes when the context is lost on a visible terminal", async () => {
