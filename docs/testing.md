@@ -1740,7 +1740,10 @@ Notes worth knowing before you use it:
   the binary. Building a release agent by hand for the armed container needs the
   same flag. A previously built musl agent is reused only if it embeds that key,
   so a stale non-`test-hooks` build is rebuilt instead of failing the real swap
-  at AGT-005 (#4092).
+  at AGT-005 (#4092). To stage it outside a test, run
+  `uv run --frozen python -m termihub_harness.stage_agent` from `tests/system`:
+  it calls `stage_remote_agent_binary` itself. The nightly fixture step does this
+  so it can pre-build the `agent`-profile images before the tests start (#4479).
 - **It does not swap the binary.** The default staged path points at a file the
   agent never writes. A `pending_update` is live — closing the last session fires
   a real deferred apply — so this matters: the apply fails, logs, and keeps the
