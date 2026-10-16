@@ -173,6 +173,66 @@ def test_open_named_context_menu_waits_for_resolve_then_a_mounted_trigger():
     assert driver.context_menu_calls == ["trigger-9"]
 
 
+class ToolbarDriver:
+    """Driver stub for the responsive-toolbar helpers (#4838).
+
+    ``inline`` actions are always mounted; ``in_menu`` actions mount only once the
+    overflow trigger has been clicked, like the Radix overflow menu that only
+    renders its items while open.
+    """
+
+    def __init__(self, *, inline=(), in_menu=(), overflow="tb-overflow"):
+        self._inline = set(inline)
+        self._in_menu = set(in_menu)
+        self._overflow = overflow
+        self.menu_open = False
+        self.clicks: list[str] = []
+
+    def exists(self, test_id: str) -> bool:
+        if test_id in self._inline:
+            return True
+        if test_id == self._overflow:
+            return bool(self._in_menu)
+        return self.menu_open and test_id in self._in_menu
+
+    def click(self, test_id: str) -> None:
+        self.clicks.append(test_id)
+        if test_id == self._overflow:
+            self.menu_open = not self.menu_open
+        elif test_id in self._in_menu:
+            self.menu_open = False
+
+
+def test_invoke_toolbar_action_clicks_an_inline_action_directly():
+    driver = ToolbarDriver(inline={"save"}, in_menu={"import"})
+    FakeHarness(driver).invoke_toolbar_action("save", overflow="tb-overflow")
+    assert driver.clicks == ["save"]
+
+
+def test_invoke_toolbar_action_opens_the_overflow_menu_when_not_inline():
+    # Regression for #4838: Save Current is only in the "…" menu at the default
+    # sidebar width, so clicking its testid directly waited forever.
+    driver = ToolbarDriver(inline={"new"}, in_menu={"save"})
+    FakeHarness(driver).invoke_toolbar_action("save", overflow="tb-overflow")
+    assert driver.clicks == ["tb-overflow", "save"]
+    assert not driver.menu_open
+
+
+def test_reveal_toolbar_action_reports_whether_it_opened_the_menu():
+    inline = ToolbarDriver(inline={"new"}, in_menu={"save"})
+    assert FakeHarness(inline).reveal_toolbar_action("new", overflow="tb-overflow") is False
+    assert inline.clicks == []
+    collapsed = ToolbarDriver(inline={"new"}, in_menu={"save"})
+    assert FakeHarness(collapsed).reveal_toolbar_action("save", overflow="tb-overflow") is True
+    assert collapsed.menu_open
+
+
+def test_invoke_toolbar_action_times_out_when_the_action_is_nowhere():
+    driver = ToolbarDriver(inline={"new"}, in_menu={"other"})
+    with pytest.raises(AssertionError, match="'save'"):
+        FakeHarness(driver).invoke_toolbar_action("save", overflow="tb-overflow")
+
+
 class FolderCreateDriver:
     """Driver stub for ``create_folder``: the just-created folder's id starts as
     the optimistic ``folder-<timestamp>`` the sidebar assigns, then swaps to its
@@ -194,7 +254,7 @@ class FolderCreateDriver:
         self._settled = settled_id
         self._settle_after = settle_after
         self._reads = 0
-        self._present = {ConnectionsUi.FOLDER_NAME_INPUT}
+        self._present = {ConnectionsUi.FOLDER_NAME_INPUT, ConnectionsUi.NEW_FOLDER}
         self.clicks: list[str] = []
         self.typed: dict[str, str] = {}
 

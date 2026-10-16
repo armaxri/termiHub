@@ -64,6 +64,8 @@ PERF_006_PANIC = "PERF-006: incremental session delta diverged"
 
 WORKSPACES_VIEW = "activity-bar-workspaces"
 SAVE_CURRENT = "workspace-save-current-btn"
+#: The Workspaces toolbar's overflow "…" trigger; Save Current lives in it at narrow widths (#4824).
+WORKSPACE_OVERFLOW = "workspace-toolbar-overflow"
 SAVE_DIALOG = "save-workspace-dialog"
 SAVE_NAME = "save-workspace-name"
 SAVE_CONFIRM = "save-workspace-confirm"
@@ -344,8 +346,9 @@ class TestWorkspaceRestoreUi(
     def _save_workspace(self, name: str) -> str:
         """Save the current layout as workspace ``name``; return its id."""
         self._ensure_sidebar("workspaces", WORKSPACES_VIEW)
-        self.wait(lambda: self.driver.exists(SAVE_CURRENT), what="the Save Current button")
-        self.driver.click(SAVE_CURRENT)
+        # "New Workspace" is the toolbar's primary action, so Save Current is
+        # inline only when every action fits; otherwise it is in the "…" menu.
+        self.invoke_toolbar_action(SAVE_CURRENT, overflow=WORKSPACE_OVERFLOW)
         self.wait(lambda: self.driver.exists(SAVE_DIALOG), what="the save-workspace dialog")
         self.driver.type(SAVE_NAME, name)
         self.driver.click(SAVE_CONFIRM)

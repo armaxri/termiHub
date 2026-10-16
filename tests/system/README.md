@@ -442,6 +442,32 @@ because each only borrows `self.driver` / `self.wait` from the base.
 The plain name→element lookups (`find_connection` / `find_folder`) stay free
 functions in `termihub_harness.ui` so they remain unit-testable without an app.
 
+#### Sidebar toolbar actions — never click them directly
+
+Sidebar toolbars (Connections header, Workspaces, Macros, Workflows, …) are a
+width-responsive `ResponsiveToolbar` (#4709, #4824): every action is a labelled
+button while they all fit, otherwise only the `primary` action stays inline and
+the rest move into one overflow "…" menu, whose items are only mounted while it
+is open. Workspaces already collapses at the default 260px sidebar width, so a
+bare `self.driver.click("workspace-save-current-btn")` waits forever (#4838).
+Every mixin inherits two helpers that handle both forms; pass the action's
+`data-testid` (inline button and menu item share it) and the toolbar's overflow
+trigger testid:
+
+```python
+self.invoke_toolbar_action("workspace-save-current-btn", overflow="workspace-toolbar-overflow")
+# Only reveal it (opens the menu if needed; returns True when it did — close it with Escape):
+opened = self.reveal_toolbar_action("connection-list-new-folder",
+                                    overflow="sidebar-group-header-connections-overflow")
+```
+
+| Toolbar            | Overflow trigger testid                     |
+| ------------------ | ------------------------------------------- |
+| Connections header | `sidebar-group-header-connections-overflow` |
+| Workspaces         | `workspace-toolbar-overflow`                |
+| Macros             | `macro-toolbar-overflow`                    |
+| Workflows          | `workflow-toolbar-overflow`                 |
+
 ### Tests that need container fixtures (SSH/serial/telnet)
 
 The infrastructure suites reuse the **containers in

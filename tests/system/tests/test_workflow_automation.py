@@ -189,7 +189,7 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         """Author a one-step macro in the Macros sidebar; return its id."""
         self._ensure_sidebar("macros", "activity-bar-macros")
         self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
-        self.driver.click("macro-new-btn")
+        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
         self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
         self.driver.type("macro-editor-name", name)
         # A new macro opens pre-seeded with one empty step; only add one if the
