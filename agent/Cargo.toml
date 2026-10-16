@@ -118,6 +118,7 @@ libc = "0.2"
 termihub-win-security = { path = "../win-security" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_System_Console",
     "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }

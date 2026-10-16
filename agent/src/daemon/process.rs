@@ -206,6 +206,13 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     let settings = read_settings_from_stdin()?;
     let config = DaemonConfig::from_env(session_id, settings)?;
 
+    // The detached spawn disabled Ctrl+C for this process group on Windows;
+    // re-enable it before the session's shell is spawned so it inherits normal
+    // Ctrl+C processing (#4828).
+    if let Err(e) = crate::daemon::spawn::restore_ctrl_c_for_children() {
+        warn!("could not re-enable Ctrl+C for the session's processes: {e}");
+    }
+
     // Log the whole session under the desktop's correlation id when the
     // worker handed one over (#3782, OBS-004).
     let span = daemon_session_span(&config, correlation_id_from_env().as_deref());
