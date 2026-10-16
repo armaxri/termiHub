@@ -26,6 +26,7 @@ import {
   Route,
   FileDown,
   FileSpreadsheet,
+  FileInput,
   Link,
   Square,
   Puzzle,
@@ -78,6 +79,7 @@ import {
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { BulkSshImportDialog } from "./BulkSshImportDialog";
 import { FleetOnboardDialog } from "./FleetOnboardDialog";
+import { MobaxtermImportDialog } from "./MobaxtermImportDialog";
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
@@ -764,6 +766,7 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [mobaxtermImportOpen, setMobaxtermImportOpen] = useState(false);
   const [fleetRows, setFleetRows] = useState<InventoryHost[] | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [agentFilterQuery, setAgentFilterQuery] = useState("");
@@ -800,6 +803,7 @@ export function ConnectionList() {
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
   const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
+  const importConnectionTree = useAppStore((s) => s.importConnectionTree);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
@@ -1507,6 +1511,14 @@ export function ConnectionList() {
                 testId: "connection-list-import-ssh-config",
               },
               {
+                id: "import-mobaxterm",
+                label: "Import from MobaXterm",
+                icon: <FileInput size={16} />,
+                onClick: () => setMobaxtermImportOpen(true),
+                iconOnly: true,
+                testId: "connection-list-import-mobaxterm",
+              },
+              {
                 id: "import-csv",
                 label: "Onboard hosts from a CSV / inventory",
                 icon: <FileSpreadsheet size={16} />,
@@ -1731,6 +1743,13 @@ export function ConnectionList() {
         folders={folders}
         existingConnections={connections}
         onImport={bulkAddConnections}
+      />
+      <MobaxtermImportDialog
+        open={mobaxtermImportOpen}
+        onOpenChange={setMobaxtermImportOpen}
+        folders={folders}
+        existingConnections={connections}
+        onImport={importConnectionTree}
       />
       <FleetOnboardDialog
         open={fleetRows !== null}

@@ -113,6 +113,15 @@ export type { SshConfigImportConnection } from "./generated/SshConfigImportConne
  */
 export type { InventoryHost } from "./generated/InventoryHost";
 
+/**
+ * MobaXterm import (#4850): a configuration found on this machine, the parsed
+ * preview of one, and one saved session in it (importable or skipped with a
+ * reason). Generated from `commands/mobaxterm_import/mod.rs` via ts-rs.
+ */
+export type { MobaxtermConfigCandidate } from "./generated/MobaxtermConfigCandidate";
+export type { MobaxtermImportPreview } from "./generated/MobaxtermImportPreview";
+export type { MobaxtermSession } from "./generated/MobaxtermSession";
+
 // DUP-008: the connection tree's source of truth is the Rust on-disk
 // `ConnectionTreeNode` (`src-tauri/src/connection/config.rs`). It never crosses
 // IPC: storage flattens it into the generated `ConnectionFolder` /
