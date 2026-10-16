@@ -187,7 +187,7 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
 
     def _create_macro(self, name: str, step_text: str) -> str:
         """Author a one-step macro in the editor dialog; return its id."""
-        self.driver.click("macro-new-btn")
+        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
         self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
         self.driver.type("macro-editor-name", name)
         # A new macro opens pre-seeded with one empty step; only add one if the

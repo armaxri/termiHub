@@ -79,7 +79,9 @@ class WorkflowUi(HarnessMixin):
     # ── Editor dialog ───────────────────────────────────────────────────────
     def open_new_workflow(self) -> None:
         """Open the editor on a fresh blank workflow via the New menu."""
-        self.driver.click("workflow-new-btn")
+        # "New" is the toolbar's primary action (inline beside the "…" menu); at a
+        # width too narrow even for that it becomes a sub-menu of "…" (#4824).
+        self.invoke_toolbar_action("workflow-new-btn", overflow="workflow-toolbar-overflow")
         self.wait(
             lambda: self.driver.exists("workflow-new-blank"),
             what="the New-workflow menu",
