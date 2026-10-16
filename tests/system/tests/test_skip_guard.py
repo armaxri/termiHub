@@ -147,6 +147,86 @@ def test_the_committed_allowlist_parses_and_never_admits_linux_fixture_skips():
     assert not verdict.ok
 
 
+#: The exact skip reasons the container-fixture suites gave on a windows-latest
+#: runner whose Docker daemon was unreachable (#4842, run 38847806014). The em
+#: dashes are real U+2014 characters: the skip guard reads the reason from the
+#: in-process report, so the Windows console's mangled ``�`` never reaches it.
+_WINDOWS_NO_DAEMON_SKIPS = [
+    sg.Skip(
+        f"tests/test_{name}.py::T::test_x",
+        f"{prefix} unavailable: no container runtime available — need Docker or Podman "
+        "(override the choice with CONTAINER_CMD=podman)",
+    )
+    for name, prefix in [
+        ("ssh", "SSH container fixtures"),
+        ("ssh_jump", "SSH jump-host container fixtures"),
+        ("telnet", "telnet container fixtures"),
+        ("vnc", "VNC container fixtures"),
+        ("ftp", "FTP container fixture"),
+    ]
+] + [
+    sg.Skip(
+        f"tests/test_remote_agent_{index}.py::T::test_x",
+        f"{prefix} unavailable: no container runtime (Docker/Podman) reachable — the "
+        "deployed-agent suites need one that runs Linux containers",
+    )
+    for index, prefix in enumerate(
+        [
+            "deployed-agent container fixture",
+            "armed deployed-agent container fixture",
+            "keyboard-interactive deployed-agent fixture",
+            "real-swap deployed-agent container fixture",
+        ]
+    )
+]
+
+
+def test_bulk_windows_admits_container_fixture_skips_when_the_daemon_is_unreachable():
+    """#4842: a windows-latest runner without a reachable Docker daemon must not
+    red the skip guard — those Linux fixtures can never run on Windows."""
+    verdict = sg.evaluate(
+        "bulk-windows",
+        collected=500,
+        skips=_WINDOWS_NO_DAEMON_SKIPS,
+        allowlist=sg.load_allowlist(),
+    )
+    assert verdict.ok, verdict.problems
+
+
+def test_bulk_windows_still_fails_an_unexpected_skip():
+    unexpected = sg.Skip("tests/test_x.py::T::test_y", "some brand-new environment gap")
+    verdict = sg.evaluate(
+        "bulk-windows",
+        collected=500,
+        skips=[*_WINDOWS_NO_DAEMON_SKIPS, unexpected],
+        allowlist=sg.load_allowlist(),
+    )
+    assert not verdict.ok
+    assert verdict.unexpected == [unexpected]
+
+
+def test_bulk_windows_does_not_admit_a_container_fixture_failure():
+    """Only the "no runtime" reason is admitted, not a broken fixture."""
+    broken = sg.Skip(
+        "tests/test_ssh.py::T::test_x",
+        "SSH container fixtures unavailable: `compose up` timed out after 300.0s",
+    )
+    verdict = sg.evaluate(
+        "bulk-windows", collected=500, skips=[broken], allowlist=sg.load_allowlist()
+    )
+    assert not verdict.ok
+
+
+def test_the_windows_no_daemon_entries_do_not_leak_into_linux():
+    verdict = sg.evaluate(
+        "bulk-linux",
+        collected=500,
+        skips=_WINDOWS_NO_DAEMON_SKIPS[:1],
+        allowlist=sg.load_allowlist(),
+    )
+    assert not verdict.ok
+
+
 def test_fully_skipped_modules_lists_suites_that_ran_nothing():
     skips = [sg.Skip("tests/test_rdp.py::T::a", "r"), sg.Skip("tests/test_ssh.py::T::b", "r")]
     assert sg.fully_skipped_modules(skips, ran=["tests/test_ssh.py::T::c"]) == [
