@@ -232,6 +232,46 @@ jobs:
         with:
           fixture-images: "true"
 
+      - name: Start the Docker service (Windows)
+        # #4842: the windows-latest image does not always have its Docker service
+        # running when the job starts; on such a runner every `docker info` in the
+        # harness failed for the whole run, so the container fixtures skipped as
+        # "no container runtime available" instead of the usual "daemon runs
+        # windows containers". Start the service and wait for the daemon here so
+        # the runtime state is deterministic. Either way the Linux fixtures cannot
+        # run on Windows (the daemon only runs Windows containers), so a daemon
+        # that still will not come up is a loud ::warning:: annotation, not a red
+        # lane; the skip guard admits both reasons for bulk-windows only.
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        # advisory: the fixtures cannot run on Windows with or without a daemon.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $warn = '::warning title=Docker daemon not reachable on runner::'
+          $svc = Get-Service -Name docker -ErrorAction SilentlyContinue
+          if (-not $svc) {
+            Write-Output "${warn}no 'docker' service on this runner; container fixtures will skip (#4842)"
+            exit 0
+          }
+          Write-Output "docker service before: Status=$($svc.Status) StartType=$($svc.StartType)"
+          if ($svc.Status -ne 'Running') {
+            try { Start-Service -Name docker -ErrorAction Stop }
+            catch { Write-Output "Start-Service docker failed: $_" }
+          }
+          $deadline = (Get-Date).AddSeconds(180)
+          while ((Get-Date) -lt $deadline) {
+            $os = docker info --format '{{.OSType}}' 2>$null
+            if ($LASTEXITCODE -eq 0 -and $os) {
+              Write-Output "docker daemon reachable (OSType=$os)"
+              exit 0
+            }
+            Start-Sleep -Seconds 5
+          }
+          Get-Service -Name docker | Format-List Name, Status, StartType
+          Write-Output "${warn}docker info still failing after 180s; container fixtures will skip (#4842)"
+          exit 0
+
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
 

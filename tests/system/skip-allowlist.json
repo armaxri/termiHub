@@ -99,6 +99,20 @@
       "why": "the Windows runner's daemon runs Windows containers only, not the Linux fixtures"
     },
     {
+      "reason": "^(SSH|SSH jump-host|telnet|VNC|FTP) container fixtures? unavailable: no container runtime available",
+      "lanes": [
+        "bulk-windows"
+      ],
+      "why": "#4842: some windows-latest runners never bring the Docker service up (the lane's start step warns). A reachable daemon would only run Windows containers, so these Linux fixtures cannot run on Windows either way"
+    },
+    {
+      "reason": "^(armed |keyboard-interactive |real-swap )?deployed-agent (container )?fixture unavailable: no container runtime \\(Docker/Podman\\) reachable",
+      "lanes": [
+        "bulk-windows"
+      ],
+      "why": "#4842: same as above for the deployed-agent containers, which need a Linux daemon the Windows runner never has"
+    },
+    {
       "reason": "^Windows runners only run Windows containers; no alpine image$",
       "nodeid": "test_external_spawn\\.py",
       "lanes": [
