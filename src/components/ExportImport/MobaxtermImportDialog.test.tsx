@@ -120,9 +120,16 @@ const INVALID_KEY: MobaxtermHostKey = {
 function preview(
   sessions: MobaxtermSession[],
   path = "C:\\Users\\a\\MobaXterm.ini",
-  hostKeys: MobaxtermHostKey[] = []
+  hostKeys: MobaxtermHostKey[] = [],
+  notes: string[] = []
 ) {
-  const p: MobaxtermImportPreview = { sourcePath: path, encoding: "utf-8", sessions, hostKeys };
+  const p: MobaxtermImportPreview = {
+    sourcePath: path,
+    encoding: "utf-8",
+    sessions,
+    hostKeys,
+    notes,
+  };
   return p;
 }
 
@@ -184,6 +191,27 @@ describe("MobaxtermImportDialog", () => {
     expect(q("mobaxterm-import-check-moba-2")).toBeNull();
     // Every importable session starts selected.
     expect(q("mobaxterm-import-submit")?.textContent).toBe("Import 2");
+  });
+
+  it("shows file-level notes such as unimported global appearance settings", async () => {
+    mockedDiscover.mockResolvedValue([
+      { path: "C:\\Users\\a\\MobaXterm.ini", source: "installed" },
+    ]);
+    const note = "MobaXterm's global appearance settings ([Font]) were not imported.";
+    mockedPreview.mockResolvedValue(preview([SSH], undefined, [], [note]));
+    renderDialog();
+    await flush();
+    expect(q("mobaxterm-import-file-notes")?.textContent).toContain("[Font]");
+  });
+
+  it("shows no file-level notes when there are none", async () => {
+    mockedDiscover.mockResolvedValue([
+      { path: "C:\\Users\\a\\MobaXterm.ini", source: "installed" },
+    ]);
+    mockedPreview.mockResolvedValue(preview([SSH]));
+    renderDialog();
+    await flush();
+    expect(q("mobaxterm-import-file-notes")).toBeNull();
   });
 
   it("offers a manual file pick when nothing is discovered", async () => {

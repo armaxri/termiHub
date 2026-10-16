@@ -51,6 +51,15 @@
   overflow: visible;
 }
 
+.mobaxterm-import__file-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .mobaxterm-import__note {
   display: inline-flex;
   align-items: center;

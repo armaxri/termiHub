@@ -91,7 +91,7 @@ export function buildMobaxtermImportPlan(
     const taken = takenIn(folderId);
     const name = uniqueConnectionName(session.name, taken);
     taken.add(name);
-    return {
+    const connection: SavedConnection = {
       id: `conn-${now}-${i}`,
       name,
       config: {
@@ -100,6 +100,9 @@ export function buildMobaxtermImportPlan(
       },
       folderId,
     };
+    // MobaXterm's per-session font/cursor (#4854) become per-connection options.
+    if (session.terminalOptions) connection.terminalOptions = { ...session.terminalOptions };
+    return connection;
   });
 
   return { folders: newFolders, connections };
