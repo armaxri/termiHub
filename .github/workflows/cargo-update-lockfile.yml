@@ -55,14 +55,14 @@ name: Cargo Update Lockfile
 # up to a week before the refresh landed. Daily shrinks that window to ~a day.
 
 on:
-  schedule:
-    # Daily, 04:00 UTC — before the weekday PR traffic so a fresh lockfile is
-    # usually already merged when contributors branch, and so an advisory
-    # published mid-week is proposed within ~a day rather than up to a week.
-    # GitHub fires this only from main (the default branch). Until this file
-    # is on main, scheduled-dispatch.yml dispatches it on develop at the same
-    # time (#4277); see scripts/internal/scheduled-lanes.mjs.
-    - cron: '0 4 * * *'
+  # No schedule of its own (#4847). scheduled-dispatch.yml dispatches it on
+  # develop daily at 04:00 UTC — before the weekday PR traffic so a fresh
+  # lockfile is usually already merged when contributors branch, and so an
+  # advisory published mid-week is proposed within ~a day rather than up to a
+  # week. A cron here would fire from main and run MAIN's copy of this YAML
+  # (its gate lags develop's between releases); the PR it opens targets develop,
+  # so there is no main cadence to keep. Registry:
+  # scripts/internal/scheduled-lanes.mjs.
   workflow_dispatch:
   # A change to this chore runs it once on develop. That first run also
   # registers the workflow with GitHub, which a dispatch needs (#4277): a
@@ -72,7 +72,7 @@ on:
     paths:
       - '.github/workflows/cargo-update-lockfile.yml'
 
-# Cancel a superseded manual run; a scheduled run and a manual run should not
+# Cancel a superseded run; the nightly dispatch and a manual run should not
 # race to push the same automation branch.
 concurrency:
   group: cargo-update-lockfile
@@ -371,7 +371,7 @@ jobs:
           fi
 
       # Visible failure: the PR above is a draft, but the run must go red too so
-      # the failed scheduled run is noticed (#3755, CI-012).
+      # the failed nightly run is noticed (#3755, CI-012).
       - name: Fail when the refreshed lockfile fails the gate
         if: steps.diff.outputs.changed == 'true' && steps.gate.outputs.passed != 'true'
         env:

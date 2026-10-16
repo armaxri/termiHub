@@ -15,12 +15,11 @@ name: Branch Protection Drift
 # admin with scripts/internal/apply-branch-protection.sh, never by CI.
 
 on:
-  schedule:
-    # Mondays 06:17 UTC (off the hour to dodge scheduler congestion).
-    # GitHub fires this only from main (the default branch). Until this file
-    # is on main, scheduled-dispatch.yml dispatches it on develop at the same
-    # time (#4277); see scripts/internal/scheduled-lanes.mjs.
-    - cron: '17 6 * * 1'
+  # No schedule of its own (#4847): scheduled-dispatch.yml dispatches it on
+  # develop every Monday 06:17 UTC. A cron here would fire from main and run
+  # MAIN's copy of this YAML and the checker; the expectation is kept current on
+  # develop, so there is no main cadence to keep. Registry:
+  # scripts/internal/scheduled-lanes.mjs.
   workflow_dispatch:
   # Re-check when the expectation or the checker changes. The first such run
   # also registers the workflow with GitHub, which a dispatch needs (#4277).
@@ -47,12 +46,11 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      # A scheduled run starts on the default branch (main); the expectation
-      # that is kept current lives on develop, so read that one.
+      # The dispatching or pushed branch: develop for the weekly dispatch,
+      # whose expectation is the one kept current.
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false
 
       - name: Setup Node.js
