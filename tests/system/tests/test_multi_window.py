@@ -221,6 +221,14 @@ class TestMultiWindow(WindowsUi, TerminalUi, SystemTest):
         self.wait(lambda: second.exists(CLOSE_DIALOG_MOVE), what="the Move tabs action")
         second.click(CLOSE_DIALOG_MOVE)
         second.wait_until_closed()
+        # Closing one window must not take the surviving window's page with it.
+        # On macOS this once failed with the main window's socket closed as well
+        # (#4861); fail on that at once, pointing at the evidence, instead of
+        # timing out on the registry poll below.
+        assert self.driver.is_connected, (
+            f"the main window's bridge socket closed when {label!r} closed — see "
+            "bridge-events.txt (close code) and probe-diagnostics.txt (app alive?)"
+        )
         self.wait(
             lambda: label not in {w["label"] for w in self.driver.list_windows()},
             what=f"window {label!r} to leave the backend registry",

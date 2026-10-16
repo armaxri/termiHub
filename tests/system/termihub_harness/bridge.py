@@ -91,6 +91,12 @@ class _Connection:
         self._next_id = 1
         self._pending: dict[int, asyncio.Future] = {}
         self._closed = False
+        #: The WebSocket close code and reason, once the socket has closed (#4861).
+        #: ``1006`` (no close frame) means the page died without closing it — a
+        #: crashed or killed webview process — while ``1000``/``1001``/``1005``
+        #: mean the page closed it (a reload, or the window going away).
+        self.close_code: Optional[int] = None
+        self.close_reason: str = ""
 
     async def reader(self) -> None:
         """Pump incoming response envelopes to their pending futures until close."""
@@ -107,6 +113,8 @@ class _Connection:
             # Expected when the app is killed/restarted — not an error.
             pass
         finally:
+            self.close_code = getattr(self._ws, "close_code", None)
+            self.close_reason = getattr(self._ws, "close_reason", None) or ""
             self._fail_all()
 
     def _fail_all(self) -> None:
@@ -178,6 +186,28 @@ class Driver:
     def is_connected(self) -> bool:
         """Whether this window's bridge socket is still open."""
         return not self._conn._closed
+
+    def bridge_events(self) -> list[str]:
+        """The owning bridge's connect/close log, oldest first (#4861).
+
+        Empty for a driver built without a bridge. Written into the failure
+        bundle as ``bridge-events.txt``, so a dropped socket shows which window
+        dropped, when, and with which close code.
+        """
+        if self._bridge is None:
+            return []
+        return self._bridge.connection_events()
+
+    def live_replacement(self) -> Optional["Driver"]:
+        """A driver for this window's newer live connection, if its page reconnected.
+
+        ``None`` while this driver is still connected, or when no newer live
+        connection exists for the same window label. A page that reloads opens a
+        new socket; this driver stays bound to the old, closed one (#4861).
+        """
+        if self.is_connected or self._bridge is None:
+            return None
+        return self._bridge.live_driver(self.window_label, request_timeout=self._timeout)
 
     def windows(self) -> list[str]:
         """Labels of every app window with a live bridge connection, main first.
@@ -822,6 +852,10 @@ class Bridge:
         # Both are only touched on the bridge event loop.
         self._windows: dict[str, _Connection] = {}
         self._windows_changed: Optional[asyncio.Event] = None
+        # Connect/close log for the failure bundle (#4861). Appended on the bridge
+        # loop and copied out by connection_events(); list.append is atomic.
+        self._events: list[str] = []
+        self._connection_count = 0
 
     def start(self) -> "Bridge":
         """Start listening on a background thread; resolves once :attr:`port` is set."""
@@ -939,6 +973,41 @@ class Bridge:
             raise TimeoutError(f"{what} did not connect to the bridge within {timeout}s") from exc
         return Driver(connection, self._loop, request_timeout=request_timeout, bridge=self)
 
+    def connection_events(self) -> list[str]:
+        """Every connect/close this bridge saw, oldest first (#4861).
+
+        One line each: wall-clock time, ``connect``/``close``, the window label,
+        a per-bridge connection number, and for a close the WebSocket close code
+        and reason.
+        """
+        return list(self._events)
+
+    def live_driver(
+        self, label: str, *, request_timeout: float = DEFAULT_REQUEST_TIMEOUT
+    ) -> Optional[Driver]:
+        """A :class:`Driver` for window ``label``'s live connection, or ``None``.
+
+        Unlike :meth:`window` this does not wait: it answers from the registry
+        as it is now.
+        """
+        if self._loop is None:
+            raise RuntimeError("bridge is not started")
+
+        async def lookup() -> Optional[_Connection]:
+            connection = self._windows.get(label)
+            return connection if connection is not None and not connection._closed else None
+
+        connection = asyncio.run_coroutine_threadsafe(lookup(), self._loop).result(5)
+        if connection is None:
+            return None
+        return Driver(connection, self._loop, request_timeout=request_timeout, bridge=self)
+
+    def _record_event(self, text: str) -> None:
+        """Append one timestamped line to the connect/close log (bridge loop)."""
+        now = time.time()
+        stamp = time.strftime("%H:%M:%S", time.gmtime(now)) + f".{int(now % 1 * 1000):03d}Z"
+        self._events.append(f"{stamp} {text}")
+
     async def _live_labels(self) -> list[str]:
         labels = [label for label, conn in self._windows.items() if not conn._closed]
         return sorted(labels, key=lambda label: (label != MAIN_WINDOW, label))
@@ -1026,6 +1095,9 @@ class Bridge:
                 await ws.close(1008, "invalid bridge window label")
                 return
             connection = _Connection(ws, loop, window=window)
+            self._connection_count += 1
+            number = self._connection_count
+            self._record_event(f"connect window={window} conn=#{number}")
             self._windows[window] = connection
             self._signal_windows_changed()
             # Only the main window takes part in the wait_for_app queue (the
@@ -1037,6 +1109,10 @@ class Bridge:
             try:
                 await connection.reader()
             finally:
+                self._record_event(
+                    f"close window={window} conn=#{number} "
+                    f"code={connection.close_code} reason={connection.close_reason!r}"
+                )
                 if self._windows.get(window) is connection:
                     del self._windows[window]
                 self._signal_windows_changed()

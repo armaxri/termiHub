@@ -206,3 +206,61 @@ def test_screenshot_to_png_bytes_accepts_data_url_and_bare_base64():
 def test_screenshot_to_png_bytes_rejects_malformed_base64():
     with pytest.raises(ValueError):
         screenshot_to_png_bytes("data:image/png;base64,not valid base64!!")
+
+
+class _BridgeDriver(_StubDriver):
+    """A driver with the multi-window bridge's socket state and event log (#4861)."""
+
+    def __init__(self, *, connected=True, events=(), replacement=None, **kwargs):
+        super().__init__(**kwargs)
+        self.window_label = "main"
+        self.is_connected = connected
+        self._events = list(events)
+        self._replacement = replacement
+
+    def bridge_events(self):
+        return self._events
+
+    def live_replacement(self):
+        return self._replacement
+
+
+class _LiveApp(_StubApp):
+    def __init__(self, *, running, returncode=None, **kwargs):
+        super().__init__(**kwargs)
+        self._running = running
+        self.pid = 4242
+        self.returncode = returncode
+
+    def is_running(self):
+        return self._running
+
+
+def test_bundle_records_bridge_events_socket_state_and_app_liveness(tmp_path: Path):
+    events = [
+        "11:17:01.300Z connect window=main conn=#1",
+        "11:17:07.140Z close window=main conn=#1 code=1006 reason=''",
+    ]
+    driver = _BridgeDriver(connected=False, events=events)
+    dest = write_failure_artifacts(tmp_path / "b", driver, _LiveApp(running=True))
+    assert (dest / "bridge-events.txt").read_text() == "\n".join(events) + "\n"
+    text = (dest / "probe-diagnostics.txt").read_text()
+    assert "app process: running (pid 4242)" in text
+    assert "driver socket (main): CLOSED" in text
+    assert "bridge-events.txt: ok in " in text
+
+
+def test_bundle_records_an_exited_app(tmp_path: Path):
+    dest = write_failure_artifacts(
+        tmp_path / "x", None, _LiveApp(running=False, returncode=-11)
+    )
+    assert "app process: EXITED (code -11)" in (dest / "probe-diagnostics.txt").read_text()
+
+
+def test_bundle_probes_through_a_reconnected_page(tmp_path: Path):
+    # The page reloaded onto a new socket: probe through it and say so (#4861).
+    fresh = _StubDriver(state={"windowLabel": "main"})
+    driver = _BridgeDriver(connected=False, replacement=fresh, state_exc=RuntimeError("closed"))
+    dest = write_failure_artifacts(tmp_path / "r", driver, None)
+    assert json.loads((dest / "state.json").read_text()) == {"windowLabel": "main"}
+    assert "reconnected on a new socket" in (dest / "probe-diagnostics.txt").read_text()

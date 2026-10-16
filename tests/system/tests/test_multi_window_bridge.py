@@ -8,6 +8,7 @@ that respawns windows), and an untagged (legacy) client is still the main window
 """
 
 import json
+import re
 import time
 
 import pytest
@@ -205,3 +206,42 @@ def test_window_tab_count_is_zero_without_a_readable_save(tmp_path):
     assert last_session_window_tab_count(tmp_path, "win-1") == 0
     (tmp_path / "last-session.json").write_text("{not json", encoding="utf-8")
     assert last_session_window_tab_count(tmp_path, "win-1") == 0
+
+
+def test_bridge_event_log_records_connects_and_closes(bridge):
+    # The failure bundle's bridge-events.txt (#4861): which window's socket
+    # dropped, when, and with which close code.
+    with FakeApp(bridge.port, label_echo("main"), window="main"):
+        main = bridge.wait_for_app(timeout=5)
+        second_app = FakeApp(bridge.port, label_echo("win-1"), window="win-1").start()
+        second = main.window("win-1", timeout=5)
+        second_app.stop()
+        second.wait_until_closed(timeout=5)
+        deadline = time.monotonic() + 5
+        while not any(" close " in e for e in main.bridge_events()):
+            assert time.monotonic() < deadline, main.bridge_events()
+            time.sleep(0.05)
+        events = main.bridge_events()
+
+    assert "connect window=main conn=#1" in events[0]
+    assert "connect window=win-1 conn=#2" in events[1]
+    assert "close window=win-1 conn=#2 code=1000" in events[2]
+    assert all(re.match(r"\d\d:\d\d:\d\d\.\d{3}Z ", e) for e in events), events
+
+
+def test_live_replacement_follows_a_reconnected_page(bridge):
+    # A page that reloads opens a new socket; the old driver can find it (#4861).
+    first = FakeApp(bridge.port, label_echo("main"), window="main").start()
+    main = bridge.wait_for_app(timeout=5)
+    assert main.live_replacement() is None  # still connected
+
+    first.stop()
+    main.wait_until_closed(timeout=5)
+    assert main.live_replacement() is None  # nothing reconnected yet
+
+    with FakeApp(bridge.port, label_echo("main"), window="main"):
+        bridge.window("main", timeout=5)
+        replacement = main.live_replacement()
+        assert replacement is not None
+        assert replacement.is_connected
+        assert replacement.get_text("t") == "main:t"
