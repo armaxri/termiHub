@@ -174,7 +174,7 @@ fn ssh_login_command_note_carries_the_decoded_command() {
         s.notes
     );
     assert!(
-        s.notes[0].contains("no on-connect command"),
+        s.notes[0].contains("have no on-connect command"),
         "{:?}",
         s.notes
     );

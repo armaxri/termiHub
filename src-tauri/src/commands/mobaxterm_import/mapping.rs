@@ -20,8 +20,9 @@
 //!
 //! What termiHub has a counterpart for is mapped: SSH gateways become the SSH
 //! jump-host chain, and a single VNC SSH gateway becomes the VNC SSH tunnel.
-//! The rest stays a preview note: termiHub has no on-connect command, no
-//! outbound network proxy, no SSH tunnel for RDP and no multi-hop VNC tunnel.
+//! The rest stays a preview note: termiHub SSH connections have no on-connect
+//! command (only local and WSL shells do) and no outbound network proxy, RDP
+//! has no SSH tunnel, and the VNC tunnel is single-hop.
 //!
 //! Rsh (2), XDMCP (3), File (9), Browser (11), Mosh (12) and S3 (13) have no
 //! termiHub counterpart and are skipped with a reason. Passwords are never
@@ -259,8 +260,8 @@ fn map_ssh(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     }
     if let Some(command) = b.field(7) {
         b.notes.push(format!(
-            "The command run at login (\"{command}\") was not imported: termiHub has no \
-             on-connect command; run it yourself after connecting."
+            "The command run at login (\"{command}\") was not imported: termiHub SSH \
+             connections have no on-connect command; run it yourself after connecting."
         ));
     }
     if let Some(note) = proxy_note(&b, [19, 20, 21, 22], "SSH connections") {
