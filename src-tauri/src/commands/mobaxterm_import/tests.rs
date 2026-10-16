@@ -210,7 +210,7 @@ fn ssh_network_proxy_is_described_in_the_note() {
 }
 
 #[test]
-fn rdp_ssh_gateway_and_rd_gateway_stay_notes() {
+fn rdp_single_ssh_gateway_becomes_the_ssh_tunnel_and_rd_gateway_stays_a_note() {
     let ini = r"[Bookmarks]
 SubRep=
 Gated RDP=#91#4%192.0.2.21%3389%carol%0%0%0%0%-1%0%0%-1%%edge.example.com%2200%alice%0%0%_ProfileDir_\keys\edge%-1%rdgw.example.com%-1#MobaFont#0# #-1
@@ -218,14 +218,49 @@ Gated RDP=#91#4%192.0.2.21%3389%carol%0%0%0%0%-1%0%0%-1%%edge.example.com%2200%a
     let s = &preview(ini)[0];
     assert_eq!(s.connection_type.as_deref(), Some("rdp"));
     assert_eq!(s.target, "carol@192.0.2.21");
-    assert!(setting(s, "useSshTunnel").is_null());
-    assert_eq!(s.notes.len(), 2, "{:?}", s.notes);
+    assert_eq!(setting(s, "host"), "192.0.2.21");
+    assert_eq!(setting(s, "useSshTunnel"), true);
+    assert_eq!(setting(s, "sshHost"), "edge.example.com");
+    assert_eq!(setting(s, "sshPort"), 2200);
+    assert_eq!(setting(s, "sshUsername"), "alice");
+    assert_eq!(setting(s, "sshAuthMethod"), "key");
+    let key = Path::new("/home/alice").join("keys").join("edge");
+    assert_eq!(setting(s, "sshKeyPath"), &json!(key.to_string_lossy()));
     assert!(
-        s.notes[0].contains("SSH gateway edge.example.com:2200 was not imported"),
+        setting(s, "sshPassword").is_null(),
+        "passwords are never imported"
+    );
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(s.notes[0].contains("rdgw.example.com"), "{:?}", s.notes);
+}
+
+#[test]
+fn rdp_gateway_without_key_or_user_uses_password_auth() {
+    let ini = "[Bookmarks]\nSubRep=\nG=#91#4%192.0.2.22%3389%carol%0%0%0%0%-1%0%0%-1%%192.0.2.61%%<default>%0%0%%-1%%-1#MobaFont#0# #-1\n";
+    let s = &preview(ini)[0];
+    assert_eq!(setting(s, "useSshTunnel"), true);
+    assert_eq!(setting(s, "sshHost"), "192.0.2.61");
+    assert_eq!(setting(s, "sshPort"), 22);
+    assert_eq!(setting(s, "sshUsername"), "");
+    assert_eq!(setting(s, "sshAuthMethod"), "password");
+    assert!(setting(s, "sshKeyPath").is_null());
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+}
+
+#[test]
+fn rdp_gateway_chain_stays_a_note() {
+    let ini = "[Bookmarks]\nSubRep=\nChained RDP=#91#4%192.0.2.23%3389%carol%0%0%0%0%-1%0%0%-1%%edge.example.com__PIPE__192.0.2.40%22__PIPE__2200%alice__PIPE__alice%0%0%%-1%%-1#MobaFont#0# #-1\n";
+    let s = &preview(ini)[0];
+    assert_eq!(s.connection_type.as_deref(), Some("rdp"));
+    assert!(setting(s, "useSshTunnel").is_null());
+    assert!(setting(s, "sshHost").is_null());
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(
+        s.notes[0].contains("SSH gateway chain edge.example.com → 192.0.2.40:2200")
+            && s.notes[0].contains("RDP SSH tunnel"),
         "{:?}",
         s.notes
     );
-    assert!(s.notes[1].contains("rdgw.example.com"), "{:?}", s.notes);
 }
 
 #[test]

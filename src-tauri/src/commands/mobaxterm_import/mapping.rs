@@ -19,10 +19,10 @@
 //! | WSL | 14 | 1 distribution |
 //!
 //! What termiHub has a counterpart for is mapped: SSH gateways become the SSH
-//! jump-host chain, a single VNC SSH gateway becomes the VNC SSH tunnel, and
-//! the SSH login command becomes the SSH initial command. The rest stays a
-//! preview note: termiHub SSH connections have no outbound network proxy, RDP
-//! has no SSH tunnel, and the VNC tunnel is single-hop.
+//! jump-host chain, a single VNC or RDP SSH gateway becomes that connection's
+//! SSH tunnel, and the SSH login command becomes the SSH initial command. The
+//! rest stays a preview note: termiHub SSH connections have no outbound network
+//! proxy, RDP has no RD Gateway, and the VNC / RDP tunnel is single-hop.
 //!
 //! Rsh (2), XDMCP (3), File (9), Browser (11), Mosh (12) and S3 (13) have no
 //! termiHub counterpart and are skipped with a reason. Passwords are never
@@ -409,13 +409,7 @@ fn map_rdp(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
         b.set("username", json!(u));
     }
     let hops = gateway_hops(&mut b, [13, 14, 15, 18], env);
-    if !hops.is_empty() {
-        b.notes.push(format!(
-            "The SSH gateway {} was not imported: termiHub RDP connections cannot use an \
-             SSH tunnel; connect through a port forward instead.",
-            hops_summary(&hops)
-        ));
-    }
+    apply_ssh_tunnel_gateway(&mut b, &hops, "RDP");
     if let Some(gateway) = b.field(20) {
         b.notes.push(format!(
             "The Remote Desktop Gateway {gateway} was not imported: termiHub does not support \
@@ -424,6 +418,30 @@ fn map_rdp(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     }
     let target = host_target(user.as_deref(), &host, port, 3389);
     b.import("rdp", label, target)
+}
+
+/// Map a graphical session's SSH gateways onto its **SSH Tunnel** group (VNC,
+/// RDP #4865): a single gateway becomes the tunnel; a chain of several cannot
+/// be expressed there and stays a note. `kind` names the type in that note.
+fn apply_ssh_tunnel_gateway(b: &mut Builder<'_>, hops: &[Value], kind: &str) {
+    match hops {
+        [] => {}
+        [hop] => {
+            b.set("useSshTunnel", json!(true));
+            b.set("sshHost", hop["host"].clone());
+            b.set("sshPort", hop["port"].clone());
+            b.set("sshUsername", hop["username"].clone());
+            b.set("sshAuthMethod", hop["authMethod"].clone());
+            if let Some(key) = hop.get("keyPath") {
+                b.set("sshKeyPath", key.clone());
+            }
+        }
+        _ => b.notes.push(format!(
+            "The SSH gateway chain {} was not imported: termiHub's {kind} SSH tunnel uses a \
+             single SSH host.",
+            hops_summary(hops)
+        )),
+    }
 }
 
 /// VNC: a single SSH gateway maps onto termiHub's VNC SSH tunnel; a chain of
@@ -437,24 +455,7 @@ fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     b.set("host", json!(host));
     b.set("port", json!(port));
     let hops = gateway_hops(&mut b, [5, 6, 7, 8], env);
-    match hops.as_slice() {
-        [] => {}
-        [hop] => {
-            b.set("useSshTunnel", json!(true));
-            b.set("sshHost", hop["host"].clone());
-            b.set("sshPort", hop["port"].clone());
-            b.set("sshUsername", hop["username"].clone());
-            b.set("sshAuthMethod", hop["authMethod"].clone());
-            if let Some(key) = hop.get("keyPath") {
-                b.set("sshKeyPath", key.clone());
-            }
-        }
-        _ => b.notes.push(format!(
-            "The SSH gateway chain {} was not imported: termiHub's VNC SSH tunnel uses a \
-             single SSH host.",
-            hops_summary(&hops)
-        )),
-    }
+    apply_ssh_tunnel_gateway(&mut b, &hops, "VNC");
     if let Some(note) = proxy_note(&b, [13, 14, 15, 16], "VNC connections") {
         b.notes.push(note);
     }
