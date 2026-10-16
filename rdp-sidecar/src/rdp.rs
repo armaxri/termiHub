@@ -20,7 +20,7 @@ use ironrdp::connector::connection_activation::{
 };
 use ironrdp::connector::{
     BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
-    DesktopSize, ServerName,
+    DesktopSize, Sequence as _, ServerName,
 };
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
@@ -1266,9 +1266,29 @@ where
         ConnectionActivationSequence::new(connector_config, io_channel_id, user_channel_id);
     let mut buf = WriteBuf::new();
     loop {
-        ironrdp_tokio::single_sequence_step(&mut framed, &mut activation, &mut buf)
-            .await
-            .context("RDP reactivation sequence step failed")?;
+        buf.clear();
+        let written = if activation.next_pdu_hint().is_some() {
+            let (action, pdu) = framed
+                .read_pdu()
+                .await
+                .context("RDP reactivation read failed")?;
+            if !is_io_channel_pdu(action, &pdu, io_channel_id) {
+                // The server's virtual channels and fast-path output keep
+                // flowing during the sequence (#4845); they are not part of it.
+                route_interleaved_pdu(stage, image, action, &pdu, &mut framed).await?;
+                continue;
+            }
+            activation.step(&pdu, &mut buf)
+        } else {
+            activation.step_no_input(&mut buf)
+        }
+        .context("RDP reactivation sequence step failed")?;
+        if let Some(len) = written.size() {
+            framed
+                .write_all(&buf.filled()[..len])
+                .await
+                .context("RDP reactivation write failed")?;
+        }
         if let ConnectionActivationState::Finalized {
             desktop_size,
             share_id,
@@ -1305,6 +1325,49 @@ where
         }
     }
     Ok(framed)
+}
+
+/// Whether a PDU read during a reactivation belongs to the sequence: an X.224
+/// Send Data Indication on the I/O channel. Fast-path output and the virtual
+/// channels' traffic do not.
+fn is_io_channel_pdu(action: ironrdp::pdu::Action, frame: &[u8], io_channel_id: u16) -> bool {
+    action == ironrdp::pdu::Action::X224
+        && ironrdp::pdu::mcs::decode_send_data_indication(frame)
+            .is_ok_and(|ctx| ctx.channel_id == io_channel_id)
+}
+
+/// Handle a PDU that arrived during a reactivation but is not part of it. A
+/// virtual-channel PDU still goes to its channel (CLIPRDR, drdynvc), whose
+/// replies are written back; fast-path output is dropped, as the server repaints
+/// the rebuilt desktop. A PDU the stage cannot process is logged and skipped,
+/// so it does not end the session mid-resize.
+async fn route_interleaved_pdu<T: FramedWrite>(
+    stage: &mut ActiveStage,
+    image: &mut DecodedImage,
+    action: ironrdp::pdu::Action,
+    frame: &[u8],
+    transport: &mut T,
+) -> Result<()> {
+    if action == ironrdp::pdu::Action::FastPath {
+        debug!("dropping fast-path output received during reactivation");
+        return Ok(());
+    }
+    let outputs = match stage.process(image, action, frame) {
+        Ok(outputs) => outputs,
+        Err(e) => {
+            debug!(error = %e, "skipping a channel PDU received during reactivation");
+            return Ok(());
+        }
+    };
+    for output in outputs {
+        if let ActiveStageOutput::ResponseFrame(bytes) = output {
+            transport
+                .write_all(&bytes)
+                .await
+                .context("RDP channel reply during reactivation failed")?;
+        }
+    }
+    Ok(())
 }
 
 /// Encode a batch of CLIPRDR channel messages against the active stage and write
