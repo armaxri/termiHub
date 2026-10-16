@@ -9,7 +9,7 @@
 //! split here is therefore a deliberately small, domain-specific reader; only
 //! the text decoding is delegated to [`encoding_rs`].
 //!
-//! Layout (see `docs/user-guide.md` → "Importing from MobaXterm"):
+//! Layout (user-facing behaviour: `README.md` → "Importing from MobaXterm"):
 //!
 //! ```text
 //! [Bookmarks]            <- root folder
