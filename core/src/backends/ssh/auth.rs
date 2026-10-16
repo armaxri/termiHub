@@ -96,16 +96,13 @@ pub async fn connect_and_authenticate_cancellable_with_liveness(
 async fn do_connect_and_authenticate(
     config: &SshConfig,
 ) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
-    let addr = format!("{}:{}", config.host, config.port);
-
     // Async connect so the surrounding connect timeout / cancellation token can
     // interrupt a hung connect; a blocking std connect would ignore them (#841).
-    let tokio_tcp = tokio::net::TcpStream::connect(&addr)
-        .await
-        // Typed, locale-independent discriminant so consumers classify an
-        // unreachable host structurally rather than by matching the "Connection
-        // failed" text (I18N-002 / ERR-003).
-        .map_err(|e| SessionError::ConnectionFailed(e.to_string()))?;
+    // With an outbound proxy configured (#4867) the stream is tunnelled through
+    // it; the SSH handshake below — and host-key verification — still runs
+    // against the target host.
+    let tokio_tcp =
+        super::proxy::connect_tcp(&config.host, config.port, config.proxy.as_ref()).await?;
 
     // Configure TCP keepalives on the connected socket before the SSH
     // handshake so a half-open transport is torn down promptly. Shared with the

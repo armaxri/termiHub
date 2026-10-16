@@ -51,9 +51,12 @@ fn classification_always_includes_the_fallback_keys() {
     let s = schema(vec![field("apiToken", FieldType::Password)]);
     assert_eq!(
         secret_keys(Some(&s)),
-        keys(&["apiToken", "password", "sshPassword"])
+        keys(&["apiToken", "password", "sshPassword", "proxyPassword"])
     );
-    assert_eq!(secret_keys(None), keys(&["password", "sshPassword"]));
+    assert_eq!(
+        secret_keys(None),
+        keys(&["password", "sshPassword", "proxyPassword"])
+    );
 }
 
 #[cfg(feature = "ssh")]
@@ -64,7 +67,8 @@ fn every_core_backend_secret_field_is_classified() {
     for info in registry.available_types() {
         let classified = schema_secret_keys(&info.schema);
         let expected: &[&str] = match info.type_id.as_str() {
-            "ssh" | "telnet" => &["password"],
+            "ssh" => &["password", "proxyPassword"],
+            "telnet" => &["password"],
             _ => &[],
         };
         assert_eq!(classified, keys(expected), "type {}", info.type_id);

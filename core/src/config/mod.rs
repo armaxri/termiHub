@@ -590,6 +590,101 @@ pub struct SshConfig {
     /// existing saved connections stay byte-stable, mirroring `proxy_jump` above.
     #[serde(default, skip_serializing_if = "is_false")]
     pub forward_agent: bool,
+    /// Optional outbound proxy (SOCKS4/4a, SOCKS5 or HTTP `CONNECT`) the TCP
+    /// connection is dialled through before the SSH handshake (#4867). With a
+    /// `proxy_jump` chain it applies to the first hop only — later hops ride the
+    /// SSH channels of the hop before. `None` (the default, omitted from the
+    /// serialized form) means a direct connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<SshProxyConfig>,
+}
+
+/// Protocol of an outbound connection proxy (#4867).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SshProxyType {
+    /// SOCKS4 (SOCKS4a when the target is a host name). No password support.
+    Socks4,
+    /// SOCKS5 (RFC 1928) with optional username/password auth (RFC 1929).
+    Socks5,
+    /// HTTP `CONNECT` tunnel with optional Basic proxy authentication.
+    Http,
+}
+
+impl SshProxyType {
+    /// Parse the settings value (`"socks4"`, `"socks5"`, `"http"`); `None` for
+    /// `"none"`, an empty or an unknown value.
+    pub fn from_setting(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "socks4" => Some(Self::Socks4),
+            "socks5" => Some(Self::Socks5),
+            "http" => Some(Self::Http),
+            _ => None,
+        }
+    }
+
+    /// The conventional port for this proxy type, used when none is set.
+    pub fn default_port(self) -> u16 {
+        match self {
+            Self::Socks4 | Self::Socks5 => 1080,
+            Self::Http => 8080,
+        }
+    }
+
+    /// Human-readable protocol name for messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Socks4 => "SOCKS4",
+            Self::Socks5 => "SOCKS5",
+            Self::Http => "HTTP",
+        }
+    }
+}
+
+/// An outbound proxy an SSH connection is dialled through (#4867).
+///
+/// `password` is a secret: it comes from the credential store at connect time
+/// (settings key `proxyPassword`), is never logged, and is redacted from this
+/// type's [`Debug`] output.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshProxyConfig {
+    /// Proxy protocol.
+    #[serde(rename = "type")]
+    pub proxy_type: SshProxyType,
+    /// Proxy host name or IP address.
+    pub host: String,
+    /// Proxy port.
+    pub port: u16,
+    /// Proxy user name (SOCKS4 user id, SOCKS5 / HTTP auth user), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Proxy password (SOCKS5 / HTTP only), if any. Secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshProxyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshProxyConfig")
+            .field("proxy_type", &self.proxy_type)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+impl SshProxyConfig {
+    /// Return a copy with `${VAR}` placeholders expanded in the non-secret
+    /// fields (`host`, `username`). The password stays verbatim, like
+    /// [`SshConfig::password`].
+    pub fn expand(mut self) -> Self {
+        self.host = expand_config_value(&self.host);
+        self.username = self.username.map(|u| expand_config_value(&u));
+        self
+    }
 }
 
 impl SshConfig {
@@ -639,6 +734,7 @@ impl Default for SshConfig {
             keepalive_max_count: None,
             proxy_jump: Vec::new(),
             forward_agent: false,
+            proxy: None,
         }
     }
 }
@@ -920,7 +1016,7 @@ impl FtpConfig {
 impl SshConfig {
     /// Return a copy with `${VAR}` placeholders and `~` expanded in the
     /// non-secret fields (`host`, `username`, `key_path`, and each `proxy_jump`
-    /// hop's non-secret fields).
+    /// hop's non-secret fields, and the proxy's host and user).
     ///
     /// `password` is **deliberately left verbatim**. A password is opaque
     /// secret material, not a template: `$`, `${VAR}`, and a leading `~` are all
@@ -937,6 +1033,7 @@ impl SshConfig {
         self.username = expand_config_value(&self.username);
         self.key_path = expand_key_path(self.key_path);
         self.proxy_jump = self.proxy_jump.into_iter().map(|h| h.expand()).collect();
+        self.proxy = self.proxy.map(SshProxyConfig::expand);
         self
     }
 }
@@ -1840,9 +1937,21 @@ mod tests {
             keepalive_max_count: Some(6),
             proxy_jump: Vec::new(),
             forward_agent: true,
+            proxy: Some(SshProxyConfig {
+                proxy_type: SshProxyType::Socks5,
+                host: "proxy.example.com".into(),
+                port: 1080,
+                username: Some("alice".into()),
+                password: None,
+            }),
         };
         let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            json.contains(r#""proxy":{"type":"socks5","host":"proxy.example.com""#),
+            "got: {json}"
+        );
         let back: SshConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.proxy, cfg.proxy);
         assert_eq!(back.host, "example.com");
         assert_eq!(back.port, 2222);
         assert_eq!(back.username, "admin");

@@ -22,6 +22,8 @@ mod legacy_pem;
 mod monitoring;
 mod process;
 mod prompt_clock;
+pub mod proxy;
+pub mod proxy_settings;
 pub mod remote_shell;
 pub mod session_pool;
 pub mod sftp;
@@ -291,6 +293,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         keepalive_max_count: opt_u32("keepaliveMaxCount"),
         proxy_jump,
         forward_agent: bool_field("forwardAgent", false),
+        proxy: proxy_settings::parse_proxy_settings(settings),
     }
 }
 
@@ -703,6 +706,7 @@ impl ConnectionType for Ssh {
                         },
                     ],
                 },
+                proxy_settings::proxy_settings_group(),
             ],
         }
     }
@@ -1273,19 +1277,23 @@ mod tests {
     // --- Schema tests ---
 
     #[test]
-    fn schema_has_three_groups() {
+    fn schema_has_four_groups() {
         let ssh = Ssh::new();
         let schema = ssh.settings_schema();
-        assert_eq!(schema.groups.len(), 3);
+        assert_eq!(schema.groups.len(), 4);
         assert_eq!(schema.groups[0].key, "connection");
         assert_eq!(schema.groups[1].key, "authentication");
         assert_eq!(schema.groups[2].key, "advanced");
+        // Outbound proxy (#4867), collapsed like Advanced.
+        assert_eq!(schema.groups[3].key, "proxy");
+        assert!(schema.groups[3].collapsed, "proxy must be collapsed");
     }
 
-    /// Progressive disclosure (UX-008): only the Advanced group is collapsed by
-    /// default; the essential Connection and Authentication groups stay open.
+    /// Progressive disclosure (UX-008): the Advanced (and Proxy) groups are
+    /// collapsed by default; the essential Connection and Authentication groups
+    /// stay open.
     #[test]
-    fn schema_only_advanced_group_is_collapsed_by_default() {
+    fn schema_only_advanced_and_proxy_groups_are_collapsed_by_default() {
         let ssh = Ssh::new();
         let schema = ssh.settings_schema();
         assert!(!schema.groups[0].collapsed, "connection must be expanded");
@@ -1519,6 +1527,28 @@ mod tests {
         });
         let config = parse_ssh_settings(&settings);
         assert!(config.proxy_jump.is_empty());
+        // No outbound proxy unless one is configured (#4867).
+        assert!(config.proxy.is_none());
+    }
+
+    #[test]
+    fn parse_ssh_settings_reads_outbound_proxy() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "agent",
+            "proxyType": "socks5",
+            "proxyHost": "proxy.corp",
+            "proxyPort": 1081,
+            "proxyUsername": "alice",
+            "proxyPassword": "pw",
+        });
+        let proxy = parse_ssh_settings(&settings).proxy.expect("proxy");
+        assert_eq!(proxy.proxy_type, crate::config::SshProxyType::Socks5);
+        assert_eq!(proxy.host, "proxy.corp");
+        assert_eq!(proxy.port, 1081);
+        assert_eq!(proxy.username.as_deref(), Some("alice"));
+        assert_eq!(proxy.password.as_deref(), Some("pw"));
     }
 
     #[test]
