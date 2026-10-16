@@ -25,6 +25,10 @@ serde_json = "1"
 [target.'cfg(windows)'.dependencies]
 rustls-native-certs = { version = "0.8", optional = true }
 rustls-webpki = { version = "0.103", default-features = false, features = ["alloc"], optional = true }
+# The `tls` probe (#4818): a real certificate-verified handshake through a
+# bridged connection, its roots from the snapshot above. `ring` needs only a C
+# compiler (no cmake/nasm). Test-only, and only in the `tls-probe` build.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 
 [features]
 # The default build exports every ABI symbol. Building with
@@ -45,3 +49,8 @@ crash-commands = []
 # (or a positive control it must allow) and answers `PROBE <op> ALLOWED|DENIED
 # <detail>`. Test-only; never part of a shipped plugin.
 escape-probe = ["dep:rustls-native-certs", "dep:rustls-webpki"]
+# The `tls` session probe (#4818): a rustls handshake against a public host
+# through a bridged `open_connection`, roots from `load_native_certs()` (the
+# host's `SSL_CERT_FILE` snapshot). Needs the network, so only the nightly
+# `plugin_runner_tls_handshake` test builds it; never part of a shipped plugin.
+tls-probe = ["escape-probe", "dep:rustls"]

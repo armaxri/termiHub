@@ -33,6 +33,9 @@
 //! * The `escape-probe` feature adds `?probe <op> [arg]` commands that try
 //!   each operation the OS sandbox must deny, plus positive controls, for the
 //!   sandbox tests on every OS (#4186, #4185, #4187): see the `escape` module.
+//! * The `tls-probe` feature adds the `tls` session probe (#4818): a
+//!   certificate-verified TLS handshake over a bridged connection, its roots
+//!   from the host's snapshot only. It needs a public host: nightly lane only.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -465,10 +468,11 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
 #[serde(rename_all = "camelCase", default)]
 struct ProbeConfig {
     /// One of `"network"`, `"netecho"`, `"connlimit"`, `"readfile"`, `"writefile"`,
-    /// `"appendfile"`, `"createfile"`, `"statpath"`, `"listdir"`; empty means "no
-    /// probe, just echo".
+    /// `"appendfile"`, `"createfile"`, `"statpath"`, `"listdir"`, `"tls"`
+    /// (feature `tls-probe`, #4818); empty means "no probe, just echo".
     probe: String,
-    /// Target host for the `network` probe.
+    /// Target host for the `network`/`tls` probe (`tls` also verifies it as
+    /// the server name).
     probe_host: String,
     /// Target port for the `network`/`netecho`/`connlimit` probe.
     probe_port: u16,
@@ -553,6 +557,16 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
             let _ = output.send(format!("CONNLIMIT:{ok}:{denied}").as_bytes());
             // Hold the streams until after the line is sent, then drop them.
             drop(held);
+        }
+        #[cfg(feature = "tls-probe")]
+        "tls" => {
+            // A certificate-verified TLS handshake over a bridged connection,
+            // roots from the host's snapshot only (#4818).
+            let line = match bridge.open_connection(&cfg.probe_host, cfg.probe_port) {
+                Ok(stream) => escape::tls_handshake(stream, &cfg.probe_host),
+                Err(e) => format!("TLS_CONNECT_ERR:{e:?}"),
+            };
+            let _ = output.send(line.as_bytes());
         }
         "readfile" => {
             let line = match bridge.read_file(&cfg.probe_path) {
