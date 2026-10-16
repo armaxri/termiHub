@@ -1,7 +1,7 @@
 //! Per-session supervisor for graphical remote-desktop sessions (#3364).
 //!
-//! The supervisor owns one graphical session's pumps (frame, cursor and — for
-//! RDP — cert-prompt) and drives the unified auto-reconnect engine
+//! The supervisor owns one graphical session's pumps (frame, cursor, remote
+//! clipboard and — for RDP — cert-prompt) and drives the unified auto-reconnect engine
 //! ([`reconnect_reducer`], SM-020) when the stream drops unexpectedly. It is the
 //! graphical twin of the tunnel/agent reconnect loops: the same canonical
 //! reducer and [`BackoffConfig`] schedule, not a second engine.
@@ -89,8 +89,8 @@ use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    CertPromptReceiver, ConnectionType, ConnectionTypeRegistry, CursorReceiver, FrameReceiver,
-    GraphicalState, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
+    CertPromptReceiver, ClipboardTextReceiver, ConnectionType, ConnectionTypeRegistry,
+    CursorReceiver, FrameReceiver, GraphicalState, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
 };
 use termihub_core::errors::SessionError;
 use termihub_core::reconnect_backoff::{
@@ -101,8 +101,8 @@ use termihub_core::reconnect_backoff::{
 use crate::session::frame_guard::REJECTED_FRAMES_MESSAGE;
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_manager::{
-    cert_pump, cursor_pump, emit_state, frame_pump, Activation, GraphicalEventSink, OnReactivated,
-    PendingCert,
+    cert_pump, clipboard_pump, cursor_pump, emit_state, frame_pump, Activation, GraphicalEventSink,
+    LastClipboard, OnReactivated, PendingCert,
 };
 use crate::session::rdp_trust_store::RdpTrustStore;
 
@@ -134,6 +134,9 @@ pub(crate) struct Generation {
     pub(crate) frames: FrameReceiver,
     pub(crate) cursor: CursorReceiver,
     pub(crate) cert: Option<CertPromptReceiver>,
+    /// Server-originated clipboard text (#4836), when the backend has a text
+    /// clipboard.
+    pub(crate) clipboard: Option<ClipboardTextReceiver>,
 }
 
 impl Generation {
@@ -146,6 +149,7 @@ impl Generation {
             frames: backend.subscribe_frames(),
             cursor: backend.subscribe_cursor(),
             cert: backend.subscribe_cert_prompts(),
+            clipboard: backend.subscribe_clipboard(),
         })
     }
 }
@@ -183,6 +187,10 @@ pub(crate) struct Supervisor<S: GraphicalEventSink> {
     pub(crate) last_size: LastSize,
     pub(crate) trust_store: Arc<RdpTrustStore>,
     pub(crate) pending_cert: PendingCert,
+    /// The session's clipboard push state (#4836) — `Some` only when the
+    /// connection's Clipboard Sync is on, so a session with it off never pushes
+    /// a remote copy to the frontend.
+    pub(crate) clipboard_push: Option<LastClipboard>,
     /// Held keys / buttons (#3402), released on the fresh connection after a
     /// re-dial so nothing stays stuck across the reconnect.
     pub(crate) held: SharedHeldInput,
@@ -308,6 +316,14 @@ impl<S: GraphicalEventSink> Supervisor<S> {
                 self.connection.clone(),
                 self.trust_store.clone(),
                 self.pending_cert.clone(),
+            ));
+        }
+        if let (Some(changes), Some(last)) = (generation.clipboard, &self.clipboard_push) {
+            side.spawn(clipboard_pump(
+                self.session_id.clone(),
+                changes,
+                last.clone(),
+                self.sink.clone(),
             ));
         }
         let activate = reconnecting.then(|| Activation {
