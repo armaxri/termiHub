@@ -447,13 +447,15 @@ jobs:
         # of being retried away here. `display-grades` runs the same two grades on
         # all three OSes with identical env, so nothing is lost by excluding them.
         # `-r aR` adds RERUN lines to the short summary so persistent flakes stay
-        # visible for tracking.
+        # visible for tracking; `--rerun-show-tracebacks` prints each retried
+        # attempt's traceback there too, so a rerun that fails differently (e.g.
+        # on state the first attempt left) cannot hide the first error (#4829).
         # Per-PR CI (code-quality.yml → Run Tests) deliberately does NOT get this.
         if: runner.os == 'Linux'
         env:
           TERMIHUB_SKIP_GUARD_LANE: bulk-linux
           TERMIHUB_REQUIRE_FIXTURES: "1"
-        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -525,8 +527,9 @@ jobs:
         # after all retries. The display-critical grades are likewise excluded here
         # via `-k "not (...)"` and run only in the `display-grades` job at
         # --reruns 0 (see the Linux step's comment). `-r aR` surfaces RERUN lines in
-        # the summary. Not applied to per-PR CI.
-        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
+        # the summary, with each retried attempt's traceback (#4829). Not applied
+        # to per-PR CI.
+        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
       - name: Export harness coverage (lcov)
         # Converts the harness's frontend dumps and exports the app's llvm-cov

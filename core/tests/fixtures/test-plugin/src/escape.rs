@@ -199,6 +199,101 @@ fn load_tls_roots() -> Result<String, String> {
     Err("the root snapshot is Windows-only".to_owned())
 }
 
+/// The `tls` session probe (#4818, feature `tls-probe`): a real TLS handshake
+/// over `stream` — a connection the host opened through the capability bridge
+/// — verifying `host`'s certificate against the roots a sandboxed Windows
+/// plugin gets, i.e. `rustls_native_certs::load_native_certs()` reading the
+/// host's `SSL_CERT_FILE` snapshot (#4811). Answers one line:
+///
+/// ```text
+/// TLS_OK:<version> <cipher suite> chain=<n> anchors=<n> ignored=<n>
+/// TLS_ERR:<rustls error, Debug>   e.g. InvalidCertificate(UnknownIssuer)
+/// ```
+///
+/// It needs a public host, so only the nightly lane's
+/// `plugin_runner_tls_handshake` test runs it.
+#[cfg(feature = "tls-probe")]
+pub(crate) fn tls_handshake(mut stream: impl std::io::Read + std::io::Write, host: &str) -> String {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tls::handshake(&mut stream, host)
+    }))
+    .unwrap_or_else(|_| Err("panicked".to_owned()));
+    match outcome {
+        Ok(detail) => format!("TLS_OK:{detail}"),
+        Err(error) => format!("TLS_ERR:{error}"),
+    }
+}
+
+#[cfg(all(feature = "tls-probe", windows))]
+mod tls {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+
+    /// Handshake with `host` over `stream`, roots from the snapshot only.
+    pub(super) fn handshake(
+        stream: &mut (impl Read + Write),
+        host: &str,
+    ) -> Result<String, String> {
+        let loaded = rustls_native_certs::load_native_certs();
+        if !loaded.errors.is_empty() {
+            return Err(format!("loading the roots: {:?}", loaded.errors));
+        }
+        // No other root source: an empty snapshot leaves the store empty, and
+        // the handshake must then fail to find an issuer.
+        let mut roots = rustls::RootCertStore::empty();
+        let (anchors, ignored) = roots.add_parsable_certificates(loaded.certs);
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("protocol versions: {e}"))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let name = rustls::pki_types::ServerName::try_from(host.to_owned())
+            .map_err(|e| format!("server name `{host}`: {e}"))?;
+        let mut conn = rustls::ClientConnection::new(Arc::new(config), name)
+            .map_err(|e| format!("client: {e:?}"))?;
+        while conn.is_handshaking() {
+            match conn.complete_io(stream) {
+                Ok((0, 0)) => return Err("the peer closed during the handshake".to_owned()),
+                Ok(_) => {}
+                Err(e) => {
+                    // A TLS failure (e.g. the certificate check) comes back as
+                    // an I/O error wrapping the rustls error.
+                    return Err(
+                        match e.get_ref().and_then(|i| i.downcast_ref::<rustls::Error>()) {
+                            Some(tls) => format!("{tls:?}"),
+                            None => format!("io: {e}"),
+                        },
+                    );
+                }
+            }
+        }
+        let version = conn
+            .protocol_version()
+            .map_or_else(String::new, |v| format!("{v:?}"));
+        let suite = conn
+            .negotiated_cipher_suite()
+            .map_or_else(String::new, |s| format!("{:?}", s.suite()));
+        let chain = conn.peer_certificates().map_or(0, <[_]>::len);
+        // Best-effort close_notify; the verdict is already in.
+        conn.send_close_notify();
+        let _ = conn.complete_io(stream);
+        Ok(format!(
+            "{version} {suite} chain={chain} anchors={anchors} ignored={ignored}"
+        ))
+    }
+}
+
+#[cfg(all(feature = "tls-probe", not(windows)))]
+mod tls {
+    pub(super) fn handshake(
+        _stream: &mut (impl std::io::Read + std::io::Write),
+        _host: &str,
+    ) -> Result<String, String> {
+        Err("the root snapshot is Windows-only".to_owned())
+    }
+}
+
 /// Windows: the system trust store through CryptoAPI, the path
 /// `rustls-platform-verifier`, `native-tls` (SChannel) and
 /// `rustls-native-certs` take (#4606). Denied inside the LPAC: a sandboxed

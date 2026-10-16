@@ -322,6 +322,21 @@ snapshot), `terminal.txt` (the terminal buffer), and `app.log` (the captured app
 stdout/stderr). This makes a CI or headless failure debuggable after the app has
 been torn down. The path is printed at the end of the failing test.
 
+### Reruns (`--reruns`)
+
+The nightly lane retries a failed test (pytest-rerunfailures), and a retry runs
+against the **same** class-scoped app. Two things keep a retry honest (#4829):
+
+- **Every failed attempt's error is kept.** Under `--reruns`, each failing
+  attempt also writes `attempt-<n>-failure.txt` into the bundle, so a retry that
+  fails differently does not erase the first attempt's real error. The lane also
+  passes `--rerun-show-tracebacks`, which prints those tracebacks in the summary.
+- **A suite can reset before a retry.** Override `reset_before_rerun()` on the
+  suite (it is a no-op by default) to return the app to a clean state; for open
+  tabs, call `self.reset_tabs()` from `TabsUi`. A suite with a "starts empty"
+  precondition (such as `test_performance.py`) must do this. If the reset fails,
+  the retry errors with `RerunResetError` instead of a misleading precondition.
+
 ## Useful flags
 
 | Flag      | Effect                                                   |

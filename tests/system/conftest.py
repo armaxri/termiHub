@@ -9,6 +9,7 @@ import pytest
 from termihub_harness import hang_guard, skip_guard, timing
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
+    record_failed_attempt,
     sanitize_nodeid,
     write_failure_artifacts,
 )
@@ -757,6 +758,11 @@ def remote_agent_kbdint_fixtures():
     return fixture
 
 
+#: Attempts of an item whose failure text was already saved this session, so a
+#: second failing phase of one attempt appends instead of replacing (#4829).
+_RECORDED_ATTEMPTS = pytest.StashKey[set]()
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """On an integration test *failure*, write a failure-artifact bundle.
@@ -770,7 +776,7 @@ def pytest_runtest_makereport(item, call):
     """
     outcome = yield
     report = outcome.get_result()
-    if report.when != "call" or not report.failed:
+    if not report.failed:
         return
     instance = getattr(item, "instance", None)
     if instance is None:
@@ -779,7 +785,20 @@ def pytest_runtest_makereport(item, call):
     app = getattr(instance, "app", None)
     if driver is None and app is None:
         return  # not an integration suite — nothing app-side to capture
-    dest = write_failure_artifacts(
-        ARTIFACT_ROOT / sanitize_nodeid(item.nodeid), driver, app
-    )
+    dest = ARTIFACT_ROOT / sanitize_nodeid(item.nodeid)
+    # Under --reruns the bundle below is overwritten by every later failing
+    # attempt, so keep each attempt's own error text beside it (#4829): a rerun
+    # that fails differently must not erase the first attempt's real failure.
+    attempt = getattr(item, "execution_count", None)
+    if attempt is not None:
+        recorded = item.stash.setdefault(_RECORDED_ATTEMPTS, set())
+        record = record_failed_attempt(
+            dest, attempt, report.when, report.longreprtext, append=attempt in recorded
+        )
+        recorded.add(attempt)
+        if record is not None:
+            print(f"\n[rerun-attempt] attempt {attempt} {report.when} failure saved to {record}")
+    if report.when != "call":
+        return
+    write_failure_artifacts(dest, driver, app)
     print(f"\n[artifacts] wrote failure bundle to {dest}")
