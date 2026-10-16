@@ -666,6 +666,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::ssh_config_import::import_ssh_config_hosts,
             commands::ssh_config_import::import_ssh_config_connections,
             commands::inventory_import::import_inventory_hosts,
+            commands::mobaxterm_import::discover_mobaxterm_configs,
+            commands::mobaxterm_import::preview_mobaxterm_import,
             commands::session::get_connection_types,
             commands::session::send_input,
             commands::session::set_session_line_ending,

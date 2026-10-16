@@ -14,6 +14,7 @@ export type SettingsCategory =
   | "editor"
   | "plugins"
   | "backup"
+  | "import"
   | "schedules"
   | "portable"
   | "updates";
@@ -47,6 +48,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "editor", label: "Editor" },
   { id: "plugins", label: "Plugins" },
   { id: "backup", label: "Backup & Restore" },
+  { id: "import", label: "Import & Migration" },
   { id: "schedules", label: "Schedules" },
   { id: "portable", label: "Portable Mode" },
   { id: "updates", label: "Updates" },
@@ -875,6 +877,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "plugins",
       "host keys",
       "known hosts",
+    ],
+  },
+  {
+    id: "importMobaxterm",
+    label: "Import from MobaXterm",
+    description:
+      "Bring saved MobaXterm sessions and their folders into termiHub (one-time migration)",
+    category: "import",
+    keywords: [
+      "mobaxterm",
+      "moba",
+      "import",
+      "migrate",
+      "migration",
+      "switch",
+      "sessions",
+      "bookmarks",
+      "mxtsessions",
+      "ini",
     ],
   },
   {

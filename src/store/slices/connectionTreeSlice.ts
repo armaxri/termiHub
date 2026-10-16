@@ -64,6 +64,17 @@ export interface ConnectionTreeSlice {
   toggleFolder: (folderId: string) => void;
   addConnection: (connection: SavedConnection) => void;
   bulkAddConnections: (connections: SavedConnection[]) => void;
+  /**
+   * Persist an imported folder tree (#4850): `folders` (parents first) are
+   * saved one after another so each exists before its children and
+   * connections, then `connections` go through {@link bulkAddConnections}.
+   * Resolves once the folders are written; a folder failure is toasted and
+   * stops the import before any connection is created.
+   */
+  importConnectionTree: (
+    folders: ConnectionFolder[],
+    connections: SavedConnection[]
+  ) => Promise<void>;
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
   bulkDeleteConnections: (connectionIds: string[]) => void;
@@ -331,6 +342,23 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
           frontendLog("app_store", `Failed to persist imported connections: ${errorMessage(err)}`);
           toast.error(`Failed to import connections: ${errorMessage(err)}`);
         });
+    },
+
+    importConnectionTree: async (folders, connections) => {
+      frontendLog(
+        "connection_sync",
+        `importConnectionTree: ${folders.length} folders, ${connections.length} connections`
+      );
+      try {
+        for (const folder of folders) {
+          await persistWithOverlay(upsertFolder(folder), () => persistFolder(folder));
+        }
+      } catch (err) {
+        frontendLog("app_store", `Failed to persist imported folders: ${errorMessage(err)}`);
+        toast.error(`Failed to import connections: ${errorMessage(err)}`);
+        return;
+      }
+      get().bulkAddConnections(connections);
     },
 
     updateConnection: (connection) => {
