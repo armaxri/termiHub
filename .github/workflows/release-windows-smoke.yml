@@ -8,10 +8,12 @@ name: Release Windows Smoke
 #   1. verifies the MSI's build-provenance attestation (the same check users run),
 #   2. installs it silently (`msiexec /i … /qn /l*v`), exactly as an unattended
 #      deployment would,
-#   3. asserts the "Add/Remove Programs" uninstall entry exists with the release
-#      version and that the install directory holds termihub.exe, the bundled
-#      RDP helper and the sideloaded ConPTY host (conpty.dll + OpenConsole.exe,
-#      pinned and Microsoft-signed, #4121),
+#   3. asserts the "Add/Remove Programs" uninstall entry exists with exactly the
+#      MSI version msi-version.mjs maps the release to (#4441; the downloaded
+#      MSI's ProductVersion is checked against it before install) and that
+#      the install directory holds termihub.exe, the bundled RDP helper and
+#      the sideloaded ConPTY host (conpty.dll + OpenConsole.exe, pinned and
+#      Microsoft-signed, #4121),
 #   4. runs `termihub.exe --version` (headless pre-init path, #2655),
 #   5. launches the app, waits for the frontend's first IPC call to reach the
 #      backend (logged to the durable app log), asserts it stays alive, then
@@ -94,8 +96,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011) and
-        # verify-conpty-bundle.ps1 with its pins (#4121).
+        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011),
+        # verify-conpty-bundle.ps1 with its pins (#4121) and the MSI version
+        # mapping + asserts (msi-version.mjs, msi-product-version.ps1,
+        # assert-msi-display-version.ps1, #4441).
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
@@ -151,12 +155,41 @@ jobs:
           AGENT_U="$(cygpath -u "$AGENT")"
           ( cd "$(dirname "$AGENT_U")" && sha256sum -c "$(basename "$AGENT_U").sha256" )
 
+      # release.yml builds the MSI with bundle.windows.wix.version from
+      # msi-version.mjs (PKG2-003, #4283): beta.N -> X.Y.Z.(10000+N), rc.N ->
+      # X.Y.Z.(20000+N), final -> X.Y.Z.30000. The install below must carry
+      # exactly that version (#4441), so a missing or wrong override fails here.
+      - name: Map the release version to the MSI version
+        id: msi_version
+        shell: bash
+        env:
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --check first, uncaptured, so an unsupported version's ::error
+          # annotation reaches the log.
+          node scripts/internal/msi-version.mjs --check "$VERSION"
+          msi_version="$(node scripts/internal/msi-version.mjs "$VERSION")"
+          echo "Release version ${VERSION} -> MSI version ${msi_version}"
+          echo "msi_version=$msi_version" >> "$GITHUB_OUTPUT"
+
+      # Read-only (nothing installed yet): tells a wrong build apart from a wrong
+      # install when the DisplayVersion gate below fails.
+      - name: Check the MSI ProductVersion is the mapped version
+        shell: pwsh
+        env:
+          MSI: ${{ steps.download.outputs.msi }}
+          MSI_VERSION: ${{ steps.msi_version.outputs.msi_version }}
+        run: |
+          ./scripts/internal/msi-product-version.ps1 -Msi $env:MSI -Expected $env:MSI_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Install MSI silently
         id: install
         shell: pwsh
         env:
           MSI: ${{ steps.download.outputs.msi }}
-          VERSION: ${{ needs.resolve-tag.outputs.version }}
+          MSI_VERSION: ${{ steps.msi_version.outputs.msi_version }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path $env:LOG_DIR | Out-Null
@@ -190,13 +223,10 @@ jobs:
           Write-Output "  InstallLocation: $($entry.InstallLocation)"
           Write-Output "  Publisher:       $($entry.Publisher)"
 
-          # MSI ProductVersion is numeric-only, so compare the X.Y.Z core of the
-          # release version (a v0.2.0-beta.1 tag ships ProductVersion 0.2.0[.N]).
-          $core = ($env:VERSION -split '-')[0]
-          if (-not ("$($entry.DisplayVersion)" -eq $core -or "$($entry.DisplayVersion)".StartsWith("$core."))) {
-            Write-Output "::error::installed DisplayVersion '$($entry.DisplayVersion)' does not match release $env:VERSION"
-            exit 1
-          }
+          # DisplayVersion is the MSI ProductVersion: it must equal the mapped
+          # wix.version exactly (#4441), not just share the X.Y.Z core.
+          ./scripts/internal/assert-msi-display-version.ps1 -Actual "$($entry.DisplayVersion)" -Expected $env:MSI_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
           # The template sets ARPINSTALLLOCATION; fall back to its default dir.
           $dir = "$($entry.InstallLocation)"
