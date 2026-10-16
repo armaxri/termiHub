@@ -12,6 +12,11 @@ that from empty), then reuses them for the latency/input checks and tears them
 down in PERF-04 (measuring cleanup). ``ensure_terminals`` tops up to the target,
 so each test is robust to the shared state rather than strictly order-dependent.
 
+Reruns (the nightly lane's ``--reruns``) reuse the class's app, so a rerun would
+inherit whatever a failed attempt left open. ``reset_before_rerun`` closes every
+tab first, so each rerun starts clean and a PERF-01 rerun fails (if at all) on
+the real error, not on ``assert 12 == 0`` from the attempt before it (#4829).
+
 Divergence from the original, by design:
 
 * **JS-heap check** (old ``performance.test.js`` PERF-03, ``performance.memory``
@@ -42,6 +47,10 @@ NEW_TERMINAL_BUDGET = 5.0
 class TestPerformance(TerminalUi, TabsUi, SystemTest):
     """One app; PERF-01 builds the 40 terminals, PERF-04 tears them down."""
 
+    def reset_before_rerun(self) -> None:
+        # Close what the failed attempt left open, so the rerun starts empty.
+        self.reset_tabs(timeout=60.0)
+
     def ensure_terminals(self, target: int) -> float:
         """Open terminals until at least ``target`` tabs exist; return elapsed secs.
 
@@ -62,7 +71,8 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
 
     def test_perf_01_create_40_terminals(self):
         # Create the design-target 40 terminals from empty and report throughput.
-        assert self.tab_count() == 0
+        leftover = self.tab_ids()
+        assert not leftover, f"PERF-01 must start with no tabs, found {leftover}"
         elapsed = self.ensure_terminals(TARGET_TERMINALS)
 
         count = self.tab_count()

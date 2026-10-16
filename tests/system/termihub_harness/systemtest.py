@@ -90,6 +90,10 @@ def _preserve_app_log(
         pass
 
 
+class RerunResetError(RuntimeError):
+    """The app could not be reset before a rerun attempt (see #4829)."""
+
+
 def unique_name(purpose: str) -> str:
     """A collision-free connection name, like the old E2E ``uniqueName`` helper.
 
@@ -233,6 +237,46 @@ class SystemTest:
         finally:
             bridge.close()
             app.cleanup()
+
+    # ── Rerun isolation ──────────────────────────────────────────────────────
+    @pytest.fixture(autouse=True)
+    def _system_test_rerun_reset(self, request: pytest.FixtureRequest):
+        """Give every rerun attempt a clean app before it starts (#4829).
+
+        The nightly lane runs under pytest-rerunfailures (``--reruns``), which
+        re-runs a failed test against the *same* class-scoped app. Without a
+        reset, a rerun inherits whatever the failed attempt left behind (open
+        tabs, live sessions) and then fails on that leftover state instead of
+        the original bug, and the summary shows only the rerun's failure —
+        which is how #4826 came to look like a WebGL problem.
+
+        On a rerun (``execution_count > 1``, set by pytest-rerunfailures) this
+        calls :meth:`reset_before_rerun`. If the reset itself fails, the attempt
+        errors with a message that says so and points back at the first
+        attempt's error, rather than masking it with a precondition failure.
+        """
+        attempt = int(getattr(request.node, "execution_count", 1) or 1)
+        if attempt > 1:
+            try:
+                self.reset_before_rerun()
+            except Exception as exc:  # re-raised with the rerun context below
+                raise RerunResetError(
+                    f"could not reset the app before rerun attempt {attempt} of "
+                    f"{request.node.nodeid}: {exc}. This is NOT the test's real "
+                    "failure — see the first attempt's error in the RERUN summary "
+                    "or in attempt-1-failure.txt in the failure bundle."
+                ) from exc
+        yield
+
+    def reset_before_rerun(self) -> None:
+        """Hook: return the shared app to a clean state before a rerun attempt.
+
+        A no-op by default, so suites whose tests already tolerate leftover
+        state (relative tab counts, explicit per-test resets) are unchanged.
+        A suite with a "starts empty" precondition overrides it — e.g. with
+        :meth:`~termihub_harness.ui.TabsUi.reset_tabs`. Raise if the reset
+        cannot be completed; :meth:`_system_test_rerun_reset` reports it.
+        """
 
     # ── Polling ──────────────────────────────────────────────────────────────
     def wait(
