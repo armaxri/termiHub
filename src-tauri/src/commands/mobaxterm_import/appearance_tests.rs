@@ -51,15 +51,39 @@ fn opts_json(block: &[String], code: u32, ty: &str) -> serde_json::Value {
 }
 
 #[test]
-fn defaults_map_size_and_cursor_without_notes() {
+fn a_session_at_mobaxterm_defaults_gets_no_overrides_or_notes() {
     let a = map_appearance(&default_block(), 0, "ssh");
     assert!(a.notes.is_empty(), "no notes for defaults: {:?}", a.notes);
     assert_eq!(a.terminal_type, None);
-    let opts = serde_json::to_value(a.options).expect("serialize");
-    // 10 pt → 13 px; MobaFont is MobaXterm's built-in font and is not set.
+    // MobaFont, 10 pt and a non-blinking block cursor are MobaXterm's
+    // defaults: the connection keeps following termiHub's global settings.
+    assert!(a.options.is_none(), "no overrides: {:?}", a.options);
+}
+
+#[test]
+fn a_customised_session_gets_overrides_for_the_changed_values_only() {
+    let opts = opts_json(&block_with(&[(1, "12")]), 0, "ssh");
+    assert_eq!(opts, serde_json::json!({"fontSize": 16}));
+
+    let opts = opts_json(&block_with(&[(9, "4")]), 0, "ssh");
     assert_eq!(
         opts,
-        serde_json::json!({"fontSize": 13, "cursorStyle": "block", "cursorBlink": false})
+        serde_json::json!({"cursorStyle": "underline", "cursorBlink": true})
+    );
+
+    let opts = opts_json(
+        &block_with(&[(0, "Fake Mono"), (1, "11"), (9, "2")]),
+        0,
+        "ssh",
+    );
+    assert_eq!(
+        opts,
+        serde_json::json!({
+            "fontFamily": "\"Fake Mono\", monospace",
+            "fontSize": 15,
+            "cursorStyle": "bar",
+            "cursorBlink": false
+        })
     );
 }
 
@@ -83,8 +107,8 @@ fn font_size_is_clamped_to_termihub_range_with_a_note() {
 
 #[test]
 fn every_cursor_type_maps_to_style_and_blink() {
+    // "0" (non-blinking block) is the default and is covered above.
     let cases = [
-        ("0", "block", false),
         ("1", "underline", false),
         ("2", "bar", false),
         ("3", "block", true),
@@ -166,6 +190,7 @@ SubRep=\r\n\
 ImgNum=42\r\n\
 Lab router=#109#0%10.0.0.1%22%netops%%-1%-1%%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#Fake Mono%12%0%0%-1%15%236,236,236%30,30,30%180,180,192%5%-1%0%%xterm%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
 Old switch=#98#1%192.0.2.10%23%%%2%%%%%0%0%%1080%#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%1%-1%0%%vt100%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
+Default shell=#129#10%1%%%%#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
 Desk RDP=#91#4%192.0.2.20%3389%carol%0%0%0%0%-1%0%0%-1%%%%%0%0%%-1%%-1%-1%0%-1%0%-1%0%0%0%0#MobaFont%10#0# #-1\r\n";
 
 #[test]
@@ -192,6 +217,9 @@ fn preview_carries_terminal_options_and_telnet_terminal_type() {
 
     let rdp = by_name(&p.sessions, "Desk RDP");
     assert!(rdp.terminal_options.is_none());
+
+    let default_shell = by_name(&p.sessions, "Default shell");
+    assert!(default_shell.terminal_options.is_none());
     assert!(rdp
         .settings
         .as_ref()
