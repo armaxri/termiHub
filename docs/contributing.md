@@ -335,6 +335,17 @@ How the lanes that grade `develop` fire anyway:
   their crons. Once it is on `main`, each cron dispatches its lanes on `develop`
   (`gh workflow run <file> --ref develop`). A lane whose own file is already on
   `main` with a `schedule:` keeps its own cron, and the dispatcher skips it.
+- **A scheduled run executes `main`'s copy of the YAML**, even when it checks out
+  `develop`. Its job definitions lag `develop`'s until the next release, so steps
+  added on `develop` silently never run (main's `system-integration.yml` built no
+  RDP sidecar and provisioned no Windows sshd, #4449). The main-resident lanes
+  whose job bodies matter, `system-integration.yml` and `integration-fixtures.yml`,
+  are therefore registered with `ownSchedule: false`: the dispatcher starts their
+  `develop` nightly (develop's YAML), and their own `schedule:` grades `main` only,
+  weekly on Wednesday.
+- A manual run of the dispatcher (`gh workflow run scheduled-dispatch.yml --ref
+<branch> -f cron="5 5 * * *"`) dispatches that cron's lanes now; from a branch
+  other than `main` it reads that branch's lane list.
 - Until the dispatcher is on `main`, **every push to `develop`** runs it too. It
   dispatches each lane whose newest `develop` run is older than 28 h (daily) or
   7 d + 4 h (weekly). A day with no merges dispatches nothing.
@@ -343,7 +354,8 @@ How the lanes that grade `develop` fire anyway:
   (weekly). A red "Scheduled Lanes" run means a nightly gate is dark or failing.
 - The **drift guard** (`scripts/internal/check-scheduled-lane-drift.mjs`)
   annotates every scheduled workflow that is missing from `main` or whose `on:`
-  block differs there.
+  block differs there (`on-differs`), and a lane whose own schedule grades
+  `develop` while its jobs differ on `main` (`jobs-differ`).
 
 **Adding a scheduled lane:** register it in
 [`scripts/internal/scheduled-lanes.mjs`](../scripts/internal/scheduled-lanes.mjs)

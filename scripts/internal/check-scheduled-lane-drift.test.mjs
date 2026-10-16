@@ -105,6 +105,32 @@ describe("driftFindings", () => {
     ]);
   });
 
+  it("flags job-body drift for a lane whose own schedule grades develop (#4449)", () => {
+    const mainCopy = NIGHTLY.replace("jobs: {}", "jobs:\n  old: {}");
+    const t = tree();
+    const read = (name) => (name === "nightly.yml" ? mainCopy : null);
+    const own = driftFindings(t, read, [lane()]);
+    expect(own.find((f) => f.file === "nightly.yml").status).toBe("jobs-differ");
+
+    // Dispatched instead (ownSchedule: false): main's own run grades main.
+    const dispatched = driftFindings(t, read, [lane({ ownSchedule: false })]);
+    expect(dispatched.find((f) => f.file === "nightly.yml").status).toBe("ok");
+
+    // Comment-only differences are not drift.
+    const commented = NIGHTLY.replace("jobs: {}", "# note\njobs: {} # same");
+    const quiet = driftFindings(t, (n) => (n === "nightly.yml" ? commented : null), [lane()]);
+    expect(quiet.find((f) => f.file === "nightly.yml").status).toBe("ok");
+  });
+
+  it("reports a lane whose schedule main still fires after develop dropped it", () => {
+    const t = tree({ "nightly.yml": "on:\n  workflow_dispatch:\njobs: {}\n" });
+    const findings = driftFindings(t, (n) => (n === "nightly.yml" ? NIGHTLY : null), [lane()]);
+    expect(findings.find((f) => f.file === "nightly.yml").status).toBe("on-differs");
+    // An unregistered workflow without a schedule on develop stays out.
+    const other = driftFindings(tree(), (n) => (n === "ci.yml" ? NIGHTLY : null), [lane()]);
+    expect(other.map((f) => f.file)).not.toContain("ci.yml");
+  });
+
   it("ignores workflows without schedule/workflow_run", () => {
     const findings = driftFindings(tree(), () => null);
     expect(findings.map((f) => f.file)).not.toContain("ci.yml");
@@ -130,6 +156,19 @@ describe("describeDrift", () => {
     );
     expect(covered[0].level).toBe("notice");
     expect(covered[1].message).toMatch(/dispatches it on develop meanwhile/);
+  });
+
+  it("explains job-body drift", () => {
+    const msgs = describeDrift(
+      [
+        { file: DISPATCHER_FILE, status: "ok" },
+        { file: "nightly.yml", status: "jobs-differ" },
+      ],
+      [lane()]
+    );
+    expect(msgs[1].level).toBe("warning");
+    expect(msgs[1].message).toMatch(/runs MAIN's job definitions against develop/);
+    expect(msgs[1].message).toMatch(/ownSchedule: false/);
   });
 
   it("does not claim coverage for a watched-only lane", () => {

@@ -635,7 +635,7 @@ The system/E2E suite runs in **two lanes**, split so per-PR CI stays fast while
 the app-launching suites still run on a cadence:
 
 - **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR that touches the harness (`tests/system/`) runs it with `-m "not integration"` — every push to `develop`/`main` runs it regardless (#3325), so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
-- **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
+- **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). The `develop` nightly is dispatched by [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml) at 05:05 UTC so it runs `develop`'s copy of the workflow (#4449); the lane's own cron grades `main` weekly. The job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
 **Grading a feature branch before merge (#4726).** A manual dispatch normally
 picks `-f branch=develop|main|both` (dispatched with `--ref main`). To prove a
@@ -1226,9 +1226,9 @@ flowchart LR
   the `core/tests` suite under `cargo llvm-cov` and upload
   `integration-coverage/integration.lcov` (14-day retention);
   [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml)
-  dispatches it on `develop` daily (#4277). The lane's own cron is not instrumented: it
-  fires from the default branch (`main`) but checks out `develop` (#3664), so
-  its run's branch and commit would not match the code it measured. PR-triggered fixture runs stay a plain
+  dispatches it on `develop` daily (#4277), which also makes the nightly run
+  `develop`'s copy of the workflow (#4449). The lane's own cron grades `main` only
+  (weekly) and is not instrumented. PR-triggered fixture runs stay a plain
   `cargo test`, so PR runtime is unchanged.
   [`release-candidate.yml`](../.github/workflows/release-candidate.yml) calls
   this lane with `measure_coverage: true` for the
