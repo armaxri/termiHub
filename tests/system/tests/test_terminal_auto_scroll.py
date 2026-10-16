@@ -35,9 +35,20 @@ class TestTerminalAutoScroll(TerminalUi, SystemTest):
         self.driver.scroll_terminal(0, to_bottom=True)
 
     def _fill_scrollback(self, lo: int, hi: int) -> None:
-        """Emit ``seq lo hi`` and wait until the last number has rendered."""
+        """Emit ``seq lo hi`` and wait until the last number has rendered.
+
+        Matches ``hi`` as a whole output *line*, not a substring: the echoed
+        prompt line (``$ seq 1 500``) already contains ``"500"``, so a substring
+        wait returned while seq was still streaming (#4851). Scrolling then hit
+        a near-empty buffer (``baseY == 0``, so the scroll-up was a no-op) or
+        raced the remaining output.
+        """
         self.run_command(f"seq {lo} {hi}")
-        self.wait_for_output(str(hi))
+        last = str(hi)
+        self.wait(
+            lambda: last in (line.strip() for line in self.driver.read_terminal().splitlines()),
+            what=f"the line {last!r} in terminal output",
+        )
 
     # ── MT-SCROLL-01: auto-scroll preserves the user's position ─────────────
     def test_output_does_not_yank_the_view_when_scrolled_up(self):
