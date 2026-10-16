@@ -1495,6 +1495,7 @@ export function ConnectionList() {
                 icon: <Plus size={16} />,
                 onClick: handleNewConnection,
                 iconOnly: true,
+                primary: true,
                 testId: "connection-list-new-connection",
               },
               {

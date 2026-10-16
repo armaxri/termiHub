@@ -1,7 +1,8 @@
 /**
- * ResponsiveToolbar (#4709): actions render labelled while they fit, collapse to
- * icon-only buttons (tooltip + accessible name) below that, and move into an
- * overflow "…" menu after that — never clipped or hidden.
+ * ResponsiveToolbar (#4709, #4824): actions render labelled while they all fit;
+ * below that the primary action (if declared) stays inline and every other
+ * action moves into one overflow "…" menu — never clipped or hidden, and never
+ * an icon-only row.
  *
  * jsdom has no layout, so the toolbar falls back to estimated widths
  * (28px per icon button, 28px + 7px per label character) and the tests drive
@@ -41,6 +42,7 @@ function makeActions(handlers: Record<string, () => void> = {}): ToolbarAction[]
       label: "New Workspace",
       icon: <Plus size={14} />,
       onClick: handlers.new,
+      primary: true,
       testId: "tb-new",
     },
     {
@@ -108,49 +110,61 @@ function menuItemNames(): string[] {
   );
 }
 
+const ALL_NAMES = [
+  "New Workspace",
+  "Save Current Layout",
+  "Export Workspaces",
+  "Import Workspaces",
+];
+
 describe("computeToolbarLayout", () => {
-  const input = { fullWidths: [119, 112, 28, 28], iconWidth: 28, gap: 4 };
+  // Labelled widths: 119 + 112 + 28 + 28 + 3 gaps × 4 = 299 for the full strip.
+  const input = { fullWidths: [119, 112, 28, 28], iconWidth: 28, gap: 4, primaryIndex: 0 };
 
   it("is full when the width is unknown", () => {
     expect(computeToolbarLayout({ ...input, available: null })).toEqual({
       mode: "full",
-      visibleCount: 4,
-      labelledCount: 4,
+      inlineIndex: null,
     });
   });
 
-  it("keeps labels while they fit", () => {
+  it("keeps labels while they all fit", () => {
     expect(computeToolbarLayout({ ...input, available: 299 }).mode).toBe("full");
+    // Sub-pixel rounding does not flip a strip that fits.
+    expect(computeToolbarLayout({ ...input, available: 298.6 }).mode).toBe("full");
   });
 
-  it("collapses to icons when labels no longer fit", () => {
-    // The leading label still fits: 119 + 3 × 28 + 3 × 4 = 215.
+  it("keeps only the primary action beside the overflow trigger once labels do not fit", () => {
+    // Never an icon-only row: one pixel short of full goes straight to overflow.
     expect(computeToolbarLayout({ ...input, available: 298 })).toEqual({
-      mode: "icons",
-      visibleCount: 4,
-      labelledCount: 1,
+      mode: "overflow",
+      inlineIndex: 0,
     });
-    expect(computeToolbarLayout({ ...input, available: 215 }).labelledCount).toBe(1);
-    expect(computeToolbarLayout({ ...input, available: 214 }).labelledCount).toBe(0);
-    expect(computeToolbarLayout({ ...input, available: 124 })).toEqual({
-      mode: "icons",
-      visibleCount: 4,
-      labelledCount: 0,
+    // Primary (119) + gap (4) + trigger (28) = 151.
+    expect(computeToolbarLayout({ ...input, available: 151 })).toEqual({
+      mode: "overflow",
+      inlineIndex: 0,
     });
   });
 
-  it("overflows the trailing actions when even the icons do not fit", () => {
-    // 2 icons + overflow trigger = 3 × 28 + 2 × 4 = 92.
-    expect(computeToolbarLayout({ ...input, available: 92 })).toEqual({
+  it("puts everything in the menu when even the primary does not fit beside the trigger", () => {
+    expect(computeToolbarLayout({ ...input, available: 150 })).toEqual({
       mode: "overflow",
-      visibleCount: 2,
-      labelledCount: 0,
+      inlineIndex: null,
     });
-    // Too narrow for anything but the trigger: everything is in the menu.
-    expect(computeToolbarLayout({ ...input, available: 20 })).toEqual({
+  });
+
+  it("keeps a primary that is not the first action", () => {
+    expect(computeToolbarLayout({ ...input, primaryIndex: 1, available: 200 })).toEqual({
       mode: "overflow",
-      visibleCount: 0,
-      labelledCount: 0,
+      inlineIndex: 1,
+    });
+  });
+
+  it("shows only the overflow trigger when no primary is declared", () => {
+    expect(computeToolbarLayout({ ...input, primaryIndex: null, available: 298 })).toEqual({
+      mode: "overflow",
+      inlineIndex: null,
     });
   });
 });
@@ -167,79 +181,71 @@ describe("ResponsiveToolbar", () => {
     expect(container.querySelector('[data-testid="tb-overflow"]')).toBeNull();
   });
 
-  it("collapses labels to icon-only buttons that keep their accessible name", () => {
-    render();
+  it("collapses to the labelled primary plus one overflow menu — no icon-only row", () => {
+    const onSave = vi.fn();
+    render(makeActions({ save: onSave }));
+    // 200px minimum sidebar width minus the toolbar's horizontal padding.
     ro.resize(184);
-    expect(layout()).toBe("icons");
-    for (const name of [
-      "New Workspace",
-      "Save Current Layout",
-      "Export Workspaces",
-      "Import Workspaces",
-    ]) {
-      const btn = liveButton(name);
-      expect(btn, name).not.toBeNull();
-      expect(btn?.textContent).toBe("");
-      expect(btn?.classList.contains("ui-btn--icon-only")).toBe(true);
-    }
-    // Test hooks survive the collapse.
-    expect(container.querySelector('[data-testid="tb-save"]')).toBe(
-      liveButton("Save Current Layout")
-    );
-    expect(container.querySelector('[data-testid="tb-overflow"]')).toBeNull();
-  });
-
-  it("still collapses under React StrictMode's double mount (#4736)", () => {
-    render(makeActions(), { strict: true });
-    ro.resize(184);
-    expect(layout()).toBe("icons");
-    ro.resize(92);
-    expect(container.querySelector('[data-testid="tb-overflow"]')).not.toBeNull();
-    ro.resize(400);
-    expect(layout()).toBe("full");
-  });
-
-  it("moves the trailing actions into an overflow menu when even icons do not fit", () => {
-    const onImport = vi.fn();
-    render(makeActions({ import: onImport }));
-    ro.resize(92);
     expect(layout()).toBe("overflow");
-    expect(liveButton("New Workspace")).not.toBeNull();
-    expect(liveButton("Save Current Layout")).not.toBeNull();
+    expect(liveButton("New Workspace")?.textContent).toBe("New Workspace");
+    expect(liveButton("Save Current Layout")).toBeNull();
     expect(liveButton("Export Workspaces")).toBeNull();
     expect(liveButton("Import Workspaces")).toBeNull();
     const trigger = container.querySelector('[data-testid="tb-overflow"]');
     expect(trigger?.getAttribute("aria-label")).toBe("More workspace actions");
 
     openOverflow();
-    expect(menuItemNames()).toEqual(["Export Workspaces", "Import Workspaces"]);
-    const importItem = document.querySelector<HTMLElement>('[data-testid="tb-import"]');
-    act(() => importItem?.click());
-    expect(onImport).toHaveBeenCalledTimes(1);
+    expect(menuItemNames()).toEqual([
+      "Save Current Layout",
+      "Export Workspaces",
+      "Import Workspaces",
+    ]);
+    // Test hooks follow the action into the menu, and the item runs it.
+    const save = document.querySelector<HTMLElement>('[data-testid="tb-save"]');
+    expect(save?.getAttribute("role")).toBe("menuitem");
+    act(() => save?.click());
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes straight from labels to the overflow menu just below the full width", () => {
+    render();
+    ro.resize(298);
+    expect(layout()).toBe("overflow");
+    const toolbar = container.querySelector('[data-testid="tb"]');
+    const iconOnlyLive = Array.from(
+      toolbar?.querySelectorAll(":scope > .ui-btn--icon-only") ?? []
+    ).map((b) => b.getAttribute("aria-label"));
+    // The only icon-only control left inline is the "…" trigger itself.
+    expect(iconOnlyLive).toEqual(["More workspace actions"]);
+  });
+
+  it("still collapses under React StrictMode's double mount (#4736)", () => {
+    render(makeActions(), { strict: true });
+    ro.resize(184);
+    expect(layout()).toBe("overflow");
+    expect(container.querySelector('[data-testid="tb-overflow"]')).not.toBeNull();
+    expect(liveButton("New Workspace")).not.toBeNull();
+    ro.resize(400);
+    expect(layout()).toBe("full");
+    expect(container.querySelector('[data-testid="tb-overflow"]')).toBeNull();
+  });
+
+  it("moves every action into the menu when no primary is declared", () => {
+    render(makeActions().map((a) => ({ ...a, primary: undefined })));
+    ro.resize(184);
+    expect(layout()).toBe("overflow");
+    expect(ALL_NAMES.map(liveButton).filter(Boolean)).toHaveLength(0);
+    openOverflow();
+    expect(menuItemNames()).toEqual(ALL_NAMES);
   });
 
   it("keeps every action reachable by name at a very narrow width", () => {
     render();
     ro.resize(40);
-    const inline = [
-      "New Workspace",
-      "Save Current Layout",
-      "Export Workspaces",
-      "Import Workspaces",
-    ]
-      .map(liveButton)
-      .filter(Boolean);
+    const inline = ALL_NAMES.map(liveButton).filter(Boolean);
     openOverflow();
     expect(inline.length + menuItemNames().length).toBe(4);
     expect(menuItemNames()).toContain("New Workspace");
-  });
-
-  it("keeps the leading action labelled while only it still fits", () => {
-    render();
-    ro.resize(244);
-    expect(layout()).toBe("icons");
-    expect(liveButton("New Workspace")?.textContent).toBe("New Workspace");
-    expect(liveButton("Save Current Layout")?.textContent).toBe("");
   });
 
   it("restores the labels when the toolbar grows again", () => {
@@ -269,6 +275,29 @@ describe("ResponsiveToolbar", () => {
     const sub = document.querySelector('[data-testid="tb-new-menu"]');
     expect(sub?.getAttribute("aria-haspopup")).toBe("menu");
     expect(sub?.textContent).toContain("New Workflow");
+  });
+
+  it("keeps a primary drop-down inline as a labelled menu button", () => {
+    render([
+      {
+        id: "new",
+        label: "New Workflow",
+        shortLabel: "New",
+        icon: <Plus size={12} />,
+        primary: true,
+        testId: "tb-new-menu",
+        menu: [{ id: "blank", label: "Blank workflow", onSelect: vi.fn() }],
+      },
+      ...makeActions().slice(2),
+    ]);
+    // Full: 28 + 3 × 7 + 16 = 65, + 2 × 28 + 2 × 4 = 129. Primary + trigger = 97.
+    ro.resize(100);
+    expect(layout()).toBe("overflow");
+    const button = liveButton("New Workflow");
+    expect(button?.textContent).toBe("New");
+    expect(button?.getAttribute("aria-haspopup")).toBe("menu");
+    openOverflow();
+    expect(menuItemNames()).toEqual(["Export Workspaces", "Import Workspaces"]);
   });
 
   it("has no axe violations in every layout", async () => {

@@ -1,8 +1,8 @@
 /**
  * Workspaces sidebar at narrow widths (#4709): the toolbar used to clip
  * "Save Current" and hide import/export. At the minimum sidebar width every
- * action must stay reachable by role/name — inline as an icon button or in the
- * overflow menu — and workspace names must not lose width to hidden actions.
+ * action must stay reachable by role/name — the primary "New Workspace" inline,
+ * the rest in one overflow "…" menu (#4824) — and workspace names must not lose width to hidden actions.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -124,15 +124,20 @@ describe("WorkspaceSidebar at narrow widths (#4709)", () => {
     ro.restore();
   });
 
-  it("collapses to icon buttons — none clipped or hidden — at the minimum width", async () => {
+  it("keeps New Workspace labelled and moves the rest into one '…' menu at the minimum width", async () => {
     render();
     // 200px minimum sidebar width minus the toolbar's horizontal padding.
     ro.resize(184);
-    expect(inlineNames()).toEqual(ACTION_NAMES);
-    expect(document.querySelector('[data-testid="workspace-toolbar-overflow"]')).toBeNull();
-    const save = document.querySelector('[data-testid="workspace-save-current-btn"]');
-    expect(save?.textContent).toBe("");
+    expect(inlineNames()).toEqual(["New Workspace"]);
+    expect(document.querySelector('[data-testid="workspace-new-btn"]')?.textContent).toBe(
+      "New Workspace"
+    );
     expect(await checkA11y(container)).toHaveNoViolations();
+    expect(overflowNames()).toEqual([
+      "Save Current Layout",
+      "Export Workspaces",
+      "Import Workspaces",
+    ]);
   });
 
   it("keeps every action reachable through the overflow menu when even narrower", () => {
@@ -140,7 +145,6 @@ describe("WorkspaceSidebar at narrow widths (#4709)", () => {
     ro.resize(96);
     const inline = inlineNames();
     const overflow = overflowNames();
-    expect(inline.length).toBeGreaterThan(0);
     expect([...inline, ...overflow].sort()).toEqual([...ACTION_NAMES].sort());
   });
 

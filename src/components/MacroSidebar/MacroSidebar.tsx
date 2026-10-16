@@ -227,6 +227,7 @@ export function MacroSidebar() {
             tooltip: "New Macro (author by hand)",
             icon: <Plus size={12} />,
             onClick: handleNew,
+            primary: true,
             testId: "macro-new-btn",
           },
           {
