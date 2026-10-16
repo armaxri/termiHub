@@ -149,6 +149,15 @@ class _RdpSuite(
         assert self.driver.exists(self.RECONNECT)
         return text
 
+    def reopen_clipboard_panel(self) -> None:
+        """Close and reopen the clipboard panel, so it re-reads the remote clipboard."""
+        self.driver.click(self.CLIPBOARD_BUTTON)
+        self.wait(lambda: not self.driver.exists(self.CLIPBOARD_TEXT), what="the panel to close")
+        self.driver.click(self.CLIPBOARD_BUTTON)
+        self.wait(lambda: self.driver.exists(self.CLIPBOARD_TEXT), what="the panel to reopen")
+        # The read on open is asynchronous: give it a moment to land.
+        time.sleep(0.5)
+
     @staticmethod
     def resize_target(canvas: tuple[int, int]) -> tuple[int, int]:
         """A window size that really changes the tab's canvas (see test_vnc.py)."""
@@ -253,6 +262,10 @@ class TestRdpSession(_RdpSuite):
             self.driver.type(self.CLIPBOARD_TEXT, ping)
             self.driver.click(self.CLIPBOARD_SEND)
             time.sleep(1.0)
+            # The panel reads the remote clipboard when it opens; a server copy
+            # made while it is open is not pushed into it (#4828). Reopen it
+            # to pull the server's echo.
+            self.reopen_clipboard_panel()
             return self.driver.get_value(self.CLIPBOARD_TEXT) == pong
 
         self.wait(
@@ -443,7 +456,13 @@ class TestRdpConnectErrors(_RdpSuite):
             wait_active=False,
         )
         self.wait_for_error("Could not connect", "the connect-failed overlay")
-        assert self.remote_desktop_session_id() is None
+        # The RDP connect returns once the sidecar is launched; the TCP failure
+        # arrives afterwards as the session's terminal state, so the tab keeps
+        # the (failed, resting) session's id until Reconnect or close tears it
+        # down (#4828). What must hold is that it never went live: no active
+        # toolbar, and no frame ever surfaced a remote resolution.
+        assert not self.driver.exists(self.TOOLBAR)
+        assert self.remote_resolution() is None
 
     def test_wrong_password_on_nla_server_shows_authentication_failed(self):
         self.open_rdp_tab(
