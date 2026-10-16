@@ -77,4 +77,32 @@ export const MOBAXTERM_PREVIEW = {
       notes: [],
     },
   ],
+  hostKeys: [
+    {
+      id: "ssh-ed25519@22:203.0.113.5",
+      host: "203.0.113.5",
+      port: 22,
+      keyType: "ssh-ed25519",
+      fingerprint: "SHA256:D0k/zRUCvz3ysFQzAG0q7hQl2n/TE2fiVuLyLO5vJFw",
+      knownHostsLine: "203.0.113.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKDTD2Gcc7Keuye43",
+      status: "new",
+    },
+    {
+      id: "rsa2@2222:server.example.com",
+      host: "server.example.com",
+      port: 2222,
+      keyType: "ssh-rsa",
+      fingerprint: "SHA256:uyN+WW7iOMrYqwASFPd2J96MZycl8gO/tDTD238RSAY",
+      knownHostsLine: "[server.example.com]:2222 ssh-rsa AAAAB3NzaC1yc2E",
+      status: "conflict",
+      reason: "termiHub already trusts a different key for this host; it is not replaced.",
+    },
+    {
+      id: "dss@22:192.0.2.8",
+      host: "192.0.2.8",
+      port: 22,
+      status: "invalid",
+      reason: "DSA host keys are obsolete and not supported.",
+    },
+  ],
 };

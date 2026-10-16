@@ -132,6 +132,8 @@ import {
   InventoryHost,
   MobaxtermConfigCandidate,
   MobaxtermImportPreview,
+  HostKeySelection,
+  HostKeyImportResult,
   FileEntry,
   Writability,
   AppSettings,
@@ -407,6 +409,18 @@ export async function discoverMobaxtermConfigs(): Promise<MobaxtermConfigCandida
  */
 export async function previewMobaxtermImport(path: string): Promise<MobaxtermImportPreview> {
   return await invoke<MobaxtermImportPreview>("preview_mobaxterm_import", { path });
+}
+
+/**
+ * Trust the MobaXterm host keys the user opted in to (#4852). The backend
+ * re-reads `path` and re-validates each selection, importing only keys that
+ * still match the previewed fingerprint and have no conflicting trusted key.
+ */
+export async function importMobaxtermHostKeys(
+  path: string,
+  selections: HostKeySelection[]
+): Promise<HostKeyImportResult> {
+  return await invoke<HostKeyImportResult>("import_mobaxterm_host_keys", { path, selections });
 }
 
 /**

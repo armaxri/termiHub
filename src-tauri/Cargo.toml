@@ -126,6 +126,10 @@ serde_json = { workspace = true }
 # projection substrate (#2149). Library-backed per the repo's "prefer libraries"
 # rule rather than a hand-rolled differ; `diff()` emits only add/remove/replace.
 json-patch = "3"
+# Big-number arithmetic for converting MobaXterm/PuTTY host-key cache entries
+# (hex curve coordinates / RSA numbers) into SSH key blobs and checking the points
+# are on their curves (#4852). Already in the tree via russh.
+num-bigint = "0.4"
 russh = { workspace = true }
 russh-sftp = { workspace = true }
 tempfile = "3"

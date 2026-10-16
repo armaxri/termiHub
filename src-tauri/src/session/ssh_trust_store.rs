@@ -129,6 +129,32 @@ impl SshTrustStore {
         self.persist();
     }
 
+    /// Remember `fingerprint` for `host` **only** when the host has nothing
+    /// remembered yet, checking and inserting under one lock (#4852).
+    ///
+    /// Used by bulk imports, which must never add a key beside a *different*
+    /// trusted one (that would silently trust a possibly-MITM key). Returns the
+    /// lookup verdict before the call: `Unknown` means the key was added,
+    /// `Trusted` that it already was, `Changed` that it was refused.
+    pub fn remember_if_unknown(&self, host: &str, fingerprint: &str) -> TrustLookup {
+        let verdict = {
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+            let verdict = match entries.get(host) {
+                Some(fps) if fps.iter().any(|f| f == fingerprint) => TrustLookup::Trusted,
+                Some(fps) if !fps.is_empty() => TrustLookup::Changed,
+                _ => TrustLookup::Unknown,
+            };
+            if verdict == TrustLookup::Unknown {
+                entries.insert(host.to_string(), vec![fingerprint.to_string()]);
+            }
+            verdict
+        };
+        if verdict == TrustLookup::Unknown {
+            self.persist();
+        }
+        verdict
+    }
+
     /// The fingerprints currently trusted for `host`, in stored order (empty
     /// when the host has none remembered). Used to surface the previously-trusted
     /// key alongside a *changed* one in the host-key prompt so the user can
@@ -447,5 +473,30 @@ mod tests {
         assert_eq!(reopened.lookup("a:22", FP_A), TrustLookup::Changed);
         assert_eq!(reopened.lookup("a:22", FP_B), TrustLookup::Trusted);
         assert_eq!(reopened.lookup("b:22", FP_A), TrustLookup::Unknown);
+    }
+
+    /// #4852: a bulk import adds a key only for a host with nothing remembered,
+    /// and never beside a different trusted key.
+    #[test]
+    fn remember_if_unknown_never_adds_beside_a_different_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SshTrustStore::open(tmp.path().to_path_buf());
+        assert_eq!(
+            store.remember_if_unknown("a:22", FP_A),
+            TrustLookup::Unknown
+        );
+        assert_eq!(store.lookup("a:22", FP_A), TrustLookup::Trusted);
+        assert_eq!(
+            store.remember_if_unknown("a:22", FP_A),
+            TrustLookup::Trusted
+        );
+        assert_eq!(
+            store.remember_if_unknown("a:22", FP_B),
+            TrustLookup::Changed
+        );
+        assert_eq!(store.fingerprints_for("a:22"), vec![FP_A.to_string()]);
+        // Persisted: a fresh instance sees the added key.
+        let reopened = SshTrustStore::open(tmp.path().to_path_buf());
+        assert_eq!(reopened.lookup("a:22", FP_A), TrustLookup::Trusted);
     }
 }

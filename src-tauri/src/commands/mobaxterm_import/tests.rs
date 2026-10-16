@@ -9,6 +9,7 @@ use serde_json::json;
 use super::discovery::{candidate_paths, existing_candidates, CandidateSource, DiscoveryEnv};
 use super::parser::{decode, decode_escapes, parse_bookmarks, SourceEncoding};
 use super::placeholders::{expand_path, PlaceholderEnv};
+use super::trusted_hosts::NothingTrusted;
 use super::{preview_file, preview_from_bytes, MobaxtermSession};
 
 /// A placeholder environment with fixed, OS-native directories.
@@ -485,11 +486,11 @@ fn preview_file_reads_from_disk_and_rejects_missing_paths() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("sessions.mxtsessions");
     std::fs::write(&path, FULL_INI).unwrap();
-    let preview = preview_file(&path, &env()).expect("preview");
+    let preview = preview_file(&path, &env(), &NothingTrusted).expect("preview");
     assert_eq!(preview.sessions.len(), 11);
-    assert!(preview_file(&dir.path().join("missing.ini"), &env()).is_err());
+    assert!(preview_file(&dir.path().join("missing.ini"), &env(), &NothingTrusted).is_err());
     assert!(
-        preview_file(dir.path(), &env()).is_err(),
+        preview_file(dir.path(), &env(), &NothingTrusted).is_err(),
         "a directory is not a file"
     );
 }
