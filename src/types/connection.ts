@@ -121,6 +121,15 @@ export type { InventoryHost } from "./generated/InventoryHost";
 export type { MobaxtermConfigCandidate } from "./generated/MobaxtermConfigCandidate";
 export type { MobaxtermImportPreview } from "./generated/MobaxtermImportPreview";
 export type { MobaxtermSession } from "./generated/MobaxtermSession";
+/**
+ * MobaXterm host-key import (#4852): one `[SSH_Hostkeys]` entry in the preview
+ * (new / trusted / conflict / invalid), a user-approved key sent back for
+ * import, and the import outcome. Generated from
+ * `commands/mobaxterm_import/trusted_hosts.rs` via ts-rs.
+ */
+export type { MobaxtermHostKey } from "./generated/MobaxtermHostKey";
+export type { HostKeySelection } from "./generated/HostKeySelection";
+export type { HostKeyImportResult } from "./generated/HostKeyImportResult";
 
 // DUP-008: the connection tree's source of truth is the Rust on-disk
 // `ConnectionTreeNode` (`src-tauri/src/connection/config.rs`). It never crosses

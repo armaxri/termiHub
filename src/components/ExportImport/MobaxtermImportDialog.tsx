@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, FileSearch, FolderOpen } from "lucide-react";
-import { Button, EmptyState, Modal, Select, Spinner } from "@/components/ui";
-import type { ConnectionFolder, MobaxtermSession, SavedConnection } from "@/types/connection";
-import { discoverMobaxtermConfigs, previewMobaxtermImport } from "@/services/api";
+import { Button, EmptyState, Modal, Select, Spinner, toast } from "@/components/ui";
+import type {
+  ConnectionFolder,
+  HostKeyImportResult,
+  MobaxtermHostKey,
+  MobaxtermSession,
+  SavedConnection,
+} from "@/types/connection";
+import {
+  discoverMobaxtermConfigs,
+  importMobaxtermHostKeys,
+  previewMobaxtermImport,
+} from "@/services/api";
 import { open as openFileDialog } from "@/services/nativeDialog";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import { buildMobaxtermImportPlan, isImportable } from "@/services/mobaxtermImport";
@@ -11,6 +21,7 @@ import {
   resolveImportFolderId,
   ROOT_FOLDER_VALUE,
 } from "@/services/sshConfigImport";
+import { MobaxtermHostKeyList } from "./MobaxtermHostKeyList";
 import { MobaxtermSessionList } from "./MobaxtermSessionList";
 import "../Sidebar/BulkSshImportDialog.css";
 import "./MobaxtermImportDialog.css";
@@ -30,7 +41,7 @@ type LoadState =
   | { status: "discovering" }
   | { status: "no-source" }
   | { status: "loading"; path: string }
-  | { status: "ready"; path: string; sessions: MobaxtermSession[] }
+  | { status: "ready"; path: string; sessions: MobaxtermSession[]; hostKeys: MobaxtermHostKey[] }
   | { status: "error"; path: string; message: string };
 
 /** The file kinds MobaXterm stores sessions in. */
@@ -43,6 +54,17 @@ function describeError(err: unknown): string {
   return "Unknown error";
 }
 
+/** Surface the outcome of the host-key import (#4852). */
+function reportHostKeys(result: HostKeyImportResult) {
+  const n = result.imported;
+  if (n > 0) toast.success(`Trusted ${n} SSH host ${n === 1 ? "key" : "keys"} from MobaXterm.`);
+  if (result.skipped.length > 0) {
+    toast.error(`${result.skipped.length} host keys were not imported.`, {
+      description: result.skipped.join("\n"),
+    });
+  }
+}
+
 /**
  * Import saved sessions from MobaXterm (#4850). On open it looks for a local
  * MobaXterm configuration (Windows: installed edition / Documents) and previews
@@ -52,6 +74,8 @@ function describeError(err: unknown): string {
  * the rest with the reason they are skipped. Importing recreates MobaXterm's
  * folder tree under the chosen target folder; names collide-resolve within
  * each folder like the `~/.ssh/config` import. Passwords are never imported.
+ * MobaXterm's accepted SSH host keys (#4852) are listed too and trusted only
+ * when the user opts in; conflicting or invalid keys are shown and skipped.
  */
 export function MobaxtermImportDialog({
   open,
@@ -63,6 +87,8 @@ export function MobaxtermImportDialog({
   const [state, setState] = useState<LoadState>({ status: "discovering" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [folderId, setFolderId] = useState<string>(ROOT_FOLDER_VALUE);
+  // Host keys are trust anchors: never imported without this explicit opt-in.
+  const [importHostKeys, setImportHostKeys] = useState(false);
 
   const folderOptions = useMemo(() => importFolderOptions(folders), [folders]);
 
@@ -73,7 +99,8 @@ export function MobaxtermImportDialog({
       if (isCancelled()) return;
       const sessions = preview.sessions ?? [];
       setSelected(new Set(sessions.filter(isImportable).map((s) => s.key)));
-      setState({ status: "ready", path, sessions });
+      setImportHostKeys(false);
+      setState({ status: "ready", path, sessions, hostKeys: preview.hostKeys ?? [] });
     } catch (err) {
       if (!isCancelled()) setState({ status: "error", path, message: describeError(err) });
     }
@@ -111,6 +138,9 @@ export function MobaxtermImportDialog({
   const sessions = state.status === "ready" ? state.sessions : [];
   const importable = sessions.filter(isImportable);
   const skipped = sessions.filter((s) => !isImportable(s));
+  const hostKeys = state.status === "ready" ? state.hostKeys : [];
+  const newHostKeys = hostKeys.filter((k) => k.status === "new" && k.fingerprint);
+  const trustCount = importHostKeys ? newHostKeys.length : 0;
 
   const toggleOne = (key: string) => {
     setSelected((prev) => {
@@ -127,20 +157,39 @@ export function MobaxtermImportDialog({
     );
   };
 
+  const sourcePath = "path" in state ? state.path : null;
+
   const handleImport = async () => {
     const chosen = importable.filter((s) => selected.has(s.key));
-    if (chosen.length === 0) return;
-    const plan = buildMobaxtermImportPlan(
-      chosen,
-      resolveImportFolderId(folderId),
-      folders,
-      existingConnections
-    );
-    await onImport(plan.folders, plan.connections);
+    if (chosen.length === 0 && trustCount === 0) return;
+    if (chosen.length > 0) {
+      const plan = buildMobaxtermImportPlan(
+        chosen,
+        resolveImportFolderId(folderId),
+        folders,
+        existingConnections
+      );
+      await onImport(plan.folders, plan.connections);
+    }
+    if (trustCount > 0 && sourcePath) {
+      const selections = newHostKeys.map((k) => ({ id: k.id, fingerprint: k.fingerprint ?? "" }));
+      try {
+        reportHostKeys(await importMobaxtermHostKeys(sourcePath, selections));
+      } catch (err) {
+        toast.error("Could not import the MobaXterm host keys.", {
+          description: describeError(err),
+        });
+      }
+    }
     onOpenChange(false);
   };
 
-  const sourcePath = "path" in state ? state.path : null;
+  const canImport = state.status === "ready" && (selected.size > 0 || trustCount > 0);
+  const submitLabel = !canImport
+    ? "Import"
+    : selected.size > 0
+      ? `Import ${selected.size}`
+      : "Import host keys";
 
   return (
     <Modal
@@ -162,10 +211,10 @@ export function MobaxtermImportDialog({
           <Button
             variant="primary"
             onClick={handleImport}
-            disabled={selected.size === 0 || state.status !== "ready"}
+            disabled={!canImport}
             data-testid="mobaxterm-import-submit"
           >
-            {selected.size > 0 && state.status === "ready" ? `Import ${selected.size}` : "Import"}
+            {submitLabel}
           </Button>
         </>
       }
@@ -213,7 +262,7 @@ export function MobaxtermImportDialog({
           />
         )}
 
-        {state.status === "ready" && sessions.length === 0 && (
+        {state.status === "ready" && sessions.length === 0 && hostKeys.length === 0 && (
           <EmptyState
             variant="panel"
             icon={<FileSearch size={20} aria-hidden />}
@@ -246,6 +295,14 @@ export function MobaxtermImportDialog({
               onToggleAll={toggleAll}
             />
           </>
+        )}
+
+        {state.status === "ready" && (
+          <MobaxtermHostKeyList
+            hostKeys={hostKeys}
+            importNew={importHostKeys}
+            onImportNewChange={setImportHostKeys}
+          />
         )}
       </div>
     </Modal>

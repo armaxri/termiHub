@@ -90,3 +90,16 @@
 .mobaxterm-import__reason {
   font-size: var(--font-size-sm);
 }
+
+/* Host-key opt-in step (#4852). */
+.mobaxterm-import__hostkeys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.mobaxterm-import__hostkeys-hint {
+  margin: 0;
+  padding: 0 var(--spacing-sm-md);
+  color: var(--text-secondary);
+}

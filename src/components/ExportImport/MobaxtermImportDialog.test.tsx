@@ -3,17 +3,23 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type {
   ConnectionFolder,
+  MobaxtermHostKey,
   MobaxtermImportPreview,
   MobaxtermSession,
   SavedConnection,
 } from "@/types/connection";
 import { MobaxtermImportDialog } from "./MobaxtermImportDialog";
-import { discoverMobaxtermConfigs, previewMobaxtermImport } from "@/services/api";
+import {
+  discoverMobaxtermConfigs,
+  importMobaxtermHostKeys,
+  previewMobaxtermImport,
+} from "@/services/api";
 import { open as openFileDialog } from "@/services/nativeDialog";
 
 vi.mock("@/services/api", () => ({
   discoverMobaxtermConfigs: vi.fn(),
   previewMobaxtermImport: vi.fn(),
+  importMobaxtermHostKeys: vi.fn(),
 }));
 
 vi.mock("@/services/nativeDialog", () => ({
@@ -23,6 +29,7 @@ vi.mock("@/services/nativeDialog", () => ({
 const mockedDiscover = vi.mocked(discoverMobaxtermConfigs);
 const mockedPreview = vi.mocked(previewMobaxtermImport);
 const mockedPick = vi.mocked(openFileDialog);
+const mockedImportKeys = vi.mocked(importMobaxtermHostKeys);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -84,8 +91,38 @@ const BROWSER: MobaxtermSession = {
   notes: [],
 };
 
-function preview(sessions: MobaxtermSession[], path = "C:\\Users\\a\\MobaXterm.ini") {
-  const p: MobaxtermImportPreview = { sourcePath: path, encoding: "utf-8", sessions };
+const NEW_KEY: MobaxtermHostKey = {
+  id: "ssh-ed25519@22:203.0.113.5",
+  host: "203.0.113.5",
+  port: 22,
+  keyType: "ssh-ed25519",
+  fingerprint: "SHA256:D0k/zRUCvz3ysFQzAG0q7hQl2n/TE2fiVuLyLO5vJFw",
+  knownHostsLine: "203.0.113.5 ssh-ed25519 AAAA",
+  status: "new",
+};
+
+const CONFLICT_KEY: MobaxtermHostKey = {
+  ...NEW_KEY,
+  id: "ssh-ed25519@22:192.0.2.7",
+  host: "192.0.2.7",
+  status: "conflict",
+  reason: "termiHub already trusts a different key for this host; it is not replaced.",
+};
+
+const INVALID_KEY: MobaxtermHostKey = {
+  id: "dss@22:192.0.2.8",
+  host: "192.0.2.8",
+  port: 22,
+  status: "invalid",
+  reason: "DSA host keys are obsolete and not supported.",
+};
+
+function preview(
+  sessions: MobaxtermSession[],
+  path = "C:\\Users\\a\\MobaXterm.ini",
+  hostKeys: MobaxtermHostKey[] = []
+) {
+  const p: MobaxtermImportPreview = { sourcePath: path, encoding: "utf-8", sessions, hostKeys };
   return p;
 }
 
@@ -229,5 +266,67 @@ describe("MobaxtermImportDialog", () => {
     expect((q("mobaxterm-import-submit") as HTMLButtonElement).disabled).toBe(true);
     await click("mobaxterm-import-select-all");
     expect(q("mobaxterm-import-submit")?.textContent).toBe("Import 2");
+  });
+
+  describe("host keys (#4852)", () => {
+    const KEYS = [NEW_KEY, CONFLICT_KEY, INVALID_KEY];
+
+    it("lists host keys with their status and leaves the opt-in off", async () => {
+      mockedDiscover.mockResolvedValue([{ path: "C:\\x.ini", source: "installed" }]);
+      mockedPreview.mockResolvedValue(preview([SSH], "C:\\x.ini", KEYS));
+      renderDialog();
+      await flush();
+
+      expect(q("mobaxterm-import-hostkeys")?.textContent).toContain(
+        "Also import 1 trusted host key"
+      );
+      expect(q(`mobaxterm-import-hostkey-${NEW_KEY.id}`)?.textContent).toContain("SHA256:D0k");
+      expect(q(`mobaxterm-import-hostkey-${CONFLICT_KEY.id}`)?.textContent).toContain(
+        "different key"
+      );
+      expect(q(`mobaxterm-import-hostkey-${INVALID_KEY.id}`)?.textContent).toContain("DSA");
+      const optin = q("mobaxterm-import-hostkeys-optin");
+      expect(optin?.getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("does not trust any host key without the opt-in", async () => {
+      mockedDiscover.mockResolvedValue([{ path: "C:\\x.ini", source: "installed" }]);
+      mockedPreview.mockResolvedValue(preview([SSH], "C:\\x.ini", KEYS));
+      const { onImport } = renderDialog();
+      await flush();
+
+      await click("mobaxterm-import-submit");
+      expect(onImport).toHaveBeenCalledTimes(1);
+      expect(mockedImportKeys).not.toHaveBeenCalled();
+    });
+
+    it("imports only the new keys after opting in, even with no sessions selected", async () => {
+      mockedDiscover.mockResolvedValue([{ path: "C:\\x.ini", source: "installed" }]);
+      mockedPreview.mockResolvedValue(preview([SSH], "C:\\x.ini", KEYS));
+      mockedImportKeys.mockResolvedValue({ imported: 1, alreadyTrusted: 0, skipped: [] });
+      const { onImport, onOpenChange } = renderDialog();
+      await flush();
+
+      await click("mobaxterm-import-select-all");
+      expect((q("mobaxterm-import-submit") as HTMLButtonElement).disabled).toBe(true);
+      await click("mobaxterm-import-hostkeys-optin");
+      expect(q("mobaxterm-import-submit")?.textContent).toBe("Import host keys");
+      await click("mobaxterm-import-submit");
+
+      expect(onImport).not.toHaveBeenCalled();
+      expect(mockedImportKeys).toHaveBeenCalledWith("C:\\x.ini", [
+        { id: NEW_KEY.id, fingerprint: NEW_KEY.fingerprint },
+      ]);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("shows a file with only host keys instead of the empty state", async () => {
+      mockedDiscover.mockResolvedValue([{ path: "C:\\x.ini", source: "installed" }]);
+      mockedPreview.mockResolvedValue(preview([], "C:\\x.ini", [NEW_KEY]));
+      renderDialog();
+      await flush();
+      expect(q("mobaxterm-import-empty")).toBeNull();
+      expect(q("mobaxterm-import-hostkeys")).not.toBeNull();
+    });
   });
 });
