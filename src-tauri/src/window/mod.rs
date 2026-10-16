@@ -36,6 +36,8 @@
 #[cfg(target_os = "macos")]
 pub mod macos_terminate;
 pub mod quit;
+#[cfg(target_os = "macos")]
+pub mod web_content;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
