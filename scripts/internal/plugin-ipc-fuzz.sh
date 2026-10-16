@@ -108,17 +108,26 @@ for target in "${TARGETS[@]}"; do
   fi
 done
 
+# Files under a target's artifact directory (0 before libFuzzer creates it).
+artifact_count() {
+  if [ -d "$1" ]; then
+    find "$1" -type f | wc -l | tr -d ' '
+  else
+    echo 0
+  fi
+}
+
 status=0
 for target in "${TARGETS[@]}"; do
   echo "== fuzzing $target for ${SECONDS_PER_TARGET}s"
   artifacts="$FUZZ_DIR/artifacts/$target"
-  before="$(find "$artifacts" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  before="$(artifact_count "$artifacts")"
   # -timeout: one input taking >10 s is a hang. -rss_limit_mb: a frame is
   # capped at 1 MiB, so 2 GiB of RSS means an unbounded allocation.
   if ! cargo "+$TOOLCHAIN" fuzz run --target "$TRIPLE" "$target" "$CORPUS/$target" -- \
     -max_total_time="$SECONDS_PER_TARGET" -timeout=10 -rss_limit_mb=2048 \
     -print_final_stats=1; then
-    after="$(find "$artifacts" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    after="$(artifact_count "$artifacts")"
     if [ "$after" -gt "$before" ]; then
       echo "::error::fuzz target $target found a crash; reproducer under plugin-runner/fuzz/artifacts/$target/"
     else
