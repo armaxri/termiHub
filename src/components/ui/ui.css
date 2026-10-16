@@ -1747,6 +1747,12 @@
   flex-shrink: 0;
 }
 
+/* The overflow "…" trigger sits at the trailing edge, apart from the primary
+   action (#4824); next to a leading title the title already takes the slack. */
+.ui-toolbar > .ui-toolbar__overflow {
+  margin-left: auto;
+}
+
 /* Leading content (a section title) takes the leftover width and truncates. */
 .ui-toolbar__leading {
   flex: 1 1 auto;

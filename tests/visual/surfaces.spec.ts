@@ -203,6 +203,19 @@ for (const win of WINDOWS) {
             width.width === "aria-valuemin" ? minWidth : width.width
           );
           await report.check(`sidebar/${view}@${width.name}`, "[data-testid=sidebar]");
+          // A collapsed toolbar shows its primary action plus one "…" menu
+          // (#4824): open the first one so the screenshot shows what it holds.
+          const overflow = page.locator("[data-testid=sidebar] .ui-toolbar__overflow").first();
+          if (width.width === "aria-valuemin" && (await overflow.isVisible())) {
+            await overflow.click();
+            await page.getByRole("menu").waitFor();
+            await report.check(`sidebar/${view}@${width.name}-overflow-menu`, "[role=menu]");
+            await page.keyboard.press("Escape");
+            await expect(page.getByRole("menu")).toHaveCount(0);
+            // Leave no hover/focus ring on the trigger for the next screenshot.
+            await page.mouse.move(win.width - 1, win.height - 1);
+            await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+          }
         }
       }
       await report.finish();

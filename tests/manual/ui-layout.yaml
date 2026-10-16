@@ -309,10 +309,10 @@ tests:
       - "At the default sidebar width (260px) open each sidebar in turn: Connections (with Remote Agents), File Browser, SSH Tunnels, Services, Workspaces, Macros, Workflows (with Schedules and History), Network Tools, Recent Sessions and Plugins."
       - "Drag the sidebar edge fully left to its minimum width (200px; or focus the resize handle and press Home) and open every sidebar again."
       - "In each sidebar hover a list row, then Tab onto it with the keyboard."
-      - "At the minimum width open any '…' overflow menu in a toolbar or header and pick an action from it."
+      - "At the minimum width open the '…' overflow menu of the Workspaces toolbar, the Macros toolbar and the Connections header, and pick an action from one of them."
     expected:
-      - "At the default width toolbars show their labels where they fit (e.g. '+ New Workspace'); nothing is clipped."
-      - "At the minimum width toolbar buttons become icons with tooltips or move into a '…' menu; no button is cut off or missing, and import/export stay reachable."
+      - "Toolbars show all their labelled buttons while they fit; nothing is clipped."
+      - "A toolbar that no longer fits (e.g. Workspaces, or Macros and the Connections header at the minimum width) shows only its main action ('+ New Workspace', '+ New', '+') and one '…' menu at the right holding the rest; there is no row of bare icons, nothing is cut off or missing, and import/export stay reachable."
       - "Row names use the full row ('ssh-production-cluster', not 'ss…'); a name that really does not fit ends in '…' and shows the full name in a tooltip."
       - "Hovering or focusing a row shows its actions over the end of the row; all of them are visible (a long set wraps), and they disappear again on leave."
       - "The Schedules header keeps 'Pause all' on one line or hides it behind the toggle's tooltip; the toggle and '+' are never clipped. History headers keep their buttons."

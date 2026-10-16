@@ -15,9 +15,9 @@ import "./SidebarToolbar.css";
  * markup and layout; callers pass the action buttons as `children`.
  *
  * Width-responsive (#4709): pass `actions` (not `children`) and the strip is a
- * {@link ResponsiveToolbar} — labelled buttons while they fit, icon-only buttons
- * with a tooltip below that, and an overflow "…" menu after that — so no
- * control is ever clipped or hidden in a narrow sidebar. `children` remains for
+ * {@link ResponsiveToolbar} — labelled buttons while they all fit, otherwise the
+ * `primary` action next to a single overflow "…" menu holding the rest (#4824) —
+ * so no control is ever clipped or hidden in a narrow sidebar. `children` remains for
  * content that is not a list of actions; it renders verbatim.
  */
 export interface SidebarToolbarProps {

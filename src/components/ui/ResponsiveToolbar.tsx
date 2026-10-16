@@ -37,7 +37,7 @@ export type ToolbarMenuEntry =
 
 /**
  * One action of a {@link ResponsiveToolbar}. The toolbar decides how it renders
- * — labelled, icon-only, or as an entry of the overflow "…" menu — from the
+ * — as a labelled button, or as an entry of the overflow "…" menu — from the
  * width it actually has, so every action stays reachable at any width.
  */
 export interface ToolbarAction {
@@ -54,7 +54,7 @@ export interface ToolbarAction {
    * accessible name (WCAG 2.5.3 label-in-name).
    */
   shortLabel?: string;
-  /** Leading icon — the only visible content once the toolbar is compact. */
+  /** Leading icon of the button and of its overflow-menu entry. */
   icon: React.ReactNode;
   /** Click handler (may be async; a rejection from the menu surfaces a toast). */
   onClick?: () => void | Promise<void>;
@@ -64,6 +64,12 @@ export interface ToolbarAction {
   tooltip?: React.ReactNode;
   /** Always render icon-only, even when labels would fit (e.g. export/import). */
   iconOnly?: boolean;
+  /**
+   * The toolbar's main action (e.g. "New …"). When the actions do not all fit,
+   * it stays an inline button next to the "…" menu instead of moving into it.
+   * Only the first action marked primary counts.
+   */
+  primary?: boolean;
   /** `data-testid` of the button — and of its overflow-menu item. */
   testId?: string;
   /**
@@ -73,20 +79,23 @@ export interface ToolbarAction {
   menu?: ToolbarMenuEntry[];
 }
 
-/** How the toolbar lays out its actions at the current width. */
-export type ToolbarLayoutMode = "full" | "icons" | "overflow";
+/**
+ * How the toolbar lays out its actions at the current width: every action as
+ * a labelled button (`"full"`), or the primary action (if any) next to one
+ * overflow "…" menu holding the rest (`"overflow"`). There is deliberately no
+ * icon-only row in between (#4824) — a single "…" reads calmer.
+ */
+export type ToolbarLayoutMode = "full" | "overflow";
 
 /** Result of {@link computeToolbarLayout}. */
 export interface ToolbarLayout {
   mode: ToolbarLayoutMode;
-  /** Number of leading actions rendered inline; the rest go to the overflow menu. */
-  visibleCount: number;
   /**
-   * Number of leading actions that keep their text label (`iconOnly` ones never
-   * show one). In `"icons"` mode the first actions stay labelled while that
-   * still fits, so the primary action reads as text as long as possible.
+   * Index of the action rendered inline in `"overflow"` mode (the primary
+   * action, when it fits beside the "…" trigger), else `null`. Every other
+   * action is in the overflow menu. Always `null` in `"full"` mode.
    */
-  labelledCount: number;
+  inlineIndex: number | null;
 }
 
 /** Inputs of {@link computeToolbarLayout}, all in CSS pixels. */
@@ -95,52 +104,39 @@ export interface ToolbarLayoutInput {
   available: number | null;
   /** Per action, the width it needs in the labelled ("full") form. */
   fullWidths: number[];
-  /** Width of one icon-only button (also the overflow trigger). */
+  /** Width of the overflow "…" trigger (an icon-only button). */
   iconWidth: number;
   /** Flex gap between adjacent controls. */
   gap: number;
+  /** Index of the primary action, or `null` when the toolbar declares none. */
+  primaryIndex?: number | null;
 }
 
 /**
  * Pure layout decision for a {@link ResponsiveToolbar}: labelled buttons when
- * they all fit; icon-only buttons when only those fit (keeping the labels of as
- * many leading actions as still fit); otherwise as many icons as fit next to an
- * overflow "…" trigger that holds the rest. An unknown width (`null`) means
- * "unconstrained" — the full layout.
+ * they all fit; otherwise the primary action (labelled, when it fits next to
+ * the trigger) plus one overflow "…" menu holding the rest. An unknown width
+ * (`null`) means "unconstrained" — the full layout.
  */
 export function computeToolbarLayout({
   available,
   fullWidths,
   iconWidth,
   gap,
+  primaryIndex = null,
 }: ToolbarLayoutInput): ToolbarLayout {
   const n = fullWidths.length;
-  if (available === null || n === 0) return { mode: "full", visibleCount: n, labelledCount: n };
-  const gaps = gap * Math.max(0, n - 1);
-  const full = fullWidths.reduce((sum, w) => sum + w, 0) + gaps;
+  if (available === null || n === 0) return { mode: "full", inlineIndex: null };
+  const full = fullWidths.reduce((sum, w) => sum + w, 0) + gap * Math.max(0, n - 1);
   // Sub-pixel rounding in measured widths must not flip a toolbar that fits.
   const slack = 0.5;
-  if (full <= available + slack) return { mode: "full", visibleCount: n, labelledCount: n };
-  const icons = iconWidth * n + gaps;
-  if (icons <= available + slack) {
-    // Re-label leading actions one by one while the strip still fits.
-    let labelledCount = 0;
-    let width = icons;
-    while (labelledCount < n) {
-      const next = width - iconWidth + fullWidths[labelledCount];
-      if (next > available + slack) break;
-      width = next;
-      labelledCount += 1;
-    }
-    return { mode: "icons", visibleCount: n, labelledCount };
+  if (full <= available + slack) return { mode: "full", inlineIndex: null };
+  if (primaryIndex !== null && primaryIndex >= 0 && primaryIndex < n) {
+    // Room for the labelled primary plus the "…" trigger that holds the rest.
+    const needed = fullWidths[primaryIndex] + gap + iconWidth;
+    if (needed <= available + slack) return { mode: "overflow", inlineIndex: primaryIndex };
   }
-  // Room for k icons plus the overflow trigger: (k + 1) icons and k gaps.
-  const fit = Math.floor((available + slack + gap) / (iconWidth + gap)) - 1;
-  return {
-    mode: "overflow",
-    visibleCount: Math.max(0, Math.min(n - 1, fit)),
-    labelledCount: 0,
-  };
+  return { mode: "overflow", inlineIndex: null };
 }
 
 /** Fallback icon-button width when layout cannot be measured (jsdom). */
@@ -197,7 +193,7 @@ function renderEntries(entries: ToolbarMenuEntry[]): React.ReactNode {
 
 /** Props for {@link ResponsiveToolbar}. */
 export interface ResponsiveToolbarProps {
-  /** The actions, in priority order — later ones overflow first. */
+  /** The actions, in display order (mark the main one `primary`). */
   actions: ToolbarAction[];
   /** Accessible name of the action group. */
   "aria-label": string;
@@ -222,12 +218,13 @@ export interface ResponsiveToolbarProps {
 }
 
 /**
- * The shared width-responsive action strip (#4709). Actions render labelled
- * while they fit, collapse to icon-only buttons (tooltip + `aria-label`) below
- * that, and finally move — last first — into an overflow "…" menu, so a control
- * is never clipped or hidden whatever the sidebar width. Width comes from a
- * `ResizeObserver`; the labelled widths come from an invisible measuring copy,
- * so the decision never oscillates with the layout it produces.
+ * The shared width-responsive action strip (#4709, #4824). Actions render
+ * labelled while they all fit; below that the primary action (if one is
+ * declared) stays inline and everything else moves into a single overflow "…"
+ * menu, so a control is never clipped or hidden whatever the sidebar width.
+ * Width comes from a `ResizeObserver`; the labelled widths come from an
+ * invisible measuring copy, so the decision never oscillates with the layout
+ * it produces.
  */
 export function ResponsiveToolbar({
   actions,
@@ -294,16 +291,25 @@ export function ResponsiveToolbar({
   const available =
     width === null ? null : leading != null ? Math.max(0, width - leadingMinWidth) : width;
 
-  const layout = useMemo(
+  const primaryIndex = actions.findIndex((a) => a.primary);
+
+  const layout = useMemo<ToolbarLayout>(
     () =>
       metrics
-        ? computeToolbarLayout({ available, ...metrics })
-        : { mode: "full" as const, visibleCount: actions.length, labelledCount: actions.length },
-    [available, metrics, actions.length]
+        ? computeToolbarLayout({
+            available,
+            ...metrics,
+            primaryIndex: primaryIndex >= 0 ? primaryIndex : null,
+          })
+        : { mode: "full", inlineIndex: null },
+    [available, metrics, primaryIndex]
   );
 
-  const inline = actions.slice(0, layout.visibleCount);
-  const overflow = actions.slice(layout.visibleCount);
+  // Filter by index (not `actions[i]`): metrics can lag a changed action list
+  // by one render, and a stale index must never yield an undefined action.
+  const inline =
+    layout.mode === "full" ? actions : actions.filter((_, i) => i === layout.inlineIndex);
+  const overflow = layout.mode === "full" ? [] : actions.filter((_, i) => i !== layout.inlineIndex);
 
   const classes = ["ui-toolbar", className ?? ""].filter(Boolean).join(" ");
 
@@ -317,11 +323,11 @@ export function ResponsiveToolbar({
       aria-label={ariaLabel}
     >
       {leading != null && <div className="ui-toolbar__leading">{leading}</div>}
-      {inline.map((action, index) => (
+      {inline.map((action) => (
         <InlineAction
           key={action.id}
           action={action}
-          showLabel={index < layout.labelledCount && !action.iconOnly}
+          showLabel={!action.iconOnly}
           tooltipSide={tooltipSide}
         />
       ))}
@@ -335,6 +341,7 @@ export function ResponsiveToolbar({
                 iconOnly
                 icon={<MoreHorizontal size={14} />}
                 aria-label={overflowLabel}
+                className="ui-toolbar__overflow"
                 data-testid={overflowTestId}
               />
             </DropdownMenuTrigger>
@@ -405,7 +412,7 @@ interface InlineActionProps {
   tooltipSide: "top" | "bottom" | "left" | "right";
 }
 
-/** One action rendered inline — labelled or icon-only, button or drop-down. */
+/** One action rendered inline — labelled (or `iconOnly`), button or drop-down. */
 function InlineAction({ action, showLabel, tooltipSide }: InlineActionProps) {
   const button = (
     <Button

@@ -165,6 +165,7 @@ export function TunnelSidebar() {
             label: "New Tunnel",
             icon: <Plus size={14} />,
             onClick: handleNew,
+            primary: true,
             testId: "tunnel-new-btn",
           },
         ]}

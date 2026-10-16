@@ -28,8 +28,9 @@ export interface SidebarGroupHeaderProps {
   /**
    * Action controls rendered in the trailing `group-actions` slot. Pass a
    * {@link ToolbarAction} array to make them width-responsive (#4709): they
-   * stay icon buttons while they fit beside the title and collapse into an
-   * overflow "…" menu below that, instead of clipping in a narrow sidebar.
+   * stay icon buttons while they all fit beside the title; below that the
+   * `primary` action stays and the rest move into one overflow "…" menu
+   * (#4824), instead of clipping in a narrow sidebar.
    */
   actions?: React.ReactNode | ToolbarAction[];
   /** Accessible name of the responsive action group (array `actions` only). */

@@ -169,6 +169,7 @@ export function EmbeddedServerSidebar() {
             label: "New Service",
             icon: <Plus size={14} />,
             onClick: handleNew,
+            primary: true,
             testId: "server-new-btn",
           },
         ]}
