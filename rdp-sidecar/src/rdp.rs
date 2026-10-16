@@ -57,6 +57,7 @@ use crate::clipboard::{ClipboardEvent, LocalClipboard, SidecarClipboardBackend};
 use crate::drive::DriveRedirectBackend;
 use crate::failure;
 use crate::input;
+use crate::resize_gate::{LayoutRequest, ResizeGate};
 
 /// The RDPDR device id used for the single redirected drive (#1757). Any
 /// non-zero id works; IRPs the server sends carry it, and IronRDP routes them to
@@ -798,8 +799,12 @@ where
     // or `SetClipboardImage` (PROD-021), served back to the server when it
     // requests our clipboard data. Empty until the host copies something.
     let mut local_clipboard = LocalClipboard::Empty;
+    // Host layout requests wait here until the Display Control channel is open,
+    // and frame acks are held while one is applied (#4845).
+    let mut gate = ResizeGate::default();
 
     loop {
+        let ack_deadline = gate.deadline();
         tokio::select! {
             biased;
             host = host_in.next::<HostMessage>() => {
@@ -834,23 +839,13 @@ where
                         // Deactivation-Reactivation Sequence, handled below.
                         // Dimensions must be clamped to the MS-RDPEDISP range
                         // (200..=8192, even width) before encoding.
-                        let (w, h) = MonitorLayoutEntry::adjust_display_size(
+                        let (width, height) = MonitorLayoutEntry::adjust_display_size(
                             u32::from(width),
                             u32::from(height),
                         );
-                        match stage.encode_resize(w, h, None, None) {
-                            Some(Ok(frame)) => {
-                                if writer.write_all(&frame).await.is_err() {
-                                    break;
-                                }
-                                debug!(width = w, height = h, "requested display-control resize");
-                            }
-                            Some(Err(e)) => {
-                                warn!(error = %e, "failed to encode display-control resize")
-                            }
-                            None => debug!(
-                                "display control channel not ready; resize request dropped"
-                            ),
+                        gate.request(LayoutRequest::Size { width, height });
+                        if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                            break;
                         }
                     }
                     HostMessage::SetMonitorLayout(monitors) => {
@@ -858,17 +853,9 @@ where
                         // Control PDU with every monitor. The server answers
                         // with a Deactivation-Reactivation to the combined
                         // size, handled below like a resize.
-                        match crate::monitors::encode_layout(&mut stage, &monitors) {
-                            Some(Ok(frame)) => {
-                                if writer.write_all(&frame).await.is_err() {
-                                    break;
-                                }
-                                debug!(monitors = monitors.len(), "requested monitor layout");
-                            }
-                            Some(Err(e)) => warn!(error = %e, "failed to encode monitor layout"),
-                            None => debug!(
-                                "display control channel not ready; monitor layout dropped"
-                            ),
+                        gate.request(LayoutRequest::Monitors(monitors));
+                        if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                            break;
                         }
                     }
                     HostMessage::SetClipboard(text) => {
@@ -981,8 +968,31 @@ where
                     report_clipboard_failure(ipc_out, &e).await;
                     break;
                 }
+                // xrdp crashes on a frame ack that lands while it applies a
+                // layout: hold them until its reactivation (#4845). Fast-path
+                // processing answers with nothing but frame acks.
+                let outputs = if gate.in_flight() && action == ironrdp::pdu::Action::FastPath {
+                    outputs
+                        .into_iter()
+                        .filter_map(|output| match output {
+                            ActiveStageOutput::ResponseFrame(ack) => {
+                                gate.withhold(ack);
+                                None
+                            }
+                            other => Some(other),
+                        })
+                        .collect()
+                } else {
+                    outputs
+                };
                 match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
-                    Flow::Continue => {}
+                    Flow::Continue => {
+                        // The PDU may have opened the Display Control channel
+                        // a waiting layout needs.
+                        if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                            break;
+                        }
+                    }
                     Flow::Stop => break,
                     Flow::Terminate(reason) => {
                         end = failure::SessionEnd::Server(reason);
@@ -1007,6 +1017,7 @@ where
                                 let (r, w) = ironrdp_tokio::split_tokio_framed(new_framed);
                                 reader = r;
                                 writer = w;
+                                gate.reactivated();
                                 // The canvas is now a different size; tell the host so
                                 // it can resize before the server repaints.
                                 if write_message(
@@ -1022,14 +1033,41 @@ where
                                 {
                                     break;
                                 }
+                                // A layout requested meanwhile goes out now.
+                                if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer)
+                                    .await
+                                {
+                                    break;
+                                }
                             }
                             Err(e) => {
-                                warn!(error = %e, "rdp deactivation-reactivation failed");
+                                warn!(error = format!("{e:#}"), "rdp deactivation-reactivation failed");
                                 end = failure::reactivation_end(&e);
                                 break;
                             }
                         }
                     }
+                }
+            }
+            // The server never reactivated after a layout (it ignored the
+            // request): release the withheld frame acks, then any waiting layout.
+            _ = async {
+                match ack_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                let acks = gate.expire();
+                debug!(acks = acks.len(), "no reactivation after a layout request; releasing frame acks");
+                let mut failed = false;
+                for ack in acks {
+                    if writer.write_all(&ack).await.is_err() {
+                        failed = true;
+                        break;
+                    }
+                }
+                if failed || !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                    break;
                 }
             }
             // The shared folder changed while connected: re-enumerate and
@@ -1143,6 +1181,65 @@ fn check_desktop_size(width: u16, height: u16) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Send the gate's waiting layout when the Display Control channel is open and
+/// no other layout is in flight (#4845); otherwise it keeps waiting. A single
+/// size the desktop already has is skipped: a server answers it with no
+/// reactivation. Returns `false` when the transport failed.
+async fn send_pending_layout<T: FramedWrite>(
+    gate: &mut ResizeGate,
+    stage: &mut ActiveStage,
+    image: &DecodedImage,
+    transport: &mut T,
+) -> bool {
+    let Some(layout) = gate.take_sendable() else {
+        return true;
+    };
+    // MS-RDPEDISP 1.3: the client sends layouts only after the server's
+    // capabilities PDU. xrdp ignores one that races ahead of it.
+    if !display_control_ready(stage) {
+        debug!("display control channel not ready yet; layout request deferred");
+        gate.defer(layout);
+        return true;
+    }
+    let encoded = match &layout {
+        LayoutRequest::Size { width, height } => {
+            if (u32::from(image.width()), u32::from(image.height())) == (*width, *height) {
+                debug!(width, height, "desktop already has the requested size");
+                return true;
+            }
+            stage
+                .encode_resize(*width, *height, None, None)
+                .map(|r| r.map_err(|e| anyhow!("{e}")))
+        }
+        LayoutRequest::Monitors(monitors) => crate::monitors::encode_layout(stage, monitors),
+    };
+    match encoded {
+        Some(Ok(frame)) => {
+            if transport.write_all(&frame).await.is_err() {
+                return false;
+            }
+            debug!(?layout, "requested display-control layout");
+            gate.sent(layout, tokio::time::Instant::now());
+        }
+        Some(Err(e)) => warn!(error = %e, "failed to encode display-control layout"),
+        None => {
+            debug!("display control channel not open yet; layout request deferred");
+            gate.defer(layout);
+        }
+    }
+    true
+}
+
+/// Whether the Display Control channel is open and the server has sent its
+/// capabilities, so a monitor layout may be sent.
+fn display_control_ready(stage: &mut ActiveStage) -> bool {
+    stage
+        .get_dvc::<DisplayControlClient>()
+        .filter(|dvc| dvc.channel_id().is_some())
+        .and_then(|dvc| dvc.channel_processor_downcast_ref::<DisplayControlClient>())
+        .is_some_and(DisplayControlClient::ready)
 }
 
 /// Run the [Deactivation-Reactivation Sequence] after a server Deactivate All
