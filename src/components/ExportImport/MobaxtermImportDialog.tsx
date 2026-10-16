@@ -12,7 +12,7 @@ import {
   ROOT_FOLDER_VALUE,
 } from "@/services/sshConfigImport";
 import { MobaxtermSessionList } from "./MobaxtermSessionList";
-import "./BulkSshImportDialog.css";
+import "../Sidebar/BulkSshImportDialog.css";
 import "./MobaxtermImportDialog.css";
 
 interface MobaxtermImportDialogProps {

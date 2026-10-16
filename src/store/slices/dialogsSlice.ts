@@ -8,7 +8,8 @@ import type { AppState } from "../appStore";
  * Dialogs domain slice (extracted under #2077 via #2300): the small,
  * self-contained confirmation/dialog state that is not tied to any
  * projection-migration domain — the large-paste confirmation, the
- * open-saved-file-in-tab confirmation, the export/import dialogs, and the
+ * open-saved-file-in-tab confirmation, the export/import dialogs (incl. the
+ * MobaXterm import), and the
  * corrupt-config recovery-warnings dialog — together with their open/close
  * setters. Extracted verbatim from the monolithic root store as a
  * behavior-preserving Zustand slice: every action still receives the shared
@@ -54,6 +55,9 @@ export interface DialogsSlice {
   importDialogOpen: boolean;
   importFileContent: string | undefined;
   setImportDialog: (open: boolean, content?: string) => void;
+  /** The one-time MobaXterm import dialog (#4850), opened from Settings or the gear menu. */
+  mobaxtermImportOpen: boolean;
+  setMobaxtermImportOpen: (open: boolean) => void;
 
   // Recovery warnings from corrupt config files
   recoveryWarnings: RecoveryWarning[];
@@ -85,6 +89,8 @@ export const createDialogsSlice: StateCreator<AppState, [], [], DialogsSlice> = 
   importDialogOpen: false,
   importFileContent: undefined,
   setImportDialog: (open, content) => set({ importDialogOpen: open, importFileContent: content }),
+  mobaxtermImportOpen: false,
+  setMobaxtermImportOpen: (open) => set({ mobaxtermImportOpen: open }),
 
   // Recovery warnings from corrupt config files
   recoveryWarnings: [],

@@ -26,6 +26,7 @@ import {
   FileCode2,
   HardDrive,
   DatabaseBackup,
+  FileInput,
   Puzzle,
   RefreshCw,
   Check,
@@ -70,6 +71,7 @@ import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { BackupRestoreSettings } from "./BackupRestoreSettings";
+import { ImportMigrationSettings } from "./ImportMigrationSettings";
 import { SchedulesSettings } from "./SchedulesSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
 import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
@@ -108,6 +110,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   editor: FileCode2,
   plugins: Puzzle,
   backup: DatabaseBackup,
+  import: FileInput,
   schedules: CalendarClock,
   portable: HardDrive,
   updates: RefreshCw,
@@ -461,6 +464,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       </>
     ),
     backup: () => <BackupRestoreSettings />,
+    import: () => <ImportMigrationSettings />,
     schedules: () => <SchedulesSettings />,
     portable: () => <PortableModeSettings />,
     updates: (fields) => <UpdateSettings visibleFields={fields} />,

@@ -296,12 +296,19 @@ for (const win of WINDOWS) {
       await report.finish();
     });
 
-    test("mobaxterm import preview", async ({ page }, testInfo) => {
+    test("mobaxterm import from settings", async ({ page }, testInfo) => {
       const report = new SurfaceReport(page, testInfo, win.name);
       await boot(page, { mobaxtermImport: true });
-      await showSidebar(page, "connections");
-      // The real flow: header action → discovery → preview of the found file.
-      await page.locator("[data-testid=connection-list-import-mobaxterm]").click();
+      // The real flow: Settings → Import & Migration (with the discovery hint)
+      // → Import from MobaXterm… → preview of the found file (#4850).
+      await store(page, "openSettingsTab", { category: "import" });
+      const hint = page.locator("[data-testid=import-migration-mobaxterm-hint]");
+      await hint.getByText("Found MobaXterm configuration at").waitFor();
+      await report.check(
+        "settings/import-mobaxterm-found",
+        ".settings-panel:not(.settings-panel--hidden)"
+      );
+      await page.locator("[data-testid=import-migration-mobaxterm-btn]").click();
       await page.locator("[data-testid=mobaxterm-import-list]").waitFor();
       await report.check("dialog/mobaxterm-import", "[role=dialog]");
       const skipped = page.locator("[data-testid=mobaxterm-import-skipped]");

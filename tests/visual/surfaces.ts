@@ -91,7 +91,7 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
 /**
  * Tests per window: settings, imported confirmations, sidebars, unlock,
  * shortcuts, the connection editor with stored secrets, the plugin update
- * dialog with an access diff, the MobaXterm import preview, and STORE_DIALOGS.
+ * dialog with an access diff, the MobaXterm import from Settings, and STORE_DIALOGS.
  */
 export const EXPECTED_TESTS = WINDOWS.length * (8 + STORE_DIALOGS.length);
 
