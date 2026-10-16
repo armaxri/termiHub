@@ -33,6 +33,8 @@ import {
   resolveShellSpawn,
   importSshConfigHosts,
   importInventoryHosts,
+  discoverMobaxtermConfigs,
+  previewMobaxtermImport,
   connectAgent,
   adoptPersistentSession,
   updateAgent,
@@ -509,6 +511,28 @@ describe("api response-validation (TFE-004)", () => {
 
       await expect(importInventoryHosts("/tmp/bad.csv")).rejects.toEqual(
         "cannot read inventory file"
+      );
+    });
+
+    it("discoverMobaxtermConfigs returns the found candidates", async () => {
+      const found = [{ path: "C:\\Users\\a\\MobaXterm.ini", source: "installed" }];
+      mockedInvoke.mockResolvedValue(found);
+
+      await expect(discoverMobaxtermConfigs()).resolves.toEqual(found);
+      expect(mockedInvoke).toHaveBeenCalledWith("discover_mobaxterm_configs");
+    });
+
+    it("previewMobaxtermImport forwards the path and propagates a read failure", async () => {
+      const preview = { sourcePath: "/tmp/s.mxtsessions", encoding: "utf-8", sessions: [] };
+      mockedInvoke.mockResolvedValueOnce(preview);
+      await expect(previewMobaxtermImport("/tmp/s.mxtsessions")).resolves.toEqual(preview);
+      expect(mockedInvoke).toHaveBeenCalledWith("preview_mobaxterm_import", {
+        path: "/tmp/s.mxtsessions",
+      });
+
+      mockedInvoke.mockRejectedValueOnce("read /tmp/x.ini: not found");
+      await expect(previewMobaxtermImport("/tmp/x.ini")).rejects.toEqual(
+        "read /tmp/x.ini: not found"
       );
     });
   });

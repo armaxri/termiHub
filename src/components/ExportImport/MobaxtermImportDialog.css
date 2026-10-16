@@ -1,0 +1,92 @@
+/* MobaXterm import dialog (#4850). Reuses the list/row/select-all classes of the
+   bulk ~/.ssh/config importer (BulkSshImportDialog.css) so the importers read the
+   same, and adds the source row, per-session notes and the skipped section. The
+   lists grow with the modal body, which is the one scroll container. */
+
+.mobaxterm-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.mobaxterm-import__source {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm-md);
+  padding: var(--spacing-sm) var(--spacing-sm-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.mobaxterm-import__source-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  flex: 1;
+  min-width: 0;
+}
+
+.mobaxterm-import__source-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.mobaxterm-import__source-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobaxterm-import__lists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.mobaxterm-import__lists .ssh-config-import__list {
+  max-height: none;
+  overflow: visible;
+}
+
+.mobaxterm-import__note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-warning);
+}
+
+.mobaxterm-import__skipped {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.mobaxterm-import__skipped-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: var(--spacing-xs) var(--spacing-xxs);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.mobaxterm-import__skipped-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm-md);
+  padding: var(--spacing-sm) var(--spacing-sm-md);
+  color: var(--text-secondary);
+}
+
+.mobaxterm-import__skipped-icon {
+  flex-shrink: 0;
+  margin-top: var(--spacing-xxs);
+}
+
+.mobaxterm-import__reason {
+  font-size: var(--font-size-sm);
+}

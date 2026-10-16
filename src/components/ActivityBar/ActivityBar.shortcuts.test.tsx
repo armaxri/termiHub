@@ -105,6 +105,24 @@ describe("ActivityBar Settings menu — shortcuts discoverability (#1353)", () =
   });
 });
 
+describe("ActivityBar Settings menu — MobaXterm import (#4850)", () => {
+  it("offers Import from MobaXterm next to Import Connections and opens the dialog", async () => {
+    render();
+    await openSettingsMenu();
+
+    const item = document.querySelector<HTMLElement>(
+      '[data-testid="settings-menu-import-mobaxterm"]'
+    );
+    expect(item?.textContent).toContain("Import from MobaXterm");
+    expect(useAppStore.getState().mobaxtermImportOpen).toBe(false);
+
+    await act(async () => {
+      item!.click();
+    });
+    expect(useAppStore.getState().mobaxtermImportOpen).toBe(true);
+  });
+});
+
 describe("ActivityBar landmark (A11Y2-012, #4351)", () => {
   it("is a navigation landmark labelled 'Activity bar'", () => {
     render();

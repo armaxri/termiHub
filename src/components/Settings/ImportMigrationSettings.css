@@ -1,0 +1,13 @@
+/* Settings → Import & Migration (#4850). */
+
+.import-migration__hint {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.import-migration__path {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}

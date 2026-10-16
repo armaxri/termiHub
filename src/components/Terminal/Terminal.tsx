@@ -937,9 +937,18 @@ export function Terminal({
           const preWriteBuf = xterm.buffer.active;
           const stickToBottom = preWriteBuf.viewportY >= preWriteBuf.baseY;
 
+          // Re-check the live buffer when the deferred scroll actually runs.
+          // Between the pre-write snapshot and this frame lie xterm's async parse
+          // and a full animation frame (long on a throttled WebKit view): a user
+          // who scrolls up in that window has moved `viewportY` off `baseY`, and
+          // xterm itself stops following (it keeps `ydisp` while the user is
+          // scrolled up). Acting on the stale snapshot alone would yank them back
+          // to the bottom (#4851). Writes never move `viewportY` off `baseY` on
+          // their own, so a gap here means the user left the bottom.
           const afterWrite = () => {
             requestAnimationFrame(() => {
-              if (stickToBottom) {
+              const liveBuf = xterm.buffer.active;
+              if (stickToBottom && liveBuf.viewportY >= liveBuf.baseY) {
                 xterm.scrollToBottom();
               }
               if (!webglRendererActiveRef.current) {

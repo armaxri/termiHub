@@ -58,3 +58,24 @@ tests:
       - "After OK the second process exits; the first is untouched."
     verification: manual
     tags: [os-native]
+
+  - id: MT-APP-05
+    release_gate: true
+    manual_reason: "needs a real MobaXterm install on Windows to locate its configuration"
+    name: "MobaXterm import finds the installed configuration and imports the folder tree"
+    pr: 4850
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Install MobaXterm (installed edition) and save a few test sessions: an SSH session with a private key, a Telnet and a Serial session, one in a sub-folder, plus one Browser session."
+      - "Close MobaXterm, then in termiHub open Settings > Import & Migration and click Import from MobaXterm…"
+      - "Select all, pick a target folder and click Import."
+      - "Click Choose another file… and pick a .mxtsessions export of the same sessions."
+    expected:
+      - "The settings page says Found MobaXterm configuration at %APPDATA%\\MobaXterm\\MobaXterm.ini, and the dialog opens with that file already previewed, without picking a file."
+      - "Each session shows its type, target and folder; the Browser session is listed under Not imported with a reason."
+      - "The connections appear under the target folder in the same sub-folders; the SSH key path points at the real file (no _ProfileDir_ left)."
+      - "No password is filled in; connecting asks for it. The .mxtsessions file previews the same sessions."
+    verification: manual
+    tags: [os-native]

@@ -31,10 +31,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    auto_reconnect_enabled, fixed_resolution_requested, multi_monitor_requested,
-    schema_offers_file_side_channel, CertPrompt, CertPromptReceiver, ClipboardImage,
-    ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
-    MonitorLayout, MonitorRect, RemoteClipboardFile, SessionStateMachine, CONNECT_TIMEOUT_KEY,
+    auto_reconnect_enabled, clipboard_sync_enabled, fixed_resolution_requested,
+    multi_monitor_requested, schema_offers_file_side_channel, CertPrompt, CertPromptReceiver,
+    ClipboardImage, ClipboardTextReceiver, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
+    FrameUpdate, GraphicalState, InputEvent, MonitorLayout, MonitorRect, RemoteClipboardFile,
+    SessionStateMachine, CONNECT_TIMEOUT_KEY,
 };
 use termihub_core::errors::SessionError;
 
@@ -313,6 +314,9 @@ struct GraphicalSession {
     type_id: String,
     /// The certificate prompt currently awaiting a user decision, if any (#1767).
     pending_cert: PendingCert,
+    /// The clipboard text the frontend already knows (#4836): a local send
+    /// records it so the remote's echo is not pushed back as a "change".
+    last_clipboard: LastClipboard,
     /// Keys / pointer buttons currently held on the remote (#3402), released
     /// on takeover, reconnect, and explicit release-all.
     held: SharedHeldInput,
@@ -660,6 +664,8 @@ impl GraphicalSessionManager {
         // A multi-monitor session's size is its layout, never the tab (#3696).
         let fixed_resolution =
             fixed_resolution_requested(&settings) || multi_monitor_requested(&settings);
+        // Clipboard Sync off means no remote → local push (#4836).
+        let clipboard_sync = clipboard_sync_enabled(&settings);
 
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
@@ -741,6 +747,7 @@ impl GraphicalSessionManager {
         let pending_cert: PendingCert = Arc::new(Mutex::new(None));
         let last_size: LastSize = Arc::default();
         let held: SharedHeldInput = Arc::default();
+        let last_clipboard: LastClipboard = Arc::default();
 
         // The supervisor runs the frame + cursor (+ RDP cert-prompt) pumps and,
         // after an unexpected drop, the auto-reconnect loop (#3364).
@@ -755,6 +762,7 @@ impl GraphicalSessionManager {
             last_size: last_size.clone(),
             trust_store: self.trust_store.clone(),
             pending_cert: pending_cert.clone(),
+            clipboard_push: clipboard_sync.then(|| last_clipboard.clone()),
             held: held.clone(),
             forward_error,
             jitter: self.jitter,
@@ -779,6 +787,7 @@ impl GraphicalSessionManager {
             fixed_resolution,
             type_id: type_id.to_string(),
             pending_cert,
+            last_clipboard,
             held,
             _forward: routed.map(|r| r.forward),
             file_channel,
@@ -1162,14 +1171,25 @@ impl GraphicalSessionManager {
 
     /// Push local clipboard text to a session's remote, and echo it back as a
     /// `remote-desktop-clipboard` event so the shared clipboard panel confirms
-    /// the sync landed.
+    /// the sync landed. The remote's own echo of the text is suppressed by the
+    /// clipboard pump (`clipboard_pump`, #4836), so it is emitted only once.
     pub async fn send_clipboard(
         &self,
         session_id: &str,
         text: String,
         sink: impl GraphicalEventSink,
     ) -> Result<(), TerminalError> {
-        let conn = self.connection_of(session_id).await?;
+        let (conn, last_clipboard) = self
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|s| (s.connection.clone(), s.last_clipboard.clone()))
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        // Record the text before it reaches the remote, so the remote's echo
+        // of it (a VNC server re-sending it as `ServerCutText`) is recognised
+        // and not pushed back as a server change (#4836).
+        record_clipboard(&last_clipboard, &text);
         {
             let guard = conn.lock().await;
             let backend = guard
@@ -1468,6 +1488,82 @@ pub(crate) async fn cursor_pump<S: GraphicalEventSink>(
     }
 }
 
+/// Largest server-originated clipboard text pushed to the frontend (#4836),
+/// in UTF-8 bytes. A bigger remote copy is not pushed (the panel can still
+/// pull it with `remote_desktop_get_clipboard`), so a hostile or careless
+/// server cannot flood the webview with megabytes per copy.
+pub(crate) const MAX_PUSHED_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
+
+/// The clipboard text a session's frontend already knows (#4836): the last
+/// text a local send echoed or the clipboard pump pushed. A remote copy equal
+/// to it is not pushed again, which suppresses the remote's echo of a local
+/// send and breaks any send → receive → send cycle.
+pub(crate) type LastClipboard = Arc<StdMutex<Option<String>>>;
+
+/// Record `text` as known to the frontend.
+fn record_clipboard(last: &LastClipboard, text: &str) {
+    if let Ok(mut known) = last.lock() {
+        *known = Some(text.to_string());
+    }
+}
+
+/// Push server-originated clipboard text to the frontend (#4836).
+///
+/// Emits `remote-desktop-clipboard` (owner-scoped, like the local-send echo)
+/// for each remote copy, starting with any copy that arrived before the pump
+/// subscribed (a VNC server sends its clipboard right after connect). Skips
+/// empty text, text over [`MAX_PUSHED_CLIPBOARD_TEXT_BYTES`], and text equal to
+/// [`LastClipboard`] — the echo of a local send, or a repeat. Only spawned
+/// while the connection's Clipboard Sync is on; runs until the backend drops
+/// its sender or the generation's side pumps are aborted.
+pub(crate) async fn clipboard_pump<S: GraphicalEventSink>(
+    session_id: String,
+    mut changes: ClipboardTextReceiver,
+    last: LastClipboard,
+    sink: S,
+) {
+    loop {
+        let text = changes.borrow_and_update().clone();
+        push_remote_clipboard(&session_id, text, &last, &sink);
+        if changes.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Emit one remote copy unless it is empty, oversize, or already known.
+fn push_remote_clipboard<S: GraphicalEventSink>(
+    session_id: &str,
+    text: String,
+    last: &LastClipboard,
+    sink: &S,
+) {
+    if text.is_empty() {
+        return;
+    }
+    if text.len() > MAX_PUSHED_CLIPBOARD_TEXT_BYTES {
+        debug!(
+            session_id,
+            len = text.len(),
+            "remote clipboard text over the push cap; not pushed"
+        );
+        return;
+    }
+    {
+        let Ok(mut known) = last.lock() else {
+            return;
+        };
+        if known.as_deref() == Some(text.as_str()) {
+            return;
+        }
+        *known = Some(text.clone());
+    }
+    sink.emit_clipboard(&RemoteDesktopClipboardEvent {
+        session_id: session_id.to_string(),
+        text,
+    });
+}
+
 /// Pump interactive certificate-trust prompts from the backend (#1767).
 ///
 /// For each [`CertPrompt`] the sidecar raises, consult the trust store:
@@ -1757,6 +1853,8 @@ mod tests {
         cursors: Arc<StdMutex<usize>>,
         states: Arc<StdMutex<Vec<GraphicalState>>>,
         cert_prompts: Arc<StdMutex<Vec<RemoteDesktopCertPromptEvent>>>,
+        /// `remote-desktop-clipboard` texts, in emission order (#4836).
+        clipboard: Arc<StdMutex<Vec<String>>>,
     }
 
     impl GraphicalEventSink for RecordingSink {
@@ -1773,7 +1871,9 @@ mod tests {
         fn emit_cursor(&self, _event: &RemoteDesktopCursorEvent) {
             *self.cursors.lock().unwrap() += 1;
         }
-        fn emit_clipboard(&self, _event: &RemoteDesktopClipboardEvent) {}
+        fn emit_clipboard(&self, event: &RemoteDesktopClipboardEvent) {
+            self.clipboard.lock().unwrap().push(event.text.clone());
+        }
         fn emit_state(&self, event: &RemoteDesktopStateEvent) {
             self.states.lock().unwrap().push(event.state);
         }
@@ -1860,6 +1960,150 @@ mod tests {
             Some("hello".to_string())
         );
 
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    /// Poll `sink` until it has recorded `n` clipboard texts (or give up).
+    async fn clipboard_events(sink: &RecordingSink, n: usize) -> Vec<String> {
+        for _ in 0..100 {
+            if sink.clipboard.lock().unwrap().len() >= n {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Let any (wrongly) pending extra emission land before asserting.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        sink.clipboard.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn clipboard_pump_pushes_server_changes_live() {
+        let (tx, rx) = tokio::sync::watch::channel(String::new());
+        let sink = RecordingSink::default();
+        let pump = tokio::spawn(clipboard_pump(
+            "s1".to_string(),
+            rx,
+            LastClipboard::default(),
+            sink.clone(),
+        ));
+        // The empty initial value is not a copy.
+        assert!(clipboard_events(&sink, 0).await.is_empty());
+        tx.send_replace("first".to_string());
+        assert_eq!(clipboard_events(&sink, 1).await, vec!["first"]);
+        tx.send_replace("second".to_string());
+        assert_eq!(clipboard_events(&sink, 2).await, vec!["first", "second"]);
+        // The backend dropping its sender ends the pump.
+        drop(tx);
+        tokio::time::timeout(Duration::from_secs(1), pump)
+            .await
+            .expect("pump ends with its sender")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn clipboard_pump_pushes_a_copy_made_before_it_subscribed() {
+        let (tx, _initial) = tokio::sync::watch::channel(String::new());
+        tx.send_replace("early".to_string());
+        // Subscribing marks "early" as seen; the pump must still push it.
+        let rx = tx.subscribe();
+        let sink = RecordingSink::default();
+        let pump = tokio::spawn(clipboard_pump(
+            "s1".to_string(),
+            rx,
+            LastClipboard::default(),
+            sink.clone(),
+        ));
+        assert_eq!(clipboard_events(&sink, 1).await, vec!["early"]);
+        pump.abort();
+    }
+
+    #[tokio::test]
+    async fn clipboard_pump_suppresses_the_echo_of_a_local_send() {
+        let (tx, rx) = tokio::sync::watch::channel(String::new());
+        let sink = RecordingSink::default();
+        let last = LastClipboard::default();
+        let pump = tokio::spawn(clipboard_pump(
+            "s1".to_string(),
+            rx,
+            last.clone(),
+            sink.clone(),
+        ));
+        // A local send records its text; the server echoing it back (even
+        // repeatedly) is no change, so nothing loops back to the panel.
+        record_clipboard(&last, "sent");
+        tx.send_replace("sent".to_string());
+        tx.send_replace("sent".to_string());
+        assert!(clipboard_events(&sink, 1).await.is_empty());
+        // A real server copy still goes through — once.
+        tx.send_replace("server".to_string());
+        tx.send_replace("server".to_string());
+        assert_eq!(clipboard_events(&sink, 1).await, vec!["server"]);
+        pump.abort();
+    }
+
+    #[tokio::test]
+    async fn clipboard_pump_does_not_push_oversize_text() {
+        let (tx, rx) = tokio::sync::watch::channel(String::new());
+        let sink = RecordingSink::default();
+        let pump = tokio::spawn(clipboard_pump(
+            "s1".to_string(),
+            rx,
+            LastClipboard::default(),
+            sink.clone(),
+        ));
+        tx.send_replace("x".repeat(MAX_PUSHED_CLIPBOARD_TEXT_BYTES + 1));
+        assert!(clipboard_events(&sink, 1).await.is_empty());
+        let at_cap = "y".repeat(MAX_PUSHED_CLIPBOARD_TEXT_BYTES);
+        tx.send_replace(at_cap.clone());
+        assert_eq!(clipboard_events(&sink, 1).await, vec![at_cap]);
+        pump.abort();
+    }
+
+    #[tokio::test]
+    async fn server_copy_reaches_the_frontend_and_a_send_is_echoed_once() {
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect(
+                "mock-remote-desktop",
+                serde_json::json!({ "remoteCopy": "from server" }),
+                sink.clone(),
+            )
+            .await
+            .expect("connect");
+        // The server-originated copy is pushed without any pull.
+        assert_eq!(clipboard_events(&sink, 1).await, vec!["from server"]);
+        // The mock echoes a local set like a VNC server; the panel sees the
+        // send's own echo exactly once — no loop.
+        mgr.send_clipboard(&sid, "hello".to_string(), sink.clone())
+            .await
+            .expect("send");
+        assert_eq!(
+            clipboard_events(&sink, 2).await,
+            vec!["from server", "hello"]
+        );
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
+    async fn clipboard_sync_off_pushes_no_server_copy() {
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect(
+                "mock-remote-desktop",
+                serde_json::json!({ "remoteCopy": "from server", "clipboardSync": false }),
+                sink.clone(),
+            )
+            .await
+            .expect("connect");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(sink.clipboard.lock().unwrap().is_empty());
+        // An explicit pull still works.
+        assert_eq!(
+            mgr.get_clipboard(&sid).await.expect("get"),
+            Some("from server".to_string())
+        );
         mgr.disconnect(&sid, sink).await.expect("disconnect");
     }
 

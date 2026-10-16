@@ -20,6 +20,7 @@ import {
   PLUGIN_UPDATE_TRUST,
 } from "./pluginUpdatePreview";
 import { STORED_SECRET_CONNECTIONS } from "./storedSecretIds";
+import { MOBAXTERM_CANDIDATES, MOBAXTERM_PREVIEW } from "./mobaxtermImportPreview";
 
 /** Per-test knobs the spec sets before the app boots. */
 export interface VisualScenario {
@@ -46,6 +47,11 @@ export interface VisualScenario {
    * with an update whose preview carries an access diff (#4418).
    */
   pluginUpdate?: boolean;
+  /**
+   * Answer `discover_mobaxterm_configs` with a found configuration and
+   * `preview_mobaxterm_import` with a mixed preview (#4850).
+   */
+  mobaxtermImport?: boolean;
 }
 
 declare global {
@@ -415,6 +421,10 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return scenario.pluginUpdate ? PLUGIN_UPDATE_PREVIEW : null;
     case "assess_plugin_trust":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_TRUST : null;
+    case "discover_mobaxterm_configs":
+      return scenario.mobaxtermImport ? MOBAXTERM_CANDIDATES : [];
+    case "preview_mobaxterm_import":
+      return scenario.mobaxtermImport ? MOBAXTERM_PREVIEW : null;
 
     default:
       (window.__VISUAL_UNHANDLED__ ??= []).push(cmd);

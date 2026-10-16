@@ -60,9 +60,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::connection::{
-    AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ClipboardImage, ConnectionType,
-    CursorReceiver, FrameReceiver, GraphicalBackend, GraphicalCapabilities, GraphicalState,
-    InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver,
+    AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ClipboardImage, ClipboardTextReceiver,
+    ConnectionType, CursorReceiver, FrameReceiver, GraphicalBackend, GraphicalCapabilities,
+    GraphicalState, InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver,
     RemoteClipboardFile, SettingsSchema,
 };
 use crate::errors::{ConnectFailureKind, SessionError};
@@ -348,6 +348,9 @@ enum FetchEvent {
 struct SidecarShared {
     /// Latest remote clipboard text, surfaced via `get_clipboard`.
     clipboard: Mutex<String>,
+    /// Notified on every remote CLIPRDR text copy the sidecar forwards, so the
+    /// desktop can push it into an open clipboard panel (#4836).
+    clipboard_changes: tokio::sync::watch::Sender<String>,
     /// The image the remote most recently copied (PROD-021), validated against
     /// the clipboard-image caps; cleared when the remote copies text or files
     /// instead, so a stale image is never offered for the newer copy.
@@ -390,6 +393,7 @@ impl SidecarShared {
     fn new(view_only: bool, monitor_layout: Option<MonitorLayout>) -> Self {
         Self {
             clipboard: Mutex::new(String::new()),
+            clipboard_changes: tokio::sync::watch::Sender::default(),
             clipboard_image: Mutex::new(None),
             remote_clipboard_files: Mutex::new(Vec::new()),
             fetches: StdMutex::new(HashMap::new()),
@@ -564,7 +568,8 @@ async fn run_reader<R>(
                         // offering both text and an image sends the text first,
                         // then the image, so the image still lands.)
                         *shared.clipboard_image.lock().await = None;
-                        *shared.clipboard.lock().await = text;
+                        *shared.clipboard.lock().await = text.clone();
+                        shared.clipboard_changes.send_replace(text);
                     }
                     Ok(SidecarMessage::ClipboardImage(image)) => {
                         // Re-validate at the trust boundary (PROD-021): the sidecar
@@ -1032,6 +1037,11 @@ impl GraphicalBackend for SidecarRdp {
         } else {
             Some(text)
         }
+    }
+
+    /// Every remote CLIPRDR text copy the sidecar forwards (#4836).
+    fn subscribe_clipboard(&self) -> Option<ClipboardTextReceiver> {
+        Some(self.runtime.as_ref()?.shared.clipboard_changes.subscribe())
     }
 
     async fn set_clipboard(&self, text: String) -> Result<(), SessionError> {
@@ -1641,6 +1651,8 @@ mod tests {
         let (cursor_tx, mut cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
         let shared = test_shared();
+        // A remote copy also notifies the desktop's clipboard push (#4836).
+        let mut clipboard_changes = shared.clipboard_changes.subscribe();
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
             host_read,
@@ -1677,6 +1689,8 @@ mod tests {
         let _ = reader.await;
         assert!(cancel.is_cancelled());
         assert_eq!(&*shared.clipboard.lock().await, "copied");
+        assert!(clipboard_changes.has_changed().unwrap());
+        assert_eq!(*clipboard_changes.borrow_and_update(), "copied");
     }
 
     /// The writer forwards a queued `HostMessage` to what would be the sidecar's

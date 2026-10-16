@@ -43,11 +43,12 @@ pub use connect_timeout::{
     LEGACY_FTP_TIMEOUT_KEY,
 };
 pub use graphical::{
-    rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver,
-    CursorShape, CursorUpdate, CursorViolation, DirtyRect, FrameReceiver, FrameUpdate,
-    FrameViolation, GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent,
-    RectViolation, RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_CURSOR_DIMENSION,
-    MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
+    clipboard_sync_enabled, rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver,
+    ClipboardTextReceiver, CursorReceiver, CursorShape, CursorUpdate, CursorViolation, DirtyRect,
+    FrameReceiver, FrameUpdate, FrameViolation, GraphicalBackend, GraphicalCapabilities,
+    GraphicalState, InputEvent, RectViolation, RemoteClipboardFile, SanitizedFrame,
+    SessionStateMachine, CLIPBOARD_SYNC_KEY, MAX_CURSOR_DIMENSION, MAX_FRAMEBUFFER_DIMENSION,
+    MAX_RECONNECT_ATTEMPTS,
 };
 pub use graphical_files::{
     schema_offers_file_side_channel, FileChannelPolicy, FileChannelUnavailable, FileSideChannel,

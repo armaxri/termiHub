@@ -19,7 +19,7 @@ import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProces
 import { WorkflowParamPromptDialog } from "@/components/WorkflowSidebar/WorkflowParamPromptDialog";
 import { ScheduleEditorHost } from "@/components/Schedules";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
-import { ExportDialog, ImportDialog } from "@/components/ExportImport";
+import { ExportDialog, ImportDialog, MobaxtermImportHost } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
 import { SpawnPicker } from "@/components/Spawn";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
@@ -384,6 +384,7 @@ function App() {
           <CustomizeLayoutDialog />
           <ExportDialog />
           <ImportDialog />
+          <MobaxtermImportHost />
           <DiagnosticsExportDialog />
           <CrashReportViewer />
           <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
