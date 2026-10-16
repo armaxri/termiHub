@@ -118,6 +118,9 @@ hkdf = "0.12"
 # CSV / inventory parsing for bulk host onboarding (#1961) — quoting and
 # delimiter handling delegated to the maintained crate rather than hand-rolled.
 csv = "1"
+# Windows-1252 decoding for MobaXterm.ini / .mxtsessions imports (#4850): MobaXterm
+# writes its config in the legacy ANSI codepage, not UTF-8.
+encoding_rs = "0.8"
 serde_json = { workspace = true }
 # RFC 6902 JSON-Patch: structural diff (produce) + apply for the stateless-UI
 # projection substrate (#2149). Library-backed per the repo's "prefer libraries"
