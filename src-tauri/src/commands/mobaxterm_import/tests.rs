@@ -161,26 +161,28 @@ fn ssh_default_user_login_command_and_proxy_are_noted() {
     let s = &preview(ini)[0];
     assert_eq!(setting(s, "username"), "");
     assert_eq!(s.target, "10.0.0.6");
-    assert_eq!(s.notes.len(), 3, "{:?}", s.notes);
+    assert_eq!(setting(s, "initialCommand"), "uptime; df");
+    // The default user and the proxy stay notes; the login command is mapped.
+    assert_eq!(s.notes.len(), 2, "{:?}", s.notes);
 }
 
 #[test]
-fn ssh_login_command_note_carries_the_decoded_command() {
+fn ssh_login_command_maps_to_the_initial_command() {
+    // Field 7 is `__PTVIRG__` / `__PIPE__`-escaped (#4866).
     let ini = "[Bookmarks]\nSubRep=\nCmd=#109#0%10.0.0.16%22%alice%%-1%-1%cd /srv__PTVIRG__ ls __PIPE__ head%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont#0# #-1\n";
     let s = &preview(ini)[0];
-    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
-    assert!(
-        s.notes[0].contains("\"cd /srv; ls | head\""),
-        "{:?}",
-        s.notes
-    );
-    assert!(
-        s.notes[0].contains("have no on-connect command"),
-        "{:?}",
-        s.notes
-    );
-    // No setting is invented for it (on-reconnect is a different trigger).
+    assert_eq!(setting(s, "initialCommand"), "cd /srv; ls | head");
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+    // It runs on the first connect only; on-reconnect is a different trigger.
     assert!(setting(s, "onReconnectCommand").is_null());
+}
+
+#[test]
+fn ssh_without_a_login_command_has_no_initial_command() {
+    let ini = "[Bookmarks]\nSubRep=\nPlain=#109#0%10.0.0.19%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont#0# #-1\n";
+    let s = &preview(ini)[0];
+    assert!(setting(s, "initialCommand").is_null());
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! A session the backend reconnect redrive re-creates keeps the identity a
 //! user-initiated connect gives it (#4301): its saved-connection binding, the
 //! transfer-resume trigger for that connection, and the field secrets the
-//! connect restored into its settings (#4289).
+//! connect restored into its settings (#4289) — but not its first-connect-only
+//! `initialCommand` (#4866).
 //!
 //! Drives the **production** `AppReconnectRedrive`, `ReconnectTimerDriver` and
 //! `SessionManager` against a fake direct connection type that records the
@@ -36,6 +37,7 @@ use crate::session_projection::timer::{
 
 const SAVED: &str = "Work/build-box";
 const FIELD_SECRET: &str = "gateway-secret";
+const INITIAL_COMMAND: &str = "tmux new -A -s main";
 
 /// The armed one-shots a [`ManualScheduler`] records.
 type ArmedTasks = std::collections::HashMap<String, Box<dyn FnOnce() + Send>>;
@@ -229,7 +231,11 @@ fn a_redriven_session_keeps_its_binding_resumes_transfers_and_keeps_field_secret
     // The user opens the saved connection: the command restored its field
     // secret into the settings (#4289), created the session and bound it.
     let manager = handle.state::<SessionManager>();
-    let settings = serde_json::json!({ "host": "build-box", "sshPassword": FIELD_SECRET });
+    let settings = serde_json::json!({
+        "host": "build-box",
+        "sshPassword": FIELD_SECRET,
+        "initialCommand": INITIAL_COMMAND,
+    });
     let first = tauri::async_runtime::block_on(manager.create_connection(
         "recording",
         settings.clone(),
@@ -246,6 +252,15 @@ fn a_redriven_session_keeps_its_binding_resumes_transfers_and_keeps_field_secret
     store.connected("tab-1");
     store.set_backend_session_id("tab-1", Some(first.clone()));
     resumed.triggers.lock().unwrap().clear();
+    assert_eq!(
+        connects
+            .lock()
+            .unwrap()
+            .last()
+            .map(|s| s["initialCommand"].clone()),
+        Some(Value::from(INITIAL_COMMAND)),
+        "the first connect carries the initial command"
+    );
 
     let mut previous = first;
     for round in 1..=2 {
@@ -301,6 +316,14 @@ fn a_redriven_session_keeps_its_binding_resumes_transfers_and_keeps_field_secret
                 .map(|s| s["sshPassword"].clone()),
             Some(Value::from(FIELD_SECRET)),
             "round {round}: the stored field secret still reaches the connect"
+        );
+        assert!(
+            connects
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|s| s.get("initialCommand").is_none()),
+            "round {round}: an automatic reconnect does not re-run the initial command (#4866)"
         );
         let retained = manager.retained_request("tab-1").expect("still retained");
         assert_eq!(
