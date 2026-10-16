@@ -8,11 +8,11 @@
 //!
 //! | Index | Setting | termiHub |
 //! |-------|---------|----------|
-//! | 0 | font family (`MobaFont` = built-in) | `fontFamily`, unless `MobaFont` |
-//! | 1 | font size in points | `fontSize`, converted to pixels |
+//! | 0 | font family (`MobaFont` = built-in, default) | `fontFamily`, unless default |
+//! | 1 | font size in points (default 10) | `fontSize` in pixels, unless default |
 //! | 5 | character set (`15` = UTF-8) | note when not UTF-8 |
 //! | 6 / 7 / 8 | foreground / background / cursor `R,G,B` | note when not the defaults |
-//! | 9 | cursor type (0–5) | `cursorStyle` + `cursorBlink` |
+//! | 9 | cursor type (0–5, default 0) | `cursorStyle` + `cursorBlink`, unless default |
 //! | 13 | terminal type (`xterm`, `vt100`, …) | Telnet `terminalType`; note otherwise |
 //! | 16 | colour scheme (`_Std_Colors_0_` = global theme) | note when custom |
 //! | 17 / 18 / 19 | fixed columns / rows / enabled (`-1`) | note when enabled |
@@ -25,8 +25,10 @@
 //! - Only indices before 16 are mapped: a custom colour scheme expands index
 //!   16 into sixteen fields and shifts everything after it.
 //!
-//! Settings left at MobaXterm's factory defaults produce no note, so a session
-//! nobody customised does not fill the preview with noise.
+//! Settings left at MobaXterm's factory defaults (`MobaFont`, 10 pt, a
+//! non-blinking block cursor) are not written as per-connection overrides, so
+//! such a session keeps following termiHub's global appearance settings; and
+//! they produce no note, so the preview is not filled with noise.
 
 use crate::connection::config::TerminalOptions;
 
@@ -40,6 +42,12 @@ pub fn has_terminal_block(code: u32) -> bool {
 
 /// termiHub's per-connection font-size range (Settings → Appearance).
 const FONT_SIZE_PX: std::ops::RangeInclusive<u32> = 8..=32;
+
+/// MobaXterm's default font size (points) and cursor type (non-blinking
+/// block). A session at these values gets no per-connection override, so it
+/// keeps following termiHub's global appearance settings.
+const DEFAULT_FONT_SIZE_PT: &str = "10";
+const DEFAULT_CURSOR: &str = "0";
 
 /// Default foreground / background / cursor colours of MobaXterm's
 /// "Dark background / Light text" preset.
@@ -105,8 +113,8 @@ pub fn map_appearance(block: &[String], code: u32, connection_type: &str) -> App
     out
 }
 
-/// Font family, font size and cursor (indices 0, 1, 9); `None` when none of
-/// them is usable. Unreadable values add a note.
+/// Font family, font size and cursor (indices 0, 1, 9) that differ from
+/// MobaXterm's defaults; `None` when none does. Unreadable values add a note.
 fn mapped_options(block: &[String], notes: &mut Vec<String>) -> Option<TerminalOptions> {
     let mut opts = TerminalOptions::default();
 
@@ -114,7 +122,7 @@ fn mapped_options(block: &[String], notes: &mut Vec<String>) -> Option<TerminalO
         opts.font_family = Some(css_font_family(&font));
     }
 
-    if let Some(raw) = field(block, 1) {
+    if let Some(raw) = field(block, 1).filter(|v| v != DEFAULT_FONT_SIZE_PT) {
         match raw.parse::<f64>() {
             Ok(pt) if pt > 0.0 && pt < 1000.0 => {
                 let px = (pt * 4.0 / 3.0).round() as u32;
@@ -132,7 +140,7 @@ fn mapped_options(block: &[String], notes: &mut Vec<String>) -> Option<TerminalO
         }
     }
 
-    if let Some(cursor) = field(block, 9) {
+    if let Some(cursor) = field(block, 9).filter(|v| v != DEFAULT_CURSOR) {
         match cursor_style(&cursor) {
             Some((style, blink)) => {
                 opts.cursor_style = Some(style.to_string());
