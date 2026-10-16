@@ -77,6 +77,22 @@ export function SpawnPicker({
   const [newWindow, setNewWindow] = useState(defaultNewWindow);
   const [remember, setRemember] = useState(false);
 
+  // Drop the previous open's snapshot *during render* on every closed → open
+  // edge (#4862). The picker stays mounted between opens, so resetting only in
+  // the effect below is too late: the Radix portal mounts the dialog body in a
+  // sync re-render that skips the effect's lower-priority reset, painting one
+  // frame of the stale options with no loading placeholder. In that frame a
+  // stale row can be picked, and "loading finished" is observable before the
+  // fresh enumeration has even started.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setOptions(null);
+      setSelected(null);
+    }
+  }
+
   // Re-enumerate on every open: shells, distros and images are host state that
   // can change between two spawns, so a cached snapshot would go stale.
   useEffect(() => {
