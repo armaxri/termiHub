@@ -139,7 +139,6 @@ OBSERVED_CONTENDED_MAX = {
     "wait:the active terminal's shell prompt": 32.22,
     "wait:the shell's echo of the composed line": 27.45,
     "wait:the PTY to report N rows x N cols": 25.94,
-    "wait:the PTYSZN stty answer": 25.92,
     "wait:the DOM renderer to paint '…'": 24.64,
     "wait:the new terminal's shell prompt": 15.25,
     "wait:the restored terminals to reach a shell prompt": 10.23,

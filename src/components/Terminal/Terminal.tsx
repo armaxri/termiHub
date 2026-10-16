@@ -62,6 +62,7 @@ import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
 import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
+import { createOrderedResize } from "./orderedResize";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
@@ -852,6 +853,15 @@ export function Terminal({
         // one sync is not a duplicate.
         let lastSentCols = 0;
         let lastSentRows = 0;
+        // Every PTY resize goes through this sender: concurrent resize_terminal
+        // invokes can be applied out of order by the backend, which would leave
+        // the PTY at a stale size the dedupe above never corrects (#4841).
+        const sendResize = createOrderedResize(resizeTerminal, (err, r) =>
+          frontendLog(
+            "terminal",
+            `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
+          )
+        );
 
         // Output batching: stage chunks and flush in a single RAF callback.
         // The staged buffer is bounded and paces the backend by xterm's write
@@ -1126,7 +1136,7 @@ export function Terminal({
             lastSentCols = cols;
             lastSentRows = rows;
             frontendLog("terminal", `resize → PTY ${cols}×${rows} tab=${tabId}`);
-            resizeTerminal(sessionIdRef.current, cols, rows);
+            sendResize(sessionIdRef.current, cols, rows);
           }
         });
 
@@ -1139,7 +1149,7 @@ export function Terminal({
           if (wasEvicted && status === "connected" && sessionIdRef.current) {
             lastSentCols = xterm.cols;
             lastSentRows = xterm.rows;
-            resizeTerminal(sessionIdRef.current, xterm.cols, xterm.rows);
+            sendResize(sessionIdRef.current, xterm.cols, xterm.rows);
           }
           wasEvicted = status === "evicted";
         });
@@ -1159,7 +1169,7 @@ export function Terminal({
           frontendLog("multi_window", `window regained session ${sid}; repainting tab=${tabId}`);
           lastSentCols = xterm.cols;
           lastSentRows = xterm.rows;
-          resizeTerminal(sid, xterm.cols, xterm.rows);
+          sendResize(sid, xterm.cols, xterm.rows);
           replaySessionScrollback(sid)
             .then((buffer) => {
               if (isCanceled() || sessionIdRef.current !== sid || buffer.length === 0) return;
@@ -1197,7 +1207,7 @@ export function Terminal({
             "terminal",
             `resize (post-setup) → PTY ${xterm.cols}×${xterm.rows} tab=${tabId}`
           );
-          resizeTerminal(sessionId, xterm.cols, xterm.rows);
+          sendResize(sessionId, xterm.cols, xterm.rows);
         }
 
         // Arm the initial-command fallback (used by workspace launch). If no

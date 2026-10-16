@@ -63,6 +63,18 @@ CONTEXT_LOSS_TIMEOUT = 30.0
 #: 680-px "small" window was no shorter at all and the rows never changed.
 LARGE_WINDOW = (1280, 900)
 SMALL_WINDOW = (800, 600)
+#: How long one ``stty size`` probe waits for its answer before it is re-sent.
+#: The DOM and WebGL renderers measure different cells (e.g. 117 vs 111 cols on
+#: a windows runner), so every renderer swap re-fits and resizes the PTY. Git
+#: Bash under ConPTY can drop the first byte of input that arrives while it
+#: handles that resize (#4841: ``cho AFTER_LOSS_3``), so a missing answer means
+#: "send another probe", not "fail". The probe's wait label is deliberately not
+#: in ``CONTENDED_OP_DEADLINES``: it keeps this budget on a contended worker too,
+#: so the outer wait gets several probes instead of one stretched one.
+PTY_PROBE_ANSWER_TIMEOUT = 10.0
+#: Budget for the PTY to report a grid: room for several re-sent probes. A
+#: contended worker raises it to the op's ``CONTENDED_OP_DEADLINES`` entry.
+PTY_MATCH_TIMEOUT = 40.0
 
 _pty_probe_ids = itertools.count(1)
 
@@ -114,19 +126,25 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
         except AssertionError as exc:
             raise AssertionError(f"{exc}; last measurement: {self._measure(tab_id)!r}") from exc
 
-    def _pty_size(self, tab_id: str) -> tuple[int, int]:
+    def _pty_size(self, tab_id: str) -> Optional[tuple[int, int]]:
         """Ask the shell for its PTY size (``stty size``) → ``(rows, cols)``.
 
         The probe tag is unique per call and the echoed command line carries
-        ``$(stty size)`` unexpanded, so only the shell's answer matches.
+        ``$(stty size)`` unexpanded, so only the shell's answer matches. Returns
+        ``None`` when no answer arrives within :data:`PTY_PROBE_ANSWER_TIMEOUT`
+        (the probe was mangled by a concurrent resize), so the caller re-probes.
         """
         tag = f"PTYSZ{next(_pty_probe_ids)}"
         self.run_command(f'echo "{tag}:$(stty size)"')
         pattern = re.compile(rf"{tag}:(\d+) (\d+)")
-        match = self.wait(
-            lambda: pattern.search(self.driver.read_terminal(tab_id)),
-            what=f"the {tag} stty answer",
-        )
+        try:
+            match = self.wait(
+                lambda: pattern.search(self.driver.read_terminal(tab_id)),
+                timeout=PTY_PROBE_ANSWER_TIMEOUT,
+                what=f"one {tag} stty probe",
+            )
+        except AssertionError:
+            return None
         return int(match.group(1)), int(match.group(2))
 
     def _wait_pty_matches(self, tab_id: str, grid: dict[str, int]) -> None:
@@ -134,8 +152,22 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
         expected = (grid["rows"], grid["cols"])
         self.wait(
             lambda: self._pty_size(tab_id) == expected,
+            timeout=PTY_MATCH_TIMEOUT,
             what=f"the PTY to report {expected[0]} rows x {expected[1]} cols",
         )
+
+    def _wait_input_ready(self, tab_id: str, what: str) -> dict[str, Any]:
+        """Wait until a renderer swap's re-fit has reached the shell; return the fit.
+
+        A renderer swap changes the measured cell, so the terminal re-fits a
+        moment later and the PTY is resized. Input typed into that window can
+        lose bytes on Windows (#4841), so before typing a sentinel: the fit has
+        settled on the new renderer *and* the shell answers ``stty size`` with
+        that grid — proof it has already handled the resize.
+        """
+        m = self._wait_settled(tab_id, what=what)
+        self._wait_pty_matches(tab_id, m["grid"])
+        return m
 
     # -- fit + PTY ---------------------------------------------------------
 
@@ -250,10 +282,12 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
         )
         # The DOM renderer repaints the existing buffer…
         self._wait_dom_painted(tab_id, "BEFORE_LOSS_2")
+        # …re-fits to its own cell and resizes the PTY (the fallback keeps a
+        # real measured fit)…
+        self._wait_input_ready(tab_id, what="the fit to settle on the DOM renderer")
         # …and paints new output.
         self.run_command("echo AFTER_LOSS_$((2+1))")
         self._wait_dom_painted(tab_id, "AFTER_LOSS_3")
-        # The fallback keeps a real measured fit.
         self._wait_settled(tab_id, what="the fit to stay settled on the DOM renderer")
 
     def _renderer_is(self, tab_id: str, renderer: str) -> Optional[dict[str, Any]]:
@@ -341,10 +375,12 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
             == "webgl"
         )
 
-        # The reacquired renderer paints new output and keeps a real fit.
+        # The reacquired renderer re-fits (resizing the PTY), paints new output
+        # and keeps a real fit.
+        self._wait_input_ready(first, what="the fit to settle on the reacquired WebGL renderer")
         self.run_command("echo REACQUIRED_$((3+4))")
         self.wait_for_output("REACQUIRED_7", tab_id=first)
-        self._wait_settled(first, what="the fit to settle on the reacquired WebGL renderer")
+        self._wait_settled(first, what="the fit to stay settled on the reacquired WebGL renderer")
 
     # -- scrollbar ---------------------------------------------------------
 

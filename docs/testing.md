@@ -112,7 +112,6 @@ WA-CI-005).
   | `wait:the active terminal's shell prompt`             | Windows |    32.2 |               65 s |
   | `wait:the shell's echo of the composed line`          | Windows |    27.5 |               55 s |
   | `wait:the PTY to report N rows x N cols`              | Windows |    25.9 |               55 s |
-  | `wait:the PTYSZN stty answer`                         | Windows |    25.9 |               55 s |
   | `wait:the DOM renderer to paint '…'`                  | Windows |    24.6 |               50 s |
   | `wait:connection '…'`                                 | Windows |    19.2 |               40 s |
   | `wait:the new terminal's shell prompt`                | Windows |    15.3 |               35 s |
