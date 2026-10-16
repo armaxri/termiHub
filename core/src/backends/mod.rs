@@ -61,6 +61,10 @@ pub mod vnc;
 #[cfg(feature = "rdp-sidecar")]
 pub mod rdp_sidecar;
 
+// The SSH local forward a graphical connection can ride (VNC, RDP, #4865).
+#[cfg(all(feature = "ssh", any(feature = "vnc", feature = "rdp-sidecar")))]
+pub mod ssh_tunnel;
+
 /// Drop the top-level `null` members of a connection-settings object (#4017).
 ///
 /// The connection editor clears every schema field to `null` when the type

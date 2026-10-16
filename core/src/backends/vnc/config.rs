@@ -14,6 +14,7 @@ use crate::connection::graphical_monitors::{
     deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
     MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
 };
+use crate::connection::graphical_ssh_tunnel::{ssh_tunnel_group, SshTunnelSettings};
 use crate::connection::graphical_resolution::{
     normalize_fixed_size, server_resolution_fields, DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH,
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
@@ -274,6 +275,20 @@ impl VncConfig {
         }
     }
 
+    /// The SSH Tunnel rows of this connection, in the shared shape the RDP
+    /// connection uses too (#4865).
+    pub fn ssh_tunnel(&self) -> SshTunnelSettings {
+        SshTunnelSettings {
+            use_ssh_tunnel: self.use_ssh_tunnel,
+            ssh_host: self.ssh_host.clone(),
+            ssh_port: self.ssh_port,
+            ssh_username: self.ssh_username.clone(),
+            ssh_auth_method: self.ssh_auth_method.clone(),
+            ssh_key_path: self.ssh_key_path.clone(),
+            ssh_password: self.ssh_password.clone(),
+        }
+    }
+
     /// The effective SSH-tunnel auth method, defaulting to `"password"` when unset
     /// so connections saved before key/agent auth existed still authenticate.
     pub fn ssh_auth_method(&self) -> &str {
@@ -284,30 +299,10 @@ impl VncConfig {
         }
     }
 
-    /// Build the [`SshConfig`] for the SSH-tunnel gateway from the VNC settings.
-    ///
-    /// Reuses the SSH backend's own auth machinery: `"password"`, `"key"` (with
-    /// [`ssh_key_path`](Self::ssh_key_path) and an optional passphrase carried in
-    /// [`ssh_password`](Self::ssh_password)), or `"agent"` (ssh-agent). Empty
-    /// password / key-path values map to `None` so an unencrypted key isn't
-    /// mistaken for a passphrase-protected one, and an empty method falls back to
-    /// `"password"`.
+    /// Build the [`SshConfig`] for the SSH-tunnel gateway from the VNC settings
+    /// — see [`SshTunnelSettings::ssh_config`].
     pub fn tunnel_ssh_config(&self) -> SshConfig {
-        let password = if self.ssh_password.is_empty() {
-            None
-        } else {
-            Some(self.ssh_password.clone())
-        };
-        let key_path = self.ssh_key_path.clone().filter(|p| !p.trim().is_empty());
-        SshConfig {
-            host: self.ssh_host.clone(),
-            port: self.ssh_port,
-            username: self.ssh_username.clone(),
-            auth_method: self.ssh_auth_method().to_string(),
-            password,
-            key_path,
-            ..SshConfig::default()
-        }
+        self.ssh_tunnel().ssh_config()
     }
 }
 
@@ -327,31 +322,11 @@ fn field(key: &str, label: &str, field_type: FieldType) -> SettingsField {
     }
 }
 
-/// Only shown when `useSshTunnel` is enabled.
-fn when_tunnel_enabled() -> Option<Condition> {
-    Some(Condition {
-        field: "useSshTunnel".to_string(),
-        equals: serde_json::json!(true),
-        ..Default::default()
-    })
-}
-
 /// Only shown when TLS verification is set to a custom CA bundle.
 fn when_tls_ca() -> Option<Condition> {
     Some(Condition {
         field: "tlsVerify".to_string(),
         equals: serde_json::json!("ca"),
-        ..Default::default()
-    })
-}
-
-/// Only shown when the SSH-tunnel auth method equals `method`. The auth-method
-/// select is itself gated on the tunnel being enabled, so these fields stay
-/// hidden until the user opts into a tunnel and picks the matching method.
-fn when_ssh_auth_is(method: &str) -> Option<Condition> {
-    Some(Condition {
-        field: "sshAuthMethod".to_string(),
-        equals: serde_json::json!(method),
         ..Default::default()
     })
 }
@@ -513,88 +488,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
         ],
     });
 
-    groups.push(SettingsGroup {
-        collapsed: false,
-        key: "sshTunnel".to_string(),
-        label: "SSH Tunnel".to_string(),
-        fields: vec![
-            SettingsField {
-                default: Some(serde_json::json!(false)),
-                description: Some(
-                    "Reach the VNC server through an SSH tunnel (SSH local forward).".to_string(),
-                ),
-                ..field("useSshTunnel", "Use SSH Tunnel", FieldType::Boolean)
-            },
-            SettingsField {
-                required: true,
-                supports_env_expansion: true,
-                placeholder: Some("bastion.example.com".to_string()),
-                visible_when: when_tunnel_enabled(),
-                ..field("sshHost", "SSH Host", FieldType::Text)
-            },
-            SettingsField {
-                default: Some(serde_json::json!(22)),
-                visible_when: when_tunnel_enabled(),
-                ..field("sshPort", "SSH Port", FieldType::Port)
-            },
-            SettingsField {
-                supports_env_expansion: true,
-                visible_when: when_tunnel_enabled(),
-                ..field("sshUsername", "SSH Username", FieldType::Text)
-            },
-            SettingsField {
-                default: Some(serde_json::json!("password")),
-                description: Some(
-                    "How to authenticate to the SSH gateway: a password, a private \
-                     key file, or the local ssh-agent."
-                        .to_string(),
-                ),
-                visible_when: when_tunnel_enabled(),
-                ..field(
-                    "sshAuthMethod",
-                    "SSH Auth Method",
-                    FieldType::Select {
-                        options: vec![
-                            SelectOption {
-                                value: "password".to_string(),
-                                label: "Password".to_string(),
-                            },
-                            SelectOption {
-                                value: "key".to_string(),
-                                label: "Key File".to_string(),
-                            },
-                            SelectOption {
-                                value: "agent".to_string(),
-                                label: "SSH Agent".to_string(),
-                            },
-                        ],
-                    },
-                )
-            },
-            SettingsField {
-                supports_tilde_expansion: true,
-                supports_env_expansion: true,
-                placeholder: Some("~/.ssh/id_ed25519".to_string()),
-                description: Some("Private key used to authenticate the SSH tunnel.".to_string()),
-                visible_when: when_ssh_auth_is("key"),
-                ..field(
-                    "sshKeyPath",
-                    "SSH Key Path",
-                    FieldType::FilePath {
-                        kind: FilePathKind::File,
-                    },
-                )
-            },
-            SettingsField {
-                description: Some(
-                    "SSH gateway password, or the passphrase for the selected key file."
-                        .to_string(),
-                ),
-                visible_when: when_tunnel_enabled(),
-                ..field("sshPassword", "SSH Password", FieldType::Password)
-            },
-        ],
-    });
+    groups.push(ssh_tunnel_group("VNC"));
 
     groups.push(file_transfer_group());
 

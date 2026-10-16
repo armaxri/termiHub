@@ -21,6 +21,9 @@ pub mod graphical;
 pub mod graphical_files;
 pub mod graphical_monitors;
 pub mod graphical_resolution;
+// The shared SSH Tunnel group of the graphical types (VNC, RDP, #4865).
+#[cfg(any(feature = "vnc", feature = "rdp-sidecar"))]
+pub mod graphical_ssh_tunnel;
 pub mod lifecycle;
 pub mod plugin_type_id;
 pub mod registry;
