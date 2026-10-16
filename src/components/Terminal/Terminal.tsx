@@ -1676,7 +1676,14 @@ export function Terminal({
     (el as HTMLDivElement & { _xtermInstance?: XTerm })._xtermInstance = xterm;
 
     // Register element, xterm instance, and fit addon with the portal registry
-    register(tabId, el, xterm, fitAddon);
+    // The registry's fitTerminal (TerminalSlot adoption) asks this terminal
+    // first: off screen, the fit is owed to the next show like a container
+    // change (#4863), not run now on the DOM renderer's grid (#4872).
+    register(tabId, el, xterm, fitAddon, () => {
+      if (isOnScreenRef.current) return false;
+      hiddenFitPendingRef.current = true;
+      return true;
+    });
 
     // Initial fit (may fail since element starts in parking)
     try {

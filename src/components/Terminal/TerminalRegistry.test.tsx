@@ -966,3 +966,69 @@ describe("search results wiring (PROD-058)", () => {
     expect(disposable.dispose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("fitTerminal — off-screen deferral (#4872)", () => {
+  function sizedEl(width: number, height: number): HTMLDivElement {
+    const el = document.createElement("div");
+    Object.defineProperty(el, "offsetWidth", { configurable: true, value: width });
+    Object.defineProperty(el, "offsetHeight", { configurable: true, value: height });
+    return el;
+  }
+
+  it("does not fit when the terminal defers it (off screen)", () => {
+    const fitAddon = createMockFitAddon();
+    const deferFit = vi.fn(() => true);
+    act(() => {
+      registryActions.register(
+        "tab-hidden",
+        sizedEl(640, 480),
+        createMockXterm(),
+        fitAddon,
+        deferFit
+      );
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-hidden");
+    });
+
+    expect(deferFit).toHaveBeenCalledTimes(1);
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+  });
+
+  it("fits when the terminal does not defer it (on screen)", () => {
+    const fitAddon = createMockFitAddon();
+    const deferFit = vi.fn(() => false);
+    act(() => {
+      registryActions.register(
+        "tab-shown",
+        sizedEl(640, 480),
+        createMockXterm(),
+        fitAddon,
+        deferFit
+      );
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-shown");
+    });
+
+    expect(deferFit).toHaveBeenCalledTimes(1);
+    expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the deferral check when the terminal re-registers without one", () => {
+    const fitAddon = createMockFitAddon();
+    const el = sizedEl(640, 480);
+    act(() => {
+      registryActions.register("tab-re", el, createMockXterm(), fitAddon, () => true);
+      registryActions.register("tab-re", el, createMockXterm(), fitAddon);
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-re");
+    });
+
+    expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+  });
+});

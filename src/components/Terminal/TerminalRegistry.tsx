@@ -99,8 +99,21 @@ export interface TerminalHandles {
 }
 
 interface TerminalRegistryContextType {
-  /** Register a terminal's xterm container element, xterm instance, and fit addon. */
-  register: (tabId: string, element: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) => void;
+  /**
+   * Register a terminal's xterm container element, xterm instance, and fit addon.
+   *
+   * `deferFitIfOffScreen` is the terminal's own on-screen check (#4872): called
+   * by {@link fitTerminal} before fitting, it returns `true` when the terminal
+   * is off screen and has recorded the fit as owed on its next show (#4863), so
+   * the registry must not fit it now.
+   */
+  register: (
+    tabId: string,
+    element: HTMLDivElement,
+    xterm: XTerm,
+    fitAddon: FitAddon,
+    deferFitIfOffScreen?: () => boolean
+  ) => void;
   /** Unregister a terminal element (on terminal close). */
   unregister: (tabId: string) => void;
   /** Get the registered element for a tab. */
@@ -196,7 +209,10 @@ interface TerminalRegistryContextType {
   findPrevious: (tabId: string, query: string, options?: ISearchOptions) => boolean;
   /** Clear search decorations in the terminal. */
   clearSearchDecorations: (tabId: string) => void;
-  /** Fit the terminal to its current container dimensions. */
+  /**
+   * Fit the terminal to its current container dimensions. A terminal that is
+   * off screen is not fitted: the fit is deferred to its next show (#4872).
+   */
   fitTerminal: (tabId: string) => void;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
@@ -219,6 +235,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, HTMLDivElement>());
   const xtermRegistryRef = useRef(new Map<string, XTerm>());
   const fitAddonRegistryRef = useRef(new Map<string, FitAddon>());
+  const deferFitRegistryRef = useRef(new Map<string, () => boolean>());
   const sessionRegistryRef = useRef(new Map<string, SessionId>());
   const searchAddonRegistryRef = useRef(new Map<string, SearchAddon>());
   // Last-known result counts per tab + the `onDidChangeResults` subscriptions
@@ -234,10 +251,21 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const parkingRef = useRef<HTMLDivElement | null>(null);
 
   const register = useCallback(
-    (tabId: string, element: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) => {
+    (
+      tabId: string,
+      element: HTMLDivElement,
+      xterm: XTerm,
+      fitAddon: FitAddon,
+      deferFitIfOffScreen?: () => boolean
+    ) => {
       registryRef.current.set(tabId, element);
       xtermRegistryRef.current.set(tabId, xterm);
       fitAddonRegistryRef.current.set(tabId, fitAddon);
+      if (deferFitIfOffScreen) {
+        deferFitRegistryRef.current.set(tabId, deferFitIfOffScreen);
+      } else {
+        deferFitRegistryRef.current.delete(tabId);
+      }
     },
     []
   );
@@ -246,6 +274,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     registryRef.current.delete(tabId);
     xtermRegistryRef.current.delete(tabId);
     fitAddonRegistryRef.current.delete(tabId);
+    deferFitRegistryRef.current.delete(tabId);
     sessionRegistryRef.current.delete(tabId);
     searchAddonRegistryRef.current.delete(tabId);
     searchResultsDisposableRef.current.get(tabId)?.dispose();
@@ -277,6 +306,16 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const fitAddon = fitAddonRegistryRef.current.get(tabId);
     const xterm = xtermRegistryRef.current.get(tabId);
     if (!fitAddon) return;
+    // Off screen: let the terminal defer the fit to its next show (#4872).
+    // TerminalSlot re-fits on every adopt, including the slots of hidden tabs
+    // when a split / move / merge re-creates a panel's slots. Fitting a hidden
+    // terminal sizes its PTY to the DOM renderer's grid, and the WebGL re-lease
+    // on show resizes it again to the WebGL grid: two PTY resizes for one
+    // layout change (the case #4863 fixed for the ResizeObserver path).
+    if (deferFitRegistryRef.current.get(tabId)?.()) {
+      frontendLog("terminal_registry", `fitTerminal deferred (off screen) tab=${tabId}`);
+      return;
+    }
     const el = registryRef.current.get(tabId);
     const w = el?.offsetWidth ?? -1;
     const h = el?.offsetHeight ?? -1;
