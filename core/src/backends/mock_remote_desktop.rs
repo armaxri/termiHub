@@ -21,9 +21,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::connection::{
-    AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorUpdate,
-    DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent,
-    MonitorLayout, MonitorRect, OutputReceiver, SettingsSchema,
+    AuthKind, Capabilities, ClipboardImage, ClipboardTextReceiver, ConnectionType, CursorReceiver,
+    CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
+    InputEvent, MonitorLayout, MonitorRect, OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -72,6 +72,10 @@ struct MockConfig {
         deserialize_with = "crate::connection::graphical_monitors::deserialize_monitor_rects"
     )]
     monitor_layout: Vec<MonitorRect>,
+    /// Text the mock "server" copies to its clipboard right after connect
+    /// (#4836), so tests can drive a server-originated clipboard change.
+    #[serde(default)]
+    remote_copy: Option<String>,
 }
 
 /// Shared, interior-mutable state of a connected mock session.
@@ -79,6 +83,10 @@ struct MockRuntime {
     frame_tx: mpsc::Sender<FrameUpdate>,
     cursor_tx: mpsc::Sender<CursorUpdate>,
     clipboard: Mutex<String>,
+    /// Notified on every remote clipboard change (#4836). Like a VNC server
+    /// that echoes `ServerCutText`, the mock notifies for local sets too, so
+    /// the desktop's echo suppression is exercised.
+    clipboard_changes: tokio::sync::watch::Sender<String>,
     /// Echoed clipboard image (PROD-021), so the desktop's image path can be
     /// exercised without a live RDP server.
     clipboard_image: Mutex<Option<ClipboardImage>>,
@@ -319,7 +327,10 @@ impl ConnectionType for MockRemoteDesktop {
         let runtime = Arc::new(MockRuntime {
             frame_tx,
             cursor_tx,
-            clipboard: Mutex::new(String::new()),
+            clipboard: Mutex::new(cfg.remote_copy.clone().unwrap_or_default()),
+            clipboard_changes: tokio::sync::watch::Sender::new(
+                cfg.remote_copy.clone().unwrap_or_default(),
+            ),
             clipboard_image: Mutex::new(None),
             view_only: cfg.view_only,
             dims: Mutex::new((width, height)),
@@ -513,8 +524,13 @@ impl GraphicalBackend for MockRemoteDesktop {
         let Some(rt) = &self.runtime else {
             return Err(SessionError::NotRunning("mock not connected".to_string()));
         };
-        *rt.clipboard.lock().await = text;
+        *rt.clipboard.lock().await = text.clone();
+        rt.clipboard_changes.send_replace(text);
         Ok(())
+    }
+
+    fn subscribe_clipboard(&self) -> Option<ClipboardTextReceiver> {
+        Some(self.runtime.as_ref()?.clipboard_changes.subscribe())
     }
 
     async fn get_clipboard_image(&self) -> Option<ClipboardImage> {
@@ -734,6 +750,25 @@ mod tests {
         assert!(backend.get_clipboard().await.is_none());
         backend.set_clipboard("hello".to_string()).await.unwrap();
         assert_eq!(backend.get_clipboard().await.as_deref(), Some("hello"));
+        m.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn remote_copy_seeds_the_clipboard_and_sets_notify_subscribers() {
+        let mut m = connected();
+        m.connect(serde_json::json!({ "remoteCopy": "from server" }))
+            .await
+            .unwrap();
+        let backend = m.graphical().unwrap();
+        let mut changes = backend.subscribe_clipboard().expect("text clipboard");
+        assert_eq!(*changes.borrow_and_update(), "from server");
+        assert_eq!(
+            backend.get_clipboard().await.as_deref(),
+            Some("from server")
+        );
+        backend.set_clipboard("local".to_string()).await.unwrap();
+        assert!(changes.has_changed().unwrap());
+        assert_eq!(*changes.borrow_and_update(), "local");
         m.disconnect().await.unwrap();
     }
 

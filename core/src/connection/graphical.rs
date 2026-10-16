@@ -186,7 +186,7 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                 SettingsField {
                     default: Some(serde_json::json!(true)),
                     description: Some("Sync text clipboard both ways".to_string()),
-                    ..field("clipboardSync", "Clipboard Sync", FieldType::Boolean)
+                    ..field(CLIPBOARD_SYNC_KEY, "Clipboard Sync", FieldType::Boolean)
                 },
                 SettingsField {
                     default: Some(serde_json::json!(
@@ -215,6 +215,28 @@ pub type CursorReceiver = tokio::sync::mpsc::Receiver<CursorUpdate>;
 
 /// Async receiver for interactive server-certificate trust prompts (#1767).
 pub type CertPromptReceiver = tokio::sync::mpsc::Receiver<CertPrompt>;
+
+/// Async receiver for server-originated clipboard text (#4836).
+///
+/// A `watch` channel: only the remote's latest copy matters, so a slow
+/// consumer sees the newest text rather than a backlog, and a backend never
+/// blocks on it. The value is the remote clipboard text (empty before the
+/// first copy); every remote copy marks it changed, even when the text repeats.
+pub type ClipboardTextReceiver = tokio::sync::watch::Receiver<String>;
+
+/// Settings key of the shared "Clipboard Sync" toggle ("Sync text clipboard
+/// both ways").
+pub const CLIPBOARD_SYNC_KEY: &str = "clipboardSync";
+
+/// Whether a graphical connection's settings enable clipboard sync (#4836):
+/// the [`CLIPBOARD_SYNC_KEY`] boolean, defaulting to on like its schema field
+/// when it is missing or not a boolean.
+pub fn clipboard_sync_enabled(settings: &serde_json::Value) -> bool {
+    settings
+        .get(CLIPBOARD_SYNC_KEY)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true)
+}
 
 /// A server-certificate trust prompt raised by a graphical backend that reached
 /// an untrusted certificate and needs an interactive accept/reject decision
@@ -1039,6 +1061,18 @@ pub trait GraphicalBackend: Send + Sync {
     /// [`GraphicalSessionManager`](../../../termihub/session) consults its trust
     /// store and either auto-accepts or surfaces the prompt to the user.
     fn subscribe_cert_prompts(&self) -> Option<CertPromptReceiver> {
+        None
+    }
+
+    /// Subscribe to server-originated clipboard text changes (#4836).
+    ///
+    /// Each remote copy (VNC `ServerCutText`, RDP CLIPRDR text) updates the
+    /// returned receiver, so the desktop can push it into an open clipboard
+    /// panel instead of waiting for the next [`Self::get_clipboard`] pull.
+    /// Backends without a text clipboard return `None` (the default). Only
+    /// meaningful once connected; a fresh backend instance after a reconnect
+    /// hands out a fresh receiver.
+    fn subscribe_clipboard(&self) -> Option<ClipboardTextReceiver> {
         None
     }
 
