@@ -1,7 +1,7 @@
 ### Added
 
-- **Import from MobaXterm** (#4850): a new Connections header action imports saved
-  MobaXterm sessions. On Windows termiHub finds the MobaXterm configuration of the
+- **Import from MobaXterm** (#4850): **Settings → Import & Migration** (also in the gear
+  menu) imports saved MobaXterm sessions. On Windows termiHub finds the MobaXterm configuration of the
   installed edition (or one in your Documents folder) and previews it at once; on
   every OS you can pick a `MobaXterm.ini` or an exported `.mxtsessions` file. The
   preview shows each session's type, target and folder, lets you choose which to
