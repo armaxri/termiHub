@@ -145,9 +145,10 @@ jobs:
           cargo metadata --locked --format-version 1 > /dev/null
           cargo metadata --locked --format-version 1 --manifest-path rdp-sidecar/Cargo.toml > /dev/null
 
-      # Pinned tool versions (prebuilt, SHA-pinned installer), like cargo-about
-      # and cargo-cyclonedx below, so the release gate never runs whatever
-      # version is newest on the day. Bump them deliberately.
+      # Pinned tool versions (prebuilt, SHA-pinned installer) from
+      # .github/cargo-tools.json, the same ones the post-merge Security Audit
+      # runs, so the release gate never runs whatever version is newest on the
+      # day (#4406). Bump them deliberately: docs/contributing.md.
       - name: Install cargo-audit and cargo-deny
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:

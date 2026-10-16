@@ -534,6 +534,36 @@ itself (#4360). It also fails if a reader stops reading the pin file, or if any 
 workflow's Linux legs (which run on any change to the pin file) prove it. Developers with an older
 `cross` installed see a warning from `setup-agent-cross` until they reinstall it.
 
+### Cargo tool versions
+
+CI installs its cargo tools (cargo-deny, cargo-audit, cargo-about, cargo-cyclonedx, cargo-llvm-cov,
+cargo-machete, cargo-fuzz) with `taiki-e/install-action`. The action is SHA-pinned like every other
+action, but a bare `tool: cargo-deny` would install whatever release is newest on the day, so an
+upstream release could change a gate with no commit here. Every step therefore names an exact
+version, `tool: cargo-deny@X.Y.Z`, and the **one** source of truth for those versions is
+[`.github/cargo-tools.json`](../.github/cargo-tools.json). The post-merge Security Audit and the
+release workflow's `verify-supply-chain` gate thus always run the same cargo-deny and cargo-audit
+(#4406).
+
+[`scripts/internal/check-cargo-tool-pins.mjs`](../scripts/internal/check-cargo-tool-pins.mjs) (run
+by the Workflow Lint job and `./scripts/check.sh`) fails on an install-action step without a
+literal `tool:`, on a tool without an exact `@X.Y.Z`, on a version that differs from the pin file,
+on a tool missing from the pin file, and on a pin no workflow installs.
+
+**Bumping a cargo tool** is a manual chore PR (`ci: bump cargo-deny to X.Y.Z`); Dependabot has no
+ecosystem for these tools and does not open PRs for them. Do it alongside the periodic toolchain
+chore, or sooner when an advisory or a fix needs a newer tool:
+
+1. Check the release on crates.io (`cargo search <tool>` or the crate page) and its changelog for
+   behaviour changes, such as new cargo-deny lints.
+2. Write the new version to `.github/cargo-tools.json`.
+3. Replace the old `<tool>@<old>` with `<tool>@<new>` in every workflow:
+   `grep -rn '<tool>@' .github/workflows`.
+4. Run `node scripts/internal/check-cargo-tool-pins.mjs`. It must pass.
+5. Dispatch the affected `workflow_dispatch` workflows on the PR branch (for example
+   `gh workflow run security-audit.yml --ref <branch>`) and confirm the install step logs the new
+   version. Gate changes such as new cargo-deny findings are fixed in the same PR.
+
 ### GitHub Actions pins
 
 Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z` comment. Dependabot

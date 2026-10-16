@@ -111,7 +111,7 @@ jobs:
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz@0.13.2
 
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
