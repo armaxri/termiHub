@@ -14,7 +14,7 @@ interface MobaxtermSessionListProps {
   onToggleAll: () => void;
 }
 
-/** `SSH · admin@10.0.0.1 · Lab / Switches`, leaving out empty parts. */
+/** `SSH · netops@10.0.0.1 · Lab / Switches`, leaving out empty parts. */
 function metaLine(session: MobaxtermSession): string {
   return [session.sessionType, session.target, folderLabel(session.folderPath)]
     .filter((part) => part.length > 0)

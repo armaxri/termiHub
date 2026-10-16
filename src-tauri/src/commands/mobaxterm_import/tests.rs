@@ -48,7 +48,7 @@ SomePref=1\r\n\
 [Bookmarks]\r\n\
 SubRep=\r\n\
 ImgNum=42\r\n\
-Lab router=#109#0%10.0.0.1%22%admin%%-1%-1%%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
+Lab router=#109#0%10.0.0.1%22%netops%%-1%-1%%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
 Old switch=#98#1%192.0.2.10%2323%%%2%%%%%0%0%%1080%#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
 Console (USB)=#131#8%1%1009600%3%2%2%2%2%COM7  (USB Serial Device (COM7))#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%0%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1%-1#0# #-1\r\n\
 Docs site=#151#11%https://docs.example.com%%#MobaFont%10#0# #-1\r\n\
@@ -111,10 +111,10 @@ fn ssh_maps_host_port_user_and_password_auth() {
     let s = by_name(&sessions, "Lab router");
     assert_eq!(s.session_type, "SSH");
     assert_eq!(s.connection_type.as_deref(), Some("ssh"));
-    assert_eq!(s.target, "admin@10.0.0.1");
+    assert_eq!(s.target, "netops@10.0.0.1");
     assert_eq!(setting(s, "host"), "10.0.0.1");
     assert_eq!(setting(s, "port"), 22);
-    assert_eq!(setting(s, "username"), "admin");
+    assert_eq!(setting(s, "username"), "netops");
     assert_eq!(setting(s, "authMethod"), "password");
     assert!(
         setting(s, "password").is_null(),

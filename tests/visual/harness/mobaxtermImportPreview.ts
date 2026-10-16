@@ -23,9 +23,9 @@ export const MOBAXTERM_PREVIEW = {
       name: "Lab router",
       folderPath: [],
       sessionType: "SSH",
-      target: "admin@10.0.0.1",
+      target: "netops@10.0.0.1",
       connectionType: "ssh",
-      settings: { host: "10.0.0.1", port: 22, username: "admin", authMethod: "password" },
+      settings: { host: "10.0.0.1", port: 22, username: "netops", authMethod: "password" },
       notes: [],
     },
     {

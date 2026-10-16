@@ -57,9 +57,9 @@ const SSH: MobaxtermSession = {
   name: "Lab router",
   folderPath: ["Lab"],
   sessionType: "SSH",
-  target: "admin@10.0.0.1",
+  target: "netops@10.0.0.1",
   connectionType: "ssh",
-  settings: { host: "10.0.0.1", port: 22, username: "admin", authMethod: "password" },
+  settings: { host: "10.0.0.1", port: 22, username: "netops", authMethod: "password" },
   notes: [],
 };
 
@@ -141,7 +141,7 @@ describe("MobaxtermImportDialog", () => {
 
     expect(mockedPreview).toHaveBeenCalledWith("C:\\Users\\a\\MobaXterm.ini");
     expect(q("mobaxterm-import-source")?.textContent).toContain("MobaXterm.ini");
-    expect(q("mobaxterm-import-row-moba-0")?.textContent).toContain("SSH · admin@10.0.0.1 · Lab");
+    expect(q("mobaxterm-import-row-moba-0")?.textContent).toContain("SSH · netops@10.0.0.1 · Lab");
     expect(q("mobaxterm-import-row-moba-1")?.textContent).toContain("Mark/space parity");
     expect(q("mobaxterm-import-skip-moba-2")?.textContent).toContain("no Browser connection type");
     expect(q("mobaxterm-import-check-moba-2")).toBeNull();
