@@ -253,7 +253,11 @@ fn a_redriven_session_keeps_its_binding_resumes_transfers_and_keeps_field_secret
     store.set_backend_session_id("tab-1", Some(first.clone()));
     resumed.triggers.lock().unwrap().clear();
     assert_eq!(
-        connects.lock().unwrap().last().map(|s| s["initialCommand"].clone()),
+        connects
+            .lock()
+            .unwrap()
+            .last()
+            .map(|s| s["initialCommand"].clone()),
         Some(Value::from(INITIAL_COMMAND)),
         "the first connect carries the initial command"
     );
