@@ -440,6 +440,7 @@ mod tests {
             data_dir: Some(home.join("absent").to_str().unwrap().to_owned()),
             denied_dirs: vec![home.to_str().unwrap().to_owned()],
             simulate_missing: Vec::new(),
+            tls_roots_file: None,
         };
         let plan = Plan::for_policy_keeping(&policy, &[]).unwrap();
         let s = steps(&plan);
@@ -464,6 +465,7 @@ mod tests {
             data_dir: None,
             denied_dirs: vec![home.to_str().unwrap().to_owned()],
             simulate_missing: Vec::new(),
+            tls_roots_file: None,
         };
         let plan =
             Plan::for_policy_keeping(&policy, &[profiles.clone(), home.join("absent")]).unwrap();

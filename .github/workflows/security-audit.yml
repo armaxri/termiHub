@@ -159,7 +159,7 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-audit
+          tool: cargo-audit@0.22.2
 
       - name: Cargo Audit
         run: cargo audit
@@ -178,7 +178,7 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
 
       - name: Cargo Deny (supply-chain gate)
         run: cargo deny check advisories bans licenses sources
@@ -226,7 +226,7 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-audit
+          tool: cargo-audit@0.22.2
 
       # Equivalent to `cargo audit -f rdp-sidecar/Cargo.lock`, but run from
       # rdp-sidecar/ so its .cargo/audit.toml (the sidecar's ignore list) applies.
@@ -236,7 +236,7 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
 
       # Same four gates as the workspace step above, against the sidecar's own
       # lockfile and rdp-sidecar/deny.toml.

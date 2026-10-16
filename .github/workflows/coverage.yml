@@ -108,7 +108,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
 
       # Nightly integration coverage (TOOL-005, #3656): the integration-fixtures
       # lane runs core/tests against live Docker fixtures under cargo-llvm-cov on

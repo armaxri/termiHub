@@ -391,7 +391,8 @@ three seconds later (xterm waits for a restore first). It answers `false` when
 the terminal has no live WebGL context. Both default to the active terminal tab
 and fail when no terminal is registered for it. Python:
 `driver.measure_terminal(tab_id=None)` and
-`driver.lose_terminal_webgl_context(tab_id=None)`; the suite is
+`driver.lose_terminal_webgl_context(tab_id=None)`; the suite (which also
+drives loss → DOM fallback → reacquire on the next tab show, #4426) is
 `tests/system/tests/test_terminal_render_paths.py`.
 
 ### Glyph cells and IME composition (`readTerminalCells`, `compose`)

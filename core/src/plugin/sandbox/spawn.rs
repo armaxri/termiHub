@@ -21,7 +21,9 @@
 //!   pipe the host forwards into the plugin's rate-limited log (#4335). No
 //!   descriptor of the host's (its terminal, its journal stream) is inherited.
 //! * **Environment:** scrubbed to [`PASSED_ENV`] — no `SSH_AUTH_SOCK`, no
-//!   `TERMIHUB_*`, nothing else of the host's. A coverage build (the
+//!   `TERMIHUB_*`, no `SSL_CERT_FILE`, nothing else of the host's. A Windows
+//!   runner in its AppContainer gets `SSL_CERT_FILE` set by the host to the
+//!   plugin's TLS root snapshot (#4811, `super::tls_roots`). A coverage build (the
 //!   `coverage` cfg cargo-llvm-cov sets) also passes `LLVM_PROFILE_FILE`
 //!   ([`COVERAGE_ENV`], #4693); no other build does.
 //! * **Integrity (#4202):** the bundled runner is hashed through a retained
@@ -88,9 +90,10 @@ pub(super) struct RunnerSandbox<'a> {
 }
 
 /// What the host confines a runner with at spawn: the plugin's AppContainer
-/// on Windows; nothing on Unix, where the runner confines itself.
+/// on Windows, and the TLS root snapshot it may read (#4811); nothing on
+/// Unix, where the runner confines itself.
 #[cfg(windows)]
-type Confinement = termihub_plugin_runner::appcontainer::AppContainer;
+type Confinement = super::appcontainer::Confinement;
 /// What the host confines a runner with at spawn: the plugin's AppContainer
 /// on Windows; nothing on Unix, where the runner confines itself.
 #[cfg(unix)]
@@ -280,7 +283,7 @@ fn start(
     use termihub_plugin_runner::ipc::{PROTOCOL_ARG, PROTOCOL_VERSION};
     use termihub_plugin_runner::process::{ChildStdio, RunnerCommand};
 
-    let sids: Vec<&str> = container.iter().map(|c| c.sid_string()).collect();
+    let sids: Vec<&str> = container.iter().map(|c| c.container.sid_string()).collect();
     let (host_end, runner_end) = PipeStream::pair_with_access(&sids)
         .map_err(|e| format!("creating the runner pipe failed: {e}"))?;
     let mut command = RunnerCommand::new(exec_path);
@@ -293,7 +296,12 @@ fn start(
         .stderr(ChildStdio::Piped)
         .limits(*limits);
     if let Some(container) = container {
-        command.app_container(container.clone());
+        command.app_container(container.container.clone());
+        // The host's TLS root snapshot (#4811), set by the host alone: the
+        // scrubbed environment never passes the host's own `SSL_CERT_FILE`.
+        if let Some(roots) = &container.tls_roots {
+            command.envs([(super::tls_roots::SSL_CERT_FILE_ENV, roots.as_os_str())]);
+        }
         // A working directory the AppContainer may open: its own folder.
         if let Some(folder) = exec_path.parent() {
             command.current_dir(folder);

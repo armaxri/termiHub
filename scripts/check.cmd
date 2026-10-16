@@ -78,6 +78,12 @@ node scripts\internal\check-cross-version.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === cargo tool pin consistency ===
+REM Every taiki-e/install-action tool pinned to its version in .github/cargo-tools.json (#4406).
+node scripts\internal\check-cargo-tool-pins.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === GitHub Actions pin consistency ===
 REM Every third-party action pinned to ONE full commit SHA with a version comment (#4360).
 node scripts\internal\check-action-pins.mjs

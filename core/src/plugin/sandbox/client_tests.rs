@@ -169,6 +169,7 @@ fn configure() -> Configure {
             data_dir: None,
             denied_dirs: Vec::new(),
             simulate_missing: Vec::new(),
+            tls_roots_file: None,
         }),
         accept_reduced_isolation: false,
     }
