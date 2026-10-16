@@ -1172,7 +1172,7 @@ impl GraphicalSessionManager {
     /// Push local clipboard text to a session's remote, and echo it back as a
     /// `remote-desktop-clipboard` event so the shared clipboard panel confirms
     /// the sync landed. The remote's own echo of the text is suppressed by the
-    /// clipboard pump ([`clipboard_pump`], #4836), so it is emitted only once.
+    /// clipboard pump (`clipboard_pump`, #4836), so it is emitted only once.
     pub async fn send_clipboard(
         &self,
         session_id: &str,
