@@ -170,7 +170,7 @@ shellexpand = "3.1"
 # hand-rolled archive parsing to open a package and read its `manifest.json`.
 # Behind the optional `plugin` feature so it is only compiled when the plugin
 # system is built.
-zip = { version = "9.0.3", optional = true }
+zip = { workspace = true, optional = true }
 # The stable ABI contract shared by the host and every plugin (#1990): the ABI
 # and toolchain types the host's load gates check. Behind `plugin`.
 termihub-plugin-api = { path = "../plugin-api", optional = true }
