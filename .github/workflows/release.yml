@@ -628,21 +628,15 @@ jobs:
       # through a generated fragment (PKG2-003, #4283). Final releases are mapped
       # too, so the MSI version stays monotonic across beta -> rc -> final.
       # verify-version already ran --check, so this cannot reject the tag.
-      # A dry run maps the in-repo version: 0.0.0-dryrun has no MSI form.
+      # A dry run maps the in-repo version (empty input): 0.0.0-dryrun has no
+      # MSI form. The prerelease MSI dry run (release-msi-prerelease.yml, #4442)
+      # builds through the same action, so a -beta.N tag's path is proven.
       - name: Generate the Windows MSI version fragment
         id: wix_version
         if: runner.os == 'Windows'
-        shell: bash
-        env:
-          VERSION: ${{ needs.release-version.outputs.version }}
-          DRY_RUN: ${{ needs.release-version.outputs.dry_run }}
-        run: |
-          set -euo pipefail
-          fragment=src-tauri/tauri.wix-version.conf.json
-          if [ "$DRY_RUN" = true ]; then VERSION="$(node -p "require('./package.json').version")"; fi
-          node scripts/internal/msi-version.mjs --config-out "$fragment" "$VERSION"
-          cat "$fragment"
-          echo "config=--config $fragment" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/msi-version-fragment
+        with:
+          version: ${{ needs.release-version.outputs.dry_run != 'true' && needs.release-version.outputs.version || '' }}
 
       # Linux: split the desktop binary's DWARF out between compile and bundle
       # (#4504), via Tauri's build.beforeBundleCommand in a generated fragment,
