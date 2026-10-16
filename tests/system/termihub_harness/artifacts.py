@@ -175,6 +175,49 @@ def record_failed_attempt(
         return None
 
 
+def _window_label(driver: Any) -> str:
+    return str(getattr(driver, "window_label", "?"))
+
+
+def _app_liveness(app: Any) -> str:
+    """One record saying whether the app process was still alive (#4861).
+
+    Tells "the app crashed" apart from "one window's page died": both close the
+    bridge socket, but only the first ends the process.
+    """
+    try:
+        if app.is_running():
+            return f"app process: running (pid {app.pid})"
+        return f"app process: EXITED (code {app.returncode})"
+    except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
+        return f"app process: unknown — {type(exc).__name__}: {exc}"
+
+
+def _bridge_records(dest: Path, driver: Any) -> list[str]:
+    """Write ``bridge-events.txt`` and return the driver's socket state record."""
+    records: list[str] = []
+    connected = getattr(driver, "is_connected", None)
+    if connected is not None:
+        state = "open" if connected else "CLOSED"
+        records.append(f"driver socket ({_window_label(driver)}): {state}")
+    events = getattr(driver, "bridge_events", None)
+    if callable(events):
+        records.append(
+            _timed_probe(dest, "bridge-events.txt", lambda: "\n".join(events()) + "\n")
+        )
+    return records
+
+
+def _live_replacement(driver: Any) -> Optional[Any]:
+    finder = getattr(driver, "live_replacement", None)
+    if not callable(finder):
+        return None
+    try:
+        return finder()
+    except Exception:  # noqa: BLE001 — capture is best-effort by design
+        return None
+
+
 def write_failure_artifacts(
     dest: Path,
     driver: Optional[Any],
@@ -191,7 +234,9 @@ def write_failure_artifacts(
     - ``driver.read_terminal()`` → ``terminal.txt``
     - ``driver.screenshot()`` → ``screenshot.png`` (when the bridge supports it)
     - ``app.read_log()`` → ``app.log``
-    - a timed record of every probe → ``probe-diagnostics.txt``
+    - the bridge's connect/close log → ``bridge-events.txt`` (#4861)
+    - a timed record of every probe → ``probe-diagnostics.txt``, plus whether the
+      app process was still running and whether the driver's socket was open
 
     The bridge probes run with ``probe_timeout`` (default
     :data:`DIAGNOSTIC_PROBE_TIMEOUT`), *not* the driver's normal command timeout:
@@ -202,7 +247,20 @@ def write_failure_artifacts(
     """
     dest.mkdir(parents=True, exist_ok=True)
     records: list[str] = []
+    if app is not None and hasattr(app, "is_running"):
+        records.append(_app_liveness(app))
     if driver is not None:
+        records.extend(_bridge_records(dest, driver))
+        # A page that reloaded (e.g. after its webview process died) reconnects
+        # on a new socket; probe through that one so the bundle still captures
+        # its state, and say so (#4861).
+        replacement = _live_replacement(driver)
+        if replacement is not None:
+            records.append(
+                f"driver: window {_window_label(driver)!r} reconnected on a new socket; "
+                "probes below used the new connection"
+            )
+            driver = replacement
         records.append(
             _timed_probe(
                 dest,

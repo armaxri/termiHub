@@ -35,9 +35,12 @@ pub(crate) fn build(
     log_buffer: SharedLogBuffer,
     file_reload_handle: Option<FileLogReloadHandle>,
 ) -> tauri::Builder<tauri::Wry> {
-    // `mut` is only needed when the test-bridge plugin is conditionally added
-    // below (feature = "test-bridge"); release builds never reassign `builder`.
-    #[cfg_attr(not(feature = "test-bridge"), allow(unused_mut))]
+    // `mut` is only needed when the test-bridge plugin or the macOS web content
+    // handler is added below; other builds never reassign `builder`.
+    #[cfg_attr(
+        not(any(feature = "test-bridge", target_os = "macos")),
+        allow(unused_mut)
+    )]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -124,6 +127,15 @@ pub(crate) fn build(
             "Test bridge WebSocket transport enabled"
         );
         builder = builder.plugin(plugin);
+    }
+
+    // macOS: reload a window whose WebKit content process died instead of
+    // leaving it blank for good (#4861).
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.on_web_content_process_terminate(
+            window::web_content::on_web_content_process_terminate,
+        );
     }
 
     // macOS: swap the stock Quit (which exits without a preventable

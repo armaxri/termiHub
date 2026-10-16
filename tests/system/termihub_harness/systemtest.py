@@ -258,6 +258,7 @@ class SystemTest:
         attempt = int(getattr(request.node, "execution_count", 1) or 1)
         if attempt > 1:
             try:
+                self._recover_dead_driver()
                 self.reset_before_rerun()
             except Exception as exc:  # re-raised with the rerun context below
                 raise RerunResetError(
@@ -267,6 +268,34 @@ class SystemTest:
                     "or in attempt-1-failure.txt in the failure bundle."
                 ) from exc
         yield
+
+    def _recover_dead_driver(self) -> None:
+        """Before a rerun, replace a suite driver whose bridge socket closed (#4861).
+
+        A failed attempt can leave the main window's socket closed: its page
+        died, or the app did. Every command on that driver then fails at once
+        with "bridge connection closed", so the rerun would fail in a fraction
+        of a second without testing anything. Rebind to the main window's newer
+        connection if its page reconnected; otherwise relaunch the app.
+        """
+        driver = getattr(self, "driver", None)
+        if driver is None or getattr(driver, "is_connected", True):
+            return
+        replacement = driver.live_replacement()
+        if replacement is not None:
+            print(
+                f"\n[rerun-reset] window {driver.window_label!r} reconnected on a new "
+                "socket; rebinding the suite driver to it"
+            )
+            type(self).driver = replacement
+            self._projection_region_subs = {}
+            return
+        state = "running" if self.app.is_running() else f"exited ({self.app.returncode})"
+        print(
+            f"\n[rerun-reset] the suite driver's bridge socket is closed and the app "
+            f"process is {state}; relaunching the app before the rerun"
+        )
+        self.restart_app()
 
     def reset_before_rerun(self) -> None:
         """Hook: return the shared app to a clean state before a rerun attempt.
