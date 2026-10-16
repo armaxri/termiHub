@@ -158,7 +158,7 @@ tracing-subscriber = { version = "0.3", features = ["registry", "fmt", "env-filt
 chrono = "0.4"
 # ZIP writer/reader: the "Export diagnostics" bundle (OBS-010, all platforms) and,
 # on Windows, VcXsrv acquisition (X server provisioning: download + extract).
-zip = "2"
+zip = { workspace = true }
 argon2 = "0.5"
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["derive"] }

@@ -1631,7 +1631,10 @@ fn extract_package_with_limits(
         let mut entry = archive
             .by_index(i)
             .map_err(|e| PluginManagerError::Extract(e.to_string()))?;
-        let raw_name = entry.name().to_string();
+        let raw_name = entry
+            .name()
+            .map_err(|e| PluginManagerError::Extract(e.to_string()))?
+            .into_owned();
 
         // Reject symlink entries outright: a symlink extracted to disk can point
         // outside the plugin dir and be followed later, escaping the sandbox even
