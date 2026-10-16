@@ -139,7 +139,7 @@ from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
 from .serial_echo import SerialEchoPair, SerialEchoUnavailable
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
-from .systemtest import SystemTest, unique_name
+from .systemtest import RerunResetError, SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
     AgentUi,
@@ -198,6 +198,7 @@ __all__ = [
     "StubDnsServer",
     "app_binary_path",
     "agent_binary_path",
+    "RerunResetError",
     "SystemTest",
     "ProjectionHarness",
     "AgentUi",

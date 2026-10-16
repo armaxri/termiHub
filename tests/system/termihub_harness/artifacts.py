@@ -150,6 +150,31 @@ def _timed_probe(
         return f"{name}: FAILED after {elapsed:.1f}s — {type(exc).__name__}: {exc}"
 
 
+def record_failed_attempt(
+    dest: Path, attempt: int, phase: str, error_text: str, *, append: bool = False
+) -> Optional[Path]:
+    """Persist one failed test attempt's error as ``attempt-<n>-failure.txt``.
+
+    Under pytest-rerunfailures the failure bundle is rewritten by every failing
+    attempt, so only the *last* attempt's state survives. A rerun that fails
+    for a different reason (e.g. on state the first attempt left behind) would
+    then hide the real first error (#4829). One small text file per attempt
+    keeps every attempt's error in the bundle. Pass ``append=True`` for a later
+    failing phase of the same attempt (e.g. teardown after call); otherwise a
+    stale file from an earlier session is replaced. Returns the file written,
+    or ``None`` if it could not be written — best-effort, never raises.
+    """
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        target = dest / f"attempt-{attempt}-failure.txt"
+        with target.open("a" if append else "w", encoding="utf-8") as fh:
+            fh.write(f"=== attempt {attempt}, {phase} phase ===\n")
+            fh.write(error_text.rstrip("\n") + "\n")
+        return target
+    except Exception:  # noqa: BLE001 — capture must never mask the failure
+        return None
+
+
 def write_failure_artifacts(
     dest: Path,
     driver: Optional[Any],

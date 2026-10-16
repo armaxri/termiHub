@@ -131,3 +131,27 @@ class TabsUi(HarnessMixin):
                 return
             self.close_tab(tabs[0]["id"])
             time.sleep(0.2)
+
+    def reset_tabs(self, *, timeout: float = 30.0) -> None:
+        """Close every tab and confirm none remain; raise naming any leftovers.
+
+        The reset a suite with a "starts empty" precondition uses before a
+        rerun attempt (see :meth:`SystemTest.reset_before_rerun`, #4829). It
+        closes through the UI (the same path as :meth:`close_all_tabs`, so live
+        sessions are torn down with their tabs), then waits for the tab count to
+        reach zero. If tabs survive, the error lists their ids so a stuck reset
+        is diagnosable rather than surfacing later as an ``N == 0`` precondition.
+        """
+        self.close_all_tabs()
+        try:
+            self.wait(
+                lambda: self.tab_count() == 0, timeout=timeout, what="all tabs to close"
+            )
+        except AssertionError as exc:
+            try:
+                leftover = self.tab_ids()
+            except Exception:  # noqa: BLE001 — diagnostics must not mask the cause
+                leftover = ["<unreadable>"]
+            raise AssertionError(
+                f"tab reset left {len(leftover)} tab(s) open: {leftover} ({exc})"
+            ) from exc
