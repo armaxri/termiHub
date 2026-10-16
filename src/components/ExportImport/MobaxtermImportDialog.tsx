@@ -41,7 +41,13 @@ type LoadState =
   | { status: "discovering" }
   | { status: "no-source" }
   | { status: "loading"; path: string }
-  | { status: "ready"; path: string; sessions: MobaxtermSession[]; hostKeys: MobaxtermHostKey[] }
+  | {
+      status: "ready";
+      path: string;
+      sessions: MobaxtermSession[];
+      hostKeys: MobaxtermHostKey[];
+      notes: string[];
+    }
   | { status: "error"; path: string; message: string };
 
 /** The file kinds MobaXterm stores sessions in. */
@@ -100,7 +106,13 @@ export function MobaxtermImportDialog({
       const sessions = preview.sessions ?? [];
       setSelected(new Set(sessions.filter(isImportable).map((s) => s.key)));
       setImportHostKeys(false);
-      setState({ status: "ready", path, sessions, hostKeys: preview.hostKeys ?? [] });
+      setState({
+        status: "ready",
+        path,
+        sessions,
+        hostKeys: preview.hostKeys ?? [],
+        notes: preview.notes ?? [],
+      });
     } catch (err) {
       if (!isCancelled()) setState({ status: "error", path, message: describeError(err) });
     }
@@ -269,6 +281,17 @@ export function MobaxtermImportDialog({
             title="No saved MobaXterm sessions were found in this file."
             data-testid="mobaxterm-import-empty"
           />
+        )}
+
+        {state.status === "ready" && state.notes.length > 0 && (
+          <ul className="mobaxterm-import__file-notes" data-testid="mobaxterm-import-file-notes">
+            {state.notes.map((note) => (
+              <li key={note} className="mobaxterm-import__note">
+                <AlertTriangle size={12} aria-hidden />
+                {note}
+              </li>
+            ))}
+          </ul>
         )}
 
         {state.status === "ready" && sessions.length > 0 && (

@@ -225,17 +225,23 @@ termiHub uses a VS Code-inspired three-column layout:
 
 **Import/Export** — Use the gear icon to export connections to JSON or import from a JSON file.
 
-**Import from other tools** — The Connections header imports from your `~/.ssh/config` and from a CSV / host inventory. Migrating from **MobaXterm** is a one-time step under **Settings → Import & Migration** (also in the gear menu as **Import from MobaXterm…**):
-
-- The settings page tells you whether it found your MobaXterm configuration (on Windows: `%APPDATA%\MobaXterm\MobaXterm.ini` for the installed edition, or a `MobaXterm` folder in your Documents). **Import from MobaXterm…** opens a preview of it right away. On any OS — and for the portable edition, whose `MobaXterm.ini` sits next to its `.exe` — click **Choose file…** and pick a `MobaXterm.ini` or an exported `.mxtsessions` file (MobaXterm: right-click **User sessions** → **Export all sessions to file**).
-- The preview lists every saved session with its type, target and MobaXterm folder. SSH (host, port, user, private key, SSH gateways as jump hosts), Telnet, Serial, RDP, VNC, FTP, SFTP (imported as SSH), local shell and WSL sessions are importable; anything else (Browser, Mosh, XDMCP, Rsh, File, S3) is listed as **Not imported** with the reason. Notes under a session point out settings that were not carried over, such as a login command or a network proxy — check serial line settings after import.
-- Pick a target folder and the sessions to import; MobaXterm's folder tree is recreated under it, existing folders with the same name are reused, and names that already exist get a "(2)" suffix.
-- MobaXterm path placeholders in key paths (`_ProfileDir_`, `_MyDocuments_`, `_CurrentDrive_`, …) are resolved for this computer. Files in UTF-8 or MobaXterm's Windows-1252 encoding are both read.
-- **Passwords are never imported.** MobaXterm keeps them in its own encrypted vault (in the Windows registry), which termiHub does not read — you are asked for the password on first connect. Host keys and global MobaXterm settings are not imported either.
+**Import from other tools** — The Connections header imports from your `~/.ssh/config` and from a CSV / host inventory. Migrating from **MobaXterm** is a one-time step, described in [Importing from MobaXterm](#importing-from-mobaxterm) below.
 
 **External Connection Files** — Load shared connection configs from external JSON files (e.g., from a git repo). Add them in Settings > External Connection Files. External connections appear read-only with a git-folder icon.
 
 **Environment Variable Placeholders** — Use `${VAR}` syntax in any connection field to substitute environment variables at connect time (e.g., `${HOME}/.ssh/id_rsa`). Unknown variables expand to an empty string. A leading `~` is also expanded to the user's home directory.
+
+#### Importing from MobaXterm
+
+The import lives under **Settings → Import & Migration** (also in the gear menu as **Import from MobaXterm…**). It always shows a preview first and creates nothing until you click **Import**.
+
+- **Finding the file** — The settings page tells you whether it found your MobaXterm configuration (on Windows: `%APPDATA%\MobaXterm\MobaXterm.ini` for the installed edition, or a `MobaXterm` folder in your Documents). **Import from MobaXterm…** opens a preview of it right away. On any OS — and for the portable edition, whose `MobaXterm.ini` sits next to its `.exe` — click **Choose file…** and pick a `MobaXterm.ini` or an exported `.mxtsessions` file (MobaXterm: right-click **User sessions** → **Export all sessions to file**). Files in UTF-8 or MobaXterm's Windows-1252 encoding are both read.
+- **Sessions** — SSH (host, port, user, private key), Telnet, Serial, RDP, VNC, FTP, SFTP (imported as SSH), local shell and WSL sessions are importable; anything else (Browser, Mosh, XDMCP, Rsh, File, S3) is listed as **Not imported** with the reason. MobaXterm's folder tree is recreated under the target folder you pick, existing folders with the same name are reused, and names that already exist get a "(2)" suffix. Path placeholders in key paths (`_ProfileDir_`, `_MyDocuments_`, `_CurrentDrive_`, …) are resolved for this computer.
+- **Gateways** — SSH gateways become the SSH connection's jump-host chain; a single VNC SSH gateway becomes the VNC SSH tunnel.
+- **Host keys (opt-in)** — The SSH host keys MobaXterm has accepted are listed with their fingerprints. They are trusted only if you tick **Also import N trusted host keys**; a key is never imported when termiHub (or your `~/.ssh/known_hosts`) already trusts a different key for that host.
+- **Appearance** — A session whose font, font size or cursor style differs from MobaXterm's defaults keeps it as a per-connection terminal option (point sizes are converted to termiHub's pixel sizes); sessions at the defaults keep following termiHub's global appearance settings. Telnet sessions also keep their terminal type.
+- **Preview notes** — Settings termiHub has no counterpart for stay a note under the session, never applied silently: a login command, a network proxy, an RDP SSH gateway or RD Gateway, a multi-hop VNC gateway, a non-UTF-8 character set, custom session colours, a fixed terminal size, or a terminal type other than xterm on SSH and local sessions. MobaXterm's global `[Font]`, `[Colors]` and `[Cursor]` settings are reported as a note at the top of the preview. Check serial line settings after import.
+- **Passwords are never imported.** MobaXterm keeps them in its own encrypted vault (in the Windows registry), which termiHub does not read — you are asked for the password on first connect.
 
 ### Connection Types
 

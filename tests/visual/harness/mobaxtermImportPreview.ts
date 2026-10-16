@@ -2,7 +2,8 @@
  * The `mobaxtermImport` scenario of the rendered visual checks (#4850): a
  * discovered MobaXterm configuration whose preview mixes importable sessions
  * (with and without notes, nested folders, long names) and skipped ones, so the
- * import dialog renders every row kind. All data is synthetic.
+ * import dialog renders every row kind, plus a file-level note (#4854). All
+ * data is synthetic.
  */
 
 /** `discover_mobaxterm_configs`: one installed-edition configuration. */
@@ -104,5 +105,8 @@ export const MOBAXTERM_PREVIEW = {
       status: "invalid",
       reason: "DSA host keys are obsolete and not supported.",
     },
+  ],
+  notes: [
+    "MobaXterm's global appearance settings ([Font], [Colors]) were not imported; set termiHub's font, colours and cursor under Settings → Appearance.",
   ],
 };
