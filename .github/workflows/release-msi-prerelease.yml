@@ -33,7 +33,8 @@ on:
         required: true
         default: '0.0.0-beta.1'
   push:
-    branches: [develop]
+    # TEMPORARY (#4442): run once on the PR branch to prove the lane; removed before merge.
+    branches: [develop, dev9/ci/4442-beta-msi-dry-run]
     paths:
       - '.github/workflows/release-msi-prerelease.yml'
       - '.github/actions/msi-version-fragment/**'
