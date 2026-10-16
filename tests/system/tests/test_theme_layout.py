@@ -22,6 +22,14 @@ THEME_SELECT = "appearance-theme-select"
 
 
 class TestThemeLayout(TabsUi, SettingsUi, SystemTest):
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave the Customize Layout dialog (or the gear
+        # menu) open, plus the Settings tab; the rerun would click the gear
+        # behind the dialog (#4834). The layout toggles are compared to their
+        # value before each test, so they need no reset.
+        self.dismiss_modals("layout-close")
+        self.reset_tabs()
+
     def _open_customize_layout(self) -> None:
         self.driver.click("activity-bar-settings")
         self.wait(lambda: self.driver.exists("settings-menu-customize-layout"), what="the gear menu")

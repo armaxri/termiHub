@@ -129,6 +129,16 @@ class TestWorkspaceRestoreUi(
 ):
     """Last-session restore, then workspace launch (CLI, sidebar, multi-window)."""
 
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave the save-workspace or launch-confirm dialog
+        # (or a tab rename) open over the main window; each test lays out its
+        # own tabs, so only the dialogs need closing (#4834).
+        self.dismiss_modals(
+            "save-workspace-dialog",
+            "confirm-launch-workspace-dialog",
+            "confirm-overwrite-workspace-dialog",
+        )
+
     # ── Settings ─────────────────────────────────────────────────────────────
     def _restore_mode(self) -> Any:
         return self.projection_region_cache(SETTINGS_REGION).get("restoreLastSessionMode")

@@ -18,6 +18,11 @@ pytestmark = pytest.mark.integration
 
 
 class TestSettings(TerminalUi, TabsUi, LayoutUi, SettingsUi, SystemTest):
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave the gear menu open; the rerun's click on the
+        # gear would then toggle it shut instead of opening it (#4834).
+        self.dismiss_modals()
+
     # ── Settings tab + gear menu ────────────────────────────────────────────
     def test_opens_a_settings_tab(self):
         self.close_all_tabs()

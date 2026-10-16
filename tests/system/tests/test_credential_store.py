@@ -56,6 +56,12 @@ class TestCredentialStore(
     SidebarUi,
     SystemTest,
 ):
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave the unlock dialog (or its reset confirm, or
+        # the SSH password prompt) open; the tests carry the store's lock state
+        # forward on purpose, so close the dialogs only (Escape = Skip) (#4834).
+        self.dismiss_modals("unlock-dialog-skip", "unlock-dialog-reset-confirm")
+
     def test_indicator_hidden_in_none_mode(self):
         # Runs first, before any store is set up: the app launches in "none" mode,
         # where the status-bar credential indicator must not render (it is a

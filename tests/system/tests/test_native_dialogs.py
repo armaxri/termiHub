@@ -90,6 +90,22 @@ class TestNativeDialogs(
     """Native-dialog flows: harness stubs the dialog's result, drives the flow
     and verifies the file or store."""
 
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave its export/import/vault/diagnostics dialog
+        # open, and a dirty scratch editor tab behind it; the rerun's own
+        # close_all_tabs would click under that dialog (#4834). Markers are the
+        # testids each dialog mounts only while open.
+        self.dismiss_modals(
+            "export-dialog-title",
+            "import-submit",
+            "vault-export-submit",
+            "vault-import-title",
+            "shared-credential-dialog-title",
+            "open-saved-file-cancel",
+            "diagnostics-export-dialog",
+        )
+        self.reset_tabs()
+
     # ── Helpers ──────────────────────────────────────────────────────────────
     def _scratch(self, prefix: str, name: str) -> Path:
         """A fresh temp path a stubbed dialog saves to / picks."""
