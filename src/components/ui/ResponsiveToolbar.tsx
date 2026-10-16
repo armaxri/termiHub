@@ -221,9 +221,10 @@ export interface ResponsiveToolbarProps {
  * The shared width-responsive action strip (#4709, #4824). Actions render
  * labelled while they all fit; below that the primary action (if one is
  * declared) stays inline and everything else moves into a single overflow "…"
- * menu, so a control is never clipped or hidden whatever the sidebar width. Width comes from a
- * `ResizeObserver`; the labelled widths come from an invisible measuring copy,
- * so the decision never oscillates with the layout it produces.
+ * menu, so a control is never clipped or hidden whatever the sidebar width.
+ * Width comes from a `ResizeObserver`; the labelled widths come from an
+ * invisible measuring copy, so the decision never oscillates with the layout
+ * it produces.
  */
 export function ResponsiveToolbar({
   actions,
@@ -304,12 +305,10 @@ export function ResponsiveToolbar({
     [available, metrics, primaryIndex]
   );
 
+  // Filter by index (not `actions[i]`): metrics can lag a changed action list
+  // by one render, and a stale index must never yield an undefined action.
   const inline =
-    layout.mode === "full"
-      ? actions
-      : layout.inlineIndex !== null
-        ? [actions[layout.inlineIndex]]
-        : [];
+    layout.mode === "full" ? actions : actions.filter((_, i) => i === layout.inlineIndex);
   const overflow = layout.mode === "full" ? [] : actions.filter((_, i) => i !== layout.inlineIndex);
 
   const classes = ["ui-toolbar", className ?? ""].filter(Boolean).join(" ");
