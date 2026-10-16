@@ -30,6 +30,14 @@
 #     --profile minimal
 #   cargo install cargo-fuzz --locked
 # FUZZ_TOOLCHAIN=<toolchain> overrides the pin (e.g. FUZZ_TOOLCHAIN=nightly).
+#
+# The fuzz build targets the toolchain's own host triple, passed to cargo-fuzz
+# explicitly: cargo-fuzz otherwise defaults --target to the triple IT was built
+# for, and the prebuilt Linux binary CI installs is the musl one, whose static
+# libc ASan refuses (#4825). FUZZ_TARGET_TRIPLE=<triple> overrides it.
+#
+# Every target is built before any is fuzzed. A build failure exits non-zero
+# with the build error and is never reported as a fuzz finding.
 set -euo pipefail
 
 usage() {
@@ -81,18 +89,41 @@ if ! cargo "+$TOOLCHAIN" fuzz --version >/dev/null 2>&1; then
   exit 2
 fi
 
+TRIPLE="${FUZZ_TARGET_TRIPLE:-$(rustc "+$TOOLCHAIN" -vV | sed -n 's/^host: //p')}"
+if [ -z "$TRIPLE" ]; then
+  echo "could not read the host triple of the $TOOLCHAIN toolchain" >&2
+  exit 2
+fi
+
 echo "== regenerating the seed corpus"
 (cd fuzz && cargo "+$TOOLCHAIN" run --quiet --bin gen-seeds -- "$CORPUS")
+
+# Build first, so a broken build fails loudly as a build failure and is not
+# reported as a crash with a reproducer that does not exist.
+for target in "${TARGETS[@]}"; do
+  echo "== building $target for $TRIPLE"
+  if ! cargo "+$TOOLCHAIN" fuzz build --target "$TRIPLE" "$target"; then
+    echo "::error::fuzz target $target failed to BUILD for $TRIPLE (no fuzzing ran; see the build error above)"
+    exit 1
+  fi
+done
 
 status=0
 for target in "${TARGETS[@]}"; do
   echo "== fuzzing $target for ${SECONDS_PER_TARGET}s"
+  artifacts="$FUZZ_DIR/artifacts/$target"
+  before="$(find "$artifacts" -type f 2>/dev/null | wc -l | tr -d ' ')"
   # -timeout: one input taking >10 s is a hang. -rss_limit_mb: a frame is
   # capped at 1 MiB, so 2 GiB of RSS means an unbounded allocation.
-  if ! cargo "+$TOOLCHAIN" fuzz run "$target" "$CORPUS/$target" -- \
+  if ! cargo "+$TOOLCHAIN" fuzz run --target "$TRIPLE" "$target" "$CORPUS/$target" -- \
     -max_total_time="$SECONDS_PER_TARGET" -timeout=10 -rss_limit_mb=2048 \
     -print_final_stats=1; then
-    echo "::error::fuzz target $target failed; reproducer under plugin-runner/fuzz/artifacts/$target/"
+    after="$(find "$artifacts" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "$after" -gt "$before" ]; then
+      echo "::error::fuzz target $target found a crash; reproducer under plugin-runner/fuzz/artifacts/$target/"
+    else
+      echo "::error::fuzz target $target failed without writing a reproducer (see the output above)"
+    fi
     status=1
   fi
 done
