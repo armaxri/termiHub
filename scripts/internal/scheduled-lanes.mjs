@@ -36,8 +36,13 @@
 //              true (default) when the lane's own `schedule:` grades develop,
 //              so once the file is on `main` its cron takes over and the
 //              dispatcher stops dispatching it. false when only a dispatched
-//              run produces what develop needs (integration-fixtures: only a
-//              dispatched run is instrumented for coverage).
+//              run produces what develop needs. That is every MAIN-RESIDENT
+//              lane whose job bodies must match develop (#4449): a scheduled
+//              run executes main's copy of the YAML, so its job definitions
+//              lag develop's until the next release. system-integration and
+//              integration-fixtures are false; their own `schedule:` grades
+//              main only. The drift guard reports `jobs-differ` for a lane
+//              whose own schedule grades develop with stale job bodies.
 
 /** Hours a lane may go without a successful develop run before the heartbeat fails. */
 export const HEARTBEAT_HOURS = { daily: 36, weekly: 8 * 24 };
@@ -63,9 +68,10 @@ export const LANES = [
     sources: [SCHEDULE, DEVELOP_DISPATCH],
   },
   {
-    // Only a dispatched run is instrumented and uploads the
-    // `integration-coverage` lcov that coverage.yml overlays (TOOL-005), so
-    // main's own (uninstrumented) schedule does not count.
+    // Main-resident, but dispatched (#4449): only a dispatched run executes
+    // develop's YAML, and only it is instrumented and uploads the
+    // `integration-coverage` lcov that coverage.yml overlays (TOOL-005). Its
+    // own schedule grades main only (weekly), so scheduled runs do not count.
     file: "integration-fixtures.yml",
     cadence: "daily",
     cron: "41 3 * * *",
@@ -97,13 +103,19 @@ export const LANES = [
     sources: [SCHEDULE, DEVELOP_DISPATCH, DEVELOP_PUSH],
   },
   {
-    // Main-resident: its own schedule fires from main and checks out develop.
-    // Watched by the heartbeat only.
+    // Main-resident, but dispatched (#4449): a scheduled run executes MAIN's
+    // copy of the workflow, whose job bodies lag develop's between releases
+    // (main's copy built no RDP sidecar and provisioned no Windows sshd, so
+    // those suites never ran nightly). Only a dispatched run executes
+    // develop's YAML. Its own schedule now grades main only (weekly), so
+    // scheduled runs do not count.
     file: "system-integration.yml",
     cadence: "daily",
-    cron: null,
-    dispatch: false,
-    sources: [SCHEDULE, DEVELOP_DISPATCH],
+    cron: "5 5 * * *",
+    dispatch: true,
+    ownSchedule: false,
+    inputs: { branch: "develop" },
+    sources: [DEVELOP_DISPATCH],
   },
   {
     file: "plugin-sandbox-nightly.yml",
@@ -193,6 +205,26 @@ export function normalizedOnBlock(text) {
   const block = extractOnBlock(text);
   if (!block) return null;
   return block
+    .map((l) => stripComment(l).trimEnd())
+    .filter((l) => l.trim() !== "")
+    .join("\n");
+}
+
+/**
+ * Everything in a workflow EXCEPT its top-level `on:` block (the name,
+ * concurrency, permissions, env and jobs), with comments, blank lines and
+ * trailing whitespace removed. Two copies that differ only in commentary or in
+ * their triggers compare equal (#4449).
+ *
+ * @param {string} text workflow YAML
+ * @returns {string}
+ */
+export function normalizedBody(text) {
+  const lines = text.split(/\r?\n/);
+  const on = extractOnBlock(text);
+  const start = on ? lines.findIndex((l) => /^(on|"on"|'on')\s*:/.test(l)) : -1;
+  const kept = start === -1 ? lines : [...lines.slice(0, start), ...lines.slice(start + on.length)];
+  return kept
     .map((l) => stripComment(l).trimEnd())
     .filter((l) => l.trim() !== "")
     .join("\n");

@@ -16,8 +16,17 @@ name: Integration (Docker fixtures)
 
 on:
   schedule:
-    # 03:17 UTC daily (off the top of the hour to dodge scheduler congestion).
-    - cron: "17 3 * * *"
+    # main ONLY — weekly, Wednesday 03:17 UTC (off the top of the hour to dodge
+    # scheduler congestion). A scheduled run executes MAIN's copy of this file
+    # and checks out main, so main is graded with its own job definitions.
+    #
+    # The DAILY develop nightly is not a cron here (#4449): GitHub would run
+    # main's copy of this YAML against develop's tree, and main's job bodies lag
+    # develop's between releases. scheduled-dispatch.yml dispatches it at 03:41
+    # UTC instead (`gh workflow run integration-fixtures.yml --ref develop`),
+    # which executes develop's YAML and is instrumented for coverage. Registry:
+    # scripts/internal/scheduled-lanes.mjs.
+    - cron: "17 3 * * 3"
   workflow_dispatch:
   # Called by release-candidate.yml (#3652) on the exact release commit; the
   # checkouts below default to the caller's sha, and no path filter applies.
@@ -165,11 +174,9 @@ jobs:
       # the cargo-llvm-cov install is non-fatal and the suite falls back to a
       # plain `cargo test` without it (MEASURE_COVERAGE_OPTIONAL).
       #
-      # NOT on `schedule` either (#3664): a scheduled run fires from main but
-      # checks out develop, so its run metadata (branch, head_sha) would not
-      # match the code it measured and fetch-integration-coverage.mjs would
-      # merge develop's lcov into main's report. develop's instrumented run is
-      # the scheduled-dispatch.yml dispatch (#4277).
+      # NOT on `schedule` either (#3664): the weekly cron grades main, and the
+      # nightly merge reads develop's lcov from develop's instrumented run, the
+      # scheduled-dispatch.yml dispatch (#4277, #4449).
       MEASURE_COVERAGE: >-
         ${{ (github.event_name == 'workflow_dispatch'
         && contains(github.workflow_ref, '/.github/workflows/integration-fixtures.yml@'))
@@ -180,12 +187,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # The nightly grades develop, the active branch (#3664). A scheduled
-          # run fires from the default branch (main), so without this it would
-          # only ever re-test main's frozen code. Every other trigger keeps
-          # checkout's default ref: a PR's merge ref, the dispatching branch, or
-          # the release-candidate caller's sha.
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          # checkout's default ref: a PR's merge ref, the dispatching branch
+          # (develop for the nightly dispatch), main for the weekly cron, or the
+          # release-candidate caller's sha (#4449).
           persist-credentials: false
 
       - name: Docker Hub resilience (mirror + pre-pulled images)
@@ -539,7 +543,7 @@ jobs:
     # costs a macOS and a Windows runner. Dispatch this workflow on a branch to
     # try it. The whole recipe (fixture up -> suite -> sshd log on failure ->
     # teardown) is scripts/internal/run-native-sshd-suites.sh in the checked-out
-    # tree, so a scheduled run (main's copy of this file) runs develop's recipe.
+    # tree, so the graded tree's recipe runs whatever copy of this file fired.
     if: github.event_name != 'pull_request'
     name: SSH/SFTP journeys against native sshd (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -553,8 +557,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Nightly grades develop; see core-integration's checkout (#3664).
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false
 
       - name: Setup Rust
@@ -595,8 +597,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Nightly grades develop; see core-integration's checkout (#3664).
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false
 
       - name: Docker Hub resilience (mirror)

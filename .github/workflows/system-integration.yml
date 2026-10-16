@@ -31,12 +31,17 @@ name: System Integration (nightly)
 
 on:
   schedule:
-    # develop — daily ~05:00 UTC (:05 off the top of the hour to dodge scheduler
-    # congestion). Which branch each schedule grades is resolved by the `setup`
-    # job below from github.event.schedule.
-    - cron: "5 5 * * *"
-    # main — weekly, Wednesday ~05:00 UTC. Both crons fire on Wednesday, so that
-    # day gets a develop run (daily) AND a main run (weekly) as separate runs.
+    # main ONLY — weekly, Wednesday ~05:00 UTC (:05 off the top of the hour to
+    # dodge scheduler congestion). A scheduled run executes MAIN's copy of this
+    # file, so it grades main with main's own job definitions.
+    #
+    # The DAILY develop nightly is not a cron here (#4449): GitHub would run
+    # main's copy of this YAML against develop's tree, and main's job bodies lag
+    # develop's between releases (main's copy built no RDP sidecar and
+    # provisioned no Windows sshd, so those suites never ran nightly).
+    # scheduled-dispatch.yml dispatches it at 05:05 UTC instead
+    # (`gh workflow run system-integration.yml --ref develop -f branch=develop`),
+    # which executes develop's YAML. Registry: scripts/internal/scheduled-lanes.mjs.
     - cron: "5 5 * * 3"
   workflow_dispatch:
     inputs:
@@ -60,9 +65,10 @@ on:
         type: string
         required: true
 
-# Key concurrency on the trigger so the daily-develop and weekly-main runs (which
-# overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
-# same trigger still cancels the older in-flight run.
+# Key concurrency on the trigger so the daily-develop dispatch (group "develop")
+# and the weekly-main cron (group = the cron), which overlap on Wednesday, do not
+# cancel each other, while a redundant re-fire of the same trigger still cancels
+# the older in-flight run.
 # A release-candidate call keys on its sha, so it neither cancels nor is
 # cancelled by the nightly/manual runs. A `dispatched` run keys on its dispatch
 # ref, so it never touches the nightly/develop/main groups and a re-dispatch of
@@ -79,8 +85,9 @@ permissions:
   contents: read
 
 jobs:
-  # Resolve which branch(es) this run grades from the trigger: the daily cron →
-  # develop, the Wednesday cron → main, a manual dispatch → the chosen input
+  # Resolve which branch(es) this run grades from the trigger: the (weekly) cron →
+  # main, a dispatch → the chosen input (the develop nightly is the
+  # scheduled-dispatch.yml dispatch with `develop`, #4449)
   # (default both; `dispatched` → the dispatch ref's exact sha), a
   # release-candidate call → its exact sha. Emitted as a JSON
   # array the matrix below expands over (each entry is a checkout ref).
@@ -107,10 +114,8 @@ jobs:
             fi
             echo "branches=[\"${RC_REF}\"]" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "schedule" ]; then
-            case "${{ github.event.schedule }}" in
-              "5 5 * * 3") echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
-              *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
-            esac
+            # The only cron grades main (#4449); develop's nightly is dispatched.
+            echo 'branches=["main"]' >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.inputs.branch }}" in
               develop) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
