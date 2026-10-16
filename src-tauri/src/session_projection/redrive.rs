@@ -105,7 +105,7 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
         // session, since `create_connection` → `create_session` fails "Agent not
         // connected" when the SSH transport was reaped (#2472).
         let type_id = request.type_id.clone();
-        let settings = request.settings.clone();
+        let settings = without_first_connect_only_settings(request.settings.clone());
         let agent_id = request.agent_id.clone();
         // The live agent session id this tab is attached to (#2512). `Some` for a
         // resilient agent tab: the redrive re-attaches to *this* live session
@@ -238,6 +238,27 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
             }
         });
     }
+}
+
+/// Settings that apply only to a connection's first connect, never to an
+/// automatic reconnect (#4866).
+const FIRST_CONNECT_ONLY_KEYS: &[&str] = &["initialCommand"];
+
+/// Drop the [`FIRST_CONNECT_ONLY_KEYS`] from a retained request's settings
+/// before the redrive re-creates the session.
+///
+/// The session manager sends a connection's `initialCommand` after every
+/// `create_connection`, so without this an auto-reconnect would run it again.
+/// A reconnect runs the SSH `onReconnectCommand` instead (frontend,
+/// `runOnReconnectCommand`). The stripped settings are also what the new
+/// session re-retains, so later reconnects stay stripped too.
+fn without_first_connect_only_settings(mut settings: serde_json::Value) -> serde_json::Value {
+    if let Some(map) = settings.as_object_mut() {
+        for key in FIRST_CONNECT_ONLY_KEYS {
+            map.remove(*key);
+        }
+    }
+    settings
 }
 
 /// Re-attach a reconnecting resilient agent tab to its retained **live** agent
@@ -431,5 +452,29 @@ fn clear_retained_on_giveup<R: Runtime>(app: &AppHandle<R>, tab_id: &str) {
 fn sync_timer<R: Runtime>(app: &AppHandle<R>, tab_id: &str) {
     if let Some(driver) = app.try_state::<Arc<ReconnectTimerDriver>>() {
         driver.inner().sync(tab_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_first_connect_only_settings;
+
+    #[test]
+    fn redrive_settings_drop_the_initial_command() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "initialCommand": "tmux new -A -s main",
+            "onReconnectCommand": "tmux attach",
+        });
+        let stripped = without_first_connect_only_settings(settings);
+        assert!(stripped.get("initialCommand").is_none());
+        assert_eq!(stripped["host"], "h");
+        assert_eq!(stripped["onReconnectCommand"], "tmux attach");
+    }
+
+    #[test]
+    fn redrive_settings_leave_non_objects_alone() {
+        let settings = serde_json::Value::Null;
+        assert!(without_first_connect_only_settings(settings).is_null());
     }
 }
