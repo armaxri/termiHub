@@ -99,12 +99,19 @@ pub fn map_appearance(block: &[String], code: u32, connection_type: &str) -> App
     if !has_terminal_block(code) || block.is_empty() {
         return out;
     }
+    out.options = mapped_options(block, &mut out.notes);
+    terminal_type_mapping(block, connection_type, &mut out);
+    unmapped_notes(block, &mut out.notes);
+    out
+}
+
+/// Font family, font size and cursor (indices 0, 1, 9); `None` when none of
+/// them is usable. Unreadable values add a note.
+fn mapped_options(block: &[String], notes: &mut Vec<String>) -> Option<TerminalOptions> {
     let mut opts = TerminalOptions::default();
-    let mut any = false;
 
     if let Some(font) = field(block, 0).filter(|f| !f.eq_ignore_ascii_case("MobaFont")) {
         opts.font_family = Some(css_font_family(&font));
-        any = true;
     }
 
     if let Some(raw) = field(block, 1) {
@@ -113,45 +120,52 @@ pub fn map_appearance(block: &[String], code: u32, connection_type: &str) -> App
                 let px = (pt * 4.0 / 3.0).round() as u32;
                 let clamped = px.clamp(*FONT_SIZE_PX.start(), *FONT_SIZE_PX.end());
                 if clamped != px {
-                    out.notes.push(format!(
+                    notes.push(format!(
                         "Font size {raw} pt is outside termiHub's range; using {clamped} px."
                     ));
                 }
                 opts.font_size = Some(clamped);
-                any = true;
             }
-            _ => out.notes.push(format!(
+            _ => notes.push(format!(
                 "The font size \"{raw}\" could not be read; termiHub's default is used."
             )),
         }
     }
 
     if let Some(cursor) = field(block, 9) {
-        let mapped = match cursor.as_str() {
-            "0" => Some(("block", false)),
-            "1" => Some(("underline", false)),
-            "2" => Some(("bar", false)),
-            "3" => Some(("block", true)),
-            "4" => Some(("underline", true)),
-            "5" => Some(("bar", true)),
-            _ => None,
-        };
-        match mapped {
+        match cursor_style(&cursor) {
             Some((style, blink)) => {
                 opts.cursor_style = Some(style.to_string());
                 opts.cursor_blink = Some(blink);
-                any = true;
             }
-            None => out.notes.push(format!(
+            None => notes.push(format!(
                 "Unknown cursor type {cursor}; termiHub's default cursor is used."
             )),
         }
     }
 
-    terminal_type_mapping(block, connection_type, &mut out);
+    let any = opts.font_family.is_some() || opts.font_size.is_some() || opts.cursor_style.is_some();
+    any.then_some(opts)
+}
 
+/// MobaXterm cursor type → (xterm.js cursor style, blink).
+fn cursor_style(code: &str) -> Option<(&'static str, bool)> {
+    match code {
+        "0" => Some(("block", false)),
+        "1" => Some(("underline", false)),
+        "2" => Some(("bar", false)),
+        "3" => Some(("block", true)),
+        "4" => Some(("underline", true)),
+        "5" => Some(("bar", true)),
+        _ => None,
+    }
+}
+
+/// Notes for non-default settings termiHub has no per-connection counterpart
+/// for: character set, colours, fixed terminal size.
+fn unmapped_notes(block: &[String], notes: &mut Vec<String>) {
     if let Some(charset) = field(block, 5).filter(|c| c != "15") {
-        out.notes.push(format!(
+        notes.push(format!(
             "The character set ({}) was not imported: termiHub terminals always use UTF-8.",
             charset_label(&charset)
         ));
@@ -163,7 +177,7 @@ pub fn map_appearance(block: &[String], code: u32, connection_type: &str) -> App
         .enumerate()
         .any(|(i, default)| field(block, 6 + i).is_some_and(|v| v.replace(' ', "") != *default));
     if custom_scheme || custom_rgb {
-        out.notes.push(
+        notes.push(
             "The session's own colours were not imported: termiHub connections take their \
              colours from the theme (Settings → Appearance)."
                 .to_string(),
@@ -175,16 +189,11 @@ pub fn map_appearance(block: &[String], code: u32, connection_type: &str) -> App
             (Some(cols), Some(rows)) => format!(" ({cols}×{rows})"),
             _ => String::new(),
         };
-        out.notes.push(format!(
+        notes.push(format!(
             "The fixed terminal size{size} was not imported: termiHub terminals follow the \
              window size."
         ));
     }
-
-    if any {
-        out.options = Some(opts);
-    }
-    out
 }
 
 /// Terminal type (index 13): Telnet negotiates it, so a terminfo name maps to
