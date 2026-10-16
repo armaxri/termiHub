@@ -66,6 +66,18 @@ describe("buildMobaxtermImportPlan", () => {
     });
   });
 
+  it("carries MobaXterm terminal appearance onto the connection's terminal options", () => {
+    const terminalOptions = { fontSize: 16, cursorStyle: "bar" as const, cursorBlink: true };
+    const plan = buildMobaxtermImportPlan([session({ terminalOptions })], null, [], []);
+    expect(plan.connections[0].terminalOptions).toEqual(terminalOptions);
+    expect(plan.connections[0].terminalOptions).not.toBe(terminalOptions);
+  });
+
+  it("leaves terminal options unset when the session has none", () => {
+    const plan = buildMobaxtermImportPlan([session({})], null, [], []);
+    expect(plan.connections[0]).not.toHaveProperty("terminalOptions");
+  });
+
   it("recreates nested folders once, parents first, under the target folder", () => {
     const target: ConnectionFolder = {
       id: "Imported",

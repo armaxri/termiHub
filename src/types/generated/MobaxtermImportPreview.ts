@@ -21,4 +21,9 @@ sessions: Array<MobaxtermSession>,
 /**
  * Every `[SSH_Hostkeys]` entry, importable and skipped, in file order.
  */
-hostKeys: Array<MobaxtermHostKey>, };
+hostKeys: Array<MobaxtermHostKey>, 
+/**
+ * File-level remarks, e.g. global appearance sections that were not
+ * imported (#4854).
+ */
+notes: Array<string>, };
