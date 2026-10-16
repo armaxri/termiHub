@@ -296,6 +296,20 @@ for (const win of WINDOWS) {
       await report.finish();
     });
 
+    test("mobaxterm import preview", async ({ page }, testInfo) => {
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page, { mobaxtermImport: true });
+      await showSidebar(page, "connections");
+      // The real flow: header action → discovery → preview of the found file.
+      await page.locator("[data-testid=connection-list-import-mobaxterm]").click();
+      await page.locator("[data-testid=mobaxterm-import-list]").waitFor();
+      await report.check("dialog/mobaxterm-import", "[role=dialog]");
+      const skipped = page.locator("[data-testid=mobaxterm-import-skipped]");
+      await skipped.scrollIntoViewIfNeeded();
+      await report.check("dialog/mobaxterm-import-skipped", "[role=dialog]");
+      await report.finish();
+    });
+
     for (const { name, action, args } of STORE_DIALOGS) {
       test(`${name} dialog`, async ({ page }, testInfo) => {
         const report = new SurfaceReport(page, testInfo, win.name);
