@@ -100,6 +100,15 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const [clipboardOpen, setClipboardOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [clipboardDraft, setClipboardDraft] = useState("");
+  // The user edited the draft since it last matched the remote (#4836): a
+  // remote change then waits behind a notice instead of overwriting the draft.
+  const draftEditedRef = useRef(false);
+  const clipboardDraftRef = useRef(clipboardDraft);
+  useEffect(() => {
+    clipboardDraftRef.current = clipboardDraft;
+  }, [clipboardDraft]);
+  // A remote clipboard change that arrived while the user was typing (#4836).
+  const [pendingRemoteClipboard, setPendingRemoteClipboard] = useState<string | null>(null);
   // Files the remote copied to its clipboard, surfaced for a local paste (#1804).
   // Empty where the host has no delayed-render binding (non-macOS today).
   const [clipboardFiles, setClipboardFiles] = useState<RemoteClipboardFile[]>([]);
@@ -266,14 +275,29 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     }
   }, []);
 
+  // Show remote clipboard text in the panel: straight into the draft, or —
+  // while the user has unsent edits that differ — as a pending change they can
+  // apply (#4836).
+  const offerRemoteClipboard = useCallback((text: string) => {
+    if (draftEditedRef.current && text !== clipboardDraftRef.current) {
+      setPendingRemoteClipboard(text);
+      return;
+    }
+    draftEditedRef.current = false;
+    setPendingRemoteClipboard(null);
+    setClipboardDraft(text);
+  }, []);
+
   const handleToggleClipboard = useCallback(() => {
     setClipboardOpen((open) => {
       const next = !open;
       // Pull the current remote clipboard text + surfaced files when opening.
       if (next && session.sessionId) {
+        draftEditedRef.current = false;
+        setPendingRemoteClipboard(null);
         void remoteDesktopGetClipboard(session.sessionId)
           .then((text) => {
-            if (text) setClipboardDraft(text);
+            if (text) offerRemoteClipboard(text);
           })
           .catch((err: unknown) => {
             // The panel still opens with the last draft; tell the user it is stale.
@@ -284,7 +308,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
       }
       return next;
     });
-  }, [session]);
+  }, [session, offerRemoteClipboard]);
 
   const handleToggleFiles = useCallback(() => {
     setFilesOpen((open) => {
@@ -304,14 +328,31 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     }
   }, [session]);
 
-  // Reflect an incoming remote clipboard into the draft while the panel is open.
+  // Reflect an incoming remote clipboard into the draft while the panel is open
+  // — pushed live by the backend for server-side copies (#4836). Never
+  // clobbers a draft the user is typing: that change waits behind a notice.
   useEffect(() => {
     if (clipboardOpen && session.remoteClipboard !== null) {
-      setClipboardDraft(session.remoteClipboard);
+      offerRemoteClipboard(session.remoteClipboard);
     }
-  }, [clipboardOpen, session.remoteClipboard]);
+  }, [clipboardOpen, session.remoteClipboard, offerRemoteClipboard]);
+
+  const handleClipboardDraftChange = useCallback((text: string) => {
+    draftEditedRef.current = true;
+    setClipboardDraft(text);
+  }, []);
+
+  const handleApplyRemoteClipboard = useCallback(() => {
+    if (pendingRemoteClipboard === null) return;
+    draftEditedRef.current = false;
+    setClipboardDraft(pendingRemoteClipboard);
+    setPendingRemoteClipboard(null);
+  }, [pendingRemoteClipboard]);
 
   const handleSendClipboard = useCallback(() => {
+    // The remote now holds the draft, so it is in sync again.
+    draftEditedRef.current = false;
+    setPendingRemoteClipboard(null);
     session.sendClipboard(clipboardDraft);
     toast.success("Clipboard sent to remote");
   }, [session, clipboardDraft]);
@@ -445,10 +486,27 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
             className="rd-clipboard__text"
             aria-label="Remote clipboard text"
             value={clipboardDraft}
-            onChange={(e) => setClipboardDraft(e.target.value)}
+            onChange={(e) => handleClipboardDraftChange(e.target.value)}
             placeholder="Text synced with the remote clipboard…"
             data-testid="remote-desktop-clipboard-text"
           />
+          {pendingRemoteClipboard !== null && (
+            <div
+              className="rd-clipboard__changed"
+              role="status"
+              data-testid="remote-desktop-clipboard-changed"
+            >
+              <span>Remote clipboard changed</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleApplyRemoteClipboard}
+                data-testid="remote-desktop-clipboard-apply"
+              >
+                Apply
+              </Button>
+            </div>
+          )}
           <Button
             variant="secondary"
             size="sm"

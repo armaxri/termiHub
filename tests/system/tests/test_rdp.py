@@ -149,15 +149,6 @@ class _RdpSuite(
         assert self.driver.exists(self.RECONNECT)
         return text
 
-    def reopen_clipboard_panel(self) -> None:
-        """Close and reopen the clipboard panel, so it re-reads the remote clipboard."""
-        self.driver.click(self.CLIPBOARD_BUTTON)
-        self.wait(lambda: not self.driver.exists(self.CLIPBOARD_TEXT), what="the panel to close")
-        self.driver.click(self.CLIPBOARD_BUTTON)
-        self.wait(lambda: self.driver.exists(self.CLIPBOARD_TEXT), what="the panel to reopen")
-        # The read on open is asynchronous: give it a moment to land.
-        time.sleep(0.5)
-
     @staticmethod
     def resize_target(canvas: tuple[int, int]) -> tuple[int, int]:
         """A window size that really changes the tab's canvas (see test_vnc.py)."""
@@ -261,12 +252,14 @@ class TestRdpSession(_RdpSuite):
             # CLIPRDR initialises asynchronously after logon: re-offer.
             self.driver.type(self.CLIPBOARD_TEXT, ping)
             self.driver.click(self.CLIPBOARD_SEND)
-            time.sleep(1.0)
-            # The panel reads the remote clipboard when it opens; a server copy
-            # made while it is open is not pushed into it (#4828). Reopen it
-            # to pull the server's echo.
-            self.reopen_clipboard_panel()
-            return self.driver.get_value(self.CLIPBOARD_TEXT) == pong
+            # The server's copy is pushed into the still-open panel (#4836):
+            # watch it rather than reopening the panel to pull it.
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                if self.driver.get_value(self.CLIPBOARD_TEXT) == pong:
+                    return True
+                time.sleep(0.25)
+            return False
 
         self.wait(
             echoed,

@@ -10,18 +10,21 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use tracing::{debug, warn};
 use vnc::VncEvent;
 
 use crate::connection::clipboard_dib::dib_to_image;
-use crate::connection::ClipboardImage;
+use crate::connection::{ClipboardImage, ClipboardTextReceiver};
 
 /// The mirrored remote clipboard and what the server's clipboard can carry.
 #[derive(Default)]
 pub(super) struct VncClipboard {
     /// Latest remote clipboard text, surfaced via `get_clipboard`.
     text: Mutex<String>,
+    /// Notified on every `ServerCutText`, so the desktop can push a remote copy
+    /// into an open clipboard panel (#4836).
+    changes: watch::Sender<String>,
     /// Latest remote clipboard image, already validated against the caps;
     /// cleared when the remote copies text.
     image: Mutex<Option<ClipboardImage>>,
@@ -37,6 +40,7 @@ impl VncClipboard {
             VncEvent::Text(text) => {
                 *self.image.lock().await = None;
                 *self.text.lock().await = text.clone();
+                self.changes.send_replace(text.clone());
             }
             VncEvent::ClipboardCapabilities(caps) => {
                 debug!(
@@ -72,6 +76,11 @@ impl VncClipboard {
     pub(super) async fn text(&self) -> Option<String> {
         let text = self.text.lock().await;
         (!text.is_empty()).then(|| text.clone())
+    }
+
+    /// Subscribe to the server's clipboard text changes (#4836).
+    pub(super) fn subscribe(&self) -> ClipboardTextReceiver {
+        self.changes.subscribe()
     }
 
     /// The remote clipboard image, if its latest copy was one.
@@ -139,6 +148,18 @@ mod tests {
             .on_event(&VncEvent::ClipboardDib(vec![1, 2, 3]))
             .await;
         assert_eq!(clipboard.image().await, None);
+    }
+
+    #[tokio::test]
+    async fn server_cut_text_notifies_subscribers_even_when_repeated() {
+        let clipboard = VncClipboard::default();
+        let mut changes = clipboard.subscribe();
+        assert!(clipboard.on_event(&VncEvent::Text("copied".into())).await);
+        assert!(changes.has_changed().unwrap());
+        assert_eq!(*changes.borrow_and_update(), "copied");
+        // A repeated copy is still a fresh remote copy.
+        assert!(clipboard.on_event(&VncEvent::Text("copied".into())).await);
+        assert!(changes.has_changed().unwrap());
     }
 
     #[tokio::test]
