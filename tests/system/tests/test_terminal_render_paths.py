@@ -65,7 +65,9 @@ LARGE_WINDOW = (1280, 900)
 SMALL_WINDOW = (800, 600)
 #: How long one ``stty size`` probe waits for its answer before it is re-sent.
 #: The DOM and WebGL renderers measure different cells (e.g. 117 vs 111 cols on
-#: a windows runner), so every renderer swap re-fits and resizes the PTY. Git
+#: a windows runner), so a renderer swap on a visible terminal (context loss,
+#: re-lease on show) re-fits and resizes the PTY; a hidden tab keeps its grid
+#: (#4858). Git
 #: Bash under ConPTY can drop the first byte of input that arrives while it
 #: handles that resize (#4841: ``cho AFTER_LOSS_3``), so a missing answer means
 #: "send another probe", not "fail". The probe's wait label is deliberately not
