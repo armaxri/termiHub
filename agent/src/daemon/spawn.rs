@@ -137,6 +137,34 @@ pub fn spawn_detached(command: &mut std::process::Command) -> std::io::Result<st
 /// production callers ignore it. If the reaper thread cannot be spawned the
 /// `Child` is dropped as before (best-effort, never a panic) and `None` is
 /// returned.
+/// Re-enable Ctrl+C for the processes a detached daemon spawns (Windows).
+///
+/// [`configure_detachment`] starts a Windows daemon with
+/// `CREATE_NEW_PROCESS_GROUP`, which turns Ctrl+C processing **off** for the new
+/// group — and that "ignore Ctrl+C" attribute is inherited by every child. The
+/// session daemon is the parent of the session's shell (hosted in a ConPTY), so
+/// without this the shell inherits it too: a `\x03` typed into an agent shell tab
+/// reached the ConPTY but never interrupted the foreground command (#4828).
+///
+/// `SetConsoleCtrlHandler(NULL, FALSE)` restores normal Ctrl+C processing for
+/// the calling process, and children inherit that instead. It is safe for the
+/// daemon itself: it is spawned with `DETACHED_PROCESS`, so it is attached to no
+/// console and never receives a console Ctrl+C event. Call it once, early in the
+/// daemon, before the session's process is spawned. A no-op on unix, where the
+/// daemon's `setsid` does not affect how the shell's PTY delivers `SIGINT`.
+pub fn restore_ctrl_c_for_children() -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+        // Safety: a plain Win32 call; a `None` handler with `FALSE` only clears
+        // the process's inherited ignore-Ctrl+C attribute.
+        if unsafe { SetConsoleCtrlHandler(None, 0) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 #[must_use = "ignoring the handle is fine in production but tests should join it"]
 pub fn reap_detached_child(
     child: std::process::Child,
@@ -186,6 +214,14 @@ mod tests {
             .expect("reaper thread joins")
             .expect("wait() succeeds");
         assert!(status.success(), "the reaped process exited 0");
+    }
+
+    /// Restoring Ctrl+C for the daemon's children succeeds (and is idempotent)
+    /// on every platform — a no-op off Windows (#4828).
+    #[test]
+    fn restore_ctrl_c_for_children_succeeds_and_is_idempotent() {
+        restore_ctrl_c_for_children().expect("first call succeeds");
+        restore_ctrl_c_for_children().expect("a repeat call succeeds");
     }
 
     // ── daemon detachment (issue #995) ───────────────────────────────
