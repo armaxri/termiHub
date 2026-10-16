@@ -256,6 +256,18 @@ pub struct DirtyRect {
     /// message (#4291), not through this serde form. Backends should keep rects
     /// small (dirty regions only) so the payload stays bounded.
     pub data: Vec<u8>,
+    /// The compressed source of `data`, when the backend received this rect as
+    /// a self-describing baseline JPEG (VNC Tight, #4424).
+    ///
+    /// `data` stays authoritative: it is always the decoded RGBA, which keeps
+    /// the VNC shadow framebuffer (CopyRect) and every RGBA-only consumer
+    /// correct. The desktop app may send these bytes to a webview that decodes
+    /// JPEG itself instead of `data`, cutting the IPC cost by roughly an order
+    /// of magnitude for photographic content. In-process only: never part of
+    /// the serde form.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub jpeg: Option<Vec<u8>>,
 }
 
 impl DirtyRect {
@@ -1123,6 +1135,7 @@ mod tests {
             width: 2,
             height: 1,
             data: vec![0; 8],
+            jpeg: None,
         };
         assert!(ok.is_well_formed());
         let bad = DirtyRect {
@@ -1131,6 +1144,7 @@ mod tests {
             width: 2,
             height: 1,
             data: vec![0; 7],
+            jpeg: None,
         };
         assert!(!bad.is_well_formed());
     }
@@ -1393,6 +1407,7 @@ mod tests {
             width,
             height,
             data: vec![0u8; (width as usize) * (height as usize) * 4],
+            jpeg: None,
         }
     }
 
@@ -1483,6 +1498,7 @@ mod tests {
             width: 2,
             height: 2,
             data: vec![0u8; 16],
+            jpeg: None,
         };
         let out = frame(100, 100, vec![hostile]).sanitize().expect("fb ok");
         assert!(out.frame.rects.is_empty());
@@ -1526,6 +1542,7 @@ mod tests {
             width: u32::MAX,
             height: u32::MAX,
             data: Vec::new(),
+            jpeg: None,
         };
         assert!(!hostile.is_well_formed());
         assert_eq!(rgba_len(u32::MAX, u32::MAX), None);

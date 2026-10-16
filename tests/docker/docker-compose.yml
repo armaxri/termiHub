@@ -404,6 +404,25 @@ services:
       timeout: 3s
       retries: 5
 
+  # TigerVNC Xvnc (classic VncAuth) serving a smooth gradient that a Tight
+  # encoder sends as JPEG, plus a looping server-side CopyRect over it (#4821):
+  # the live coverage for JPEG pass-through to the webview (#4424).
+  vnc-jpeg-server:
+    build: ./vnc-jpeg-server
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-vnc-jpeg
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_VNC_JPEG_PORT:-2504}:5900"
+    networks:
+      - test-net
+    profiles:
+      - vnc
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5900"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # The same TigerVNC image serving VeNCrypt with the X509Plain sub-type only:
   # the TLS handshake, then a username/password stage (`testuser`/`testpass`,
   # checked through PAM). Drives the `vnc` backend's VeNCrypt Plain sub-auth

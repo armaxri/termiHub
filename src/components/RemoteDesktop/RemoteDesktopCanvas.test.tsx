@@ -7,7 +7,7 @@ import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { subscribeRemoteDesktopFrames } from "@/services/remoteDesktopFrames";
 import type {
   BinaryCursorShape,
-  BinaryDirtyRect,
+  FrameRect,
   RemoteDesktopFrameHandlers,
 } from "@/services/remoteDesktopFrames";
 import { remoteDesktopRequestFullFrame } from "@/services/api";
@@ -20,7 +20,7 @@ interface TestFrame {
   session_id: string;
   width: number;
   height: number;
-  rects: BinaryDirtyRect[];
+  rects: FrameRect[];
 }
 
 /** A decoded cursor update addressed to a session. */
@@ -39,13 +39,25 @@ interface TestCursor {
 let subscribedSession: string | null = null;
 let handlers: RemoteDesktopFrameHandlers | null = null;
 const frameUnsubscribe = vi.fn();
+const frameDisableJpeg = vi.fn(() => Promise.resolve());
 
 vi.mock("@/services/remoteDesktopFrames", () => ({
+  WIRE_VERSION: 2,
   subscribeRemoteDesktopFrames: vi.fn((sessionId: string, h: RemoteDesktopFrameHandlers) => {
     subscribedSession = sessionId;
     handlers = h;
-    return Promise.resolve(frameUnsubscribe);
+    return Promise.resolve({
+      unsubscribe: frameUnsubscribe,
+      acceptsJpeg: true,
+      disableJpeg: frameDisableJpeg,
+    });
   }),
+}));
+
+const toastError = vi.fn();
+vi.mock("@/components/ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui")>()),
+  toast: { error: (...args: unknown[]) => toastError(...args) },
 }));
 
 vi.mock("@/services/api", () => ({
@@ -909,5 +921,95 @@ describe("RemoteDesktopCanvas", () => {
     expect(frameUnsubscribe).toHaveBeenCalledOnce();
     // Re-mount so afterEach's unmount call remains valid.
     root = createRoot(container);
+  });
+
+  describe("JPEG pass-through (#4424)", () => {
+    /** Settle-on-demand createImageBitmap calls, in call order. */
+    let decodes: Array<{ resolve: (b: ImageBitmap) => void; reject: (e: Error) => void }>;
+
+    beforeEach(() => {
+      decodes = [];
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(
+          () => new Promise<ImageBitmap>((resolve, reject) => decodes.push({ resolve, reject }))
+        )
+      );
+    });
+
+    const jpegRect = (x: number): FrameRect => ({
+      x,
+      y: 0,
+      width: 2,
+      height: 2,
+      encoding: "jpeg",
+      data: Uint8Array.of(0xff, 0xd8),
+    });
+    const rawRect = (x: number): FrameRect => ({
+      x,
+      y: 0,
+      width: 1,
+      height: 1,
+      data: new Uint8ClampedArray(4),
+    });
+    const bitmap = (): ImageBitmap =>
+      ({ width: 2, height: 2, close: vi.fn() }) as unknown as ImageBitmap;
+    const settle = () => act(async () => flushAsync());
+
+    it("paints a JPEG rect and the raw rects after it in server order", async () => {
+      render({ scaleMode: "pixel" });
+      await flushAsync();
+      emitFrame(makeFrame(100, 50));
+      const ctx = canvasStub.contextFor(canvasEl());
+      const framebuffer = ctx.drawImage.mock.calls[0][0] as HTMLCanvasElement;
+      const fbCtx = canvasStub.contextFor(framebuffer);
+      const order: string[] = [];
+      fbCtx.drawImage.mockImplementation((_b: unknown, x: number) => order.push(`jpeg@${x}`));
+      fbCtx.putImageData.mockImplementation((_d: unknown, x: number) => order.push(`raw@${x}`));
+
+      deliverFrame({ session_id: SESSION, width: 100, height: 50, rects: [jpegRect(10)] });
+      deliverFrame({ session_id: SESSION, width: 100, height: 50, rects: [rawRect(20)] });
+      // The raw rect waits behind the pending JPEG decode.
+      expect(order).toEqual([]);
+
+      const bmp = bitmap();
+      decodes[0].resolve(bmp);
+      await settle();
+      expect(order).toEqual(["jpeg@10", "raw@20"]);
+      expect(bmp.close).toHaveBeenCalled();
+      // The system tests read the pass-through count off the canvas (#4821).
+      expect(canvasEl().getAttribute("data-jpeg-rects")).toBe("1");
+      expect(canvasEl().hasAttribute("data-jpeg-fallback")).toBe(false);
+      expect(frameDisableJpeg).not.toHaveBeenCalled();
+    });
+
+    it("falls back to RGBA and requests a full frame when a decode fails", async () => {
+      render({ scaleMode: "pixel" });
+      await flushAsync();
+      emitFrame(makeFrame(100, 50));
+      vi.mocked(remoteDesktopRequestFullFrame).mockClear();
+      const framebuffer = canvasStub.contextFor(canvasEl()).drawImage.mock
+        .calls[0][0] as HTMLCanvasElement;
+      const fbCtx = canvasStub.contextFor(framebuffer);
+      fbCtx.drawImage.mockClear();
+
+      deliverFrame({ session_id: SESSION, width: 100, height: 50, rects: [jpegRect(10)] });
+      decodes[0].reject(new Error("corrupt"));
+      await settle();
+      // Nothing is drawn for the failed rect: the screen never shows garbage.
+      expect(fbCtx.drawImage).not.toHaveBeenCalled();
+      expect(frameDisableJpeg).toHaveBeenCalledOnce();
+      expect(remoteDesktopRequestFullFrame).toHaveBeenCalledExactlyOnceWith(SESSION);
+      expect(canvasEl().getAttribute("data-jpeg-fallback")).toBe("true");
+      expect(canvasEl().getAttribute("data-jpeg-rects")).toBe("0");
+    });
+
+    it("tells the user when the frame wire versions do not match", async () => {
+      render();
+      await flushAsync();
+      act(() => handlers?.onWireMismatch?.(1));
+      expect(toastError).toHaveBeenCalledOnce();
+      expect(JSON.stringify(toastError.mock.calls[0])).toMatch(/backend v1, frontend v2/);
+    });
   });
 });

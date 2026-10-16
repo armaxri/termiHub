@@ -176,6 +176,7 @@ fn background_frame(width: u16, height: u16) -> FrameUpdate {
             width: w,
             height: h,
             data,
+            jpeg: None,
         }],
     }
 }
@@ -207,6 +208,7 @@ fn moving_block(width: u16, height: u16, i: u32) -> DirtyRect {
         width: bw,
         height: bh,
         data,
+        jpeg: None,
     }
 }
 

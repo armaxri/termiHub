@@ -51,7 +51,10 @@ pub(super) trait QueuedBytes {
 
 impl QueuedBytes for FrameUpdate {
     fn queued_bytes(&self) -> usize {
-        self.rects.iter().map(|r| r.data.len()).sum()
+        self.rects
+            .iter()
+            .map(|r| r.data.len() + r.jpeg.as_ref().map_or(0, Vec::len))
+            .sum()
     }
 }
 
@@ -138,6 +141,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 data: vec![0; bytes],
+                jpeg: None,
             }],
         }
     }
@@ -147,6 +151,9 @@ mod tests {
         let mut two = frame(10);
         two.rects.extend(frame(5).rects);
         assert_eq!(two.queued_bytes(), 15);
+        // A JPEG rect pins its compressed source as well as the decoded RGBA.
+        two.rects[1].jpeg = Some(vec![0; 3]);
+        assert_eq!(two.queued_bytes(), 18);
         let hidden = CursorUpdate {
             x: 0,
             y: 0,

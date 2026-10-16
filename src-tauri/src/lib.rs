@@ -598,6 +598,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::remote_desktop::remote_desktop_request_full_frame,
             commands::remote_desktop::remote_desktop_subscribe_frames,
             commands::remote_desktop::remote_desktop_unsubscribe_frames,
+            commands::remote_desktop::remote_desktop_set_frame_jpeg,
             commands::remote_desktop::remote_desktop_pending_cert_prompt,
             commands::remote_desktop::remote_desktop_file_channel,
             commands::remote_desktop::remote_desktop_upload,

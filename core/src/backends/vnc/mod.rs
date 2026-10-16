@@ -569,8 +569,15 @@ async fn drive_guarded<F: std::future::Future<Output = ()>>(shared: Arc<VncShare
 /// The decoded pixel dimensions are authoritative for the blit; a full frame
 /// arriving before any resolution event grows the shadow to fit, exactly as the
 /// Raw path does.
-fn jpeg_dirty_rect(shadow: &mut FrameShadow, x: u32, y: u32, jpeg: &[u8]) -> Option<DirtyRect> {
-    let decoded = match jpeg::decode_jpeg_rgba(jpeg) {
+///
+/// The JPEG is still decoded here even though the desktop webview can decode it
+/// itself (#4424): the shadow framebuffer must hold real pixels so a later
+/// CopyRect that reads this region resolves correctly, and an RGBA-only
+/// subscriber (or a webview whose decode failed) needs the decoded rect. The
+/// compressed bytes ride along in [`DirtyRect::jpeg`] so the IPC hop can send
+/// them instead of the ~10x larger RGBA.
+fn jpeg_dirty_rect(shadow: &mut FrameShadow, x: u32, y: u32, jpeg: Vec<u8>) -> Option<DirtyRect> {
+    let decoded = match jpeg::decode_jpeg_rgba(&jpeg) {
         Ok(d) => d,
         Err(e) => {
             warn!(error = %e, "vnc tight jpeg decode failed — dropped");
@@ -591,6 +598,7 @@ fn jpeg_dirty_rect(shadow: &mut FrameShadow, x: u32, y: u32, jpeg: &[u8]) -> Opt
         width: w,
         height: h,
         data: decoded.rgba,
+        jpeg: Some(jpeg),
     })
 }
 
@@ -643,6 +651,7 @@ async fn handle_event(
                         width: w,
                         height: h,
                         data,
+                        jpeg: None,
                     }],
                 })
                 .await
@@ -665,6 +674,7 @@ async fn handle_event(
                         width: w,
                         height: h,
                         data,
+                        jpeg: None,
                     }],
                 })
                 .await
@@ -698,7 +708,7 @@ async fn handle_event(
             // Tight's photographic sub-rect: a self-describing JPEG independent of
             // the negotiated RFB pixel format. Decode to RGBA, fold into the
             // shadow, and emit a dirty-rect like any other encoding.
-            let Some(dirty) = jpeg_dirty_rect(shadow, rect.x as u32, rect.y as u32, &data) else {
+            let Some(dirty) = jpeg_dirty_rect(shadow, rect.x as u32, rect.y as u32, data) else {
                 return true; // malformed / out of bounds — already logged, dropped
             };
             frame_tx
@@ -1408,12 +1418,15 @@ mod tests {
     fn jpeg_dirty_rect_decodes_and_blits_into_shadow() {
         let mut shadow = FrameShadow::new();
         shadow.resize(32, 32);
-        let dirty = jpeg_dirty_rect(&mut shadow, 4, 8, RED_JPEG_16X16).expect("decoded rect");
+        let dirty =
+            jpeg_dirty_rect(&mut shadow, 4, 8, RED_JPEG_16X16.to_vec()).expect("decoded rect");
         assert_eq!(
             (dirty.x, dirty.y, dirty.width, dirty.height),
             (4, 8, 16, 16)
         );
         assert_eq!(dirty.data.len(), 16 * 16 * 4);
+        // The compressed source rides along for the webview (#4424).
+        assert_eq!(dirty.jpeg.as_deref(), Some(RED_JPEG_16X16));
         // The shadow now holds the decoded pixels at the target position.
         let center = shadow.extract(4 + 8, 8 + 8, 1, 1).unwrap();
         assert!(center[0] > 200 && center[1] < 50 && center[2] < 50); // ~red
@@ -1424,7 +1437,8 @@ mod tests {
     fn jpeg_dirty_rect_grows_shadow_from_zero() {
         // A JPEG arriving before any resolution event grows the shadow to fit.
         let mut shadow = FrameShadow::new();
-        let dirty = jpeg_dirty_rect(&mut shadow, 0, 0, RED_JPEG_16X16).expect("decoded rect");
+        let dirty =
+            jpeg_dirty_rect(&mut shadow, 0, 0, RED_JPEG_16X16.to_vec()).expect("decoded rect");
         assert_eq!((dirty.width, dirty.height), (16, 16));
         assert_eq!(shadow.width(), 16);
         assert_eq!(shadow.height(), 16);
@@ -1435,14 +1449,14 @@ mod tests {
         let mut shadow = FrameShadow::new();
         shadow.resize(16, 16);
         // A 16×16 rect at (8,8) exceeds the 16×16 shadow → dropped, no panic.
-        assert!(jpeg_dirty_rect(&mut shadow, 8, 8, RED_JPEG_16X16).is_none());
+        assert!(jpeg_dirty_rect(&mut shadow, 8, 8, RED_JPEG_16X16.to_vec()).is_none());
     }
 
     #[test]
     fn jpeg_dirty_rect_rejects_garbage() {
         let mut shadow = FrameShadow::new();
         shadow.resize(16, 16);
-        assert!(jpeg_dirty_rect(&mut shadow, 0, 0, &[0xff, 0x00, 0x13, 0x37]).is_none());
+        assert!(jpeg_dirty_rect(&mut shadow, 0, 0, vec![0xff, 0x00, 0x13, 0x37]).is_none());
     }
 
     #[test]
@@ -1548,6 +1562,39 @@ mod tests {
         let copied = &frames.last().unwrap().rects[0];
         assert_eq!((copied.x, copied.width), (2, 2));
         assert_eq!(copied.data, vec![0, 255, 0, 255, 255, 255, 255, 255]);
+    }
+
+    /// #4424: the JPEG bytes pass through to the frame stream, but the shadow
+    /// still gets the decoded pixels, so a later CopyRect reading the JPEG's
+    /// region emits the real (decoded) RGBA rather than stale black.
+    #[tokio::test]
+    async fn copy_rect_after_jpeg_rect_copies_the_decoded_pixels() {
+        let frames = frames_for(
+            PixelFormat::rgba(),
+            vec![
+                VncEvent::SetResolution((32, 16).into()),
+                VncEvent::JpegImage(rect(0, 0, 16, 16), RED_JPEG_16X16.to_vec()),
+                VncEvent::Copy(rect(16, 0, 16, 16), rect(0, 0, 16, 16)),
+            ],
+        )
+        .await;
+        assert_eq!(frames.len(), 3);
+        let jpeg_rect = &frames[1].rects[0];
+        assert_eq!(jpeg_rect.jpeg.as_deref(), Some(RED_JPEG_16X16));
+        let copied = &frames[2].rects[0];
+        assert_eq!(
+            (copied.x, copied.y, copied.width, copied.height),
+            (16, 0, 16, 16)
+        );
+        // A CopyRect is resolved from the shadow, so it is plain RGBA only.
+        assert!(copied.jpeg.is_none());
+        assert_eq!(
+            copied.data, jpeg_rect.data,
+            "copy must equal the decoded JPEG"
+        );
+        let mid = ((8 * 16) + 8) * 4;
+        assert!(copied.data[mid] > 200 && copied.data[mid + 1] < 50, "~red");
+        assert_eq!(copied.data[mid + 3], 255);
     }
 
     #[tokio::test]

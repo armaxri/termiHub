@@ -49,7 +49,7 @@ use crate::session::graphical_upload::{
     place, plan_local, resolve_dest_dir, start_uploads, AgentHostFiles, AgentRequests,
     RemoteDesktopUploadStarted, UploadCarrier,
 };
-use crate::session::remote_desktop_frames::{FrameSink, RemoteDesktopFrameChannels};
+use crate::session::remote_desktop_frames::{FrameSink, RemoteDesktopFrameChannels, WIRE_VERSION};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::window::WindowManager;
@@ -583,16 +583,56 @@ pub async fn remote_desktop_request_full_frame(
 /// [`remote_desktop_frames`](crate::session::remote_desktop_frames). Delivery is
 /// owner-scoped like every other content event (#3388). Returns the
 /// subscription id for [`remote_desktop_unsubscribe_frames`].
+///
+/// `wire_version` is the frame format the webview decodes; anything but
+/// [`WIRE_VERSION`] (including a webview too old to send it) is refused, so a
+/// frontend/backend skew surfaces as an error instead of garbage on the canvas.
+/// `accept_jpeg` opts in to JPEG pass-through (#4424).
 #[tauri::command]
 pub fn remote_desktop_subscribe_frames(
     session_id: String,
     channel: Channel<InvokeResponseBody>,
+    wire_version: Option<u8>,
+    accept_jpeg: Option<bool>,
     window: tauri::WebviewWindow,
     channels: State<'_, RemoteDesktopFrameChannels>,
-) -> u64 {
+) -> Result<u64, String> {
+    check_wire_version(wire_version)?;
     let sink: FrameSink =
         Arc::new(move |bytes| channel.send(InvokeResponseBody::Raw(bytes)).is_ok());
-    channels.subscribe(&session_id, window.label(), sink)
+    Ok(channels.subscribe(
+        &session_id,
+        window.label(),
+        accept_jpeg.unwrap_or(false),
+        sink,
+    ))
+}
+
+/// Refuse a frame subscription whose webview decodes another wire version.
+fn check_wire_version(wire_version: Option<u8>) -> Result<(), String> {
+    match wire_version {
+        Some(v) if v == WIRE_VERSION => Ok(()),
+        other => Err(format!(
+            "remote-desktop frame wire version mismatch: webview decodes {}, backend sends \
+             {WIRE_VERSION}; frontend and backend builds differ",
+            other.map_or_else(|| "1 (unversioned)".to_string(), |v| v.to_string())
+        )),
+    }
+}
+
+/// Switch a frame subscription between JPEG pass-through and RGBA (#4424).
+///
+/// The webview turns JPEG off when it cannot decode a rect (no
+/// `createImageBitmap`, or a decode error) and then requests a full frame, which
+/// arrives as RGBA.
+#[tauri::command]
+pub fn remote_desktop_set_frame_jpeg(
+    session_id: String,
+    subscription_id: u64,
+    accept_jpeg: bool,
+    channels: State<'_, RemoteDesktopFrameChannels>,
+) -> bool {
+    channels.set_accept_jpeg(&session_id, subscription_id, accept_jpeg)
 }
 
 /// Close a frame channel opened by [`remote_desktop_subscribe_frames`].
@@ -890,6 +930,24 @@ pub(crate) async fn gated_disconnect(
         return Ok(false);
     }
     manager.disconnect(session_id, sink).await.map(|()| true)
+}
+
+#[cfg(test)]
+mod wire_version_tests {
+    use super::*;
+
+    /// #4424: a frontend/backend skew refuses the subscription loudly.
+    #[test]
+    fn subscription_requires_the_matching_wire_version() {
+        assert!(check_wire_version(Some(WIRE_VERSION)).is_ok());
+        let old = check_wire_version(None).unwrap_err();
+        assert!(
+            old.contains("mismatch") && old.contains("unversioned"),
+            "{old}"
+        );
+        let skew = check_wire_version(Some(WIRE_VERSION + 1)).unwrap_err();
+        assert!(skew.contains(&(WIRE_VERSION + 1).to_string()), "{skew}");
+    }
 }
 
 #[cfg(all(test, feature = "mock-remote-desktop"))]

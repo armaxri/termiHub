@@ -169,6 +169,7 @@ mod tests {
             width: w,
             height: h,
             data: vec![0u8; (w as usize) * (h as usize) * 4],
+            jpeg: None,
         }
     }
 
