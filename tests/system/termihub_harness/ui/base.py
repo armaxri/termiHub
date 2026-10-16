@@ -44,6 +44,53 @@ class HarnessMixin:
         """
         return self.driver.get_attribute(test_id, "disabled") is not None
 
+    def reveal_toolbar_action(self, action: str, *, overflow: str) -> bool:
+        """Make a responsive-toolbar action clickable; return whether a menu opened.
+
+        Sidebar toolbars are a ``ResponsiveToolbar`` (#4709, #4824): every action
+        is a labelled button while they all fit, otherwise only the ``primary``
+        action stays inline and the rest move into one overflow "…" menu. Which
+        form an action takes depends on the sidebar width (Workspaces already
+        collapses at the default 260px), so a test must not assume either. Both
+        forms carry the same ``data-testid`` (``action``), and the menu items are
+        only mounted while the menu is open — so this waits until either the
+        action is inline or the ``overflow`` trigger is present, and in the
+        latter case opens the menu and waits for the item to mount.
+
+        The layout decision runs in a layout effect before paint, so a toolbar is
+        never observed in a transient "full" form it is about to leave.
+
+        Returns ``True`` when the overflow menu was opened (the caller then owns
+        closing it, e.g. with Escape, if it does not click an item).
+        """
+
+        def placement() -> str | None:
+            if self.driver.exists(action):
+                return "inline"
+            if self.driver.exists(overflow):
+                return "overflow"
+            return None
+
+        placed = self.wait(placement, what=f"toolbar action {action!r} or its {overflow!r} menu")
+        if placed == "inline":
+            return False
+        self.driver.click(overflow)
+        self.wait(
+            lambda: self.driver.exists(action),
+            what=f"toolbar action {action!r} in the {overflow!r} menu",
+        )
+        return True
+
+    def invoke_toolbar_action(self, action: str, *, overflow: str) -> None:
+        """Click a responsive-toolbar action, inline or from the overflow "…" menu.
+
+        See :meth:`reveal_toolbar_action`. ``action`` is the action's stable
+        ``data-testid`` (the inline button and the overflow-menu item share it);
+        ``overflow`` is the toolbar's overflow-trigger testid (``overflowTestId``).
+        """
+        self.reveal_toolbar_action(action, overflow=overflow)
+        self.driver.click(action)
+
     def projection_region_cache(self, region: str) -> dict[str, Any]:
         """The current projected **view document** of a ``region``.
 
