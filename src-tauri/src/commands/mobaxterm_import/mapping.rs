@@ -30,11 +30,14 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::connection::config::TerminalOptions;
+
+use super::appearance::map_appearance;
 use super::parser::{decode_escapes, RawSession};
 use super::placeholders::{expand_path, PlaceholderEnv};
 
 /// A session mapped to a termiHub connection, or the reason it was skipped.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Mapped {
     /// Human label of the MobaXterm session type (`"SSH"`, `"Serial"`, …).
     pub session_type: String,
@@ -44,6 +47,8 @@ pub struct Mapped {
     pub outcome: Outcome,
     /// Non-fatal remarks (settings that were not carried over, guesses made).
     pub notes: Vec<String>,
+    /// Per-connection terminal options from the terminal block (#4854).
+    pub terminal_options: Option<TerminalOptions>,
 }
 
 /// What a session turns into.
@@ -151,6 +156,7 @@ impl<'a> Builder<'a> {
                 settings: Value::Object(self.settings),
             },
             notes: self.notes,
+            terminal_options: None,
         }
     }
 }
@@ -161,6 +167,7 @@ fn skip(label: &str, target: String, reason: impl Into<String>) -> Mapped {
         target,
         outcome: Outcome::Skip(reason.into()),
         notes: Vec::new(),
+        terminal_options: None,
     }
 }
 
@@ -188,7 +195,7 @@ pub fn map_session(session: &RawSession, env: &PlaceholderEnv) -> Mapped {
     };
     let label = type_label(code);
     let params = session.params.as_slice();
-    match code {
+    let mut mapped = match code {
         0 => map_ssh(params, env, &label),
         1 => map_host_port(params, &label, "telnet", 23, false),
         4 => map_rdp(params, env, &label),
@@ -208,7 +215,26 @@ pub fn map_session(session: &RawSession, env: &PlaceholderEnv) -> Mapped {
             String::new(),
             format!("Unknown MobaXterm session type {code}."),
         ),
+    };
+    apply_appearance(&mut mapped, &session.terminal, code);
+    mapped
+}
+
+/// Carry the terminal block's appearance onto an imported session (#4854).
+fn apply_appearance(mapped: &mut Mapped, terminal: &[String], code: u32) {
+    let Outcome::Import {
+        connection_type,
+        settings,
+    } = &mut mapped.outcome
+    else {
+        return;
+    };
+    let appearance = map_appearance(terminal, code, connection_type);
+    if let (Some(term), Some(obj)) = (appearance.terminal_type, settings.as_object_mut()) {
+        obj.insert("terminalType".to_string(), json!(term));
     }
+    mapped.notes.extend(appearance.notes);
+    mapped.terminal_options = appearance.options;
 }
 
 /// Host + port (+ optional user) for the simple remote types.

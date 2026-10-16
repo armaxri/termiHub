@@ -10,6 +10,8 @@
 //!
 //! - `parser` — decoding (UTF-8 / Windows-1252) and the bookmark-section split.
 //! - `mapping` — session type → termiHub connection settings, skip reasons.
+//! - `appearance` — the per-session terminal block (font, cursor, terminal
+//!   type) → per-connection terminal options (#4854).
 //! - `placeholders` — `_ProfileDir_`-style path tokens in key paths.
 //! - `discovery` — where MobaXterm keeps its configuration on Windows.
 //! - `hostkeys` — `[SSH_Hostkeys]` (PuTTY cache format) → OpenSSH keys (#4852).
@@ -19,6 +21,7 @@
 //! Passwords are never imported: MobaXterm keeps them in its own encrypted
 //! vault, which termiHub does not read.
 
+mod appearance;
 mod discovery;
 mod hostkeys;
 mod mapping;
@@ -26,6 +29,8 @@ mod parser;
 mod placeholders;
 mod trusted_hosts;
 
+#[cfg(test)]
+mod appearance_tests;
 #[cfg(test)]
 mod hostkeys_tests;
 #[cfg(test)]
@@ -37,9 +42,11 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
+use crate::connection::config::TerminalOptions;
 use crate::session::ssh_host_key_verifier::SshHostKeyVerifier;
 use crate::utils::errors::TerminalError;
 
+use appearance::global_appearance_note;
 use mapping::{map_session, Outcome};
 use placeholders::PlaceholderEnv;
 use trusted_hosts::{host_key_entries, import_host_keys, StoreTrust, TrustCheck};
@@ -89,6 +96,11 @@ pub struct MobaxtermSession {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub skip_reason: Option<String>,
+    /// Per-connection terminal options (font, cursor) from the session's
+    /// MobaXterm terminal settings; absent when nothing was mappable (#4854).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub terminal_options: Option<TerminalOptions>,
     /// Settings that were not carried over, or assumptions that were made.
     pub notes: Vec<String>,
 }
@@ -107,6 +119,9 @@ pub struct MobaxtermImportPreview {
     pub sessions: Vec<MobaxtermSession>,
     /// Every `[SSH_Hostkeys]` entry, importable and skipped, in file order.
     pub host_keys: Vec<MobaxtermHostKey>,
+    /// File-level remarks, e.g. global appearance sections that were not
+    /// imported (#4854).
+    pub notes: Vec<String>,
 }
 
 /// Build the preview from raw file bytes, with every host key classified as
@@ -154,6 +169,7 @@ pub fn preview_with_trust(
                 connection_type,
                 settings,
                 skip_reason,
+                terminal_options: mapped.terminal_options,
                 notes: mapped.notes,
             }
         })
@@ -163,6 +179,7 @@ pub fn preview_with_trust(
         encoding: encoding.label().to_string(),
         sessions,
         host_keys,
+        notes: global_appearance_note(&text).into_iter().collect(),
     }
 }
 

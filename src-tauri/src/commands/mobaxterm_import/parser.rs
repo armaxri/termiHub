@@ -71,6 +71,9 @@ pub struct RawSession {
     /// The `%`-separated params block, *raw* (escape tokens still encoded so a
     /// caller can split `__PIPE__` lists before decoding). Index 0 is the type.
     pub params: Vec<String>,
+    /// The `%`-separated terminal-settings block (font, cursor, terminal type,
+    /// …), raw like `params`; empty when absent (#4854).
+    pub terminal: Vec<String>,
     /// The free-text comment block, decoded; empty when absent.
     pub comment: String,
 }
@@ -130,12 +133,16 @@ fn split_session(name: &str, value: &str, folder_path: &[String]) -> RawSession 
     let _prefix = blocks.next();
     let _icon = blocks.next();
     let params_block = blocks.next();
-    let _terminal = blocks.next();
+    let terminal_block = blocks.next();
     let _start_mode = blocks.next();
     let comment = blocks.next().map(decode_escapes).unwrap_or_default();
 
     let params: Vec<String> = params_block
         .map(|p| p.split('%').map(str::to_string).collect())
+        .unwrap_or_default();
+    let terminal: Vec<String> = terminal_block
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| t.split('%').map(str::to_string).collect())
         .unwrap_or_default();
     let type_code = params.first().and_then(|t| t.trim().parse::<u32>().ok());
 
@@ -144,6 +151,7 @@ fn split_session(name: &str, value: &str, folder_path: &[String]) -> RawSession 
         folder_path: folder_path.to_vec(),
         type_code,
         params,
+        terminal,
         comment: comment.trim().to_string(),
     }
 }
