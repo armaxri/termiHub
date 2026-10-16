@@ -261,6 +261,39 @@ describe("Terminal auto-scroll behavior", () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
 
+  it("does not yank a user who scrolls up after the write but before the deferred scroll (#4851)", async () => {
+    // The pin decision is snapshotted before the write, but the scroll runs a
+    // frame after xterm's write callback. A user who scrolls up inside that
+    // window (output still streaming) must keep their position.
+    renderTerminal();
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    mockScrollToBottom.mockClear();
+
+    // At the bottom when the output is flushed: the snapshot says "stick".
+    if (outputCallback) {
+      act(() => {
+        outputCallback!(new Uint8Array([77, 78, 79]));
+      });
+    }
+    act(() => flushRaf());
+    if (capturedWriteCallback) {
+      act(() => capturedWriteCallback!());
+    }
+
+    // The user scrolls up before the deferred scroll-to-bottom frame runs.
+    mockBuffer.active.viewportY = 50;
+    mockBuffer.active.baseY = 100;
+    act(() => capturedOnScrollHandler!());
+
+    act(() => flushRaf());
+
+    expect(mockScrollToBottom).not.toHaveBeenCalled();
+  });
+
   it("resumes auto-scroll when user scrolls back to bottom", async () => {
     renderTerminal();
 
