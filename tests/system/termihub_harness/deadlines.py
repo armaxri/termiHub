@@ -99,7 +99,6 @@ CONTENDED_OP_DEADLINES: dict[str, float] = {
     "wait:the active terminal's shell prompt": 65.0,  # Windows max 32.2 s
     "wait:the shell's echo of the composed line": 55.0,  # Windows max 27.5 s
     "wait:the PTY to report N rows x N cols": 55.0,  # Windows max 25.9 s
-    "wait:the PTYSZN stty answer": 55.0,  # Windows max 25.9 s
     "wait:the DOM renderer to paint '…'": 50.0,  # Windows max 24.6 s
     "wait:the new terminal's shell prompt": 35.0,  # Windows max 15.3 s
     "wait:the restored terminals to reach a shell prompt": 25.0,  # Windows max 10.2 s

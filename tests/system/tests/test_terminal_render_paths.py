@@ -68,8 +68,13 @@ SMALL_WINDOW = (800, 600)
 #: a windows runner), so every renderer swap re-fits and resizes the PTY. Git
 #: Bash under ConPTY can drop the first byte of input that arrives while it
 #: handles that resize (#4841: ``cho AFTER_LOSS_3``), so a missing answer means
-#: "send another probe", not "fail".
-PTY_PROBE_ANSWER_TIMEOUT = 5.0
+#: "send another probe", not "fail". The probe's wait label is deliberately not
+#: in ``CONTENDED_OP_DEADLINES``: it keeps this budget on a contended worker too,
+#: so the outer wait gets several probes instead of one stretched one.
+PTY_PROBE_ANSWER_TIMEOUT = 10.0
+#: Budget for the PTY to report a grid: room for several re-sent probes. A
+#: contended worker raises it to the op's ``CONTENDED_OP_DEADLINES`` entry.
+PTY_MATCH_TIMEOUT = 40.0
 
 _pty_probe_ids = itertools.count(1)
 
@@ -136,7 +141,7 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
             match = self.wait(
                 lambda: pattern.search(self.driver.read_terminal(tab_id)),
                 timeout=PTY_PROBE_ANSWER_TIMEOUT,
-                what=f"the {tag} stty answer",
+                what=f"one {tag} stty probe",
             )
         except AssertionError:
             return None
@@ -147,6 +152,7 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
         expected = (grid["rows"], grid["cols"])
         self.wait(
             lambda: self._pty_size(tab_id) == expected,
+            timeout=PTY_MATCH_TIMEOUT,
             what=f"the PTY to report {expected[0]} rows x {expected[1]} cols",
         )
 
