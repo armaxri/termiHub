@@ -308,6 +308,7 @@ export function WorkflowSidebar() {
             label: "New Workflow",
             shortLabel: "New",
             icon: <Plus size={12} />,
+            primary: true,
             testId: "workflow-new-btn",
             menu: [
               {

@@ -224,6 +224,7 @@ export function WorkspaceSidebar() {
             label: "New Workspace",
             icon: <Plus size={14} />,
             onClick: handleNew,
+            primary: true,
             testId: "workspace-new-btn",
           },
           {
