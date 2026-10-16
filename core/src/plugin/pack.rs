@@ -230,10 +230,10 @@ pub fn sign_package(package_path: &Path, key: &SigningKeyFile) -> Result<(), Plu
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        if entry.is_dir() || entry.name() == SIGNATURE_FILE_NAME {
+        if entry.is_dir() || entry.name()? == SIGNATURE_FILE_NAME {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         let mut buf = Vec::new();
         entry.read_to_end(&mut buf)?;
         entries.push((name, buf));
@@ -434,7 +434,7 @@ mod tests {
     fn entry_names(pkg: &Path) -> BTreeSet<String> {
         let mut archive = ZipArchive::new(File::open(pkg).unwrap()).unwrap();
         (0..archive.len())
-            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
             .collect()
     }
 
