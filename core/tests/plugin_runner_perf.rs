@@ -233,6 +233,11 @@ async fn measure(conn: Shared, mut rx: OutputReceiver) -> Measured {
 /// run would pump alone while the others' threads are still being created (a
 /// 3-vCPU CI runner showed one session at 936 MB/s, near the solo rate, next
 /// to 25 MB/s ones), which measures thread start-up skew, not sharing.
+///
+/// The session stays open until its echo is drained: `conn` may hold the last
+/// reference to it, and dropping a plugin connection stops delivering its
+/// output at once (#4499), so the writer finishing first would cut off the
+/// echo still in flight (#4825).
 async fn pump(
     conn: Shared,
     mut rx: OutputReceiver,
@@ -240,6 +245,7 @@ async fn pump(
     total: usize,
     start: Arc<Barrier>,
 ) -> Option<f64> {
+    let session = Arc::clone(&conn);
     let writer = tokio::task::spawn_blocking(move || {
         start.wait();
         let released = Instant::now();
@@ -254,6 +260,7 @@ async fn pump(
         received += rx.recv().await?.len();
     }
     let done = Instant::now();
+    drop(session);
     let released = writer.await.unwrap();
     Some(total as f64 / 1_000_000.0 / (done - released).as_secs_f64())
 }
