@@ -14,11 +14,11 @@ use crate::connection::graphical_monitors::{
     deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
     MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
 };
-use crate::connection::graphical_ssh_tunnel::{ssh_tunnel_group, SshTunnelSettings};
 use crate::connection::graphical_resolution::{
     normalize_fixed_size, server_resolution_fields, DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH,
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
 };
+use crate::connection::graphical_ssh_tunnel::{ssh_tunnel_group, SshTunnelSettings};
 use crate::connection::schema::{
     Condition, FieldType, FilePathKind, NoticeSeverity, SelectOption, SettingsField, SettingsGroup,
 };

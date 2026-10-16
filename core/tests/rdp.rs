@@ -1894,7 +1894,14 @@ async fn rdp_17_session_through_an_ssh_tunnel() {
     wait_for_xrdp_session(&mut frames, "RDP-17 tunnelled").await;
 
     let mut fb = Framebuffer::default();
-    resize_until(graphical, &mut frames, &mut fb, (1100, 700), "RDP-17 resize").await;
+    resize_until(
+        graphical,
+        &mut frames,
+        &mut fb,
+        (1100, 700),
+        "RDP-17 resize",
+    )
+    .await;
     assert!(
         rdp.fatal_error().is_none(),
         "RDP-17: the tunnelled session survives a reactivation"

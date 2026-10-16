@@ -18,10 +18,10 @@ use crate::connection::graphical_monitors::{
     deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
     MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
 };
-use crate::connection::graphical_ssh_tunnel::ssh_tunnel_group;
 use crate::connection::graphical_resolution::{
     DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
 };
+use crate::connection::graphical_ssh_tunnel::ssh_tunnel_group;
 use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::{
     fixed_resolution_fields, is_fixed_mode, normalize_fixed_size, shared_field_base, SettingsSchema,

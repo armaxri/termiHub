@@ -72,8 +72,8 @@ async fn open_enabled(
     tunnel: &SshTunnelSettings,
     cfg: &mut RdpConfig,
 ) -> Result<RdpTunnel, SessionError> {
-    let live = RdpTunnel::establish(&tunnel.ssh_config(), cfg.host.clone(), cfg.effective_port())
-        .await?;
+    let live =
+        RdpTunnel::establish(&tunnel.ssh_config(), cfg.host.clone(), cfg.effective_port()).await?;
     point_at_tunnel(cfg, live.local_port);
     Ok(live)
 }
