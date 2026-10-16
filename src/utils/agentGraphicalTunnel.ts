@@ -15,8 +15,9 @@ import type { ConnectionTypeInfo } from "@/types/connection";
 const AGENT_TUNNELLED_GRAPHICAL_TYPES: readonly string[] = ["vnc", "rdp"];
 
 /**
- * Schema group dropped from a tunnelled type: VNC's own SSH tunnel cannot be
- * combined with the agent route (the agent already carries the connection).
+ * Schema group dropped from a tunnelled type: a VNC or RDP connection's own SSH
+ * tunnel cannot be combined with the agent route (the agent already carries the
+ * connection).
  */
 const UNSUPPORTED_GROUP_KEYS: readonly string[] = ["sshTunnel"];
 

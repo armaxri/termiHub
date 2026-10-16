@@ -34,6 +34,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
+#[cfg(feature = "rdp-sidecar")]
+use termihub_core::connection::graphical_ssh_tunnel::SshTunnelSettings;
 use termihub_core::session::forward_window::{ack_threshold, ForwardWindow, AGENT_FORWARD_WINDOW};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -107,6 +109,12 @@ pub fn agent_route(type_id: &str, settings: &Value) -> Result<Option<AgentRoute>
     }))
 }
 
+/// Why a graphical connection cannot use its own SSH tunnel and an agent route
+/// at once.
+#[cfg(any(feature = "vnc", feature = "rdp-sidecar"))]
+const SSH_TUNNEL_WITH_AGENT: &str = "An SSH tunnel cannot be combined with connecting through \
+     an agent — the agent already carries the connection";
+
 /// The port the backend of `type_id` would dial for `settings`, from core's own
 /// config type (DUP2-008).
 #[cfg_attr(
@@ -120,19 +128,23 @@ fn routed_target_port(type_id: &str, settings: &Value) -> Result<u16, String> {
             let cfg = termihub_core::backends::vnc::VncConfig::from_settings(settings.clone())
                 .map_err(|e| format!("Invalid VNC settings: {e}"))?;
             if cfg.use_ssh_tunnel {
-                return Err(
-                    "An SSH tunnel cannot be combined with connecting through an agent \
-                     — the agent already carries the connection"
-                        .to_string(),
-                );
+                return Err(SSH_TUNNEL_WITH_AGENT.to_string());
             }
             Ok(cfg.effective_port())
         }
         #[cfg(feature = "rdp-sidecar")]
         "rdp" => {
-            termihub_core::backends::rdp_sidecar::config::RdpConfig::from_settings(settings.clone())
-                .map(|cfg| cfg.effective_port())
-                .map_err(|e| format!("Invalid RDP settings: {e}"))
+            let cfg = termihub_core::backends::rdp_sidecar::config::RdpConfig::from_settings(
+                settings.clone(),
+            )
+            .map_err(|e| format!("Invalid RDP settings: {e}"))?;
+            // The tunnel rows live outside `RdpConfig` (#4865) — read them apart.
+            let tunnel = SshTunnelSettings::from_settings(settings)
+                .map_err(|e| format!("Invalid RDP settings: {e}"))?;
+            if tunnel.use_ssh_tunnel {
+                return Err(SSH_TUNNEL_WITH_AGENT.to_string());
+            }
+            Ok(cfg.effective_port())
         }
         other => Err(format!(
             "Connection type '{other}' cannot be routed through an agent"
