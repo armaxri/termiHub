@@ -192,7 +192,12 @@ fn preview_carries_terminal_options_and_telnet_terminal_type() {
 
     let rdp = by_name(&p.sessions, "Desk RDP");
     assert!(rdp.terminal_options.is_none());
-    assert!(rdp.settings.as_ref().expect("settings").get("terminalType").is_none());
+    assert!(rdp
+        .settings
+        .as_ref()
+        .expect("settings")
+        .get("terminalType")
+        .is_none());
 }
 
 #[test]
