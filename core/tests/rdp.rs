@@ -387,9 +387,9 @@ async fn rdp_02_fixed_resolution() {
 // ── RDP-03: dynamic resize over Display Control (#1755, #3465) ──────
 
 /// Ask for `(w, h)` over Display Control until the desktop reflows to it and
-/// shows the solid red session again. The channel may still be opening right
-/// after the first frame (or right after a reactivation); a request sent
-/// before it is ready is dropped by design, so the request is re-sent.
+/// shows the solid red session again. The sidecar holds a request until the
+/// channel is open (#4845); re-sending only keeps this grade independent of
+/// that.
 async fn resize_until(
     graphical: &dyn GraphicalBackend,
     frames: &mut FrameReceiver,

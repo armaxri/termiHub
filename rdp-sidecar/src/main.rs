@@ -43,6 +43,7 @@ mod panic_report;
 mod rdp;
 #[cfg(test)]
 mod rdpsnd_fork_tests;
+mod resize_gate;
 mod sandbox;
 
 use anyhow::{bail, Context, Result};

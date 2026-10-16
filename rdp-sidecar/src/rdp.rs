@@ -20,7 +20,7 @@ use ironrdp::connector::connection_activation::{
 };
 use ironrdp::connector::{
     BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
-    DesktopSize, ServerName,
+    DesktopSize, Sequence as _, ServerName,
 };
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
@@ -57,6 +57,7 @@ use crate::clipboard::{ClipboardEvent, LocalClipboard, SidecarClipboardBackend};
 use crate::drive::DriveRedirectBackend;
 use crate::failure;
 use crate::input;
+use crate::resize_gate::{LayoutRequest, ResizeGate};
 
 /// The RDPDR device id used for the single redirected drive (#1757). Any
 /// non-zero id works; IRPs the server sends carry it, and IronRDP routes them to
@@ -798,8 +799,12 @@ where
     // or `SetClipboardImage` (PROD-021), served back to the server when it
     // requests our clipboard data. Empty until the host copies something.
     let mut local_clipboard = LocalClipboard::Empty;
+    // Host layout requests wait here until the Display Control channel is open,
+    // and frame acks are held while one is applied (#4845).
+    let mut gate = ResizeGate::default();
 
     loop {
+        let ack_deadline = gate.deadline();
         tokio::select! {
             biased;
             host = host_in.next::<HostMessage>() => {
@@ -834,23 +839,13 @@ where
                         // Deactivation-Reactivation Sequence, handled below.
                         // Dimensions must be clamped to the MS-RDPEDISP range
                         // (200..=8192, even width) before encoding.
-                        let (w, h) = MonitorLayoutEntry::adjust_display_size(
+                        let (width, height) = MonitorLayoutEntry::adjust_display_size(
                             u32::from(width),
                             u32::from(height),
                         );
-                        match stage.encode_resize(w, h, None, None) {
-                            Some(Ok(frame)) => {
-                                if writer.write_all(&frame).await.is_err() {
-                                    break;
-                                }
-                                debug!(width = w, height = h, "requested display-control resize");
-                            }
-                            Some(Err(e)) => {
-                                warn!(error = %e, "failed to encode display-control resize")
-                            }
-                            None => debug!(
-                                "display control channel not ready; resize request dropped"
-                            ),
+                        gate.request(LayoutRequest::Size { width, height });
+                        if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                            break;
                         }
                     }
                     HostMessage::SetMonitorLayout(monitors) => {
@@ -858,17 +853,9 @@ where
                         // Control PDU with every monitor. The server answers
                         // with a Deactivation-Reactivation to the combined
                         // size, handled below like a resize.
-                        match crate::monitors::encode_layout(&mut stage, &monitors) {
-                            Some(Ok(frame)) => {
-                                if writer.write_all(&frame).await.is_err() {
-                                    break;
-                                }
-                                debug!(monitors = monitors.len(), "requested monitor layout");
-                            }
-                            Some(Err(e)) => warn!(error = %e, "failed to encode monitor layout"),
-                            None => debug!(
-                                "display control channel not ready; monitor layout dropped"
-                            ),
+                        gate.request(LayoutRequest::Monitors(monitors));
+                        if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                            break;
                         }
                     }
                     HostMessage::SetClipboard(text) => {
@@ -981,8 +968,31 @@ where
                     report_clipboard_failure(ipc_out, &e).await;
                     break;
                 }
+                // xrdp crashes on a frame ack that lands while it applies a
+                // layout: hold them until its reactivation (#4845). Fast-path
+                // processing answers with nothing but frame acks.
+                let outputs = if gate.in_flight() && action == ironrdp::pdu::Action::FastPath {
+                    outputs
+                        .into_iter()
+                        .filter_map(|output| match output {
+                            ActiveStageOutput::ResponseFrame(ack) => {
+                                gate.withhold(ack);
+                                None
+                            }
+                            other => Some(other),
+                        })
+                        .collect()
+                } else {
+                    outputs
+                };
                 match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
-                    Flow::Continue => {}
+                    Flow::Continue => {
+                        // The PDU may have opened the Display Control channel
+                        // a waiting layout needs.
+                        if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                            break;
+                        }
+                    }
                     Flow::Stop => break,
                     Flow::Terminate(reason) => {
                         end = failure::SessionEnd::Server(reason);
@@ -1007,6 +1017,7 @@ where
                                 let (r, w) = ironrdp_tokio::split_tokio_framed(new_framed);
                                 reader = r;
                                 writer = w;
+                                gate.reactivated();
                                 // The canvas is now a different size; tell the host so
                                 // it can resize before the server repaints.
                                 if write_message(
@@ -1022,14 +1033,41 @@ where
                                 {
                                     break;
                                 }
+                                // A layout requested meanwhile goes out now.
+                                if !send_pending_layout(&mut gate, &mut stage, &image, &mut writer)
+                                    .await
+                                {
+                                    break;
+                                }
                             }
                             Err(e) => {
-                                warn!(error = %e, "rdp deactivation-reactivation failed");
+                                warn!(error = format!("{e:#}"), "rdp deactivation-reactivation failed");
                                 end = failure::reactivation_end(&e);
                                 break;
                             }
                         }
                     }
+                }
+            }
+            // The server never reactivated after a layout (it ignored the
+            // request): release the withheld frame acks, then any waiting layout.
+            _ = async {
+                match ack_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                let acks = gate.expire();
+                debug!(acks = acks.len(), "no reactivation after a layout request; releasing frame acks");
+                let mut failed = false;
+                for ack in acks {
+                    if writer.write_all(&ack).await.is_err() {
+                        failed = true;
+                        break;
+                    }
+                }
+                if failed || !send_pending_layout(&mut gate, &mut stage, &image, &mut writer).await {
+                    break;
                 }
             }
             // The shared folder changed while connected: re-enumerate and
@@ -1145,6 +1183,65 @@ fn check_desktop_size(width: u16, height: u16) -> Result<()> {
     Ok(())
 }
 
+/// Send the gate's waiting layout when the Display Control channel is open and
+/// no other layout is in flight (#4845); otherwise it keeps waiting. A single
+/// size the desktop already has is skipped: a server answers it with no
+/// reactivation. Returns `false` when the transport failed.
+async fn send_pending_layout<T: FramedWrite>(
+    gate: &mut ResizeGate,
+    stage: &mut ActiveStage,
+    image: &DecodedImage,
+    transport: &mut T,
+) -> bool {
+    let Some(layout) = gate.take_sendable() else {
+        return true;
+    };
+    // MS-RDPEDISP 1.3: the client sends layouts only after the server's
+    // capabilities PDU. xrdp ignores one that races ahead of it.
+    if !display_control_ready(stage) {
+        debug!("display control channel not ready yet; layout request deferred");
+        gate.defer(layout);
+        return true;
+    }
+    let encoded = match &layout {
+        LayoutRequest::Size { width, height } => {
+            if (u32::from(image.width()), u32::from(image.height())) == (*width, *height) {
+                debug!(width, height, "desktop already has the requested size");
+                return true;
+            }
+            stage
+                .encode_resize(*width, *height, None, None)
+                .map(|r| r.map_err(|e| anyhow!("{e}")))
+        }
+        LayoutRequest::Monitors(monitors) => crate::monitors::encode_layout(stage, monitors),
+    };
+    match encoded {
+        Some(Ok(frame)) => {
+            if transport.write_all(&frame).await.is_err() {
+                return false;
+            }
+            debug!(?layout, "requested display-control layout");
+            gate.sent(layout, tokio::time::Instant::now());
+        }
+        Some(Err(e)) => warn!(error = %e, "failed to encode display-control layout"),
+        None => {
+            debug!("display control channel not open yet; layout request deferred");
+            gate.defer(layout);
+        }
+    }
+    true
+}
+
+/// Whether the Display Control channel is open and the server has sent its
+/// capabilities, so a monitor layout may be sent.
+fn display_control_ready(stage: &mut ActiveStage) -> bool {
+    stage
+        .get_dvc::<DisplayControlClient>()
+        .filter(|dvc| dvc.channel_id().is_some())
+        .and_then(|dvc| dvc.channel_processor_downcast_ref::<DisplayControlClient>())
+        .is_some_and(DisplayControlClient::ready)
+}
+
 /// Run the [Deactivation-Reactivation Sequence] after a server Deactivate All
 /// PDU (the mechanism by which a Display Control resize takes effect): re-run the
 /// capability exchange, then re-point the active stage and decoded image at the
@@ -1169,9 +1266,29 @@ where
         ConnectionActivationSequence::new(connector_config, io_channel_id, user_channel_id);
     let mut buf = WriteBuf::new();
     loop {
-        ironrdp_tokio::single_sequence_step(&mut framed, &mut activation, &mut buf)
-            .await
-            .context("RDP reactivation sequence step failed")?;
+        buf.clear();
+        let written = if activation.next_pdu_hint().is_some() {
+            let (action, pdu) = framed
+                .read_pdu()
+                .await
+                .context("RDP reactivation read failed")?;
+            if !is_io_channel_pdu(action, &pdu, io_channel_id) {
+                // The server's virtual channels and fast-path output keep
+                // flowing during the sequence (#4845); they are not part of it.
+                route_interleaved_pdu(stage, image, action, &pdu, &mut framed).await?;
+                continue;
+            }
+            activation.step(&pdu, &mut buf)
+        } else {
+            activation.step_no_input(&mut buf)
+        }
+        .context("RDP reactivation sequence step failed")?;
+        if let Some(len) = written.size() {
+            framed
+                .write_all(&buf.filled()[..len])
+                .await
+                .context("RDP reactivation write failed")?;
+        }
         if let ConnectionActivationState::Finalized {
             desktop_size,
             share_id,
@@ -1208,6 +1325,49 @@ where
         }
     }
     Ok(framed)
+}
+
+/// Whether a PDU read during a reactivation belongs to the sequence: an X.224
+/// Send Data Indication on the I/O channel. Fast-path output and the virtual
+/// channels' traffic do not.
+fn is_io_channel_pdu(action: ironrdp::pdu::Action, frame: &[u8], io_channel_id: u16) -> bool {
+    action == ironrdp::pdu::Action::X224
+        && ironrdp::pdu::mcs::decode_send_data_indication(frame)
+            .is_ok_and(|ctx| ctx.channel_id == io_channel_id)
+}
+
+/// Handle a PDU that arrived during a reactivation but is not part of it. A
+/// virtual-channel PDU still goes to its channel (CLIPRDR, drdynvc), whose
+/// replies are written back; fast-path output is dropped, as the server repaints
+/// the rebuilt desktop. A PDU the stage cannot process is logged and skipped,
+/// so it does not end the session mid-resize.
+async fn route_interleaved_pdu<T: FramedWrite>(
+    stage: &mut ActiveStage,
+    image: &mut DecodedImage,
+    action: ironrdp::pdu::Action,
+    frame: &[u8],
+    transport: &mut T,
+) -> Result<()> {
+    if action == ironrdp::pdu::Action::FastPath {
+        debug!("dropping fast-path output received during reactivation");
+        return Ok(());
+    }
+    let outputs = match stage.process(image, action, frame) {
+        Ok(outputs) => outputs,
+        Err(e) => {
+            debug!(error = %e, "skipping a channel PDU received during reactivation");
+            return Ok(());
+        }
+    };
+    for output in outputs {
+        if let ActiveStageOutput::ResponseFrame(bytes) = output {
+            transport
+                .write_all(&bytes)
+                .await
+                .context("RDP channel reply during reactivation failed")?;
+        }
+    }
+    Ok(())
 }
 
 /// Encode a batch of CLIPRDR channel messages against the active stage and write
@@ -1970,7 +2130,14 @@ mod tests {
     /// Script the server half of a Deactivation-Reactivation Sequence: a Demand
     /// Active for the new desktop size under a new share id, then the
     /// finalization PDUs (Synchronize, Cooperate, Granted Control, Font Map).
-    fn scripted_reactivation(share_id: u32, width: u16, height: u16) -> Vec<u8> {
+    /// `interleaved` is written after the Demand Active and after each
+    /// finalization PDU, as a server's channel traffic can be (#4845).
+    fn scripted_reactivation(
+        share_id: u32,
+        width: u16,
+        height: u16,
+        interleaved: &[u8],
+    ) -> Vec<u8> {
         use ironrdp::pdu::rdp::capability_sets::{
             Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, ServerDemandActive,
         };
@@ -1991,6 +2158,7 @@ mod tests {
             },
         });
         let mut script = server_share_control(share_id, demand_active);
+        script.extend_from_slice(interleaved);
         for pdu in [
             ShareDataPdu::Synchronize(SynchronizePdu {
                 target_user_id: TEST_USER_CHANNEL,
@@ -2008,6 +2176,7 @@ mod tests {
             ShareDataPdu::FontMap(FontPdu::default()),
         ] {
             script.extend(server_share_data(share_id, pdu));
+            script.extend_from_slice(interleaved);
         }
         script
     }
@@ -2017,7 +2186,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let (client, mut server) = tokio::io::duplex(64 * 1024);
-        let script = scripted_reactivation(0x0002_03EA, 1100, 700);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &[]);
         let server_task = tokio::spawn(async move {
             server.write_all(&script).await.unwrap();
             // Collect what the client sends back (Confirm Active + finalization).
@@ -2077,6 +2246,50 @@ mod tests {
         assert!(outputs
             .iter()
             .any(|o| matches!(o, ActiveStageOutput::DeactivateAll)));
+    }
+
+    /// xrdp keeps its virtual channels (CLIPRDR, drdynvc) and fast-path output
+    /// flowing while it reactivates after an early resize. Those PDUs are not
+    /// part of the sequence; decoding one as a Share Control PDU ended the
+    /// session with "invalid pdu type" (#4845).
+    #[tokio::test]
+    async fn reactivation_tolerates_interleaved_channel_and_fast_path_pdus() {
+        use ironrdp::pdu::mcs::SendDataIndication;
+        use ironrdp::pdu::x224::X224;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut interleaved = ironrdp::core::encode_vec(&X224(SendDataIndication {
+            initiator_id: TEST_SERVER_CHANNEL,
+            channel_id: TEST_IO_CHANNEL + 1,
+            user_data: std::borrow::Cow::Owned(vec![0x07, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        }))
+        .unwrap();
+        // A fast-path output PDU with no updates.
+        interleaved.extend_from_slice(&[0x00, 0x02]);
+
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &interleaved);
+        let server_task = tokio::spawn(async move {
+            server.write_all(&script).await.unwrap();
+            let mut sent = Vec::new();
+            let _ = server.read_to_end(&mut sent).await;
+        });
+
+        let mut stage = test_active_stage(0x0001_03EA);
+        let mut image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+        let framed = reactivate(
+            TokioFramed::new(client),
+            test_connector_config(),
+            &mut stage,
+            &mut image,
+            TEST_IO_CHANNEL,
+            TEST_USER_CHANNEL,
+        )
+        .await
+        .expect("interleaved channel traffic must not fail the reactivation");
+        assert_eq!((image.width(), image.height()), (1100, 700));
+        drop(framed);
+        server_task.await.unwrap();
     }
 }
 
