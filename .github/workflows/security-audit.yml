@@ -5,10 +5,13 @@ name: Security Audit
 # Moved out of code-quality.yml (#3325):
 #
 #   * push to develop/main — every merge is audited post-merge; watch develop.
-#   * daily schedule       — RUSTSEC advisories and yanks are TIME-based (the tree
+#   * daily, both branches — RUSTSEC advisories and yanks are TIME-based (the tree
 #                            does not change, the database does), so a daily run
 #                            surfaces them on develop AND main without waiting
-#                            for the next merge.
+#                            for the next merge. main: this file's own schedule.
+#                            develop: scheduled-dispatch.yml dispatches it on
+#                            develop at 04:00 UTC (#4847), so develop is audited
+#                            with develop's YAML, not main's stale copy.
 #   * pull_request         — only when a dependency manifest/lockfile (or this
 #                            gate's own config) changes, i.e. when the PR itself
 #                            can introduce a finding.
@@ -57,11 +60,13 @@ on:
   push:
     branches: [ main, develop ]
   schedule:
-    # 04:41 UTC daily (off the hour to dodge scheduler congestion; after the
-    # 04:00 cargo-update-lockfile run).
-    # GitHub fires this only from main (the default branch). Until this file
-    # is on main, scheduled-dispatch.yml dispatches it on develop (#4277); see
-    # scripts/internal/scheduled-lanes.mjs.
+    # main ONLY — 04:41 UTC daily (off the hour to dodge scheduler congestion;
+    # after the 04:00 cargo-update-lockfile run). A scheduled run executes
+    # MAIN's copy of this file and checks out main.
+    #
+    # develop's daily audit is not a cron here (#4847): GitHub would run main's
+    # copy of this YAML against develop's tree. scheduled-dispatch.yml
+    # dispatches it on develop instead; see scripts/internal/scheduled-lanes.mjs.
     - cron: '41 4 * * *'
   workflow_dispatch:
 
@@ -85,21 +90,16 @@ permissions:
   contents: read
 
 jobs:
-  # A scheduled run starts on the default branch (main) only, so it fans out
-  # over both long-lived branches; every other event audits its own ref ('').
+  # Every event audits its own ref: a PR's merge ref, the pushed branch, the
+  # dispatching branch (develop for the nightly dispatch) or main for the cron.
   security-audit:
-    name: Security Audit${{ matrix.ref != '' && format(' ({0})', matrix.ref) || '' }}
+    name: Security Audit
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        ref: ${{ fromJSON(github.event_name == 'schedule' && '["develop","main"]' || '[""]') }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ matrix.ref }}
           persist-credentials: false
 
       - name: Setup pnpm
@@ -198,17 +198,14 @@ jobs:
   # The RDP sidecar (termihub-rdp-helper) ships in every release but is
   # workspace-EXCLUDED with its own lockfile (rdp-sidecar/Cargo.lock), which the
   # job above never reads (#4357, SUP2-004). Same triggers and the same daily
-  # develop+main fan-out, so a RUSTSEC advisory or yank against the sidecar
-  # lockfile surfaces within a day on both branches, without a full build.
+  # develop (dispatched) + main (cron) cadence, so a RUSTSEC advisory or yank
+  # against the sidecar lockfile surfaces within a day on both branches,
+  # without a full build.
   # Configs: rdp-sidecar/.cargo/audit.toml and rdp-sidecar/deny.toml — both are
   # picked up because every step runs in rdp-sidecar/.
   security-audit-sidecar:
-    name: Security Audit (RDP sidecar${{ matrix.ref != '' && format(', {0}', matrix.ref) || '' }})
+    name: Security Audit (RDP sidecar)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        ref: ${{ fromJSON(github.event_name == 'schedule' && '["develop","main"]' || '[""]') }}
     defaults:
       run:
         working-directory: rdp-sidecar
@@ -217,7 +214,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ matrix.ref }}
           persist-credentials: false
 
       - name: Setup Rust

@@ -21,19 +21,24 @@ name: Windows SSH Host
 # HKLM\SOFTWARE\OpenSSH\DefaultShell, brings the fixture up, runs exactly that
 # shell's desktop test and then the agent-side suite under
 # TERMIHUB_REQUIRE_WINDOWS_SSH=1, fails on a skip or a test that did not run,
-# and tears everything down. The recipe lives in the script,
-# so a scheduled run (main's copy of this file) runs develop's recipe.
+# and tears everything down. The recipe lives in the script, so the graded
+# tree's recipe runs whatever copy of this file fired.
 #
 # Not on every PR (a Windows build of the desktop crate costs several minutes):
 # nightly + manual + PRs that touch the deploy/connect paths under test.
 
 on:
   schedule:
-    # 04:17 UTC daily (off the top of the hour to dodge scheduler congestion).
-    # GitHub fires this only from main (the default branch). Until this file
-    # is on main, scheduled-dispatch.yml dispatches it on develop (#4277); see
+    # main ONLY — weekly, Wednesday 04:17 UTC (off the top of the hour to dodge
+    # scheduler congestion). A scheduled run executes MAIN's copy of this file
+    # and checks out main, so main is graded with its own job definitions.
+    #
+    # The DAILY develop nightly is not a cron here (#4847): GitHub would run
+    # main's copy of this YAML against develop's tree. scheduled-dispatch.yml
+    # dispatches it at 04:00 UTC instead (`gh workflow run windows-ssh-host.yml
+    # --ref develop`), which executes develop's YAML. Registry:
     # scripts/internal/scheduled-lanes.mjs.
-    - cron: "17 4 * * *"
+    - cron: "17 4 * * 3"
   workflow_dispatch:
   pull_request:
     # Every source the suite exercises (#4618): the desktop deploy/connect
@@ -85,9 +90,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # The nightly grades develop: a scheduled run fires from the default
-          # branch (main), so without this it would only re-test main's code.
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          # checkout's default ref: a PR's merge ref, the dispatching branch
+          # (develop for the nightly dispatch) or main for the weekly cron.
           persist-credentials: false
 
       - name: Setup Rust

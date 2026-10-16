@@ -23,11 +23,16 @@ name: WSL Live (Windows)
 
 on:
   schedule:
-    # 03:41 UTC daily (off the top of the hour to dodge scheduler congestion).
-    # GitHub fires this only from main (the default branch). Until this file
-    # is on main, scheduled-dispatch.yml dispatches it on develop (#4277); see
+    # main ONLY — weekly, Wednesday 03:41 UTC (off the top of the hour to dodge
+    # scheduler congestion). A scheduled run executes MAIN's copy of this file
+    # and checks out main, so main is graded with its own job definitions.
+    #
+    # The DAILY develop nightly is not a cron here (#4847): GitHub would run
+    # main's copy of this YAML against develop's tree. scheduled-dispatch.yml
+    # dispatches it at 03:41 UTC instead (`gh workflow run wsl-live.yml --ref
+    # develop`), which executes develop's YAML. Registry:
     # scripts/internal/scheduled-lanes.mjs.
-    - cron: "41 3 * * *"
+    - cron: "41 3 * * 3"
   workflow_dispatch:
   pull_request:
     # Every source the live suite exercises (#4618); kept in sync by the drift
@@ -71,9 +76,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # The nightly grades develop: a scheduled run fires from the default
-          # branch (main), so without this it would only re-test main's code.
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          # checkout's default ref: a PR's merge ref, the dispatching branch
+          # (develop for the nightly dispatch) or main for the weekly cron.
           persist-credentials: false
 
       - name: Install WSL and a Debian distribution
