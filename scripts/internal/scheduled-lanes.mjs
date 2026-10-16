@@ -36,13 +36,16 @@
 //              true (default) when the lane's own `schedule:` grades develop,
 //              so once the file is on `main` its cron takes over and the
 //              dispatcher stops dispatching it. false when only a dispatched
-//              run produces what develop needs. That is every MAIN-RESIDENT
-//              lane whose job bodies must match develop (#4449): a scheduled
-//              run executes main's copy of the YAML, so its job definitions
-//              lag develop's until the next release. system-integration and
-//              integration-fixtures are false; their own `schedule:` grades
-//              main only. The drift guard reports `jobs-differ` for a lane
-//              whose own schedule grades develop with stale job bodies.
+//              run produces what develop needs: a scheduled run executes
+//              MAIN's copy of the YAML, so its job definitions lag develop's
+//              until the next release (#4449). EVERY lane below is false
+//              (#4847): the dispatcher always starts develop's nightly with
+//              develop's YAML, and a lane's own `schedule:`, where it keeps
+//              one, grades main only. Only dispatched develop runs (and develop
+//              pushes) count; scheduled runs do not. The drift guard reports
+//              `jobs-differ` for a lane whose own schedule grades develop with
+//              stale job bodies, and a registry problem for an `ownSchedule:
+//              false` lane that still checks out develop on `schedule`.
 
 /** Hours a lane may go without a successful develop run before the heartbeat fails. */
 export const HEARTBEAT_HOURS = { daily: 36, weekly: 8 * 24 };
@@ -56,16 +59,18 @@ export const CATCH_UP_HOURS = { daily: 28, weekly: 7 * 24 + 4 };
 
 const DEVELOP_PUSH = { event: "push", branch: "develop" };
 const DEVELOP_DISPATCH = { event: "workflow_dispatch", branch: "develop" };
-const SCHEDULE = { event: "schedule" };
 
 /** The lanes that grade develop on a schedule. */
 export const LANES = [
   {
+    // Dispatched (#4847): its own schedule grades main only (weekly), so a
+    // scheduled run never pairs main's YAML with develop's tree.
     file: "wsl-live.yml",
     cadence: "daily",
     cron: "41 3 * * *",
     dispatch: true,
-    sources: [SCHEDULE, DEVELOP_DISPATCH],
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH],
   },
   {
     // Main-resident, but dispatched (#4449): only a dispatched run executes
@@ -80,27 +85,35 @@ export const LANES = [
     sources: [DEVELOP_DISPATCH],
   },
   {
+    // Dispatched only (#4847): it opens its PR against develop, so main has
+    // nothing to grade; it keeps no schedule of its own.
     file: "cargo-update-lockfile.yml",
     cadence: "daily",
     cron: "0 4 * * *",
     dispatch: true,
-    sources: [SCHEDULE, DEVELOP_DISPATCH, DEVELOP_PUSH],
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
   },
   {
+    // Dispatched (#4847): its own schedule grades main only (weekly).
     file: "windows-ssh-host.yml",
     cadence: "daily",
     cron: "0 4 * * *",
     dispatch: true,
-    sources: [SCHEDULE, DEVELOP_DISPATCH],
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH],
   },
   {
     // Every develop push runs it too, so it is rarely stale; the cron catches
-    // an advisory published on a day with no merges.
+    // an advisory published on a day with no merges. Dispatched (#4847): its
+    // own daily schedule audits main only (advisories are time-based, so main
+    // keeps a daily cadence).
     file: "security-audit.yml",
     cadence: "daily",
     cron: "0 4 * * *",
     dispatch: true,
-    sources: [SCHEDULE, DEVELOP_DISPATCH, DEVELOP_PUSH],
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
   },
   {
     // Main-resident, but dispatched (#4449): a scheduled run executes MAIN's
@@ -118,12 +131,15 @@ export const LANES = [
     sources: [DEVELOP_DISPATCH],
   },
   {
+    // Dispatched (#4847): its daily develop cron is gone; its own Wednesday
+    // cron grades main only.
     file: "plugin-sandbox-nightly.yml",
     cadence: "daily",
     cron: "35 5 * * *",
     dispatch: true,
+    ownSchedule: false,
     inputs: { branch: "develop" },
-    sources: [SCHEDULE, DEVELOP_DISPATCH],
+    sources: [DEVELOP_DISPATCH],
   },
   {
     // Has no schedule of its own (#4277): the dispatcher is its only cron.
@@ -131,23 +147,30 @@ export const LANES = [
     cadence: "daily",
     cron: "23 7 * * *",
     dispatch: true,
+    ownSchedule: false,
     sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
   },
   {
-    // The upstream-drift job runs only on schedule/dispatch; the path-filtered
-    // push runs do not exercise it, so they do not count.
+    // The upstream-drift job runs only on dispatch; the path-filtered push
+    // runs do not exercise it, so they do not count. Dispatched only (#4847):
+    // the register it checks is kept current on develop, so it keeps no
+    // schedule of its own.
     file: "vendored-forks.yml",
     cadence: "weekly",
     cron: "17 6 * * 1",
     dispatch: true,
-    sources: [SCHEDULE, DEVELOP_DISPATCH],
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH],
   },
   {
+    // Dispatched only (#4847): the expectation is kept current on develop, so
+    // it keeps no schedule of its own.
     file: "branch-protection.yml",
     cadence: "weekly",
     cron: "17 6 * * 1",
     dispatch: true,
-    sources: [SCHEDULE, DEVELOP_DISPATCH, DEVELOP_PUSH],
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
   },
 ];
 
@@ -277,6 +300,22 @@ export function cronsOf(text) {
     if (m) crons.push(m[1].trim());
   }
   return crons;
+}
+
+/**
+ * True when the workflow checks out `develop` on a `schedule` event, e.g.
+ * `ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}` or a
+ * schedule-only `["develop","main"]` fan-out. A scheduled run executes MAIN's
+ * copy of the YAML, so this grades develop's tree with main's job definitions
+ * (#4449, #4847). Comments are ignored.
+ *
+ * @param {string} text workflow YAML
+ */
+export function checksOutDevelopOnSchedule(text) {
+  return text
+    .split(/\r?\n/)
+    .map(stripComment)
+    .some((l) => /github\.event_name\s*==\s*'schedule'\s*&&\s*'[^']*develop/.test(l));
 }
 
 /**

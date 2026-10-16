@@ -8,7 +8,7 @@ name: Vendored Forks
 #                     vendored dir, each fork README records its base, and the
 #                     watchlist versions match the lockfiles. Runs on PRs/pushes
 #                     that touch those files only (#3326 lane policy).
-#   * upstream-drift — weekly + manual. Asks crates.io, GitHub and OSV whether
+#   * upstream-drift — weekly (dispatched) + manual. Asks crates.io, GitHub and OSV whether
 #                     upstream moved past the reviewed state or an advisory hits
 #                     the fork base, and keeps ONE tracking issue in sync.
 #                     A path/[patch] fork is invisible to cargo update,
@@ -37,12 +37,11 @@ on:
       - 'scripts/internal/check-vendored-forks.mjs'
       - 'scripts/internal/vendored-fork-drift.mjs'
       - '.github/workflows/vendored-forks.yml'
-  schedule:
-    # Mondays 05:23 UTC (off the hour to dodge scheduler congestion).
-    # GitHub fires this only from main (the default branch). Until this file
-    # is on main, scheduled-dispatch.yml dispatches it on develop (#4277); see
-    # scripts/internal/scheduled-lanes.mjs.
-    - cron: '23 5 * * 1'
+  # No schedule of its own (#4847): scheduled-dispatch.yml dispatches it on
+  # develop every Monday 06:17 UTC, which runs upstream-drift. A cron here would
+  # fire from main and run MAIN's copy of this YAML; the register it checks is
+  # kept current on develop, so there is no main cadence to keep. Registry:
+  # scripts/internal/scheduled-lanes.mjs.
   workflow_dispatch:
 
 # Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
@@ -88,7 +87,7 @@ jobs:
 
   upstream-drift:
     name: Vendored Forks Upstream Drift
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -96,12 +95,11 @@ jobs:
       issues: write
 
     steps:
-      # A scheduled run starts on the default branch (main); the register that
-      # is kept current lives on develop, so read that one.
+      # The dispatching branch: develop for the weekly dispatch, whose
+      # register is the one kept current.
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false
 
       - name: Setup Node.js

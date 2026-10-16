@@ -159,6 +159,18 @@ describe("LANES", () => {
     expect(fx.cron).toBe("41 3 * * *");
   });
 
+  it("dispatches every lane, so develop is never graded with main's YAML (#4847)", () => {
+    for (const lane of LANES) {
+      expect(lane.dispatch, lane.file).toBe(true);
+      expect(lane.ownSchedule, lane.file).toBe(false);
+      // Scheduled runs execute main's YAML (and grade main), so they never count.
+      expect(
+        lane.sources.every((s) => s.branch === "develop"),
+        lane.file
+      ).toBe(true);
+    }
+  });
+
   it("keeps the catch-up window inside the heartbeat window", () => {
     for (const cadence of Object.keys(HEARTBEAT_HOURS)) {
       expect(CATCH_UP_HOURS[cadence]).toBeLessThan(HEARTBEAT_HOURS[cadence]);

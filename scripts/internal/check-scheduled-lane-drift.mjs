@@ -8,8 +8,10 @@
 //   1. Registry (always fails on a problem): every workflow with `schedule:` or
 //      `workflow_run:` must be a lane in scripts/internal/scheduled-lanes.mjs
 //      (or the dispatcher itself), every dispatched lane must accept
-//      `workflow_dispatch` (and the inputs the dispatcher passes), and the
-//      crons in scheduled-dispatch.yml must match the registry. The vitest
+//      `workflow_dispatch` (and the inputs the dispatcher passes), the
+//      crons in scheduled-dispatch.yml must match the registry, and a lane
+//      with `ownSchedule: false` must not check out develop on `schedule`
+//      (#4847). The vitest
 //      suite runs this part against the real tree, so a PR that adds a
 //      scheduled lane without registering it fails per PR.
 //   2. Drift against main (annotates; fails only with --strict): each such
@@ -41,6 +43,7 @@ import { isMainModule } from "./is-main-module.mjs";
 import {
   DISPATCHER_FILE,
   LANES,
+  checksOutDevelopOnSchedule,
   cronsOf,
   extractOnBlock,
   hasDefaultBranchOnlyTrigger,
@@ -126,6 +129,13 @@ export function registryProblems(workflows, lanes = LANES) {
       if (!declaresInput(text, key)) {
         problems.push(`${lane.file} does not declare the workflow_dispatch input "${key}".`);
       }
+    }
+    if (lane.ownSchedule === false && checksOutDevelopOnSchedule(text)) {
+      problems.push(
+        `${lane.file} checks out develop on \`schedule\`, but its develop run is dispatched ` +
+          "(ownSchedule: false). A scheduled run executes main's YAML, so this would grade " +
+          "develop with stale job definitions; let the cron grade main (#4847)."
+      );
     }
   }
 

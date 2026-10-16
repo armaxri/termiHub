@@ -66,6 +66,35 @@ describe("registryProblems", () => {
     ).toEqual([]);
   });
 
+  it("flags an ownSchedule: false lane that checks out develop on schedule (#4847)", () => {
+    const override = NIGHTLY.replace(
+      "jobs: {}",
+      "jobs:\n  a:\n    steps:\n      - with:\n" +
+        "          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}"
+    );
+    const fanOut = NIGHTLY.replace(
+      "jobs: {}",
+      "jobs:\n  a:\n    strategy:\n      matrix:\n" +
+        "        ref: ${{ fromJSON(github.event_name == 'schedule' && '[\"develop\",\"main\"]' || '[\"\"]') }}"
+    );
+    for (const text of [override, fanOut]) {
+      const problems = registryProblems(tree({ "nightly.yml": text }), [
+        lane({ ownSchedule: false }),
+      ]);
+      expect(problems.join("\n")).toMatch(/checks out develop on `schedule`/);
+      // A lane whose own schedule grades develop may still do it.
+      expect(registryProblems(tree({ "nightly.yml": text }), [lane()])).toEqual([]);
+    }
+    // A comment that mentions the pattern is not an override.
+    const commented = NIGHTLY.replace(
+      "jobs: {}",
+      "# was: ${{ github.event_name == 'schedule' && 'develop' || '' }}\njobs: {}"
+    );
+    expect(
+      registryProblems(tree({ "nightly.yml": commented }), [lane({ ownSchedule: false })])
+    ).toEqual([]);
+  });
+
   it("flags cron/dispatch mismatches", () => {
     expect(registryProblems(tree(), [lane({ cron: null })]).join("\n")).toMatch(/has no cron/);
     const watched = lane({ dispatch: false, cron: "17 3 * * *" });
