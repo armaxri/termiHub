@@ -44,6 +44,9 @@ pub enum Variant {
     Crash,
     /// `--features escape-probe`: tries sandbox escapes on command (#4186).
     Escape,
+    /// `--features tls-probe`: the escape probe plus the `tls` session probe,
+    /// a real handshake against a public host (#4818; nightly lane only).
+    TlsProbe,
 }
 
 impl Variant {
@@ -55,6 +58,7 @@ impl Variant {
             Variant::Abi10 => "abi-1-0",
             Variant::Crash => "crash",
             Variant::Escape => "escape",
+            Variant::TlsProbe => "tls-probe",
         }
     }
 
@@ -65,6 +69,7 @@ impl Variant {
             Variant::Abi10 => 2,
             Variant::Crash => 3,
             Variant::Escape => 4,
+            Variant::TlsProbe => 5,
         }
     }
 
@@ -75,6 +80,7 @@ impl Variant {
             Variant::Abi10 => &["--features", "abi-1-0"],
             Variant::Crash => &["--features", "crash-commands"],
             Variant::Escape => &["--features", "escape-probe"],
+            Variant::TlsProbe => &["--features", "tls-probe"],
         }
     }
 }
@@ -105,7 +111,8 @@ fn shared_target_dir(variant: Variant) -> PathBuf {
 /// Build `variant` into its shared target directory (once per test binary) and
 /// return the path of the shared artifact. Callers must copy it, never load it.
 fn shared_artifact(variant: Variant) -> &'static Path {
-    static BUILT: [OnceLock<PathBuf>; 5] = [
+    static BUILT: [OnceLock<PathBuf>; 6] = [
+        OnceLock::new(),
         OnceLock::new(),
         OnceLock::new(),
         OnceLock::new(),
