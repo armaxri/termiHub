@@ -498,9 +498,30 @@ function Invoke-Up([int]$ListenPort, [string]$AgentSource, [bool]$ToGitHubEnv) {
     Write-FixtureEnvironment $ToGitHubEnv
 }
 
+function Stop-FixtureBinaryProcess {
+    # The agent copied under $Dir leaves detached daemons behind (the registry
+    # daemon and any persistent session daemon outlive the SSH session by
+    # design), and a running image cannot be deleted: stop every process
+    # started from a file under $Dir before the directory is removed (#4828).
+    $root = (Resolve-Path -LiteralPath $Dir).Path.TrimEnd('\') + '\'
+    $procs = @(Get-CimInstance -ClassName Win32_Process | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)
+        })
+    foreach ($proc in $procs) {
+        Write-FixtureLog "stopping leftover $($proc.Name) (pid $($proc.ProcessId))"
+        Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($proc in $procs) {
+        Wait-Process -Id $proc.ProcessId -Timeout 15 -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-Down {
     Assert-Admin
     Suspend-Fixture
+    if (Test-Path -LiteralPath $Dir) {
+        Stop-FixtureBinaryProcess
+    }
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }

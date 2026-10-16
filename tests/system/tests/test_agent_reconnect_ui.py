@@ -141,6 +141,12 @@ _TICK_RE = re.compile(r"TICK=(\d+)")
 # buffers output through the outage, so recovery + catch-up is not instant.
 RECOVERY_TIMEOUT = 90.0
 
+# How long the counter must hold one value to count as stopped: comfortably
+# longer than its 1 s tick, so a still-running counter can never pass.
+COUNTER_STOP_WINDOW = 3.0
+# How long to wait for the post-re-attach echo before typing it again.
+ECHO_RESEND_INTERVAL = 5.0
+
 
 def _agent_doc(sshd: LocalAgentSshd | NativeSshdFixture) -> str:
     """A v2 nested connections store carrying one key-auth agent at ``sshd``."""
@@ -360,12 +366,20 @@ class TestAgentReconnectUi(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syst
             self._counter_stopped(shell_tab), timeout=30.0, what="the counter to stop after Ctrl-C"
         )
         marker = unique_name("reattach-echo")
-        self.driver.terminal_input(f"echo {marker}", tab_id=shell_tab)
-        self.wait(
-            lambda: marker in (self.driver.read_terminal(shell_tab) or ""),
-            timeout=30.0,
-            what=f"{marker!r} to echo in the re-attached shell",
-        )
+        # Re-offer the command until it shows: an interrupted PowerShell can
+        # drop the first keystrokes typed while it is redrawing its prompt
+        # (seen on the Windows leg, #4828), which says nothing about re-attach.
+        sent = {"at": 0.0}
+
+        def echoed() -> bool:
+            if marker in (self.driver.read_terminal(shell_tab) or ""):
+                return True
+            if time.monotonic() - sent["at"] >= ECHO_RESEND_INTERVAL:
+                self.driver.terminal_input(f"echo {marker}\r", tab_id=shell_tab)
+                sent["at"] = time.monotonic()
+            return False
+
+        self.wait(echoed, timeout=30.0, what=f"{marker!r} to echo in the re-attached shell")
 
         # ── PERMANENT sever: hold the endpoint DOWN so the reconnect provably
         # cannot succeed, then sever. It must PARK in Reconnecting (never vanish),
@@ -401,16 +415,22 @@ class TestAgentReconnectUi(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syst
         assert shell_tab in self.tab_ids(), "the agent tab vanished instead of settling Disconnected"
 
     def _counter_stopped(self, tab_id: str):
-        """A predicate that is true once the counter's value stops changing."""
-        last = {"value": self._max_tick(tab_id), "stable": 0}
+        """A predicate that is true once the counter's value stops changing.
+
+        "Stopped" means unchanged for longer than the counter's 1 s tick
+        (``COUNTER_STOP_WINDOW``): two equal reads a poll interval apart are
+        what a still-running 1 Hz counter looks like too, which let a Ctrl-C
+        that never reached the shell pass as a stop (#4828).
+        """
+        last = {"value": self._max_tick(tab_id), "since": time.monotonic()}
 
         def check() -> bool:
             current = self._max_tick(tab_id)
-            if current is not None and current == last["value"]:
-                last["stable"] += 1
-            else:
+            now = time.monotonic()
+            if current is None or current != last["value"]:
                 last["value"] = current
-                last["stable"] = 0
-            return last["stable"] >= 2
+                last["since"] = now
+                return False
+            return now - last["since"] >= COUNTER_STOP_WINDOW
 
         return check
