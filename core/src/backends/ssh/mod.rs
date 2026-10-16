@@ -592,6 +592,28 @@ impl ConnectionType for Ssh {
                             visible_when: None,
                         },
                         SettingsField {
+                            key: "initialCommand".to_string(),
+                            label: "Initial Command".to_string(),
+                            description: Some("Command to run after the shell starts".to_string()),
+                            help_text: Some(concat!(
+                                "Runs once in the remote shell after the first connect, for example ",
+                                "`tmux attach` or `cd /srv`. termiHub waits for the shell's prompt ",
+                                "(after Shell Integration has been set up, when enabled) before ",
+                                "sending it.\n\n",
+                                "It does not run again after an automatic reconnect; use the ",
+                                "On-reconnect Command for that. Leave empty to run nothing.",
+                            ).to_string()),
+                            field_type: FieldType::Text,
+                            required: false,
+                            default: None,
+                            placeholder: None,
+                            // Literal: the remote shell expands `$VAR` / `~` itself;
+                            // host-side expansion would resolve against the local machine.
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
                             key: "shellIntegration".to_string(),
                             label: "Shell Integration".to_string(),
                             description: Some(
@@ -1326,6 +1348,7 @@ mod tests {
                 "keepaliveIntervalSecs",
                 "keepaliveMaxCount",
                 "env",
+                "initialCommand",
                 "shellIntegration",
                 "autoReconnect",
                 "onReconnectCommand"
@@ -1353,6 +1376,29 @@ mod tests {
             .iter()
             .flat_map(|g| g.fields.iter())
             .any(|f| f.key == crate::connection::LEGACY_RESILIENT_RECONNECT_KEY));
+    }
+
+    #[test]
+    fn schema_has_initial_command() {
+        // #4866: parity with local shell / WSL — same key, label and wording,
+        // always visible (not gated on auto-reconnect like onReconnectCommand).
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .find(|f| f.key == "initialCommand")
+            .expect("initialCommand field present");
+        assert_eq!(field.label, "Initial Command");
+        assert_eq!(
+            field.description.as_deref(),
+            Some("Command to run after the shell starts")
+        );
+        assert!(matches!(field.field_type, FieldType::Text));
+        assert!(!field.required);
+        assert!(field.visible_when.is_none());
+        assert!(!field.supports_env_expansion);
     }
 
     #[test]
