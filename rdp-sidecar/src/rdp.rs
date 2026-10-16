@@ -453,7 +453,7 @@ fn crop_rect(
         width: w as u32,
         height: h as u32,
         data: rgba,
- jpeg: None,
+        jpeg: None,
     })
 }
 
