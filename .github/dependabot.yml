@@ -7,6 +7,10 @@
 # drifts to two SHAs (scripts/internal/check-action-pins.mjs enforces that).
 # Only github-actions here: cargo/npm updates go through the existing lockfile
 # chores (cargo-update-lockfile.yml) and security-audit.yml.
+# Dependabot has no ecosystem for the cargo TOOLS taiki-e/install-action
+# installs (cargo-deny, cargo-audit, ...): those are pinned in
+# .github/cargo-tools.json and bumped by hand (docs/contributing.md ->
+# "Cargo tool versions", #4406).
 version: 2
 updates:
   - package-ecosystem: github-actions

@@ -112,7 +112,7 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
 
       # Compatible (SemVer-respecting) updates only: `cargo update` never bumps
       # past a Cargo.toml constraint, so this is a lockfile-only refresh, not a
