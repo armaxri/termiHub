@@ -1,19 +1,28 @@
 //! Map parsed MobaXterm sessions onto termiHub connection settings (#4850).
 //!
 //! Field positions follow the community-documented `.mxtsessions` layout
-//! (index 0 of the `%` block is the session type):
+//! (index 0 of the `%` block is the session type). The SSH, RDP and VNC
+//! positions match the open-source Sessionator generator
+//! (`src/Formats/MobaXterm/{SSH,RDP,VNC}.php`); the serial positions are a
+//! best-effort reading that has not been checked against MobaXterm itself.
 //!
 //! | Type | Code | Fields used |
 //! |------|------|-------------|
-//! | SSH | 0 | 1 host, 2 port, 3 user (`<default>` = none), 7 login command, 8/9/10/15 gateway hosts/ports/users/keys (`__PIPE__` lists), 14 key path, 19 proxy type |
+//! | SSH | 0 | 1 host, 2 port, 3 user (`<default>` = none), 7 login command, 8/9/10/15 gateway hosts/ports/users/keys (`__PIPE__` lists), 14 key path, 19/20/21/22 proxy type/host/port/user |
 //! | Telnet | 1 | 1 host, 2 port |
-//! | RDP | 4 | 1 host, 2 port, 3 user, 13 SSH gateway host |
-//! | VNC | 5 | 1 host, 2 port |
+//! | RDP | 4 | 1 host, 2 port, 3 user, 13/14/15/18 SSH gateway hosts/ports/users/keys, 20 RD Gateway |
+//! | VNC | 5 | 1 host, 2 port, 5/6/7/8 SSH gateway hosts/ports/users/keys, 13/14/15/16 proxy type/host/port/user |
 //! | FTP | 6 | 1 host, 2 port, 3 user |
 //! | SFTP | 7 | 1 host, 2 port, 3 user |
 //! | Serial | 8 | 2 speed, 3 data bits, 4 parity, 5 stop bits, 6 flow control, 8 port description |
 //! | Shell | 10 | 3 start directory |
 //! | WSL | 14 | 1 distribution |
+//!
+//! What termiHub has a counterpart for is mapped: SSH gateways become the SSH
+//! jump-host chain, and a single VNC SSH gateway becomes the VNC SSH tunnel.
+//! The rest stays a preview note: termiHub SSH connections have no on-connect
+//! command (only local and WSL shells do) and no outbound network proxy, RDP
+//! has no SSH tunnel, and the VNC tunnel is single-hop.
 //!
 //! Rsh (2), XDMCP (3), File (9), Browser (11), Mosh (12) and S3 (13) have no
 //! termiHub counterpart and are skipped with a reason. Passwords are never
@@ -182,8 +191,8 @@ pub fn map_session(session: &RawSession, env: &PlaceholderEnv) -> Mapped {
     match code {
         0 => map_ssh(params, env, &label),
         1 => map_host_port(params, &label, "telnet", 23, false),
-        4 => map_rdp(params, &label),
-        5 => map_host_port(params, &label, "vnc", 5900, false),
+        4 => map_rdp(params, env, &label),
+        5 => map_vnc(params, env, &label),
         6 => map_host_port(params, &label, "ftp", 21, true),
         7 => map_sftp(params, &label),
         8 => map_serial(params, &session.name, &label),
@@ -249,13 +258,14 @@ fn map_ssh(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     if !hops.is_empty() {
         b.set("proxyJump", Value::Array(hops));
     }
-    if b.field(7).is_some() {
-        b.notes
-            .push("The command run at login was not imported.".to_string());
+    if let Some(command) = b.field(7) {
+        b.notes.push(format!(
+            "The command run at login (\"{command}\") was not imported: termiHub SSH \
+             connections have no on-connect command; run it yourself after connecting."
+        ));
     }
-    if b.field(19).is_some_and(|p| p != "0") {
-        b.notes
-            .push("The network proxy setting was not imported.".to_string());
+    if let Some(note) = proxy_note(&b, [19, 20, 21, 22], "SSH connections") {
+        b.notes.push(note);
     }
     let target = host_target(user.as_deref(), &host, port, 22);
     b.import("ssh", label, target)
@@ -318,15 +328,113 @@ fn gateway_hops(b: &mut Builder<'_>, idx: [usize; 4], env: &PlaceholderEnv) -> V
     hops
 }
 
-fn map_rdp(params: &[String], label: &str) -> Mapped {
-    let mut mapped = map_host_port(params, label, "rdp", 3389, true);
-    let has_gateway = params.get(13).is_some_and(|g| !g.trim().is_empty());
-    if has_gateway && matches!(mapped.outcome, Outcome::Import { .. }) {
-        mapped
-            .notes
-            .push("The SSH gateway (jump host) of this RDP session was not imported.".to_string());
+/// The preview note for a MobaXterm network proxy (`[type, host, port, user]`
+/// field indices), or `None` when the session uses no proxy. termiHub has no
+/// outbound proxy setting for `subject` (e.g. `"SSH connections"`).
+fn proxy_note(b: &Builder<'_>, idx: [usize; 4], subject: &str) -> Option<String> {
+    let kind = match b.field(idx[0])?.as_str() {
+        "0" => return None,
+        "1" => "SOCKS4 proxy",
+        "2" => "SOCKS5 proxy",
+        "3" => "HTTP proxy",
+        "4" => "Telnet proxy",
+        "5" => "local proxy command",
+        "6" => "SSH-forwarding proxy",
+        "7" => "SSH proxy command",
+        _ => "network proxy",
+    };
+    let at = match (b.field(idx[1]), b.field(idx[2])) {
+        (Some(host), Some(port)) => format!(" {host}:{port}"),
+        (Some(host), None) => format!(" {host}"),
+        _ => String::new(),
+    };
+    let user = b
+        .field(idx[3])
+        .map(|u| format!(" (user {u})"))
+        .unwrap_or_default();
+    Some(format!(
+        "The {kind}{at}{user} was not imported: termiHub {subject} have no network proxy setting."
+    ))
+}
+
+/// `host:port → host:port` summary of a gateway chain for a preview note.
+fn hops_summary(hops: &[Value]) -> String {
+    hops.iter()
+        .map(|h| {
+            let host = h["host"].as_str().unwrap_or_default();
+            match h["port"].as_u64() {
+                Some(22) | None => host.to_string(),
+                Some(port) => format!("{host}:{port}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" → ")
+}
+
+fn map_rdp(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
+    let mut b = Builder::new(params);
+    let Some(host) = b.field(1) else {
+        return skip(label, String::new(), "No host is set.");
+    };
+    let port = b.port(2, 3389);
+    let user = b.username(3);
+    b.set("host", json!(host));
+    b.set("port", json!(port));
+    if let Some(u) = &user {
+        b.set("username", json!(u));
     }
-    mapped
+    let hops = gateway_hops(&mut b, [13, 14, 15, 18], env);
+    if !hops.is_empty() {
+        b.notes.push(format!(
+            "The SSH gateway {} was not imported: termiHub RDP connections cannot use an \
+             SSH tunnel; connect through a port forward instead.",
+            hops_summary(&hops)
+        ));
+    }
+    if let Some(gateway) = b.field(20) {
+        b.notes.push(format!(
+            "The Remote Desktop Gateway {gateway} was not imported: termiHub does not support \
+             RD Gateway."
+        ));
+    }
+    let target = host_target(user.as_deref(), &host, port, 3389);
+    b.import("rdp", label, target)
+}
+
+/// VNC: a single SSH gateway maps onto termiHub's VNC SSH tunnel; a chain of
+/// several gateways cannot be expressed there and stays a note.
+fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
+    let mut b = Builder::new(params);
+    let Some(host) = b.field(1) else {
+        return skip(label, String::new(), "No host is set.");
+    };
+    let port = b.port(2, 5900);
+    b.set("host", json!(host));
+    b.set("port", json!(port));
+    let hops = gateway_hops(&mut b, [5, 6, 7, 8], env);
+    match hops.as_slice() {
+        [] => {}
+        [hop] => {
+            b.set("useSshTunnel", json!(true));
+            b.set("sshHost", hop["host"].clone());
+            b.set("sshPort", hop["port"].clone());
+            b.set("sshUsername", hop["username"].clone());
+            b.set("sshAuthMethod", hop["authMethod"].clone());
+            if let Some(key) = hop.get("keyPath") {
+                b.set("sshKeyPath", key.clone());
+            }
+        }
+        _ => b.notes.push(format!(
+            "The SSH gateway chain {} was not imported: termiHub's VNC SSH tunnel uses a \
+             single SSH host.",
+            hops_summary(&hops)
+        )),
+    }
+    if let Some(note) = proxy_note(&b, [13, 14, 15, 16], "VNC connections") {
+        b.notes.push(note);
+    }
+    let target = host_target(None, &host, port, 5900);
+    b.import("vnc", label, target)
 }
 
 fn map_sftp(params: &[String], label: &str) -> Mapped {
