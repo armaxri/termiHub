@@ -267,10 +267,10 @@ fn read_entries(package: &Path) -> Result<BTreeMap<String, Vec<u8>>, PluginPackE
     let mut out = BTreeMap::new();
     for i in 0..archive.len() {
         let entry = archive.by_index(i)?;
-        if entry.is_dir() || entry.name() == SIGNATURE_FILE_NAME {
+        if entry.is_dir() || entry.name()? == SIGNATURE_FILE_NAME {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         let mut buf = Vec::new();
         read_entry_bounded(
             entry,

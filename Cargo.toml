@@ -138,6 +138,21 @@ serial2-tokio = "0.1"
 russh = "0.61"
 russh-sftp = "2.3"
 bollard = "0.18"
+# zip 9 (#4846; every 2.x release is yanked). Default features off so the set
+# stays what zip 2's defaults gave us (deflate, deflate64, lzma, xz, zstd, AES
+# decryption, `time` mtimes) minus two codecs: the new `ppmd`, and `bzip2`. Zip
+# 9's bzip2 support always links `libbz2-rs-sys` (even via its `bzip2-rs`
+# feature), whose `bzip2-1.0.6` license is outside deny.toml's allowlist. Our
+# writers only emit Deflated entries, so only a hand-made bzip2 archive is lost.
+zip = { version = "9.0.3", default-features = false, features = [
+    "aes-crypto",
+    "deflate",
+    "deflate64",
+    "lzma",
+    "time",
+    "xz",
+    "zstd",
+] }
 
 # In-tree fork of `serial2` (registered in vendor/vendored-forks.json, see
 # docs/supply-chain.md -> "Vendored forks"). Patched rather than a path dep so
