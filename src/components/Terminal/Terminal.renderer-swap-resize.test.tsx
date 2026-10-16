@@ -12,6 +12,10 @@
  *
  * The mocks model exactly that: the fit addon proposes a grid from the current
  * container width and the cell width of whichever renderer is live.
+ *
+ * #4863: a real container change while a tab is hidden is fitted once, on the
+ * next show, to the grid the tab is shown with — not to the DOM grid while
+ * hidden and again to the WebGL grid on show.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -28,6 +32,8 @@ const h = vi.hoisted(() => {
     containerWidth: 1000,
     containerHeight: 480,
     liveWebgl: 0,
+    /** When set, creating a WebGL addon throws (no WebGL2: DOM renderer only). */
+    webglFails: false,
     xterm: null as null | {
       resize: (cols: number, rows: number) => void;
     },
@@ -92,6 +98,7 @@ vi.mock("@xterm/addon-webgl", () => {
       this.lossCb?.();
     }
     constructor() {
+      if (h.state.webglFails) throw new Error("no WebGL2 context");
       h.webglInstances.push(this);
     }
   }
@@ -165,6 +172,11 @@ globalThis.ResizeObserver = class {
   disconnect = vi.fn();
 } as unknown as typeof ResizeObserver;
 
+// jsdom lays nothing out (offsetWidth/Height are 0), which the degenerate-fit
+// guard (#2693) would read as a parked terminal. Report the modelled container.
+const offsetWidthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+const offsetHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+
 let rafCallbacks: Array<() => void> = [];
 const originalRAF = globalThis.requestAnimationFrame;
 const originalCAF = globalThis.cancelAnimationFrame;
@@ -180,11 +192,16 @@ let root: Root;
 
 const LOCAL_CONFIG = { type: "local" as const, config: {} };
 
-function renderTerminal(isVisible: boolean) {
+function renderTerminal(isVisible: boolean, isOnScreen: boolean = isVisible) {
   act(() => {
     root.render(
       <TerminalPortalProvider>
-        <Terminal tabId="tab-swap" config={LOCAL_CONFIG} isVisible={isVisible} />
+        <Terminal
+          tabId="tab-swap"
+          config={LOCAL_CONFIG}
+          isVisible={isVisible}
+          isOnScreen={isOnScreen}
+        />
       </TerminalPortalProvider>
     );
   });
@@ -228,10 +245,20 @@ beforeEach(() => {
   h.state.containerWidth = 1000;
   h.state.containerHeight = 480;
   h.state.liveWebgl = 0;
+  h.state.webglFails = false;
   h.state.xterm = null;
   h.webglInstances.length = 0;
   h.resizeObserverCallbacks.length = 0;
   mockResizeTerminal.mockClear();
+
+  Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+    configurable: true,
+    get: () => h.state.containerWidth,
+  });
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get: () => h.state.containerHeight,
+  });
 
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -243,6 +270,10 @@ afterEach(() => {
   container.remove();
   globalThis.requestAnimationFrame = originalRAF;
   globalThis.cancelAnimationFrame = originalCAF;
+  if (offsetWidthDesc) Object.defineProperty(HTMLElement.prototype, "offsetWidth", offsetWidthDesc);
+  if (offsetHeightDesc) {
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", offsetHeightDesc);
+  }
 });
 
 describe("Terminal renderer swap keeps the PTY grid (#4858)", () => {
@@ -286,7 +317,7 @@ describe("Terminal renderer swap keeps the PTY grid (#4858)", () => {
     expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 24);
   });
 
-  it("still resizes the PTY on a real container change while hidden", async () => {
+  it("defers a container change while hidden to one resize on show (#4863)", async () => {
     await mountConnected();
     renderTerminal(false);
     await settle();
@@ -294,9 +325,100 @@ describe("Terminal renderer swap keeps the PTY grid (#4858)", () => {
     resizeContainer(800, 600);
     await settle();
 
-    // Hidden: the DOM renderer is live, so the fit lands on its grid.
+    // Hidden: nothing is fitted, so the PTY is not resized to the DOM grid.
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    renderTerminal(true);
+    await settle();
+
+    // Shown: exactly one resize, to the WebGL grid the tab is shown with.
+    expect(h.state.liveWebgl).toBe(1);
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("collapses several container changes while hidden into one resize on show", async () => {
+    await mountConnected();
+    renderTerminal(false);
+    await settle();
+
+    resizeContainer(900, 520);
+    await settle();
+    resizeContainer(700, 400);
+    await settle();
+    resizeContainer(800, 600);
+    await settle();
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    renderTerminal(true);
+    await settle();
+
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("keeps the fit pending when the tab is hidden again before the show frame", async () => {
+    // Only isOnScreen flips (an inactive tab group's active tab), so the
+    // visibility effect does not fit synchronously on show.
+    await mountConnected();
+    renderTerminal(true, false);
+    await settle();
+    resizeContainer(800, 600);
+    await settle();
+
+    // Put on screen and taken off again before any frame runs: nothing
+    // reaches the PTY.
+    renderTerminal(true, true);
+    renderTerminal(true, false);
+    await settle();
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    // The next real show still owes (and sends) the one resize.
+    renderTerminal(true, true);
+    await settle();
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
+  });
+
+  it("runs the deferred fit on show even when no renderer swap re-fits (DOM only)", async () => {
+    // No WebGL2: the DOM renderer is live throughout, so showing the tab swaps
+    // nothing. Only isOnScreen flips (an inactive tab group's active tab), so
+    // the visibility effect does not re-fit either: the deferred fit must.
+    h.state.webglFails = true;
+    await mountConnected();
+    expect(h.state.liveWebgl).toBe(0);
+
+    renderTerminal(true, false);
+    await settle();
+    resizeContainer(800, 600);
+    await settle();
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    renderTerminal(true, true);
+    await settle();
     expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
     expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 94, 30);
+  });
+
+  it("does not fit a degenerate container on show (#2693)", async () => {
+    await mountConnected();
+    renderTerminal(false);
+    await settle();
+    resizeContainer(800, 600);
+    await settle();
+
+    // Shown into a panel that is not laid out yet: no fit, no PTY resize.
+    h.state.containerWidth = 0;
+    h.state.containerHeight = 0;
+    renderTerminal(true);
+    await settle();
+    expect(mockResizeTerminal).not.toHaveBeenCalled();
+
+    // The ResizeObserver fits once the panel reaches its real size.
+    resizeContainer(800, 600);
+    await settle();
+    expect(mockResizeTerminal).toHaveBeenCalledTimes(1);
+    expect(mockResizeTerminal).toHaveBeenLastCalledWith("session-swap", 100, 30);
   });
 
   it("re-fits and resizes when the context is lost on a visible terminal", async () => {

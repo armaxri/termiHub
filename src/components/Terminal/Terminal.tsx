@@ -360,6 +360,12 @@ export function Terminal({
   // creation effect, which does not re-run on visibility changes.
   const webglRendererRef = useRef<WebglRendererController | null>(null);
   const isOnScreenRef = useRef(isOnScreen);
+  // A fit deferred while the terminal was off screen (#4863). A hidden terminal
+  // draws with the DOM renderer, whose cell differs from WebGL's, so fitting it
+  // there and again on show cost its PTY two resizes per container change. The
+  // fit is instead run once, when the terminal is next shown (see the
+  // isOnScreen layout effect), on the renderer it is shown with.
+  const hiddenFitPendingRef = useRef(false);
   // Set by a layout-effect cleanup, which React runs before any passive-effect
   // cleanup on unmount. Lets the xterm teardown tell a final unmount (tab,
   // group or window close — the instance is discarded) from an effect re-run
@@ -1512,8 +1518,8 @@ export function Terminal({
         // per tab switch, and on Windows ConPTY a dropped keystroke. Nobody sees
         // a hidden terminal, so it keeps the grid it was last shown with; the
         // re-fit below on show then lands on that same grid and sends nothing.
-        // A real container change while hidden is still caught by the
-        // ResizeObserver.
+        // A real container change while hidden is fitted once, on the next
+        // show (#4863).
         if (reason === "hidden" || !isOnScreenRef.current) return;
         // The two renderers measure their own cells, so the grid fitted under
         // one no longer fills the container under the other and nothing else
@@ -1757,6 +1763,14 @@ export function Terminal({
         );
         return;
       }
+      // Off screen: defer the fit until the terminal is shown (#4863). Fitting
+      // now would size the PTY to the DOM renderer's grid, and the WebGL
+      // re-lease on show would resize it again to the WebGL grid. Nobody sees a
+      // hidden terminal, so one resize at show time is enough.
+      if (!isOnScreenRef.current) {
+        hiddenFitPendingRef.current = true;
+        return;
+      }
       if (entry) {
         frontendLog(
           "terminal",
@@ -1920,7 +1934,43 @@ export function Terminal({
   useLayoutEffect(() => {
     isOnScreenRef.current = isOnScreen;
     webglRendererRef.current?.setVisible(isOnScreen);
-  }, [isOnScreen]);
+    if (!isOnScreen || !hiddenFitPendingRef.current) return;
+    // Run the fit deferred while off screen (#4863) once the renderer leased
+    // above has measured (next frame), so it lands on the grid the terminal is
+    // shown with: one PTY resize. Fitting twice to the same grid is a no-op, so
+    // the re-fits on show (visibility effect, renderer swap) send nothing more.
+    hiddenFitPendingRef.current = false;
+    let ran = false;
+    const rafId = requestAnimationFrame(() => {
+      ran = true;
+      const xterm = xtermRef.current;
+      const fitAddon = fitAddonRef.current;
+      const el = terminalElRef.current;
+      // Hidden again before the frame: the effect cleanup re-armed the fit.
+      if (!xterm || !fitAddon || !el || !isOnScreenRef.current) return;
+      // Same degenerate-fit guards as every other fit path (#2693, #2700): a
+      // ~0-sized container is left to the ResizeObserver to re-fit.
+      if (!isFitReady(el)) return;
+      try {
+        if (horizontalScrollingRef.current) {
+          applyHorizontalScrollResize(xterm, fitAddon, el);
+        } else if (isProposedFitSafe(fitAddon)) {
+          fitAddon.fit();
+        }
+        // As after a ResizeObserver fit: re-pin the bottom and re-render the thumb.
+        if (!userScrolledUpRef.current) xterm.scrollToBottom();
+        scrollbarRef.current?.update();
+      } catch (err) {
+        // Once per show; the next ResizeObserver fit re-fits.
+        frontendLog("terminal", `deferred fit on show failed tab=${tabId}: ${errorMessage(err)}`);
+      }
+    });
+    return () => {
+      cancelAnimationFrame(rafId);
+      // Hidden (or unmounted) before the frame ran: the fit is still owed.
+      if (!ran) hiddenFitPendingRef.current = true;
+    };
+  }, [isOnScreen, tabId]);
 
   // Re-fit and focus when visibility changes
   useEffect(() => {
@@ -2051,8 +2101,12 @@ export function Terminal({
       tabTermOpts?.scrollbackBuffer ?? scrollbackBuffer ?? DEFAULT_SCROLLBACK;
     xterm.options.screenReaderMode = screenReaderMode ?? false;
 
-    // Re-fit after font changes
-    if (fitAddon) {
+    // Re-fit after font changes. Off screen the fit is deferred to the next
+    // show, like a container change, so the PTY is resized once to the grid
+    // the terminal is shown with rather than to the DOM grid first (#4863).
+    if (fitAddon && !isOnScreenRef.current) {
+      hiddenFitPendingRef.current = true;
+    } else if (fitAddon) {
       try {
         if (!horizontalScrollingRef.current) {
           fitAddon.fit();
