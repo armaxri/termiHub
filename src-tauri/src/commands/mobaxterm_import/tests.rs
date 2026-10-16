@@ -164,6 +164,124 @@ fn ssh_default_user_login_command_and_proxy_are_noted() {
 }
 
 #[test]
+fn ssh_login_command_note_carries_the_decoded_command() {
+    let ini = "[Bookmarks]\nSubRep=\nCmd=#109#0%10.0.0.16%22%alice%%-1%-1%cd /srv__PTVIRG__ ls __PIPE__ head%%%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont#0# #-1\n";
+    let s = &preview(ini)[0];
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(
+        s.notes[0].contains("\"cd /srv; ls | head\""),
+        "{:?}",
+        s.notes
+    );
+    assert!(
+        s.notes[0].contains("no on-connect command"),
+        "{:?}",
+        s.notes
+    );
+    // No setting is invented for it (on-reconnect is a different trigger).
+    assert!(setting(s, "onReconnectCommand").is_null());
+}
+
+#[test]
+fn ssh_network_proxy_is_described_in_the_note() {
+    let socks = "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.17%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%2%proxy.example.com%1080%%0%0%1#MobaFont#0# #-1\n";
+    let s = &preview(socks)[0];
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(
+        s.notes[0].contains("SOCKS5 proxy proxy.example.com:1080 was not imported"),
+        "{:?}",
+        s.notes
+    );
+
+    let http = "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.18%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%3%192.0.2.50%3128%alice%0%0%1#MobaFont#0# #-1\n";
+    let s = &preview(http)[0];
+    assert!(
+        s.notes[0].contains("HTTP proxy 192.0.2.50:3128 (user alice)"),
+        "{:?}",
+        s.notes
+    );
+
+    // Type 0 is "no proxy", even when a stale host/port is still stored.
+    let none = "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.19%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%0%proxy.example.com%1080%%0%0%1#MobaFont#0# #-1\n";
+    assert!(preview(none)[0].notes.is_empty());
+}
+
+#[test]
+fn rdp_ssh_gateway_and_rd_gateway_stay_notes() {
+    let ini = r"[Bookmarks]
+SubRep=
+Gated RDP=#91#4%192.0.2.21%3389%carol%0%0%0%0%-1%0%0%-1%%edge.example.com%2200%alice%0%0%_ProfileDir_\keys\edge%-1%rdgw.example.com%-1#MobaFont#0# #-1
+";
+    let s = &preview(ini)[0];
+    assert_eq!(s.connection_type.as_deref(), Some("rdp"));
+    assert_eq!(s.target, "carol@192.0.2.21");
+    assert!(setting(s, "useSshTunnel").is_null());
+    assert_eq!(s.notes.len(), 2, "{:?}", s.notes);
+    assert!(
+        s.notes[0].contains("SSH gateway edge.example.com:2200 was not imported"),
+        "{:?}",
+        s.notes
+    );
+    assert!(s.notes[1].contains("rdgw.example.com"), "{:?}", s.notes);
+}
+
+#[test]
+fn vnc_single_ssh_gateway_becomes_the_ssh_tunnel() {
+    let ini = r"[Bookmarks]
+SubRep=
+Tunnelled=#128#5%192.0.2.30%5901%-1%0%bastion.example.com%2222%alice%_ProfileDir_\keys\vnc%-1%0%0%%0%%1080%%#MobaFont#0# #-1
+";
+    let s = &preview(ini)[0];
+    assert_eq!(s.connection_type.as_deref(), Some("vnc"));
+    assert_eq!(setting(s, "host"), "192.0.2.30");
+    assert_eq!(setting(s, "port"), 5901);
+    assert_eq!(setting(s, "useSshTunnel"), true);
+    assert_eq!(setting(s, "sshHost"), "bastion.example.com");
+    assert_eq!(setting(s, "sshPort"), 2222);
+    assert_eq!(setting(s, "sshUsername"), "alice");
+    assert_eq!(setting(s, "sshAuthMethod"), "key");
+    let key = Path::new("/home/alice").join("keys").join("vnc");
+    assert_eq!(setting(s, "sshKeyPath"), &json!(key.to_string_lossy()));
+    assert!(
+        setting(s, "sshPassword").is_null(),
+        "passwords are never imported"
+    );
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+}
+
+#[test]
+fn vnc_gateway_without_key_or_user_uses_password_auth() {
+    let ini = "[Bookmarks]\nSubRep=\nT=#128#5%192.0.2.32%5900%-1%0%192.0.2.60%%<default>%%-1%0%0%%0%%1080%%#MobaFont#0# #-1\n";
+    let s = &preview(ini)[0];
+    assert_eq!(setting(s, "useSshTunnel"), true);
+    assert_eq!(setting(s, "sshHost"), "192.0.2.60");
+    assert_eq!(setting(s, "sshPort"), 22);
+    assert_eq!(setting(s, "sshUsername"), "");
+    assert_eq!(setting(s, "sshAuthMethod"), "password");
+    assert!(setting(s, "sshKeyPath").is_null());
+}
+
+#[test]
+fn vnc_gateway_chain_and_proxy_stay_notes() {
+    let ini = "[Bookmarks]\nSubRep=\nChained=#128#5%192.0.2.31%5900%-1%0%edge.example.com__PIPE__192.0.2.40%22__PIPE__2200%alice__PIPE__alice%%-1%0%0%%2%proxy.example.com%1080%alice%#MobaFont#0# #-1\n";
+    let s = &preview(ini)[0];
+    assert_eq!(s.connection_type.as_deref(), Some("vnc"));
+    assert!(setting(s, "useSshTunnel").is_null());
+    assert!(setting(s, "sshHost").is_null());
+    assert_eq!(s.notes.len(), 2, "{:?}", s.notes);
+    assert!(
+        s.notes[0].contains("edge.example.com → 192.0.2.40:2200"),
+        "{:?}",
+        s.notes
+    );
+    assert!(
+        s.notes[1].contains("SOCKS5 proxy proxy.example.com:1080 (user alice)"),
+        "{:?}",
+        s.notes
+    );
+}
+
+#[test]
 fn telnet_maps_host_and_custom_port() {
     let sessions = preview(FULL_INI);
     let s = by_name(&sessions, "Old switch");
@@ -212,10 +330,13 @@ fn rdp_vnc_ftp_sftp_shell_and_wsl_map_to_their_types() {
     let rdp = by_name(&sessions, "Desk RDP");
     assert_eq!(rdp.connection_type.as_deref(), Some("rdp"));
     assert_eq!(rdp.target, "carol@192.0.2.20:3390");
+    assert!(rdp.notes.is_empty(), "{:?}", rdp.notes);
 
     let vnc = by_name(&sessions, "Viewer");
     assert_eq!(vnc.connection_type.as_deref(), Some("vnc"));
     assert_eq!(setting(vnc, "port"), 5901);
+    assert!(setting(vnc, "useSshTunnel").is_null());
+    assert!(vnc.notes.is_empty(), "{:?}", vnc.notes);
 
     let ftp = by_name(&sessions, "Files");
     assert_eq!(ftp.connection_type.as_deref(), Some("ftp"));
