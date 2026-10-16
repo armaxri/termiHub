@@ -19,6 +19,12 @@ NEW = "terminal-view-new-terminal"
 
 
 class TestTabManagement(TerminalUi, TabsUi, SystemTest):
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave the tab context menu, the rename or colour
+        # dialog, or a close confirm open; each test then closes its tabs from
+        # under it (#4834). The shared markers cover the dialogs.
+        self.dismiss_modals("tab-context-rename")
+
     def _reset(self) -> None:
         self.close_all_tabs()
         self.ensure_terminal()
