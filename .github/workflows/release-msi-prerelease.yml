@@ -1,0 +1,169 @@
+name: Release MSI Prerelease Dry Run
+
+# Prove a semver-prerelease version builds the Windows MSI (#4442, follow-up to
+# #4283 / PKG2-003). Tauri's WiX bundler rejects an app version such as
+# 0.0.0-beta.1, so release.yml's Windows leg maps every tag with
+# scripts/internal/msi-version.mjs and merges the result as
+# bundle.windows.wix.version through a generated --config fragment. A release dry
+# run (release.yml dispatch) maps the in-repo X.Y.Z, so it never exercises a
+# -beta.N / -rc.N version. This workflow does: it sets every version source to
+# the given prerelease on a scratch tree, generates the fragment through the SAME
+# composite action release.yml uses (.github/actions/msi-version-fragment), runs
+# `tauri build --bundles msi` on Windows and asserts the MSI's ProductVersion
+# equals the mapped version.
+#
+# It never publishes: read-only token, no secrets, no tag, no release, no
+# artifact upload. The build skips the bundle-only sidecar and notices fragments
+# (neither touches the MSI version) and keeps the Windows ConPTY fragment, which
+# release.yml also merges on this leg.
+#
+# Run it: `gh workflow run release-msi-prerelease.yml --ref <branch>`
+# (optionally `-f version=0.2.0-rc.3`). See docs/contributing.md → "Prerelease
+# tags and the Windows MSI version". It is not a scheduled lane (no `schedule:`,
+# so scripts/internal/scheduled-lanes.mjs does not list it); instead it re-proves
+# itself on develop whenever the mapping, the action or this file changes. That
+# push run also registers the workflow with GitHub, which a dispatch of a file
+# that is not on main needs (#4277).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Prerelease version to build the MSI from (X.Y.Z-beta.N or X.Y.Z-rc.N)'
+        type: string
+        required: true
+        default: '0.0.0-beta.1'
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/release-msi-prerelease.yml'
+      - '.github/actions/msi-version-fragment/**'
+      - 'scripts/internal/msi-version.mjs'
+      - 'scripts/internal/msi-product-version.ps1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  msi-prerelease:
+    name: Build the Windows MSI from a prerelease version
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      # A push run has no inputs: build the default -beta.N.
+      VERSION: ${{ inputs.version || '0.0.0-beta.1' }}
+      RUST_TARGET: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ env.RUST_TARGET }}
+
+      # Restore the Windows release cache dev-build.yml warms (same target and
+      # profile), but never save: this lane must not crowd the shared 10 GB cache.
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tauri-x86_64-pc-windows-msvc
+          save-if: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Fail early, with msi-version.mjs's own message, on a version the mapping
+      # cannot represent (the same check verify-version runs on a tag).
+      - name: Check the version maps to a Windows MSI version
+        shell: bash
+        run: node scripts/internal/msi-version.mjs --check "$VERSION"
+
+      # Scratch tree only (nothing is committed or pushed): rewrite the seven
+      # version sources release-check.sh reads, exactly as a release commit
+      # would, and refresh the workspace members' Cargo.lock entries so the
+      # build below can stay --locked like release.yml's.
+      - name: Set every version source to the prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in package.json src-tauri/tauri.conf.json; do
+            node -e '
+              const fs = require("fs");
+              const [file, version] = process.argv.slice(1);
+              const json = JSON.parse(fs.readFileSync(file, "utf8"));
+              json.version = version;
+              fs.writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+            ' "$f" "$VERSION"
+          done
+          for d in src-tauri core agent plugin-runner rdp-sidecar; do
+            sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" "$d/Cargo.toml"
+          done
+          cargo update --workspace
+          git diff --stat
+
+      - name: Check every version source says the prerelease
+        shell: bash
+        run: scripts/release-check.sh --versions-only --expect-version "$VERSION"
+
+      # Stage the sideloaded ConPTY host for tauri.conpty.conf.json, as
+      # release.yml's Windows leg does (tauri-build rejects a missing resource).
+      - name: Fetch sideloaded ConPTY
+        shell: bash
+        run: ./scripts/internal/fetch-conpty.sh --arch x64
+
+      # The fragment path under test: release.yml's Windows leg builds through
+      # this same action.
+      - name: Generate the Windows MSI version fragment
+        id: wix_version
+        uses: ./.github/actions/msi-version-fragment
+        with:
+          version: ${{ env.VERSION }}
+
+      - name: Build the MSI
+        shell: bash
+        env:
+          WIX_CONFIG: ${{ steps.wix_version.outputs.config }}
+        run: |
+          set -euo pipefail
+          read -ra wix <<< "$WIX_CONFIG" # "--config <file>": two arguments
+          pnpm tauri build --ci --target "$RUST_TARGET" --bundles msi \
+            --config src-tauri/tauri.conpty.conf.json "${wix[@]}" -- --locked
+
+      - name: Assert the MSI ProductVersion is the mapped version
+        shell: pwsh
+        env:
+          MSI_VERSION: ${{ steps.wix_version.outputs.msi-version }}
+        run: |
+          $msis = @(Get-ChildItem "target/$env:RUST_TARGET/release/bundle/msi" -Filter *.msi)
+          if ($msis.Count -ne 1) {
+            Write-Output "::error::expected exactly one MSI, found $($msis.Count)"
+            exit 1
+          }
+          $msi = $msis[0]
+          ./scripts/internal/msi-product-version.ps1 -Msi $msi.FullName -Expected $env:MSI_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          @(
+            "### Prerelease MSI dry run",
+            "",
+            "| Release version | Mapped MSI version | MSI | Size |",
+            "| --- | --- | --- | --- |",
+            "| ``$env:VERSION`` | ``$env:MSI_VERSION`` | ``$($msi.Name)`` | $([math]::Round($msi.Length / 1MB, 1)) MB |",
+            "",
+            "ProductVersion matches the mapped version. Nothing was published."
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
