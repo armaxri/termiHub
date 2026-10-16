@@ -539,14 +539,16 @@ When you click on an SSH terminal tab, the sidebar file browser auto-connects vi
 
 ### SSH Connection Settings
 
-| Field                 | Description                               | Default  |
-| --------------------- | ----------------------------------------- | -------- |
-| Host                  | Server hostname or IP address             | —        |
-| Port                  | SSH port                                  | 22       |
-| Username              | Remote username                           | —        |
-| Auth Method           | `password` or `key`                       | password |
-| Key Path              | Path to private key (when using key auth) | —        |
-| Enable X11 Forwarding | Forward remote GUI apps to local display  | Off      |
+| Field                 | Description                                                                                 | Default  |
+| --------------------- | ------------------------------------------------------------------------------------------- | -------- |
+| Host                  | Server hostname or IP address                                                               | —        |
+| Port                  | SSH port                                                                                    | 22       |
+| Username              | Remote username                                                                             | —        |
+| Auth Method           | `password` or `key`                                                                         | password |
+| Key Path              | Path to private key (when using key auth)                                                   | —        |
+| Enable X11 Forwarding | Forward remote GUI apps to local display                                                    | Off      |
+| Initial Command       | Command run once after the first connect (e.g. `tmux attach`); not re-run on auto-reconnect | —        |
+| On-reconnect Command  | Command run once after an automatic reconnect                                               | —        |
 
 ### SSH Troubleshooting
 
