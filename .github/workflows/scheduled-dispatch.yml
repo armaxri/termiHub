@@ -20,7 +20,17 @@ name: Scheduled Lanes (dispatch + heartbeat)
 #     weekly), then runs the heartbeat. A failing lane is not re-dispatched on
 #     every push: a recent red run counts as fresh. A quiet day with no push
 #     dispatches nothing; that gap closes when this file reaches main.
-#   * workflow_dispatch — the same as a push (catch-up + heartbeat).
+#   * workflow_dispatch — the same as a push (catch-up + heartbeat). With the
+#     `cron` input it instead dispatches that cron's lanes now, like the
+#     schedule would. Dispatched from a branch other than main, it reads that
+#     branch's lane list, so a registry change can be tried before it merges;
+#     the lanes themselves are always dispatched on develop.
+#
+# Main-resident lanes (#4449): a lane whose file is on main still runs MAIN's
+# copy of its YAML when its own cron fires, so its job definitions lag
+# develop's until the next release. system-integration and integration-fixtures
+# are therefore dispatched here (`ownSchedule: false`): a dispatched run
+# executes develop's YAML. Their own `schedule:` grades main only (weekly).
 #
 # The heartbeat FAILS this run when a lane has no successful develop run within
 # 36 h (daily) / 8 days (weekly). A red run here means a nightly gate is dark or
@@ -35,12 +45,18 @@ on:
   schedule:
     - cron: "41 3 * * *" # wsl-live, integration-fixtures (instrumented)
     - cron: "0 4 * * *" # cargo-update-lockfile, windows-ssh-host, security-audit
+    - cron: "5 5 * * *" # system-integration (develop's YAML, #4449)
     - cron: "35 5 * * *" # plugin-sandbox-nightly (after system-integration's 05:05)
     - cron: "23 7 * * *" # coverage (after the fixtures + system-integration lcov)
     - cron: "17 6 * * 1" # vendored-forks drift, branch-protection drift (Mondays)
   push:
     branches: [develop]
   workflow_dispatch:
+    inputs:
+      cron:
+        description: "Dispatch this cron's lanes now (e.g. '5 5 * * *'); empty = catch-up"
+        type: string
+        default: ""
 
 # A newer develop push supersedes an older catch-up check. Schedules and manual
 # runs are keyed separately and never cancelled.
@@ -60,12 +76,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Always develop's scripts and lane list: on main (schedule) the scripts may
-      # not exist yet, and develop's list is the one that matches develop's lanes.
+      # develop's scripts and lane list: on main (schedule) the scripts may not
+      # exist yet, and develop's list is the one that matches develop's lanes. A
+      # manual run from a branch other than main reads that branch's list, so a
+      # registry change can be proven before it merges (#4449).
       - name: Checkout develop
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: develop
+          ref: ${{ (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && github.ref || 'develop' }}
           # "Fetch main" below needs no token: the repo is public (#4729).
           persist-credentials: false
 
@@ -87,10 +105,9 @@ jobs:
       - name: Dispatch due lanes, then check the heartbeat
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          CRON: ${{ github.event.schedule }}
+          CRON: ${{ github.event.schedule || inputs.cron }}
         run: |
-          if [ "$EVENT" = "schedule" ]; then
+          if [ -n "$CRON" ]; then
             mode=(--dispatch-cron "$CRON")
           else
             mode=(--dispatch-stale)

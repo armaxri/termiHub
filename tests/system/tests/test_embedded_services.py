@@ -57,6 +57,14 @@ class TestEmbeddedServices(
     """SVC-01..13 — Services sidebar CRUD, lifecycle, status bar, quick-share,
     and live HTTP/FTP/TFTP transfers."""
 
+    def reset_before_rerun(self) -> None:
+        # The per-test teardown cleans servers and tabs best-effort, but cannot get
+        # past a New/Edit Service dialog, LAN warning or delete confirm that a
+        # failed attempt left open. Close those, then retry the cleanup (#4834).
+        self.dismiss_modals("server-dialog-cancel", "lan-warning-cancel", "server-delete-confirm")
+        self.open_services_sidebar()
+        self.cleanup_all_servers()
+
     @pytest.fixture(autouse=True)
     def _per_test(self):
         self._tmpdirs: list[Path] = []

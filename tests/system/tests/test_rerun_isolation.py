@@ -12,7 +12,11 @@ drives a fake tab model instead of the app, and prove that:
 * a reset that cannot close the tabs fails with a ``RerunResetError`` naming the
   leftover tab, not a misleading precondition failure;
 * every failed attempt's error is kept in the bundle as
-  ``attempt-<n>-failure.txt``, so the first attempt's real failure stays visible.
+  ``attempt-<n>-failure.txt``, so the first attempt's real failure stays visible;
+* a dialog a failed attempt left open — including a dirty one that answers
+  Escape with the unsaved-changes prompt — is closed by
+  :meth:`~termihub_harness.ui.base.HarnessMixin.dismiss_modals` before the
+  rerun, and a dialog that will not close fails the reset naming it (#4834).
 """
 
 from __future__ import annotations
@@ -82,11 +86,77 @@ RESET = """
         self.reset_tabs(timeout=1.0)
 """
 
+# A suite that fakes the app's modal stack: the first attempt opens a dirty
+# editor dialog and fails. Escape pressed on a modal closes the top one, except
+# that a dirty dialog raises the unsaved-changes prompt instead (whose Escape
+# means "keep editing"); Discard closes the prompt and the dialog under it. A
+# "stuck" dialog ignores Escape, like one whose dismiss is broken.
+MODAL_SUITE = """
+import pytest
 
-def _run_suite(tmp_path: Path, *, reset: bool, stuck: bool = False):
+from termihub_harness import SystemTest, TabsUi
+
+EDITOR = "fake-editor-dialog"
+UNSAVED = "unsaved-changes-dialog"
+DISCARD = "unsaved-changes-just-close"
+
+
+class FakeDriver:
+    def __init__(self, stuck):
+        self.modals = []
+        self.dirty = False
+        self.stuck = stuck
+
+    def exists(self, testid):
+        if testid == DISCARD:
+            return UNSAVED in self.modals
+        return testid in self.modals
+
+    def press_key(self, key, test_id=None, **_mods):
+        assert key == "Escape", key
+        top = self.modals[-1] if self.modals else None
+        if top is None or top == UNSAVED or self.stuck:
+            return
+        if top == EDITOR and self.dirty:
+            self.modals.append(UNSAVED)
+            return
+        self.modals.pop()
+
+    def click(self, testid):
+        if testid == DISCARD and UNSAVED in self.modals:
+            self.modals.remove(UNSAVED)
+            self.modals.remove(EDITOR)
+            self.dirty = False
+
+
+class TestLeavesDialogThenFails(TabsUi, SystemTest):
+    @pytest.fixture(scope="class", autouse=True)
+    @classmethod
+    def _system_test_app(cls, request):
+        request.cls.driver = FakeDriver(stuck={stuck})
+        yield
+
+{reset}
+
+    def test_starts_without_dialog(self, request):
+        assert not self.driver.modals, f"rerun inherited modals {{self.driver.modals}}"
+        self.driver.modals.append(EDITOR)
+        self.driver.dirty = True
+        if request.node.execution_count == 1:
+            raise AssertionError("first-attempt boom")
+"""
+
+MODAL_RESET = """
+    def reset_before_rerun(self):
+        self.dismiss_modals(EDITOR, timeout=1.0)
+"""
+
+
+def _run_suite(tmp_path: Path, *, reset: bool, stuck: bool = False, modal: bool = False):
+    suite, reset_src = (MODAL_SUITE, MODAL_RESET) if modal else (SUITE, RESET)
     test_file = tmp_path / "test_rerun_suite.py"
     test_file.write_text(
-        textwrap.dedent(SUITE).format(stuck=stuck, reset=RESET if reset else ""),
+        textwrap.dedent(suite).format(stuck=stuck, reset=reset_src if reset else ""),
         encoding="utf-8",
     )
     env = {**os.environ}
@@ -178,6 +248,34 @@ def test_failed_reset_is_reported_as_such(tmp_path, bundle_dirs):
     assert "first-attempt boom" in (dest / "attempt-1-failure.txt").read_text(
         encoding="utf-8"
     )
+    assert "setup phase" in (dest / "attempt-2-failure.txt").read_text(encoding="utf-8")
+
+
+def test_rerun_dismisses_a_leftover_dirty_dialog(tmp_path, bundle_dirs):
+    result, output = _run_suite(tmp_path, reset=True, modal=True)
+    dest = _bundle_dir(output, bundle_dirs)
+    assert result.returncode == 0, output
+    assert "1 passed, 1 rerun" in output, output
+    assert "first-attempt boom" in (dest / "attempt-1-failure.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_rerun_without_reset_inherits_the_dialog(tmp_path, bundle_dirs):
+    # Control: without the reset the fake's dialog really leaks into the rerun.
+    result, output = _run_suite(tmp_path, reset=False, modal=True)
+    _bundle_dir(output, bundle_dirs)
+    assert result.returncode != 0, output
+    assert "rerun inherited modals ['fake-editor-dialog']" in output, output
+
+
+def test_stuck_dialog_fails_the_reset_naming_it(tmp_path, bundle_dirs):
+    result, output = _run_suite(tmp_path, reset=True, stuck=True, modal=True)
+    dest = _bundle_dir(output, bundle_dirs)
+    assert result.returncode != 0, output
+    assert "RerunResetError" in output, output
+    assert "could not reset the app before rerun attempt 2" in output, output
+    assert "modal reset left 1 modal(s) open after 1s: ['fake-editor-dialog']" in output
     assert "setup phase" in (dest / "attempt-2-failure.txt").read_text(encoding="utf-8")
 
 

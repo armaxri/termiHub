@@ -141,7 +141,12 @@ class TabsUi(HarnessMixin):
         sessions are torn down with their tabs), then waits for the tab count to
         reach zero. If tabs survive, the error lists their ids so a stuck reset
         is diagnosable rather than surfacing later as an ``N == 0`` precondition.
+
+        Shared modals a failed attempt left open (see
+        :data:`~termihub_harness.ui.base.COMMON_MODAL_MARKERS`) are dismissed
+        first, so a leftover prompt cannot sit over the tab bar (#4834).
         """
+        self.dismiss_modals()
         self.close_all_tabs()
         try:
             self.wait(

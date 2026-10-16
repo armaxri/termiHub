@@ -32,9 +32,18 @@ pytestmark = pytest.mark.integration
 
 STEP_KINDS = ["send-command", "run-script", "run-macro", "wait", "run-local-process"]
 
+#: The editor dialogs a failed attempt can leave open (#4834).
+WORKFLOW_MODALS = ("workflow-editor-dialog", "macro-editor-dialog")
+
 
 class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
     """Author a workflow through the sidebar + editor dialog."""
+
+    def reset_before_rerun(self) -> None:
+        # A failed attempt can leave the editor dialog open (or its Add-step menu,
+        # or the unsaved prompt over it); the rerun's open_new_workflow would then
+        # click New behind it (#4834).
+        self.dismiss_modals(*WORKFLOW_MODALS)
 
     def test_panel_opens(self):
         # The Workflows panel is experimental-gated, so reveal it first, then
@@ -115,6 +124,11 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
 
 class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest):
     """Run a stored send-command workflow against a live local shell."""
+
+    def reset_before_rerun(self) -> None:
+        # Same leftover as TestWorkflowEditor: an editor dialog a failed authoring
+        # step left open would sit over the rerun's New click (#4834).
+        self.dismiss_modals(*WORKFLOW_MODALS)
 
     def test_send_command_reaches_terminal(self):
         name = unique_name("wf-run")

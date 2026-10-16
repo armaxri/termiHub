@@ -14,9 +14,15 @@
 //      scheduled lane without registering it fails per PR.
 //   2. Drift against main (annotates; fails only with --strict): each such
 //      workflow is compared with its copy on `main`. "missing" means its own
-//      cron is dark; "on-differs" means main fires a stale trigger set. Whether
-//      a dark lane is still covered depends on scheduled-dispatch.yml being on
-//      main, which is reported first.
+//      cron is dark; "on-differs" means main fires a stale trigger set;
+//      "jobs-differ" (#4449) means the triggers match but the rest of the file
+//      does not, for a lane whose own schedule grades develop: a scheduled run
+//      executes MAIN's job definitions against develop's tree, so suites added
+//      on develop never run (main's system-integration built no RDP sidecar).
+//      A lane with `ownSchedule: false` is exempt: develop's nightly is
+//      dispatched (develop's YAML), and its own schedule grades main with
+//      main's YAML. Whether a dark lane is still covered depends on
+//      scheduled-dispatch.yml being on main, which is reported first.
 //
 // Usage:
 //   node scripts/internal/check-scheduled-lane-drift.mjs [--main-ref origin/main]
@@ -38,6 +44,7 @@ import {
   cronsOf,
   extractOnBlock,
   hasDefaultBranchOnlyTrigger,
+  normalizedBody,
   normalizedOnBlock,
   triggersOf,
 } from "./scheduled-lanes.mjs";
@@ -139,20 +146,33 @@ export function registryProblems(workflows, lanes = LANES) {
 }
 
 /**
- * Compare each workflow with a default-branch-only trigger against main.
+ * Compare each workflow with a default-branch-only trigger against main. A
+ * lane whose develop copy dropped its schedule but whose main copy still has
+ * one is compared too (main still fires it).
  *
  * @param {Record<string, string>} workflows name -> develop YAML
  * @param {(name: string) => string | null} readMain main's copy, or null when absent
- * @returns {{ file: string, status: "ok" | "missing" | "on-differs" }[]}
+ * @param {typeof LANES} [lanes]
+ * @returns {{ file: string, status: "ok" | "missing" | "on-differs" | "jobs-differ" }[]}
  */
-export function driftFindings(workflows, readMain) {
+export function driftFindings(workflows, readMain, lanes = LANES) {
+  const byFile = new Map(lanes.map((l) => [l.file, l]));
   const findings = [];
   for (const [name, text] of Object.entries(workflows)) {
-    if (!hasDefaultBranchOnlyTrigger(text)) continue;
     const main = readMain(name);
+    const scheduled = hasDefaultBranchOnlyTrigger(text);
+    if (!scheduled && !(byFile.has(name) && main !== null && hasDefaultBranchOnlyTrigger(main))) {
+      continue;
+    }
     let status = "ok";
     if (main === null) status = "missing";
     else if (normalizedOnBlock(main) !== normalizedOnBlock(text)) status = "on-differs";
+    else if (
+      gradesDevelopWithMainYaml(byFile.get(name)) &&
+      normalizedBody(main) !== normalizedBody(text)
+    ) {
+      status = "jobs-differ";
+    }
     findings.push({ file: name, status });
   }
   // The dispatcher first: every other line depends on it.
@@ -160,6 +180,16 @@ export function driftFindings(workflows, readMain) {
     (a, b) =>
       (b.file === DISPATCHER_FILE) - (a.file === DISPATCHER_FILE) || a.file.localeCompare(b.file)
   );
+}
+
+/**
+ * True when the lane's own schedule (fired from main, so main's YAML) grades
+ * develop: a registered lane that did not opt out with `ownSchedule: false`.
+ *
+ * @param {(typeof LANES)[number] | undefined} lane
+ */
+function gradesDevelopWithMainYaml(lane) {
+  return lane !== undefined && lane.ownSchedule !== false;
 }
 
 /**
@@ -197,6 +227,17 @@ export function describeDrift(findings, lanes = LANES) {
         : dispatched.has(file)
           ? " Only develop-push catch-up dispatches it until the dispatcher reaches main."
           : "";
+    if (status === "jobs-differ") {
+      return {
+        level: "warning",
+        file,
+        message:
+          `${file}: same triggers on main, but its jobs differ. Its own schedule fires ` +
+          "from main and runs MAIN's job definitions against develop, so steps added on " +
+          "develop do not run. Set `ownSchedule: false` and dispatch it (see " +
+          "scripts/internal/scheduled-lanes.mjs), or land develop on main.",
+      };
+    }
     const what =
       status === "missing"
         ? "is not on main: its own schedule:/workflow_run: never fires."

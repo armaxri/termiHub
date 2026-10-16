@@ -14,11 +14,43 @@ real ``SystemTest`` members during method resolution.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 from ..bridge import BridgeError, Driver
 
 _T = TypeVar("_T")
+
+#: Testids that are mounted only while one of the *shared* modals is open — the
+#: ones any suite can leave behind, whatever it was driving (#4834). A marker is
+#: the modal's content testid where it has one, otherwise a control that only
+#: exists inside it (several dialogs put their testid on a title span or a
+#: button). Suite-specific dialogs are passed to :meth:`HarnessMixin.dismiss_modals`.
+COMMON_MODAL_MARKERS: tuple[str, ...] = (
+    # The shared dirty-dismiss guard (``UnsavedChangesDialog``), answered with
+    # Discard rather than Escape (Escape there means "keep editing").
+    "unsaved-changes-dialog",
+    # Tab-close confirmations ``TabsUi.close_tab`` normally answers.
+    "unsaved-editor-close-dialog",
+    "confirm-close-tab-dialog",
+    "confirm-session-close-dialog",
+    "confirm-detach-tab-dialog",
+    "confirm-delete-dialog",
+    # Tab rename / colour dialogs and the SSH password prompt.
+    "rename-dialog-cancel",
+    "color-picker-apply",
+    "password-prompt-cancel",
+    # The activity-bar gear menu (a modal Radix menu: clicking the gear again
+    # toggles it shut, so a rerun's open_settings_tab would close it instead).
+    "settings-menu-open",
+    # App-wide overlays.
+    "command-palette",
+    "shortcuts-overlay",
+    "zoom-overlay",
+)
+
+#: The unsaved-changes prompt's Discard ("Just close") button.
+UNSAVED_DISCARD = "unsaved-changes-just-close"
 
 
 class HarnessMixin:
@@ -43,6 +75,52 @@ class HarnessMixin:
         empty string, absent → ``None``), so a non-``None`` value means disabled.
         """
         return self.driver.get_attribute(test_id, "disabled") is not None
+
+    def open_modals(self, *markers: str) -> list[str]:
+        """Which of :data:`COMMON_MODAL_MARKERS` plus ``markers`` are mounted now."""
+        watched = dict.fromkeys((*COMMON_MODAL_MARKERS, *markers))
+        return [marker for marker in watched if self.driver.exists(marker)]
+
+    def dismiss_modals(self, *markers: str, timeout: float = 10.0) -> None:
+        """Close every open modal the reset knows about; raise naming survivors.
+
+        The reset a suite uses before a rerun attempt (see
+        :meth:`SystemTest.reset_before_rerun`, #4834) when a failed attempt can
+        leave a dialog, editor dialog, menu or overlay open. ``markers`` are the
+        suite's own dialogs, checked alongside :data:`COMMON_MODAL_MARKERS`.
+
+        Each round dismisses the top layer the way a user would: the shared
+        unsaved-changes prompt gets Discard, anything else gets Escape (pressed on
+        the open dialog, so it lands inside the focus trap; Radix closes the
+        topmost layer, so a menu open inside a dialog closes first and the dialog
+        on the next round). A dirty dialog answers Escape with the unsaved prompt,
+        which the next round discards. Escape is only pressed while a watched
+        modal is open, so a clean app is left untouched.
+
+        Raises ``AssertionError`` listing the markers still mounted after
+        ``timeout`` seconds, so a stuck dialog surfaces as a reset failure rather
+        than as the rerun tripping over it.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            still_open = self.open_modals(*markers)
+            if not still_open:
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"modal reset left {len(still_open)} modal(s) open after "
+                    f"{timeout:g}s: {still_open}"
+                )
+            try:
+                if self.driver.exists(UNSAVED_DISCARD):
+                    self.driver.click(UNSAVED_DISCARD)
+                else:
+                    self.driver.press_key("Escape", still_open[0])
+            except BridgeError:
+                # The modal closed between the check and the action (it was
+                # already animating out); the next round re-reads what is open.
+                pass
+            time.sleep(0.3)
 
     def reveal_toolbar_action(self, action: str, *, overflow: str) -> bool:
         """Make a responsive-toolbar action clickable; return whether a menu opened.

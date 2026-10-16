@@ -6,6 +6,7 @@ import {
   cronsOf,
   extractOnBlock,
   hasDefaultBranchOnlyTrigger,
+  normalizedBody,
   normalizedOnBlock,
   triggersOf,
 } from "./scheduled-lanes.mjs";
@@ -91,6 +92,34 @@ describe("normalizedOnBlock", () => {
   });
 });
 
+describe("normalizedBody", () => {
+  it("drops the on: block, comments and blank lines", () => {
+    const body = normalizedBody(WORKFLOW);
+    expect(body).not.toMatch(/cron|workflow_dispatch/);
+    expect(body).toBe(
+      [
+        "name: Example",
+        "concurrency:",
+        "  group: x",
+        "jobs:",
+        "  a:",
+        "    runs-on: ubuntu-latest",
+      ].join("\n")
+    );
+  });
+
+  it("ignores a trigger change but detects a job change", () => {
+    const triggers = WORKFLOW.replace("'17 3 * * *'", "'17 4 * * *'");
+    expect(normalizedBody(triggers)).toBe(normalizedBody(WORKFLOW));
+    const jobs = WORKFLOW.replace("ubuntu-latest", "windows-latest");
+    expect(normalizedBody(jobs)).not.toBe(normalizedBody(WORKFLOW));
+  });
+
+  it("returns the whole file without an on: block", () => {
+    expect(normalizedBody("jobs:\n  a: {} # x\n")).toBe("jobs:\n  a: {}");
+  });
+});
+
 describe("hasDefaultBranchOnlyTrigger", () => {
   it("is true for schedule and workflow_run", () => {
     expect(hasDefaultBranchOnlyTrigger(WORKFLOW)).toBe(true);
@@ -114,6 +143,20 @@ describe("LANES", () => {
       expect(HEARTBEAT_HOURS[lane.cadence]).toBeGreaterThan(0);
       expect(lane.sources.length).toBeGreaterThan(0);
     }
+  });
+
+  it("dispatches the main-resident lanes so develop's nightly runs develop's YAML (#4449)", () => {
+    const si = LANES.find((l) => l.file === "system-integration.yml");
+    const fx = LANES.find((l) => l.file === "integration-fixtures.yml");
+    for (const lane of [si, fx]) {
+      expect(lane.dispatch).toBe(true);
+      expect(lane.ownSchedule).toBe(false);
+      // A scheduled run executes main's YAML, so it must not count for develop.
+      expect(lane.sources).toEqual([{ event: "workflow_dispatch", branch: "develop" }]);
+    }
+    expect(si.inputs).toEqual({ branch: "develop" });
+    expect(si.cron).toBe("5 5 * * *");
+    expect(fx.cron).toBe("41 3 * * *");
   });
 
   it("keeps the catch-up window inside the heartbeat window", () => {
