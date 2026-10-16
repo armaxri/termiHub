@@ -1667,6 +1667,32 @@ node scripts/internal/msi-version.mjs 0.2.0-beta.1   # prints 0.2.0.10001
 node scripts/internal/msi-version.mjs --check v0.2.0-alpha.1 || echo "unsupported tag"
 ```
 
+#### Prerelease MSI dry run
+
+The [release dry run](#release-dry-run) maps the in-repo `X.Y.Z`, so it never builds an MSI
+from a prerelease version. The **Release MSI Prerelease Dry Run** workflow
+(`release-msi-prerelease.yml`, #4442) does, on `windows-latest`:
+
+```bash
+gh workflow run release-msi-prerelease.yml --ref <branch>                        # 0.0.0-beta.1
+gh workflow run release-msi-prerelease.yml --ref <branch> -f version=0.2.0-rc.3
+```
+
+It sets all seven version sources to the given `-beta.N` or `-rc.N` version on a scratch
+tree and confirms them with `release-check.sh --versions-only --expect-version`. It then
+generates the `wix.version` fragment through the same composite action that the Release
+workflow's Windows leg uses (`.github/actions/msi-version-fragment`), runs
+`tauri build --bundles msi`, and fails unless the MSI's `ProductVersion` equals the mapped
+version (`scripts/internal/msi-product-version.ps1`). The job summary shows the version
+pair and the MSI name.
+
+It publishes nothing. The token is read-only and the workflow uses no secrets, creates no
+tag or release, and uploads no artifact. It skips the sidecar and license-notices bundle
+fragments, which do not affect the MSI version. Besides manual dispatch, the workflow runs
+on every push to `develop` that changes the mapping script, the composite action, the
+assertion script or the workflow itself. Before tagging the first `-beta.N` or `-rc.N`,
+check that its most recent run passed.
+
 ### Release integration gate
 
 Per-PR CI is the [slim lane](#ci-lanes-what-a-green-pr-proves-and-what-it-does-not): it

@@ -172,12 +172,71 @@ describe("release.yml wiring", () => {
 
   it("the Windows leg generates the wix.version fragment and passes it to the build", () => {
     const body = job("build-app", "\n  upload-app:");
-    const gen = body.indexOf("scripts/internal/msi-version.mjs --config-out");
+    const gen = body.indexOf("uses: ./.github/actions/msi-version-fragment");
     const build = body.indexOf("- name: Build Tauri app for release");
     expect(gen).toBeGreaterThan(-1);
     expect(gen).toBeLessThan(build);
-    const step = body.slice(body.lastIndexOf("- name:", gen), gen);
+    const step = body.slice(body.lastIndexOf("- name:", gen), body.indexOf("\n\n", gen));
+    expect(step).toContain("id: wix_version");
     expect(step).toContain("if: runner.os == 'Windows'");
+    // A tag maps itself; a dry run maps the in-repo version (empty input).
+    expect(step).toMatch(
+      /version: \$\{\{ needs\.release-version\.outputs\.dry_run != 'true' && needs\.release-version\.outputs\.version \|\| '' \}\}/
+    );
     expect(body.slice(build)).toMatch(/args:.*\$\{\{ steps\.wix_version\.outputs\.config \}\}/);
+  });
+});
+
+describe("msi-version-fragment action (#4442)", () => {
+  const ACTION = readFileSync(
+    path.join(REPO_ROOT, ".github/actions/msi-version-fragment/action.yml"),
+    "utf8"
+  );
+
+  it("generates the fragment with msi-version.mjs --config-out", () => {
+    expect(ACTION).toMatch(
+      /node scripts\/internal\/msi-version\.mjs --config-out "\$FRAGMENT" "\$VERSION"/
+    );
+    expect(ACTION).toContain('echo "config=--config $FRAGMENT" >> "$GITHUB_OUTPUT"');
+    expect(ACTION).toContain('echo "msi_version=$msi_version" >> "$GITHUB_OUTPUT"');
+  });
+
+  it("falls back to the in-repo package.json version when no version is given", () => {
+    expect(ACTION).toMatch(
+      /if \[ -z "\$VERSION" \]; then VERSION="\$\(node -p "require\('\.\/package\.json'\)\.version"\)"; fi/
+    );
+  });
+});
+
+describe("release-msi-prerelease.yml dry run (#4442)", () => {
+  const DRY = readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/release-msi-prerelease.yml"),
+    "utf8"
+  );
+  const onBlock = DRY.slice(DRY.indexOf("\non:"), DRY.indexOf("\npermissions:"));
+
+  it("is dispatch/develop-push only and read-only, so it can never publish", () => {
+    expect(onBlock).toContain("workflow_dispatch:");
+    expect(onBlock).not.toMatch(/\b(schedule|workflow_run|pull_request|tags):/);
+    expect(onBlock).toMatch(/push:\n\s+branches: \[develop\]\n\s+paths:/);
+    expect(DRY).toMatch(/\npermissions:\n {2}contents: read\n/);
+    expect(DRY).not.toMatch(/contents: write|id-token|attestations:|secrets\./);
+    expect(DRY).not.toMatch(/gh release|git tag|git push/);
+  });
+
+  it("defaults to a -beta.N version", () => {
+    expect(DRY).toMatch(/default: '0\.0\.0-beta\.1'/);
+  });
+
+  it("builds the MSI through release.yml's fragment action and asserts its ProductVersion", () => {
+    const gen = DRY.indexOf("uses: ./.github/actions/msi-version-fragment");
+    const build = DRY.indexOf('pnpm tauri build --ci --target "$RUST_TARGET" --bundles msi');
+    const assert = DRY.indexOf("./scripts/internal/msi-product-version.ps1 -Msi");
+    expect(gen).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(gen);
+    expect(assert).toBeGreaterThan(build);
+    expect(DRY).toContain("WIX_CONFIG: ${{ steps.wix_version.outputs.config }}");
+    expect(DRY.slice(build)).toMatch(/"\$\{wix\[@\]\}" -- --locked/);
+    expect(DRY).toContain("-Expected $env:MSI_VERSION");
   });
 });
