@@ -175,4 +175,35 @@ describe("SpawnPicker", () => {
     expect(query("spawn-picker-none")).not.toBeNull();
     expect((query("spawn-picker-open") as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("never paints the previous open's options when it is reopened (#4862)", async () => {
+    await renderPicker();
+    const props = { location: "/home/user/app", onConfirm: vi.fn(), onCancel: vi.fn() };
+    await act(async () => {
+      root.render(<SpawnPicker open={false} {...props} />);
+    });
+
+    // The fresh enumeration stays pending: every frame from here on must show
+    // the loading placeholder, never a row from the previous snapshot. A row
+    // painted and then replaced still shows up in the removed nodes.
+    mockedListSpawnOptions.mockReturnValue(new Promise<SpawnOptions>(() => {}));
+    const observer = new MutationObserver(() => {});
+    observer.observe(document.body, { childList: true, subtree: true });
+    act(() => {
+      root.render(<SpawnPicker open {...props} />);
+    });
+    const painted = observer
+      .takeRecords()
+      .flatMap((r) => [...Array.from(r.addedNodes), ...Array.from(r.removedNodes)])
+      .filter((n): n is Element => n instanceof Element);
+    observer.disconnect();
+
+    const staleRow = painted.some(
+      (el) =>
+        el.matches('[data-testid^="spawn-picker-row-"]') ||
+        el.querySelector('[data-testid^="spawn-picker-row-"]') !== null
+    );
+    expect(staleRow).toBe(false);
+    expect(query("spawn-picker-loading")).not.toBeNull();
+  });
 });
