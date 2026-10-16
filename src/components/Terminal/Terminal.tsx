@@ -1504,6 +1504,17 @@ export function Terminal({
         el.dataset.terminalRenderer = renderer;
         frontendLog("terminal", `renderer ${renderer} (${reason}) tab=${tabId}`);
         if (webglInitialAttach || reason === "disposed") return;
+        // Only an on-screen swap re-fits (#4858). The DOM renderer measures an
+        // unrounded cell and WebGL a device-pixel-floored one, so the same
+        // container fits a different grid under each (e.g. 111 vs 117 cols).
+        // Re-fitting a terminal that is being hidden would resize its PTY to the
+        // DOM grid and back to the WebGL grid on the next show: two SIGWINCHs
+        // per tab switch, and on Windows ConPTY a dropped keystroke. Nobody sees
+        // a hidden terminal, so it keeps the grid it was last shown with; the
+        // re-fit below on show then lands on that same grid and sends nothing.
+        // A real container change while hidden is still caught by the
+        // ResizeObserver.
+        if (reason === "hidden" || !isOnScreenRef.current) return;
         // The two renderers measure their own cells, so the grid fitted under
         // one no longer fills the container under the other and nothing else
         // re-fits it until the next resize (#4017). Re-fit once the swapped-in
@@ -1511,6 +1522,8 @@ export function Terminal({
         // through onResize as usual.
         requestAnimationFrame(() => {
           if (connectAbort.signal.aborted || horizontalScrollingRef.current) return;
+          // Hidden again before the frame: leave its grid alone (see above).
+          if (!isOnScreenRef.current) return;
           try {
             if (isProposedFitSafe(fitAddon)) fitAddon.fit();
           } catch (err) {
