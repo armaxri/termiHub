@@ -12,26 +12,38 @@
 //! - `mapping` — session type → termiHub connection settings, skip reasons.
 //! - `placeholders` — `_ProfileDir_`-style path tokens in key paths.
 //! - `discovery` — where MobaXterm keeps its configuration on Windows.
+//! - `hostkeys` — `[SSH_Hostkeys]` (PuTTY cache format) → OpenSSH keys (#4852).
+//! - `trusted_hosts` — classify those keys against termiHub's SSH trust store
+//!   and import the user-approved ones into it.
 //!
 //! Passwords are never imported: MobaXterm keeps them in its own encrypted
 //! vault, which termiHub does not read.
 
 mod discovery;
+mod hostkeys;
 mod mapping;
 mod parser;
 mod placeholders;
+mod trusted_hosts;
 
+#[cfg(test)]
+mod hostkeys_tests;
 #[cfg(test)]
 mod tests;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Serialize;
+use tauri::State;
 
+use crate::session::ssh_host_key_verifier::SshHostKeyVerifier;
 use crate::utils::errors::TerminalError;
 
 use mapping::{map_session, Outcome};
 use placeholders::PlaceholderEnv;
+use trusted_hosts::{host_key_entries, import_host_keys, StoreTrust, TrustCheck};
+pub use trusted_hosts::{HostKeyImportResult, HostKeySelection, MobaxtermHostKey};
 
 /// Refuse files larger than this: a real MobaXterm.ini is tens of kilobytes,
 /// so anything this big is not one (and must not be read into memory whole).
@@ -93,15 +105,30 @@ pub struct MobaxtermImportPreview {
     pub encoding: String,
     /// Every saved session, importable and skipped, in file order.
     pub sessions: Vec<MobaxtermSession>,
+    /// Every `[SSH_Hostkeys]` entry, importable and skipped, in file order.
+    pub host_keys: Vec<MobaxtermHostKey>,
 }
 
-/// Build the preview from raw file bytes. Shared by the command and the tests.
+/// Build the preview from raw file bytes, with every host key classified as
+/// new (no trust store consulted). Used by the tests.
+#[cfg(test)]
 pub fn preview_from_bytes(
     bytes: &[u8],
     source_path: &str,
     env: &PlaceholderEnv,
 ) -> MobaxtermImportPreview {
+    preview_with_trust(bytes, source_path, env, &trusted_hosts::NothingTrusted)
+}
+
+/// Build the preview from raw file bytes, classifying host keys with `trust`.
+pub fn preview_with_trust(
+    bytes: &[u8],
+    source_path: &str,
+    env: &PlaceholderEnv,
+    trust: &dyn TrustCheck,
+) -> MobaxtermImportPreview {
     let (text, encoding) = parser::decode(bytes);
+    let host_keys = host_key_entries(&text, trust);
     let sessions = parser::parse_bookmarks(&text)
         .iter()
         .enumerate()
@@ -135,11 +162,12 @@ pub fn preview_from_bytes(
         source_path: source_path.to_string(),
         encoding: encoding.label().to_string(),
         sessions,
+        host_keys,
     }
 }
 
-/// Read and preview the MobaXterm configuration at `path`.
-pub fn preview_file(path: &Path, env: &PlaceholderEnv) -> Result<MobaxtermImportPreview, String> {
+/// Read a configuration file, refusing non-files and oversized files.
+fn read_config(path: &Path) -> Result<Vec<u8>, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(format!("{} is not a file", path.display()));
@@ -150,8 +178,22 @@ pub fn preview_file(path: &Path, env: &PlaceholderEnv) -> Result<MobaxtermImport
             path.display()
         ));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    Ok(preview_from_bytes(&bytes, &path.to_string_lossy(), env))
+    std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))
+}
+
+/// Read and preview the MobaXterm configuration at `path`.
+pub fn preview_file(
+    path: &Path,
+    env: &PlaceholderEnv,
+    trust: &dyn TrustCheck,
+) -> Result<MobaxtermImportPreview, String> {
+    let bytes = read_config(path)?;
+    Ok(preview_with_trust(
+        &bytes,
+        &path.to_string_lossy(),
+        env,
+        trust,
+    ))
 }
 
 /// List the MobaXterm configurations found on this machine. Always empty off
@@ -170,8 +212,40 @@ pub fn discover_mobaxterm_configs() -> Result<Vec<MobaxtermConfigCandidate>, Ter
 /// Parse the MobaXterm configuration (`MobaXterm.ini` or `.mxtsessions`) at
 /// `path` into an import preview. The user picked or confirmed this file, so a
 /// read failure is an error the UI shows.
+///
+/// Host keys are classified against termiHub's SSH trust store and the user's
+/// `~/.ssh/known_hosts`; nothing is trusted until
+/// [`import_mobaxterm_host_keys`] is called with the user's opt-in.
 #[tauri::command]
-pub fn preview_mobaxterm_import(path: String) -> Result<MobaxtermImportPreview, TerminalError> {
-    preview_file(Path::new(&path), &PlaceholderEnv::from_system())
+pub fn preview_mobaxterm_import(
+    path: String,
+    verifier: State<'_, Arc<SshHostKeyVerifier>>,
+) -> Result<MobaxtermImportPreview, TerminalError> {
+    let trust = StoreTrust::new(verifier.trust_store());
+    preview_file(Path::new(&path), &PlaceholderEnv::from_system(), &trust)
         .map_err(TerminalError::InvalidParams)
+}
+
+/// Trust the host keys the user opted in to importing from the MobaXterm
+/// configuration at `path` (#4852).
+///
+/// The file is re-read and every selected entry re-validated and re-classified
+/// here, so only a key that is still valid, still has the fingerprint the user
+/// saw in the preview, and still has no conflicting trusted key is added. An
+/// existing entry is never replaced or extended with a different key.
+#[tauri::command]
+pub fn import_mobaxterm_host_keys(
+    path: String,
+    selections: Vec<HostKeySelection>,
+    verifier: State<'_, Arc<SshHostKeyVerifier>>,
+) -> Result<HostKeyImportResult, TerminalError> {
+    let bytes = read_config(Path::new(&path)).map_err(TerminalError::InvalidParams)?;
+    let (text, _) = parser::decode(&bytes);
+    let store = verifier.trust_store();
+    Ok(import_host_keys(
+        &text,
+        &selections,
+        store,
+        &StoreTrust::new(store),
+    ))
 }
