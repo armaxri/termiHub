@@ -536,6 +536,11 @@ pub fn port_vnc_vencrypt() -> u16 {
 pub fn port_vnc_vencrypt_plain() -> u16 {
     resolve_port("TERMIHUB_TEST_VNC_VENCRYPT_PLAIN_PORT", 2503)
 }
+/// vnc-jpeg-server container (TigerVNC Xvnc, VncAuth, a gradient sent as Tight
+/// JPEG plus a looping server-side CopyRect over it, #4821).
+pub fn port_vnc_jpeg() -> u16 {
+    resolve_port("TERMIHUB_TEST_VNC_JPEG_PORT", 2504)
+}
 /// rdp-server container (xrdp + xorgxrdp, TLS, `testuser`/`testpass`).
 pub fn port_rdp() -> u16 {
     resolve_port("TERMIHUB_TEST_RDP_PORT", 2601)

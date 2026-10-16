@@ -1617,6 +1617,7 @@ mod tests {
                 width: 2,
                 height: 1,
                 data: vec![10, 20, 30, 40, 50, 60, 70, 80],
+                jpeg: None,
             }],
         };
         write_message(&mut sidecar_stdout, &SidecarMessage::Frame(frame.clone()))

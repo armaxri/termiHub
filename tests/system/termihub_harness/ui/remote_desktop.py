@@ -142,6 +142,7 @@ class RemoteDesktopUi(HarnessMixin):
         scale_mode: Optional[str] = None,
         resolution_mode: Optional[str] = None,
         tls_verify: Optional[str] = None,
+        quality: Optional[str] = None,
         auto_reconnect: bool = True,
         connect: bool = True,
     ) -> None:
@@ -153,7 +154,9 @@ class RemoteDesktopUi(HarnessMixin):
         the opened tab's config, so a manual Reconnect re-authenticates too.
         ``scale_mode`` (``fit``/``pixel``/``match``), ``resolution_mode``
         (``server``/``dynamic``/``fixed``) and ``tls_verify``
-        (``system``/``insecure``/``ca``) pick the matching editor selects;
+        (``system``/``insecure``/``ca``) and ``quality`` (``lossless``/``high``/
+        ``medium``/``low`` — the JPEG levels, #4821) pick the matching editor
+        selects;
         ``auto_reconnect=False`` turns the default-on Auto-Reconnect off, so a drop
         rests on the manual Reconnect prompt instead of retrying.
         """
@@ -176,6 +179,10 @@ class RemoteDesktopUi(HarnessMixin):
         if tls_verify is not None:
             self._select_when_available(
                 "field-tlsVerify", tls_verify, what=f"the {tls_verify!r} TLS verification"
+            )
+        if quality is not None:
+            self._select_when_available(
+                "field-quality", quality, what=f"the {quality!r} image quality"
             )
         if not auto_reconnect:
             self.wait(
