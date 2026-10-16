@@ -19,9 +19,9 @@
 //                      `github.event.schedule`), regardless of age.
 //
 // Either dispatch mode skips a lane whose own `schedule:` is live, meaning
-// its workflow file is on main with a schedule trigger (and `ownSchedule` is not
-// false). That way the dispatcher retires lane by lane as files reach main,
-// instead of doubling their runs.
+// its workflow file is on main with a schedule trigger and `ownSchedule` is not
+// false. Every registered lane is `ownSchedule: false` (#4449, #4847), so the
+// dispatcher always starts develop's run with develop's YAML.
 //
 // Usage:
 //   node scripts/internal/scheduled-lanes-heartbeat.mjs [--check]

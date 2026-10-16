@@ -303,6 +303,22 @@ export function cronsOf(text) {
 }
 
 /**
+ * True when the workflow checks out `develop` on a `schedule` event, e.g.
+ * `ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}` or a
+ * schedule-only `["develop","main"]` fan-out. A scheduled run executes MAIN's
+ * copy of the YAML, so this grades develop's tree with main's job definitions
+ * (#4449, #4847). Comments are ignored.
+ *
+ * @param {string} text workflow YAML
+ */
+export function checksOutDevelopOnSchedule(text) {
+  return text
+    .split(/\r?\n/)
+    .map(stripComment)
+    .some((l) => /github\.event_name\s*==\s*'schedule'\s*&&\s*'[^']*develop/.test(l));
+}
+
+/**
  * True when the workflow has a trigger GitHub reads only from the default
  * branch (`schedule:` or `workflow_run:`).
  *

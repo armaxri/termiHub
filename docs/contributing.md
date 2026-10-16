@@ -333,16 +333,23 @@ How the lanes that grade `develop` fire anyway:
 
 - [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml) owns
   their crons. Once it is on `main`, each cron dispatches its lanes on `develop`
-  (`gh workflow run <file> --ref develop`). A lane whose own file is already on
-  `main` with a `schedule:` keeps its own cron, and the dispatcher skips it.
+  (`gh workflow run <file> --ref develop`). Every lane is dispatched this way,
+  even once its file is on `main` (`ownSchedule: false`, #4847).
 - **A scheduled run executes `main`'s copy of the YAML**, even when it checks out
   `develop`. Its job definitions lag `develop`'s until the next release, so steps
   added on `develop` silently never run (main's `system-integration.yml` built no
-  RDP sidecar and provisioned no Windows sshd, #4449). The main-resident lanes
-  whose job bodies matter, `system-integration.yml` and `integration-fixtures.yml`,
-  are therefore registered with `ownSchedule: false`: the dispatcher starts their
-  `develop` nightly (develop's YAML), and their own `schedule:` grades `main` only,
-  weekly on Wednesday.
+  RDP sidecar and provisioned no Windows sshd, #4449). Every lane is therefore
+  registered with `ownSchedule: false` (#4449, #4847): the dispatcher starts its
+  `develop` run (develop's YAML), and a lane's own `schedule:` never grades
+  `develop`. Where `main` needs a cadence it keeps a main-only cron: weekly on
+  Wednesday for the test lanes (`system-integration.yml`,
+  `integration-fixtures.yml`, `wsl-live.yml`, `windows-ssh-host.yml`,
+  `plugin-sandbox-nightly.yml`) and daily for `security-audit.yml` (advisories
+  are time-based). The lanes that only act on `develop` (`cargo-update-lockfile.yml`,
+  `vendored-forks.yml`, `branch-protection.yml`) and `coverage.yml` have no
+  schedule of their own. Never check out `develop` on `schedule`
+  (`ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}`): that pairs
+  main's YAML with develop's tree, and the drift guard rejects it.
 - A manual run of the dispatcher (`gh workflow run scheduled-dispatch.yml --ref
 <branch> -f cron="5 5 * * *"`) dispatches that cron's lanes now; from a branch
   other than `main` it reads that branch's lane list.
@@ -359,8 +366,9 @@ How the lanes that grade `develop` fire anyway:
 
 **Adding a scheduled lane:** register it in
 [`scripts/internal/scheduled-lanes.mjs`](../scripts/internal/scheduled-lanes.mjs)
-(cadence, cron, which runs count) and add its cron to `scheduled-dispatch.yml`
-if it is new. Give it `workflow_dispatch`. If it has no other trigger, also give
+(cadence, cron, which runs count, `ownSchedule: false`) and add its cron to
+`scheduled-dispatch.yml` if it is new. Give it `workflow_dispatch`; its own
+`schedule:`, if any, grades `main` only. If it has no other trigger, also give
 it a self-path `push: develop` trigger so its first merge registers it. The
 per-PR vitest suite fails when a workflow with `schedule:`/`workflow_run:` is not
 registered. A `workflow_run:` lane can only be dispatched, so add a cron for it.

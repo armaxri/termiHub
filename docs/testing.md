@@ -1539,8 +1539,8 @@ For detailed profiling instructions, baseline metrics, and memory leak detection
 
 The out-of-process plugin host (plugin OS-sandbox phase 8, #4190) has its own
 nightly lane, [`plugin-sandbox-nightly.yml`](../.github/workflows/plugin-sandbox-nightly.yml)
-(develop daily, main weekly; scheduled runs only fire once the file is on `main`,
-use **Run workflow** before that):
+(develop daily, dispatched by [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml)
+so it runs develop's copy of the workflow (#4847); main weekly on its own cron):
 
 - **IPC fuzzing** — `cargo-fuzz` targets in `plugin-runner/fuzz/`: `host_decode`
   (the host decoding runner frames, the untrusted direction), `runner_decode`

@@ -12,9 +12,8 @@ name: Scheduled Lanes (dispatch + heartbeat)
 #
 # Triggers:
 #   * schedule — fires only once THIS file is on main. Each cron dispatches the
-#     lanes assigned to it, except a lane whose own `schedule:` is live on main
-#     (its file is there with a schedule trigger), so the dispatcher retires lane
-#     by lane as files reach main instead of doubling their runs.
+#     lanes assigned to it. (A lane with `ownSchedule: true` whose own
+#     `schedule:` is live on main would be skipped; no lane uses that today.)
 #   * push to develop — works without main. Dispatches any lane whose newest
 #     develop run is older than its catch-up window (28 h daily, 7 d + 4 h
 #     weekly), then runs the heartbeat. A failing lane is not re-dispatched on
@@ -26,11 +25,11 @@ name: Scheduled Lanes (dispatch + heartbeat)
 #     branch's lane list, so a registry change can be tried before it merges;
 #     the lanes themselves are always dispatched on develop.
 #
-# Main-resident lanes (#4449): a lane whose file is on main still runs MAIN's
-# copy of its YAML when its own cron fires, so its job definitions lag
-# develop's until the next release. system-integration and integration-fixtures
-# are therefore dispatched here (`ownSchedule: false`): a dispatched run
-# executes develop's YAML. Their own `schedule:` grades main only (weekly).
+# Why every lane is dispatched (#4449, #4847): a lane whose file is on main
+# runs MAIN's copy of its YAML when its own cron fires, so its job definitions
+# lag develop's until the next release. Every lane is therefore dispatched here
+# (`ownSchedule: false`): a dispatched run executes develop's YAML. A lane's own
+# `schedule:`, where it keeps one, grades main only.
 #
 # The heartbeat FAILS this run when a lane has no successful develop run within
 # 36 h (daily) / 8 days (weekly). A red run here means a nightly gate is dark or
