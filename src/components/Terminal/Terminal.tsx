@@ -1946,7 +1946,8 @@ export function Terminal({
       const xterm = xtermRef.current;
       const fitAddon = fitAddonRef.current;
       const el = terminalElRef.current;
-      if (!xterm || !fitAddon || !el) return;
+      // Hidden again before the frame: the effect cleanup re-armed the fit.
+      if (!xterm || !fitAddon || !el || !isOnScreenRef.current) return;
       // Same degenerate-fit guards as every other fit path (#2693, #2700): a
       // ~0-sized container is left to the ResizeObserver to re-fit.
       if (!isFitReady(el)) return;
