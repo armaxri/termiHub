@@ -43,9 +43,10 @@ use crate::backends::ssh::handler::SshSession;
 use crate::connection::clipboard_dib::image_to_dib;
 use crate::connection::graphical_files::is_same_host;
 use crate::connection::{
-    AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorShape,
-    CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
-    InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
+    AuthKind, Capabilities, ClipboardImage, ClipboardTextReceiver, ConnectionType, CursorReceiver,
+    CursorShape, CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend,
+    GraphicalCapabilities, InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability,
+    OutputReceiver, SettingsSchema,
 };
 use crate::connection::{FileChannelPolicy, FileSideChannel, FileSideChannelKind};
 use crate::errors::SessionError;
@@ -1033,6 +1034,11 @@ impl GraphicalBackend for Vnc {
 
     async fn get_clipboard(&self) -> Option<String> {
         self.runtime.as_ref()?.shared.clipboard.text().await
+    }
+
+    /// Every `ServerCutText` the server sends (#4836).
+    fn subscribe_clipboard(&self) -> Option<ClipboardTextReceiver> {
+        Some(self.runtime.as_ref()?.shared.clipboard.subscribe())
     }
 
     async fn get_clipboard_image(&self) -> Option<ClipboardImage> {

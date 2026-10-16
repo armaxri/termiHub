@@ -1,0 +1,25 @@
+import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { MobaxtermImportDialog } from "./MobaxtermImportDialog";
+
+/**
+ * App-level mount of the one-time MobaXterm import (#4850). Opened through the
+ * store (`setMobaxtermImportOpen`) from Settings → Import & Migration or the
+ * gear menu, so the dialog lives in one place and works from any window state.
+ */
+export function MobaxtermImportHost() {
+  const open = useAppStore((s) => s.mobaxtermImportOpen);
+  const setOpen = useAppStore((s) => s.setMobaxtermImportOpen);
+  const importConnectionTree = useAppStore((s) => s.importConnectionTree);
+  const { folders, connections } = useProjectedConnections();
+
+  return (
+    <MobaxtermImportDialog
+      open={open}
+      onOpenChange={setOpen}
+      folders={folders}
+      existingConnections={connections}
+      onImport={importConnectionTree}
+    />
+  );
+}

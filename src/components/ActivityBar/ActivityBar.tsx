@@ -11,6 +11,7 @@ import {
   Settings,
   Download,
   Upload,
+  FileInput,
   ScrollText,
   LayoutDashboard,
   Stethoscope,
@@ -92,6 +93,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const setLayoutDialogOpen = useAppStore((s) => s.setLayoutDialogOpen);
   const setExportDialogOpen = useAppStore((s) => s.setExportDialogOpen);
   const setImportDialog = useAppStore((s) => s.setImportDialog);
+  const setMobaxtermImportOpen = useAppStore((s) => s.setMobaxtermImportOpen);
   const toggleActivityBarView = useAppStore((s) => s.toggleActivityBarView);
   const showRecentSessions = useProjectedSettings().showRecentSessions;
   const experimental = useExperimentalFeatures();
@@ -208,6 +210,13 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 <MenuItem onSelect={handleImport} data-testid="settings-menu-import">
                   <Upload size={14} />
                   Import Connections
+                </MenuItem>
+                <MenuItem
+                  onSelect={() => setMobaxtermImportOpen(true)}
+                  data-testid="settings-menu-import-mobaxterm"
+                >
+                  <FileInput size={14} />
+                  Import from MobaXterm…
                 </MenuItem>
                 <MenuItem onSelect={handleExport} data-testid="settings-menu-export">
                   <Download size={14} />

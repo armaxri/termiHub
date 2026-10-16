@@ -130,6 +130,8 @@ import {
   SshConfigImportHost,
   SshConfigImportConnection,
   InventoryHost,
+  MobaxtermConfigCandidate,
+  MobaxtermImportPreview,
   FileEntry,
   Writability,
   AppSettings,
@@ -387,6 +389,24 @@ export async function importSshConfigConnections(): Promise<SshConfigImportConne
  */
 export async function importInventoryHosts(path: string): Promise<InventoryHost[]> {
   return await invoke<InventoryHost[]>("import_inventory_hosts", { path });
+}
+
+/**
+ * Find MobaXterm configurations on this machine (#4850). Windows-only on the
+ * backend (installed edition under `%APPDATA%`, Documents folders); every other
+ * OS — and a missing install — resolves to an empty list, never an error.
+ */
+export async function discoverMobaxtermConfigs(): Promise<MobaxtermConfigCandidate[]> {
+  return await invoke<MobaxtermConfigCandidate[]>("discover_mobaxterm_configs");
+}
+
+/**
+ * Parse the MobaXterm configuration (`MobaXterm.ini` or a `.mxtsessions`
+ * export) at `path` into an import preview (#4850). The user picked or
+ * confirmed the file, so a read failure rejects (the dialog shows it).
+ */
+export async function previewMobaxtermImport(path: string): Promise<MobaxtermImportPreview> {
+  return await invoke<MobaxtermImportPreview>("preview_mobaxterm_import", { path });
 }
 
 /**

@@ -227,6 +227,16 @@
   border-radius: var(--radius-sm);
 }
 
+/* A remote change held back while the user edits the draft (#4836). */
+.rd-clipboard__changed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
 .rd-clipboard__files {
   display: flex;
   flex-direction: column;

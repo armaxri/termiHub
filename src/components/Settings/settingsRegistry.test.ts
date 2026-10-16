@@ -30,6 +30,14 @@ describe("settingsRegistry", () => {
       }
     });
 
+    it("finds the MobaXterm import by mobaxterm, import and migrate (#4850)", () => {
+      for (const query of ["mobaxterm", "import", "migrate", "MobaXterm"]) {
+        const results = filterSettings(query);
+        expect(results.some((s) => s.id === "importMobaxterm")).toBe(true);
+        expect(getMatchingCategories(query).has("import")).toBe(true);
+      }
+    });
+
     it("matches by description", () => {
       const results = filterSettings("scrollback buffer");
       expect(results.some((s) => s.id === "scrollbackBuffer")).toBe(true);
