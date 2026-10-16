@@ -36,12 +36,14 @@ function Get-MsiProperty {
     param($Database, [string]$Name)
     $view = $Database.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$Name'")
     try {
-        $view.Execute()
+        # [void]: anything a COM call returns would otherwise join the function's
+        # output, and the caller would get an array (" 0.0.0.10001 " once joined).
+        [void]$view.Execute()
         $record = $view.Fetch()
-        if ($null -eq $record) { return $null }
-        return $record.StringData(1)
+        if ($null -eq $record) { return '' }
+        return [string]$record.StringData(1)
     } finally {
-        $view.Close()
+        [void]$view.Close()
     }
 }
 
