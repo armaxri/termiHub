@@ -5,8 +5,8 @@
 //! folder), `_AppDataDir_` (roaming AppData), `_DesktopDir_` (the Desktop) and
 //! `_CurrentDrive_` (the drive letter MobaXterm runs from, written as
 //! `_CurrentDrive_:\…`). They are resolved against the importing machine so a
-//! key path such as `_ProfileDir_\.ssh\id_ed25519` lands on the user's real
-//! `.ssh` folder on every OS. A token we cannot resolve is left in place and
+//! key path such as `_ProfileDir_\keys\lab_key` lands in the user's real
+//! profile folder on every OS. A token we cannot resolve is left in place and
 //! reported, never guessed.
 
 use std::path::PathBuf;

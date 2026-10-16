@@ -63,7 +63,7 @@ Viewer=#128#5%10.0.0.30%5901%-1%0%%%%%%%#MobaFont%10#0# #-1\r\n\
 Files=#130#6%ftp.example.com%2121%dave%%%#MobaFont%10#0# #-1\r\n\
 Secure files=#140#7%sftp.example.com%22%erin%%%#MobaFont%10#0# #-1\r\n\
 Bash here=#129#10%1%%_MyDocuments_\\projects%%#MobaFont%10#0# #-1\r\n\
-Ubuntu=#151#14%Ubuntu-22.04%%%%%%0#MobaFont%10#0# #-1\r\n\
+Fedora box=#151#14%Fedora-Remix-41%%%%%%0#MobaFont%10#0# #-1\r\n\
 Xdmcp box=#99#3%10.0.0.40%177%#MobaFont%10#0# #-1\r\n\
 [SSH_Hostkeys]\r\n\
 ssh-ed25519@22:10.0.0.1=0x1234\r\n";
@@ -84,7 +84,7 @@ fn parses_every_session_and_ignores_other_sections() {
             "Files",
             "Secure files",
             "Bash here",
-            "Ubuntu",
+            "Fedora box",
             "Xdmcp box"
         ]
     );
@@ -125,11 +125,11 @@ fn ssh_maps_host_port_user_and_password_auth() {
 
 #[test]
 fn ssh_key_path_placeholder_is_expanded() {
-    let ini = "[Bookmarks]\nSubRep=\nKeyed=#109#0%host.example.com%2222%bob%%-1%-1%%%%%0%0%0%_ProfileDir_\\.ssh\\id_ed25519%%-1%0%0%0%%1080%%0%0%1#MobaFont#0# #-1\n";
+    let ini = "[Bookmarks]\nSubRep=\nKeyed=#109#0%host.example.com%2222%bob%%-1%-1%%%%%0%0%0%_ProfileDir_\\keys\\lab_key%%-1%0%0%0%%1080%%0%0%1#MobaFont#0# #-1\n";
     let sessions = preview(ini);
     let s = &sessions[0];
     assert_eq!(setting(s, "authMethod"), "key");
-    let expected = Path::new("/home/alice").join(".ssh").join("id_ed25519");
+    let expected = Path::new("/home/alice").join("keys").join("lab_key");
     assert_eq!(setting(s, "keyPath"), &json!(expected.to_string_lossy()));
     assert_eq!(s.target, "bob@host.example.com:2222");
     assert!(s.notes.is_empty(), "{:?}", s.notes);
@@ -233,9 +233,9 @@ fn rdp_vnc_ftp_sftp_shell_and_wsl_map_to_their_types() {
         &json!(dir.to_string_lossy())
     );
 
-    let wsl = by_name(&sessions, "Ubuntu");
+    let wsl = by_name(&sessions, "Fedora box");
     assert_eq!(wsl.connection_type.as_deref(), Some("wsl"));
-    assert_eq!(setting(wsl, "distribution"), "Ubuntu-22.04");
+    assert_eq!(setting(wsl, "distribution"), "Fedora-Remix-41");
 }
 
 #[test]
