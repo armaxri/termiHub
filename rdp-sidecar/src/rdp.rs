@@ -2067,7 +2067,14 @@ mod tests {
     /// Script the server half of a Deactivation-Reactivation Sequence: a Demand
     /// Active for the new desktop size under a new share id, then the
     /// finalization PDUs (Synchronize, Cooperate, Granted Control, Font Map).
-    fn scripted_reactivation(share_id: u32, width: u16, height: u16) -> Vec<u8> {
+    /// `interleaved` is written after the Demand Active and after each
+    /// finalization PDU, as a server's channel traffic can be (#4845).
+    fn scripted_reactivation(
+        share_id: u32,
+        width: u16,
+        height: u16,
+        interleaved: &[u8],
+    ) -> Vec<u8> {
         use ironrdp::pdu::rdp::capability_sets::{
             Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, ServerDemandActive,
         };
@@ -2088,6 +2095,7 @@ mod tests {
             },
         });
         let mut script = server_share_control(share_id, demand_active);
+        script.extend_from_slice(interleaved);
         for pdu in [
             ShareDataPdu::Synchronize(SynchronizePdu {
                 target_user_id: TEST_USER_CHANNEL,
@@ -2105,6 +2113,7 @@ mod tests {
             ShareDataPdu::FontMap(FontPdu::default()),
         ] {
             script.extend(server_share_data(share_id, pdu));
+            script.extend_from_slice(interleaved);
         }
         script
     }
@@ -2114,7 +2123,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let (client, mut server) = tokio::io::duplex(64 * 1024);
-        let script = scripted_reactivation(0x0002_03EA, 1100, 700);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &[]);
         let server_task = tokio::spawn(async move {
             server.write_all(&script).await.unwrap();
             // Collect what the client sends back (Confirm Active + finalization).
@@ -2174,6 +2183,50 @@ mod tests {
         assert!(outputs
             .iter()
             .any(|o| matches!(o, ActiveStageOutput::DeactivateAll)));
+    }
+
+    /// xrdp keeps its virtual channels (CLIPRDR, drdynvc) and fast-path output
+    /// flowing while it reactivates after an early resize. Those PDUs are not
+    /// part of the sequence; decoding one as a Share Control PDU ended the
+    /// session with "invalid pdu type" (#4845).
+    #[tokio::test]
+    async fn reactivation_tolerates_interleaved_channel_and_fast_path_pdus() {
+        use ironrdp::pdu::mcs::SendDataIndication;
+        use ironrdp::pdu::x224::X224;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut interleaved = ironrdp::core::encode_vec(&X224(SendDataIndication {
+            initiator_id: TEST_SERVER_CHANNEL,
+            channel_id: TEST_IO_CHANNEL + 1,
+            user_data: std::borrow::Cow::Owned(vec![0x07, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        }))
+        .unwrap();
+        // A fast-path output PDU with no updates.
+        interleaved.extend_from_slice(&[0x00, 0x02]);
+
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &interleaved);
+        let server_task = tokio::spawn(async move {
+            server.write_all(&script).await.unwrap();
+            let mut sent = Vec::new();
+            let _ = server.read_to_end(&mut sent).await;
+        });
+
+        let mut stage = test_active_stage(0x0001_03EA);
+        let mut image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+        let framed = reactivate(
+            TokioFramed::new(client),
+            test_connector_config(),
+            &mut stage,
+            &mut image,
+            TEST_IO_CHANNEL,
+            TEST_USER_CHANNEL,
+        )
+        .await
+        .expect("interleaved channel traffic must not fail the reactivation");
+        assert_eq!((image.width(), image.height()), (1100, 700));
+        drop(framed);
+        server_task.await.unwrap();
     }
 }
 
