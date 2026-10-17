@@ -94,6 +94,8 @@ pub fn evaluate_condition(condition: &Condition, settings: &Settings) -> bool {
             .get(&condition.field)
             .is_some_and(|actual| *actual == condition.equals),
     };
+    // `negate` inverts only the primary test, never the sub-conditions (#4888).
+    let primary = primary != condition.negate;
     primary
         && condition
             .all_of

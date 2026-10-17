@@ -16,9 +16,16 @@
  *   comparison with both hosts seen from this computer, by
  *   [`is_same_named_host`](crate::connection::graphical_files::is_same_named_host)
  *   (#4194): a loopback name is this computer, never the other host.
+ * - [`negate`](Condition::negate) inverts the primary test (the `equals`
+ *   comparison or the host comparison), so a field can be shown when another
+ *   field is *not* a value, e.g. the proxy rows when Proxy Type is not
+ *   `none` (#4888).
  * - [`all_of`](Condition::all_of) adds conditions that must all hold too.
  * - [`any_of`](Condition::any_of) adds conditions of which at least one must
  *   hold (ignored when empty).
+ *
+ * Every extension is optional and omitted from the serialized form when
+ * unset, so a schema written before it existed reads and writes unchanged.
  *
  * Every condition is evaluated by `schema_defaults::is_field_visible` in core
  * and by its TypeScript mirror `isFieldVisible` in `src/utils/schemaDefaults.ts`;
@@ -52,6 +59,14 @@ sameHostAs?: string,
  * rather than a field, e.g. `fileTransferVia.host` (#4194).
  */
 sameNameAs?: string, 
+/**
+ * Invert the primary test: the field is visible when `field` does *not*
+ * equal `equals` (or the host comparison does not give `equals`). A
+ * missing `field` never equals `equals`, so a negated test on it holds.
+ * The [`all_of`](Condition::all_of) and [`any_of`](Condition::any_of)
+ * sub-conditions are not inverted (#4888).
+ */
+negate?: boolean, 
 /**
  * Further conditions that must all hold as well.
  */

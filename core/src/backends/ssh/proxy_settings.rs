@@ -8,7 +8,7 @@
 //! shape (a nested `proxy` object) is accepted too.
 
 use crate::config::{SshProxyConfig, SshProxyType};
-use crate::connection::{FieldType, SelectOption, SettingsField, SettingsGroup};
+use crate::connection::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 
 /// Settings key of the proxy type select.
 pub const PROXY_TYPE_KEY: &str = "proxyType";
@@ -84,6 +84,30 @@ fn field(key: &str, label: &str, description: &str, field_type: FieldType) -> Se
     }
 }
 
+/// Visible when Proxy Type is set to a proxy, i.e. not `none` (#4888).
+fn when_proxy_chosen() -> Option<Condition> {
+    Some(Condition {
+        field: PROXY_TYPE_KEY.to_string(),
+        equals: serde_json::json!("none"),
+        negate: true,
+        ..Default::default()
+    })
+}
+
+/// Visible when Proxy Type is a proxy that takes a password: not `none` and
+/// not SOCKS4, which has no password support (#4888).
+fn when_proxy_takes_password() -> Option<Condition> {
+    Some(Condition {
+        all_of: vec![Condition {
+            field: PROXY_TYPE_KEY.to_string(),
+            equals: serde_json::json!("socks4"),
+            negate: true,
+            ..Default::default()
+        }],
+        ..when_proxy_chosen()?
+    })
+}
+
 /// The collapsed **Proxy** settings group of the SSH schema.
 pub fn proxy_settings_group() -> SettingsGroup {
     let option = |value: &str, label: &str| SelectOption {
@@ -127,6 +151,7 @@ pub fn proxy_settings_group() -> SettingsGroup {
             SettingsField {
                 placeholder: Some("proxy.example.com".to_string()),
                 supports_env_expansion: true,
+                visible_when: when_proxy_chosen(),
                 ..field(
                     PROXY_HOST_KEY,
                     "Proxy Host",
@@ -136,6 +161,7 @@ pub fn proxy_settings_group() -> SettingsGroup {
             },
             SettingsField {
                 placeholder: Some("1080".to_string()),
+                visible_when: when_proxy_chosen(),
                 help_text: Some(
                     "Leave empty for the usual port: 1080 for SOCKS, 8080 for HTTP.".to_string(),
                 ),
@@ -148,6 +174,7 @@ pub fn proxy_settings_group() -> SettingsGroup {
             },
             SettingsField {
                 supports_env_expansion: true,
+                visible_when: when_proxy_chosen(),
                 ..field(
                     PROXY_USERNAME_KEY,
                     "Proxy User",
@@ -163,6 +190,7 @@ pub fn proxy_settings_group() -> SettingsGroup {
                     )
                     .to_string(),
                 ),
+                visible_when: when_proxy_takes_password(),
                 ..field(
                     PROXY_PASSWORD_KEY,
                     "Proxy Password",

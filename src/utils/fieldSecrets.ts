@@ -8,8 +8,10 @@
  * Test) this module fills in the ones the connect needs:
  *
  * 1. Decide which are **needed** from the schema ({@link neededFieldSecrets}):
- *    a visible, empty secret field that is required or whose group selects
- *    password authentication, and each inline hop with password auth.
+ *    a visible, empty secret field that is required, whose group selects
+ *    password authentication, or — in a group without an auth-method choice —
+ *    whose paired user field is set (the SSH proxy's `proxyPassword` with a
+ *    `proxyUsername`, #4888), and each inline hop with password auth.
  * 2. With a saved connection and a credential store, pass the unlock gate
  *    (#1144) and take the stored values.
  * 3. Prompt for the rest through the shared password prompt. Its Save box
@@ -125,11 +127,41 @@ function groupSelectsPasswordAuth(
   );
 }
 
+/** Whether a select in `group` offers password authentication as a choice. */
+function groupOffersPasswordAuth(group: SettingsField[]): boolean {
+  return group.some(
+    (f) =>
+      f.fieldType.type === "select" && f.fieldType.options.some((o) => o.value === PASSWORD_KEY)
+  );
+}
+
+/**
+ * Whether the user field paired with secret `field` is set: `<prefix>Username`
+ * for a `<prefix>Password` key (`proxyPassword` ↔ `proxyUsername`, #4888). Only
+ * consulted in a group without an auth-method choice, where a user with no
+ * password would fail to authenticate.
+ */
+function pairedUserSet(
+  group: SettingsField[],
+  field: SettingsField,
+  settings: Record<string, unknown>
+): boolean {
+  if (!field.key.endsWith("Password")) return false;
+  const userKey = `${field.key.slice(0, -"Password".length)}Username`;
+  const user = group.find((f) => f.key === userKey);
+  return (
+    user !== undefined &&
+    isFieldVisible(user, settings) &&
+    readString(settings, userKey).trim() !== ""
+  );
+}
+
 /**
  * The schema field secrets and inline hop passwords a connect with `settings`
- * needs but does not carry: a visible, empty secret field that is required or
- * whose group selects password authentication, and each inline hop with
- * password auth and no password.
+ * needs but does not carry: a visible, empty secret field that is required,
+ * whose group selects password authentication, or — when its group offers no
+ * auth-method choice — whose paired user field is set ({@link pairedUserSet}),
+ * and each inline hop with password auth and no password.
  */
 export function neededFieldSecrets(
   schema: SettingsSchema | undefined,
@@ -138,7 +170,10 @@ export function neededFieldSecrets(
   const fields: FieldSecretSlot[] = secretFields(schema)
     .filter(({ field }) => isFieldVisible(field, settings) && isEmpty(settings[field.key]))
     .filter(
-      ({ field, group }) => field.required || groupSelectsPasswordAuth(group, field, settings)
+      ({ field, group }) =>
+        field.required ||
+        groupSelectsPasswordAuth(group, field, settings) ||
+        (!groupOffersPasswordAuth(group) && pairedUserSet(group, field, settings))
     )
     .map(({ field }) => ({ kind: "field", key: field.key, label: field.label }));
   const hops: FieldSecretSlot[] = inlineHops(settings).flatMap((hop) => {
@@ -200,14 +235,24 @@ async function promptFor(
   readFailed: boolean,
   label: string | undefined
 ): Promise<PasswordPromptAnswer | null> {
+  // A `<prefix>Password` field names its own `<prefix>Host` / `<prefix>Username`
+  // (the tunnel's `sshHost`, the proxy's `proxyHost`, #4888) before the main ones.
+  const prefix =
+    slot.kind === "field" && slot.key.endsWith("Password")
+      ? slot.key.slice(0, -"Password".length)
+      : "ssh";
   const host =
     slot.kind === "hop"
       ? slot.host
-      : readString(settings, "sshHost") || readString(settings, "host");
+      : readString(settings, `${prefix}Host`) ||
+        readString(settings, "sshHost") ||
+        readString(settings, "host");
   const username =
     slot.kind === "hop"
       ? slot.username
-      : readString(settings, "sshUsername") || readString(settings, "username");
+      : readString(settings, `${prefix}Username`) ||
+        readString(settings, "sshUsername") ||
+        readString(settings, "username");
   const notice = readFailed
     ? `The saved secrets could not be read — enter the ${slotLabel(slot)} for this connection.`
     : `Enter the ${slotLabel(slot)} for this connection.`;

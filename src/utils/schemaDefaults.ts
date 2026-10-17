@@ -87,6 +87,9 @@ export function isFieldVisible(field: SettingsField, settings: Record<string, un
  *   same host as `settings[sameHostAs]` ({@link hostsCompareSame}).
  * - `sameNameAs`: the same comparison with both hosts seen from this computer
  *   (`isSameNamedHost`, #4194).
+ * - `negate`: inverts the primary test above (not the sub-conditions), e.g.
+ *   "Proxy Type is not `none`" (#4888). A missing field never equals, so a
+ *   negated test on it holds.
  * - `allOf`: every sub-condition must hold too.
  * - `anyOf`: when non-empty, at least one sub-condition must hold.
  */
@@ -113,6 +116,7 @@ export function evaluateCondition(
     // Use JSON comparison for robust value matching (handles strings, numbers, booleans)
     primary = JSON.stringify(settings[condition.field]) === JSON.stringify(condition.equals);
   }
+  if (condition.negate === true) primary = !primary;
   const allOf = condition.allOf ?? [];
   const anyOf = condition.anyOf ?? [];
   return (
