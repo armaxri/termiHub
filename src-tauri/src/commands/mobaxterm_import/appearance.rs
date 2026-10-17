@@ -290,7 +290,10 @@ fn unmapped_notes(block: &[String], notes: &mut Vec<String>) {
     }
 
     if field(block, shifted(block, 19)).as_deref() == Some("-1") {
-        let size = match (field(block, shifted(block, 17)), field(block, shifted(block, 18))) {
+        let size = match (
+            field(block, shifted(block, 17)),
+            field(block, shifted(block, 18)),
+        ) {
             (Some(cols), Some(rows)) => format!(" ({cols}×{rows})"),
             _ => String::new(),
         };

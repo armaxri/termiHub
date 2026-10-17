@@ -64,7 +64,11 @@ fn opts(block: &[String]) -> serde_json::Value {
 
 #[test]
 fn logging_and_scrollback_at_defaults_add_nothing() {
-    for extra in [None, Some(expert("").as_str()), Some(expert("360000").as_str())] {
+    for extra in [
+        None,
+        Some(expert("").as_str()),
+        Some(expert("360000").as_str()),
+    ] {
         let a = map_appearance(&block(&[], extra), 0, "ssh");
         assert!(a.options.is_none(), "no overrides: {:?}", a.options);
         assert!(a.notes.is_empty(), "no notes: {:?}", a.notes);
@@ -117,11 +121,17 @@ fn scrollback_maps_and_clamps_to_termihub_range() {
 
     let a = map_appearance(&block(&[], Some(&expert("10"))), 0, "ssh");
     assert_eq!(a.options.and_then(|o| o.scrollback_buffer), Some(100));
-    assert!(a.notes.iter().any(|n| n.contains("10 lines") && n.contains("100")));
+    assert!(a
+        .notes
+        .iter()
+        .any(|n| n.contains("10 lines") && n.contains("100")));
 
     let a = map_appearance(&block(&[], Some(&expert("99999999"))), 0, "ssh");
     assert_eq!(a.options.and_then(|o| o.scrollback_buffer), Some(1_000_000));
-    assert!(a.notes.iter().any(|n| n.contains("outside termiHub's range")));
+    assert!(a
+        .notes
+        .iter()
+        .any(|n| n.contains("outside termiHub's range")));
 }
 
 #[test]
