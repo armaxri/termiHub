@@ -36,6 +36,8 @@ use serde_json::Value;
 use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
 #[cfg(feature = "rdp-sidecar")]
 use termihub_core::connection::graphical_ssh_tunnel::SshTunnelSettings;
+#[cfg(feature = "rdp-sidecar")]
+use termihub_core::connection::proxy_settings::{parse_proxy_with_keys, DIRECT_PROXY_KEYS};
 use termihub_core::session::forward_window::{ack_threshold, ForwardWindow, AGENT_FORWARD_WINDOW};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -115,10 +117,10 @@ pub fn agent_route(type_id: &str, settings: &Value) -> Result<Option<AgentRoute>
 const SSH_TUNNEL_WITH_AGENT: &str = "An SSH tunnel cannot be combined with connecting through \
      an agent — the agent already carries the connection";
 
-/// Why a direct VNC connection cannot use its outbound proxy and an agent route
-/// at once (#4897): the desktop would dial its loopback forward through the
-/// proxy.
-#[cfg(feature = "vnc")]
+/// Why a direct VNC or RDP connection cannot use its outbound proxy and an
+/// agent route at once (#4897, #4899): the desktop would dial its loopback
+/// forward through the proxy.
+#[cfg(any(feature = "vnc", feature = "rdp-sidecar"))]
 const PROXY_WITH_AGENT: &str = "A proxy cannot be combined with connecting through an agent \
      — the agent already carries the connection";
 
@@ -153,6 +155,10 @@ fn routed_target_port(type_id: &str, settings: &Value) -> Result<u16, String> {
                 .map_err(|e| format!("Invalid RDP settings: {e}"))?;
             if tunnel.use_ssh_tunnel {
                 return Err(SSH_TUNNEL_WITH_AGENT.to_string());
+            }
+            // So do the direct Proxy rows (#4899).
+            if parse_proxy_with_keys(settings, &DIRECT_PROXY_KEYS).is_some() {
+                return Err(PROXY_WITH_AGENT.to_string());
             }
             Ok(cfg.effective_port())
         }

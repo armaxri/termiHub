@@ -17,15 +17,14 @@ fn every_builtin_secret_field_is_classified() {
             "ssh" => &["password", "proxyPassword"],
             "telnet" | "ftp" | "mock-remote-desktop" => &["password"],
             // The SSH Tunnel group's gateway password (VNC; RDP since #4865)
-            // and its outbound-proxy password (#4887); VNC's direct
-            // outbound-proxy password (#4897).
-            "vnc" => &[
+            // and its outbound-proxy password (#4887); the direct
+            // outbound-proxy password (VNC #4897, RDP #4899).
+            "vnc" | "rdp" => &[
                 "password",
                 "sshPassword",
                 "sshProxyPassword",
                 "proxyPassword",
             ],
-            "rdp" => &["password", "sshPassword", "sshProxyPassword"],
             _ => &[],
         };
         let classified = schema_keys_in(&registry, &info.type_id).unwrap();

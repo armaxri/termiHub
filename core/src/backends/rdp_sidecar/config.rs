@@ -22,6 +22,7 @@ use crate::connection::graphical_resolution::{
     DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
 };
 use crate::connection::graphical_ssh_tunnel::ssh_tunnel_group;
+use crate::connection::proxy_settings::direct_proxy_group;
 use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::{
     fixed_resolution_fields, is_fixed_mode, normalize_fixed_size, shared_field_base, SettingsSchema,
@@ -662,6 +663,12 @@ pub fn rdp_settings_schema() -> SettingsSchema {
     // endpoint, never the gateway credentials (see `SidecarRdp::connect`).
     groups.push(ssh_tunnel_group("RDP"));
 
+    // Outbound proxy for a direct connection (#4899), collapsed and shown only
+    // with the SSH tunnel off. Like the tunnel, the host process dials it and
+    // hands the sidecar a loopback forward; its rows are not part of
+    // `RdpConfig`, so the proxy password never reaches the sidecar.
+    groups.push(direct_proxy_group("RDP"));
+
     // Silence the unused helper if no field currently uses a security condition;
     // keeping it available documents the conditional-visibility seam.
     let _ = when_security_is;
@@ -1234,7 +1241,14 @@ mod tests {
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["connection", "display", "features", "rdp", "sshTunnel"]
+            vec![
+                "connection",
+                "display",
+                "features",
+                "rdp",
+                "sshTunnel",
+                "proxy"
+            ]
         );
     }
 
@@ -1297,7 +1311,7 @@ mod tests {
         let schema = rdp_settings_schema();
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.groups.len(), 5);
+        assert_eq!(back.groups.len(), 6);
     }
 
     /// The connect timeout reaches the sidecar from the unified
@@ -1389,7 +1403,8 @@ mod tests {
 
     /// #4865: the SSH-tunnel rows are not part of `RdpConfig`, so the gateway
     /// password can never ride the sidecar's connect payload — nor the tunnel
-    /// proxy's host, user or password (#4887).
+    /// proxy's host, user or password (#4887), nor the direct connection's own
+    /// proxy rows (#4899).
     #[test]
     fn ssh_tunnel_rows_never_reach_the_sidecar_payload() {
         let cfg = RdpConfig::from_settings(serde_json::json!({
@@ -1399,6 +1414,9 @@ mod tests {
             "sshProxyType": "socks5", "sshProxyHost": "proxy.corp",
             "sshProxyPort": 1080, "sshProxyUsername": "proxy-user",
             "sshProxyPassword": "proxy-secret",
+            "proxyType": "http", "proxyHost": "direct-proxy.corp",
+            "proxyPort": 3128, "proxyUsername": "direct-user",
+            "proxyPassword": "direct-proxy-secret",
         }))
         .unwrap();
         let wire = serde_json::to_string(&cfg).unwrap();
@@ -1410,6 +1428,11 @@ mod tests {
             "proxy.corp",
             "proxy-user",
             "sshProxy",
+            "direct-proxy-secret",
+            "direct-proxy.corp",
+            "direct-user",
+            "proxyType",
+            "proxyPassword",
         ] {
             assert!(!wire.contains(leaked), "{leaked}: {wire}");
         }
@@ -1426,5 +1449,49 @@ mod tests {
         assert_eq!(cfg.server_name(), "127.0.0.1", "blank falls back to host");
         cfg.tls_server_name = Some("desk.corp".to_string());
         assert_eq!(cfg.server_name(), "desk.corp");
+    }
+
+    /// #4899: the direct Proxy group mirrors VNC's — same keys, a secret
+    /// password, shown only with the SSH tunnel off.
+    #[test]
+    fn schema_proxy_group_shows_only_with_the_tunnel_off() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let schema = rdp_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "proxy").unwrap();
+        assert!(group.collapsed);
+        assert_eq!(group.label, "Proxy");
+        let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "proxyType",
+                "proxyHost",
+                "proxyPort",
+                "proxyUsername",
+                "proxyPassword"
+            ]
+        );
+        let description = group.fields[0].description.as_deref().unwrap_or("");
+        assert!(description.contains("RDP server"), "{description}");
+        assert!(crate::connection::secrets::is_secret_field(
+            &group.fields[4]
+        ));
+        let visible = |settings: serde_json::Value| -> usize {
+            let settings = settings.as_object().unwrap().clone();
+            group
+                .fields
+                .iter()
+                .filter(|f| is_field_visible(f, &settings))
+                .count()
+        };
+        assert_eq!(visible(serde_json::json!({"proxyType": "socks5"})), 5);
+        assert_eq!(
+            visible(serde_json::json!({"useSshTunnel": false, "proxyType": "socks4"})),
+            4
+        );
+        assert_eq!(
+            visible(serde_json::json!({"useSshTunnel": true, "proxyType": "http"})),
+            0
+        );
     }
 }

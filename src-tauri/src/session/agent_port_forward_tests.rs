@@ -142,6 +142,18 @@ fn unroutable_settings_are_rejected_with_a_reason() {
     )
     .unwrap_err();
     assert!(err.contains("SSH tunnel"), "{err}");
+    // Nor can RDP's direct proxy (#4899).
+    let err = agent_route(
+        "rdp",
+        &json!({ "agentId": "a", "host": "h", "proxyType": "http", "proxyHost": "p" }),
+    )
+    .unwrap_err();
+    assert!(err.contains("proxy"), "{err}");
+    assert!(agent_route(
+        "rdp",
+        &json!({ "agentId": "a", "host": "h", "proxyType": "none", "proxyHost": "p" })
+    )
+    .is_ok());
     let err = agent_route(
         "mock-remote-desktop",
         &json!({ "agentId": "a", "host": "h" }),
