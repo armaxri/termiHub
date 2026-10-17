@@ -81,15 +81,21 @@ Operational notes for that PR:
   or a fresh one; the next passing run marks the PR ready again.
 - **The PR carries the `automation` label** so the coordinator/maintainer can
   spot and merge it fast when auto-merge is unavailable.
-- **CI does not start automatically, so the in-job gate is the merge guard.** A
-  PR opened by the built-in `GITHUB_TOKEN` does not trigger other workflows (a
-  GitHub safeguard), so it has no check runs and auto-merge does not wait for
-  anything: that is how #4460 merged a lockfile that broke every Rust build
-  (#4465). The gate above is what stops that now. To run the full CI on the PR
-  anyway, close and reopen it (or push an empty commit). The
-  repo setting **Settings → Actions → General → "Allow GitHub Actions to create
-  and approve pull requests"** must also be enabled for the job to open the PR
-  at all.
+- **Without a dedicated token, CI does not start automatically, so the in-job
+  gate is the merge guard.** By default the PR is pushed with the built-in
+  `GITHUB_TOKEN`, which does not trigger other workflows (a GitHub safeguard),
+  so it has no check runs and auto-merge does not wait for anything: that is how
+  #4460 merged a lockfile that broke every Rust build (#4465). The gate above is
+  what stops that now. To run the full CI on the PR anyway, close and reopen it
+  (or push an empty commit). Configure the lockfile App token
+  ([below](#make-the-chore-run-full-ci-app-or-pat-token)) to make full CI and a
+  CI-gated auto-merge the default. The repo setting **Settings → Actions →
+  General → "Allow GitHub Actions to create and approve pull requests"** must
+  be enabled for the `GITHUB_TOKEN` fallback to open the PR at all.
+- **The gate never sees a write token.** It compiles freshly-bumped, unreviewed
+  crates, so it runs in a read-only job with no secrets. A separate job that
+  compiles nothing takes the refreshed lockfiles and the verdict, mints the
+  token, pushes the branch and opens the PR (#4465, #4469).
 - **It uses a fixed automation branch** (`chore/cargo-update-lockfile`) that the
   job force-updates each run, so repeated runs refresh the same PR rather than
   piling up new ones. That force-update touches only this bot-owned branch —
@@ -108,6 +114,42 @@ Operational notes for that PR:
   `aead`, `aes-gcm`, `argon2` and `blake2` with exact `=…-rc.N` requirements
   (#4465). Lift those pins, with their allowlist entries, in a reviewed PR when
   russh moves to a stable RustCrypto line.
+
+### Make the chore run full CI (App or PAT token)
+
+With a dedicated token the chore's PR runs the normal per-PR CI, and
+`gh pr merge --auto` waits for `develop`'s required checks instead of firing at
+once (#4469). The workflow picks the first token that is configured:
+
+1. **GitHub App** (preferred: short-lived, scoped to this repo, revoked when the
+   job ends): repo variable `LOCKFILE_APP_CLIENT_ID` + repo secret
+   `LOCKFILE_APP_PRIVATE_KEY`.
+2. **Fine-grained PAT**: repo secret `LOCKFILE_PAT`.
+3. **`GITHUB_TOKEN`**: the default while neither is set; behaves as described
+   above (no CI on the PR, the in-job gate is the only merge guard).
+
+Maintainer checklist for the App:
+
+1. Create a GitHub App (Settings → Developer settings → GitHub Apps → New): no
+   webhook, **Repository permissions** only `Contents: Read and write` and
+   `Pull requests: Read and write` (`Metadata: Read` is added automatically).
+   Nothing else.
+2. Install it on `armaxri/termiHub` only ("Only select repositories").
+3. Generate a private key, then in the repo (Settings → Secrets and variables →
+   Actions) add the **variable** `LOCKFILE_APP_CLIENT_ID` (the App's Client ID)
+   and the **secret** `LOCKFILE_APP_PRIVATE_KEY` (the whole `.pem` file).
+4. Make sure auto-merge has something to wait for: `develop`'s required status
+   checks must be applied (`.github/branch-protection.json`, applied with
+   `scripts/internal/apply-branch-protection.sh --branch develop --apply`), and
+   repo auto-merge enabled (Settings → General → "Allow auto-merge").
+5. Run the chore (`gh workflow run cargo-update-lockfile.yml`): the run summary
+   says `token kind: app`, and the PR shows its CI checks.
+
+PAT alternative: a fine-grained PAT with access to this repository only and
+the same two permissions (`Contents` and `Pull requests`, read and write),
+stored as the secret `LOCKFILE_PAT`. It is long-lived and tied to a person, so
+prefer the App. Setting the App variable without the key secret fails the run
+loudly instead of silently falling back.
 
 ## Fast manual fix (when a yank or advisory slips through between runs)
 
