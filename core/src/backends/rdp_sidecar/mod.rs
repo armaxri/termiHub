@@ -43,6 +43,7 @@
 pub mod config;
 pub mod integrity;
 pub mod protocol;
+mod proxy;
 pub mod sidecar_log;
 mod tunnel;
 
@@ -483,10 +484,11 @@ struct SidecarRuntime {
     /// chunk responses (#1793).
     next_fetch_id: AtomicU64,
     cancel: CancellationToken,
-    /// The SSH tunnel the sidecar's TCP connection rides (#4865), kept alive
-    /// for the session. It also closes when `cancel` fires (teardown, or the
-    /// sidecar exiting on its own), not only when this runtime is dropped.
-    _tunnel: Option<tunnel::RdpTunnel>,
+    /// The loopback forward the sidecar's TCP connection rides — the SSH
+    /// tunnel (#4865) or the direct connection's outbound proxy (#4899) — kept
+    /// alive for the session. It also closes when `cancel` fires (teardown, or
+    /// the sidecar exiting on its own), not only when this runtime is dropped.
+    _tunnel: Option<tunnel::RdpForward>,
 }
 
 /// RDP graphical remote-desktop connection backed by the IronRDP sidecar.
@@ -788,14 +790,19 @@ impl ConnectionType for SidecarRdp {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
         let tunnel_settings = tunnel::tunnel_settings(&settings)?;
+        // The Proxy rows, like the tunnel rows, live outside `RdpConfig`, so
+        // the proxy password never enters the sidecar's connect payload.
+        let direct_proxy = proxy::direct_proxy(&settings, &tunnel_settings);
         let mut cfg = Self::parse_config(settings)?;
         let view_only = cfg.view_only;
-        // Open the SSH tunnel first (#4865), so a gateway failure — a rejected
-        // host key or credential — surfaces before a sidecar is spawned. The
-        // sidecar then dials the tunnel's loopback port; the gateway's
-        // credentials never enter its connect payload.
-        let ssh_tunnel = tunnel::open(&tunnel_settings, &mut cfg).await?;
+        // Open the SSH tunnel (#4865) or dial the outbound proxy (#4899) first,
+        // so a gateway or proxy failure — a rejected host key or credential —
+        // surfaces before a sidecar is spawned. The sidecar then dials the
+        // forward's loopback port; the gateway's and proxy's credentials never
+        // enter its connect payload.
+        let ssh_tunnel = tunnel::open(&tunnel_settings, direct_proxy.as_ref(), &mut cfg).await?;
         drop(tunnel_settings);
+        drop(direct_proxy);
 
         // Resolve to a single ABSOLUTE path once, then hash and spawn *that same
         // path* — never the bare name — so the integrity check verifies the exact
@@ -1407,7 +1414,14 @@ mod tests {
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["connection", "display", "features", "rdp", "sshTunnel"]
+            vec![
+                "connection",
+                "display",
+                "features",
+                "rdp",
+                "sshTunnel",
+                "proxy"
+            ]
         );
     }
 

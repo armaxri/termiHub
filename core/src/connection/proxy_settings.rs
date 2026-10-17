@@ -14,8 +14,8 @@
 //! - [`SSH_TUNNEL_PROXY_KEYS`] — the proxy rows of the graphical types' shared
 //!   **SSH Tunnel** group (`sshProxyType`, `sshProxyHost`, …, #4887), so a VNC
 //!   or RDP connection's SSH hop can go through a proxy too.
-//! - [`DIRECT_PROXY_KEYS`] — a direct (untunnelled) VNC connection's own
-//!   collapsed **Proxy** group (#4897). The same keys as the SSH type's, shown
+//! - [`DIRECT_PROXY_KEYS`] — a direct (untunnelled) VNC or RDP connection's
+//!   own collapsed **Proxy** group (#4897, #4899). The same keys as the SSH type's, shown
 //!   only with the SSH tunnel off ([`direct_proxy_group`]).
 //!
 //! This module carries no SSH dependency (it lives outside the `ssh` feature),
@@ -139,7 +139,7 @@ pub fn parse_proxy_with_keys(
     })
 }
 
-/// A direct graphical connection's outbound proxy (#4897), parsed from the
+/// A direct graphical connection's outbound proxy (#4897, #4899), parsed from the
 /// [`DIRECT_PROXY_KEYS`] rows; `None` for a direct connection. Only the flat
 /// rows are read, never the SSH type's nested serialized `proxy` object.
 ///
@@ -311,7 +311,8 @@ pub fn proxy_settings_group() -> SettingsGroup {
 }
 
 /// The collapsed **Proxy** group of a graphical connection that dials its
-/// server directly (VNC, #4897). `server_kind` names the server ("VNC").
+/// server directly (VNC #4897, RDP #4899). `server_kind` names the server
+/// ("VNC", "RDP").
 ///
 /// Every row needs the SSH tunnel off (`useSshTunnel` not `true`): with the
 /// tunnel on, the server is reached through the tunnel and only the SSH Tunnel

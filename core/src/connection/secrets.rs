@@ -28,8 +28,8 @@ use super::schema::{FieldType, SettingsField, SettingsSchema};
 /// Secret settings keys used by the built-in connection types, for callers
 /// that have no schema: the SSH/Telnet/FTP/VNC/RDP `password` (which also holds
 /// an SSH key passphrase for key auth), the VNC / RDP SSH-tunnel `sshPassword`
-/// (#4865), the SSH and direct-VNC outbound-proxy `proxyPassword` (#4867,
-/// #4897) and the SSH-tunnel outbound-proxy `sshProxyPassword` (#4887).
+/// (#4865), the SSH and direct VNC / RDP outbound-proxy `proxyPassword`
+/// (#4867, #4897, #4899) and the SSH-tunnel outbound-proxy `sshProxyPassword` (#4887).
 pub const FALLBACK_SECRET_KEYS: &[&str] = &[
     "password",
     "sshPassword",

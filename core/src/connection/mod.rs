@@ -27,7 +27,8 @@ pub mod graphical_ssh_tunnel;
 pub mod lifecycle;
 pub mod plugin_type_id;
 // Outbound proxy rows: the SSH backend's Proxy group, the graphical SSH
-// tunnel's proxy rows and VNC's direct Proxy group (#4867, #4887, #4897).
+// tunnel's proxy rows and the VNC / RDP direct Proxy group (#4867, #4887,
+// #4897, #4899).
 // Feature-free like the tunnel group.
 pub mod proxy_settings;
 pub mod registry;
