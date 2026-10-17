@@ -314,6 +314,9 @@ for (const win of WINDOWS) {
       const skipped = page.locator("[data-testid=mobaxterm-import-skipped]");
       await skipped.scrollIntoViewIfNeeded();
       await report.check("dialog/mobaxterm-import-skipped", "[role=dialog]");
+      const appearance = page.locator("[data-testid=mobaxterm-import-appearance]");
+      await appearance.scrollIntoViewIfNeeded();
+      await report.check("dialog/mobaxterm-import-appearance", "[role=dialog]");
       await report.finish();
     });
 
