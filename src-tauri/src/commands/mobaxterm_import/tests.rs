@@ -370,6 +370,70 @@ fn vnc_gateway_chain_and_proxy_stay_notes() {
     );
 }
 
+/// A synthetic VNC bookmark with SSH gateway fields 5-8 `gateway`
+/// (`hosts%ports%users%keys`) and proxy fields 13-16 `proxy`
+/// (`type%host%port%user`).
+fn vnc_with(gateway: &str, proxy: &str) -> String {
+    format!(
+        "[Bookmarks]\nSubRep=\nV=#128#5%192.0.2.33%5900%-1%0%{gateway}%-1%0%0%%{proxy}%#MobaFont#0# #-1\n"
+    )
+}
+
+#[test]
+fn vnc_proxy_with_a_single_gateway_maps_onto_the_tunnel_proxy() {
+    // #4887: the proxy reaches the SSH tunnel's SSH hop.
+    let gateway = "bastion.example.com%22%alice%";
+    let s = &preview(&vnc_with(gateway, "2%proxy.example.com%1081%carol"))[0];
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+    assert_eq!(setting(s, "useSshTunnel"), true);
+    assert_eq!(setting(s, "sshProxyType"), "socks5");
+    assert_eq!(setting(s, "sshProxyHost"), "proxy.example.com");
+    assert_eq!(setting(s, "sshProxyPort"), 1081);
+    assert_eq!(setting(s, "sshProxyUsername"), "carol");
+    // Never the SSH type's own proxy keys, and never a password.
+    assert!(setting(s, "proxyType").is_null());
+    assert!(setting(s, "sshProxyPassword").is_null());
+
+    let s = &preview(&vnc_with(gateway, "3%192.0.2.50%%"))[0];
+    assert_eq!(setting(s, "sshProxyType"), "http");
+    assert_eq!(setting(s, "sshProxyPort"), 8080, "HTTP default port");
+    assert!(setting(s, "sshProxyUsername").is_null());
+
+    let s = &preview(&vnc_with(gateway, "1%socks.example.com%1080%"))[0];
+    assert_eq!(setting(s, "sshProxyType"), "socks4");
+}
+
+#[test]
+fn vnc_proxy_without_a_gateway_or_of_another_kind_stays_a_note() {
+    let s = &preview(&vnc_with("%%%", "2%proxy.example.com%1080%"))[0];
+    assert!(setting(s, "useSshTunnel").is_null());
+    assert!(setting(s, "sshProxyType").is_null());
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(
+        s.notes[0].contains("SOCKS5 proxy proxy.example.com:1080 was not imported"),
+        "{:?}",
+        s.notes
+    );
+    assert!(
+        s.notes[0].contains("no single SSH gateway"),
+        "{:?}",
+        s.notes
+    );
+
+    let s = &preview(&vnc_with(
+        "bastion.example.com%22%alice%",
+        "4%proxy.example.com%23%",
+    ))[0];
+    assert_eq!(setting(s, "useSshTunnel"), true);
+    assert!(setting(s, "sshProxyType").is_null());
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(s.notes[0].contains("Telnet proxy"), "{:?}", s.notes);
+
+    let s = &preview(&vnc_with("bastion.example.com%22%alice%", "3%%3128%"))[0];
+    assert!(setting(s, "sshProxyType").is_null());
+    assert!(s.notes[0].contains("no host"), "{:?}", s.notes);
+}
+
 #[test]
 fn telnet_maps_host_and_custom_port() {
     let sessions = preview(FULL_INI);

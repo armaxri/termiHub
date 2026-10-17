@@ -8,10 +8,11 @@
  * Test) this module fills in the ones the connect needs:
  *
  * 1. Decide which are **needed** from the schema ({@link neededFieldSecrets}):
- *    a visible, empty secret field that is required, whose group selects
- *    password authentication, or — in a group without an auth-method choice —
- *    whose paired user field is set (the SSH proxy's `proxyPassword` with a
- *    `proxyUsername`, #4888), and each inline hop with password auth.
+ *    a visible, empty secret field that is required, whose auth-method select
+ *    picks password authentication, or — when no auth-method select governs it
+ *    — whose paired user field is set (the SSH proxy's `proxyPassword` with a
+ *    `proxyUsername`, #4888; the SSH tunnel's `sshProxyPassword` with a
+ *    `sshProxyUsername`, #4887), and each inline hop with password auth.
  * 2. With a saved connection and a credential store, pass the unlock gate
  *    (#1144) and take the stored values.
  * 3. Prompt for the rest through the shared password prompt. Its Save box
@@ -127,27 +128,52 @@ function groupSelectsPasswordAuth(
   );
 }
 
-/** Whether a select in `group` offers password authentication as a choice. */
-function groupOffersPasswordAuth(group: SettingsField[]): boolean {
-  return group.some(
+/** The `<prefix>` of a `<prefix>Password` key, or `null` for any other key. */
+function passwordPrefix(key: string): string | null {
+  return key.endsWith("Password") && key.length > "Password".length
+    ? key.slice(0, -"Password".length)
+    : null;
+}
+
+/**
+ * Whether an auth-method select of `group` governs secret `field`, so that
+ * select — not a paired user field — decides whether the secret is needed.
+ *
+ * A group without a select offering password auth has none. Otherwise a
+ * `<prefix>Password` field with a paired `<prefix>Username` field in the group
+ * is governed only by a select keyed `<prefix>…`: the SSH Tunnel group's
+ * `sshAuthMethod` governs `sshPassword` but not the tunnel proxy's
+ * `sshProxyPassword` (#4887), which follows its `sshProxyUsername` instead.
+ * Any other secret is governed by the group's select, as before.
+ */
+function governedByAuthSelect(group: SettingsField[], field: SettingsField): boolean {
+  const authSelects = group.filter(
     (f) =>
-      f.fieldType.type === "select" && f.fieldType.options.some((o) => o.value === PASSWORD_KEY)
+      f !== field &&
+      f.fieldType.type === "select" &&
+      f.fieldType.options.some((o) => o.value === PASSWORD_KEY)
   );
+  if (authSelects.length === 0) return false;
+  const prefix = passwordPrefix(field.key);
+  if (prefix === null || !group.some((f) => f.key === `${prefix}Username`)) return true;
+  return authSelects.some((f) => f.key.startsWith(prefix));
 }
 
 /**
  * Whether the user field paired with secret `field` is set: `<prefix>Username`
  * for a `<prefix>Password` key (`proxyPassword` ↔ `proxyUsername`, #4888). Only
- * consulted in a group without an auth-method choice, where a user with no
- * password would fail to authenticate.
+ * consulted when no auth-method select governs the field
+ * ({@link governedByAuthSelect}), where a user with no password would fail to
+ * authenticate.
  */
 function pairedUserSet(
   group: SettingsField[],
   field: SettingsField,
   settings: Record<string, unknown>
 ): boolean {
-  if (!field.key.endsWith("Password")) return false;
-  const userKey = `${field.key.slice(0, -"Password".length)}Username`;
+  const prefix = passwordPrefix(field.key);
+  if (prefix === null) return false;
+  const userKey = `${prefix}Username`;
   const user = group.find((f) => f.key === userKey);
   return (
     user !== undefined &&
@@ -159,9 +185,10 @@ function pairedUserSet(
 /**
  * The schema field secrets and inline hop passwords a connect with `settings`
  * needs but does not carry: a visible, empty secret field that is required,
- * whose group selects password authentication, or — when its group offers no
- * auth-method choice — whose paired user field is set ({@link pairedUserSet}),
- * and each inline hop with password auth and no password.
+ * whose governing auth-method select picks password authentication, or — when
+ * no auth-method select governs it ({@link governedByAuthSelect}) — whose
+ * paired user field is set ({@link pairedUserSet}), and each inline hop with
+ * password auth and no password.
  */
 export function neededFieldSecrets(
   schema: SettingsSchema | undefined,
@@ -172,8 +199,9 @@ export function neededFieldSecrets(
     .filter(
       ({ field, group }) =>
         field.required ||
-        groupSelectsPasswordAuth(group, field, settings) ||
-        (!groupOffersPasswordAuth(group) && pairedUserSet(group, field, settings))
+        (governedByAuthSelect(group, field)
+          ? groupSelectsPasswordAuth(group, field, settings)
+          : pairedUserSet(group, field, settings))
     )
     .map(({ field }) => ({ kind: "field", key: field.key, label: field.label }));
   const hops: FieldSecretSlot[] = inlineHops(settings).flatMap((hop) => {

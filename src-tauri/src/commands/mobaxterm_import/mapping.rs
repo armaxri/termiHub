@@ -20,10 +20,13 @@
 //!
 //! What termiHub has a counterpart for is mapped: SSH gateways become the SSH
 //! jump-host chain, a single VNC or RDP SSH gateway becomes that connection's
-//! SSH tunnel, the SSH login command becomes the SSH initial command, and an
-//! SSH SOCKS4/SOCKS5/HTTP proxy becomes the SSH outbound proxy (#4867). The rest
-//! stays a preview note: other SSH proxy kinds and VNC proxies, RDP has no RD
-//! Gateway, and the VNC / RDP tunnel is single-hop.
+//! SSH tunnel, the SSH login command becomes the SSH initial command, an SSH
+//! SOCKS4/SOCKS5/HTTP proxy becomes the SSH outbound proxy (#4867), and a VNC
+//! SOCKS4/SOCKS5/HTTP proxy on a session with a single SSH gateway becomes the
+//! SSH tunnel's proxy (#4887). The rest stays a preview note: other proxy
+//! kinds, a VNC proxy without a single SSH gateway (termiHub dials a VNC server
+//! directly, never through a proxy), RDP has no RD Gateway, and the VNC / RDP
+//! tunnel is single-hop.
 //!
 //! Rsh (2), XDMCP (3), File (9), Browser (11), Mosh (12) and S3 (13) have no
 //! termiHub counterpart and are skipped with a reason. Passwords are never
@@ -32,6 +35,7 @@
 use serde_json::{json, Map, Value};
 
 use crate::connection::config::TerminalOptions;
+use termihub_core::connection::proxy_settings::{ProxyKeys, SSH_PROXY_KEYS, SSH_TUNNEL_PROXY_KEYS};
 
 use super::appearance::map_appearance;
 use super::parser::{decode_escapes, RawSession};
@@ -290,7 +294,12 @@ fn map_ssh(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     if let Some(command) = b.field(7) {
         b.set("initialCommand", Value::String(command));
     }
-    apply_ssh_proxy(&mut b, [19, 20, 21, 22]);
+    apply_proxy(
+        &mut b,
+        [19, 20, 21, 22],
+        &SSH_PROXY_KEYS,
+        "termiHub SSH connections support only SOCKS4, SOCKS5 and HTTP proxies.",
+    );
     let target = host_target(user.as_deref(), &host, port, 22);
     b.import("ssh", label, target)
 }
@@ -352,19 +361,19 @@ fn gateway_hops(b: &mut Builder<'_>, idx: [usize; 4], env: &PlaceholderEnv) -> V
     hops
 }
 
-/// Map an SSH session's MobaXterm proxy (`[type, host, port, user]` field
-/// indices) onto the SSH outbound proxy (#4867): types 1-3 (SOCKS4, SOCKS5,
-/// HTTP) with a host are mapped; any other kind stays a preview note. The
+/// Map a session's MobaXterm proxy (`[type, host, port, user]` field indices)
+/// onto the outbound-proxy rows named by `keys` — the SSH proxy (#4867) or the
+/// VNC SSH tunnel's proxy (#4887): types 1-3 (SOCKS4, SOCKS5, HTTP) with a host
+/// are mapped; any other kind stays a preview note giving `unsupported`. The
 /// proxy password lives in MobaXterm's vault and is never imported.
-fn apply_ssh_proxy(b: &mut Builder<'_>, idx: [usize; 4]) {
+fn apply_proxy(b: &mut Builder<'_>, idx: [usize; 4], keys: &ProxyKeys, unsupported: &str) {
     let proxy_type = match b.field(idx[0]).as_deref() {
         None | Some("0") => return,
         Some("1") => "socks4",
         Some("2") => "socks5",
         Some("3") => "http",
         Some(_) => {
-            let reason = "termiHub SSH connections support only SOCKS4, SOCKS5 and HTTP proxies.";
-            if let Some(note) = proxy_note(b, idx, reason) {
+            if let Some(note) = proxy_note(b, idx, unsupported) {
                 b.notes.push(note);
             }
             return;
@@ -377,11 +386,11 @@ fn apply_ssh_proxy(b: &mut Builder<'_>, idx: [usize; 4]) {
     };
     let default_port = if proxy_type == "http" { 8080 } else { 1080 };
     let port = b.port(idx[2], default_port);
-    b.set("proxyType", json!(proxy_type));
-    b.set("proxyHost", json!(host));
-    b.set("proxyPort", json!(port));
+    b.set(keys.proxy_type, json!(proxy_type));
+    b.set(keys.host, json!(host));
+    b.set(keys.port, json!(port));
     if let Some(user) = b.field(idx[3]) {
-        b.set("proxyUsername", json!(user));
+        b.set(keys.username, json!(user));
     }
 }
 
@@ -475,7 +484,10 @@ fn apply_ssh_tunnel_gateway(b: &mut Builder<'_>, hops: &[Value], kind: &str) {
 }
 
 /// VNC: a single SSH gateway maps onto termiHub's VNC SSH tunnel; a chain of
-/// several gateways cannot be expressed there and stays a note.
+/// several gateways cannot be expressed there and stays a note. The session's
+/// proxy (fields 13-16) becomes the tunnel's proxy for the SSH hop (#4887)
+/// when the tunnel was mapped; without one it stays a note, as termiHub dials
+/// a VNC server directly, never through a proxy.
 fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     let mut b = Builder::new(params);
     let Some(host) = b.field(1) else {
@@ -486,10 +498,19 @@ fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     b.set("port", json!(port));
     let hops = gateway_hops(&mut b, [5, 6, 7, 8], env);
     apply_ssh_tunnel_gateway(&mut b, &hops, "VNC");
-    if let Some(note) = proxy_note(
+    let proxy = [13, 14, 15, 16];
+    if hops.len() == 1 {
+        apply_proxy(
+            &mut b,
+            proxy,
+            &SSH_TUNNEL_PROXY_KEYS,
+            "termiHub's VNC SSH tunnel supports only SOCKS4, SOCKS5 and HTTP proxies.",
+        );
+    } else if let Some(note) = proxy_note(
         &b,
-        [13, 14, 15, 16],
-        "termiHub VNC connections have no network proxy setting.",
+        proxy,
+        "termiHub VNC connections use a proxy only for their SSH tunnel, and this session \
+         has no single SSH gateway.",
     ) {
         b.notes.push(note);
     }

@@ -153,6 +153,70 @@ const TUNNEL = {
   sshAuthMethod: "password",
 };
 
+/**
+ * The shared SSH Tunnel group with its proxy rows (#4887): one group holding
+ * both the gateway's auth select + password and the proxy's user + password.
+ */
+const tunnelOn = { field: "useSshTunnel", equals: true };
+const tunnelProxyChosen = {
+  field: "sshProxyType",
+  equals: "none",
+  negate: true,
+  allOf: [tunnelOn],
+};
+const VNC_TUNNEL_PROXY: SettingsSchema = {
+  groups: [
+    VNC.groups[0],
+    {
+      key: "sshTunnel",
+      label: "SSH Tunnel",
+      fields: [
+        ...VNC.groups[1].fields,
+        {
+          key: "sshProxyType",
+          label: "Proxy Type",
+          fieldType: {
+            type: "select",
+            options: [
+              { value: "none", label: "None (direct)" },
+              { value: "socks5", label: "SOCKS5" },
+              { value: "socks4", label: "SOCKS4 / SOCKS4a" },
+              { value: "http", label: "HTTP (CONNECT)" },
+            ],
+          },
+          required: false,
+          default: "none",
+          visibleWhen: tunnelOn,
+        },
+        {
+          key: "sshProxyHost",
+          label: "Proxy Host",
+          fieldType: { type: "text" },
+          required: false,
+          visibleWhen: tunnelProxyChosen,
+        },
+        {
+          key: "sshProxyUsername",
+          label: "Proxy User",
+          fieldType: { type: "text" },
+          required: false,
+          visibleWhen: tunnelProxyChosen,
+        },
+        {
+          key: "sshProxyPassword",
+          label: "Proxy Password",
+          fieldType: { type: "password" },
+          required: false,
+          visibleWhen: {
+            ...tunnelProxyChosen,
+            allOf: [tunnelOn, { field: "sshProxyType", equals: "socks4", negate: true }],
+          },
+        },
+      ],
+    },
+  ],
+} as unknown as SettingsSchema;
+
 function setStore(mode: "none" | "master_password" | "os_keychain", status: string) {
   useAppStore.setState({
     credentialStoreStatus: { mode, status } as never,
@@ -189,6 +253,40 @@ describe("neededFieldSecrets", () => {
   it("keeps the auth select in charge where a group has one", () => {
     // The tunnel user is set, but key auth means no password is needed.
     expect(neededFieldSecrets(VNC, { ...TUNNEL, sshAuthMethod: "key" })).toEqual([]);
+  });
+
+  describe("the SSH Tunnel group's proxy password (#4887)", () => {
+    const proxySlot = { kind: "field", key: "sshProxyPassword", label: "Proxy Password" };
+    const sshSlot = { kind: "field", key: "sshPassword", label: "SSH Password" };
+    const viaProxy = {
+      ...TUNNEL,
+      sshProxyType: "socks5",
+      sshProxyHost: "proxy.corp",
+      sshProxyUsername: "alice",
+    };
+
+    it("follows the proxy user, not the gateway's auth select", () => {
+      expect(neededFieldSecrets(VNC_TUNNEL_PROXY, viaProxy)).toEqual([sshSlot, proxySlot]);
+      // Key auth needs no gateway password, but the proxy user still needs one.
+      expect(neededFieldSecrets(VNC_TUNNEL_PROXY, { ...viaProxy, sshAuthMethod: "key" })).toEqual([
+        proxySlot,
+      ]);
+    });
+
+    it("is not needed without a proxy user, a proxy, a tunnel, or for SOCKS4", () => {
+      const without = (over: Record<string, unknown>) =>
+        neededFieldSecrets(VNC_TUNNEL_PROXY, { ...viaProxy, ...over });
+      expect(without({ sshProxyUsername: "" })).toEqual([sshSlot]);
+      expect(without({ sshProxyType: "none" })).toEqual([sshSlot]);
+      expect(without({ sshProxyType: "socks4" })).toEqual([sshSlot]);
+      expect(without({ sshProxyPassword: "typed" })).toEqual([sshSlot]);
+      expect(without({ useSshTunnel: false })).toEqual([]);
+    });
+
+    it("keeps the gateway password under the auth select", () => {
+      expect(neededFieldSecrets(VNC_TUNNEL_PROXY, TUNNEL)).toEqual([sshSlot]);
+      expect(neededFieldSecrets(VNC_TUNNEL_PROXY, { ...TUNNEL, sshAuthMethod: "key" })).toEqual([]);
+    });
   });
 
   it("needs a required plugin secret but not an optional one", () => {
@@ -293,6 +391,31 @@ describe("resolveFieldSecrets", () => {
       "Desk",
       { fields: { proxyPassword: "proxy-pw" } },
       null
+    );
+  });
+
+  it("prompts for the tunnel proxy password with the proxy's host and user (#4887)", async () => {
+    setStore("none", "unavailable");
+    requestPassword.mockResolvedValue({ password: "proxy-pw", shouldSave: false });
+    const settings = {
+      ...TUNNEL,
+      sshAuthMethod: "agent",
+      sshProxyType: "http",
+      sshProxyHost: "tunnel-proxy.corp",
+      sshProxyUsername: "bob",
+    };
+    const r = await resolveFieldSecrets(opts({ schema: VNC_TUNNEL_PROXY, settings }));
+    expect(r).toEqual({
+      status: "resolved",
+      settings: { ...settings, sshProxyPassword: "proxy-pw" },
+    });
+    expect(requestPassword).toHaveBeenCalledTimes(1);
+    expect(requestPassword).toHaveBeenCalledWith(
+      "tunnel-proxy.corp",
+      "bob",
+      expect.stringContaining("Proxy Password"),
+      "password",
+      { allowSave: false }
     );
   });
 

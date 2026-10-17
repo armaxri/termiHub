@@ -16,8 +16,9 @@ fn every_builtin_secret_field_is_classified() {
             // The SSH outbound-proxy password (#4867).
             "ssh" => &["password", "proxyPassword"],
             "telnet" | "ftp" | "mock-remote-desktop" => &["password"],
-            // The SSH Tunnel group's gateway password (VNC; RDP since #4865).
-            "vnc" | "rdp" => &["password", "sshPassword"],
+            // The SSH Tunnel group's gateway password (VNC; RDP since #4865)
+            // and its outbound-proxy password (#4887).
+            "vnc" | "rdp" => &["password", "sshPassword", "sshProxyPassword"],
             _ => &[],
         };
         let classified = schema_keys_in(&registry, &info.type_id).unwrap();
@@ -50,7 +51,8 @@ fn a_plugin_declared_secret_is_classified() {
             "apiToken".to_string(),
             "pin".to_string(),
             "sshPassword".to_string(),
-            "proxyPassword".to_string()
+            "proxyPassword".to_string(),
+            "sshProxyPassword".to_string()
         ]
     );
 }
@@ -62,7 +64,8 @@ fn an_unknown_type_falls_back_to_the_builtin_secret_keys() {
         vec![
             "password".to_string(),
             "sshPassword".to_string(),
-            "proxyPassword".to_string()
+            "proxyPassword".to_string(),
+            "sshProxyPassword".to_string()
         ]
     );
 }
