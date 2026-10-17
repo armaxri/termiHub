@@ -153,7 +153,6 @@ gate_rdp_sidecar() {
 }
 gate_rdp_sidecar_deny() { (cd rdp-sidecar && cargo deny check advisories bans licenses sources); }
 
-gate_manual_inventory() { python3 scripts/manual-inventory.py --check; }
 gate_versions() { ./scripts/release-check.sh --versions-only; }
 gate_bundle_size() { pnpm build && pnpm size; }
 # Rendered visual checks (#4712): headless Chromium against the IPC mock.
@@ -266,7 +265,6 @@ if [ "$MODE" = "full" ]; then
   run_gate "RDP sidecar: fmt + clippy + tests" gate_rdp_sidecar
 
   # Frontend Code Quality (lint/prettier/markdownlint/IPC contract in check.sh).
-  run_gate "Frontend: manual-test inventory" gate_manual_inventory
   run_gate "Version sources + Tauri drift" gate_versions
   run_gate "Frontend: bundle size budget" gate_bundle_size
   run_gate "Frontend: rendered visual checks" gate_visual_checks

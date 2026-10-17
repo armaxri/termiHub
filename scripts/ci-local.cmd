@@ -80,7 +80,6 @@ REM RDP Sidecar Quality.
 call :run_gate "RDP sidecar: fmt + clippy + tests" g_rdp_sidecar
 
 REM Frontend Code Quality (lint/prettier/markdownlint/IPC contract in check.cmd).
-call :run_gate "Frontend: manual-test inventory" g_manual_inventory
 call :run_gate "Version sources + Tauri drift" g_versions
 call :run_gate "Frontend: bundle size budget" g_bundle_size
 call :run_gate "Frontend: rendered visual checks" g_visual_checks
@@ -259,10 +258,6 @@ call cargo fmt --check && call cargo clippy --locked --all-targets -- -D warning
 set "RC=!errorlevel!"
 popd
 exit /b !RC!
-
-:g_manual_inventory
-call python scripts\manual-inventory.py --check
-exit /b %errorlevel%
 
 :g_versions
 call scripts\release-check.cmd --versions-only

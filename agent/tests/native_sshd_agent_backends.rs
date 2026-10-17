@@ -23,7 +23,8 @@
 //! of MT-AGENT-28). The Docker backend's container lifecycle is Linux-image
 //! only (it keeps a new container alive with `tail -f /dev/null` and defaults
 //! to `/bin/sh`), and GitHub's windows runners run only Windows containers.
-//! That part stays in the manual corpus (`tests/manual/remote-agent.yaml`).
+//! That part is a guided-manual test on a real Windows host
+//! (`tests/system/tests/test_real_hardware.py`).
 //!
 //! # Fixture and gate
 //!

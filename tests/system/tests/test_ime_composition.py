@@ -15,7 +15,7 @@ with no preedit leaking through and no duplicate or partial commit:
 
 What this cannot drive is the OS input method itself — its preedit underline and
 candidate window are native UI. Those stay release-gating manual checks
-(MT-NIN-10..14 in ``tests/manual/native-input.yaml``).
+(MT-NIN-10..14 in ``test_guided_native_input.py``).
 
 ``src/testbridge/composition.test.ts`` pins the same replay against the real
 xterm per PR. Terminal cases need a POSIX shell (Git Bash on Windows, skipped

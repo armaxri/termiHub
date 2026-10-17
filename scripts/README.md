@@ -24,8 +24,6 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `release-check`           | Validate release readiness — version consistency, changelog (incl. unconsolidated `docs/changes/` fragments), unit tests, coverage ratchet, quality checks, git state, branch, green CI integration lanes for HEAD (via `gh`), a blocking TODO/FIXME/HACK scan (allowlist: `release-marker-allowlist.json`), and a real bundle build + smoke test. See [docs/contributing.md](../docs/contributing.md#pre-release-checklist) |
 | `smoke-test`              | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown                                                                                                                                                                                                                                                                                                               |
 | `package-plugin`          | Package a plugin source directory into a validated `.termihub-plugin` archive — builds the backend `cdylib` (if the source is a Rust crate) and stages it, then validates the manifest and zips the concept §1 layout. See [docs/plugin-authoring.md](../docs/plugin-authoring.md)                                                                                                                                           |
-| `test-manual.py`          | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports                                                                                                                                                                                                                                                                                                   |
-| `manual-inventory.py`     | Print the per-category manual-test inventory from `tests/manual/*.yaml` (no counts are committed to the docs, #4070); `--check` (CI) validates the corpus and writes the table to the job summary                                                                                                                                                                                                                            |
 | `build-testid-catalog.py` | Scan `src/**` for every `data-testid` into a local, git-ignored catalog (`tests/system/testid-catalog.md`) so test authors confirm a selector without reading components; not committed — CI regenerates and verifies coverage instead of diffing it (#1528)                                                                                                                                                                 |
 | `system-test-timing.py`   | Download recent `system-integration.yml` job logs (needs `gh`) or read `--log-dir`, and print per-OS p50/p95/max tables of the harness's `[termihub-test-timing]` lines, pytest `--durations` and deadline hits — the data the per-operation harness deadlines are sized from (#3660)                                                                                                                                        |
 
@@ -81,13 +79,9 @@ scripts\test-system.cmd                                                  REM Del
 ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl  # Build specific target
 ./scripts/build-agents.sh --native --targets x86_64-pc-windows-msvc  # Windows x64 (run on Windows)
 
-# Guided manual tests
-python scripts/test-manual.py                     # Run all manual tests for current platform
-python scripts/test-manual.py --list              # List applicable tests (no run)
-python scripts/test-manual.py --category ssh      # Run SSH tests only
-python scripts/test-manual.py --test MT-LOCAL-03  # Run a single test
-python scripts/test-manual.py --keep-infra        # Keep Docker containers after session
-python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume previous session
+# Guided-manual tests (@pytest.mark.manual in tests/system/; see docs/testing.md)
+./scripts/run-guided-manual.sh -k guided_native_input   # one suite, with an operator
+(cd tests/system && ./pytest.sh --collect-only -q -m manual)  # list every manual test
 
 # data-testid catalog (for system-test authors)
 # The autoformat PostToolUse hook regenerates this automatically after a source

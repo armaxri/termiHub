@@ -594,9 +594,9 @@ single guided test interactively (use `-s` so the prompts reach your console):
 A `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes,
 platform, timestamps) is written to [`tests/reports/`](../reports/) at the end of
 the session. See the worked examples in
-[`tests/test_manual_examples.py`](tests/test_manual_examples.py). This subsumes
-the standalone `scripts/test-manual.py` + `tests/manual/*.yaml` runner, which is
-being migrated incrementally (epic #913).
+[`tests/test_manual_examples.py`](tests/test_manual_examples.py). This replaced
+the standalone YAML runner (`scripts/test-manual.py` + `tests/manual/*.yaml`),
+retired in #919; every manual test now lives here.
 
 Tips:
 

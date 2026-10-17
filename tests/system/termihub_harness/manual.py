@@ -1,8 +1,8 @@
 """Guided-manual test mode core (issue #914).
 
-Manual tests used to live entirely outside the Python harness
-(``tests/manual/*.yaml`` + ``scripts/test-manual.py``), so they shared none of
-the harness's app/agent orchestration, fixtures, or reporting. This module makes
+Manual tests used to live entirely outside the Python harness (a YAML corpus
+walked by a standalone runner, retired in #919), so they shared none of the
+harness's app/agent orchestration, fixtures, or reporting. This module makes
 the *irreducibly-manual* step a first-class concern of a normal ``pytest`` test:
 a test marked ``@pytest.mark.manual`` does all the automatable setup through the
 existing mixins, then calls :class:`ManualUi` helpers for the human-in-the-loop
@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 
-# ── Platform detection (mirrors scripts/test-manual.py) ──────────────────────
+# ── Platform detection ────────────────────────────────────────────────────────
 def detect_platform() -> str:
     """Return ``'macos'``, ``'linux'``, ``'windows'`` or the raw system name."""
     system = _platform.system().lower()
@@ -246,10 +246,10 @@ def build_manual_report(
 ) -> dict:
     """Build the JSON report object.
 
-    Shares the ``version`` / ``session`` / ``environment`` / ``summary`` /
-    ``results`` shape and the ``tests/reports/`` filename convention with
-    ``scripts/test-manual.py`` so release sign-off keeps working; the per-record
-    fields differ (one record per operator interaction, not per YAML item).
+    Keeps the ``version`` / ``session`` / ``environment`` / ``summary`` /
+    ``results`` shape and the ``tests/reports/manual-*`` filename convention of
+    the retired YAML runner (#919) so release sign-off keeps working; there is
+    one record per operator interaction.
     """
     plat = selected_platform or detect_platform()
     return {
