@@ -27,7 +27,7 @@ name: Cargo Update Lockfile
 # changed; the tripwire reads both lockfiles; both cargo-deny runs always run.
 #
 # Gate before merge (#3755 CI-012, #4465): the refreshed lockfile must pass, in
-# this job, before the PR is opened ready or armed for auto-merge:
+# the cargo-update job, before the PR is opened ready or armed for auto-merge:
 #   1. `cargo check --workspace --all-targets --all-features --locked` — it
 #      compiles. #4460 moved primefield 0.14.0-rc.9 -> 0.14.0, which the -rc
 #      p256/p384/p521 stack does not build against, and auto-merged a lockfile
@@ -37,18 +37,32 @@ name: Cargo Update Lockfile
 #      Quality runs, which #4460 also failed (aead/argon2/blake2 left their -rc);
 #   3. the cargo-deny gate Security Audit uses (advisories incl. yanked, bans,
 #      licenses, sources).
-# The job has to gate itself: this PR is pushed with GITHUB_TOKEN, and pushes
-# made with GITHUB_TOKEN trigger NO workflows, so the PR carries no check runs
-# and "auto-merge once CI is green" has nothing to wait for — it merges at once.
 # If any check FAILS, the PR is still opened/updated so the change and its
 # failure are visible in one place, but as a DRAFT with the failing output in
-# its body, with auto-merge off — and the job itself then fails, so the
-# scheduled run goes red instead of silently proposing a broken lockfile. When a
-# later run passes, the PR is marked ready again.
+# its body, with auto-merge off — and the run then fails, so the scheduled run
+# goes red instead of silently proposing a broken lockfile. When a later run
+# passes, the PR is marked ready again.
+#
+# Which token pushes the PR (#4469), first one configured wins:
+#   1. a GitHub App installation token, minted by actions/create-github-app-token
+#      when the repo variable LOCKFILE_APP_CLIENT_ID is set (with the secret
+#      LOCKFILE_APP_PRIVATE_KEY): short-lived, scoped to this repo with
+#      contents:write + pull-requests:write, revoked when the job ends;
+#   2. a fine-grained PAT in the secret LOCKFILE_PAT;
+#   3. GITHUB_TOKEN (the default while neither is configured).
+# A push or PR made with an App token or a PAT triggers the normal PR workflows,
+# so the PR runs the full per-PR CI and `gh pr merge --auto` waits for develop's
+# required checks. A push made with GITHUB_TOKEN triggers NO workflows: the PR
+# carries no check runs, so auto-merge has nothing to wait for and merges at
+# once, and the in-job gate is the only merge guard. The gate runs with every
+# token kind, as defence in depth. Maintainer setup: docs/ci-yanked-crate-runbook.md.
 #
 # The gate compiles freshly-bumped, unreviewed crates (build scripts and proc
-# macros run), so no step before the PR step can reach a write token: checkout
-# does not persist credentials and GH_TOKEN is scoped to the PR step only.
+# macros run), so it runs in its own job with a read-only GITHUB_TOKEN, no
+# persisted checkout credentials and no secret at all. Only the open-pr job, on a
+# fresh runner that compiles nothing, holds a write token: it takes the refreshed
+# lockfiles and the gate verdict from the cargo-update job, and mints the App
+# token (if configured) right before the one step that pushes and opens the PR.
 #
 # Daily (not weekly) because an advisory or yank is published upstream at an
 # arbitrary time: a weekly cadence left every open PR's Security Audit red for
@@ -78,19 +92,21 @@ concurrency:
   group: cargo-update-lockfile
   cancel-in-progress: true
 
+# Read-only by default; only the open-pr job is granted write (#4469).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   cargo-update:
     name: Update Cargo.lock
     runs-on: ubuntu-latest
 
-    env:
-      # Fixed automation branch: reused every run so repeated runs update the
-      # same PR instead of opening a new one each day.
-      UPDATE_BRANCH: chore/cargo-update-lockfile
+    # Handed to open-pr, which compiles nothing and holds the write token.
+    outputs:
+      base-sha: ${{ steps.base.outputs.sha }}
+      changed: ${{ steps.diff.outputs.changed }}
+      passed: ${{ steps.gate.outputs.passed }}
+      failed: ${{ steps.gate.outputs.failed }}
 
     steps:
       - name: Checkout develop
@@ -98,9 +114,15 @@ jobs:
         with:
           ref: develop
           # The gate below runs build scripts of unreviewed crate versions; keep
-          # the write token out of .git/config while it does (#4465). The PR
-          # step pushes with an explicit, step-scoped credential instead.
+          # even this read-only token out of .git/config (#4465).
           persist-credentials: false
+
+      # open-pr recreates the automation branch from this exact develop commit,
+      # so the lockfiles it commits are the ones gated here even if develop
+      # moves between the two jobs.
+      - name: Record the develop commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -240,23 +262,101 @@ jobs:
             echo "Lockfile gate FAILED: ${failed[*]}." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Open or update pull request
+      # Hand the refreshed lockfiles and the gate log to open-pr. Plain files
+      # only: open-pr reads them, it never builds or runs anything from them.
+      - name: Stash the refreshed lockfiles for the PR job
         if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/lockfile-pr"
+          mkdir -p "$out"
+          cp Cargo.lock "$out/Cargo.lock"
+          cp rdp-sidecar/Cargo.lock "$out/rdp-sidecar.Cargo.lock"
+          cp "$RUNNER_TEMP/lockfile-gate.log" "$out/lockfile-gate.log"
+
+      - name: Upload the refreshed lockfiles
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lockfile-pr
+          path: ${{ runner.temp }}/lockfile-pr
+          retention-days: 3
+          if-no-files-found: error
+
+  # The only job that holds a write token (#4465, #4469). It runs on a fresh
+  # runner, checks out develop without persisted credentials, compiles nothing
+  # and installs no packages, so no unreviewed crate's code runs next to it.
+  open-pr:
+    name: Open or update the lockfile PR
+    needs: cargo-update
+    if: needs.cargo-update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+
+    # For the GITHUB_TOKEN fallback; an App token or PAT carries its own scopes.
+    permissions:
+      contents: write
+      pull-requests: write
+
+    env:
+      # Fixed automation branch: reused every run so repeated runs update the
+      # same PR instead of opening a new one each day.
+      UPDATE_BRANCH: chore/cargo-update-lockfile
+
+    steps:
+      - name: Checkout the gated develop commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.cargo-update.outputs.base-sha }}
+          # The PR step pushes with an explicit, step-scoped credential instead.
+          persist-credentials: false
+
+      - name: Download the refreshed lockfiles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lockfile-pr
+          path: ${{ runner.temp }}/lockfile-pr
+
+      - name: Apply the refreshed lockfiles
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/lockfile-pr/Cargo.lock" Cargo.lock
+          cp "$RUNNER_TEMP/lockfile-pr/rdp-sidecar.Cargo.lock" rdp-sidecar/Cargo.lock
+
+      # Token order (#4469): App token > LOCKFILE_PAT > GITHUB_TOKEN. Minted only
+      # here, after the gate job finished and right before the one step that
+      # uses it; actions/create-github-app-token revokes it when the job ends.
+      # Skipped (and the run behaves as before) while the App is not configured.
+      - name: Mint the lockfile App token
+        id: app-token
+        if: vars.LOCKFILE_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.LOCKFILE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LOCKFILE_APP_PRIVATE_KEY }}
+          # This repository only (the default), with the two scopes the PR step
+          # needs and nothing else.
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open or update pull request
         env:
-          # The only step that holds a write token (#4465).
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GATE_PASSED: ${{ steps.gate.outputs.passed }}
-          GATE_FAILED: ${{ steps.gate.outputs.failed }}
-          GATE_LOG: ${{ runner.temp }}/lockfile-gate.log
+          # The only step that holds a write token (#4465). The first configured
+          # token wins; TOKEN_KIND tells the script which one it got.
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.LOCKFILE_PAT || secrets.GITHUB_TOKEN }}
+          TOKEN_KIND: ${{ steps.app-token.outputs.token && 'app' || secrets.LOCKFILE_PAT && 'pat' || 'github-token' }}
+          GATE_PASSED: ${{ needs.cargo-update.outputs.passed }}
+          GATE_FAILED: ${{ needs.cargo-update.outputs.failed }}
+          GATE_LOG: ${{ runner.temp }}/lockfile-pr/lockfile-gate.log
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "Pushing the lockfile PR with token kind: $TOKEN_KIND" >> "$GITHUB_STEP_SUMMARY"
 
-          # Recreate the automation branch from the freshly-updated tree. Force
-          # applies ONLY to this bot-owned branch; it never touches a human
-          # branch, develop, or main.
+          # Recreate the automation branch from the gated develop commit plus
+          # the refreshed lockfiles. Force applies ONLY to this bot-owned
+          # branch; it never touches a human branch, develop, or main.
           git checkout -B "$UPDATE_BRANCH"
           git add Cargo.lock rdp-sidecar/Cargo.lock
           git commit -m "chore(deps): update cargo lockfile"
@@ -283,8 +383,7 @@ jobs:
           Before this PR was marked ready, the chore job itself ran the lockfile
           gate on it: `cargo check --workspace --all-targets --all-features --locked`
           (and `cargo check --locked` for rdp-sidecar), the pre-release tripwire and
-          `cargo deny` for both lockfiles (#4465, #4357). This PR is pushed
-          with `GITHUB_TOKEN`, so no other workflow runs on it by itself.
+          `cargo deny` for both lockfiles (#4465, #4357).
 
           This PR best-effort enables auto-merge, so it lands on its own once
           CI is green **if the repo has auto-merge enabled**
@@ -293,12 +392,29 @@ jobs:
           label flags it for pickup. Maintainer: enabling repo auto-merge makes
           this fully hands-off.
 
-          If CI did not start automatically, close and reopen this PR (PRs
-          opened by `GITHUB_TOKEN` do not trigger other workflows). See
-          `docs/ci-yanked-crate-runbook.md` for the manual fix path when
+          See `docs/ci-yanked-crate-runbook.md` for the manual fix path when
           something slips through between runs.
           EOF
           )
+
+          # Which CI this PR gets depends on the token that pushed it (#4469).
+          if [ "$TOKEN_KIND" = "github-token" ]; then
+            CI_NOTE=$(cat <<'EOF'
+          This PR is pushed with `GITHUB_TOKEN`, so no other workflow runs on it by
+          itself and auto-merge does not wait for CI: the in-job gate above is the
+          merge guard. To run the full CI, close and reopen this PR. To make the
+          chore run full CI on its own, configure the lockfile App token (#4469).
+          EOF
+            )
+          else
+            CI_NOTE=$(cat <<'EOF'
+          This PR is pushed with a dedicated token (GitHub App or fine-grained PAT,
+          #4469), so the normal per-PR CI runs on it and auto-merge waits for
+          develop's required checks.
+          EOF
+            )
+          fi
+          BODY="$(printf '%s\n\n%s\n' "$BODY" "$CI_NOTE")"
 
           # Gate failed: say so at the top of the body, with each failing check's
           # output, so a reviewer sees why the PR is a draft without opening the
@@ -360,8 +476,14 @@ jobs:
           # `automation` label leaves the PR for a human to merge. Merge commit
           # only, per the repo git workflow (never squash/rebase).
           if gh pr merge "$UPDATE_BRANCH" --auto --merge; then
-            echo "Auto-merge enabled for $UPDATE_BRANCH; it will merge once CI is green." \
-              >> "$GITHUB_STEP_SUMMARY"
+            if [ "$TOKEN_KIND" = "github-token" ]; then
+              # No check runs on a GITHUB_TOKEN push: auto-merge fires at once.
+              echo "Auto-merge enabled for $UPDATE_BRANCH; with GITHUB_TOKEN it merges" \
+                "without waiting for CI (the in-job gate passed)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Auto-merge enabled for $UPDATE_BRANCH; it waits for the required checks." \
+                >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "::notice::Could not enable auto-merge (repo auto-merge likely disabled)." \
               "PR left for manual merge — see the 'automation' label."
@@ -371,11 +493,12 @@ jobs:
           fi
 
       # Visible failure: the PR above is a draft, but the run must go red too so
-      # the failed nightly run is noticed (#3755, CI-012).
+      # the failed nightly run is noticed (#3755, CI-012). The gate job records
+      # its verdict instead of failing, so this job still opens the draft PR.
       - name: Fail when the refreshed lockfile fails the gate
-        if: steps.diff.outputs.changed == 'true' && steps.gate.outputs.passed != 'true'
+        if: needs.cargo-update.outputs.passed != 'true'
         env:
-          GATE_FAILED: ${{ steps.gate.outputs.failed }}
+          GATE_FAILED: ${{ needs.cargo-update.outputs.failed }}
         run: |
           echo "::error::The refreshed lockfile(s) fail the lockfile gate ($GATE_FAILED);" \
             "see the draft PR and the gate step."
