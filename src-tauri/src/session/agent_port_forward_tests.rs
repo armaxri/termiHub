@@ -150,7 +150,6 @@ fn rewrite_dials_loopback_and_keeps_the_vnc_tls_name() {
     assert_eq!(dial["password"], "p");
     assert!(dial.get("agentId").is_none());
     assert!(dial.get("display").is_none());
-
 }
 
 #[test]
