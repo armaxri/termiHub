@@ -11,7 +11,8 @@
 //! - `parser` — decoding (UTF-8 / Windows-1252) and the bookmark-section split.
 //! - `mapping` — session type → termiHub connection settings, skip reasons.
 //! - `appearance` — the per-session terminal block (font, cursor, terminal
-//!   type) → per-connection terminal options (#4854).
+//!   type, session logging, scrollback) → per-connection terminal options
+//!   (#4854, #4881).
 //! - `placeholders` — `_ProfileDir_`-style path tokens in key paths.
 //! - `discovery` — where MobaXterm keeps its configuration on Windows.
 //! - `hostkeys` — `[SSH_Hostkeys]` (PuTTY cache format) → OpenSSH keys (#4852).
@@ -33,6 +34,8 @@ mod trusted_hosts;
 mod appearance_tests;
 #[cfg(test)]
 mod hostkeys_tests;
+#[cfg(test)]
+mod logging_scrollback_tests;
 #[cfg(test)]
 mod tests;
 
