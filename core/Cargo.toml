@@ -458,7 +458,12 @@ http-monitor = ["dep:reqwest", "dep:uuid", "dep:tracing", "tokio/rt"]
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing", "dep:sysinfo"]
 telnet = ["dep:tracing"]
+# The outbound SOCKS/HTTP proxy dialer (`backends::proxy_dial`, #4867/#4897),
+# shared by the SSH backend and a direct VNC connection. Internal: the `ssh`
+# and `vnc` features enable it.
+proxy-dial = ["dep:zeroize", "dep:data-encoding", "dep:tracing"]
 ssh = [
+    "proxy-dial",
     "dep:russh",
     "dep:zeroize",
     "dep:russh-sftp",
@@ -528,7 +533,9 @@ mock-remote-desktop = []
 # clipboard events to RFB. Depends on `ssh` because the connection editor's
 # optional SSH-tunnel group reaches the VNC server through the existing SSH
 # tunnel infrastructure (as the VNC concept specifies).
-vnc = ["dep:vnc-rs", "dep:zune-jpeg", "dep:tracing", "ssh"]
+# A direct (untunnelled) VNC connection can go through an outbound proxy via the
+# shared `proxy-dial` dialer (#4897).
+vnc = ["dep:vnc-rs", "dep:zune-jpeg", "dep:tracing", "ssh", "proxy-dial"]
 # RDP graphical remote-desktop backend via a separately-built IronRDP sidecar
 # (#1747). This crate holds only the thin `SidecarRdp` adapter — it spawns the
 # `termihub-rdp-helper` binary and bridges its IPC into the shared #1680 layer —

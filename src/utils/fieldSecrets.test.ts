@@ -217,6 +217,26 @@ const VNC_TUNNEL_PROXY: SettingsSchema = {
   ],
 } as unknown as SettingsSchema;
 
+/**
+ * VNC's direct Proxy group (#4897): the SSH type's proxy rows, each gated on
+ * the SSH tunnel being off, next to the tunnel group and its own proxy rows.
+ */
+const tunnelOff = { field: "useSshTunnel", equals: true, negate: true };
+const VNC_DIRECT_PROXY: SettingsSchema = {
+  groups: [
+    ...VNC_TUNNEL_PROXY.groups,
+    {
+      ...PROXY.groups[1],
+      fields: PROXY.groups[1].fields.map((f) => ({
+        ...f,
+        visibleWhen: f.visibleWhen
+          ? { ...f.visibleWhen, allOf: [...(f.visibleWhen.allOf ?? []), tunnelOff] }
+          : tunnelOff,
+      })),
+    },
+  ],
+} as unknown as SettingsSchema;
+
 function setStore(mode: "none" | "master_password" | "os_keychain", status: string) {
   useAppStore.setState({
     credentialStoreStatus: { mode, status } as never,
@@ -286,6 +306,33 @@ describe("neededFieldSecrets", () => {
     it("keeps the gateway password under the auth select", () => {
       expect(neededFieldSecrets(VNC_TUNNEL_PROXY, TUNNEL)).toEqual([sshSlot]);
       expect(neededFieldSecrets(VNC_TUNNEL_PROXY, { ...TUNNEL, sshAuthMethod: "key" })).toEqual([]);
+    });
+  });
+
+  describe("VNC's direct proxy password (#4897)", () => {
+    const directSlot = { kind: "field", key: "proxyPassword", label: "Proxy Password" };
+    const direct = {
+      host: "desk",
+      proxyType: "http",
+      proxyHost: "proxy.corp",
+      proxyUsername: "carol",
+    };
+
+    it("is needed for a direct connection whose proxy has a user", () => {
+      expect(neededFieldSecrets(VNC_DIRECT_PROXY, direct)).toEqual([directSlot]);
+      expect(neededFieldSecrets(VNC_DIRECT_PROXY, { ...direct, useSshTunnel: false })).toEqual([
+        directSlot,
+      ]);
+    });
+
+    it("is not needed with the tunnel on, without a user, or for SOCKS4", () => {
+      const without = (over: Record<string, unknown>) =>
+        neededFieldSecrets(VNC_DIRECT_PROXY, { ...direct, ...over });
+      expect(without({ proxyUsername: "" })).toEqual([]);
+      expect(without({ proxyType: "socks4" })).toEqual([]);
+      expect(without({ proxyPassword: "typed" })).toEqual([]);
+      // With the tunnel on, only the tunnel's own secrets apply.
+      expect(without({ ...TUNNEL, sshPassword: "gw-pw" })).toEqual([]);
     });
   });
 

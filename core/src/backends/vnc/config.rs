@@ -21,6 +21,7 @@ use crate::connection::graphical_resolution::{
 use crate::connection::graphical_ssh_tunnel::{
     ssh_tunnel_group, SshTunnelProxy, SshTunnelSettings,
 };
+use crate::connection::proxy_settings::{direct_proxy_group, DirectProxy};
 use crate::connection::schema::{
     Condition, FieldType, FilePathKind, NoticeSeverity, SelectOption, SettingsField, SettingsGroup,
 };
@@ -121,6 +122,11 @@ pub struct VncConfig {
     /// Outbound proxy for the SSH tunnel's SSH hop (`sshProxy*` rows, #4887).
     #[serde(flatten)]
     pub ssh_proxy: SshTunnelProxy,
+    /// Outbound proxy for a direct connection to the VNC server — the **Proxy**
+    /// group's `proxy*` rows (#4897). Used only without the SSH tunnel; with
+    /// it, [`ssh_proxy`](Self::ssh_proxy) applies to the SSH hop instead.
+    #[serde(flatten)]
+    pub proxy: DirectProxy,
     /// Allow file transfer over the connection's side channel — SFTP on the SSH
     /// tunnel's session, or the hosting agent's file service (#3770, #4191).
     /// Off by default; never honoured in view-only sessions.
@@ -176,6 +182,7 @@ impl Default for VncConfig {
             ssh_key_path: None,
             ssh_password: String::new(),
             ssh_proxy: SshTunnelProxy::default(),
+            proxy: DirectProxy::default(),
             file_transfer: false,
             file_transfer_dir: None,
             monitors: MONITORS_SINGLE.to_string(),
@@ -293,6 +300,17 @@ impl VncConfig {
             ssh_key_path: self.ssh_key_path.clone(),
             ssh_password: self.ssh_password.clone(),
             ssh_proxy: self.ssh_proxy.clone(),
+        }
+    }
+
+    /// The outbound proxy the VNC server itself is dialed through (#4897):
+    /// the Proxy group's rows for a direct connection, `None` with the SSH
+    /// tunnel on (the tunnel's own proxy rows then reach its SSH hop).
+    pub fn direct_proxy(&self) -> Option<&crate::config::SshProxyConfig> {
+        if self.use_ssh_tunnel {
+            None
+        } else {
+            self.proxy.0.as_ref()
         }
     }
 
@@ -498,6 +516,10 @@ pub fn vnc_settings_schema() -> SettingsSchema {
     groups.push(ssh_tunnel_group("VNC"));
 
     groups.push(file_transfer_group());
+
+    // Outbound proxy for a direct connection (#4897), collapsed and shown only
+    // with the SSH tunnel off.
+    groups.push(direct_proxy_group("VNC"));
 
     SettingsSchema { groups }
 }
@@ -823,7 +845,8 @@ mod tests {
                 "features",
                 "vnc",
                 "sshTunnel",
-                "fileTransfer"
+                "fileTransfer",
+                "proxy"
             ]
         );
     }
@@ -1430,6 +1453,99 @@ mod tests {
         assert!(!format!("{cfg:?}").contains("proxy-pw"));
         // Without proxy rows the tunnel dials directly.
         assert!(VncConfig::default().tunnel_ssh_config().proxy.is_none());
+        // The tunnel's proxy rows never become the direct proxy.
+        assert!(cfg.proxy.0.is_none());
+        assert!(cfg.direct_proxy().is_none());
+    }
+
+    #[test]
+    fn direct_proxy_rows_apply_only_without_the_tunnel() {
+        // #4897: a direct connection can go through its own proxy rows.
+        let settings = serde_json::json!({
+            "host": "h",
+            "password": "vnc-pw",
+            "proxyType": "socks5",
+            "proxyHost": "proxy.corp",
+            "proxyPort": null,
+            "proxyUsername": "carol",
+            "proxyPassword": "direct-proxy-pw",
+            "sshProxyType": "http",
+            "sshProxyHost": "tunnel-proxy",
+        });
+        let cfg = VncConfig::from_settings(settings.clone()).unwrap();
+        let proxy = cfg.direct_proxy().expect("direct proxy");
+        assert_eq!(proxy.proxy_type, crate::config::SshProxyType::Socks5);
+        assert_eq!(proxy.host, "proxy.corp");
+        assert_eq!(proxy.port, 1080, "a null port falls back to the default");
+        assert_eq!(proxy.username.as_deref(), Some("carol"));
+        assert_eq!(proxy.password.as_deref(), Some("direct-proxy-pw"));
+        // The VNC password and the proxy password stay apart.
+        assert_eq!(cfg.password, "vnc-pw");
+        assert!(!format!("{cfg:?}").contains("direct-proxy-pw"));
+        // The direct rows never reach the tunnel's SSH hop.
+        assert_eq!(
+            cfg.tunnel_ssh_config().proxy.map(|p| p.host),
+            Some("tunnel-proxy".to_string())
+        );
+
+        // With the tunnel on, the direct proxy is ignored.
+        let mut tunnelled = settings;
+        tunnelled["useSshTunnel"] = serde_json::json!(true);
+        let cfg = VncConfig::from_settings(tunnelled).unwrap();
+        assert!(cfg.proxy.0.is_some());
+        assert!(cfg.direct_proxy().is_none());
+
+        // No proxy by default, or for `none`.
+        assert!(VncConfig::default().direct_proxy().is_none());
+        let none = VncConfig::from_settings(serde_json::json!({
+            "host": "h", "proxyType": "none", "proxyHost": "p"
+        }))
+        .unwrap();
+        assert!(none.direct_proxy().is_none());
+    }
+
+    #[test]
+    fn schema_proxy_group_shows_only_with_the_tunnel_off() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let schema = vnc_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "proxy").unwrap();
+        assert!(group.collapsed);
+        assert_eq!(group.label, "Proxy");
+        let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "proxyType",
+                "proxyHost",
+                "proxyPort",
+                "proxyUsername",
+                "proxyPassword"
+            ]
+        );
+        assert!(crate::connection::secrets::is_secret_field(
+            &group.fields[4]
+        ));
+        let visible = |settings: serde_json::Value| -> usize {
+            let settings = settings.as_object().unwrap().clone();
+            group
+                .fields
+                .iter()
+                .filter(|f| is_field_visible(f, &settings))
+                .count()
+        };
+        assert_eq!(visible(serde_json::json!({"proxyType": "socks5"})), 5);
+        assert_eq!(
+            visible(serde_json::json!({"useSshTunnel": false, "proxyType": "none"})),
+            1
+        );
+        assert_eq!(
+            visible(serde_json::json!({"useSshTunnel": false, "proxyType": "socks4"})),
+            4
+        );
+        assert_eq!(
+            visible(serde_json::json!({"useSshTunnel": true, "proxyType": "http"})),
+            0
+        );
     }
 
     #[test]
@@ -1512,7 +1628,7 @@ mod tests {
         let schema = vnc_settings_schema();
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.groups.len(), 6);
+        assert_eq!(back.groups.len(), 7);
     }
 
     /// #4348: VNC's `fileTransfer` opt-in is what makes the side channel offered.

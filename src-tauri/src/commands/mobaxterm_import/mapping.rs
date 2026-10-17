@@ -35,7 +35,9 @@
 use serde_json::{json, Map, Value};
 
 use crate::connection::config::TerminalOptions;
-use termihub_core::connection::proxy_settings::{ProxyKeys, SSH_PROXY_KEYS, SSH_TUNNEL_PROXY_KEYS};
+use termihub_core::connection::proxy_settings::{
+    ProxyKeys, DIRECT_PROXY_KEYS, SSH_PROXY_KEYS, SSH_TUNNEL_PROXY_KEYS,
+};
 
 use super::appearance::map_appearance;
 use super::parser::{decode_escapes, RawSession};
@@ -362,8 +364,8 @@ fn gateway_hops(b: &mut Builder<'_>, idx: [usize; 4], env: &PlaceholderEnv) -> V
 }
 
 /// Map a session's MobaXterm proxy (`[type, host, port, user]` field indices)
-/// onto the outbound-proxy rows named by `keys` — the SSH proxy (#4867) or the
-/// VNC SSH tunnel's proxy (#4887): types 1-3 (SOCKS4, SOCKS5, HTTP) with a host
+/// onto the outbound-proxy rows named by `keys` — the SSH proxy (#4867), the
+/// VNC SSH tunnel's proxy (#4887) or a direct VNC connection's proxy (#4897): types 1-3 (SOCKS4, SOCKS5, HTTP) with a host
 /// are mapped; any other kind stays a preview note giving `unsupported`. The
 /// proxy password lives in MobaXterm's vault and is never imported.
 fn apply_proxy(b: &mut Builder<'_>, idx: [usize; 4], keys: &ProxyKeys, unsupported: &str) {
@@ -486,8 +488,9 @@ fn apply_ssh_tunnel_gateway(b: &mut Builder<'_>, hops: &[Value], kind: &str) {
 /// VNC: a single SSH gateway maps onto termiHub's VNC SSH tunnel; a chain of
 /// several gateways cannot be expressed there and stays a note. The session's
 /// proxy (fields 13-16) becomes the tunnel's proxy for the SSH hop (#4887)
-/// when the tunnel was mapped; without one it stays a note, as termiHub dials
-/// a VNC server directly, never through a proxy.
+/// when the tunnel was mapped, and the connection's own direct proxy (#4897)
+/// without any gateway. With an unmapped gateway chain it stays a note: the
+/// proxy reaches MobaXterm's first gateway, not the VNC server.
 fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     let mut b = Builder::new(params);
     let Some(host) = b.field(1) else {
@@ -499,20 +502,29 @@ fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     let hops = gateway_hops(&mut b, [5, 6, 7, 8], env);
     apply_ssh_tunnel_gateway(&mut b, &hops, "VNC");
     let proxy = [13, 14, 15, 16];
-    if hops.len() == 1 {
-        apply_proxy(
+    match hops.len() {
+        0 => apply_proxy(
+            &mut b,
+            proxy,
+            &DIRECT_PROXY_KEYS,
+            "termiHub's VNC proxy supports only SOCKS4, SOCKS5 and HTTP proxies.",
+        ),
+        1 => apply_proxy(
             &mut b,
             proxy,
             &SSH_TUNNEL_PROXY_KEYS,
             "termiHub's VNC SSH tunnel supports only SOCKS4, SOCKS5 and HTTP proxies.",
-        );
-    } else if let Some(note) = proxy_note(
-        &b,
-        proxy,
-        "termiHub VNC connections use a proxy only for their SSH tunnel, and this session \
-         has no single SSH gateway.",
-    ) {
-        b.notes.push(note);
+        ),
+        _ => {
+            if let Some(note) = proxy_note(
+                &b,
+                proxy,
+                "it reaches the first SSH gateway, and this session's gateway chain was not \
+                 imported.",
+            ) {
+                b.notes.push(note);
+            }
+        }
     }
     let target = host_target(None, &host, port, 5900);
     b.import("vnc", label, target)

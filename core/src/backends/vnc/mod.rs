@@ -1174,7 +1174,8 @@ mod tests {
                 "features",
                 "vnc",
                 "sshTunnel",
-                "fileTransfer"
+                "fileTransfer",
+                "proxy"
             ]
         );
     }
