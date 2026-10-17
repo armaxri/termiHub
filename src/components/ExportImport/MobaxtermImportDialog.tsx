@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, FileSearch, FolderOpen } from "lucide-react";
 import { Button, EmptyState, Modal, Select, Spinner, toast } from "@/components/ui";
 import type {
+  AppSettings,
   ConnectionFolder,
   HostKeyImportResult,
+  MobaxtermGlobalAppearance,
   MobaxtermHostKey,
   MobaxtermSession,
   SavedConnection,
@@ -17,10 +19,15 @@ import { open as openFileDialog } from "@/services/nativeDialog";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import { buildMobaxtermImportPlan, isImportable } from "@/services/mobaxtermImport";
 import {
+  applyMobaxtermGlobalAppearance,
+  type GlobalAppearanceOptIn,
+} from "@/services/mobaxtermGlobalAppearance";
+import {
   importFolderOptions,
   resolveImportFolderId,
   ROOT_FOLDER_VALUE,
 } from "@/services/sshConfigImport";
+import { MobaxtermGlobalAppearanceSection } from "./MobaxtermGlobalAppearanceSection";
 import { MobaxtermHostKeyList } from "./MobaxtermHostKeyList";
 import { MobaxtermSessionList } from "./MobaxtermSessionList";
 import "../Sidebar/BulkSshImportDialog.css";
@@ -35,6 +42,10 @@ interface MobaxtermImportDialogProps {
   existingConnections: SavedConnection[];
   /** Persist the new folders (parents first), then the connections. */
   onImport: (folders: ConnectionFolder[], connections: SavedConnection[]) => Promise<void>;
+  /** termiHub's current settings (theme names, before values of #4880). */
+  settings: AppSettings;
+  /** Persist settings changed by the global-appearance opt-ins (#4880). */
+  onApplySettings: (settings: AppSettings) => Promise<void>;
 }
 
 type LoadState =
@@ -46,6 +57,7 @@ type LoadState =
       path: string;
       sessions: MobaxtermSession[];
       hostKeys: MobaxtermHostKey[];
+      globalAppearance: MobaxtermGlobalAppearance | null;
       notes: string[];
     }
   | { status: "error"; path: string; message: string };
@@ -59,6 +71,9 @@ function describeError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return "Unknown error";
 }
+
+/** Nothing from MobaXterm's global appearance is applied until opted in. */
+const NO_APPEARANCE_OPT_IN: GlobalAppearanceOptIn = { theme: false, appearance: false };
 
 /** Surface the outcome of the host-key import (#4852). */
 function reportHostKeys(result: HostKeyImportResult) {
@@ -82,6 +97,9 @@ function reportHostKeys(result: HostKeyImportResult) {
  * each folder like the `~/.ssh/config` import. Passwords are never imported.
  * MobaXterm's accepted SSH host keys (#4852) are listed too and trusted only
  * when the user opts in; conflicting or invalid keys are shown and skipped.
+ * MobaXterm's global colours, font and cursor (#4880) are offered the same
+ * way: a new custom theme and the global font/cursor settings, each behind its
+ * own opt-in, with the font/cursor changes shown as before → after.
  */
 export function MobaxtermImportDialog({
   open,
@@ -89,12 +107,17 @@ export function MobaxtermImportDialog({
   folders,
   existingConnections,
   onImport,
+  settings,
+  onApplySettings,
 }: MobaxtermImportDialogProps) {
   const [state, setState] = useState<LoadState>({ status: "discovering" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [folderId, setFolderId] = useState<string>(ROOT_FOLDER_VALUE);
   // Host keys are trust anchors: never imported without this explicit opt-in.
   const [importHostKeys, setImportHostKeys] = useState(false);
+  // Appearance is the user's own setup: never changed without these opt-ins.
+  const [appearanceOptIn, setAppearanceOptIn] =
+    useState<GlobalAppearanceOptIn>(NO_APPEARANCE_OPT_IN);
 
   const folderOptions = useMemo(() => importFolderOptions(folders), [folders]);
 
@@ -106,11 +129,13 @@ export function MobaxtermImportDialog({
       const sessions = preview.sessions ?? [];
       setSelected(new Set(sessions.filter(isImportable).map((s) => s.key)));
       setImportHostKeys(false);
+      setAppearanceOptIn(NO_APPEARANCE_OPT_IN);
       setState({
         status: "ready",
         path,
         sessions,
         hostKeys: preview.hostKeys ?? [],
+        globalAppearance: preview.globalAppearance ?? null,
         notes: preview.notes ?? [],
       });
     } catch (err) {
@@ -153,6 +178,10 @@ export function MobaxtermImportDialog({
   const hostKeys = state.status === "ready" ? state.hostKeys : [];
   const newHostKeys = hostKeys.filter((k) => k.status === "new" && k.fingerprint);
   const trustCount = importHostKeys ? newHostKeys.length : 0;
+  const globalAppearance = state.status === "ready" ? state.globalAppearance : null;
+  const appearanceUpdate = globalAppearance
+    ? applyMobaxtermGlobalAppearance(settings, globalAppearance, appearanceOptIn)
+    : null;
 
   const toggleOne = (key: string) => {
     setSelected((prev) => {
@@ -173,7 +202,7 @@ export function MobaxtermImportDialog({
 
   const handleImport = async () => {
     const chosen = importable.filter((s) => selected.has(s.key));
-    if (chosen.length === 0 && trustCount === 0) return;
+    if (chosen.length === 0 && trustCount === 0 && !appearanceUpdate) return;
     if (chosen.length > 0) {
       const plan = buildMobaxtermImportPlan(
         chosen,
@@ -193,15 +222,30 @@ export function MobaxtermImportDialog({
         });
       }
     }
+    if (appearanceUpdate) await applyAppearance(appearanceUpdate.settings);
     onOpenChange(false);
   };
 
-  const canImport = state.status === "ready" && (selected.size > 0 || trustCount > 0);
+  const applyAppearance = async (next: AppSettings) => {
+    try {
+      await onApplySettings(next);
+      toast.success("Applied MobaXterm's appearance.");
+    } catch (err) {
+      toast.error("Could not apply MobaXterm's appearance.", {
+        description: describeError(err),
+      });
+    }
+  };
+
+  const canImport =
+    state.status === "ready" && (selected.size > 0 || trustCount > 0 || appearanceUpdate !== null);
   const submitLabel = !canImport
     ? "Import"
     : selected.size > 0
       ? `Import ${selected.size}`
-      : "Import host keys";
+      : trustCount > 0
+        ? "Import host keys"
+        : "Apply appearance";
 
   return (
     <Modal
@@ -274,14 +318,17 @@ export function MobaxtermImportDialog({
           />
         )}
 
-        {state.status === "ready" && sessions.length === 0 && hostKeys.length === 0 && (
-          <EmptyState
-            variant="panel"
-            icon={<FileSearch size={20} aria-hidden />}
-            title="No saved MobaXterm sessions were found in this file."
-            data-testid="mobaxterm-import-empty"
-          />
-        )}
+        {state.status === "ready" &&
+          sessions.length === 0 &&
+          hostKeys.length === 0 &&
+          !globalAppearance && (
+            <EmptyState
+              variant="panel"
+              icon={<FileSearch size={20} aria-hidden />}
+              title="No saved MobaXterm sessions were found in this file."
+              data-testid="mobaxterm-import-empty"
+            />
+          )}
 
         {state.status === "ready" && state.notes.length > 0 && (
           <ul className="mobaxterm-import__file-notes" data-testid="mobaxterm-import-file-notes">
@@ -325,6 +372,15 @@ export function MobaxtermImportDialog({
             hostKeys={hostKeys}
             importNew={importHostKeys}
             onImportNewChange={setImportHostKeys}
+          />
+        )}
+
+        {globalAppearance && (
+          <MobaxtermGlobalAppearanceSection
+            global={globalAppearance}
+            settings={settings}
+            optIn={appearanceOptIn}
+            onOptInChange={setAppearanceOptIn}
           />
         )}
       </div>

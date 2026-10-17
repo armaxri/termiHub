@@ -128,6 +128,8 @@ export type { MobaxtermSession } from "./generated/MobaxtermSession";
  * `commands/mobaxterm_import/trusted_hosts.rs` via ts-rs.
  */
 export type { MobaxtermHostKey } from "./generated/MobaxtermHostKey";
+export type { MobaxtermGlobalAppearance } from "./generated/MobaxtermGlobalAppearance";
+export type { MobaxtermThemeColors } from "./generated/MobaxtermThemeColors";
 export type { HostKeySelection } from "./generated/HostKeySelection";
 export type { HostKeyImportResult } from "./generated/HostKeyImportResult";
 
