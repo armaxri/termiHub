@@ -112,3 +112,47 @@
   padding: 0 var(--spacing-sm-md);
   color: var(--text-secondary);
 }
+
+/* Global-appearance opt-in step (#4880): palette swatches and before → after rows. */
+.mobaxterm-import__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xxs);
+  padding: 0 var(--spacing-sm-md);
+}
+
+.mobaxterm-import__swatch {
+  width: var(--spacing-lg);
+  height: var(--spacing-lg);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-xs);
+}
+
+.mobaxterm-import__swatch[data-empty="true"] {
+  background: var(--bg-tertiary);
+}
+
+.mobaxterm-import__changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0 var(--spacing-sm-md);
+  list-style: none;
+}
+
+.mobaxterm-import__change {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.mobaxterm-import__change-label {
+  min-width: calc(var(--spacing-2xl) * 3);
+}
+
+.mobaxterm-import__change-after {
+  color: var(--text-primary);
+}

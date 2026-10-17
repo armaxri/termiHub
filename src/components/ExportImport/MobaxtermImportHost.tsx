@@ -1,5 +1,6 @@
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { MobaxtermImportDialog } from "./MobaxtermImportDialog";
 
 /**
@@ -11,7 +12,9 @@ export function MobaxtermImportHost() {
   const open = useAppStore((s) => s.mobaxtermImportOpen);
   const setOpen = useAppStore((s) => s.setMobaxtermImportOpen);
   const importConnectionTree = useAppStore((s) => s.importConnectionTree);
+  const updateSettings = useAppStore((s) => s.updateSettings);
   const { folders, connections } = useProjectedConnections();
+  const settings = useProjectedSettings();
 
   return (
     <MobaxtermImportDialog
@@ -20,6 +23,8 @@ export function MobaxtermImportHost() {
       folders={folders}
       existingConnections={connections}
       onImport={importConnectionTree}
+      settings={settings}
+      onApplySettings={updateSettings}
     />
   );
 }

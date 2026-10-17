@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type {
+  AppSettings,
   ConnectionFolder,
   MobaxtermHostKey,
   MobaxtermImportPreview,
@@ -135,6 +136,12 @@ function preview(
 
 const FOLDERS: ConnectionFolder[] = [];
 const EXISTING: SavedConnection[] = [];
+const SETTINGS: AppSettings = {
+  version: "1",
+  externalConnectionFiles: [],
+  powerMonitoringEnabled: true,
+  fileBrowserEnabled: true,
+};
 
 function renderDialog(onImport = vi.fn().mockResolvedValue(undefined), onOpenChange = vi.fn()) {
   render(
@@ -144,6 +151,8 @@ function renderDialog(onImport = vi.fn().mockResolvedValue(undefined), onOpenCha
       folders={FOLDERS}
       existingConnections={EXISTING}
       onImport={onImport}
+      settings={SETTINGS}
+      onApplySettings={vi.fn()}
     />
   );
   return { onImport, onOpenChange };
@@ -170,6 +179,8 @@ describe("MobaxtermImportDialog", () => {
         folders={FOLDERS}
         existingConnections={EXISTING}
         onImport={vi.fn()}
+        settings={SETTINGS}
+        onApplySettings={vi.fn()}
       />
     );
     expect(mockedDiscover).not.toHaveBeenCalled();
