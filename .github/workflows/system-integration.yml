@@ -581,6 +581,31 @@ jobs:
         # to per-PR CI.
         run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
+      - name: macOS Quit delivery probe (debug bundle)
+        # The macOS release smoke quits the installed app by clicking its own
+        # "Quit termiHub" menu item through System Events (#4076), and only a
+        # real release runs that smoke. This step proves the same click on the
+        # same hosted image every night, against the debug bundle built above:
+        # --quit-probe launches it, clicks the menu Quit aimed at the launched
+        # pid (never an app name or bundle id), and fails unless the app exits
+        # and logs "termiHub exited cleanly". TERMIHUB_LOG_DIR keeps the log in
+        # the runner's temp dir. A graded tree whose script predates
+        # --quit-probe (main, before it ships) is skipped.
+        if: runner.os == 'macOS' && !cancelled()
+        env:
+          TERMIHUB_LOG_DIR: ${{ runner.temp }}/quit-probe-log
+        run: |
+          set -euo pipefail
+          script=scripts/internal/release-smoke-app-lifecycle.sh
+          if ! grep -q -- '--quit-probe)' "$script"; then
+            echo "::notice::$script has no --quit-probe in this tree; skipping"
+            exit 0
+          fi
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n1)"
+          "$script" --exe target/debug/bundle/macos/termiHub.app/Contents/MacOS/termiHub \
+            --log "$TERMIHUB_LOG_DIR/termihub.log" --version "$version" \
+            --close applevent --quit-probe --out "$RUNNER_TEMP/quit-probe"
+
       - name: Export harness coverage (lcov)
         # Converts the harness's frontend dumps and exports the app's llvm-cov
         # profiles into harness-coverage/harness.lcov (+ the measured sha), even

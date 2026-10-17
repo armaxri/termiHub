@@ -30,7 +30,8 @@
 #
 # Usage:
 #   release-smoke-app-lifecycle.sh --exe <path> --log <path> --version <x.y.z> \
-#       --close x11|applevent|sigterm [--bundle-id <id>] [--out <dir>] [--clear-log]
+#       --close x11|applevent|sigterm [--bundle-id <id>] [--out <dir>] [--clear-log] \
+#       [--quit-probe]
 #
 #   --exe        the installed app executable (AppRun, /usr/bin/termihub,
 #                termiHub.app/Contents/MacOS/termihub)
@@ -59,6 +60,15 @@
 #   --bundle-id  the macOS bundle identifier (applevent only)
 #   --out        directory for the launch logs and a copy of the app log
 #   --clear-log  allow deleting an existing non-empty log
+#   --quit-probe run 1 only: launch, then close for real, and check the clean
+#                exit. No relaunch and no single-instance checks, so a debug
+#                build passes too. With --close applevent only the menu Quit is
+#                tried, aimed at the launched pid (--bundle-id is not needed and
+#                no Apple event goes to a bundle id, which would also reach an
+#                installed termiHub with that id), and a Quit that cannot be
+#                delivered FAILS instead of being skipped. The macOS leg of the
+#                system-integration workflow runs this against the debug bundle
+#                to prove the menu Quit works on a hosted runner (#4076).
 #
 # Exit status: 0 when every check passed (or was explicitly skipped), 1 otherwise.
 
@@ -75,6 +85,7 @@ CLOSE=""
 BUNDLE_ID=""
 OUT=""
 CLEAR_LOG=false
+QUIT_PROBE=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help | -h)
@@ -88,6 +99,7 @@ while [ $# -gt 0 ]; do
     --bundle-id) BUNDLE_ID="${2:-}"; shift 2 ;;
     --out) OUT="${2:-}"; shift 2 ;;
     --clear-log) CLEAR_LOG=true; shift ;;
+    --quit-probe) QUIT_PROBE=true; shift ;;
     *)
       echo "error: unknown argument '$1' (see --help)" >&2
       exit 2
@@ -105,7 +117,9 @@ die() {
 [ -n "$VERSION" ] || die "--version is required"
 case "$CLOSE" in
   x11 | sigterm) ;;
-  applevent) [ -n "$BUNDLE_ID" ] || die "--close applevent needs --bundle-id" ;;
+  applevent)
+    [ -n "$BUNDLE_ID" ] || [ "$QUIT_PROBE" = true ] || die "--close applevent needs --bundle-id"
+    ;;
   *) die "--close must be x11, applevent or sigterm" ;;
 esac
 if [ -s "$LOG" ] && [ "$CLEAR_LOG" != true ]; then
@@ -292,6 +306,9 @@ close_for_real() {
       fi
       echo "  System Events could not click the Quit menu item:"
       sed 's/^/    | /' "$OUT/osascript-menu.log"
+      # The probe proves the menu path alone, and must never address an app by
+      # bundle id (see --quit-probe).
+      if [ "$QUIT_PROBE" = true ]; then return 2; fi
       if quit_via_appleevent; then
         echo "  Quit delivered: Quit AppleEvent to $BUNDLE_ID"
         return 0
@@ -376,7 +393,10 @@ fi
 section "Run 1: close for real ($CLOSE)"
 rc=0
 close_for_real "$APP1" || rc=$?
-if [ "$rc" -eq 2 ]; then
+if [ "$rc" -eq 2 ] && [ "$QUIT_PROBE" = true ]; then
+  fail "the Quit menu item could not be clicked through System Events"
+  kill -KILL "$APP1" 2>/dev/null || true
+elif [ "$rc" -eq 2 ]; then
   skip "neither the Quit menu item nor a Quit AppleEvent could be delivered; stopping with SIGTERM instead"
   kill -TERM "$APP1" 2>/dev/null || true
   wait_exit "$APP1" "$EXIT_TIMEOUT" || kill -KILL "$APP1" 2>/dev/null || true
@@ -398,6 +418,18 @@ else
   fi
 fi
 wait_exit "$RUN1" "$EXIT_TIMEOUT" || kill -KILL "$RUN1" 2>/dev/null || true
+
+summary() {
+  echo ""
+  echo "==========================================="
+  echo "  App lifecycle smoke: $PASSED passed, $FAILED failed, $SKIPPED skipped"
+  echo "==========================================="
+  [ "$FAILED" -eq 0 ]
+}
+if [ "$QUIT_PROBE" = true ]; then
+  summary
+  exit $?
+fi
 
 # ---------------------------------------------------------------------------
 section "Run 2: relaunch appends to the log"
@@ -471,8 +503,4 @@ else
   pass "run 2 (SIGKILL) left no '$CLEAN_EXIT' line"
 fi
 
-echo ""
-echo "==========================================="
-echo "  App lifecycle smoke: $PASSED passed, $FAILED failed, $SKIPPED skipped"
-echo "==========================================="
-[ "$FAILED" -eq 0 ]
+summary
