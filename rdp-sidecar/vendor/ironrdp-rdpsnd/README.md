@@ -90,6 +90,12 @@ the AUDIO_INPUT helper (`50fa88b2`), server-side wave timestamps/confirms
 live in `rdp-sidecar/src/rdpsnd_fork_tests.rs` (this crate builds with
 `test = false`).
 
+Reviewed again up to IronRDP
+[`62246b36`](https://github.com/Devolutions/IronRDP/commit/62246b364a0282bab85087f658a81fe4207b6b31)
+(2026-10-16, [#4461]): the two newer commits, `2e872b08` (drop waves queued before
+the channel negotiates) and `966a842f` (server-side logging), touch only
+`server.rs`, which the sidecar does not use, so nothing was ported.
+
 `lib.rs` is byte-for-byte upstream 0.9.0; `pdu/mod.rs` and `server.rs` differ
 only by the #3510 Wave split. The intended
 upstream contribution is changes 1 and 2. Sibling `ironrdp-*` deps
@@ -98,6 +104,7 @@ remain registry versions so nothing else forks.
 [#1773]: https://github.com/armaxri/termiHub/issues/1773
 [#1812]: https://github.com/armaxri/termiHub/issues/1812
 [#3499]: https://github.com/armaxri/termiHub/issues/3499
+[#4461]: https://github.com/armaxri/termiHub/issues/4461
 [#3510]: https://github.com/armaxri/termiHub/issues/3510
 [IronRDP]: https://github.com/Devolutions/IronRDP
 [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b

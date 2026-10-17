@@ -295,19 +295,44 @@ impl<'de> Decode<'de> for ShareControlHeader {
         };
 
         if pdu_type == ShareControlPduType::DataPdu {
-            // Some windows version have an issue where
-            // there is some padding not part of the inner unit.
-            // Consume that data
+            // termiHub fork (#4461): ported from upstream IronRDP 33506e61 (#1515) and
+            // 9b04c90c (#1541).
+            //
+            // This is the re-encoded size, which differs from the received size for a supported
+            // header-only Server Font Map because decoding substitutes `FontPdu::default()`.
             let header_length = header.size();
 
-            if header_length != total_length {
-                if total_length < header_length {
-                    return Err(not_enough_bytes_err!(total_length, header_length));
-                }
+            // An empty Update/Pointer PDU is a legitimate no-op carrying a zero length.
+            let is_zero_length_empty_output_pdu = total_length == 0
+                && matches!(
+                    &header.share_control_pdu,
+                    ShareControlPdu::Data(ShareDataHeader {
+                        share_data_pdu: ShareDataPdu::Update(data) | ShareDataPdu::Pointer(data),
+                        ..
+                    }) if data.is_empty()
+                );
 
+            // VirtualBox's VRDP declares only the two headers of a Server Font Map (18) and
+            // omits the 8-byte body from the declared length. Keep this exception to that exact
+            // declaration.
+            let is_header_length_font_map = total_length
+                == ShareControlHeader::FIXED_PART_SIZE + ShareDataHeader::FIXED_PART_SIZE
+                && matches!(
+                    &header.share_control_pdu,
+                    ShareControlPdu::Data(ShareDataHeader {
+                        share_data_pdu: ShareDataPdu::FontMap(_),
+                        ..
+                    })
+                );
+
+            if total_length > header_length {
+                // Over-declared: some Windows versions append padding past the inner unit.
+                // Still bounded by `ensure_size!`.
                 let padding = total_length - header_length;
                 ensure_size!(in: src, size: padding);
                 read_padding!(src, padding);
+            } else if total_length < header_length && !is_header_length_font_map && !is_zero_length_empty_output_pdu {
+                return Err(not_enough_bytes_err!(total_length, header_length));
             }
         }
 
@@ -563,7 +588,17 @@ impl ShareDataPdu {
             ShareDataPduType::Synchronize => Ok(ShareDataPdu::Synchronize(SynchronizePdu::decode(src)?)),
             ShareDataPduType::Control => Ok(ShareDataPdu::Control(ControlPdu::decode(src)?)),
             ShareDataPduType::FontList => Ok(ShareDataPdu::FontList(FontPdu::decode(src)?)),
-            ShareDataPduType::FontMap => Ok(ShareDataPdu::FontMap(FontPdu::decode(src)?)),
+            ShareDataPduType::FontMap => {
+                // termiHub fork (#4461): ported from upstream IronRDP e496b7b8 (#1506).
+                // A header-only Server Font Map decodes as the default Font PDU.
+                let font_pdu = if src.is_empty() {
+                    FontPdu::default()
+                } else {
+                    FontPdu::decode(src)?
+                };
+
+                Ok(ShareDataPdu::FontMap(font_pdu))
+            }
             ShareDataPduType::MonitorLayoutPdu => Ok(ShareDataPdu::MonitorLayout(MonitorLayoutPdu::decode(src)?)),
             ShareDataPduType::SaveSessionInfo => Ok(ShareDataPdu::SaveSessionInfo(SaveSessionInfoPdu::decode(src)?)),
             ShareDataPduType::FrameAcknowledgePdu => {
@@ -851,5 +886,135 @@ mod tests {
             ShareControlPdu::ServerDeactivateAll(_)
         ));
         assert_eq!(decoded.share_id, 0xAABB_CCDD);
+    }
+
+    // termiHub fork (#4461): tests ported from upstream IronRDP 33506e61 (#1515) and
+    // 9b04c90c (#1541).
+    fn zero_length_empty_data_pdu(pdu_type: u8) -> [u8; 18] {
+        [
+            0x00, 0x00, // totalLength
+            0x17, 0x00, // pduType (Data PDU) + protocolVersion
+            0xE9, 0x03, // pduSource
+            0xDD, 0xCC, 0xBB, 0xAA, // shareId
+            0x00, // pad1
+            0x04, // streamId (Medium)
+            0x00, 0x00,     // uncompressedLength
+            pdu_type, // pduType2
+            0x00,     // compressedType
+            0x00, 0x00, // compressedLength
+        ]
+    }
+
+    #[test]
+    fn decode_zero_length_empty_output_update() {
+        let encoded = zero_length_empty_data_pdu(0x02);
+
+        let decoded: ShareControlHeader = decode(&encoded).expect("empty output PDU is a no-op");
+
+        assert!(matches!(
+            decoded.share_control_pdu,
+            ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::Update(data),
+                ..
+            }) if data.is_empty()
+        ));
+    }
+
+    #[test]
+    fn decode_zero_length_empty_output_pointer() {
+        let encoded = zero_length_empty_data_pdu(0x1B);
+
+        let decoded: ShareControlHeader = decode(&encoded).expect("empty output PDU is a no-op");
+
+        assert!(matches!(
+            decoded.share_control_pdu,
+            ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::Pointer(data),
+                ..
+            }) if data.is_empty()
+        ));
+    }
+
+    #[test]
+    fn reject_nonzero_under_declared_empty_output_data_pdu() {
+        for pdu_type in [0x02, 0x1B] {
+            for total_length in 1u16..18 {
+                let mut encoded = zero_length_empty_data_pdu(pdu_type);
+                encoded[..2].copy_from_slice(&total_length.to_le_bytes());
+
+                assert!(
+                    decode::<ShareControlHeader>(&encoded).is_err(),
+                    "accepted PDU type {pdu_type:#04x} with totalLength {total_length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reject_zero_length_non_output_data_pdu() {
+        let encoded = zero_length_empty_data_pdu(0x25);
+
+        let error =
+            decode::<ShareControlHeader>(&encoded).expect_err("zero total length is only accepted for no-op output");
+
+        assert!(matches!(
+            error.kind(),
+            ironrdp_core::DecodeErrorKind::NotEnoughBytes {
+                received: 0,
+                expected: 18
+            }
+        ));
+    }
+
+    /// The under-declaration carve-out must not extend past the Server Font Map case.
+    #[test]
+    fn reject_under_declared_non_output_data_pdu() {
+        let mut encoded = zero_length_empty_data_pdu(0x25);
+        encoded[0] = 17;
+
+        let error = decode::<ShareControlHeader>(&encoded)
+            .expect_err("an under-declared length is only tolerated for a Server Font Map");
+
+        assert!(matches!(
+            error.kind(),
+            ironrdp_core::DecodeErrorKind::NotEnoughBytes {
+                received: 17,
+                expected: 18
+            }
+        ));
+    }
+
+    /// VirtualBox VRDP declares a Server Font Map as its two headers only (18 bytes).
+    #[test]
+    fn accept_header_length_declared_server_font_map() {
+        let mut encoded = [0u8; 26];
+        encoded[..18].copy_from_slice(&zero_length_empty_data_pdu(0x28));
+        encoded[0] = 18;
+
+        let decoded: ShareControlHeader = decode(&encoded).expect("VRDP Font Map with under-declared length");
+
+        assert!(matches!(
+            decoded.share_control_pdu,
+            ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::FontMap(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_header_only_server_font_map() {
+        let mut encoded = zero_length_empty_data_pdu(0x28);
+        encoded[0] = 18;
+
+        let decoded: ShareControlHeader = decode(&encoded).expect("header-only Font Map");
+
+        assert!(matches!(
+            decoded.share_control_pdu,
+            ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::FontMap(_),
+                ..
+            })
+        ));
     }
 }

@@ -1,5 +1,6 @@
 use ironrdp_core::{
-    ReadCursor, WriteCursor, ensure_fixed_part_size, read_padding, unsupported_version_err, write_padding,
+    ReadCursor, WriteCursor, ensure_fixed_part_size, invalid_field_err, read_padding, unsupported_version_err,
+    write_padding,
 };
 
 use crate::{DecodeResult, EncodeResult};
@@ -62,6 +63,14 @@ impl TpktHeader {
         read_padding!(src, 1);
 
         let packet_length = src.read_u16_be();
+
+        // termiHub fork (#4461): ported from upstream IronRDP 33506e61 (#1515).
+        if usize::from(packet_length) < 7 {
+            return Err(invalid_field_err!(
+                "packetLength",
+                "length is smaller than the minimum TPKT size"
+            ));
+        }
 
         Ok(Self { packet_length })
     }

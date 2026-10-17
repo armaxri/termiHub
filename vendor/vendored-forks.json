@@ -98,7 +98,7 @@
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.9.0",
       "reviewed_version": "0.9.0",
-      "reviewed_commit": "160752fcf3293889f1ce1bdd3d2e7afc790a9cd2",
+      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
       "deltas": [
         {
           "summary": "RdpsndClientHandler::wave receives the concrete negotiated AudioFormat instead of an index",
@@ -138,7 +138,7 @@
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-pdu-v0.9.0",
       "reviewed_version": "0.9.0",
-      "reviewed_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
+      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
       "deltas": [
         {
           "summary": "Accept the 6-byte Share Control Header (shareId optional) so xrdp's header-only Deactivate All PDU no longer ends the session; port of unreleased upstream d4b728a1d40b (IronRDP#1719)",
@@ -146,6 +146,10 @@
             "https://github.com/armaxri/termiHub/issues/3611",
             "https://github.com/Devolutions/IronRDP/commit/d4b728a1d40b"
           ]
+        },
+        {
+          "summary": "Upstream robustness fixes ported after 0.9.0 (reviewed up to 62246b36): undersized TPKT/Fast-Path frame lengths refused (33506e61), zero-length empty Update/Pointer PDUs and VRDP's under-declared Server Font Map accepted while other under-declared Data PDUs stay refused (33506e61, 9b04c90c, e496b7b8), unknown server GCC user-data blocks skipped (629a8024), unknown multitransport flag and echoed protocol bits retained (e8a75797, 9af99317), ERRINFO_SERVER_SHUTDOWN/REBOOT decoded (d2bb7376), auto-reconnect random redacted from Debug (d0948faa)",
+          "refs": ["https://github.com/armaxri/termiHub/issues/4461"]
         }
       ],
       "watch": {
@@ -166,7 +170,7 @@
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-rdpdr-v0.7.0",
       "reviewed_version": "0.7.0",
-      "reviewed_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
+      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
       "deltas": [
         {
           "summary": "Drive Device Announce carries the drive name (first 7 valid ASCII characters, DRIVE fallback) in PreferredDosName instead of the literal \"ignored\", so xrdp mounts drives under their names; port of the unreleased upstream PreferredDosName::for_drive from 161409e18dd1 (IronRDP#1566), keeping 0.7.0's UTF-8 DeviceData (see IronRDP#2075)",

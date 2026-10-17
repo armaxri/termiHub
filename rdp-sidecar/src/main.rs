@@ -40,6 +40,8 @@ mod keymap;
 mod monitors;
 mod nla;
 mod panic_report;
+#[cfg(test)]
+mod pdu_fork_tests;
 mod rdp;
 #[cfg(test)]
 mod rdpsnd_fork_tests;

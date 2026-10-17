@@ -16,7 +16,7 @@ job reports upstream releases, commits and advisories that the fork does not hav
 yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing or
 reviewing upstream again.
 
-### The one change: accept the 6-byte Share Control Header ([#3611])
+### Change 1: accept the 6-byte Share Control Header ([#3611])
 
 MS-RDPBCGR 2.2.8.1.1.1.1 defines the Share Control Header as 6 bytes
 (`totalLength`, `pduType`, `pduSource`); `shareId` belongs to the individual PDU
@@ -38,9 +38,60 @@ This is a straight port of upstream commit
 [`d4b728a1d40b`](https://github.com/Devolutions/IronRDP/commit/d4b728a1d40b)
 ("fix(pdu): accept a 6-byte Share Control Header", IronRDP#1719), which landed on
 master after 0.9.0 and is not yet released. Drop the fork once an `ironrdp-pdu`
-release containing it is adopted. Everything else is byte-for-byte upstream 0.9.0.
+release containing it is adopted.
+
+### Change 2: upstream robustness fixes ported after 0.9.0 ([#4461])
+
+Reviewed upstream `crates/ironrdp-pdu` up to IronRDP
+[`62246b36`](https://github.com/Devolutions/IronRDP/commit/62246b364a0282bab85087f658a81fe4207b6b31)
+(2026-10-16; no `ironrdp-pdu` release after 0.9.0 yet). Ported, because they
+reach the sidecar's client-side decode path (each site is marked
+`termiHub fork (#4461)`):
+
+- **Undersized frames are refused** (`33506e61`): `find_size` rejects a
+  Fast-Path length smaller than its header and `TpktHeader::read` a TPKT length
+  under 7, so a hostile server cannot hand the framed reader a frame that never
+  advances it.
+- **Share Data `totalLength` checks** (`33506e61`, `9b04c90c`, `e496b7b8`): an
+  empty Update / Pointer PDU with `totalLength` 0 is a no-op, VirtualBox VRDP's
+  Server Font Map declared as its two headers only (18 bytes) decodes, and a
+  header-only Font Map decodes as the default Font PDU. Every other
+  under-declared Data PDU is still refused; over-declared padding stays bounded.
+- **Unknown server GCC user-data blocks are skipped** (`629a8024`) instead of
+  failing the Conference Create Response.
+- **Unknown bits are retained** in the server's Multitransport Channel Data
+  `flags` (`e8a75797`) and the Server Core Data `clientRequestedProtocols` echo
+  (`9af99317`) instead of failing the GCC exchange.
+- **`ERRINFO_SERVER_SHUTDOWN` / `ERRINFO_SERVER_REBOOT` decode** (`d2bb7376`), so
+  a server going down reports why instead of a Set Error Info decode error.
+- **The auto-reconnect random is redacted from `Debug`** (`d0948faa`):
+  `ServerAutoReconnect` prints only `logon_id`, keeping the reconnect credential
+  out of logs.
+
+Deliberately **not** ported: server-side decoders of client PDUs the sidecar
+never receives (`e56bb42c`, `0c3fc702`, `f87040f2`, `ff48d8a8`, `c74e7c5c`, the
+client-block halves of `e8a75797` / `9af99317`, `6aebe6d0`), ClearCodec /
+Progressive codec fixes (`8e76c316`, `c1db8608`, `69e323ae`, `714dce46`; only
+reached through `ironrdp-egfx`, which is not in the sidecar graph), the
+encoder-side auto-detect change and its decode follow-up (`f9cc62fa`,
+`dffad79d`; 0.9.0 never had the decode rejection), the `BasicSecurityHeader`
+leniency (`a4acab48`; all 16 flag bits are already defined in 0.9.0, so
+`from_bits` cannot fail), the bulk-decompression rework (`6151e21b`; needs the
+matching `ironrdp-session` change and adds an enum variant, and the sidecar
+negotiates no bulk compression), error byte offsets (`a1f9189c`, `8607ac5d`;
+need a newer `ironrdp-core`), new features (auto-reconnect cookies, multitransport,
+RemoteApp / windowing orders, heartbeat, correlation info, monitor topology,
+ActiveX settings, server-side auto-detect / RemoteFX tables), input constants
+(`2685d85c`, `3818b480`; the sidecar sends a fixed wheel step and the session
+batches events), the crypto dependency bump (`e1725e8c`), refactors, test-only
+and toolchain commits. The fork's unit tests run in an upstream 0.9.0 workspace
+(the crate's dev-dependencies are not in the sidecar lockfile); the sidecar's
+`src/pdu_fork_tests.rs` covers the ported behaviour through `ironrdp::pdu`.
+
+Everything else is byte-for-byte upstream 0.9.0.
 
 [#3611]: https://github.com/armaxri/termiHub/issues/3611
+[#4461]: https://github.com/armaxri/termiHub/issues/4461
 
 ---
 

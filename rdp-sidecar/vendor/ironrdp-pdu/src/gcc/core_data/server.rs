@@ -109,10 +109,16 @@ impl<'de> Decode<'de> for ServerCoreOptionalData {
     fn decode(src: &mut ReadCursor<'de>) -> DecodeResult<Self> {
         let mut optional_data = Self::default();
 
-        optional_data.client_requested_protocols = Some(
-            SecurityProtocol::from_bits(try_or_return!(src.try_read_u32(), optional_data))
-                .ok_or_else(|| invalid_field_err!("clientReqProtocols", "invalid server security protocol"))?,
-        );
+        // termiHub fork (#4461): ported from upstream IronRDP 9af99317 (#1846).
+        // Echo of the requestedProtocols from the X.224 RDP Negotiation
+        // Request, which nego.rs already decodes with from_bits_retain; the
+        // echo must not be stricter than the original, and the client
+        // compares it against what it actually requested rather than
+        // validating the bit set.
+        optional_data.client_requested_protocols = Some(SecurityProtocol::from_bits_retain(try_or_return!(
+            src.try_read_u32(),
+            optional_data
+        )));
 
         optional_data.early_capability_flags = Some(
             ServerEarlyCapabilityFlags::from_bits(try_or_return!(src.try_read_u32(), optional_data))
@@ -133,5 +139,24 @@ bitflags! {
         const SKIP_CHANNELJOIN_SUPPORTED = 0x0000_0008;
         // The source may set any bits
         const _ = !0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // termiHub fork (#4461): ported from upstream IronRDP 9af99317 (#1846).
+    #[test]
+    fn unknown_client_requested_protocol_bits_are_retained() {
+        // PROTOCOL_SSL | PROTOCOL_HYBRID plus an undefined bit (0x0100).
+        let encoded = [0x03, 0x01, 0x00, 0x00];
+
+        let decoded = ServerCoreOptionalData::decode(&mut ReadCursor::new(&encoded)).expect("unknown bits are retained");
+
+        assert_eq!(
+            decoded.client_requested_protocols.map(|p| p.bits()),
+            Some(0x0103)
+        );
     }
 }

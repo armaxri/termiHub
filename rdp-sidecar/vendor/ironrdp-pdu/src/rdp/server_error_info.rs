@@ -127,6 +127,9 @@ pub enum ProtocolIndependentCode {
     CloseStackOnDriverIfaceFailure = 0x0000_0012,
     ServerWinlogonCrash = 0x0000_0017,
     ServerCsrssCrash = 0x0000_0018,
+    // termiHub fork (#4461): ported from upstream IronRDP d2bb7376 (#1966).
+    ServerShutdown = 0x0000_0019,
+    ServerReboot = 0x0000_001A,
 }
 
 impl ProtocolIndependentCode {
@@ -170,6 +173,8 @@ impl ProtocolIndependentCode {
             }
             Self::ServerWinlogonCrash => "The Winlogon process running in the remote session terminated unexpectedly",
             Self::ServerCsrssCrash => "The CSRSS process running in the remote session terminated unexpectedly",
+            Self::ServerShutdown => "The remote server is busy shutting down",
+            Self::ServerReboot => "The remote server is busy rebooting",
         }
     }
 
@@ -598,6 +603,21 @@ mod tests {
     const SERVER_SET_ERROR_INFO: ServerSetErrorInfoPdu = ServerSetErrorInfoPdu(
         ErrorInfo::ProtocolIndependentLicensingCode(ProtocolIndependentLicensingCode::Internal),
     );
+
+    // termiHub fork (#4461): ERRINFO_SERVER_SHUTDOWN / ERRINFO_SERVER_REBOOT (upstream d2bb7376).
+    #[test]
+    fn from_buffer_parses_server_shutdown_and_reboot_codes() {
+        assert_eq!(
+            ServerSetErrorInfoPdu(ErrorInfo::ProtocolIndependentCode(
+                ProtocolIndependentCode::ServerShutdown
+            )),
+            decode([0x19, 0x00, 0x00, 0x00].as_ref()).unwrap()
+        );
+        assert_eq!(
+            ServerSetErrorInfoPdu(ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::ServerReboot)),
+            decode([0x1A, 0x00, 0x00, 0x00].as_ref()).unwrap()
+        );
+    }
 
     #[test]
     fn from_buffer_correctly_parses_server_set_error_info() {

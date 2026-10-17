@@ -52,11 +52,24 @@ live xrdp test RDP-15 (`core/tests/rdp.rs`) cover the fix from outside.
 Everything else is byte-for-byte upstream 0.7.0, without the registry-only
 `Cargo.lock`, `Cargo.toml.orig` and VCS metadata.
 
+Upstream `crates/ironrdp-rdpdr` was reviewed up to IronRDP
+[`62246b36`](https://github.com/Devolutions/IronRDP/commit/62246b364a0282bab85087f658a81fe4207b6b31)
+(2026-10-16, [#4461]); no `ironrdp-rdpdr` release after 0.7.0 exists yet. Nothing
+was ported: the newer commits are features (filesystem / smartcard / printer
+backends, the bidirectional PDU layer and `RdpdrServer`), error byte offsets that
+need a newer `ironrdp-core`, and the toolchain bump. The one fix, `476e8a17`
+(consume the `DR_DRIVE_QUERY_INFORMATION_REQ` `Length`, padding and
+`QueryBuffer`), matters only for the bidirectional layer that decodes several
+PDUs from one cursor; in 0.7.0 the request is decoded from its own channel
+message and the trailing bytes are never read, so porting it would only add
+strictness.
+
 Retire the fork once an `ironrdp-rdpdr` release contains `for_drive` and keeps a
 `DeviceData` encoding that works on Windows and xrdp. The status, prepared upstream
 text and retirement steps are in [`UPSTREAM.md`](UPSTREAM.md).
 
 [#4125]: https://github.com/armaxri/termiHub/issues/4125
+[#4461]: https://github.com/armaxri/termiHub/issues/4461
 
 ---
 
