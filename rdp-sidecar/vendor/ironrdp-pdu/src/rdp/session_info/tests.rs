@@ -432,3 +432,40 @@ fn from_buffer_parsing_with_invalid_logon_error_type_fails() {
         res => panic!("Expected InvalidLogonErrorType error, got: {res:?}"),
     };
 }
+
+/// The auto-reconnect random must not reach logs.
+///
+/// termiHub fork (#4461): ported from upstream IronRDP d0948faa (#1496).
+#[test]
+fn auto_reconnect_random_is_redacted_from_debug_output() {
+    const SECRET: [u8; 16] = [0xAB; 16];
+
+    let cookie = ServerAutoReconnect {
+        logon_id: 42,
+        random_bits: SECRET,
+    };
+    let extended = LogonInfoExtended {
+        present_fields_flags: LogonExFlags::AUTO_RECONNECT_COOKIE,
+        auto_reconnect: Some(cookie.clone()),
+        errors_info: None,
+    };
+    let pdu = SaveSessionInfoPdu {
+        info_type: InfoType::LogonExtended,
+        info_data: InfoData::LogonExtended(extended.clone()),
+    };
+
+    // 0xAB renders as `171` in the derived byte-slice output.
+    for (label, rendered) in [
+        ("ServerAutoReconnect", format!("{cookie:?}")),
+        ("LogonInfoExtended", format!("{extended:?}")),
+        ("SaveSessionInfoPdu", format!("{pdu:?}")),
+    ] {
+        assert!(
+            !rendered.contains("171"),
+            "{label} leaked the auto-reconnect random: {rendered}"
+        );
+    }
+
+    // The session identifier is not secret and stays visible for diagnosis.
+    assert!(format!("{cookie:?}").contains("42"));
+}
