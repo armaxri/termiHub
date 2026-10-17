@@ -45,13 +45,14 @@ pub async fn connect_tcp(
     let Some(proxy) = proxy else {
         // Typed, locale-independent discriminant so consumers classify an
         // unreachable host structurally (I18N-002 / ERR-003).
-        return TcpStream::connect((host, port))
+        // `host:port` text, as before #4867, so a bracketed IPv6 literal works.
+        return TcpStream::connect(format!("{host}:{port}"))
             .await
             .map_err(|e| SessionError::ConnectionFailed(e.to_string()));
     };
 
     let kind = proxy.proxy_type.label();
-    let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
+    let mut stream = TcpStream::connect(format!("{}:{}", proxy.host, proxy.port))
         .await
         .map_err(|e| {
             SessionError::ConnectionFailed(format!(
