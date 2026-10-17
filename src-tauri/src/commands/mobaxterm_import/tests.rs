@@ -368,6 +368,10 @@ fn vnc_gateway_chain_and_proxy_stay_notes() {
         "{:?}",
         s.notes
     );
+    assert!(s.notes[1].contains("first SSH gateway"), "{:?}", s.notes);
+    // Neither the tunnel's nor the direct proxy rows are set (#4897).
+    assert!(setting(s, "sshProxyType").is_null());
+    assert!(setting(s, "proxyType").is_null());
 }
 
 /// A synthetic VNC bookmark with SSH gateway fields 5-8 `gateway`
@@ -404,18 +408,37 @@ fn vnc_proxy_with_a_single_gateway_maps_onto_the_tunnel_proxy() {
 }
 
 #[test]
-fn vnc_proxy_without_a_gateway_or_of_another_kind_stays_a_note() {
-    let s = &preview(&vnc_with("%%%", "2%proxy.example.com%1080%"))[0];
+fn vnc_proxy_without_a_gateway_maps_onto_the_direct_proxy() {
+    // #4897: a direct VNC connection dials the server through the proxy.
+    let s = &preview(&vnc_with("%%%", "2%proxy.example.com%1081%carol"))[0];
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
     assert!(setting(s, "useSshTunnel").is_null());
+    assert_eq!(setting(s, "proxyType"), "socks5");
+    assert_eq!(setting(s, "proxyHost"), "proxy.example.com");
+    assert_eq!(setting(s, "proxyPort"), 1081);
+    assert_eq!(setting(s, "proxyUsername"), "carol");
+    // Never the tunnel's proxy keys, and never a password.
     assert!(setting(s, "sshProxyType").is_null());
+    assert!(setting(s, "proxyPassword").is_null());
+
+    let s = &preview(&vnc_with("%%%", "3%192.0.2.50%%"))[0];
+    assert_eq!(setting(s, "proxyType"), "http");
+    assert_eq!(setting(s, "proxyPort"), 8080, "HTTP default port");
+    assert!(setting(s, "proxyUsername").is_null());
+
+    let s = &preview(&vnc_with("%%%", "1%socks.example.com%%"))[0];
+    assert_eq!(setting(s, "proxyType"), "socks4");
+    assert_eq!(setting(s, "proxyPort"), 1080, "SOCKS default port");
+}
+
+#[test]
+fn vnc_proxy_of_another_kind_or_without_a_host_stays_a_note() {
+    let s = &preview(&vnc_with("%%%", "4%proxy.example.com%23%"))[0];
+    assert!(setting(s, "proxyType").is_null());
     assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(s.notes[0].contains("Telnet proxy"), "{:?}", s.notes);
     assert!(
-        s.notes[0].contains("SOCKS5 proxy proxy.example.com:1080 was not imported"),
-        "{:?}",
-        s.notes
-    );
-    assert!(
-        s.notes[0].contains("no single SSH gateway"),
+        s.notes[0].contains("VNC proxy supports only"),
         "{:?}",
         s.notes
     );
@@ -426,11 +449,16 @@ fn vnc_proxy_without_a_gateway_or_of_another_kind_stays_a_note() {
     ))[0];
     assert_eq!(setting(s, "useSshTunnel"), true);
     assert!(setting(s, "sshProxyType").is_null());
+    assert!(setting(s, "proxyType").is_null());
     assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
     assert!(s.notes[0].contains("Telnet proxy"), "{:?}", s.notes);
 
     let s = &preview(&vnc_with("bastion.example.com%22%alice%", "3%%3128%"))[0];
     assert!(setting(s, "sshProxyType").is_null());
+    assert!(s.notes[0].contains("no host"), "{:?}", s.notes);
+
+    let s = &preview(&vnc_with("%%%", "3%%3128%"))[0];
+    assert!(setting(s, "proxyType").is_null());
     assert!(s.notes[0].contains("no host"), "{:?}", s.notes);
 }
 
