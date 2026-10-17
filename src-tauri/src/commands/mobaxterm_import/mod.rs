@@ -55,8 +55,7 @@ use crate::connection::config::TerminalOptions;
 use crate::session::ssh_host_key_verifier::SshHostKeyVerifier;
 use crate::utils::errors::TerminalError;
 
-use global_appearance::parse_global_appearance;
-pub use global_appearance::{MobaxtermGlobalAppearance, MobaxtermThemeColors};
+use global_appearance::{parse_global_appearance, MobaxtermGlobalAppearance};
 use mapping::{map_session, Outcome};
 use placeholders::PlaceholderEnv;
 use trusted_hosts::{host_key_entries, import_host_keys, StoreTrust, TrustCheck};
