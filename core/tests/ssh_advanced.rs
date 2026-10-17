@@ -292,7 +292,7 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
     };
 
     let pool = shared_gateway_pool();
-    let pool_key = gateway_pool_key(&target.proxy_jump);
+    let pool_key = gateway_pool_key(&target.proxy_jump, target.proxy.as_ref());
     assert_eq!(
         pool.ref_count(&pool_key),
         0,

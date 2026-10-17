@@ -239,9 +239,10 @@ The import lives under **Settings → Import & Migration** (also in the gear men
 - **Sessions** — SSH (host, port, user, private key), Telnet, Serial, RDP, VNC, FTP, SFTP (imported as SSH), local shell and WSL sessions are importable; anything else (Browser, Mosh, XDMCP, Rsh, File, S3) is listed as **Not imported** with the reason. MobaXterm's folder tree is recreated under the target folder you pick, existing folders with the same name are reused, and names that already exist get a "(2)" suffix. Path placeholders in key paths (`_ProfileDir_`, `_MyDocuments_`, `_CurrentDrive_`, …) are resolved for this computer.
 - **Gateways** — SSH gateways become the SSH connection's jump-host chain; a single VNC or RDP SSH gateway becomes that connection's SSH tunnel.
 - **Login command** — An SSH session's "Execute command" becomes the connection's **Initial Command**, run once after connecting.
+- **Proxy** — An SSH session's SOCKS4, SOCKS5 or HTTP proxy becomes the connection's **Proxy** settings (type, host, port and user); enter the proxy password after import.
 - **Host keys (opt-in)** — The SSH host keys MobaXterm has accepted are listed with their fingerprints. They are trusted only if you tick **Also import N trusted host keys**; a key is never imported when termiHub (or your `~/.ssh/known_hosts`) already trusts a different key for that host.
 - **Appearance** — A session whose font, font size or cursor style differs from MobaXterm's defaults keeps it as a per-connection terminal option (point sizes are converted to termiHub's pixel sizes); sessions at the defaults keep following termiHub's global appearance settings. Telnet sessions also keep their terminal type.
-- **Preview notes** — Settings termiHub has no counterpart for stay a note under the session, never applied silently: a network proxy, an RD Gateway, a multi-hop VNC or RDP gateway, a non-UTF-8 character set, custom session colours, a fixed terminal size, or a terminal type other than xterm on SSH and local sessions. MobaXterm's global `[Font]`, `[Colors]` and `[Cursor]` settings are reported as a note at the top of the preview. Check serial line settings after import.
+- **Preview notes** — Settings termiHub has no counterpart for stay a note under the session, never applied silently: a VNC proxy or another kind of SSH proxy (Telnet, local or SSH proxy command), an RD Gateway, a multi-hop VNC or RDP gateway, a non-UTF-8 character set, custom session colours, a fixed terminal size, or a terminal type other than xterm on SSH and local sessions. MobaXterm's global `[Font]`, `[Colors]` and `[Cursor]` settings are reported as a note at the top of the preview. Check serial line settings after import.
 - **Passwords are never imported.** MobaXterm keeps them in its own encrypted vault (in the Windows registry), which termiHub does not read — you are asked for the password on first connect.
 
 ### Connection Types
@@ -556,6 +557,11 @@ When you click on an SSH terminal tab, the sidebar file browser auto-connects vi
 | Enable X11 Forwarding | Forward remote GUI apps to local display                                                    | Off      |
 | Initial Command       | Command run once after the first connect (e.g. `tmux attach`); not re-run on auto-reconnect | —        |
 | On-reconnect Command  | Command run once after an automatic reconnect                                               | —        |
+| Proxy Type            | Connect through a `socks5`, `socks4` (SOCKS4a for host names) or `http` (`CONNECT`) proxy   | None     |
+| Proxy Host / Port     | Proxy address; an empty port means 1080 for SOCKS, 8080 for HTTP                            | —        |
+| Proxy User / Password | Proxy credentials (SOCKS5 and HTTP; SOCKS4 sends only the user); password kept in the vault | —        |
+
+With a proxy set, the host key is still checked against the SSH host, not the proxy. With jump hosts, only the connection to the first jump host goes through the proxy.
 
 ### SSH Troubleshooting
 

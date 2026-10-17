@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{JumpHostConfig, SshConfig};
+use crate::config::{JumpHostConfig, SshConfig, SshProxyConfig};
 use crate::errors::{ConnectFailureKind, SessionError};
 
 use super::auth::{
@@ -123,7 +123,7 @@ pub async fn probe_connection_path(
     let mut keep_alive: Vec<SshSession> = Vec::new();
 
     for (idx, hop) in hops.iter().enumerate() {
-        let cfg = hop.to_ssh_config();
+        let cfg = hop_config(hop, idx, target.proxy.as_ref());
         on_progress(HopProgress {
             index: idx,
             total,
@@ -345,14 +345,38 @@ fn label_first_hop_error(e: SessionError, first_cfg: &SshConfig) -> SessionError
     }
 }
 
+/// The connection config for hop `idx` of a chain: the hop's own settings, plus
+/// — for the first hop only — the connection's outbound `proxy` (#4867). Later
+/// hops ride the SSH channel of the hop before them, so a proxy never applies
+/// to them.
+fn hop_config(hop: &JumpHostConfig, idx: usize, proxy: Option<&SshProxyConfig>) -> SshConfig {
+    let mut cfg = hop.to_ssh_config();
+    if idx == 0 {
+        cfg.proxy = proxy.cloned();
+    }
+    cfg
+}
+
 /// Stable pool key for a jump-host chain.
 ///
 /// Two connections whose chains resolve to the same ordered hops share one
 /// pooled gateway session. A hop is identified by its saved-connection id when
 /// present, otherwise by its `user@host:port` (inline hops, which is what the
-/// editor currently writes).
-pub fn gateway_pool_key(hops: &[JumpHostConfig]) -> String {
+/// editor currently writes). The outbound proxy the first hop is dialled
+/// through (#4867) is part of the key, so connections that reach the same
+/// bastion through different proxies (or none) never share a gateway.
+pub fn gateway_pool_key(hops: &[JumpHostConfig], proxy: Option<&SshProxyConfig>) -> String {
     let mut key = String::from("gateway");
+    if let Some(p) = proxy {
+        // Identity only — never the password.
+        key.push_str(&format!(
+            "|proxy:{}:{}@{}:{}",
+            p.proxy_type.label(),
+            p.username.as_deref().unwrap_or(""),
+            p.host,
+            p.port
+        ));
+    }
     for hop in hops {
         key.push('|');
         match hop.connection_id.as_deref() {
@@ -376,8 +400,9 @@ pub fn gateway_pool_key(hops: &[JumpHostConfig]) -> String {
 /// innermost gateway hop, plus the outer-hop sessions kept alive to hold it.
 ///
 /// Hops are ordered outermost → innermost (`ssh -J edge,bastion` ⇒
-/// `[edge, bastion]`). The first hop is reached by a direct TCP connection; each
-/// subsequent hop is reached over a `direct-tcpip` channel opened on the
+/// `[edge, bastion]`). The first hop is reached by a direct TCP connection —
+/// dialled through `proxy` when the connection has an outbound proxy (#4867);
+/// each subsequent hop is reached over a `direct-tcpip` channel opened on the
 /// preceding hop's session.
 ///
 /// Every hop is bounded by its [`SshConfig::connect_timeout`] — the hop's own
@@ -388,15 +413,17 @@ pub fn gateway_pool_key(hops: &[JumpHostConfig]) -> String {
 /// Returns an error if `hops` is empty.
 pub async fn connect_gateway_chain(
     hops: &[JumpHostConfig],
+    proxy: Option<&SshProxyConfig>,
     cancel: Option<&CancellationToken>,
 ) -> Result<SshGateway, SessionError> {
     let first = hops
         .first()
         .ok_or_else(|| SessionError::SpawnFailed("Jump host chain is empty".to_string()))?;
 
-    // First hop: an ordinary direct TCP connection, bounded by its connect
-    // timeout (#841) and abortable via `cancel` (#952). Label any failure.
-    let first_cfg = first.to_ssh_config();
+    // First hop: an ordinary direct TCP connection (through the outbound proxy
+    // when one is set, #4867), bounded by its connect timeout (#841) and
+    // abortable via `cancel` (#952). Label any failure.
+    let first_cfg = hop_config(first, 0, proxy);
     let (mut current, mut registry) =
         connect_and_authenticate_cancellable(&first_cfg, cancel.cloned())
             .await
@@ -496,7 +523,7 @@ pub async fn connect_target_through_pooled_gateway_with_liveness(
     SessionError,
 > {
     let pool = shared_gateway_pool();
-    let key = gateway_pool_key(&target.proxy_jump);
+    let key = gateway_pool_key(&target.proxy_jump, target.proxy.as_ref());
 
     let gateway = pool
         .get_or_create_live(
@@ -506,7 +533,7 @@ pub async fn connect_target_through_pooled_gateway_with_liveness(
             // direct-tcpip channel to the target. Evict it and redial (#1315).
             |gw| !gw.session.is_closed() && gw.intermediate_sessions.iter().all(|s| !s.is_closed()),
             || async {
-                connect_gateway_chain(&target.proxy_jump, cancel)
+                connect_gateway_chain(&target.proxy_jump, target.proxy.as_ref(), cancel)
                     .await
                     .map(Arc::new)
             },
@@ -563,7 +590,7 @@ pub async fn connect_through_jump_hosts(
         session: gateway,
         registry: _gateway_registry,
         mut intermediate_sessions,
-    } = connect_gateway_chain(&target.proxy_jump, None).await?;
+    } = connect_gateway_chain(&target.proxy_jump, target.proxy.as_ref(), None).await?;
 
     let (session, registry) = open_target_over_gateway(&gateway, target, None).await?;
 
@@ -713,14 +740,14 @@ mod tests {
     fn pool_key_is_stable_for_equal_inline_chains() {
         let a = vec![hop("bastion", 22, "admin")];
         let b = vec![hop("bastion", 22, "admin")];
-        assert_eq!(gateway_pool_key(&a), gateway_pool_key(&b));
+        assert_eq!(gateway_pool_key(&a, None), gateway_pool_key(&b, None));
     }
 
     #[test]
     fn pool_key_differs_for_different_hosts() {
         let a = vec![hop("bastion-a", 22, "admin")];
         let b = vec![hop("bastion-b", 22, "admin")];
-        assert_ne!(gateway_pool_key(&a), gateway_pool_key(&b));
+        assert_ne!(gateway_pool_key(&a, None), gateway_pool_key(&b, None));
     }
 
     #[test]
@@ -728,15 +755,54 @@ mod tests {
         let one = vec![hop("edge", 22, "u")];
         let two = vec![hop("edge", 22, "u"), hop("inner", 22, "u")];
         let swapped = vec![hop("inner", 22, "u"), hop("edge", 22, "u")];
-        assert_ne!(gateway_pool_key(&one), gateway_pool_key(&two));
-        assert_ne!(gateway_pool_key(&two), gateway_pool_key(&swapped));
+        assert_ne!(gateway_pool_key(&one, None), gateway_pool_key(&two, None));
+        assert_ne!(
+            gateway_pool_key(&two, None),
+            gateway_pool_key(&swapped, None)
+        );
     }
 
     #[test]
     fn pool_key_prefers_connection_id_when_present() {
         let mut by_id = hop("ignored-host", 99, "ignored");
         by_id.connection_id = Some("Work/bastion".to_string());
-        assert_eq!(gateway_pool_key(&[by_id]), "gateway|id:Work/bastion");
+        assert_eq!(gateway_pool_key(&[by_id], None), "gateway|id:Work/bastion");
+    }
+
+    fn socks(host: &str, password: &str) -> SshProxyConfig {
+        SshProxyConfig {
+            proxy_type: crate::config::SshProxyType::Socks5,
+            host: host.to_string(),
+            port: 1080,
+            username: Some("alice".to_string()),
+            password: Some(password.to_string()),
+        }
+    }
+
+    #[test]
+    fn pool_key_separates_proxied_chains_without_the_password() {
+        // #4867: the same bastion through different proxies (or none) must not
+        // share a gateway, and the key must never carry the proxy password.
+        let hops = vec![hop("bastion", 22, "admin")];
+        let direct = gateway_pool_key(&hops, None);
+        let via_a = gateway_pool_key(&hops, Some(&socks("proxy-a", "pw-one")));
+        let via_b = gateway_pool_key(&hops, Some(&socks("proxy-b", "pw-one")));
+        assert_ne!(direct, via_a);
+        assert_ne!(via_a, via_b);
+        assert_eq!(
+            via_a,
+            gateway_pool_key(&hops, Some(&socks("proxy-a", "pw-two")))
+        );
+        assert!(!via_a.contains("pw-one"), "{via_a}");
+    }
+
+    #[test]
+    fn only_the_first_hop_is_dialled_through_the_proxy() {
+        let proxy = socks("proxy", "pw");
+        let first = hop_config(&hop("edge", 22, "u"), 0, Some(&proxy));
+        let second = hop_config(&hop("inner", 22, "u"), 1, Some(&proxy));
+        assert_eq!(first.proxy.as_ref(), Some(&proxy));
+        assert!(second.proxy.is_none());
     }
 
     /// A hung hop step (one that never resolves) must fail within the per-hop

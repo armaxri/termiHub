@@ -8,7 +8,7 @@
 //!
 //! | Type | Code | Fields used |
 //! |------|------|-------------|
-//! | SSH | 0 | 1 host, 2 port, 3 user (`<default>` = none), 7 login command, 8/9/10/15 gateway hosts/ports/users/keys (`__PIPE__` lists), 14 key path, 19/20/21/22 proxy type/host/port/user |
+//! | SSH | 0 | 1 host, 2 port, 3 user (`<default>` = none), 7 login command, 8/9/10/15 gateway hosts/ports/users/keys (`__PIPE__` lists), 14 key path, 19/20/21/22 proxy type (1 SOCKS4, 2 SOCKS5, 3 HTTP)/host/port/user |
 //! | Telnet | 1 | 1 host, 2 port |
 //! | RDP | 4 | 1 host, 2 port, 3 user, 13/14/15/18 SSH gateway hosts/ports/users/keys, 20 RD Gateway |
 //! | VNC | 5 | 1 host, 2 port, 5/6/7/8 SSH gateway hosts/ports/users/keys, 13/14/15/16 proxy type/host/port/user |
@@ -20,9 +20,10 @@
 //!
 //! What termiHub has a counterpart for is mapped: SSH gateways become the SSH
 //! jump-host chain, a single VNC or RDP SSH gateway becomes that connection's
-//! SSH tunnel, and the SSH login command becomes the SSH initial command. The
-//! rest stays a preview note: termiHub SSH connections have no outbound network
-//! proxy, RDP has no RD Gateway, and the VNC / RDP tunnel is single-hop.
+//! SSH tunnel, the SSH login command becomes the SSH initial command, and an
+//! SSH SOCKS4/SOCKS5/HTTP proxy becomes the SSH outbound proxy (#4867). The rest
+//! stays a preview note: other SSH proxy kinds and VNC proxies, RDP has no RD
+//! Gateway, and the VNC / RDP tunnel is single-hop.
 //!
 //! Rsh (2), XDMCP (3), File (9), Browser (11), Mosh (12) and S3 (13) have no
 //! termiHub counterpart and are skipped with a reason. Passwords are never
@@ -289,9 +290,7 @@ fn map_ssh(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     if let Some(command) = b.field(7) {
         b.set("initialCommand", Value::String(command));
     }
-    if let Some(note) = proxy_note(&b, [19, 20, 21, 22], "SSH connections") {
-        b.notes.push(note);
-    }
+    apply_ssh_proxy(&mut b, [19, 20, 21, 22]);
     let target = host_target(user.as_deref(), &host, port, 22);
     b.import("ssh", label, target)
 }
@@ -353,10 +352,43 @@ fn gateway_hops(b: &mut Builder<'_>, idx: [usize; 4], env: &PlaceholderEnv) -> V
     hops
 }
 
+/// Map an SSH session's MobaXterm proxy (`[type, host, port, user]` field
+/// indices) onto the SSH outbound proxy (#4867): types 1-3 (SOCKS4, SOCKS5,
+/// HTTP) with a host are mapped; any other kind stays a preview note. The
+/// proxy password lives in MobaXterm's vault and is never imported.
+fn apply_ssh_proxy(b: &mut Builder<'_>, idx: [usize; 4]) {
+    let proxy_type = match b.field(idx[0]).as_deref() {
+        None | Some("0") => return,
+        Some("1") => "socks4",
+        Some("2") => "socks5",
+        Some("3") => "http",
+        Some(_) => {
+            let reason = "termiHub SSH connections support only SOCKS4, SOCKS5 and HTTP proxies.";
+            if let Some(note) = proxy_note(b, idx, reason) {
+                b.notes.push(note);
+            }
+            return;
+        }
+    };
+    let Some(host) = b.field(idx[1]) else {
+        b.notes
+            .push("The proxy has no host and was not imported.".to_string());
+        return;
+    };
+    let default_port = if proxy_type == "http" { 8080 } else { 1080 };
+    let port = b.port(idx[2], default_port);
+    b.set("proxyType", json!(proxy_type));
+    b.set("proxyHost", json!(host));
+    b.set("proxyPort", json!(port));
+    if let Some(user) = b.field(idx[3]) {
+        b.set("proxyUsername", json!(user));
+    }
+}
+
 /// The preview note for a MobaXterm network proxy (`[type, host, port, user]`
-/// field indices), or `None` when the session uses no proxy. termiHub has no
-/// outbound proxy setting for `subject` (e.g. `"SSH connections"`).
-fn proxy_note(b: &Builder<'_>, idx: [usize; 4], subject: &str) -> Option<String> {
+/// field indices) that was not imported for `reason`, or `None` when the
+/// session uses no proxy.
+fn proxy_note(b: &Builder<'_>, idx: [usize; 4], reason: &str) -> Option<String> {
     let kind = match b.field(idx[0])?.as_str() {
         "0" => return None,
         "1" => "SOCKS4 proxy",
@@ -377,9 +409,7 @@ fn proxy_note(b: &Builder<'_>, idx: [usize; 4], subject: &str) -> Option<String>
         .field(idx[3])
         .map(|u| format!(" (user {u})"))
         .unwrap_or_default();
-    Some(format!(
-        "The {kind}{at}{user} was not imported: termiHub {subject} have no network proxy setting."
-    ))
+    Some(format!("The {kind}{at}{user} was not imported: {reason}"))
 }
 
 /// `host:port → host:port` summary of a gateway chain for a preview note.
@@ -456,7 +486,11 @@ fn map_vnc(params: &[String], env: &PlaceholderEnv, label: &str) -> Mapped {
     b.set("port", json!(port));
     let hops = gateway_hops(&mut b, [5, 6, 7, 8], env);
     apply_ssh_tunnel_gateway(&mut b, &hops, "VNC");
-    if let Some(note) = proxy_note(&b, [13, 14, 15, 16], "VNC connections") {
+    if let Some(note) = proxy_note(
+        &b,
+        [13, 14, 15, 16],
+        "termiHub VNC connections have no network proxy setting.",
+    ) {
         b.notes.push(note);
     }
     let target = host_target(None, &host, port, 5900);

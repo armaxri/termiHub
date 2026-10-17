@@ -163,7 +163,8 @@ pub struct PersistedSession {
 /// case-insensitively against the core classifier's built-in secret keys
 /// ([`FALLBACK_SECRET_KEYS`]): SSH/FTP/RDP/VNC and jump-host `password` (which
 /// also holds a key **passphrase** for key auth — see
-/// `core::backends::ssh::auth`), and the VNC / RDP SSH-tunnel `sshPassword`. Agents
+/// `core::backends::ssh::auth`), the VNC / RDP SSH-tunnel `sshPassword` and the
+/// SSH outbound-proxy `proxyPassword` (#4867). Agents
 /// host only built-in types, whose schema secrets that list covers (#4289).
 fn is_secret_settings_key(key: &str) -> bool {
     FALLBACK_SECRET_KEYS
