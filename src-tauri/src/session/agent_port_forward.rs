@@ -115,6 +115,13 @@ pub fn agent_route(type_id: &str, settings: &Value) -> Result<Option<AgentRoute>
 const SSH_TUNNEL_WITH_AGENT: &str = "An SSH tunnel cannot be combined with connecting through \
      an agent — the agent already carries the connection";
 
+/// Why a direct VNC connection cannot use its outbound proxy and an agent route
+/// at once (#4897): the desktop would dial its loopback forward through the
+/// proxy.
+#[cfg(feature = "vnc")]
+const PROXY_WITH_AGENT: &str = "A proxy cannot be combined with connecting through an agent \
+     — the agent already carries the connection";
+
 /// The port the backend of `type_id` would dial for `settings`, from core's own
 /// config type (DUP2-008).
 #[cfg_attr(
@@ -129,6 +136,9 @@ fn routed_target_port(type_id: &str, settings: &Value) -> Result<u16, String> {
                 .map_err(|e| format!("Invalid VNC settings: {e}"))?;
             if cfg.use_ssh_tunnel {
                 return Err(SSH_TUNNEL_WITH_AGENT.to_string());
+            }
+            if cfg.direct_proxy().is_some() {
+                return Err(PROXY_WITH_AGENT.to_string());
             }
             Ok(cfg.effective_port())
         }

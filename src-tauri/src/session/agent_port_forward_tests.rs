@@ -122,6 +122,19 @@ fn unroutable_settings_are_rejected_with_a_reason() {
     )
     .unwrap_err();
     assert!(err.contains("SSH tunnel"), "{err}");
+    // A direct VNC proxy (#4897) would dial the loopback forward through it.
+    let err = agent_route(
+        "vnc",
+        &json!({ "agentId": "a", "host": "h", "proxyType": "socks5", "proxyHost": "p" }),
+    )
+    .unwrap_err();
+    assert!(err.contains("proxy"), "{err}");
+    // A proxy type without a host is no proxy and routes fine.
+    assert!(agent_route(
+        "vnc",
+        &json!({ "agentId": "a", "host": "h", "proxyType": "socks5" })
+    )
+    .is_ok());
     // RDP's SSH tunnel (#4865) cannot ride an agent route either.
     let err = agent_route(
         "rdp",
