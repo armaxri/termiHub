@@ -80,7 +80,7 @@ describe("dev-build.yml token scope (CI2-007)", () => {
  * Jobs whose checkout must keep the token in .git/config because a later step
  * pushes, tags or otherwise authenticates git with it. Key: `<file>#<job>`,
  * value: why. Empty today: cargo-update-lockfile.yml pushes with a step-scoped
- * credential, the dev/release publishers use the API (gh), and every git fetch
+ * credential (App token, PAT or GITHUB_TOKEN, #4469), the dev/release publishers use the API (gh), and every git fetch
  * is anonymous against this public repo. A new entry must set
  * `persist-credentials: true` explicitly so the exception is visible in the YAML.
  */
