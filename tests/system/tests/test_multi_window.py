@@ -17,7 +17,7 @@ journeys that used to be verified only by hand:
 
 What stays manual is only the OS-native macOS behaviour — the app staying alive
 in the Dock after its last window closes, and Cmd+Q — see ``MT-WIN-01``/``02``
-in ``tests/manual/multi-window.yaml``.
+in ``test_guided_app_os.py`` (guided-manual).
 
 Runs in the nightly integration lane (Linux and Windows; macOS too, minus the
 last-window quit check). The suite drives POSIX-agnostic ``echo`` only, so the

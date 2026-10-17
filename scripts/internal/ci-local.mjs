@@ -66,7 +66,6 @@ export const CI_LOCAL_JOBS = {
     gates: [
       "Quality checks",
       "Frontend: TypeScript (tsc --noEmit)",
-      "Frontend: manual-test inventory",
       "Version sources + Tauri drift",
     ],
     omitted: "Frontend Code Quality: the advisory knip reports (default + --production)",

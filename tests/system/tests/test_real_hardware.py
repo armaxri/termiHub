@@ -230,7 +230,8 @@ class TestRealHardware(
 
     # ── MT-AGENT-28: Docker container session from a Windows agent ───────────
     def test_windows_agent_docker_container_session(self):
-        """MT-AGENT-28: a Docker container session through a Windows-hosted agent."""
+        """MT-AGENT-28 (and the Docker half of MT-AGENT-26): a container session
+        through a Windows-hosted agent."""
         spec = _require_host(
             WINDOWS_AGENT_HOST_ENV,
             "me@winbox:22",

@@ -29,15 +29,9 @@ Covered:
 - **Clipboard** — copy the terminal buffer via the tab menu and via the
   platform copy shortcut, and paste into the terminal (MT-KB-01..04).
 
-**Not applicable — OS credential stores (MT-CRED-01/02/03).** These assume the
-app writes credentials into the *native* OS store (macOS Keychain / Windows
-Credential Manager / Linux Secret Service). The app implements only two
-credential modes — ``"master_password"`` (an encrypted vault file) and
-``"none"`` (see ``src/types/credential.ts`` / ``src-tauri/src/credential``) — and
-exposes no OS-keychain backend. There is therefore nothing to verify in an OS
-store; the real saved-credential behaviour (master-password reuse on reconnect)
-is already covered by ``test_credential_store.py``. If an OS-keychain backend is
-added later, MT-CRED-01/02/03 become implementable here.
+**OS credential stores (MT-CRED-01/02/03)** live in
+``test_guided_credentials.py``: the app has an OS-keychain storage mode (#956),
+and those tests check that a saved secret lands in the native store.
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and run
 only under ``./pytest.sh --manual -k external_app -s`` with an operator. The

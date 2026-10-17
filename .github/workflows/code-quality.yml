@@ -469,15 +469,6 @@ jobs:
       - name: Lint Markdown
         run: pnpm run markdownlint
 
-      # Manual-test counts are NOT committed to the docs (#4070, after #3721):
-      # any committed total row made every pair of test-automation PRs conflict.
-      # This validates the tests/manual/*.yaml corpus (incl. that every item has
-      # the name/instructions/expected keys the runner needs, #4131), fails if a doc
-      # reintroduces a committed count block, and publishes the per-category
-      # table as the job summary. Stdlib-only Python, no venv.
-      - name: Manual-test inventory (job summary)
-        run: python3 scripts/manual-inventory.py --check
-
       # Version drift (CI-009, #3901): the seven version sources (package.json,
       # tauri.conf.json, src-tauri/core/agent/plugin-runner/rdp-sidecar
       # Cargo.toml; DOC2-007) must agree, and the installed @tauri-apps/* npm
@@ -1278,7 +1269,7 @@ jobs:
           set "STUB_LOG=%OUT%\quick.log"
           call "%CIL%" --quick >"%OUT%\quick.txt" 2>&1
           >"%OUT%\quick.rc" echo %errorlevel%
-          set "STUB_FAIL_ON=tsc manual-inventory.py machete deny"
+          set "STUB_FAIL_ON=tsc release-check machete deny"
           set "STUB_LOG=%OUT%\fail.log"
           call "%CIL%" >"%OUT%\fail.txt" 2>&1
           >"%OUT%\fail.rc" echo %errorlevel%
@@ -1338,7 +1329,7 @@ jobs:
               fail "$1 run: gate titles/verdicts differ (< expected, > ci-local.cmd)"
           }
           summary() { tr -d '\r' <"$out/$1.txt" | sed -En '/^={20,}$/,$p'; }
-          fails=$'Frontend: TypeScript (tsc --noEmit)\nFrontend: manual-test inventory'
+          fails=$'Frontend: TypeScript (tsc --noEmit)\nVersion sources + Tauri drift'
           skips=$'Rust: unused dependencies (cargo-machete)\nShell: ShellCheck\nSystem-test harness (machinery)\nSecurity: cargo deny (supply-chain)\nRDP sidecar: cargo deny'
 
           check_run quick 0 3 "" ""
@@ -1346,7 +1337,7 @@ jobs:
 
           check_run fail 1 "$n" "$fails" "$skips"
           list="$(summary fail | sed -n '/^SOME GATES FAILED:$/{n;p;}')"
-          [ "$list" = "  - Frontend: TypeScript (tsc --noEmit)  - Frontend: manual-test inventory" ] ||
+          [ "$list" = "  - Frontend: TypeScript (tsc --noEmit)  - Version sources + Tauri drift" ] ||
             fail "fail run: failure list is '$list'"
 
           check_run skip 0 "$n" "" "$skips"

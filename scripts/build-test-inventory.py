@@ -154,6 +154,7 @@ MACHINERY_CATEGORIES = frozenset(
         "cross_platform",
         "dev_local",
         "fixtures",
+        "guided_helpers",
         "manual_examples",
         "manual_mode",
         "mixins",
