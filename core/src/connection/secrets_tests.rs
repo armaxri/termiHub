@@ -51,11 +51,22 @@ fn classification_always_includes_the_fallback_keys() {
     let s = schema(vec![field("apiToken", FieldType::Password)]);
     assert_eq!(
         secret_keys(Some(&s)),
-        keys(&["apiToken", "password", "sshPassword", "proxyPassword"])
+        keys(&[
+            "apiToken",
+            "password",
+            "sshPassword",
+            "proxyPassword",
+            "sshProxyPassword"
+        ])
     );
     assert_eq!(
         secret_keys(None),
-        keys(&["password", "sshPassword", "proxyPassword"])
+        keys(&[
+            "password",
+            "sshPassword",
+            "proxyPassword",
+            "sshProxyPassword"
+        ])
     );
 }
 
