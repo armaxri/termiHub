@@ -318,7 +318,9 @@ pub fn proxy_settings_group() -> SettingsGroup {
 /// group's own proxy rows (`sshProxy*`) apply, to the SSH hop.
 pub fn direct_proxy_group(server_kind: &str) -> SettingsGroup {
     let tunnel_off = Condition {
-        field: crate::connection::graphical_ssh_tunnel::USE_SSH_TUNNEL_KEY.to_string(),
+        // `graphical_ssh_tunnel::USE_SSH_TUNNEL_KEY`, spelled out: that module
+        // is compiled only with a graphical feature, this one always.
+        field: "useSshTunnel".to_string(),
         equals: serde_json::json!(true),
         negate: true,
         ..Default::default()
