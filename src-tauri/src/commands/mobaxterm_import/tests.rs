@@ -156,14 +156,16 @@ fn ssh_gateway_list_becomes_a_jump_host_chain() {
 }
 
 #[test]
-fn ssh_default_user_login_command_and_proxy_are_noted() {
+fn ssh_default_user_is_noted_while_login_command_and_proxy_are_mapped() {
     let ini = "[Bookmarks]\nSubRep=\nNoted=#109#0%10.0.0.6%22%<default>%%-1%-1%uptime__PTVIRG__ df%%%%0%-1%0%%%-1%0%0%2%proxy.example.com%1080%%0%0%1#MobaFont#0# #-1\n";
     let s = &preview(ini)[0];
     assert_eq!(setting(s, "username"), "");
     assert_eq!(s.target, "10.0.0.6");
     assert_eq!(setting(s, "initialCommand"), "uptime; df");
-    // The default user and the proxy stay notes; the login command is mapped.
-    assert_eq!(s.notes.len(), 2, "{:?}", s.notes);
+    // The default user stays a note; the login command and the SOCKS5 proxy
+    // (#4867) are mapped.
+    assert_eq!(setting(s, "proxyType"), "socks5");
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
 }
 
 #[test]
@@ -185,28 +187,77 @@ fn ssh_without_a_login_command_has_no_initial_command() {
     assert!(s.notes.is_empty(), "{:?}", s.notes);
 }
 
-#[test]
-fn ssh_network_proxy_is_described_in_the_note() {
-    let socks = "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.17%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%2%proxy.example.com%1080%%0%0%1#MobaFont#0# #-1\n";
-    let s = &preview(socks)[0];
-    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
-    assert!(
-        s.notes[0].contains("SOCKS5 proxy proxy.example.com:1080 was not imported"),
-        "{:?}",
-        s.notes
-    );
+/// A synthetic SSH bookmark whose proxy fields 19-22 are `proxy`
+/// (`type%host%port%user`).
+fn ssh_with_proxy(proxy: &str) -> String {
+    format!(
+        "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.17%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%{proxy}%0%0%1#MobaFont#0# #-1\n"
+    )
+}
 
-    let http = "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.18%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%3%192.0.2.50%3128%alice%0%0%1#MobaFont#0# #-1\n";
-    let s = &preview(http)[0];
-    assert!(
-        s.notes[0].contains("HTTP proxy 192.0.2.50:3128 (user alice)"),
-        "{:?}",
-        s.notes
-    );
+#[test]
+fn ssh_socks_and_http_proxies_map_onto_the_outbound_proxy() {
+    // #4867: MobaXterm proxy types 1-3 become the SSH proxy settings.
+    let s = &preview(&ssh_with_proxy("2%proxy.example.com%1080%"))[0];
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+    assert_eq!(setting(s, "proxyType"), "socks5");
+    assert_eq!(setting(s, "proxyHost"), "proxy.example.com");
+    assert_eq!(setting(s, "proxyPort"), 1080);
+    assert!(setting(s, "proxyUsername").is_null());
+
+    let s = &preview(&ssh_with_proxy("3%192.0.2.50%3128%alice"))[0];
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+    assert_eq!(setting(s, "proxyType"), "http");
+    assert_eq!(setting(s, "proxyHost"), "192.0.2.50");
+    assert_eq!(setting(s, "proxyPort"), 3128);
+    assert_eq!(setting(s, "proxyUsername"), "alice");
+    // The proxy password is in MobaXterm's vault; it is never imported.
+    assert!(setting(s, "proxyPassword").is_null());
+
+    let s = &preview(&ssh_with_proxy("1%socks.example.com%%bob"))[0];
+    assert_eq!(setting(s, "proxyType"), "socks4");
+    assert_eq!(setting(s, "proxyPort"), 1080, "SOCKS default port");
+    assert_eq!(setting(s, "proxyUsername"), "bob");
+}
+
+#[test]
+fn ssh_proxy_without_a_host_or_with_a_bad_port_is_noted() {
+    let s = &preview(&ssh_with_proxy("3%%3128%"))[0];
+    assert!(setting(s, "proxyType").is_null());
+    assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+    assert!(s.notes[0].contains("no host"), "{:?}", s.notes);
+
+    let s = &preview(&ssh_with_proxy("3%proxy.example.com%99999%"))[0];
+    assert_eq!(setting(s, "proxyPort"), 8080, "HTTP default port");
+    assert!(s.notes[0].contains("Invalid port"), "{:?}", s.notes);
+}
+
+#[test]
+fn ssh_unsupported_proxy_kinds_stay_notes() {
+    for (code, kind) in [
+        ("4", "Telnet proxy"),
+        ("5", "local proxy command"),
+        ("7", "SSH proxy command"),
+    ] {
+        let s = &preview(&ssh_with_proxy(&format!("{code}%proxy.example.com%23%")))[0];
+        assert!(setting(s, "proxyType").is_null(), "type {code}");
+        assert_eq!(s.notes.len(), 1, "{:?}", s.notes);
+        assert!(
+            s.notes[0].contains(&format!("{kind} proxy.example.com:23 was not imported")),
+            "{:?}",
+            s.notes
+        );
+        assert!(
+            s.notes[0].contains("only SOCKS4, SOCKS5 and HTTP"),
+            "{:?}",
+            s.notes
+        );
+    }
 
     // Type 0 is "no proxy", even when a stale host/port is still stored.
-    let none = "[Bookmarks]\nSubRep=\nP=#109#0%10.0.0.19%22%alice%%-1%-1%%%%%0%0%0%%%-1%0%0%0%proxy.example.com%1080%%0%0%1#MobaFont#0# #-1\n";
-    assert!(preview(none)[0].notes.is_empty());
+    let s = &preview(&ssh_with_proxy("0%proxy.example.com%1080%"))[0];
+    assert!(s.notes.is_empty(), "{:?}", s.notes);
+    assert!(setting(s, "proxyType").is_null());
 }
 
 #[test]
