@@ -264,11 +264,15 @@ class TestGuidedAppOs(
         home = str(Path.home())
         self.app.run_cli(["spawn", "--kind", "wsl", "--location", home])
         self.manual_step(
-            f"The harness spawned a WSL tab at {home}. Run `pwd`. Then save a WSL "
-            "connection for a non-default distro and run `termiHub spawn --kind wsl "
-            f"--location {home} --connection <its id>` with this test build.",
-            "The first tab is '(Spawned)' with pwd /mnt/c/Users/<you>; with --connection "
-            "the tab runs the saved distro.",
+            f"The harness spawned a WSL tab at {home}. Run `pwd` in it. Then save a WSL "
+            "connection named 'shi03' for a non-default distro (e.g. Debian).",
+            "The tab is '(Spawned)' and pwd is /mnt/c/Users/<you>; 'shi03' is saved.",
+        )
+        conn = self.wait(lambda: self.find_connection("shi03"), what="the 'shi03' connection")
+        self.app.run_cli(["spawn", "--kind", "wsl", "--location", home, "--connection", conn["id"]])
+        self.manual_observe(
+            "The harness spawned again with --connection shi03.",
+            "The new '(Spawned)' tab runs the saved distro (`cat /etc/os-release`).",
         )
 
     # ── MT-SHI-04..06: OS context-menu integration ───────────────────────────
