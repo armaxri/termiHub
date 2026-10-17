@@ -470,8 +470,9 @@ chmod +x "$LS/fakebin/osascript"
 
 # The bash smoke and its PowerShell twin (the Windows release smoke), the latter
 # only where pwsh is installed (GitHub's ubuntu runners have it). `applevent` is
-# the bash smoke with the macOS close path, against the fake osascript.
-lifecycle_cmd() { # <sh|applevent|ps1>: the smoke command line for the stub
+# the bash smoke with the macOS close path, against the fake osascript; `probe`
+# is the same with --quit-probe (run 1 and the menu Quit only, no bundle id).
+lifecycle_cmd() { # <sh|applevent|probe|ps1>: the smoke command line for the stub
   if [ "$1" = sh ]; then
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
       --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out"
@@ -479,6 +480,9 @@ lifecycle_cmd() { # <sh|applevent|ps1>: the smoke command line for the stub
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
       --log "$LS/termihub.log" --version 9.8.7 --close applevent \
       --bundle-id com.termihub.app --out "$LS/out"
+  elif [ "$1" = probe ]; then
+    echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
+      --log "$LS/termihub.log" --version 9.8.7 --close applevent --quit-probe --out "$LS/out"
   else
     echo pwsh -NoProfile -File scripts/internal/release-smoke-app-lifecycle.ps1 -Exe "$LS/stub-app" \
       -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out"
@@ -527,6 +531,13 @@ lifecycle_run applevent "falls back to a Quit AppleEvent when System Events refu
 lifecycle_run applevent "reports the clean exit as skipped when no Quit is deliverable" skip \
   FAKE_NO_MENU=1 FAKE_NO_APPLEEVENT=1
 lifecycle_run applevent "fails when a delivered Quit leaves no clean-exit line" fail \
+  STUB_NO_CLEAN_EXIT=1
+# The probe passes even with STUB_NO_SINGLE (it never relaunches). With the menu
+# refused it must fail, not fall back: the fake would accept the Apple event.
+lifecycle_run probe "quit probe passes on the menu Quit alone" pass STUB_NO_SINGLE=1
+lifecycle_run probe "quit probe fails, without an Apple event, when the menu is refused" fail \
+  FAKE_NO_MENU=1
+lifecycle_run probe "quit probe fails when the clean-exit line is missing" fail \
   STUB_NO_CLEAN_EXIT=1
 rm -rf "$LS/lock"
 app_lifecycle_and_earlier_failures="$failures"
