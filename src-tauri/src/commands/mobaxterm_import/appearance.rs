@@ -1,5 +1,5 @@
-//! Per-session terminal appearance from MobaXterm's terminal-settings block
-//! (#4854).
+//! Per-session terminal appearance, session logging and scrollback from
+//! MobaXterm's terminal-settings block (#4854, #4881).
 //!
 //! The fourth `#` block of a session line is a `%`-separated list of terminal
 //! settings. MobaXterm does not document it; the positions below follow the
@@ -13,17 +13,29 @@
 //! | 5 | character set (`15` = UTF-8) | note when not UTF-8 |
 //! | 6 / 7 / 8 | foreground / background / cursor `R,G,B` | note when not the defaults |
 //! | 9 | cursor type (0–5, default 0) | `cursorStyle` + `cursorBlink`, unless default |
+//! | 11 | log terminal output (`-1` = enabled, default `0`) | `logToFile` when enabled |
+//! | 12 | log folder (empty = MobaXterm's default, `<>` = its program folder) | note when set |
 //! | 13 | terminal type (`xterm`, `vt100`, …) | Telnet `terminalType`; note otherwise |
 //! | 16 | colour scheme (`_Std_Colors_0_` = global theme) | note when custom |
 //! | 17 / 18 / 19 | fixed columns / rows / enabled (`-1`) | note when enabled |
+//! | 28 | expert settings, a `,` list; entry 11 = scrollback lines (empty = 360 000) | `scrollbackBuffer`, unless default |
 //!
 //! Best-effort, not verified against MobaXterm itself:
 //! - The font size is treated as typographic points (MobaXterm is a Windows
 //!   app) and converted at 96 DPI (`px = pt × 4/3`); termiHub sizes are pixels.
 //! - Sessionator names indices 17/18 "rows"/"columns" but defaults them to
 //!   80/24, so they are read here as columns × rows.
-//! - Only indices before 16 are mapped: a custom colour scheme expands index
-//!   16 into sixteen fields and shifts everything after it.
+//! - A custom colour scheme expands index 16 into sixteen fields and shifts
+//!   every later index by fifteen; indices after 16 are read through
+//!   `shifted`. Sessionator documents the expansion but does not decode it,
+//!   so a custom scheme is recognised by index 16 not being the
+//!   `_Std_Colors_0_` marker.
+//! - The scrollback entry position inside the expert-settings list
+//!   (`terminalScrollbackLines`, entry 11) comes from Sessionator's writer;
+//!   Sessionator does not read that list back.
+//! - Session logging is mapped to termiHub's own "Log Session Output" option,
+//!   which writes to termiHub's log folder, never to the MobaXterm folder: a
+//!   path from another machine must not make termiHub write files elsewhere.
 //!
 //! Settings left at MobaXterm's factory defaults (`MobaFont`, 10 pt, a
 //! non-blinking block cursor) are not written as per-connection overrides, so
@@ -48,6 +60,23 @@ const FONT_SIZE_PX: std::ops::RangeInclusive<u32> = 8..=32;
 /// keeps following termiHub's global appearance settings.
 const DEFAULT_FONT_SIZE_PT: &str = "10";
 const DEFAULT_CURSOR: &str = "0";
+
+/// termiHub's per-connection scrollback range (lines).
+const SCROLLBACK_LINES: std::ops::RangeInclusive<u32> = 100..=1_000_000;
+
+/// MobaXterm's scrollback when the expert-settings entry is empty.
+const DEFAULT_SCROLLBACK_LINES: u64 = 360_000;
+
+/// Index of the colour scheme, and the expert-settings list (before any
+/// colour-scheme shift).
+const COLOR_SCHEME_IDX: usize = 16;
+const EXPERT_SETTINGS_IDX: usize = 28;
+
+/// Entry of the scrollback line count in the expert-settings list.
+const EXPERT_SCROLLBACK_ENTRY: usize = 11;
+
+/// Extra fields a custom colour scheme inserts: index 16 becomes sixteen.
+const CUSTOM_SCHEME_EXTRA_FIELDS: usize = 15;
 
 /// Default foreground / background / cursor colours of MobaXterm's
 /// "Dark background / Light text" preset.
@@ -82,6 +111,22 @@ fn field(block: &[String], idx: usize) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Whether index 16 holds a custom colour scheme (sixteen fields) instead of
+/// the `_Std_Colors_0_` "global theme" marker.
+fn has_custom_scheme(block: &[String]) -> bool {
+    field(block, COLOR_SCHEME_IDX).is_some_and(|s| !s.starts_with("_Std_Colors_0_"))
+}
+
+/// The real position of Sessionator index `idx` in this block: indices after
+/// the colour scheme move by fifteen when the scheme is custom.
+fn shifted(block: &[String], idx: usize) -> usize {
+    if idx > COLOR_SCHEME_IDX && has_custom_scheme(block) {
+        idx + CUSTOM_SCHEME_EXTRA_FIELDS
+    } else {
+        idx
+    }
+}
+
 /// `Consolas` → `"Consolas", monospace`, so a font that is not installed here
 /// falls back to a monospace face instead of a proportional one.
 fn css_font_family(name: &str) -> String {
@@ -113,8 +158,9 @@ pub fn map_appearance(block: &[String], code: u32, connection_type: &str) -> App
     out
 }
 
-/// Font family, font size and cursor (indices 0, 1, 9) that differ from
-/// MobaXterm's defaults; `None` when none does. Unreadable values add a note.
+/// Font family, font size, cursor, session logging and scrollback (indices 0,
+/// 1, 9, 11, 28) that differ from MobaXterm's defaults; `None` when none does.
+/// Unreadable values add a note.
 fn mapped_options(block: &[String], notes: &mut Vec<String>) -> Option<TerminalOptions> {
     let mut opts = TerminalOptions::default();
 
@@ -152,8 +198,59 @@ fn mapped_options(block: &[String], notes: &mut Vec<String>) -> Option<TerminalO
         }
     }
 
-    let any = opts.font_family.is_some() || opts.font_size.is_some() || opts.cursor_style.is_some();
+    if field(block, 11).as_deref() == Some("-1") {
+        opts.log_to_file = Some(true);
+        if let Some(folder) = field(block, 12) {
+            let folder = if folder == "<>" {
+                "MobaXterm's program folder".to_string()
+            } else {
+                format!("\"{folder}\"")
+            };
+            notes.push(format!(
+                "Session logging is kept, but not the MobaXterm log folder ({folder}): \
+                 termiHub writes session logs to its own log folder."
+            ));
+        }
+    }
+
+    opts.scrollback_buffer = scrollback_lines(block, notes);
+
+    let any = opts.font_family.is_some()
+        || opts.font_size.is_some()
+        || opts.cursor_style.is_some()
+        || opts.log_to_file.is_some()
+        || opts.scrollback_buffer.is_some();
     any.then_some(opts)
+}
+
+/// Scrollback line count from the expert-settings list (index 28, entry 11),
+/// clamped to termiHub's range. `None` when absent, empty or MobaXterm's
+/// 360 000 default, so the connection keeps termiHub's global scrollback.
+fn scrollback_lines(block: &[String], notes: &mut Vec<String>) -> Option<u32> {
+    let expert = block.get(shifted(block, EXPERT_SETTINGS_IDX))?;
+    let raw = decode_escapes(expert.split(',').nth(EXPERT_SCROLLBACK_ENTRY)?.trim());
+    if raw.is_empty() {
+        return None;
+    }
+    match raw.parse::<u64>() {
+        Ok(DEFAULT_SCROLLBACK_LINES) => None,
+        Ok(lines) => {
+            let (min, max) = (*SCROLLBACK_LINES.start(), *SCROLLBACK_LINES.end());
+            let clamped = lines.clamp(u64::from(min), u64::from(max)) as u32;
+            if u64::from(clamped) != lines {
+                notes.push(format!(
+                    "Scrollback of {lines} lines is outside termiHub's range; using {clamped}."
+                ));
+            }
+            Some(clamped)
+        }
+        Err(_) => {
+            notes.push(format!(
+                "The scrollback size \"{raw}\" could not be read; termiHub's default is used."
+            ));
+            None
+        }
+    }
 }
 
 /// MobaXterm cursor type → (xterm.js cursor style, blink).
@@ -179,7 +276,7 @@ fn unmapped_notes(block: &[String], notes: &mut Vec<String>) {
         ));
     }
 
-    let custom_scheme = field(block, 16).is_some_and(|s| !s.starts_with("_Std_Colors_0_"));
+    let custom_scheme = has_custom_scheme(block);
     let custom_rgb = DEFAULT_COLORS
         .iter()
         .enumerate()
@@ -192,8 +289,11 @@ fn unmapped_notes(block: &[String], notes: &mut Vec<String>) {
         );
     }
 
-    if field(block, 19).as_deref() == Some("-1") {
-        let size = match (field(block, 17), field(block, 18)) {
+    if field(block, shifted(block, 19)).as_deref() == Some("-1") {
+        let size = match (
+            field(block, shifted(block, 17)),
+            field(block, shifted(block, 18)),
+        ) {
             (Some(cols), Some(rows)) => format!(" ({cols}×{rows})"),
             _ => String::new(),
         };
