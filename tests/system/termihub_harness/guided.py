@@ -74,10 +74,12 @@ def parse_host_spec(spec: str, *, default_port: int = 22) -> HostSpec:
     return HostSpec(user=match.group("user"), host=host, port=port)
 
 
-def host_from_env(var: str, *, environ: Optional[dict] = None) -> Optional[HostSpec]:
+def host_from_env(
+    var: str, *, environ: Optional[dict] = None, default_port: int = 22
+) -> Optional[HostSpec]:
     """The :class:`HostSpec` named by ``var``, or ``None`` when it is unset/blank."""
     value = (os.environ if environ is None else environ).get(var, "").strip()
-    return parse_host_spec(value) if value else None
+    return parse_host_spec(value, default_port=default_port) if value else None
 
 
 def missing_env_reason(var: str, example: str, purpose: str) -> str:

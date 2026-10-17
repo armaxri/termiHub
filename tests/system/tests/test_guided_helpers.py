@@ -58,6 +58,11 @@ class TestHostFromEnv:
         env = {REAL_AGENT_HOST_ENV: "pi@10.0.0.5:22"}
         assert host_from_env(REAL_AGENT_HOST_ENV, environ=env) == HostSpec("pi", "10.0.0.5")
 
+    def test_default_port_applies_when_spec_has_none(self):
+        env = {REAL_AGENT_HOST_ENV: "me@winhost"}
+        spec = host_from_env(REAL_AGENT_HOST_ENV, environ=env, default_port=3389)
+        assert spec == HostSpec("me", "winhost", 3389)
+
     def test_skip_reason_names_variable_and_example(self):
         reason = missing_env_reason("X_HOST", "me@h:22", "a real host")
         assert "X_HOST=me@h:22" in reason and "a real host" in reason
