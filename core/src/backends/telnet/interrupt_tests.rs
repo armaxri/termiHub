@@ -111,30 +111,56 @@ async fn interrupt_io_frees_a_socket_whose_write_is_parked() {
 
     // Every platform: the peer sees the connection end (EOF or reset) after
     // draining whatever was already in flight.
+    let interrupted_at = Instant::now();
     peer.set_read_timeout(Some(CEILING)).expect("peer timeout");
     let mut buf = vec![0u8; 256 * 1024];
     let deadline = Instant::now() + CEILING;
+    let mut drained: u64 = 0;
+    let mut reads: u64 = 0;
+    let mut slowest = Duration::ZERO;
+    let diag = |drained: u64, reads: u64, slowest: Duration, end: &str| {
+        format!(
+            "peer never saw the socket close ({end}): writer wrote {} B before parking, \
+             peer drained {drained} B in {reads} reads over {:?}, slowest read {slowest:?}, \
+             writer finished: {:?}",
+            written.load(Ordering::SeqCst),
+            interrupted_at.elapsed(),
+            done_rx.try_recv().map(|r| r.map_err(|e| e.to_string())),
+        )
+    };
     loop {
-        match peer.read(&mut buf) {
+        let started = Instant::now();
+        let read = peer.read(&mut buf);
+        slowest = slowest.max(started.elapsed());
+        match read {
             Ok(0) => break,
-            Ok(_) => {}
+            Ok(n) => {
+                drained += n as u64;
+                reads += 1;
+            }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => {
-                assert_ne!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock,
-                    "peer never saw the socket close"
-                );
-                assert_ne!(
-                    e.kind(),
-                    std::io::ErrorKind::TimedOut,
-                    "peer never saw the socket close"
+                assert!(
+                    !matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ),
+                    "{}",
+                    diag(drained, reads, slowest, &format!("read error {e}"))
                 );
                 break;
             }
         }
-        assert!(Instant::now() < deadline, "peer never saw the socket close");
+        assert!(
+            Instant::now() < deadline,
+            "{}",
+            diag(drained, reads, slowest, "deadline")
+        );
     }
+    eprintln!(
+        "peer drained {drained} B in {reads} reads over {:?} (slowest {slowest:?})",
+        interrupted_at.elapsed()
+    );
 
     #[cfg(not(unix))]
     {
