@@ -44,6 +44,18 @@ fn tunnelled_vnc() -> SavedConnection {
     )
 }
 
+/// An RDP connection through its SSH tunnel (#4865): the same `sshPassword`
+/// field secret as the tunnelled VNC connection.
+fn tunnelled_rdp() -> SavedConnection {
+    conn(
+        "Win",
+        "rdp",
+        json!({ "host": "win", "port": 3389, "username": "me", "useSshTunnel": true,
+                "sshHost": "gw", "sshUsername": "ops", "sshAuthMethod": "password",
+                "sshPassword": GATEWAY }),
+    )
+}
+
 fn jump_ssh() -> SavedConnection {
     conn(
         "Target",
@@ -399,4 +411,41 @@ fn listing_field_secret_names_from_a_locked_store_fails() {
         .clear_field_secrets("Desk", None, &["sshPassword".into()], &[])
         .is_err());
     assert!(store.snapshot().is_empty());
+}
+
+/// #4865: a tunnelled RDP connection's gateway password goes to the credential
+/// store, never the connection file, an export or a backup, and comes back at
+/// connect time — exactly like VNC's.
+#[test]
+fn a_tunnelled_rdp_connections_ssh_password_is_a_field_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::default());
+    let mgr = manager(dir.path(), &store);
+
+    let id = mgr.save_connection(tunnelled_rdp()).unwrap();
+    assert_no_secret(&read(dir.path(), "connections.json"), "connections.json");
+    let stored = secret_fields::read_field_secrets(&*store, &id).unwrap();
+    assert_eq!(
+        stored.fields.get("sshPassword").map(String::as_str),
+        Some(GATEWAY)
+    );
+
+    assert_no_secret(&mgr.export_encrypted_json(None, None).unwrap(), "export");
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&read(dir.path(), "connections.json")).unwrap();
+    doc["children"][0]["config"]["config"]["sshPassword"] = json!(GATEWAY);
+    crate::backup::sections::strip_connection_passwords(&mut doc);
+    assert_no_secret(&doc.to_string(), "backup");
+
+    let rdp = mgr
+        .get_all()
+        .unwrap()
+        .connections
+        .into_iter()
+        .find(|c| c.id == id)
+        .unwrap();
+    let mut settings = rdp.config.settings.clone();
+    assert!(settings.get("sshPassword").is_none());
+    mgr.restore_saved_secrets(&mut settings, &id);
+    assert_eq!(settings["sshPassword"], GATEWAY);
 }
