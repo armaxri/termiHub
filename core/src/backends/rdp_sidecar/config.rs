@@ -1388,19 +1388,31 @@ mod tests {
     }
 
     /// #4865: the SSH-tunnel rows are not part of `RdpConfig`, so the gateway
-    /// password can never ride the sidecar's connect payload.
+    /// password can never ride the sidecar's connect payload — nor the tunnel
+    /// proxy's host, user or password (#4887).
     #[test]
     fn ssh_tunnel_rows_never_reach_the_sidecar_payload() {
         let cfg = RdpConfig::from_settings(serde_json::json!({
             "host": "desk", "useSshTunnel": true, "sshHost": "bastion",
             "sshUsername": "arne", "sshPassword": "gateway-secret",
             "sshKeyPath": "~/.ssh/id",
+            "sshProxyType": "socks5", "sshProxyHost": "proxy.corp",
+            "sshProxyPort": 1080, "sshProxyUsername": "proxy-user",
+            "sshProxyPassword": "proxy-secret",
         }))
         .unwrap();
         let wire = serde_json::to_string(&cfg).unwrap();
-        assert!(!wire.contains("gateway-secret"), "{wire}");
-        assert!(!wire.contains("bastion"), "{wire}");
-        assert!(!wire.contains("sshKeyPath"), "{wire}");
+        for leaked in [
+            "gateway-secret",
+            "bastion",
+            "sshKeyPath",
+            "proxy-secret",
+            "proxy.corp",
+            "proxy-user",
+            "sshProxy",
+        ] {
+            assert!(!wire.contains(leaked), "{leaked}: {wire}");
+        }
     }
 
     #[test]

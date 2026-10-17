@@ -26,6 +26,9 @@ pub mod graphical_resolution;
 pub mod graphical_ssh_tunnel;
 pub mod lifecycle;
 pub mod plugin_type_id;
+// Outbound proxy rows: the SSH backend's Proxy group and the graphical SSH
+// tunnel's proxy rows (#4867, #4887). Feature-free like the tunnel group.
+pub mod proxy_settings;
 pub mod registry;
 pub mod save_password;
 pub mod schema;

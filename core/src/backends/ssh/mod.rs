@@ -23,7 +23,6 @@ mod monitoring;
 mod process;
 mod prompt_clock;
 pub mod proxy;
-pub mod proxy_settings;
 pub mod remote_shell;
 pub mod session_pool;
 pub mod sftp;
@@ -293,7 +292,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         keepalive_max_count: opt_u32("keepaliveMaxCount"),
         proxy_jump,
         forward_agent: bool_field("forwardAgent", false),
-        proxy: proxy_settings::parse_proxy_settings(settings),
+        proxy: crate::connection::proxy_settings::parse_proxy_settings(settings),
     }
 }
 
@@ -706,7 +705,7 @@ impl ConnectionType for Ssh {
                         },
                     ],
                 },
-                proxy_settings::proxy_settings_group(),
+                crate::connection::proxy_settings::proxy_settings_group(),
             ],
         }
     }

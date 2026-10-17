@@ -18,7 +18,9 @@ use crate::connection::graphical_resolution::{
     normalize_fixed_size, server_resolution_fields, DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH,
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
 };
-use crate::connection::graphical_ssh_tunnel::{ssh_tunnel_group, SshTunnelSettings};
+use crate::connection::graphical_ssh_tunnel::{
+    ssh_tunnel_group, SshTunnelProxy, SshTunnelSettings,
+};
 use crate::connection::schema::{
     Condition, FieldType, FilePathKind, NoticeSeverity, SelectOption, SettingsField, SettingsGroup,
 };
@@ -116,6 +118,9 @@ pub struct VncConfig {
     /// SSH gateway password. Doubles as the private-key passphrase when the auth
     /// method is `"key"`; ignored for `"agent"`.
     pub ssh_password: String,
+    /// Outbound proxy for the SSH tunnel's SSH hop (`sshProxy*` rows, #4887).
+    #[serde(flatten)]
+    pub ssh_proxy: SshTunnelProxy,
     /// Allow file transfer over the connection's side channel — SFTP on the SSH
     /// tunnel's session, or the hosting agent's file service (#3770, #4191).
     /// Off by default; never honoured in view-only sessions.
@@ -170,6 +175,7 @@ impl Default for VncConfig {
             ssh_auth_method: "password".to_string(),
             ssh_key_path: None,
             ssh_password: String::new(),
+            ssh_proxy: SshTunnelProxy::default(),
             file_transfer: false,
             file_transfer_dir: None,
             monitors: MONITORS_SINGLE.to_string(),
@@ -286,6 +292,7 @@ impl VncConfig {
             ssh_auth_method: self.ssh_auth_method.clone(),
             ssh_key_path: self.ssh_key_path.clone(),
             ssh_password: self.ssh_password.clone(),
+            ssh_proxy: self.ssh_proxy.clone(),
         }
     }
 
@@ -1398,6 +1405,31 @@ mod tests {
         assert_eq!(ssh.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
         // The password field carries the key passphrase for "key" auth.
         assert_eq!(ssh.password.as_deref(), Some("secret-passphrase"));
+    }
+
+    #[test]
+    fn tunnel_proxy_rows_reach_the_ssh_config() {
+        // #4887: the SSH hop of the tunnel can go through a proxy.
+        let cfg = VncConfig::from_settings(serde_json::json!({
+            "host": "h",
+            "useSshTunnel": true,
+            "sshHost": "bastion",
+            "sshProxyType": "http",
+            "sshProxyHost": "proxy.corp",
+            "sshProxyPort": 3128,
+            "sshProxyUsername": "alice",
+            "sshProxyPassword": "proxy-pw",
+        }))
+        .unwrap();
+        let proxy = cfg.tunnel_ssh_config().proxy.expect("proxy");
+        assert_eq!(proxy.proxy_type, crate::config::SshProxyType::Http);
+        assert_eq!(proxy.host, "proxy.corp");
+        assert_eq!(proxy.port, 3128);
+        assert_eq!(proxy.username.as_deref(), Some("alice"));
+        assert_eq!(proxy.password.as_deref(), Some("proxy-pw"));
+        assert!(!format!("{cfg:?}").contains("proxy-pw"));
+        // Without proxy rows the tunnel dials directly.
+        assert!(VncConfig::default().tunnel_ssh_config().proxy.is_none());
     }
 
     #[test]
