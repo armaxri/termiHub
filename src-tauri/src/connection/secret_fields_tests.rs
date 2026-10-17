@@ -13,7 +13,9 @@ fn every_builtin_secret_field_is_classified() {
     let registry = crate::session::registry::build_desktop_registry();
     for info in registry.available_types() {
         let expected: &[&str] = match info.type_id.as_str() {
-            "ssh" | "telnet" | "ftp" | "rdp" | "mock-remote-desktop" => &["password"],
+            // The SSH outbound-proxy password (#4867).
+            "ssh" => &["password", "proxyPassword"],
+            "telnet" | "ftp" | "rdp" | "mock-remote-desktop" => &["password"],
             "vnc" => &["password", "sshPassword"],
             _ => &[],
         };
@@ -46,7 +48,8 @@ fn a_plugin_declared_secret_is_classified() {
         vec![
             "apiToken".to_string(),
             "pin".to_string(),
-            "sshPassword".to_string()
+            "sshPassword".to_string(),
+            "proxyPassword".to_string()
         ]
     );
 }
@@ -55,7 +58,11 @@ fn a_plugin_declared_secret_is_classified() {
 fn an_unknown_type_falls_back_to_the_builtin_secret_keys() {
     assert_eq!(
         secret_keys_for("plugin:not-installed:x"),
-        vec!["password".to_string(), "sshPassword".to_string()]
+        vec![
+            "password".to_string(),
+            "sshPassword".to_string(),
+            "proxyPassword".to_string()
+        ]
     );
 }
 
@@ -123,14 +130,19 @@ fn only_connections_that_can_own_field_secrets_touch_the_store() {
         "ssh",
         &json!({ "proxyJump": [{ "host": "gw" }] })
     ));
-    assert!(!may_have_field_secrets(
+    // Every SSH connection can own an outbound-proxy password (#4867).
+    assert!(may_have_field_secrets(
         "ssh",
+        &json!({ "host": "h", "authMethod": "key" })
+    ));
+    assert!(!may_have_field_secrets(
+        "telnet",
         &json!({ "proxyJump": [{ "connectionId": "saved" }] })
     ));
     assert!(!may_have_field_secrets("local", &json!({ "shell": "zsh" })));
     assert!(!may_have_field_secrets(
-        "ssh",
-        &json!({ "host": "h", "authMethod": "key" })
+        "telnet",
+        &json!({ "host": "h", "port": 23 })
     ));
 }
 
