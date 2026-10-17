@@ -492,4 +492,51 @@ mod tests {
         assert!(crate::connection::secrets::is_secret_field(&fields[4]));
         assert_eq!(fields[4].key, "sshProxyPassword");
     }
+
+    #[test]
+    fn direct_proxy_reads_only_the_flat_rows() {
+        let p: DirectProxy = serde_json::from_value(json!({
+            "proxyType": "socks5", "proxyHost": "direct", "proxyPassword": "pw",
+            "sshProxyType": "http", "sshProxyHost": "tunnel",
+        }))
+        .expect("parse");
+        let p = p.0.expect("proxy");
+        assert_eq!(p.host, "direct");
+        assert_eq!(p.password.as_deref(), Some("pw"));
+        // The SSH type's nested serialized shape is not a direct proxy.
+        let nested: DirectProxy =
+            serde_json::from_value(json!({"proxy": {"type": "socks5", "host": "n", "port": 1}}))
+                .expect("parse");
+        assert_eq!(nested, DirectProxy(None));
+    }
+
+    #[test]
+    fn direct_proxy_group_needs_the_tunnel_off() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let group = direct_proxy_group("VNC");
+        assert!(group.collapsed);
+        assert_eq!(group.key, "proxy");
+        let description = group.fields[0].description.as_deref().unwrap_or("");
+        assert!(description.contains("VNC server"), "{description}");
+        let visible = |settings: serde_json::Value| -> usize {
+            let settings = settings.as_object().expect("object").clone();
+            group
+                .fields
+                .iter()
+                .filter(|f| is_field_visible(f, &settings))
+                .count()
+        };
+        assert_eq!(visible(json!({"proxyType": "http"})), 5);
+        assert_eq!(
+            visible(json!({"useSshTunnel": false, "proxyType": "http"})),
+            5
+        );
+        assert_eq!(
+            visible(json!({"useSshTunnel": true, "proxyType": "http"})),
+            0
+        );
+        assert!(crate::connection::secrets::is_secret_field(
+            &group.fields[4]
+        ));
+    }
 }
