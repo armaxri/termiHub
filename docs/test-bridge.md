@@ -923,7 +923,7 @@ rendering, terminal I/O, and state — but **not** the native OS input pipeline
 (native drag-and-drop coordinates, IME, real keyboard focus). The real-input
 `tauri-driver` path that once ran on Linux/Windows was retired (#1027), so these
 are gated by hand on every OS: the guided-manual `test_input_routing.py` suite
-and the release-gating
-[`tests/manual/native-input.yaml`](../tests/manual/native-input.yaml) matrix.
+and the release-gating guided-manual
+[`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py) matrix.
 See [testing.md → Native input the bridge cannot drive](testing.md#native-input-the-bridge-cannot-drive-tin-017-3764)
 for the coverage and why reviving `tauri-driver` would not close the gap.

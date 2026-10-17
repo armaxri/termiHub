@@ -976,7 +976,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 See the [Manual Testing section in testing.md](testing.md#manual-testing) for the full checklist.
 
-Adding or deleting an item in `tests/manual/*.yaml` needs no doc update: the per-category counts are deliberately not committed anywhere (#4070), so test-automation PRs never conflict on them. View them with `python3 scripts/manual-inventory.py`; CI (`--check`) validates the corpus, publishes the table as a job summary, and fails if a doc reintroduces a committed count block.
+Manual tests are guided-manual pytests (`@pytest.mark.manual` in `tests/system/tests/`); the YAML corpus was retired in #919. Adding or deleting one needs no doc update: counts are deliberately not committed anywhere (#4070), so test-automation PRs never conflict on them. List them with `./pytest.sh --collect-only -q -m manual` from `tests/system/`.
 
 For UI changes, test at minimum:
 

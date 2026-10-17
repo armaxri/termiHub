@@ -372,117 +372,71 @@ echo "Raspi: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
 
 ### Strategy
 
-Use the existing manual test runner with its **resume capability** to
-spread testing across multiple sessions and machines.
+Every manual test is a guided-manual pytest (`@pytest.mark.manual`) in the
+Python harness; the harness sets the app up and asks only for the human step.
+Each run writes a sign-off report to `tests/reports/manual-*.{json,md}`, so
+testing spreads across sessions and machines one suite at a time.
 
 ### 5.1 Session Planning
 
 The manual gate is the **Release-gating manual checklist** in
-[`docs/testing.md`](testing.md#release-gating-manual-checklist): the
-guided-manual harness suites plus the `tests/manual/*.yaml` corpus. Each
-corpus item is either genuinely manual (`release_gate: true`) or pending
-automation (`automation_issue`, walked manually until its issue lands). The
-per-category counts are not committed here (#4070) — every test-automation PR
-would otherwise rewrite the same total row and conflict with the next. Print the
-current inventory as a Markdown table, or as a plain terminal listing:
+[`docs/testing.md`](testing.md#release-gating-manual-checklist): one list of
+guided-manual suites (the YAML corpus was retired in #919). Counts are not
+committed here (#4070) — every test-automation PR would otherwise rewrite the
+same total row and conflict with the next. List the current tests with:
 
 ```bash
-python3 scripts/manual-inventory.py
-python scripts/test-manual.py --inventory
+(cd tests/system && ./pytest.sh --collect-only -q -m manual)
 ```
 
-CI also renders the table into the **Manual-test inventory** job summary of the
-_Frontend Code Quality_ job.
+Platform-scoped tests run only on their OS, so a Windows session sees fewer
+tests than a full listing. Run the suites per machine with
+`./scripts/run-guided-manual.sh -k <suite>` (one command: it starts Docker,
+builds if stale and tees a transcript):
 
-Note: `--category` filtering also honours each test's `platforms:` field, so a
-per-platform run (e.g. Windows) sees fewer than the corpus totals. The
-sessions below split the corpus across machines (they were planned against the
-pre-triage 166 tests; categories that are now empty simply finish early) so each category is covered
-once, with a final Windows pass re-running the platform-sensitive subset.
-
-#### Session 1: Mac — Core UI, Local Shell & Tabs (~4 h)
+#### Session 1: Mac — look and feel, native input, macOS app paths (~4 h)
 
 ```bash
-python scripts/test-manual.py \
-  --category ui-layout \
-  --category tab-management \
-  --category keyboard \
-  --category local-shell
-# Tests: MT-UI-*, MT-TAB-*, MT-KB-*, MT-LOCAL-*
-# Count: 28 + 13 + 14 + 4 = 59 tests
+./scripts/run-guided-manual.sh -k "visual_rendering or guided_look_and_feel"
+./scripts/run-guided-manual.sh -k "input_routing or guided_native_input"
+./scripts/run-guided-manual.sh -k "guided_app_os or guided_credentials"
 ```
 
-**How to stop**: Press `Ctrl+C` at any prompt. The runner saves progress
-to a JSON report file in `tests/reports/`.
+**How to stop**: answer `s` to skip a step or press `Ctrl+C`; re-run the
+same command (narrow it with `-k <test name>`) to pick up where you stopped.
+Each run's report lands in `tests/reports/`.
 
-**How to resume**:
+#### Session 2: Mac or Linux — external apps, shells, SSH and network tools (~2.5 h)
+
+Needs Docker for the SSH / X11 fixtures (the starter script starts it).
 
 ```bash
-python scripts/test-manual.py --resume tests/reports/manual-<timestamp>.json
+./scripts/run-guided-manual.sh -k "external_app or guided_shells_and_tools"
 ```
 
-#### Session 2: Mac — Connections, Files, Credentials & Portable (~2.5 h)
+#### Session 3: real hardware and remote hosts (~3 h)
+
+A USB-serial adapter with TX and RX bridged, a Raspberry Pi or Windows
+notebook, and a Windows host with Docker Desktop and RDP:
 
 ```bash
-python scripts/test-manual.py \
-  --category connection-management \
-  --category credential-store \
-  --category portable-mode
-# Tests: MT-CONN-*, MT-CRED-*, MT-PORT-*
-# Count: 12 + 4 + 4 = 20 tests
+export TERMIHUB_SERIAL_DEVICE=/dev/ttyUSB0
+export TERMIHUB_REAL_AGENT_HOST=pi@raspberrypi.local:22
+export TERMIHUB_WINDOWS_AGENT_HOST=me@winbox:22
+export TERMIHUB_RDP_HOST='CORP\alice@winbox:3389'
+./scripts/run-guided-manual.sh -k "real_hardware or guided_remote_desktop"
 ```
 
-#### Session 3: WSL or Mac — SSH, Remote Agent & Serial (~4 h)
+#### Session 4: Linux desktop (~1.5 h)
 
-Requires Docker containers running for SSH targets. WSL is preferred
-over the Linux tower for this session — WSLg provides a proper GUI
-for interactive testing, and WSL can SSH to the Raspi directly.
-
-```bash
-# Run inside WSL
-# Start test infrastructure
-cd tests/docker && docker compose up -d && cd ../..
-
-python scripts/test-manual.py \
-  --category ssh \
-  --category remote-agent \
-  --category serial
-# Tests: MT-SSH-*, MT-AGENT-*, MT-SER-*
-# Count: 24 + 25 + 11 = 60 tests
-```
-
-**After testing**:
-
-```bash
-cd tests/docker && docker compose down
-```
-
-#### Session 4: Mac or WSL — Network Services & Tools (~1.5 h)
-
-Also needs the Docker test infrastructure (embedded-server targets).
-
-```bash
-python scripts/test-manual.py \
-  --category network-tools \
-  --category embedded-services
-# Tests: MT-NET-*, MT-SVC-*
-# Count: 13 + 3 = 16 tests
-```
+Repeat Sessions 1–2 on a Linux desktop; the Linux-scoped tests (Wayland /
+X11 drops, IME, polkit, Secret Service, file-manager menus) run only here.
 
 #### Session 5: Windows — Cross-Platform Verification (~1.5 h)
 
-Run the cross-platform case plus the platform-sensitive subset on Windows
-to verify Windows-specific behavior (these re-run cases already covered on
-Mac in Sessions 1–2, so they do not add to the 166 unique total):
-
-```bash
-python scripts/test-manual.py \
-  --category cross-platform \
-  --category keyboard \
-  --category local-shell
-# Tests: MT-XPLAT-*, plus Windows-applicable MT-KB-*, MT-LOCAL-*
-# The runner auto-filters each category to the Windows-tagged cases.
-```
+Repeat Sessions 1–2 on Windows; the Windows-scoped tests (Credential Manager,
+Windows Hello, WSL, CMD paint, Git install, Explorer menu, VcXsrv) run only
+here.
 
 Also manually verify these Windows-specific behaviors:
 
@@ -735,14 +689,14 @@ This is a hobby project. Here's how to safely stop and resume at any point.
 
 ### Phase-Specific Resume Instructions
 
-| Phase                         | How to Resume                                                               |
-| ----------------------------- | --------------------------------------------------------------------------- |
-| **Phase 0** (Automation)      | `git checkout release/0.1.0`, continue writing scripts                      |
-| **Phase 1** (Finalization)    | `git checkout release/0.1.0`, pick up where you left off                    |
-| **Phase 2** (Automated tests) | Re-run the test command for the current platform; tests are idempotent      |
-| **Phase 3** (Manual tests)    | `python scripts/test-manual.py --resume tests/reports/manual-<latest>.json` |
-| **Phase 4** (Release)         | If tag not pushed: resume from 6.3. If CI running: check with `gh run list` |
-| **Phase 5** (Post-release)    | Download artifacts and continue smoke testing                               |
+| Phase                         | How to Resume                                                                     |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| **Phase 0** (Automation)      | `git checkout release/0.1.0`, continue writing scripts                            |
+| **Phase 1** (Finalization)    | `git checkout release/0.1.0`, pick up where you left off                          |
+| **Phase 2** (Automated tests) | Re-run the test command for the current platform; tests are idempotent            |
+| **Phase 3** (Manual tests)    | Re-run the next unfinished suite with `./scripts/run-guided-manual.sh -k <suite>` |
+| **Phase 4** (Release)         | If tag not pushed: resume from 6.3. If CI running: check with `gh run list`       |
+| **Phase 5** (Post-release)    | Download artifacts and continue smoke testing                                     |
 
 ### Time Boxing
 
