@@ -154,8 +154,10 @@ fn routed_target_port(type_id: &str, settings: &Value) -> Result<u16, String> {
 
 /// The settings the desktop backend dials with once the forward is up: the
 /// target becomes `127.0.0.1:<local_port>`, the agent route and VNC display are
-/// dropped (the local port is already the resolved one), and a VNC connection
-/// keeps verifying its TLS certificate against the real server name.
+/// dropped (the local port is already the resolved one), and a VNC or RDP
+/// connection keeps naming the real server: VNC verifies its TLS certificate
+/// against it, and RDP presents it for TLS SNI and the CredSSP service
+/// principal (`TERMSRV/<host>`, #4885) so Kerberos-based NLA still works.
 pub fn rewrite_for_forward(type_id: &str, settings: &Value, local_port: u16) -> Value {
     let mut dial = settings.clone();
     if let Some(map) = dial.as_object_mut() {
@@ -164,7 +166,7 @@ pub fn rewrite_for_forward(type_id: &str, settings: &Value, local_port: u16) -> 
         map.remove("display");
         map.insert("host".to_string(), Value::String("127.0.0.1".to_string()));
         map.insert("port".to_string(), Value::from(local_port));
-        if type_id == "vnc" && !map.contains_key("tlsServerName") {
+        if matches!(type_id, "vnc" | "rdp") && !map.contains_key("tlsServerName") {
             if let Some(host) = original_host {
                 map.insert("tlsServerName".to_string(), host);
             }

@@ -150,10 +150,32 @@ fn rewrite_dials_loopback_and_keeps_the_vnc_tls_name() {
     assert_eq!(dial["password"], "p");
     assert!(dial.get("agentId").is_none());
     assert!(dial.get("display").is_none());
+}
 
-    let rdp = rewrite_for_forward("rdp", &json!({ "agentId": "a", "host": "win" }), 40124);
+#[test]
+fn rewrite_dials_loopback_and_keeps_the_rdp_tls_name() {
+    let rdp = rewrite_for_forward(
+        "rdp",
+        &json!({ "agentId": "a", "host": "win.corp", "port": 3389, "username": "u" }),
+        40124,
+    );
     assert_eq!(rdp["host"], "127.0.0.1");
-    assert!(rdp.get("tlsServerName").is_none());
+    assert_eq!(rdp["port"], 40124);
+    assert_eq!(rdp["tlsServerName"], "win.corp");
+    assert_eq!(rdp["username"], "u");
+    assert!(rdp.get("agentId").is_none());
+
+    // An explicit server name is kept, not overwritten by the host.
+    let explicit = rewrite_for_forward(
+        "rdp",
+        &json!({ "agentId": "a", "host": "10.0.0.5", "tlsServerName": "win.corp" }),
+        40125,
+    );
+    assert_eq!(explicit["tlsServerName"], "win.corp");
+
+    // Other types never gain a server name.
+    let other = rewrite_for_forward("telnet", &json!({ "agentId": "a", "host": "h" }), 40126);
+    assert!(other.get("tlsServerName").is_none());
 }
 
 #[test]
