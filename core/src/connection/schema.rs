@@ -102,9 +102,16 @@ pub struct SettingsField {
 ///   comparison with both hosts seen from this computer, by
 ///   [`is_same_named_host`](crate::connection::graphical_files::is_same_named_host)
 ///   (#4194): a loopback name is this computer, never the other host.
+/// - [`negate`](Condition::negate) inverts the primary test (the `equals`
+///   comparison or the host comparison), so a field can be shown when another
+///   field is *not* a value, e.g. the proxy rows when Proxy Type is not
+///   `none` (#4888).
 /// - [`all_of`](Condition::all_of) adds conditions that must all hold too.
 /// - [`any_of`](Condition::any_of) adds conditions of which at least one must
 ///   hold (ignored when empty).
+///
+/// Every extension is optional and omitted from the serialized form when
+/// unset, so a schema written before it existed reads and writes unchanged.
 ///
 /// Every condition is evaluated by `schema_defaults::is_field_visible` in core
 /// and by its TypeScript mirror `isFieldVisible` in `src/utils/schemaDefaults.ts`;
@@ -138,6 +145,14 @@ pub struct Condition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub same_name_as: Option<String>,
+    /// Invert the primary test: the field is visible when `field` does *not*
+    /// equal `equals` (or the host comparison does not give `equals`). A
+    /// missing `field` never equals `equals`, so a negated test on it holds.
+    /// The [`all_of`](Condition::all_of) and [`any_of`](Condition::any_of)
+    /// sub-conditions are not inverted (#4888).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(optional, as = "Option<bool>"))]
+    pub negate: bool,
     /// Further conditions that must all hold as well.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<Condition>>", optional))]
@@ -493,6 +508,26 @@ mod tests {
             FieldType::SavedConnection { ref connection_type, match_host_field: None }
                 if connection_type == "ssh"
         ));
+    }
+
+    #[test]
+    fn condition_negate_round_trips_and_is_omitted_when_false() {
+        let cond = Condition {
+            field: "proxyType".to_string(),
+            equals: serde_json::json!("none"),
+            negate: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cond).unwrap();
+        assert_eq!(json["negate"], true);
+        let back: Condition = serde_json::from_value(json).unwrap();
+        assert!(back.negate);
+        // The pre-#4888 form has no `negate` key and reads as not negated.
+        let old: Condition =
+            serde_json::from_value(serde_json::json!({"field": "a", "equals": 1})).unwrap();
+        assert!(!old.negate);
+        let plain = serde_json::to_value(Condition::default()).unwrap();
+        assert!(plain.get("negate").is_none());
     }
 
     #[test]

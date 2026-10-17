@@ -76,6 +76,74 @@ const PLUGIN: SettingsSchema = {
   ],
 } as unknown as SettingsSchema;
 
+/** The SSH Proxy group (#4867): no auth select, a user and a password (#4888). */
+const notNone = { field: "proxyType", equals: "none", negate: true };
+const PROXY: SettingsSchema = {
+  groups: [
+    {
+      key: "connection",
+      label: "Connection",
+      fields: [
+        { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+        { key: "username", label: "Username", fieldType: { type: "text" }, required: false },
+      ],
+    },
+    {
+      key: "proxy",
+      label: "Proxy",
+      fields: [
+        {
+          key: "proxyType",
+          label: "Proxy Type",
+          fieldType: {
+            type: "select",
+            options: [
+              { value: "none", label: "None (direct)" },
+              { value: "socks5", label: "SOCKS5" },
+              { value: "socks4", label: "SOCKS4 / SOCKS4a" },
+              { value: "http", label: "HTTP (CONNECT)" },
+            ],
+          },
+          required: false,
+          default: "none",
+        },
+        {
+          key: "proxyHost",
+          label: "Proxy Host",
+          fieldType: { type: "text" },
+          required: false,
+          visibleWhen: notNone,
+        },
+        {
+          key: "proxyUsername",
+          label: "Proxy User",
+          fieldType: { type: "text" },
+          required: false,
+          visibleWhen: notNone,
+        },
+        {
+          key: "proxyPassword",
+          label: "Proxy Password",
+          fieldType: { type: "password" },
+          required: false,
+          visibleWhen: {
+            ...notNone,
+            allOf: [{ field: "proxyType", equals: "socks4", negate: true }],
+          },
+        },
+      ],
+    },
+  ],
+} as unknown as SettingsSchema;
+
+const VIA_PROXY = {
+  host: "server",
+  username: "me",
+  proxyType: "socks5",
+  proxyHost: "proxy.corp",
+  proxyUsername: "alice",
+};
+
 const TUNNEL = {
   host: "desk",
   username: "me",
@@ -102,6 +170,25 @@ describe("neededFieldSecrets", () => {
     expect(neededFieldSecrets(VNC, { ...TUNNEL, sshAuthMethod: "key" })).toEqual([]);
     expect(neededFieldSecrets(VNC, { ...TUNNEL, useSshTunnel: false })).toEqual([]);
     expect(neededFieldSecrets(VNC, { ...TUNNEL, sshPassword: "typed" })).toEqual([]);
+  });
+
+  it("needs the proxy password when a SOCKS5 or HTTP proxy has a user (#4888)", () => {
+    const slot = { kind: "field", key: "proxyPassword", label: "Proxy Password" };
+    expect(neededFieldSecrets(PROXY, VIA_PROXY)).toEqual([slot]);
+    expect(neededFieldSecrets(PROXY, { ...VIA_PROXY, proxyType: "http" })).toEqual([slot]);
+  });
+
+  it("does not need the proxy password without a user, a proxy, or for SOCKS4", () => {
+    expect(neededFieldSecrets(PROXY, { ...VIA_PROXY, proxyUsername: "" })).toEqual([]);
+    expect(neededFieldSecrets(PROXY, { ...VIA_PROXY, proxyUsername: "  " })).toEqual([]);
+    expect(neededFieldSecrets(PROXY, { ...VIA_PROXY, proxyType: "none" })).toEqual([]);
+    expect(neededFieldSecrets(PROXY, { ...VIA_PROXY, proxyType: "socks4" })).toEqual([]);
+    expect(neededFieldSecrets(PROXY, { ...VIA_PROXY, proxyPassword: "typed" })).toEqual([]);
+  });
+
+  it("keeps the auth select in charge where a group has one", () => {
+    // The tunnel user is set, but key auth means no password is needed.
+    expect(neededFieldSecrets(VNC, { ...TUNNEL, sshAuthMethod: "key" })).toEqual([]);
   });
 
   it("needs a required plugin secret but not an optional one", () => {
@@ -185,6 +272,36 @@ describe("resolveFieldSecrets", () => {
     );
     expect(mockedResolve).not.toHaveBeenCalled();
     expect(mockedStore).not.toHaveBeenCalled();
+  });
+
+  it("prompts for a missing proxy password with the proxy's host and user and saves it", async () => {
+    setStore("os_keychain", "unlocked");
+    requestPassword.mockResolvedValue({ password: "proxy-pw", shouldSave: true });
+    const r = await resolveFieldSecrets(opts({ schema: PROXY, settings: VIA_PROXY }));
+    expect(r).toEqual({
+      status: "resolved",
+      settings: { ...VIA_PROXY, proxyPassword: "proxy-pw" },
+    });
+    expect(requestPassword).toHaveBeenCalledWith(
+      "proxy.corp",
+      "alice",
+      expect.stringContaining("Proxy Password"),
+      "password",
+      { allowSave: true }
+    );
+    expect(mockedStore).toHaveBeenCalledWith(
+      "Desk",
+      { fields: { proxyPassword: "proxy-pw" } },
+      null
+    );
+  });
+
+  it("uses a stored proxy password without prompting", async () => {
+    setStore("os_keychain", "unlocked");
+    mockedResolve.mockResolvedValue({ fields: { proxyPassword: "stored" } });
+    const r = await resolveFieldSecrets(opts({ schema: PROXY, settings: VIA_PROXY }));
+    expect(r).toEqual({ status: "resolved", settings: { ...VIA_PROXY, proxyPassword: "stored" } });
+    expect(requestPassword).not.toHaveBeenCalled();
   });
 
   it("with a locked store asks to unlock first, then uses the stored secret", async () => {
