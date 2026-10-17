@@ -15,6 +15,18 @@ use std::time::Instant;
 /// Upper bound for one wait. Conditions usually hold within milliseconds.
 const CEILING: Duration = Duration::from_secs(20);
 
+/// Upper bound for the peer to see the close and for the writer to return.
+///
+/// Unix aborts the parked `send` at once. Windows does not promise to, and
+/// `interrupt_io` documents that `WRITE_TIMEOUT` bounds the write there
+/// instead, so a Windows run may legitimately take up to that long. A
+/// shorter bound than the product's own asserts a stronger guarantee than
+/// the code makes, and flaked on a loaded Windows runner (#4901).
+#[cfg(unix)]
+const CLOSE_CEILING: Duration = CEILING;
+#[cfg(not(unix))]
+const CLOSE_CEILING: Duration = WRITE_TIMEOUT.saturating_add(CEILING);
+
 /// How long the written-byte counter must stay flat before the writer is
 /// considered parked inside `write`.
 const PARKED_FOR: Duration = Duration::from_millis(300);
@@ -112,9 +124,10 @@ async fn interrupt_io_frees_a_socket_whose_write_is_parked() {
     // Every platform: the peer sees the connection end (EOF or reset) after
     // draining whatever was already in flight.
     let interrupted_at = Instant::now();
-    peer.set_read_timeout(Some(CEILING)).expect("peer timeout");
+    peer.set_read_timeout(Some(CLOSE_CEILING))
+        .expect("peer timeout");
     let mut buf = vec![0u8; 256 * 1024];
-    let deadline = Instant::now() + CEILING;
+    let deadline = Instant::now() + CLOSE_CEILING;
     let mut drained: u64 = 0;
     let mut reads: u64 = 0;
     let mut slowest = Duration::ZERO;
@@ -165,7 +178,7 @@ async fn interrupt_io_frees_a_socket_whose_write_is_parked() {
     #[cfg(not(unix))]
     {
         let result = done_rx
-            .recv_timeout(CEILING)
+            .recv_timeout(CLOSE_CEILING)
             .expect("the write must return once the socket is shut down");
         assert!(result.is_err(), "the interrupted write reports an error");
     }
