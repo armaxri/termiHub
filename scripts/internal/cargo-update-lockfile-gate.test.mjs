@@ -1,8 +1,9 @@
 // Structural guard for the daily lockfile chore's pre-PR gate (#3755, #4465).
 //
-// .github/workflows/cargo-update-lockfile.yml pushes its PR with GITHUB_TOKEN,
-// and pushes made with GITHUB_TOKEN trigger no workflows: the PR carries no
-// check runs, so "auto-merge once CI is green" merges it at once. That is how
+// Without a dedicated token (#4469), .github/workflows/cargo-update-lockfile.yml
+// pushes its PR with GITHUB_TOKEN, and pushes made with GITHUB_TOKEN trigger no
+// workflows: the PR carries no check runs, so "auto-merge once CI is green"
+// merges it at once. That is how
 // #4460 landed a lockfile that did not compile (primefield 0.14.0 vs the -rc
 // p256/p384/p521 stack) and failed the pre-release tripwire, breaking every
 // Rust build of develop (#4465).
@@ -15,7 +16,10 @@
 //   - the PR step only marks the PR ready / enables auto-merge when the gate
 //     passed, and otherwise opens a draft and disables auto-merge;
 //   - a failed gate turns the job red;
-//   - no step that compiles unreviewed crates can reach the write token.
+//   - no step that compiles unreviewed crates can reach the write token: the
+//     gate runs in a read-only job, and only the separate PR job holds secrets;
+//   - the App token / PAT / GITHUB_TOKEN fallback order, and that the App token
+//     is minted only after the gate, right before the PR step (#4469).
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
@@ -28,28 +32,44 @@ const WORKFLOW = readFileSync(
   "utf8"
 );
 
+/** The text of one top-level job, from its `  <id>:` line to the next job. */
+function jobText(id) {
+  const jobs = WORKFLOW.slice(WORKFLOW.indexOf("\njobs:\n"));
+  const start = jobs.indexOf(`\n  ${id}:\n`);
+  expect(start, `job ${id}`).toBeGreaterThan(-1);
+  const rest = jobs.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+}
+
+/** The gate job: compiles unreviewed crates, must never hold a write token. */
+const GATE_JOB = "cargo-update";
+/** The PR job: holds the write token, must compile nothing. */
+const PR_JOB = "open-pr";
+
 /**
- * Split the single job's `steps:` list into `{ name, text }` chunks. Steps are
- * the `      - name:` items (six-space indent) under `jobs.cargo-update.steps`.
+ * Split a job's `steps:` list into `{ name, text }` chunks. Steps are the
+ * `      - name:` items (six-space indent) under `jobs.<job>.steps`.
  */
-function steps() {
-  const body = WORKFLOW.slice(WORKFLOW.indexOf("    steps:\n"));
+function steps(job = GATE_JOB) {
+  const text = jobText(job);
+  const body = text.slice(text.indexOf("    steps:\n"));
   const chunks = body.split(/^(?= {6}- name: )/m).slice(1);
-  return chunks.map((text) => ({
-    name: text.match(/^ {6}- name: (.+)$/m)[1].trim(),
-    text,
+  return chunks.map((chunk) => ({
+    name: chunk.match(/^ {6}- name: (.+)$/m)[1].trim(),
+    text: chunk,
   }));
 }
 
-/** The one step whose name contains `needle`. */
-function step(needle) {
-  const found = steps().filter((s) => s.name.includes(needle));
-  expect(found, `exactly one step named like "${needle}"`).toHaveLength(1);
+/** The one step in `job` whose name contains `needle`. */
+function step(needle, job = GATE_JOB) {
+  const found = steps(job).filter((s) => s.name.includes(needle));
+  expect(found, `exactly one step named like "${needle}" in ${job}`).toHaveLength(1);
   return found[0];
 }
 
-/** Index of the step whose name contains `needle`. */
-const indexOf = (needle) => steps().findIndex((s) => s.name.includes(needle));
+/** Index of the step in `job` whose name contains `needle`. */
+const indexOf = (needle, job = GATE_JOB) => steps(job).findIndex((s) => s.name.includes(needle));
 
 describe("cargo-update-lockfile.yml pre-PR gate", () => {
   const gate = step("Gate the refreshed lockfile");
@@ -88,8 +108,22 @@ describe("cargo-update-lockfile.yml pre-PR gate", () => {
     expect(indexOf("Run cargo update")).toBeLessThan(g);
     expect(indexOf("Install cargo-deny")).toBeLessThan(g);
     expect(indexOf("Install system dependencies")).toBeLessThan(g);
-    expect(g).toBeLessThan(indexOf("Open or update pull request"));
-    expect(g).toBeLessThan(indexOf("Fail when the refreshed lockfile fails the gate"));
+    expect(g).toBeLessThan(indexOf("Stash the refreshed lockfiles"));
+    expect(g).toBeLessThan(indexOf("Upload the refreshed lockfiles"));
+    // The PR job only starts once the gate job has finished.
+    expect(jobText(PR_JOB)).toMatch(/\n {4}needs: cargo-update\n/);
+  });
+
+  it("hands its verdict and the gated develop commit to the PR job", () => {
+    const outputs = jobText(GATE_JOB);
+    expect(outputs).toContain("base-sha: ${{ steps.base.outputs.sha }}");
+    expect(outputs).toContain("changed: ${{ steps.diff.outputs.changed }}");
+    expect(outputs).toContain("passed: ${{ steps.gate.outputs.passed }}");
+    expect(outputs).toContain("failed: ${{ steps.gate.outputs.failed }}");
+    expect(step("Checkout the gated develop commit", PR_JOB).text).toContain(
+      "ref: ${{ needs.cargo-update.outputs.base-sha }}"
+    );
+    expect(jobText(PR_JOB)).toContain("if: needs.cargo-update.outputs.changed == 'true'");
   });
 });
 
@@ -123,20 +157,24 @@ describe("cargo-update-lockfile.yml refreshes and gates rdp-sidecar/Cargo.lock",
   });
 
   it("commits the sidecar lockfile with the workspace one", () => {
-    expect(step("Open or update pull request").text).toContain(
+    expect(step("Stash the refreshed lockfiles").text).toContain("cp rdp-sidecar/Cargo.lock");
+    expect(step("Apply the refreshed lockfiles", PR_JOB).text).toContain(
+      'rdp-sidecar.Cargo.lock" rdp-sidecar/Cargo.lock'
+    );
+    expect(step("Open or update pull request", PR_JOB).text).toContain(
       "git add Cargo.lock rdp-sidecar/Cargo.lock"
     );
   });
 });
 
 describe("cargo-update-lockfile.yml PR step honours the gate", () => {
-  const pr = step("Open or update pull request");
+  const pr = step("Open or update pull request", PR_JOB);
   const run = pr.text.slice(pr.text.indexOf("run: |"));
 
   it("reads the gate verdict and log", () => {
-    expect(pr.text).toContain("GATE_PASSED: ${{ steps.gate.outputs.passed }}");
-    expect(pr.text).toContain("GATE_FAILED: ${{ steps.gate.outputs.failed }}");
-    expect(pr.text).toContain("GATE_LOG: ${{ runner.temp }}/lockfile-gate.log");
+    expect(pr.text).toContain("GATE_PASSED: ${{ needs.cargo-update.outputs.passed }}");
+    expect(pr.text).toContain("GATE_FAILED: ${{ needs.cargo-update.outputs.failed }}");
+    expect(pr.text).toContain("GATE_LOG: ${{ runner.temp }}/lockfile-pr/lockfile-gate.log");
   });
 
   it("opens a new PR as a draft when the gate failed", () => {
@@ -171,25 +209,120 @@ describe("cargo-update-lockfile.yml PR step honours the gate", () => {
 
 describe("cargo-update-lockfile.yml failure visibility", () => {
   it("fails the job when the gate did not pass", () => {
-    const fail = step("Fail when the refreshed lockfile fails the gate");
-    expect(fail.text).toContain(
-      "if: steps.diff.outputs.changed == 'true' && steps.gate.outputs.passed != 'true'"
-    );
+    const fail = step("Fail when the refreshed lockfile fails the gate", PR_JOB);
+    expect(fail.text).toContain("if: needs.cargo-update.outputs.passed != 'true'");
     expect(fail.text).toMatch(/exit 1/);
+    // Last in the PR job, so the draft PR is opened before the run goes red.
+    expect(indexOf("Fail when the refreshed lockfile fails the gate", PR_JOB)).toBe(
+      steps(PR_JOB).length - 1
+    );
+  });
+
+  it("records the gate verdict instead of failing the gate job", () => {
+    // A red gate job would skip open-pr, and the draft PR would never open.
+    expect(jobText(GATE_JOB)).not.toMatch(/\bexit 1\b/);
   });
 });
 
 describe("cargo-update-lockfile.yml keeps the write token away from the gate", () => {
-  it("does not persist checkout credentials", () => {
+  it("does not persist checkout credentials in either job", () => {
     expect(step("Checkout develop").text).toContain("persist-credentials: false");
+    expect(step("Checkout the gated develop commit", PR_JOB).text).toContain(
+      "persist-credentials: false"
+    );
   });
 
-  it("exposes GITHUB_TOKEN to the PR step only", () => {
-    const holders = steps().filter((s) => s.text.includes("secrets.GITHUB_TOKEN"));
-    expect(holders.map((s) => s.name)).toEqual(["Open or update pull request"]);
-    // Not at job level either: the job env sits between `jobs:` and `steps:`.
-    const job = WORKFLOW.slice(WORKFLOW.indexOf("\njobs:\n"), WORKFLOW.indexOf("    steps:\n"));
-    expect(job).not.toContain("GH_TOKEN");
-    expect(job).not.toContain("secrets.");
+  it("defaults the workflow token to read-only and grants write to the PR job only", () => {
+    expect(WORKFLOW).toMatch(/^permissions:\n {2}contents: read\n\n/m);
+    expect(jobText(GATE_JOB)).not.toMatch(/permissions:|: write/);
+    expect(jobText(PR_JOB)).toMatch(
+      /\n {4}permissions:\n {6}contents: write\n {6}pull-requests: write\n/
+    );
+  });
+
+  it("gives the gate job no secrets and no token", () => {
+    const gateJob = jobText(GATE_JOB);
+    expect(gateJob).not.toContain("secrets.");
+    expect(gateJob).not.toContain("GH_TOKEN");
+    expect(gateJob).not.toContain("github.token");
+  });
+
+  it("compiles nothing and installs no packages in the PR job", () => {
+    const prJob = jobText(PR_JOB);
+    // No toolchain, no dependency install, no build: only git, gh and cp run.
+    expect(prJob).not.toMatch(/^\s*cargo\s/m);
+    expect(prJob).not.toMatch(/setup-rust|rust-cache|apt-get|pnpm|npm (ci|install)|install-action/);
+  });
+
+  it("scopes each secret to the step that needs it", () => {
+    const holders = steps(PR_JOB)
+      .filter((s) => s.text.includes("secrets."))
+      .map((s) => s.name);
+    expect(holders).toEqual(["Mint the lockfile App token", "Open or update pull request"]);
+    expect(step("Mint the lockfile App token", PR_JOB).text).not.toContain("GITHUB_TOKEN");
+    // Not at job level either: the job env sits between the job id and `steps:`.
+    const prJob = jobText(PR_JOB);
+    const header = prJob.slice(0, prJob.indexOf("    steps:\n"));
+    expect(header).not.toContain("GH_TOKEN");
+    expect(header).not.toContain("secrets.");
+    expect(WORKFLOW.slice(0, WORKFLOW.indexOf("\njobs:\n"))).not.toContain("secrets.");
+  });
+});
+
+// #4469: an App token or PAT makes the PR run the normal per-PR CI, so
+// `gh pr merge --auto` waits for the required checks; GITHUB_TOKEN stays the
+// fallback that behaves exactly as before.
+describe("cargo-update-lockfile.yml token selection (#4469)", () => {
+  const mint = step("Mint the lockfile App token", PR_JOB);
+  const pr = step("Open or update pull request", PR_JOB);
+
+  it("mints the App token with a SHA-pinned create-github-app-token", () => {
+    expect(mint.text).toMatch(/uses: actions\/create-github-app-token@[0-9a-f]{40} # v\d/);
+    expect(mint.text).toContain("id: app-token");
+  });
+
+  it("mints only when the App is configured", () => {
+    expect(mint.text).toContain("if: vars.LOCKFILE_APP_CLIENT_ID != ''");
+    expect(mint.text).toContain("client-id: ${{ vars.LOCKFILE_APP_CLIENT_ID }}");
+    expect(mint.text).toContain("private-key: ${{ secrets.LOCKFILE_APP_PRIVATE_KEY }}");
+  });
+
+  it("asks for contents and pull-requests write and nothing else", () => {
+    const permissions = mint.text.match(/permission-[a-z-]+: \w+/g);
+    expect(permissions).toEqual(["permission-contents: write", "permission-pull-requests: write"]);
+    // This repository only: no owner/repositories widening.
+    expect(mint.text).not.toMatch(/\n\s+(owner|repositories):/);
+  });
+
+  it("prefers the App token, then LOCKFILE_PAT, then GITHUB_TOKEN", () => {
+    expect(pr.text).toContain(
+      "GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.LOCKFILE_PAT || secrets.GITHUB_TOKEN }}"
+    );
+    expect(pr.text).toContain(
+      "TOKEN_KIND: ${{ steps.app-token.outputs.token && 'app' || secrets.LOCKFILE_PAT && 'pat' || 'github-token' }}"
+    );
+  });
+
+  it("mints after the gate job and right before the PR step", () => {
+    // After the gate: the gate lives in another job that open-pr needs.
+    expect(steps(PR_JOB).some((s) => s.name.includes("Gate the refreshed lockfile"))).toBe(false);
+    expect(jobText(PR_JOB)).toMatch(/\n {4}needs: cargo-update\n/);
+    // Immediately followed by the one step that uses it.
+    const m = indexOf("Mint the lockfile App token", PR_JOB);
+    expect(indexOf("Open or update pull request", PR_JOB)).toBe(m + 1);
+    expect(indexOf("Apply the refreshed lockfiles", PR_JOB)).toBeLessThan(m);
+    // Only the PR step reads the minted token.
+    const readers = steps(PR_JOB)
+      .filter((s) => s.text.includes("steps.app-token.outputs.token"))
+      .map((s) => s.name);
+    expect(readers).toEqual(["Open or update pull request"]);
+  });
+
+  it("still pushes and arms auto-merge through the same single path", () => {
+    const run = pr.text.slice(pr.text.indexOf("run: |"));
+    expect(run).toContain("printf 'x-access-token:%s' \"$GH_TOKEN\"");
+    expect(run.match(/--auto\b/g)).toHaveLength(1);
+    // The PR body tells reviewers which CI the PR gets.
+    expect(run).toContain('if [ "$TOKEN_KIND" = "github-token" ]; then');
   });
 });
