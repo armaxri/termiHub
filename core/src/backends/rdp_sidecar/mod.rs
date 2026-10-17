@@ -44,6 +44,7 @@ pub mod config;
 pub mod integrity;
 pub mod protocol;
 pub mod sidecar_log;
+mod tunnel;
 
 pub use config::{host_supports_clipboard_delayed_render, rdp_settings_schema};
 
@@ -482,6 +483,10 @@ struct SidecarRuntime {
     /// chunk responses (#1793).
     next_fetch_id: AtomicU64,
     cancel: CancellationToken,
+    /// The SSH tunnel the sidecar's TCP connection rides (#4865), kept alive
+    /// for the session. It also closes when `cancel` fires (teardown, or the
+    /// sidecar exiting on its own), not only when this runtime is dropped.
+    _tunnel: Option<tunnel::RdpTunnel>,
 }
 
 /// RDP graphical remote-desktop connection backed by the IronRDP sidecar.
@@ -782,8 +787,15 @@ impl ConnectionType for SidecarRdp {
         if self.runtime.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
-        let cfg = Self::parse_config(settings)?;
+        let tunnel_settings = tunnel::tunnel_settings(&settings)?;
+        let mut cfg = Self::parse_config(settings)?;
         let view_only = cfg.view_only;
+        // Open the SSH tunnel first (#4865), so a gateway failure — a rejected
+        // host key or credential — surfaces before a sidecar is spawned. The
+        // sidecar then dials the tunnel's loopback port; the gateway's
+        // credentials never enter its connect payload.
+        let ssh_tunnel = tunnel::open(&tunnel_settings, &mut cfg).await?;
+        drop(tunnel_settings);
 
         // Resolve to a single ABSOLUTE path once, then hash and spawn *that same
         // path* — never the bare name — so the integrity check verifies the exact
@@ -850,6 +862,9 @@ impl ConnectionType for SidecarRdp {
         let writer_task = tokio::spawn(run_writer(stdin, sidecar_rx, cancel.clone()));
         let supervisor_task = tokio::spawn(supervise(child, cancel.clone()));
         let tasks = vec![reader_task, writer_task, supervisor_task];
+        if let Some(live) = &ssh_tunnel {
+            live.close_with(&cancel);
+        }
         // Forward the helper's logs and panics into the desktop log (#4320,
         // OBS2-003). Runs to the pipe's EOF, which follows the helper's exit,
         // so a dying sidecar's last words are still captured; it is detached
@@ -867,6 +882,7 @@ impl ConnectionType for SidecarRdp {
             shared,
             next_fetch_id: AtomicU64::new(1),
             cancel,
+            _tunnel: ssh_tunnel,
         }));
         Ok(())
     }
@@ -1389,7 +1405,10 @@ mod tests {
     fn schema_is_rdp_schema() {
         let schema = SidecarRdp::new().settings_schema();
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
-        assert_eq!(keys, vec!["connection", "display", "features", "rdp"]);
+        assert_eq!(
+            keys,
+            vec!["connection", "display", "features", "rdp", "sshTunnel"]
+        );
     }
 
     #[test]
@@ -2023,6 +2042,7 @@ mod tests {
                 shared: shared.clone(),
                 next_fetch_id: AtomicU64::new(1),
                 cancel: cancel.clone(),
+                _tunnel: None,
             })),
             frame_rx: StdMutex::new(None),
             cursor_rx: StdMutex::new(None),
@@ -2113,6 +2133,7 @@ mod tests {
                 shared: shared.clone(),
                 next_fetch_id: AtomicU64::new(1),
                 cancel: cancel.clone(),
+                _tunnel: None,
             })),
             frame_rx: StdMutex::new(None),
             cursor_rx: StdMutex::new(None),
@@ -2212,6 +2233,7 @@ mod tests {
                 shared,
                 next_fetch_id: AtomicU64::new(1),
                 cancel: CancellationToken::new(),
+                _tunnel: None,
             })),
             frame_rx: StdMutex::new(None),
             cursor_rx: StdMutex::new(None),

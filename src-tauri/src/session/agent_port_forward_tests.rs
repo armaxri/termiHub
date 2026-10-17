@@ -122,6 +122,13 @@ fn unroutable_settings_are_rejected_with_a_reason() {
     )
     .unwrap_err();
     assert!(err.contains("SSH tunnel"), "{err}");
+    // RDP's SSH tunnel (#4865) cannot ride an agent route either.
+    let err = agent_route(
+        "rdp",
+        &json!({ "agentId": "a", "host": "h", "useSshTunnel": true }),
+    )
+    .unwrap_err();
+    assert!(err.contains("SSH tunnel"), "{err}");
     let err = agent_route(
         "mock-remote-desktop",
         &json!({ "agentId": "a", "host": "h" }),

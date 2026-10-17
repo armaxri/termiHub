@@ -15,8 +15,9 @@ fn every_builtin_secret_field_is_classified() {
         let expected: &[&str] = match info.type_id.as_str() {
             // The SSH outbound-proxy password (#4867).
             "ssh" => &["password", "proxyPassword"],
-            "telnet" | "ftp" | "rdp" | "mock-remote-desktop" => &["password"],
-            "vnc" => &["password", "sshPassword"],
+            "telnet" | "ftp" | "mock-remote-desktop" => &["password"],
+            // The SSH Tunnel group's gateway password (VNC; RDP since #4865).
+            "vnc" | "rdp" => &["password", "sshPassword"],
             _ => &[],
         };
         let classified = schema_keys_in(&registry, &info.type_id).unwrap();
@@ -115,17 +116,24 @@ fn exports_carry_no_secret() {
         "sshPassword": "gw",
         "proxyJump": [{ "host": "b", "password": "hop" }]
     });
-    let clean = without_secrets("vnc", &settings);
-    let text = clean.to_string();
-    for secret in ["pw", "gw", "hop"] {
-        assert!(!text.contains(&format!("\"{secret}\"")), "{text}");
+    for type_id in ["vnc", "rdp"] {
+        let clean = without_secrets(type_id, &settings);
+        let text = clean.to_string();
+        for secret in ["pw", "gw", "hop"] {
+            assert!(
+                !text.contains(&format!("\"{secret}\"")),
+                "{type_id}: {text}"
+            );
+        }
+        assert_eq!(clean["host"], "h");
     }
-    assert_eq!(clean["host"], "h");
 }
 
 #[test]
 fn only_connections_that_can_own_field_secrets_touch_the_store() {
     assert!(may_have_field_secrets("vnc", &json!({ "host": "h" })));
+    // RDP's SSH Tunnel group owns a field secret too (#4865).
+    assert!(may_have_field_secrets("rdp", &json!({ "host": "h" })));
     assert!(may_have_field_secrets(
         "ssh",
         &json!({ "proxyJump": [{ "host": "gw" }] })

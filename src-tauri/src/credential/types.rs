@@ -12,7 +12,7 @@ pub enum CredentialType {
     /// A password used to elevate a save (e.g., `sudo` for an elevated write).
     SudoPassword,
     /// Every other secret a connection's settings schema declares — e.g. the
-    /// VNC SSH-gateway `sshPassword`, a plugin's password field or an inline
+    /// VNC / RDP SSH-tunnel `sshPassword`, a plugin's password field or an inline
     /// jump-host hop's password — as one JSON object
     /// ([`termihub_core::connection::secrets::TakenSecrets`]) (#4289).
     FieldSecrets,

@@ -1852,3 +1852,99 @@ async fn rdp_16_shared_folder_files_are_served_to_the_server() {
     }
     end_xrdp_session("RDP-16").await;
 }
+
+// ── RDP-17: the whole session through an SSH tunnel (#4865) ─────────
+
+/// Settings that reach the fixture only through the `ssh-password` fixture's
+/// SSH tunnel: the RDP host is the compose service name `rdp-server`, which
+/// resolves on the SSH host's network but not on this computer, so a desktop
+/// can only appear if the sidecar's TCP connection rode the tunnel.
+#[cfg(feature = "ssh")]
+fn tunnelled_rdp_settings() -> serde_json::Value {
+    let mut settings = rdp_settings(3389, RDP_PASSWORD);
+    settings["host"] = serde_json::json!("rdp-server");
+    settings["useSshTunnel"] = serde_json::json!(true);
+    settings["sshHost"] = serde_json::json!("127.0.0.1");
+    settings["sshPort"] = serde_json::json!(common::port_ssh_password());
+    settings["sshUsername"] = serde_json::json!("testuser");
+    settings["sshAuthMethod"] = serde_json::json!("password");
+    settings["sshPassword"] = serde_json::json!("testpass");
+    settings
+}
+
+/// Logon, decode and a Display Control resize (a Deactivation-Reactivation
+/// Sequence on the same forwarded stream, #4845/#4859) through the tunnel;
+/// then a disconnect that leaves no sidecar, and a reconnect that opens a
+/// fresh tunnel and reaches the desktop again.
+#[cfg(feature = "ssh")]
+#[tokio::test]
+async fn rdp_17_session_through_an_ssh_tunnel() {
+    let _serial = SERIAL.lock().await;
+    require_docker!(common::port_ssh_password());
+    require_rdp!();
+    assert_no_helpers("RDP-17");
+
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(tunnelled_rdp_settings())
+        .await
+        .expect("RDP-17: connect through the SSH tunnel");
+    let pid = spawned_helper_pid("RDP-17");
+    let graphical = rdp.graphical().expect("graphical");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-17 tunnelled").await;
+
+    let mut fb = Framebuffer::default();
+    resize_until(
+        graphical,
+        &mut frames,
+        &mut fb,
+        (1100, 700),
+        "RDP-17 resize",
+    )
+    .await;
+    assert!(
+        rdp.fatal_error().is_none(),
+        "RDP-17: the tunnelled session survives a reactivation"
+    );
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    assert!(!rdp.is_connected(), "RDP-17: disconnect clears the session");
+    assert_helper_gone(pid, "RDP-17").await;
+
+    // A reconnect is a fresh connect: it must open its own tunnel.
+    let mut again = SidecarRdp::new();
+    again
+        .connect(tunnelled_rdp_settings())
+        .await
+        .expect("RDP-17: reconnect through a fresh SSH tunnel");
+    let pid = spawned_helper_pid("RDP-17 reconnect");
+    let mut frames = again.graphical().expect("graphical").subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-17 reconnect").await;
+    again.disconnect().await.expect("disconnect should succeed");
+    assert_helper_gone(pid, "RDP-17 reconnect").await;
+}
+
+/// A tunnel whose gateway refuses the login fails the connect before any
+/// sidecar is spawned — the gateway's verdict, not an RDP timeout.
+#[cfg(feature = "ssh")]
+#[tokio::test]
+async fn rdp_18_a_rejected_ssh_gateway_spawns_no_sidecar() {
+    let _serial = SERIAL.lock().await;
+    require_docker!(common::port_ssh_password());
+    require_rdp!();
+    assert_no_helpers("RDP-18");
+
+    let mut settings = tunnelled_rdp_settings();
+    settings["sshPassword"] = serde_json::json!("wrong-gateway-password");
+    let mut rdp = SidecarRdp::new();
+    let err = rdp
+        .connect(settings)
+        .await
+        .expect_err("RDP-18: a rejected gateway login fails the connect");
+    assert!(
+        err.to_string().contains("SSH tunnel"),
+        "RDP-18: the error names the tunnel: {err}"
+    );
+    assert!(!rdp.is_connected());
+    assert_no_helpers("RDP-18");
+}
