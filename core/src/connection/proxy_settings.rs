@@ -14,6 +14,9 @@
 //! - [`SSH_TUNNEL_PROXY_KEYS`] — the proxy rows of the graphical types' shared
 //!   **SSH Tunnel** group (`sshProxyType`, `sshProxyHost`, …, #4887), so a VNC
 //!   or RDP connection's SSH hop can go through a proxy too.
+//! - [`DIRECT_PROXY_KEYS`] — a direct (untunnelled) VNC connection's own
+//!   collapsed **Proxy** group (#4897). The same keys as the SSH type's, shown
+//!   only with the SSH tunnel off ([`direct_proxy_group`]).
 //!
 //! This module carries no SSH dependency (it lives outside the `ssh` feature),
 //! so the RDP sidecar's slim core build can still render the tunnel group.
@@ -54,6 +57,12 @@ pub const SSH_TUNNEL_PROXY_KEYS: ProxyKeys = ProxyKeys {
     username: "sshProxyUsername",
     password: "sshProxyPassword",
 };
+
+/// The proxy keys of a graphical connection's own **Proxy** group, used when
+/// it dials its server directly (no SSH tunnel, #4897). The same keys as the
+/// SSH type's [`SSH_PROXY_KEYS`] for consistency; a graphical type has no SSH
+/// proxy rows of its own, so they never clash.
+pub const DIRECT_PROXY_KEYS: ProxyKeys = SSH_PROXY_KEYS;
 
 /// Settings key of the SSH proxy type select.
 pub const PROXY_TYPE_KEY: &str = SSH_PROXY_KEYS.proxy_type;
@@ -128,6 +137,23 @@ pub fn parse_proxy_with_keys(
         username: text(settings, keys.username),
         password,
     })
+}
+
+/// A direct graphical connection's outbound proxy (#4897), parsed from the
+/// [`DIRECT_PROXY_KEYS`] rows; `None` for a direct connection. Only the flat
+/// rows are read, never the SSH type's nested serialized `proxy` object.
+///
+/// Its `Deserialize` reads the whole settings object, so a config struct takes
+/// it with `#[serde(flatten)]` next to its other fields. `Debug` redacts the
+/// password (see [`SshProxyConfig`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirectProxy(pub Option<SshProxyConfig>);
+
+impl<'de> serde::Deserialize<'de> for DirectProxy {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let settings = serde_json::Value::deserialize(deserializer)?;
+        Ok(Self(parse_proxy_with_keys(&settings, &DIRECT_PROXY_KEYS)))
+    }
 }
 
 fn field(key: &str, label: &str, description: &str, field_type: FieldType) -> SettingsField {
@@ -281,6 +307,39 @@ pub fn proxy_settings_group() -> SettingsGroup {
                 "`CONNECT` to the SSH port. SOCKS4 has no password support.",
             ),
         ),
+    }
+}
+
+/// The collapsed **Proxy** group of a graphical connection that dials its
+/// server directly (VNC, #4897). `server_kind` names the server ("VNC").
+///
+/// Every row needs the SSH tunnel off (`useSshTunnel` not `true`): with the
+/// tunnel on, the server is reached through the tunnel and only the SSH Tunnel
+/// group's own proxy rows (`sshProxy*`) apply, to the SSH hop.
+pub fn direct_proxy_group(server_kind: &str) -> SettingsGroup {
+    let tunnel_off = Condition {
+        field: crate::connection::graphical_ssh_tunnel::USE_SSH_TUNNEL_KEY.to_string(),
+        equals: serde_json::json!(true),
+        negate: true,
+        ..Default::default()
+    };
+    let help = format!(
+        "Connect to the {server_kind} server through a SOCKS or HTTP proxy, like \
+         OpenSSH's `ProxyCommand nc -X`. Used only without an SSH tunnel; with the \
+         tunnel on, set the SSH Tunnel's own proxy instead. HTTP proxies must allow \
+         `CONNECT` to the {server_kind} port. SOCKS4 has no password support."
+    );
+    let mut fields = proxy_fields(&DIRECT_PROXY_KEYS, Some(tunnel_off), &help);
+    if let Some(type_field) = fields.first_mut() {
+        type_field.description = Some(format!(
+            "Proxy the connection to the {server_kind} server is made through"
+        ));
+    }
+    SettingsGroup {
+        collapsed: true,
+        key: "proxy".to_string(),
+        label: "Proxy".to_string(),
+        fields,
     }
 }
 
