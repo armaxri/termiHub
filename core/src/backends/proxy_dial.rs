@@ -1,17 +1,23 @@
-//! Outbound connection proxies for SSH (#4867).
+//! Outbound connection proxies (#4867, #4897).
 //!
-//! Dials the TCP stream an SSH session runs over through a SOCKS4/4a, SOCKS5
-//! (RFC 1928, username/password auth per RFC 1929) or HTTP `CONNECT` proxy —
-//! the equivalent of OpenSSH's `ProxyCommand nc -X …`. The proxy only carries
-//! bytes: the SSH handshake, and with it host-key verification, still runs
-//! end to end against the **target** host over the returned stream.
+//! Dials a TCP stream through a SOCKS4/4a, SOCKS5 (RFC 1928, username/password
+//! auth per RFC 1929) or HTTP `CONNECT` proxy — the equivalent of OpenSSH's
+//! `ProxyCommand nc -X …`. The SSH backend dials its session (or its first jump
+//! host) this way, and a direct VNC connection its RFB stream (#4897). The proxy
+//! only carries bytes: the protocol handshake — for SSH, with it host-key
+//! verification — still runs end to end against the **target** host over the
+//! returned stream.
 //!
 //! Every reply is validated strictly and read with bounded lengths. The HTTP
 //! response is read one byte at a time up to the blank line so no byte of the
-//! SSH server's banner is consumed, and its headers are capped at
-//! [`MAX_HTTP_RESPONSE_HEADER_BYTES`]. A proxy that refuses the credentials
-//! fails the connect with a clear error; credentials are never logged and
-//! never echoed in an error message.
+//! server's greeting (the SSH banner, the RFB version) is consumed, and its
+//! headers are capped at [`MAX_HTTP_RESPONSE_HEADER_BYTES`]. A proxy that
+//! refuses the credentials fails the connect with a clear error; credentials
+//! are never logged and never echoed in an error message.
+//!
+//! The dialer carries no SSH dependency: it is compiled with the internal
+//! `proxy-dial` feature, which the `ssh` and `vnc` features both enable, and
+//! stays reachable as `backends::ssh::proxy` for the SSH backend.
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -66,7 +72,7 @@ pub async fn connect_tcp(
         proxy_port = proxy.port,
         target_host = %host,
         target_port = port,
-        "Opening SSH connection through proxy"
+        "Opening connection through proxy"
     );
     establish_tunnel(&mut stream, proxy, host, port).await?;
     Ok(stream)
@@ -508,7 +514,7 @@ where
 }
 
 /// Read the proxy's response up to and including the blank line, one byte at
-/// a time so nothing past it (the SSH banner) is consumed. Bounded by
+/// a time so nothing past it (the server's greeting) is consumed. Bounded by
 /// [`MAX_HTTP_RESPONSE_HEADER_BYTES`].
 async fn read_http_response_head<S>(
     stream: &mut S,
@@ -568,5 +574,5 @@ fn quote_reason(reason: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "proxy_tests.rs"]
+#[path = "proxy_dial_tests.rs"]
 mod tests;

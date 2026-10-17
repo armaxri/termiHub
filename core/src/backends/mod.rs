@@ -19,6 +19,10 @@ pub mod telnet;
 #[cfg(feature = "ssh")]
 pub mod ssh;
 
+// Outbound SOCKS/HTTP proxy dialer shared by SSH and direct VNC (#4897).
+#[cfg(feature = "proxy-dial")]
+pub mod proxy_dial;
+
 #[cfg(feature = "docker")]
 pub mod docker;
 

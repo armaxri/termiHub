@@ -22,7 +22,9 @@ mod legacy_pem;
 mod monitoring;
 mod process;
 mod prompt_clock;
-pub mod proxy;
+// The outbound proxy dialer (#4867) lives in the feature-free
+// `backends::proxy_dial` (#4897); kept reachable here for the SSH backend.
+pub use crate::backends::proxy_dial as proxy;
 pub mod remote_shell;
 pub mod session_pool;
 pub mod sftp;
