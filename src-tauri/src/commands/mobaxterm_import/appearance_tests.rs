@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use super::appearance::{global_appearance_sections, map_appearance};
+use super::appearance::map_appearance;
 use super::placeholders::PlaceholderEnv;
 use super::{preview_from_bytes, MobaxtermImportPreview, MobaxtermSession};
 
@@ -175,14 +175,8 @@ fn non_terminal_types_and_empty_blocks_contribute_nothing() {
     assert!(a.options.is_none() && a.notes.is_empty());
 }
 
-#[test]
-fn global_sections_are_detected_case_insensitively_once() {
-    let text = "[font]\r\nX=1\r\n[Colors]\r\n[Bookmarks]\r\n[Font]\r\n";
-    assert_eq!(global_appearance_sections(text), ["Font", "Colors"]);
-}
-
 const INI: &str = "[Font]\r\n\
-Font=Fake Mono\r\n\
+Font2=Fake Mono\r\n\
 [Colors]\r\n\
 DefaultColorScheme=0\r\n\
 [Bookmarks]\r\n\
@@ -229,12 +223,19 @@ fn preview_carries_terminal_options_and_telnet_terminal_type() {
 }
 
 #[test]
-fn preview_notes_global_appearance_sections() {
+fn preview_offers_global_font_but_no_empty_colours() {
+    // `[Colors]` here has only the preset index, so no theme is offered.
     let p = preview(INI);
-    assert_eq!(p.notes.len(), 1);
-    assert!(p.notes[0].contains("[Font], [Colors]"));
+    let global = p.global_appearance.expect("global appearance");
+    assert_eq!(
+        global.font_family.as_deref(),
+        Some("\"Fake Mono\", monospace")
+    );
+    assert!(global.colors.is_none());
+    assert!(p.notes.is_empty());
 
     let p = preview("[Bookmarks]\r\nSubRep=\r\n");
+    assert!(p.global_appearance.is_none());
     assert!(p.notes.is_empty());
 }
 

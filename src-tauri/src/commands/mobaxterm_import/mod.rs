@@ -13,6 +13,9 @@
 //! - `appearance` — the per-session terminal block (font, cursor, terminal
 //!   type, session logging, scrollback) → per-connection terminal options
 //!   (#4854, #4881).
+//! - `global_appearance` — the global `[Colors]`, `[Font]` and `[Cursor]`
+//!   sections, offered as an opt-in custom theme and appearance settings
+//!   (#4880).
 //! - `placeholders` — `_ProfileDir_`-style path tokens in key paths.
 //! - `discovery` — where MobaXterm keeps its configuration on Windows.
 //! - `hostkeys` — `[SSH_Hostkeys]` (PuTTY cache format) → OpenSSH keys (#4852).
@@ -24,6 +27,7 @@
 
 mod appearance;
 mod discovery;
+mod global_appearance;
 mod hostkeys;
 mod mapping;
 mod parser;
@@ -32,6 +36,8 @@ mod trusted_hosts;
 
 #[cfg(test)]
 mod appearance_tests;
+#[cfg(test)]
+mod global_appearance_tests;
 #[cfg(test)]
 mod hostkeys_tests;
 #[cfg(test)]
@@ -49,7 +55,8 @@ use crate::connection::config::TerminalOptions;
 use crate::session::ssh_host_key_verifier::SshHostKeyVerifier;
 use crate::utils::errors::TerminalError;
 
-use appearance::global_appearance_note;
+use global_appearance::parse_global_appearance;
+pub use global_appearance::{MobaxtermGlobalAppearance, MobaxtermThemeColors};
 use mapping::{map_session, Outcome};
 use placeholders::PlaceholderEnv;
 use trusted_hosts::{host_key_entries, import_host_keys, StoreTrust, TrustCheck};
@@ -122,8 +129,14 @@ pub struct MobaxtermImportPreview {
     pub sessions: Vec<MobaxtermSession>,
     /// Every `[SSH_Hostkeys]` entry, importable and skipped, in file order.
     pub host_keys: Vec<MobaxtermHostKey>,
-    /// File-level remarks, e.g. global appearance sections that were not
-    /// imported (#4854).
+    /// MobaXterm's global colours, font and cursor (#4880), parsed but not
+    /// applied: the dialog offers them behind explicit opt-ins. Absent when
+    /// the file has nothing usable in those sections.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub global_appearance: Option<MobaxtermGlobalAppearance>,
+    /// File-level remarks, e.g. global appearance values that could not be
+    /// read or have no termiHub counterpart.
     pub notes: Vec<String>,
 }
 
@@ -177,12 +190,15 @@ pub fn preview_with_trust(
             }
         })
         .collect();
+    let mut notes = Vec::new();
+    let global_appearance = parse_global_appearance(&text, &mut notes);
     MobaxtermImportPreview {
         source_path: source_path.to_string(),
         encoding: encoding.label().to_string(),
         sessions,
         host_keys,
-        notes: global_appearance_note(&text).into_iter().collect(),
+        global_appearance,
+        notes,
     }
 }
 
