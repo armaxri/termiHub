@@ -144,8 +144,6 @@ bitflags! {
 
 #[cfg(test)]
 mod tests {
-    use ironrdp_core::ReadCursor;
-
     use super::*;
 
     // termiHub fork (#4461): ported from upstream IronRDP 9af99317 (#1846).
@@ -157,7 +155,7 @@ mod tests {
         let decoded = ServerCoreOptionalData::decode(&mut ReadCursor::new(&encoded)).expect("unknown bits are retained");
 
         assert_eq!(
-            decoded.client_requested_protocols.map(SecurityProtocol::bits),
+            decoded.client_requested_protocols.map(|p| p.bits()),
             Some(0x0103)
         );
     }
