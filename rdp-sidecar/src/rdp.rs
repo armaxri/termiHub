@@ -164,6 +164,9 @@ where
 {
     let host = cfg.host.clone();
     let port = cfg.effective_port();
+    // The name TLS SNI and the CredSSP service principal use: the real server
+    // even when `host` is the loopback end of an SSH tunnel (#4865).
+    let server_name = cfg.server_name().to_string();
     // Bound the TCP connect and the X.224 / TLS negotiation by the connect
     // timeout (#4320, #4401): a firewalled host otherwise waits out the OS TCP
     // timeout, and a peer that accepts TCP but never speaks RDP hangs the
@@ -258,7 +261,7 @@ where
         deadline,
         timeout,
         &target,
-        ironrdp_tls::upgrade(initial_stream, host.as_str()),
+        ironrdp_tls::upgrade(initial_stream, server_name.as_str()),
     )
     .await?
     .context("RDP TLS upgrade failed")?;
@@ -302,7 +305,7 @@ where
             connector,
             &mut framed,
             &mut network_client,
-            ServerName::new(host),
+            ServerName::new(server_name),
             server_public_key,
             cfg.multi_monitor_layout().as_ref(),
         ),

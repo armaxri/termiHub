@@ -21,6 +21,7 @@ use crate::connection::graphical_monitors::{
 use crate::connection::graphical_resolution::{
     DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
 };
+use crate::connection::graphical_ssh_tunnel::ssh_tunnel_group;
 use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::{
     fixed_resolution_fields, is_fixed_mode, normalize_fixed_size, shared_field_base, SettingsSchema,
@@ -163,6 +164,12 @@ pub struct RdpConfig {
     /// [`connect_timeout`](Self::connect_timeout).
     #[serde(deserialize_with = "deserialize_connect_timeout_secs")]
     pub connect_timeout_secs: Option<u64>,
+    /// The server's real name, for TLS SNI and the CredSSP service principal,
+    /// when [`host`](Self::host) is a loopback port forward. Not an editor
+    /// field: the host process sets it when it dials the server through an SSH
+    /// tunnel (#4865), so `host` is `127.0.0.1` but NLA still names the real
+    /// server. `None` means `host` itself; see [`server_name`](Self::server_name).
+    pub tls_server_name: Option<String>,
 }
 
 /// Default bound on the sidecar's TCP connect and RDP negotiation when the
@@ -222,6 +229,7 @@ impl Default for RdpConfig {
             monitor_count: None,
             monitor_layout: Vec::new(),
             connect_timeout_secs: None,
+            tls_server_name: None,
         }
     }
 }
@@ -252,6 +260,17 @@ impl RdpConfig {
     /// forward (#4284), so both resolve the same target.
     pub fn from_settings(settings: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(crate::backends::without_null_fields(settings))
+    }
+
+    /// The name the sidecar presents to the server for TLS SNI and CredSSP:
+    /// [`tls_server_name`](Self::tls_server_name) when set (a tunnelled
+    /// connection, #4865), otherwise [`host`](Self::host).
+    pub fn server_name(&self) -> &str {
+        self.tls_server_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(self.host.as_str())
     }
 
     /// The bound on the sidecar's TCP connect and RDP negotiation (#4320,
@@ -488,7 +507,8 @@ fn color_depth_field() -> SettingsField {
 }
 
 /// The RDP connection editor schema: the shared field base plus the RDP-specific
-/// **RDP Options** group (domain, security mode, certificate handling).
+/// **RDP Options** group (domain, security mode, certificate handling) and the
+/// shared **SSH Tunnel** group (#4865).
 pub fn rdp_settings_schema() -> SettingsSchema {
     let mut groups = shared_field_base(RDP_DEFAULT_PORT);
     if let Some(display) = groups.iter_mut().find(|g| g.key == "display") {
@@ -636,6 +656,11 @@ pub fn rdp_settings_schema() -> SettingsSchema {
             },
         ],
     });
+
+    // Reach the server through an SSH local forward — the same group VNC has.
+    // The host process runs the tunnel; the sidecar only ever sees the loopback
+    // endpoint, never the gateway credentials (see `SidecarRdp::connect`).
+    groups.push(ssh_tunnel_group("RDP"));
 
     // Silence the unused helper if no field currently uses a security condition;
     // keeping it available documents the conditional-visibility seam.
@@ -927,6 +952,7 @@ mod tests {
                 MonitorRect::new(-1280, 0, 1280, 1024),
             ],
             connect_timeout_secs: Some(12),
+            tls_server_name: Some("desk.corp".to_string()),
         };
         // The sidecar IPC is MessagePack with named fields (#3696 layout included).
         let packed = rmp_serde::to_vec_named(&cfg).unwrap();
@@ -1206,7 +1232,10 @@ mod tests {
     fn schema_extends_shared_base_with_rdp_group() {
         let schema = rdp_settings_schema();
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
-        assert_eq!(keys, vec!["connection", "display", "features", "rdp"]);
+        assert_eq!(
+            keys,
+            vec!["connection", "display", "features", "rdp", "sshTunnel"]
+        );
     }
 
     #[test]
@@ -1268,7 +1297,7 @@ mod tests {
         let schema = rdp_settings_schema();
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.groups.len(), 4);
+        assert_eq!(back.groups.len(), 5);
     }
 
     /// The connect timeout reaches the sidecar from the unified
@@ -1338,5 +1367,52 @@ mod tests {
         assert!(!crate::connection::schema_offers_file_side_channel(
             &rdp_settings_schema()
         ));
+    }
+
+    /// #4865: the SSH Tunnel group mirrors VNC's — same keys, tunnel-gated.
+    #[test]
+    fn schema_has_the_shared_ssh_tunnel_group() {
+        let schema = rdp_settings_schema();
+        let group = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "sshTunnel")
+            .expect("RDP offers an SSH Tunnel group");
+        let vnc = crate::connection::graphical_ssh_tunnel::ssh_tunnel_group("VNC");
+        let keys = |g: &SettingsGroup| g.fields.iter().map(|f| f.key.clone()).collect::<Vec<_>>();
+        assert_eq!(keys(group), keys(&vnc));
+        let toggle = &group.fields[0];
+        assert_eq!(toggle.key, "useSshTunnel");
+        assert_eq!(toggle.default, Some(serde_json::json!(false)));
+        assert!(toggle.description.as_deref().unwrap().contains("RDP"));
+    }
+
+    /// #4865: the SSH-tunnel rows are not part of `RdpConfig`, so the gateway
+    /// password can never ride the sidecar's connect payload.
+    #[test]
+    fn ssh_tunnel_rows_never_reach_the_sidecar_payload() {
+        let cfg = RdpConfig::from_settings(serde_json::json!({
+            "host": "desk", "useSshTunnel": true, "sshHost": "bastion",
+            "sshUsername": "arne", "sshPassword": "gateway-secret",
+            "sshKeyPath": "~/.ssh/id",
+        }))
+        .unwrap();
+        let wire = serde_json::to_string(&cfg).unwrap();
+        assert!(!wire.contains("gateway-secret"), "{wire}");
+        assert!(!wire.contains("bastion"), "{wire}");
+        assert!(!wire.contains("sshKeyPath"), "{wire}");
+    }
+
+    #[test]
+    fn server_name_prefers_the_tunnel_name_over_the_loopback_host() {
+        let mut cfg = RdpConfig {
+            host: "127.0.0.1".to_string(),
+            ..RdpConfig::default()
+        };
+        assert_eq!(cfg.server_name(), "127.0.0.1");
+        cfg.tls_server_name = Some("  ".to_string());
+        assert_eq!(cfg.server_name(), "127.0.0.1", "blank falls back to host");
+        cfg.tls_server_name = Some("desk.corp".to_string());
+        assert_eq!(cfg.server_name(), "desk.corp");
     }
 }
