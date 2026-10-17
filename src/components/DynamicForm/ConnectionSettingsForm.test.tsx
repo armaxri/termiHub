@@ -317,6 +317,89 @@ describe("ConnectionSettingsForm", () => {
     });
   });
 
+  describe("SSH proxy rows gated on Proxy Type != none (#4888)", () => {
+    const notNone = { field: "proxyType", equals: "none", negate: true };
+    const PROXY_SCHEMA: SettingsSchema = {
+      groups: [
+        {
+          key: "proxy",
+          label: "Proxy",
+          fields: [
+            {
+              key: "proxyType",
+              label: "Proxy Type",
+              fieldType: {
+                type: "select",
+                options: [
+                  { value: "none", label: "None (direct)" },
+                  { value: "socks5", label: "SOCKS5" },
+                  { value: "socks4", label: "SOCKS4 / SOCKS4a" },
+                ],
+              },
+              required: false,
+              default: "none",
+            },
+            {
+              key: "proxyHost",
+              label: "Proxy Host",
+              fieldType: { type: "text" },
+              required: false,
+              visibleWhen: notNone,
+            },
+            {
+              key: "proxyPort",
+              label: "Proxy Port",
+              fieldType: { type: "port" },
+              required: false,
+              visibleWhen: notNone,
+            },
+            {
+              key: "proxyUsername",
+              label: "Proxy User",
+              fieldType: { type: "text" },
+              required: false,
+              visibleWhen: notNone,
+            },
+            {
+              key: "proxyPassword",
+              label: "Proxy Password",
+              fieldType: { type: "password" },
+              required: false,
+              visibleWhen: {
+                ...notNone,
+                allOf: [{ field: "proxyType", equals: "socks4", negate: true }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const ROWS = ["proxyHost", "proxyPort", "proxyUsername", "proxyPassword"];
+
+    it("hides every proxy row with Proxy Type none", () => {
+      renderForm(PROXY_SCHEMA, { proxyType: "none" }, vi.fn());
+      expect(query("dynamic-field-proxyType")).toBeTruthy();
+      for (const key of ROWS) expect(query(`dynamic-field-${key}`)).toBeNull();
+    });
+
+    it("hides them for a connection saved before the proxy existed", () => {
+      // No `proxyType` key: the schema default `none` applies.
+      renderForm(PROXY_SCHEMA, { host: "h" }, vi.fn());
+      for (const key of ROWS) expect(query(`dynamic-field-${key}`)).toBeNull();
+    });
+
+    it("shows every proxy row for SOCKS5", () => {
+      renderForm(PROXY_SCHEMA, { proxyType: "socks5" }, vi.fn());
+      for (const key of ROWS) expect(query(`dynamic-field-${key}`)).toBeTruthy();
+    });
+
+    it("shows all but the password for SOCKS4", () => {
+      renderForm(PROXY_SCHEMA, { proxyType: "socks4" }, vi.fn());
+      for (const key of ROWS.slice(0, 3)) expect(query(`dynamic-field-${key}`)).toBeTruthy();
+      expect(query("dynamic-field-proxyPassword")).toBeNull();
+    });
+  });
+
   it("hides entire group when all fields are hidden", () => {
     // Create a schema where the only group has all fields conditional
     const schema: SettingsSchema = {

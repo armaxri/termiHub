@@ -273,4 +273,32 @@ mod tests {
         assert!(crate::connection::secrets::is_secret_field(password));
         assert!(!password.required);
     }
+
+    #[test]
+    fn proxy_rows_show_only_for_a_chosen_proxy() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let group = proxy_settings_group();
+        let visible = |proxy_type: &str| -> Vec<&str> {
+            let settings = json!({ "proxyType": proxy_type });
+            let settings = settings.as_object().expect("object");
+            group
+                .fields
+                .iter()
+                .filter(|f| is_field_visible(f, settings))
+                .map(|f| f.key.as_str())
+                .collect()
+        };
+        assert_eq!(visible("none"), [PROXY_TYPE_KEY]);
+        let all = [
+            PROXY_TYPE_KEY,
+            PROXY_HOST_KEY,
+            PROXY_PORT_KEY,
+            PROXY_USERNAME_KEY,
+            PROXY_PASSWORD_KEY,
+        ];
+        assert_eq!(visible("socks5"), all);
+        assert_eq!(visible("http"), all);
+        // SOCKS4 has no password support.
+        assert_eq!(visible("socks4"), &all[..4]);
+    }
 }

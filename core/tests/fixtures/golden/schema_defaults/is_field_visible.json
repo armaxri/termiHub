@@ -3,7 +3,12 @@
   "cases": [
     {
       "name": "returns true for fields without visibleWhen",
-      "input": { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": false },
+      "input": {
+        "key": "host",
+        "label": "host",
+        "fieldType": { "type": "text" },
+        "required": false
+      },
       "args": { "settings": {} },
       "expected": true
     },
@@ -519,6 +524,100 @@
         }
       },
       "expected": false
+    },
+    {
+      "name": "negate: a different value satisfies the negated test",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "proxyType", "equals": "none", "negate": true }
+      },
+      "args": { "settings": { "proxyType": "socks5" } },
+      "expected": true
+    },
+    {
+      "name": "negate: the equal value fails the negated test",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "proxyType", "equals": "none", "negate": true }
+      },
+      "args": { "settings": { "proxyType": "none" } },
+      "expected": false
+    },
+    {
+      "name": "negate: a missing field satisfies the negated test",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "proxyType", "equals": "none", "negate": true }
+      },
+      "args": { "settings": {} },
+      "expected": true
+    },
+    {
+      "name": "negate: false is the plain equals test",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "proxyType", "equals": "none", "negate": false }
+      },
+      "args": { "settings": { "proxyType": "none" } },
+      "expected": true
+    },
+    {
+      "name": "negate: allOf sub-conditions are not inverted and can exclude a value",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": {
+          "field": "proxyType",
+          "equals": "none",
+          "negate": true,
+          "allOf": [{ "field": "proxyType", "equals": "socks4", "negate": true }]
+        }
+      },
+      "args": { "settings": { "proxyType": "socks4" } },
+      "expected": false
+    },
+    {
+      "name": "negate: allOf with negated sub-conditions passes for another value",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": {
+          "field": "proxyType",
+          "equals": "none",
+          "negate": true,
+          "allOf": [{ "field": "proxyType", "equals": "socks4", "negate": true }]
+        }
+      },
+      "args": { "settings": { "proxyType": "http" } },
+      "expected": true
+    },
+    {
+      "name": "negate: inverts a sameHostAs comparison",
+      "input": {
+        "key": "proxyHost",
+        "label": "Proxy Host",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "host", "sameHostAs": "sshHost", "equals": true, "negate": true }
+      },
+      "args": { "settings": { "host": "a.example", "sshHost": "b.example" } },
+      "expected": true
     }
   ]
 }
