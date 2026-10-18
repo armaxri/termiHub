@@ -7,6 +7,7 @@ bundle-writing logic is covered without building or launching the app.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -264,3 +265,125 @@ def test_bundle_probes_through_a_reconnected_page(tmp_path: Path):
     dest = write_failure_artifacts(tmp_path / "r", driver, None)
     assert json.loads((dest / "state.json").read_text()) == {"windowLabel": "main"}
     assert "reconnected on a new socket" in (dest / "probe-diagnostics.txt").read_text()
+
+
+# --- macOS crash-report capture (#4875) ---------------------------------------
+
+_LAUNCH = 1_800_000_000.0
+
+
+def _report(directory: Path, name: str, mtime: float) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(f"report {name}")
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+class _LaunchedApp(_StubApp):
+    def __init__(self, *, started=_LAUNCH, returncode=None, **kwargs):
+        super().__init__(**kwargs)
+        self.first_started_at = started
+        self.returncode = returncode
+
+
+def test_select_crash_reports_filters_by_time(tmp_path: Path):
+    _report(tmp_path, "termiHub-2026-10-18-old.ips", _LAUNCH - 600)
+    new = _report(tmp_path, "termiHub-2026-10-18-new.ips", _LAUNCH + 30)
+    assert artifacts_mod.select_crash_reports([tmp_path], _LAUNCH) == [new]
+
+
+def test_select_crash_reports_filters_by_name(tmp_path: Path):
+    app = _report(tmp_path, "termihub-2026-10-18-1.crash", _LAUNCH + 1)
+    upper = _report(tmp_path, "TERMIHUB-2026-10-18-2.ips", _LAUNCH + 2)
+    webkit = _report(tmp_path, "com.apple.WebKit.WebContent-2026-10-18-3.ips", _LAUNCH + 3)
+    _report(tmp_path, "Safari-2026-10-18.ips", _LAUNCH + 4)
+    _report(tmp_path, "termiHub-2026-10-18.diag", _LAUNCH + 5)
+    (tmp_path / "termiHub-dir.ips").mkdir()
+    found = artifacts_mod.select_crash_reports([tmp_path, tmp_path / "missing"], _LAUNCH)
+    assert found == [app, upper, webkit]
+
+
+def test_collect_crash_reports_copies_into_the_bundle(tmp_path: Path):
+    reports = tmp_path / "DiagnosticReports"
+    _report(reports, "termiHub-2026-10-18-old.ips", _LAUNCH - 600)
+    _report(reports, "termiHub-2026-10-18-new.ips", _LAUNCH + 30)
+    dest = tmp_path / "bundle"
+    record = artifacts_mod.collect_crash_reports(
+        dest, _LaunchedApp(), report_dirs=[reports], system="Darwin", settle=0
+    )
+    assert record is not None and "1 found since app launch, 1 copied" in record
+    copied = sorted(p.name for p in (dest / "crash-reports").iterdir())
+    assert copied == ["termiHub-2026-10-18-new.ips"]
+
+
+def test_collect_crash_reports_records_none_found(tmp_path: Path):
+    dest = tmp_path / "bundle"
+    record = artifacts_mod.collect_crash_reports(
+        dest, _LaunchedApp(), report_dirs=[tmp_path / "empty"], system="Darwin", settle=0
+    )
+    assert record is not None and "0 found since app launch" in record
+    assert not (dest / "crash-reports").exists()
+
+
+def test_collect_crash_reports_is_a_noop_off_macos(tmp_path: Path):
+    _report(tmp_path / "r", "termiHub-x.ips", _LAUNCH + 1)
+    for system in ("Linux", "Windows"):
+        record = artifacts_mod.collect_crash_reports(
+            tmp_path / "b", _LaunchedApp(), report_dirs=[tmp_path / "r"], system=system
+        )
+        assert record is None
+    assert not (tmp_path / "b").exists()
+
+
+def test_collect_crash_reports_skips_an_app_without_launch_time(tmp_path: Path):
+    record = artifacts_mod.collect_crash_reports(
+        tmp_path / "b", _StubApp(), report_dirs=[tmp_path], system="Darwin"
+    )
+    assert record is None
+
+
+def test_collect_crash_reports_waits_for_a_late_report_of_a_crashed_app(
+    tmp_path: Path, monkeypatch
+):
+    reports = tmp_path / "r"
+    reports.mkdir()
+    polls = []
+
+    def fake_sleep(_seconds):
+        polls.append(1)
+        if len(polls) == 2:  # ReportCrash writes the report a moment later
+            _report(reports, "termiHub-late.ips", _LAUNCH + 5)
+
+    monkeypatch.setattr(artifacts_mod.time, "sleep", fake_sleep)
+    record = artifacts_mod.collect_crash_reports(
+        tmp_path / "b",
+        _LaunchedApp(returncode=-11),
+        report_dirs=[reports],
+        system="Darwin",
+        settle=60,
+    )
+    assert record is not None and "1 found" in record
+    assert (tmp_path / "b" / "crash-reports" / "termiHub-late.ips").exists()
+
+
+def test_collect_crash_reports_never_raises(tmp_path: Path, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("disk gone")
+
+    monkeypatch.setattr(artifacts_mod, "select_crash_reports", boom)
+    record = artifacts_mod.collect_crash_reports(
+        tmp_path / "b", _LaunchedApp(), report_dirs=[tmp_path], system="Darwin"
+    )
+    assert record == "crash reports: FAILED — RuntimeError: disk gone"
+
+
+def test_bundle_notes_crash_reports_in_probe_diagnostics(tmp_path: Path, monkeypatch):
+    reports = tmp_path / "r"
+    _report(reports, "com.apple.WebKit.WebContent-1.ips", _LAUNCH + 3)
+    monkeypatch.setattr(artifacts_mod, "MACOS_CRASH_REPORT_DIRS", (reports,))
+    monkeypatch.setattr(artifacts_mod.platform, "system", lambda: "Darwin")
+    dest = write_failure_artifacts(tmp_path / "b", None, _LaunchedApp(log="x"))
+    text = (dest / "probe-diagnostics.txt").read_text()
+    assert "crash reports: 1 found since app launch, 1 copied" in text
+    assert (dest / "crash-reports" / "com.apple.WebKit.WebContent-1.ips").exists()

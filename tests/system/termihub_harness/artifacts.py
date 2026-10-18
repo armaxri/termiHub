@@ -13,9 +13,11 @@ logic is unit-testable with stub driver/app objects, no app launch needed.
 from __future__ import annotations
 
 import json
+import platform
+import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from . import deadlines
 
@@ -218,6 +220,126 @@ def _live_replacement(driver: Any) -> Optional[Any]:
         return None
 
 
+#: Where macOS writes per-user crash reports (#4875).
+MACOS_CRASH_REPORT_DIRS: tuple[Path, ...] = (
+    Path.home() / "Library" / "Logs" / "DiagnosticReports",
+)
+
+#: Lower-cased crash-report name prefixes worth keeping: the app itself, and the
+#: WebKit content process whose death blanks a window without ending the app.
+CRASH_REPORT_PREFIXES: tuple[str, ...] = ("termihub", "com.apple.webkit.webcontent")
+
+#: Crash-report file extensions (``.ips`` on current macOS, ``.crash`` on older).
+CRASH_REPORT_SUFFIXES: tuple[str, ...] = (".ips", ".crash")
+
+#: Slack subtracted from the launch time: file mtimes and ``time.time()`` can
+#: disagree by a little, and a report from just before launch is harmless.
+_CRASH_REPORT_SLACK = 2.0
+
+#: How long to wait for ReportCrash to write the report of an app that exited
+#: abnormally — it lands a few seconds after the process dies.
+CRASH_REPORT_SETTLE = 10.0
+
+
+def select_crash_reports(
+    report_dirs: Iterable[Path],
+    since: float,
+    *,
+    prefixes: Sequence[str] = CRASH_REPORT_PREFIXES,
+    suffixes: Sequence[str] = CRASH_REPORT_SUFFIXES,
+) -> list[Path]:
+    """Crash reports in ``report_dirs`` modified at or after ``since`` (#4875).
+
+    Only top-level files whose lower-cased name starts with one of ``prefixes``
+    and ends with one of ``suffixes`` count. Missing or unreadable directories
+    are skipped. Returned oldest first.
+    """
+    found: list[tuple[float, Path]] = []
+    for directory in report_dirs:
+        try:
+            entries = list(Path(directory).iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            name = entry.name.lower()
+            if not name.startswith(tuple(prefixes)) or not name.endswith(tuple(suffixes)):
+                continue
+            try:
+                if not entry.is_file():
+                    continue
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if mtime >= since:
+                found.append((mtime, entry))
+    return [path for _, path in sorted(found)]
+
+
+def _app_exited_abnormally(app: Any) -> bool:
+    try:
+        code = app.returncode
+    except Exception:  # noqa: BLE001 — capture is best-effort by design
+        return False
+    return code is not None and code != 0
+
+
+def collect_crash_reports(
+    dest: Path,
+    app: Any,
+    *,
+    report_dirs: Optional[Iterable[Path]] = None,
+    system: Optional[str] = None,
+    settle: float = CRASH_REPORT_SETTLE,
+) -> Optional[str]:
+    """Copy this app instance's macOS crash reports into ``dest/crash-reports``.
+
+    Settles #4875's question — did the app crash, or did only a window's WebKit
+    content process die? — from one failure. Copies the app's and WebContent's
+    reports modified since the instance first launched, and returns a one-line
+    record for ``probe-diagnostics.txt``. Returns ``None`` (no record) off macOS
+    or when the app has no launch time. Never raises.
+
+    When the app exited abnormally and no report is there yet, waits up to
+    ``settle`` seconds: ReportCrash writes the report a little after the crash.
+    """
+    try:
+        if (system or platform.system()) != "Darwin":
+            return None
+        started = getattr(app, "first_started_at", None)
+        if not isinstance(started, (int, float)):
+            return None
+        dirs = list(MACOS_CRASH_REPORT_DIRS if report_dirs is None else report_dirs)
+        since = started - _CRASH_REPORT_SLACK
+        reports = select_crash_reports(dirs, since)
+        if not reports and settle > 0 and _app_exited_abnormally(app):
+            deadline = time.monotonic() + settle
+            while not reports and time.monotonic() < deadline:
+                time.sleep(0.5)
+                reports = select_crash_reports(dirs, since)
+        copied = 0
+        errors: list[str] = []
+        if reports:
+            target = dest / "crash-reports"
+            target.mkdir(parents=True, exist_ok=True)
+            for report in reports:
+                try:
+                    shutil.copy2(report, target / report.name)
+                    copied += 1
+                except OSError as exc:
+                    errors.append(f"{report.name}: {exc}")
+        record = (
+            f"crash reports: {len(reports)} found since app launch, {copied} copied "
+            "to crash-reports/"
+        )
+        if reports:
+            record += " (" + ", ".join(p.name for p in reports) + ")"
+        if errors:
+            record += "; copy errors: " + "; ".join(errors)
+        return record
+    except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
+        return f"crash reports: FAILED — {type(exc).__name__}: {exc}"
+
+
 def write_failure_artifacts(
     dest: Path,
     driver: Optional[Any],
@@ -237,6 +359,8 @@ def write_failure_artifacts(
     - the bridge's connect/close log → ``bridge-events.txt`` (#4861)
     - a timed record of every probe → ``probe-diagnostics.txt``, plus whether the
       app process was still running and whether the driver's socket was open
+    - on macOS, the app's and WebKit WebContent's crash reports since the app
+      launched → ``crash-reports/`` (#4875)
 
     The bridge probes run with ``probe_timeout`` (default
     :data:`DIAGNOSTIC_PROBE_TIMEOUT`), *not* the driver's normal command timeout:
@@ -292,6 +416,9 @@ def write_failure_artifacts(
             )
     if app is not None:
         records.append(_timed_probe(dest, "app.log", app.read_log))
+        crash_record = collect_crash_reports(dest, app)
+        if crash_record is not None:
+            records.append(crash_record)
     # Always leave the timed record — it is the #2460 evidence, and its header
     # explains how to read a slow-vs-hung result even when no probe ran.
     header = (
