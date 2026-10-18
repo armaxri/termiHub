@@ -376,6 +376,9 @@ class AppInstance:
         self._relaunched: Optional[psutil.Process] = None
         #: Wall-clock time of the last :meth:`start` (finds a relaunch).
         self._started_at = 0.0
+        #: Wall-clock time of the first :meth:`start` of this instance; the
+        #: failure bundle copies crash reports written since then (#4875).
+        self._first_started_at: Optional[float] = None
         self._bridge_port: Optional[int] = None
         #: Captured app stdout/stderr — copied into the failure-artifact bundle.
         self._log_path = self._scratch_dir / "app.log"
@@ -554,6 +557,15 @@ class AppInstance:
         return self._process is not None and self._process.poll() is None
 
     @property
+    def first_started_at(self) -> Optional[float]:
+        """Wall-clock time this instance was first launched, or ``None``.
+
+        The first launch, not the latest: a rerun may have relaunched the app
+        after a crash, and that crash's report must still reach the bundle.
+        """
+        return self._first_started_at
+
+    @property
     def returncode(self) -> Optional[int]:
         """Exit code of the app process if it has already exited, else ``None``."""
         if self._process is None:
@@ -575,6 +587,8 @@ class AppInstance:
         self._bridge_port = bridge_port
         self._relaunched = None
         self._started_at = time.time()
+        if self._first_started_at is None:
+            self._first_started_at = self._started_at
         env = self.launch_env()
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
