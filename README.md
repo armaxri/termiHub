@@ -64,10 +64,18 @@ sudo dpkg -i termiHub-0.1.0-linux-x64.deb
 
 ### Linux ARM64 (Raspberry Pi)
 
-AppImage is not built for ARM64, so use the Debian package. Download `termiHub-0.1.0-linux-arm64.deb`, then:
+AppImage is not built for ARM64, so use the Debian package or the RPM package.
+
+**Debian package (`.deb`)** — download `termiHub-0.1.0-linux-arm64.deb`, then:
 
 ```bash
 sudo dpkg -i termiHub-0.1.0-linux-arm64.deb
+```
+
+**RPM package (`.rpm`)** — download `termiHub-0.1.0-linux-arm64.rpm`, then:
+
+```bash
+sudo dnf install ./termiHub-0.1.0-linux-arm64.rpm
 ```
 
 ### Verifying a download
@@ -103,7 +111,7 @@ Prefer to build it yourself? See [Development](#development) below.
 ### Connection Types
 
 - **Local shells** — zsh, bash, PowerShell, cmd, Git Bash with automatic shell detection
-- **SSH** — Remote terminal sessions with key-based and password authentication, plus jump host / `ProxyJump` chains, X11 forwarding, tunneling, and SFTP
+- **SSH** — Remote terminal sessions with key, password, SSH agent and keyboard-interactive (OTP / 2FA) authentication, plus agent forwarding, jump host / `ProxyJump` chains, X11 forwarding, tunneling, and SFTP
 - **Serial** — Direct serial port connections for hardware debugging and IoT devices
 - **Telnet** — Classic telnet connections with window-size (NAWS), terminal-type and echo / suppress-go-ahead negotiation, a character or line input mode, plus optional prompt-driven auto-login
 - **Docker** — Start a new container from an image, open a shell in an already-running container, or target a Docker Compose service by `project/service`
@@ -118,6 +126,9 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Tab management** — Drag-and-drop tabs between panels, per-tab colors, CWD tracking
 - **Inline images** — SIXEL graphics and the iTerm2 inline image protocol render directly in the terminal (`img2sixel`, `chafa -f sixel`, `imgcat`)
 - **Connection management** — Organize connections in folder hierarchies with import/export from external files
+- **Find in terminal** — Search the terminal output (`Cmd+F` on macOS, `Ctrl+Shift+F` on Windows/Linux)
+- **Shell integration and prompt navigation** — The per-connection **Shell Integration** toggle (local shell, WSL and SSH; on by default) lets the file browser follow the shell's current directory and marks each prompt and command (OSC 7 / OSC 133). With the marks, jump between prompts, select or copy the last command's output from the command palette, and see a green or red exit-status mark next to each finished command — see [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md#prompt-navigation-and-command-output-osc-133)
+- **Open Connections panel** — One place to inspect and close everything termiHub has open: local sessions, agent connections and their sessions, SSH tunnels, SFTP sessions, monitoring, embedded servers and X servers (gear menu → **Open Connections**)
 
 ### SSH Features
 
@@ -144,7 +155,8 @@ Prefer to build it yourself? See [Development](#development) below.
 ### UI and Customization
 
 - **VS Code-inspired layout** — Activity bar, sidebar, status bar with customizable positions
-- **Themes** — Dark, Light, and System (auto-detects OS preference) themes
+- **Themes** — Dark, Light, Solarized Dark, Solarized Light, and System (auto-detects OS preference) themes, plus your own custom themes built in the Theme Editor, theme import/export, and themes installed by plugins
+- **Command palette** — Search and run any command (`Cmd+P` on macOS, `Ctrl+Shift+P` on Windows/Linux)
 - **Layout presets** — Default, Focus (no sidebar), and Zen (minimal UI) modes
 - **Built-in editor** — Edit local and remote files with Monaco Editor (syntax highlighting, search, minimap)
 - **Schema-driven settings** — Connection types declare their own settings; the UI renders them automatically
@@ -209,7 +221,7 @@ termiHub uses a VS Code-inspired three-column layout:
 └──────────┴────────────────┴──────────────────────────────────────────┘
 ```
 
-- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File Browser, Recent Sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow Experimental Features** on, it also shows SSH Tunnels, Services (embedded servers), Network Tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard Shortcuts, Customize Layout, connection import/export, Updates, **Export Diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
+- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File Browser, Recent Sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow Experimental Features** on, it also shows SSH Tunnels, Services (embedded servers), Network Tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard Shortcuts, Customize Layout, Open Connections, connection import/export, Updates, **Export Diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
 - **Terminal View** — The main area with a tab bar, terminal content, toolbar (New Terminal, Split, Close Panel), and status bar.
 
@@ -373,12 +385,17 @@ Split the terminal area into multiple panels:
 
 The sidebar file browser operates in different modes based on the active tab:
 
-| Active Tab      | Mode  | Description                  |
-| --------------- | ----- | ---------------------------- |
-| Local shell     | Local | Browses the local filesystem |
-| SSH             | SFTP  | Browses the remote server    |
-| Serial / Telnet | None  | File browser unavailable     |
-| Editor/Settings | —     | Retains the last active mode |
+| Active Tab           | Mode      | Description                                                      |
+| -------------------- | --------- | ---------------------------------------------------------------- |
+| Local shell          | Local     | Browses the local filesystem                                     |
+| WSL                  | Local     | Browses the distribution's files through `\\wsl$\<distribution>` |
+| SSH                  | SFTP      | Browses the remote server                                        |
+| Docker               | Container | Browses the container's filesystem                               |
+| FTP / FTPS           | FTP       | Browses the FTP server                                           |
+| Remote agent session | Agent     | Browses the agent host, for connection types that support it     |
+| Serial / Telnet      | None      | File browser unavailable                                         |
+| Editor               | —         | Follows the file's origin (local or remote)                      |
+| Settings             | None      | File browser unavailable                                         |
 
 **Toolbar:** Up (parent dir), Refresh, Upload (SFTP), New File, New Folder, Disconnect (SFTP).
 
@@ -397,15 +414,23 @@ Double-click a file in the file browser (or right-click > Edit) to open it in a 
 
 ### Keyboard Shortcuts
 
-| Shortcut                 | Action                |
-| ------------------------ | --------------------- |
-| `Ctrl+Shift+`` (`` ` ``) | New local terminal    |
-| `Ctrl+Shift+W` / `Cmd+W` | Close active tab      |
-| `Ctrl+Tab`               | Next tab              |
-| `Ctrl+Shift+Tab`         | Previous tab          |
-| `Ctrl+S` / `Cmd+S`       | Save file (in editor) |
+The most-used default shortcuts:
 
-On macOS, `Cmd` can be used in place of `Ctrl`.
+| Action                         | macOS                         | Windows / Linux                     |
+| ------------------------------ | ----------------------------- | ----------------------------------- |
+| New local terminal             | `` Cmd+Shift+` ``             | `` Ctrl+Shift+` ``                  |
+| Close active tab               | `Cmd+W`                       | `Ctrl+Shift+W`                      |
+| Next / previous tab            | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab`       |
+| Command palette                | `Cmd+P`                       | `Ctrl+Shift+P`                      |
+| Find in terminal               | `Cmd+F`                       | `Ctrl+Shift+F`                      |
+| Jump to previous / next prompt | `Cmd+Up` / `Cmd+Down`         | `Ctrl+Shift+Up` / `Ctrl+Shift+Down` |
+| Split right / split down       | `Cmd+\` / `Cmd+Shift+\`       | `Alt+Shift+\` / `Alt+Shift+-`       |
+| Toggle sidebar                 | `Cmd+B`                       | `Ctrl+Shift+B`                      |
+| Open settings                  | `Cmd+,`                       | `Ctrl+,`                            |
+| Show all keyboard shortcuts    | `Cmd+K` `Cmd+S`               | `F1`                                |
+| Save file (in editor)          | `Cmd+S`                       | `Ctrl+S`                            |
+
+Windows/Linux defaults use `Ctrl+Shift` or `Alt+Shift` so that common shell keys such as `Ctrl+W` and `Ctrl+B` still reach the terminal. Every shortcut can be rebound under **Settings → Keyboard → Keyboard Shortcuts**. See [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md) for the reasoning and the prompt-navigation and focus keys.
 
 ### Settings
 
@@ -485,10 +510,14 @@ By default the file records **Info** level and above — enough to be readable w
 
 ### Authentication Methods
 
-termiHub supports **Password** and **SSH Key** authentication:
+Pick the **Method** in the connection editor's Authentication group:
 
-- **Password** — termiHub prompts for the password each time you connect. Passwords are never stored in the configuration file (optionally stored in the credential store).
-- **SSH Key** — Provide a path to your private key file. Recommended for frequent connections.
+- **SSH Key** (default) — Provide a path to your private key file. Recommended for frequent connections. termiHub asks for the key's passphrase when the key is encrypted.
+- **Password** — termiHub asks for the password when you connect. With **Save credentials** on, the password is kept in the credential store (OS keychain or master-password vault) and used for later connects. Passwords are never stored in the configuration file.
+- **SSH Agent** — Use the keys loaded in your local SSH agent (`ssh-agent` via `SSH_AUTH_SOCK`, or the OpenSSH Authentication Agent on Windows).
+- **Keyboard-Interactive (OTP / 2FA)** — Answer the server's prompts (one-time codes, 2FA, PAM) in a dialog. termiHub also shows these prompts when a server asks for a second factor after key, agent or password authentication, or offers keyboard-interactive after refusing a password.
+
+**SSH Agent Forwarding** — Turn on **Forward SSH agent** to make your local agent's keys available on the target (and through the jump-host chain), so onward SSH from that host works without copying private keys. It is off by default.
 
 ### Setting Up SSH Keys
 
@@ -506,7 +535,7 @@ Install the public key on the server:
 ssh-copy-id -i ~/.ssh/id_ed25519.pub user@hostname
 ```
 
-In termiHub, set **Auth Method** to **SSH Key** and **Key Path** to `~/.ssh/id_ed25519`.
+In termiHub, set **Method** to **SSH Key** and **Key Path** to `~/.ssh/id_ed25519`.
 
 ### Platform-Specific Key Setup
 
@@ -533,7 +562,7 @@ ssh-add $env:USERPROFILE\.ssh\id_ed25519
 
 ### X11 Forwarding
 
-X11 forwarding lets you run graphical applications on a remote server and display them locally. Enable it in the SSH connection editor (**Enable X11 Forwarding** checkbox).
+X11 forwarding lets you run graphical applications on a remote server and display them locally. Turn it on in the SSH connection editor's Advanced group (**X11 Forwarding** toggle, on by default for new connections).
 
 **Platform requirements:**
 
@@ -549,19 +578,22 @@ When you click on an SSH terminal tab, the sidebar file browser auto-connects vi
 
 ### SSH Connection Settings
 
-| Field                 | Description                                                                                 | Default  |
-| --------------------- | ------------------------------------------------------------------------------------------- | -------- |
-| Host                  | Server hostname or IP address                                                               | —        |
-| Port                  | SSH port                                                                                    | 22       |
-| Username              | Remote username                                                                             | —        |
-| Auth Method           | `password` or `key`                                                                         | password |
-| Key Path              | Path to private key (when using key auth)                                                   | —        |
-| Enable X11 Forwarding | Forward remote GUI apps to local display                                                    | Off      |
-| Initial Command       | Command run once after the first connect (e.g. `tmux attach`); not re-run on auto-reconnect | —        |
-| On-reconnect Command  | Command run once after an automatic reconnect                                               | —        |
-| Proxy Type            | Connect through a `socks5`, `socks4` (SOCKS4a for host names) or `http` (`CONNECT`) proxy   | None     |
-| Proxy Host / Port     | Proxy address; an empty port means 1080 for SOCKS, 8080 for HTTP                            | —        |
-| Proxy User / Password | Proxy credentials (SOCKS5 and HTTP; SOCKS4 sends only the user); password kept in the vault | —        |
+| Field                 | Description                                                                                 | Default |
+| --------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| Host                  | Server hostname or IP address                                                               | —       |
+| Port                  | SSH port                                                                                    | 22      |
+| Username              | Remote username                                                                             | —       |
+| Method                | SSH Key, Password, SSH Agent, or Keyboard-Interactive (OTP / 2FA)                           | SSH Key |
+| Key Path              | Path to private key (when using key auth)                                                   | —       |
+| Save credentials      | Keep the password or key passphrase in the credential store                                 | Off     |
+| X11 Forwarding        | Forward remote GUI apps to local display                                                    | On      |
+| Shell Integration     | Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)                          | On      |
+| Forward SSH agent     | Make your local SSH agent's keys available on the target                                    | Off     |
+| Initial Command       | Command run once after the first connect (e.g. `tmux attach`); not re-run on auto-reconnect | —       |
+| On-reconnect Command  | Command run once after an automatic reconnect                                               | —       |
+| Proxy Type            | Connect through a `socks5`, `socks4` (SOCKS4a for host names) or `http` (`CONNECT`) proxy   | None    |
+| Proxy Host / Port     | Proxy address; an empty port means 1080 for SOCKS, 8080 for HTTP                            | —       |
+| Proxy User / Password | Proxy credentials (SOCKS5 and HTTP; SOCKS4 sends only the user); password kept in the vault | —       |
 
 With a proxy set, the host key is still checked against the SSH host, not the proxy. With jump hosts, only the connection to the first jump host goes through the proxy.
 
@@ -739,7 +771,7 @@ cd examples
 ./scripts/stop-test-environment.sh    # Stop servers
 ```
 
-**Comprehensive testing** — The `tests/docker/` directory provides 13 Docker containers for system testing (SSH variants, telnet, serial, SFTP stress, network fault injection). See [tests/docker/README.md](tests/docker/README.md).
+**Comprehensive testing** — The `tests/docker/` directory provides Docker containers for system testing (SSH variants, telnet, FTP, VNC, RDP, SFTP stress, network fault injection). See [tests/docker/README.md](tests/docker/README.md).
 
 ---
 
@@ -749,6 +781,8 @@ cd examples
 - **[Contributing](docs/contributing.md)** — Development workflow, coding standards, agent development, releasing, and performance profiling
 - **[Testing](docs/testing.md)** — Automated testing strategy and manual test procedures
 - **[Remote Protocol](docs/remote-protocol.md)** — Desktop-to-agent JSON-RPC specification
+- **[Keyboard Shortcuts](docs/keyboard-shortcuts.md)** — Default keybindings, conflict avoidance with shell keys, prompt navigation
+- **[Plugin Authoring](docs/plugin-authoring.md)** — Package format, manifest, extension points, native backends and their sandbox, packaging, signing, and updates
 
 ## Built With
 
