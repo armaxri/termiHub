@@ -9,7 +9,14 @@ vi.mock("@/services/keybindings", () => ({
   isShellReservedKey: vi.fn(() => false),
   isEventFromTerminal: vi.fn(() => false),
   getActionScope: vi.fn((action: string) => {
-    if (action === "find-in-terminal" || action === "clear-terminal") return "terminal";
+    if (
+      action === "find-in-terminal" ||
+      action === "clear-terminal" ||
+      action === "jump-prev-prompt" ||
+      action === "jump-next-prompt"
+    ) {
+      return "terminal";
+    }
     if (action === "copy" || action === "paste" || action === "select-all") {
       return "editor-delegated";
     }
@@ -564,6 +571,80 @@ describe("useKeyboardShortcuts", () => {
 
       expect(events).toHaveLength(1);
       expect(events[0].detail.tabId).toBeDefined();
+    });
+  });
+
+  describe("prompt navigation from a focused terminal (#4914)", () => {
+    /**
+     * Fire a keydown from inside xterm's hidden helper <textarea>, which is
+     * where a real focused terminal's keystrokes originate.
+     */
+    function fireKeyFromXterm(key: string, opts: Partial<KeyboardEventInit> = {}): boolean {
+      const xterm = document.createElement("div");
+      xterm.className = "xterm";
+      const textarea = document.createElement("textarea");
+      textarea.className = "xterm-helper-textarea";
+      xterm.appendChild(textarea);
+      document.body.appendChild(xterm);
+      try {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ...opts,
+        });
+        textarea.dispatchEvent(event);
+        return event.defaultPrevented;
+      } finally {
+        xterm.remove();
+      }
+    }
+
+    beforeEach(() => {
+      useAppStore.getState().addTab("Shell", "local");
+      const panel = getAllLeaves(layoutState().rootPanel)[0];
+      useAppStore.getState().setActivePanel(panel.id);
+      mockIsEventFromTerminal.mockReturnValue(true);
+    });
+
+    it.each([
+      ["jump-prev-prompt", "ArrowUp"],
+      ["jump-next-prompt", "ArrowDown"],
+    ])("runs %s on Cmd+%s typed into the terminal", (action, key) => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue(action);
+
+      const events: CustomEvent[] = [];
+      const listener = (e: Event) => events.push(e as CustomEvent);
+      window.addEventListener(`termihub:${action}`, listener);
+      try {
+        const prevented = fireKeyFromXterm(key, { metaKey: true });
+
+        expect(prevented).toBe(true);
+        expect(events).toHaveLength(1);
+        expect(events[0].detail.tabId).toBeDefined();
+      } finally {
+        window.removeEventListener(`termihub:${action}`, listener);
+      }
+    });
+
+    it("leaves editor-delegated paste to the terminal's own key router", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("paste");
+
+      const events: Event[] = [];
+      const listener = (e: Event) => events.push(e);
+      window.addEventListener("termihub:paste", listener);
+      try {
+        fireKeyFromXterm("v", { metaKey: true });
+        expect(events).toHaveLength(0);
+      } finally {
+        window.removeEventListener("termihub:paste", listener);
+      }
     });
   });
 

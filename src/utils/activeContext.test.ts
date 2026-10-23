@@ -115,6 +115,20 @@ describe("isScopeCompatible", () => {
     expect(isScopeCompatible("terminal", "terminal", true)).toBe(false);
   });
 
+  it("terminal scope fires when the text input is the terminal's own xterm textarea (#4914)", () => {
+    // xterm.js receives keys through a hidden helper <textarea>, so every key
+    // typed into a focused terminal looks like a text-input event. That must
+    // not gate terminal-scoped shortcuts (Cmd+Up/Down prompt jumps, find, clear).
+    expect(isScopeCompatible("terminal", "terminal", true, true)).toBe(true);
+    expect(isScopeCompatible("terminal", "editor", true, true)).toBe(false);
+  });
+
+  it("editor-delegated scope still bails for the terminal's xterm textarea (#4914)", () => {
+    // The terminal's own key router already runs copy/paste/select-all; firing
+    // the global handler too would paste twice.
+    expect(isScopeCompatible("editor-delegated", "terminal", true, true)).toBe(false);
+  });
+
   it("editor-delegated scope bails in editor and form contexts", () => {
     expect(isScopeCompatible("editor-delegated", "editor", false)).toBe(false);
     expect(isScopeCompatible("editor-delegated", "form", false)).toBe(false);
