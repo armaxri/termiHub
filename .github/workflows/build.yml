@@ -3,6 +3,9 @@ name: Build
 on:
   pull_request:
     branches: [ main, develop ]
+  # The daily lockfile chore dispatches this on its PR branch (#4912): its
+  # GITHUB_TOKEN-pushed PR gets no pull_request run.
+  workflow_dispatch:
 
 # Cancel an in-flight PR build when a newer commit is pushed to the same PR —
 # no point finishing a build for a superseded commit.
