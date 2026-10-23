@@ -6,7 +6,8 @@ can edit, approve, and then fold the approved parts into their canonical homes (
 `README.md`, `CHANGELOG.md`, etc.) at release time.
 
 They were produced from the audit's `MKT-*` findings. Every capability claim is grounded
-in shipped code and the current `README.md` (verified at authoring time); experimental /
+in shipped code and the current `README.md` (re-verified 2026-10-24 against `develop` at
+`652dff95f`, #4318; re-check before folding them in); experimental /
 beta features are marked as such. No screenshots, logos, taglines, or metrics were
 invented — those are called out below as maintainer-only follow-ups.
 
@@ -34,5 +35,5 @@ These need a human decision or a real asset and were deliberately **not** invent
 - **Numbers / metrics** — no benchmarks, user counts, or performance figures are claimed.
   Add any only if independently verifiable.
 - **Changelog curation** — `release-notes-0.1.0-draft.md` is a curated _net-change_ summary,
-  not a mechanical dump of the 590+ per-branch fragments in `docs/changes/**`. Final
+  not a mechanical dump of the 1,100+ per-branch fragments in `docs/changes/**`. Final
   wording and any omissions/additions are the maintainer's call at release time.
