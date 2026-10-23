@@ -20,8 +20,6 @@ import {
   Pencil,
   FileDown,
   ClipboardCopy,
-  ClipboardPaste,
-  Copy,
   Eraser,
   ArrowRightLeft,
   Check,
@@ -32,7 +30,6 @@ import {
   Columns2,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import {
   useProjectedSessionLifecycle,
@@ -49,9 +46,7 @@ import { PanelNode, LeafPanel, TerminalTab } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
-import { isWindows } from "@/utils/platform";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
-import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
@@ -73,12 +68,8 @@ import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnect
 import { ImportedCommandBanner } from "@/components/Terminal/ImportedCommandBanner";
 import { ImportedConnectionPrompt } from "@/components/Terminal/ImportedConnectionPrompt";
 import {
-  toast,
   Spinner,
   EmptyState,
-  ContextMenuContent,
-  ContextMenuRoot,
-  ContextMenuTrigger,
   MenuCheckboxItem,
   MenuItem,
   MenuItemIndicator,
@@ -88,9 +79,8 @@ import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import { ZoomOverlay } from "./ZoomOverlay";
-import { useTerminalRightClickRouting } from "./terminalRightClick";
+import { TerminalContextMenu, useTerminalQuickActionMode } from "./TerminalContextMenu";
 import { describePointerHits, resolveTabDrop, type PointerHit } from "./resolveTabDrop";
-import { errorMessage } from "@/utils/errorMessage";
 import "./SplitView.css";
 
 /**
@@ -138,27 +128,7 @@ export function readSessionType(config: unknown): string {
   return "";
 }
 
-/**
- * Copy a terminal selection to the OS clipboard, clearing the selection only
- * once the write succeeds. A failed clipboard IPC must not silently drop the
- * selection and let the user believe they copied (FEC-018) — it is surfaced via
- * `reportError`, matching the other copy paths.
- */
-export async function copyTerminalSelection(
-  selection: string,
-  deps: {
-    writeClipboard: (text: string) => Promise<void>;
-    clearSelection: () => void;
-    reportError: (message: string) => void;
-  }
-): Promise<void> {
-  try {
-    await deps.writeClipboard(selection);
-    deps.clearSelection();
-  } catch (err) {
-    deps.reportError(`Failed to copy selection: ${errorMessage(err)}`);
-  }
-}
+export { copyTerminalSelection } from "./TerminalContextMenu";
 
 /**
  * The file editor is code-split out of the main bundle (PERF-001). It statically
@@ -278,6 +248,7 @@ export function SplitView() {
 
   const [zoomColorPickerOpen, setZoomColorPickerOpen] = useState(false);
   const [zoomRenameOpen, setZoomRenameOpen] = useState(false);
+  const zoomQuickAction = useTerminalQuickActionMode();
 
   // Find the zoomed tab's metadata for the overlay header
   const zoomedTab = useMemo(() => {
@@ -543,7 +514,23 @@ export function SplitView() {
                   }
                 />
               ) : zoomedTab.contentType === "terminal" ? (
-                <>
+                // The zoomed terminal gets the same right-click menu as the
+                // in-panel one (#4915) — previously only the title's tab menu.
+                <TerminalContextMenu
+                  tabId={zoomedTabId}
+                  quickAction={zoomQuickAction}
+                  triggerTestId={`zoom-terminal-context-trigger-${zoomedTabId}`}
+                  className="terminal-context-trigger"
+                  horizontalScrolling={tabHorizontalScrollingZoom[zoomedTabId] ?? false}
+                  onToggleHorizontalScrolling={() =>
+                    setTabHorizontalScrollingZoom(
+                      zoomedTabId,
+                      !(tabHorizontalScrollingZoom[zoomedTabId] ?? false)
+                    )
+                  }
+                  onRename={() => setZoomRenameOpen(true)}
+                  onSetColor={() => setZoomColorPickerOpen(true)}
+                >
                   <TerminalSearchBar tabId={zoomedTabId} />
                   {/* key forces a fresh mount on each zoomed-tab change so the
                       adoption lifecycle always matches the initial-zoom case. */}
@@ -552,7 +539,7 @@ export function SplitView() {
                     tabId={zoomedTabId}
                     isVisible={true}
                   />
-                </>
+                </TerminalContextMenu>
               ) : zoomedTab.contentType === "settings" ? (
                 <SettingsPanel tabId={zoomedTabId} isVisible={true} />
               ) : zoomedTab.contentType === "log-viewer" ? (
@@ -763,9 +750,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const terminalAutoRetryCount = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgent = useAppStore((s) => s.terminalWaitingForAgent);
   const terminalReattaching = useAppStore((s) => s.terminalReattaching);
-  const rightClickBehavior = useProjectedSettings().rightClickBehavior;
-  const useQuickAction =
-    rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
+  const useQuickAction = useTerminalQuickActionMode();
 
   // Broadcast panel ring/glow (#1957): a participating panel is ringed when the
   // terminal it currently shows (its active tab) is in the broadcast set; the
@@ -783,81 +768,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
     broadcastTargetTabIds,
   });
 
-  const {
-    clearTerminal,
-    saveTerminalToFile,
-    copyTerminalToClipboard,
-    getTerminalSelection,
-    clearTerminalSelection,
-    copySelectionToClipboard,
-    pasteToTerminal,
-    isMouseReportingActive,
-  } = useTerminalRegistry();
-
-  // With app mouse reporting on, a plain right-click belongs to the app and
-  // Shift+right-click to termiHub (#3801) — see terminalRightClick.ts.
-  const rightClickRouting = useTerminalRightClickRouting(isMouseReportingActive);
-
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
-  const [contextMenuTabSelection, setContextMenuTabSelection] = useState<string | null>(null);
 
   // OS file drop is scoped per pane: a path dropped onto this panel is inserted
   // into the session of the tab shown here, so each open connection is its own
   // drop target rather than the whole terminal area being a single zone.
   const { terminalAreaRef, isFileDragOver, panelSessionId } = usePaneFileDrop(panel);
-
-  // Capture selection BEFORE right-click modifies it (xterm auto-selects word on right-click)
-  const preRightClickSelectionRef = useRef<string | null>(null);
-
-  // Per-tab guard against a re-entrant / doubled contextmenu gesture. When termiHub
-  // is viewed over Windows Remote Desktop (mstsc, the OS session-remoting — NOT
-  // termiHub's own RDP / rdp-sidecar connection type) a single right-click can
-  // deliver the contextmenu event more than once (the OS remote-desktop relay /
-  // WebView2 double-fire), each firing a paste — the double-paste bug (#2595
-  // remote-desktop follow-up). This is defense-in-depth alongside the per-tab paste
-  // debounce in TerminalRegistry: if a right-click paste for this tab is already in
-  // flight, a second contextmenu for the same gesture is ignored until it settles.
-  // Keyed per tab so a different tab's right-click is unaffected.
-  const quickActionPastingRef = useRef<Set<string>>(new Set());
-
-  const captureSelectionBeforeRightClick = useCallback(
-    (e: React.PointerEvent, tabId: string) => {
-      if (e.button === 2) {
-        preRightClickSelectionRef.current = getTerminalSelection(tabId) ?? null;
-      }
-    },
-    [getTerminalSelection]
-  );
-
-  const handleQuickAction = useCallback(
-    (e: React.MouseEvent, tabId: string) => {
-      e.preventDefault();
-      const selection = preRightClickSelectionRef.current;
-      preRightClickSelectionRef.current = null;
-      // The app enabled mouse reporting and xterm already forwarded this
-      // right-click to it: acting on it too double-handles it — Claude Code
-      // pastes on right-click itself, so the clipboard landed twice (#3801).
-      if (!rightClickRouting.claimRightClick(e, tabId)) return;
-      if (selection) {
-        void copyTerminalSelection(selection, {
-          writeClipboard,
-          clearSelection: () => clearTerminalSelection(tabId),
-          reportError: (message) => toast.error(message),
-        });
-      } else {
-        // Ignore a duplicate contextmenu for the same gesture while its paste is
-        // still resolving (see quickActionPastingRef).
-        if (quickActionPastingRef.current.has(tabId)) return;
-        quickActionPastingRef.current.add(tabId);
-        clearTerminalSelection(tabId);
-        void Promise.resolve(pasteToTerminal(tabId)).finally(() => {
-          quickActionPastingRef.current.delete(tabId);
-        });
-      }
-    },
-    [clearTerminalSelection, pasteToTerminal, rightClickRouting]
-  );
 
   const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
 
@@ -998,17 +915,23 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   : tab.config.type
               }
             />
-          ) : useQuickAction ? (
-            <div
+          ) : (
+            <TerminalContextMenu
               key={tab.id}
+              tabId={tab.id}
+              quickAction={useQuickAction}
+              triggerTestId={`terminal-context-trigger-${tab.id}`}
               className={
                 tab.id === panel.activeTabId
                   ? "terminal-context-trigger"
                   : "terminal-context-trigger terminal-context-trigger--hidden"
               }
-              onPointerDownCapture={(e) => captureSelectionBeforeRightClick(e, tab.id)}
-              onMouseDownCapture={(e) => rightClickRouting.onMouseDownCapture(e, tab.id)}
-              onContextMenu={(e) => handleQuickAction(e, tab.id)}
+              horizontalScrolling={tabHorizontalScrolling[tab.id] ?? false}
+              onToggleHorizontalScrolling={() =>
+                setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
+              }
+              onRename={() => setRenameTabId(tab.id)}
+              onSetColor={() => setColorPickerTabId(tab.id)}
             >
               <TerminalSearchBar tabId={tab.id} />
               <TerminalSlot
@@ -1016,89 +939,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                 tabId={tab.id}
                 isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
               />
-            </div>
-          ) : (
-            <ContextMenuRoot
-              key={tab.id}
-              onOpenChange={(open) => {
-                if (open) {
-                  setContextMenuTabSelection(getTerminalSelection(tab.id) ?? null);
-                }
-              }}
-            >
-              <ContextMenuTrigger
-                asChild
-                // Preventing default before Radix's own handler keeps the menu
-                // closed when the right-click belongs to the app (#3801).
-                onContextMenu={(e) => rightClickRouting.claimRightClick(e, tab.id)}
-              >
-                <div
-                  data-testid={`terminal-context-trigger-${tab.id}`}
-                  onMouseDownCapture={(e) => rightClickRouting.onMouseDownCapture(e, tab.id)}
-                  className={
-                    tab.id === panel.activeTabId
-                      ? "terminal-context-trigger"
-                      : "terminal-context-trigger terminal-context-trigger--hidden"
-                  }
-                >
-                  <TerminalSearchBar tabId={tab.id} />
-                  <TerminalSlot
-                    key={`ts-${tab.id}-${zoomedTabId === tab.id ? "z" : "n"}`}
-                    tabId={tab.id}
-                    isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-                  />
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                {contextMenuTabSelection && (
-                  <MenuItem
-                    onSelect={() => copySelectionToClipboard(tab.id)}
-                    data-testid="terminal-context-copy-selection"
-                  >
-                    <Copy size={14} /> Copy Selection
-                  </MenuItem>
-                )}
-                <MenuItem
-                  onSelect={() => pasteToTerminal(tab.id)}
-                  data-testid="terminal-context-paste"
-                >
-                  <ClipboardPaste size={14} /> Paste
-                </MenuItem>
-                <MenuItem
-                  onSelect={() => copyTerminalToClipboard(tab.id)}
-                  data-testid="terminal-context-copy-all"
-                >
-                  <ClipboardCopy size={14} /> Copy All
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem onSelect={() => setRenameTabId(tab.id)} data-testid="tab-context-rename">
-                  <Pencil size={14} /> Rename
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem onSelect={() => saveTerminalToFile(tab.id)}>
-                  <FileDown size={14} /> Save to File
-                </MenuItem>
-                <MenuItem onSelect={() => clearTerminal(tab.id)}>
-                  <Eraser size={14} /> Clear Terminal
-                </MenuItem>
-                <MenuSeparator />
-                <MenuCheckboxItem
-                  checked={tabHorizontalScrolling[tab.id] ?? false}
-                  onSelect={() =>
-                    setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
-                  }
-                >
-                  <MenuItemIndicator>
-                    <Check size={14} />
-                  </MenuItemIndicator>
-                  <ArrowRightLeft size={14} /> Horizontal Scrolling
-                </MenuCheckboxItem>
-                <MenuSeparator />
-                <MenuItem onSelect={() => setColorPickerTabId(tab.id)}>
-                  <Palette size={14} /> Set Color...
-                </MenuItem>
-              </ContextMenuContent>
-            </ContextMenuRoot>
+            </TerminalContextMenu>
           )
         )}
         {activeDragTab && <PanelDropZone panelId={panel.id} hideEdges={hideEdges} />}
