@@ -454,7 +454,7 @@ export function SplitView() {
                     onSelect={() => copyTerminalToClipboard(zoomedTabId)}
                     data-testid="zoom-context-copy"
                   >
-                    <ClipboardCopy size={14} /> Copy to Clipboard
+                    <ClipboardCopy size={14} /> Copy All
                   </MenuItem>
                   <MenuItem
                     onSelect={() => clearTerminal(zoomedTabId)}
