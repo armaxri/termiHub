@@ -4,9 +4,20 @@
  * `SplitView.handleDragEnd` used to inline all of this, which left it
  * untestable. It now reads the dnd-kit event into a {@link TabDropInput},
  * asks {@link resolveTabDrop} what the drop means, and dispatches the result
- * to the store.
+ * to the store via {@link dispatchTabDrop}.
+ *
+ * Tear-off (#4916): a tab released outside the window's viewport opens in a new
+ * window through the same `moveTabToWindow({ kind: "new" })` hand-off the tab
+ * context menu's "Move to New Window" uses, so the live session moves with it.
+ * The drag is a dnd-kit pointer drag (not native HTML5 DnD), so detection reads
+ * only the pointer position — no `dragend` coordinates or `dropEffect`, which
+ * WKWebView (macOS) and WebKitGTK do not report reliably. The OS keeps routing
+ * the pressed mouse's move/up events to the window that received the press on
+ * macOS, Windows and Linux, so the release point arrives with coordinates
+ * outside the viewport.
  */
 import type { DropEdge, PanelNode } from "@/types/terminal";
+import type { MoveWindowTarget } from "@/types/window";
 import { getAllLeaves } from "@/utils/panelTree";
 
 /** What an element under the drop point is, for drops outside every droppable. */
@@ -31,6 +42,25 @@ export interface TabDropInput {
   rootPanel: PanelNode;
   /** What lies under the drop point (top-most first), used when `overId` is `null`. */
   pointerHits: PointerHit[];
+  /**
+   * Where the pointer was released, in viewport (client) coordinates; `null`
+   * when unknown (a non-pointer sensor).
+   */
+  dropPoint: Point | null;
+  /** The window's viewport size, to tell an in-window drop from a tear-off. */
+  viewport: Size;
+}
+
+/** A point in viewport (client) coordinates. */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** A viewport size in CSS pixels. */
+export interface Size {
+  width: number;
+  height: number;
 }
 
 /** The store operation a tab drop resolves to. */
@@ -40,7 +70,17 @@ export type TabDropAction =
   | { kind: "newGroup" }
   | { kind: "split"; targetPanelId: string; edge: DropEdge }
   | { kind: "move"; toPanelId: string; index: number }
-  | { kind: "reorder"; panelId: string; oldIndex: number; newIndex: number };
+  | { kind: "reorder"; panelId: string; oldIndex: number; newIndex: number }
+  | { kind: "tearOff" };
+
+/**
+ * Whether `point` lies outside a `viewport` of the given size. A zero-size
+ * viewport (not laid out yet) counts as inside so it never triggers a tear-off.
+ */
+export function isOutsideViewport(point: Point, viewport: Size): boolean {
+  if (viewport.width <= 0 || viewport.height <= 0) return false;
+  return point.x < 0 || point.y < 0 || point.x >= viewport.width || point.y >= viewport.height;
+}
 
 /** Describe the elements under a drop point (from `document.elementsFromPoint`). */
 export function describePointerHits(elements: Element[]): PointerHit[] {
@@ -52,8 +92,15 @@ export function describePointerHits(elements: Element[]): PointerHit[] {
 
 /** Decide what a tab drop does. */
 export function resolveTabDrop(input: TabDropInput): TabDropAction {
-  const { tabId, fromPanelId, overId, overPanelId, rootPanel, pointerHits } = input;
+  const { tabId, fromPanelId, overId, overPanelId, rootPanel, pointerHits, dropPoint, viewport } =
+    input;
   if (!fromPanelId) return { kind: "none" };
+
+  // Released outside the window: tear the tab off into a new window (#4916).
+  // Checked first because the drag overlay's rect can still intersect a
+  // droppable near the window edge (dnd-kit's rect-intersection collision),
+  // which would otherwise turn a tear-off into an edge split.
+  if (dropPoint && isOutsideViewport(dropPoint, viewport)) return { kind: "tearOff" };
 
   // Not over any registered droppable: look for the targets outside the
   // DndContext (group chips, the new-group button). A chip wins over the
@@ -99,4 +146,52 @@ export function resolveTabDrop(input: TabDropInput): TabDropAction {
   const newIndex = sourceLeaf.tabs.findIndex((t) => t.id === overId);
   if (oldIndex === -1 || newIndex === -1) return { kind: "none" };
   return { kind: "reorder", panelId: fromPanelId, oldIndex, newIndex };
+}
+
+/** The store operations a resolved tab drop is dispatched to. */
+export interface TabDropOps {
+  moveTabToGroup: (tabId: string, fromPanelId: string, groupId: string) => void;
+  addTabGroupWithTab: (tabId: string, fromPanelId: string) => void;
+  splitPanelWithTab: (
+    tabId: string,
+    fromPanelId: string,
+    targetPanelId: string,
+    edge: DropEdge
+  ) => void;
+  moveTab: (tabId: string, fromPanelId: string, toPanelId: string, index: number) => void;
+  reorderTabs: (panelId: string, oldIndex: number, newIndex: number) => void;
+  moveTabToWindow: (tabId: string, fromPanelId: string, target: MoveWindowTarget) => Promise<void>;
+}
+
+/** Apply a resolved tab drop to the store. */
+export function dispatchTabDrop(
+  action: TabDropAction,
+  tabId: string,
+  fromPanelId: string,
+  ops: TabDropOps
+): void {
+  switch (action.kind) {
+    case "moveToGroup":
+      ops.moveTabToGroup(tabId, fromPanelId, action.groupId);
+      break;
+    case "newGroup":
+      ops.addTabGroupWithTab(tabId, fromPanelId);
+      break;
+    case "split":
+      ops.splitPanelWithTab(tabId, fromPanelId, action.targetPanelId, action.edge);
+      break;
+    case "move":
+      ops.moveTab(tabId, fromPanelId, action.toPanelId, action.index);
+      break;
+    case "reorder":
+      ops.reorderTabs(action.panelId, action.oldIndex, action.newIndex);
+      break;
+    case "tearOff":
+      // The same hand-off as the tab context menu's "Move to New Window": the
+      // live session is marked moving and adopted by the new window.
+      void ops.moveTabToWindow(tabId, fromPanelId, { kind: "new" });
+      break;
+    case "none":
+      break;
+  }
 }
