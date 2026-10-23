@@ -235,6 +235,13 @@ class TestInputRouting(
         ``terminal-context-trigger-<tab>`` testid; the actual clipboard transfer
         is operator-confirmed (the bridge cannot read the OS clipboard)."""
         self.close_all_tabs()
+        # MT-UI-26: a fresh profile leaves Right-Click Behavior unset (platform
+        # default), which is the context menu on macOS/Linux (#4915).
+        behavior = self.projection_region_cache(SETTINGS_REGION).get("rightClickBehavior")
+        assert behavior is None, (
+            f"Right-Click Behavior is {behavior!r}, expected the platform default "
+            "(unset) -- reset it in Settings > Terminal before this run"
+        )
         self.ensure_terminal()
         marker = "CTX_MENU_MARKER_5120"
         self.run_command(f"echo {marker}")
@@ -253,20 +260,36 @@ class TestInputRouting(
         self.driver.press_key("Escape")
 
         self.manual_step(
-            "Right-click inside the terminal pane to open its context menu, then "
-            "use 'Copy All' (or select text first and 'Copy Selection'). Paste "
-            "the result into any external editor.",
-            f"The pasted text contains {marker!r} -- the menu copied to the real "
-            "clipboard.",
+            "Right-click inside the terminal pane (a plain right-click, release "
+            "without moving). Then use 'Copy All' (or select text first and "
+            "'Copy Selection') and paste the result into any external editor.",
+            "The menu opens and stays open on the release -- nothing is pasted "
+            f"into the terminal -- and the pasted text contains {marker!r}.",
         )
-        self.manual_step(
-            "Now test Quick Copy/Paste on the terminal:\n"
-            "  - select terminal text with the mouse (Quick Copy: it goes to the "
-            "clipboard on selection, if enabled), and\n"
-            "  - middle-click or right-click to Quick Paste it back.",
-            "Quick Copy/Paste move text via the real clipboard as configured; the "
-            "right-click menu is not shown when Quick Paste is the bound action.",
+
+        # MT-UI-27/28: Quick Copy/Paste is opt-in -- switch it on for the
+        # operator, and restore the platform default afterwards.
+        self.select_setting(
+            "terminal", "settings-right-click-behavior", "quickAction",
+            key="rightClickBehavior", expected="quickAction",
         )
+        try:
+            self.close_all_tabs()
+            self.ensure_terminal()
+            self.manual_step(
+                "Quick Copy/Paste is now on. In the terminal:\n"
+                "  - select some text with the mouse and right-click: it is copied "
+                "(the selection clears), then\n"
+                "  - right-click with nothing selected: the clipboard is pasted.",
+                "Right-click copies the selection or pastes when nothing is "
+                "selected; no menu is shown.",
+            )
+        finally:
+            self.select_setting(
+                "terminal", "settings-right-click-behavior", "__platform_default__",
+                key="rightClickBehavior", expected=None,
+            )
+            self.close_all_tabs()
 
     # ── Drag tab to a panel edge → split (MT-TAB-06) ──────────────────────────
     def test_drag_tab_to_edge_creates_split(self):
