@@ -1547,6 +1547,10 @@ the _net_ user-facing change, not the development path:
    - ...
    ```
 
+   For v0.1.0, `CHANGELOG.md` already holds a `## [0.1.0] - Unreleased` section: merge the
+   curated entries into it and replace `Unreleased` with the tag date. `release-check.sh`
+   fails until the heading carries a real `YYYY-MM-DD` date.
+
 4. **Delete the consumed fragments** so `docs/changes/` holds only `README.md`:
 
    ```bash
