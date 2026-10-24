@@ -34,6 +34,7 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -217,3 +218,80 @@ def same_path(a: str, b: str) -> bool:
         return os.path.samefile(a, b)
     except OSError:
         return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+# -- OS file-manager queries ---------------------------------------------------
+#
+# Linux's "Open in File Manager" goes through ``xdg-open`` on ``PATH``, so the
+# shim above records it. Windows (``ShellExecuteW``) and macOS (``/usr/bin/open``)
+# use no ``PATH`` lookup, so there the harness asks the file manager which
+# folders it shows instead.
+
+#: Opt-in for a local macOS run to query Finder over Apple Events. It triggers
+#: the Automation permission prompt for the terminal app, so it is off unless
+#: asked for; hosted macOS runners refuse it anyway (error -1743).
+FINDER_QUERY_OPT_IN_ENV = "TERMIHUB_ALLOW_FINDER_QUERY"
+
+_SHELL_WINDOWS_PS = (
+    "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object "
+    "{ try { $_.Document.Folder.Self.Path } catch {} }"
+)
+_SHELL_WINDOWS_CLOSE_PS = (
+    "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object "
+    "{ try { if ($_.Document.Folder.Self.Path -ieq $env:TERMIHUB_CLOSE_FOLDER) "
+    "{ $_.Quit() } } catch {} }"
+)
+_FINDER_WINDOWS_OSA = """\
+set out to ""
+tell application "Finder"
+  repeat with w in Finder windows
+    try
+      set out to out & POSIX path of (target of w as alias) & linefeed
+    end try
+  end repeat
+end tell
+return out
+"""
+
+
+def _query_lines(argv: list[str], env: Optional[dict[str, str]] = None) -> Optional[list[str]]:
+    try:
+        done = subprocess.run(
+            argv, capture_output=True, text=True, timeout=30, env=env, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    return [line.strip() for line in done.stdout.splitlines() if line.strip()]
+
+
+def file_manager_folders(platform: str = sys.platform) -> Optional[list[str]]:
+    """Folders the OS file manager currently shows, or ``None`` if it cannot say.
+
+    Windows asks Explorer through the ``Shell.Application`` COM object (no
+    permission needed). macOS asks Finder only with
+    :data:`FINDER_QUERY_OPT_IN_ENV` set. Linux returns ``None``: use the
+    ``xdg-open`` shim there.
+    """
+    if platform == "win32":
+        return _query_lines(["powershell", "-NoProfile", "-Command", _SHELL_WINDOWS_PS])
+    if platform == "darwin" and os.environ.get(FINDER_QUERY_OPT_IN_ENV, "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return _query_lines(["osascript", "-e", _FINDER_WINDOWS_OSA])
+    return None
+
+
+def close_file_manager_folder(folder: str, platform: str = sys.platform) -> None:
+    """Close the Explorer windows showing ``folder`` (Windows; no-op elsewhere).
+
+    Best effort: the test opened them, so it tidies them up; a failure here
+    never fails the test.
+    """
+    if platform != "win32":
+        return
+    env = {**os.environ, "TERMIHUB_CLOSE_FOLDER": os.path.realpath(folder)}
+    _query_lines(["powershell", "-NoProfile", "-Command", _SHELL_WINDOWS_CLOSE_PS], env=env)
