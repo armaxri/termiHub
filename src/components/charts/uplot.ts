@@ -43,6 +43,11 @@ export interface UseUplotSpec {
    * fine and never recreates the plot.
    */
   onUpdate?: (plot: uPlot, data: uPlot.AlignedData) => void;
+  /**
+   * `data-testid` put on the plot's `<canvas>` (re-applied on every rebuild),
+   * so the test bridge's `sampleCanvas` can read what it painted (#4930).
+   */
+  canvasTestId?: string;
 }
 
 /**
@@ -57,6 +62,7 @@ export function useUplot({
   makeOptions,
   recreateDeps,
   onUpdate,
+  canvasTestId,
 }: UseUplotSpec): MutableRefObject<HTMLDivElement | null> {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Bumps on every theme apply/preview; a canvas cannot follow CSS variables,
@@ -76,6 +82,7 @@ export function useUplot({
     const opts = makeOptions(container);
     const plot = new uPlot(opts, dataRef.current, container);
     plotRef.current = plot;
+    if (canvasTestId) plot.ctx.canvas.dataset.testid = canvasTestId;
 
     const { height } = opts;
     const resizeObserver = new ResizeObserver(() => {

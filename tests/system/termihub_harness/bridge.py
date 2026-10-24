@@ -621,7 +621,17 @@ class Driver:
              "webglCanvas": {"width", "height"} | None,
              "domRows": [str, ...] | None,         # rows the DOM renderer painted
              "scrollbar": {"trackHeight", "thumbVisible",
-                           "thumbHeight", "thumbTop"} | None,
+                           "thumbHeight", "thumbTop",
+                           "gutterLeft", "gutterWidth",   # vs container left
+                           "thumbLeft", "thumbWidth",
+                           "thumbColor"} | None,          # computed colour
+             "paint": {"textRight", "rowsBottom",         # vs container (#4930)
+                       "containerBackground",              # computed colour
+                       "themeBackground",                  # xterm theme bg
+                       "horizontalScroll", "viewportClientBottom",
+                       "hscrollBarHeight"},
+             "decorations": [{"classes", "background",  # OSC 133 bars,
+                              "top", "left", "width", "height"}, ...],  # flash
              "viewportY": int, "baseY": int}
 
         Read-only. Active tab unless ``tab_id`` is given.
