@@ -6,6 +6,13 @@
  * Settings category on a fresh start, every sidebar at its default and minimum
  * width, and the main dialogs. The assertions need no baseline images (see
  * layoutAudit.ts); every surface is also screenshotted for human review.
+ *
+ * These surfaces replaced guided-manual release checks (#4928): MT-CRED-17
+ * (unlock and password dialog spacing), MT-UI-54 (Settings rows styled on a
+ * fresh start, also at a narrow Settings tab), MT-UI-55 (Settings section
+ * headers at the minimum window and on one row when wide) and the look of
+ * MT-UI-56 (imported workspace confirmations at every window size). The layout
+ * rules they assert live in expectations.ts.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -16,6 +23,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { allowedBy, ALLOWLIST, type AllowEntry } from "./allowlist";
 import type { VisualScenario } from "./harness/mockBackend";
 import { STORED_SECRET_CONNECTIONS } from "./harness/storedSecretIds";
+import { oneRowHeaderIssues, settingsFieldIssues, stackedGapIssues } from "./expectations";
 import { auditLayout, type LayoutIssue } from "./layoutAudit";
 import { SCREENS, SIDEBAR_WIDTHS, SIDEBARS, STORE_DIALOGS, USAGE_DIR, WINDOWS } from "./surfaces";
 import { styledPrimitiveClasses } from "./uiClasses";
@@ -115,6 +123,19 @@ async function boot(page: Page, scenario: VisualScenario = {}): Promise<void> {
   await settle(page);
 }
 
+/** The open Settings category panel. */
+const SETTINGS_PANEL = ".settings-panel:not(.settings-panel--hidden)";
+
+/** The window wide enough for a Settings section header to fit on one row. */
+const WIDEST = WINDOWS[0].name;
+
+/** Open a Settings category and wait until its lazy chunk has rendered. */
+async function openSettings(page: Page, category: string): Promise<void> {
+  await store(page, "openSettingsTab", { category });
+  await page.locator(SETTINGS_PANEL).waitFor();
+  await expect(page.locator(".settings-panel__lazy-fallback")).toHaveCount(0);
+}
+
 /** Call an app-store action by name (the harness exposes the store). */
 async function store(page: Page, action: string, ...args: unknown[]): Promise<void> {
   await page.evaluate(
@@ -159,10 +180,13 @@ for (const win of WINDOWS) {
       ).map((testId) => testId.replace("settings-nav-", ""));
       expect(categories.length, "settings nav lists its categories").toBeGreaterThan(10);
       for (const category of categories) {
-        await store(page, "openSettingsTab", { category });
-        await page.locator(".settings-panel:not(.settings-panel--hidden)").waitFor();
-        await expect(page.locator(".settings-panel__lazy-fallback")).toHaveCount(0);
-        await report.check(`settings/${category}`, ".settings-panel:not(.settings-panel--hidden)");
+        await openSettings(page, category);
+        // MT-UI-54: rows keep their label/control/hint layout; MT-UI-55: when
+        // the window is wide, each section header keeps title and buttons on one row.
+        const extra = await page.evaluate(settingsFieldIssues, SETTINGS_PANEL);
+        if (win.name === WIDEST)
+          extra.push(...(await page.evaluate(oneRowHeaderIssues, SETTINGS_PANEL)));
+        await report.check(`settings/${category}`, SETTINGS_PANEL, extra);
       }
       await report.finish();
     });
@@ -226,7 +250,34 @@ for (const win of WINDOWS) {
       await boot(page, { credentialStore: { mode: "master_password", status: "locked" } });
       await store(page, "setUnlockDialogOpen", true);
       await page.getByRole("dialog").waitFor();
-      await report.check("dialog/unlock", "[role=dialog]");
+      // MT-CRED-17: description, field, error and reset link are separate lines
+      // with a clear gap; the audit's text-overlap check covers the focus ring.
+      const order = {
+        testIds: [
+          "unlock-dialog-description",
+          "unlock-dialog-field",
+          "unlock-dialog-error",
+          "unlock-dialog-forgot",
+        ],
+        minGap: 4,
+      };
+      const input = page.locator("[data-testid=unlock-dialog-input]");
+      await input.focus();
+      await report.check(
+        "dialog/unlock",
+        "[role=dialog]",
+        await page.evaluate(stackedGapIssues, order)
+      );
+      // A wrong password (the mock rejects every unlock) adds the error line.
+      await input.fill("not-the-master-password");
+      await page.locator("[data-testid=unlock-dialog-unlock]").click();
+      await page.locator("[data-testid=unlock-dialog-error]").waitFor();
+      await input.focus();
+      await report.check(
+        "dialog/unlock-wrong-password",
+        "[role=dialog]",
+        await page.evaluate(stackedGapIssues, order)
+      );
       await report.finish();
     });
 
@@ -320,15 +371,76 @@ for (const win of WINDOWS) {
       await report.finish();
     });
 
+    test("settings section header actions and the create-file prompt", async ({
+      page,
+    }, testInfo) => {
+      // MT-UI-55: at 800x600 the header buttons wrap below the title and stay
+      // usable (the audit flags a clipped control), and Create File opens a
+      // prompt whose field stays usable.
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page);
+      await openSettings(page, "external-files");
+      await page.getByRole("button", { name: "Create File" }).click();
+      await page.locator(".settings-panel__create-prompt").waitFor();
+      await report.check("settings/external-files-create-prompt", SETTINGS_PANEL);
+      await report.finish();
+    });
+
     for (const { name, action, args } of STORE_DIALOGS) {
       test(`${name} dialog`, async ({ page }, testInfo) => {
         const report = new SurfaceReport(page, testInfo, win.name);
         await boot(page);
         await store(page, action, ...args);
         await page.getByRole("dialog").first().waitFor();
-        await report.check(`dialog/${name}`, "[role=dialog]");
+        // MT-CRED-17: the SSH password prompt keeps the same gap above its field.
+        const extra =
+          name === "password-prompt"
+            ? await page.evaluate(stackedGapIssues, {
+                testIds: [
+                  "password-prompt-notice",
+                  "password-prompt-description",
+                  "password-prompt-input",
+                ],
+                minGap: 4,
+              })
+            : [];
+        await report.check(`dialog/${name}`, "[role=dialog]", extra);
         await report.finish();
       });
     }
   });
 }
+
+/** The Settings tab width MT-UI-54 narrows to. */
+const NARROW_SETTINGS = 420;
+
+test.describe("narrow settings tab", () => {
+  test.use({ viewport: { width: 1024, height: 700 } });
+
+  test("general and sessions settings at a narrow settings tab", async ({ page }, testInfo) => {
+    // MT-UI-54: widen the sidebar until the Settings tab is ~420px wide, then
+    // the General and Sessions rows must keep their layout without clipping.
+    const report = new SurfaceReport(page, testInfo, "narrow-settings");
+    await boot(page);
+    await openSettings(page, "general");
+    const tab = page.locator(".settings-panel").first();
+    const sidebar = page.locator("[data-testid=sidebar]");
+    const tabWidth = (await tab.boundingBox())?.width ?? 0;
+    const sidebarWidth = (await sidebar.boundingBox())?.width ?? 0;
+    await store(page, "setSidebarWidth", Math.round(sidebarWidth + tabWidth - NARROW_SETTINGS));
+    await settle(page);
+    const narrowed = (await tab.boundingBox())?.width ?? 0;
+    expect(Math.abs(narrowed - NARROW_SETTINGS), `settings tab is ${narrowed}px wide`).toBeLessThan(
+      20
+    );
+    for (const category of ["general", "sessions"]) {
+      await openSettings(page, category);
+      await report.check(
+        `settings/${category}@narrow`,
+        SETTINGS_PANEL,
+        await page.evaluate(settingsFieldIssues, SETTINGS_PANEL)
+      );
+    }
+    await report.finish();
+  });
+});
