@@ -133,7 +133,7 @@ FEATURE_AREAS: "dict[str, tuple[str, ...]]" = {
     "clipboard": ("clipboard",),
     "editor": ("editor",),
     "export / import": ("export_import",),
-    "themes / rendering": ("theme", "display", "visual_rendering"),
+    "themes / rendering": ("theme", "display", "visual_rendering", "native_capture", "native_paint"),
     "password prompt": ("password_prompt",),
     "config recovery": ("config_recovery",),
     "terminal": ("terminal",),
