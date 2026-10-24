@@ -297,6 +297,12 @@ interface TerminalProps {
 }
 
 /**
+ * How long (ms) a just-shown terminal waits for its show-time fit before it
+ * runs the fit itself, so held input is not released ahead of a late resize.
+ */
+export const SHOW_FIT_STALL_MS = 150;
+
+/**
  * Manages an xterm.js instance and its PTY backend connection.
  * Creates an imperative DOM element registered with the TerminalRegistry.
  * Renders nothing — TerminalSlot handles display by adopting the DOM element.
@@ -2010,27 +2016,57 @@ export function Terminal({
     const showSessionId = sessionIdRef.current;
     const releaseShowHold = showSessionId ? holdSessionInput(showSessionId, "show") : null;
     let showHoldRafId: number | null = null;
+    let showFitStallTimer: ReturnType<typeof setTimeout> | null = null;
+    const isShownGridSettled = () =>
+      // Horizontal scrolling pins the column count, so only the frame is awaited.
+      horizontalScrollingRef.current ||
+      isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
+    const settleShowHold = () => {
+      if (showHoldRafId !== null) cancelAnimationFrame(showHoldRafId);
+      if (showFitStallTimer !== null) clearTimeout(showFitStallTimer);
+      showHoldRafId = null;
+      showFitStallTimer = null;
+      releaseShowHold?.();
+    };
     const releaseWhenSettled = () => {
       showHoldRafId = null;
-      // Horizontal scrolling pins the column count, so only the frame is awaited.
-      const settled =
-        horizontalScrollingRef.current ||
-        isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
-      if (!settled) {
+      if (!isShownGridSettled()) {
         showHoldRafId = requestAnimationFrame(releaseWhenSettled);
         return;
       }
-      releaseShowHold?.();
+      settleShowHold();
     };
-    if (releaseShowHold) showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+    // The fit the show owes normally runs within a frame. On a busy machine
+    // (or a throttled view) it can come much later, and input released by the
+    // gate's time bound would then reach the shell just before that resize
+    // (#4958). So once the wait stalls, run the owed fit here; its resize then
+    // holds input as usual.
+    const fitIfStalled = () => {
+      showFitStallTimer = null;
+      const xterm = xtermRef.current;
+      const fitAddon = fitAddonRef.current;
+      const el = terminalElRef.current;
+      if (isShownGridSettled() || !xterm || !fitAddon || !isFitReady(el)) return;
+      if (!isProposedFitSafe(fitAddon)) return;
+      frontendLog("terminal", `show-time fit stalled; fitting now tab=${tabId}`);
+      try {
+        fitAddon.fit();
+      } catch (err) {
+        frontendLog("terminal", `stalled show fit failed tab=${tabId}: ${errorMessage(err)}`);
+      }
+      if (isShownGridSettled()) settleShowHold();
+    };
+    if (releaseShowHold) {
+      showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+      showFitStallTimer = setTimeout(fitIfStalled, SHOW_FIT_STALL_MS);
+    }
     return () => {
       if (fitRafId !== null) {
         cancelAnimationFrame(fitRafId);
         // Hidden (or unmounted) before the frame ran: the fit is still owed.
         if (!fitRan) hiddenFitPendingRef.current = true;
       }
-      if (showHoldRafId !== null) cancelAnimationFrame(showHoldRafId);
-      releaseShowHold?.();
+      settleShowHold();
     };
   }, [isOnScreen, tabId]);
 
