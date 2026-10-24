@@ -64,6 +64,7 @@ import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safe
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
 import { holdSessionInput } from "@/services/sessionInputGate";
+import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
@@ -863,6 +864,8 @@ export function Terminal({
         // Every PTY resize goes through this sender: concurrent resize_terminal
         // invokes can be applied out of order by the backend, which would leave
         // the PTY at a stale size the dedupe above never corrects (#4841).
+        // The session's output after a resize tells that the shell redrew.
+        const redrawWait = createShellRedrawWait();
         // Input typed while a resize is in flight waits for it, so the shell
         // echoes it at the grid the terminal already shows (#4942).
         const sendResize = createOrderedResize(
@@ -872,7 +875,13 @@ export function Terminal({
               "terminal",
               `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
             ),
-          (sid) => holdSessionInput(sid, "resize")
+          // Held until the resize is applied and then until the shell has
+          // redrawn for it (#4958): its SIGWINCH / ConPTY repaint would
+          // otherwise clobber input that arrived first.
+          (sid) => {
+            const release = holdSessionInput(sid, "resize");
+            return () => redrawWait.releaseAfterRedraw(release);
+          }
         );
 
         // Output batching: stage chunks and flush in a single RAF callback.
@@ -1052,6 +1061,7 @@ export function Terminal({
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          redrawWait.notifyOutput();
           // First output chunk for this session is our readiness signal for the
           // workspace-launch initial command (FEC-003). Idempotent via the guard.
           sendInitialCommand();
@@ -1232,6 +1242,8 @@ export function Terminal({
 
         cleanupRef.current = () => {
           unsubOutput();
+          // No more output will arrive to end a redraw wait: release its input.
+          redrawWait.releaseAll();
           unsubExit();
           // Cancel the pending initial-command fallback and block any further
           // send — the session is being torn down or replaced, so the command
