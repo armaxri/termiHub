@@ -16,6 +16,7 @@ which pixels were judged.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from typing import Any, Callable, Iterable, NamedTuple, Optional, TypeVar
 
@@ -137,6 +138,27 @@ class NativeCaptureUi(HarnessMixin):
         except CaptureUnavailable:
             return None
 
+    def use_capturable_renderer(self, tab_id: Optional[str] = None) -> str:
+        """Switch the terminal to a renderer whose pixels a capture can see.
+
+        On the hosted macOS runners the WebGL canvas never reaches the window
+        server's image (window and screen captures both show the bare terminal
+        background, while the DOM, the inline-image canvas and the window
+        itself are captured), so there the terminal is moved to the DOM
+        renderer through the production context-loss fallback. Linux and
+        Windows grade the WebGL renderer as is. Returns the live renderer.
+        """
+        renderer = self.driver.measure_terminal(tab_id).get("renderer") or ""
+        if sys.platform != "darwin" or renderer != "webgl":
+            return renderer
+        self.driver.lose_terminal_webgl_context(tab_id)
+        self.wait(
+            lambda: self.driver.measure_terminal(tab_id).get("renderer") == "dom",
+            timeout=30,
+            what="the DOM renderer (macOS captures show no WebGL output)",
+        )
+        return "dom"
+
     def capture_terminal(self, tab_id: Optional[str] = None) -> TerminalCapture:
         """Capture the window and map the terminal ``tab_id`` (active tab) onto it."""
         measure = self.driver.measure_terminal(tab_id)
@@ -167,13 +189,18 @@ class NativeCaptureUi(HarnessMixin):
         tab_id: Optional[str] = None,
         timeout: float = PAINT_TIMEOUT,
         label: Optional[str] = None,
+        text_layer: bool = True,
     ) -> _T:
         """Capture and ``grade`` until it passes; on timeout fail with evidence.
 
         ``grade`` returns ``(result, rects, detail)``: a truthy ``result``
         passes; otherwise ``rects`` (the graded cells) and ``detail`` (what was
-        seen) go into the failure and the saved capture.
+        seen) go into the failure and the saved capture. ``text_layer=False``
+        keeps the WebGL renderer on macOS, for grades of layers a capture does
+        see there (the inline-image canvas).
         """
+        if text_layer:
+            self.use_capturable_renderer(tab_id)
         # macOS stops painting an occluded WKWebView: make the test app (by its
         # PID, never its name) the frontmost one first. A no-op elsewhere.
         bring_app_foreground(self.app.pid)

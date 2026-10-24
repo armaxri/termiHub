@@ -229,7 +229,9 @@ class TestNativePaintGrades(
             ok = all(v == want for v in found.values())
             return ok, [rect], f"painted: {found}, want {'both' if want else 'neither'}"
 
-        self.wait_for_terminal_paint(grade, what=f"inline images ({label})", tab_id=tab)
+        self.wait_for_terminal_paint(
+            grade, what=f"inline images ({label})", tab_id=tab, text_layer=False
+        )
 
     def _show_images(self, tab: str) -> None:
         self.wait(
