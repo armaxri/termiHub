@@ -171,7 +171,9 @@ export function auditLayout({ root, styledClasses }: AuditArgs): LayoutIssue[] {
       continue;
     }
     let reason = "";
-    if (b.left < -TOL || b.right > vw + TOL) {
+    // A control in a horizontal scroller (the compact Settings nav) is reached
+    // by scrolling, so only one outside any scroller is off-screen.
+    if ((b.left < -TOL || b.right > vw + TOL) && !inHorizontalScroller(el, rootEl)) {
       reason = `off-screen: x ${Math.round(b.left)}..${Math.round(b.right)}, window width ${vw}`;
     }
     // Inside a scroller the control is reachable by scrolling on that axis, so

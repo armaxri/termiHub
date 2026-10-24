@@ -15,18 +15,18 @@ clipboard pasted) via :meth:`ManualUi.manual_step` / :meth:`manual_confirm`.
 
 Covered:
 
-- **VS Code availability** — the file-row "Open in VS Code" item (MT-FB-16) and
-  the toolbar "open folder in VS Code" action (MT-FB-23, #2656) both track
-  ``vscodeAvailable``.
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07).
 - **Clipboard** — copy the terminal buffer via the tab menu and via the
   platform copy shortcut, and paste into the terminal (MT-KB-01..04).
 
-The hand-offs themselves (Open in VS Code for local and SFTP files and folders,
-Open in File Manager, the Setup SSH Agent tab — MT-FB-04/14/15/21/22,
-MT-SSH-09) are graded automatically by ``test_external_app_handoffs.py`` through
-recording PATH shims, and the forwarded X11 window (MT-XPLAT-03) by
-``test_ssh.py`` with ``xdotool`` on Xvfb (#4932).
+The operator-free checks that the VS Code menu item and toolbar action track
+``vscodeAvailable`` (MT-FB-16/23) moved to the automated
+``test_file_browser_local.py`` (#4928). The hand-offs themselves (Open in VS Code
+for local and SFTP files and folders, Open in File Manager, the Setup SSH Agent
+tab — MT-FB-04/14/15/21/22, MT-SSH-09) are graded by
+``test_external_app_handoffs.py`` through recording PATH shims, and the
+forwarded X11 window (MT-XPLAT-03, MT-SSH-15) by ``test_ssh.py`` with
+``xdotool`` on Xvfb (#4932).
 
 **OS credential stores (MT-CRED-01/02/03)** live in
 ``test_guided_credentials.py``: the app has an OS-keychain storage mode (#956),
@@ -46,7 +46,6 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
-    FilesUi,
     SidebarUi,
     SSH_HOST,
     SSH_KEYS_PORT,
@@ -68,68 +67,17 @@ _AGENT_KEY_FIXTURE = (
     Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "ssh-keys" / "ed25519"
 )
 
-#: VS Code context-menu item on a file row (rendered only when VS Code is found).
-_VSCODE_ITEM = "context-file-vscode"
-
 
 class TestExternalApp(
     TerminalUi,
     TabsUi,
     ConnectionsUi,
     SidebarUi,
-    FilesUi,
     ManualUi,
     SystemTest,
 ):
     """External-app / OS-integration flows: harness sets up + triggers the action
     and verifies the in-app side; the operator confirms the external result."""
-
-    # ── Helpers ──────────────────────────────────────────────────────────────
-    def _vscode_available(self) -> bool:
-        """Whether the app detected a VS Code install (drives the menu item)."""
-        return bool(self.driver.get_state("vscodeAvailable"))
-
-    def _make_local_file(self, name: str) -> None:
-        """Open a local terminal's file browser and create a file in it."""
-        self.ensure_terminal()
-        self.open_file_browser()
-        self.create_file_via_browser(name)
-
-    # ── Open in VS Code: menu hidden when unavailable (MT-FB-16) ──────────────
-    def test_vscode_menu_item_matches_availability(self):
-        """The 'Open in VS Code' item is present iff the app detected VS Code.
-
-        Fully harness-verified (no operator step): the item's presence must track
-        ``vscodeAvailable``, which is exactly MT-FB-16's "menu item hidden" claim
-        plus its inverse.
-        """
-        self.close_all_tabs()
-        fname = f"{unique_name('vscode-avail')}.txt"
-        self._make_local_file(fname)
-
-        self.open_file_menu(fname)
-        assert self.driver.exists(_VSCODE_ITEM) == self._vscode_available(), (
-            "VS Code menu item presence does not match vscodeAvailable"
-        )
-        self.dismiss_menu()
-
-    # ── Open-folder-in-VS-Code toolbar tracks availability (MT-FB-23, #2656) ──
-    def test_open_folder_vscode_toolbar_matches_availability(self):
-        """The toolbar "open folder in VS Code" action is present iff the app
-        detected VS Code. The file-manager action is always present locally.
-
-        Fully harness-verified (no operator step).
-        """
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.open_file_browser()
-
-        assert self.driver.exists(self.OPEN_IN_EXPLORER), (
-            "file-manager toolbar action should always be present in local mode"
-        )
-        assert self.driver.exists(self.OPEN_FOLDER_VSCODE) == self._vscode_available(), (
-            "VS Code toolbar action presence does not match vscodeAvailable"
-        )
 
     # ── SSH agent auth connects (MT-SSH-07) ──────────────────────────────────
     @pytest.mark.usefixtures("ssh_fixtures")
