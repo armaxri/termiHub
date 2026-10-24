@@ -53,7 +53,7 @@ from termihub_harness.pixel_grades import (
     glyph_mask,
     hex_rgb,
     horizontal_line,
-    mask_difference,
+    mask_distance,
     vertical_line,
 )
 from termihub_harness.ui.native_capture import NativeCaptureUi, TerminalCapture
@@ -267,16 +267,16 @@ class TestNativeCaptureGrades(
             masks = {name: glyph_mask(cap.frame, rect, bg) for name, rect in rects.items()}
             area = max(1, masks["branch"].w * masks["branch"].h)
             problems = []
-            if mask_difference(masks["missing1"], masks["missing2"]) > 0.05:
+            if mask_distance(masks["missing1"], masks["missing2"]) > 0.08:
                 problems.append("missing glyphs do not render uniformly; cannot grade")
             for name in NERD_GLYPHS:
                 ink = masks[name].ink / area
-                diff = mask_difference(masks[name], masks["missing1"])
+                diff = mask_distance(masks[name], masks["missing1"])
                 if ink < 0.04:
                     problems.append(f"{name}: no ink ({ink:.1%})")
                 elif diff < 0.08:
                     problems.append(f"{name}: same shape as a missing glyph ({diff:.1%} differs)")
-            if mask_difference(masks["branch"], masks["folder"]) < 0.08:
+            if mask_distance(masks["branch"], masks["folder"]) < 0.08:
                 problems.append("branch and folder render identically")
             return (not problems), list(rects.values()), "; ".join(problems)
 

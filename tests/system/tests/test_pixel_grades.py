@@ -20,6 +20,7 @@ from termihub_harness.pixel_grades import (
     ink_count,
     inset,
     mask_difference,
+    mask_distance,
     near_white_fraction,
     vertical_line,
 )
@@ -114,3 +115,15 @@ def test_near_white_fraction():
     assert near_white_fraction(dark, step=1) == 0.0
     half = Frame(2, 1, bytes((255, 255, 255)) + bytes(BG))
     assert near_white_fraction(half, step=1) == 0.5
+
+
+def test_mask_distance_ignores_a_one_pixel_offset():
+    w, h = 10, 14
+    box = {(x, y) for x in range(2, 7) for y in range(2, 11) if x in (2, 6) or y in (2, 10)}
+    moved = {(x + 1, y) for x, y in box}
+    a = glyph_mask(_canvas(w, h, box), Rect(0, 0, w, h), BG)
+    b = glyph_mask(_canvas(w, h, moved), Rect(0, 0, w, h), BG)
+    assert mask_difference(a, b) > 0.1
+    assert mask_distance(a, b) == 0.0
+    blank = glyph_mask(_canvas(w, h, set()), Rect(0, 0, w, h), BG)
+    assert mask_distance(a, blank) > 0.1

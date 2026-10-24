@@ -10,7 +10,7 @@ operator used to answer by eye:
   and in the colour it should;
 - :func:`horizontal_line` / :func:`vertical_line` — whether a box-drawing
   stroke runs unbroken across cell boundaries;
-- :func:`glyph_mask` / :func:`mask_difference` — a glyph's ink shape, to tell
+- :func:`glyph_mask` / :func:`mask_distance` — a glyph's ink shape, to tell
   a real Nerd Font glyph from the "tofu" box a missing glyph falls back to;
 - :func:`near_white_fraction` — how much of a frame is near-white (the
   startup white-flash detector).
@@ -181,6 +181,39 @@ def mask_difference(a: GlyphMask, b: GlyphMask) -> float:
         1 for y in range(h) for x in range(w) if a.bits[y * a.w + x] != b.bits[y * b.w + x]
     )
     return differ / (w * h)
+
+
+def _shifted_difference(a: GlyphMask, b: GlyphMask, dx: int, dy: int) -> float:
+    """:func:`mask_difference` with ``b`` moved by ``(dx, dy)`` over ``a``."""
+    w, h = min(a.w, b.w), min(a.h, b.h)
+    differ = total = 0
+    for y in range(h):
+        by = y + dy
+        if not 0 <= by < b.h:
+            continue
+        for x in range(w):
+            bx = x + dx
+            if not 0 <= bx < b.w:
+                continue
+            total += 1
+            differ += a.bits[y * a.w + x] != b.bits[by * b.w + bx]
+    return differ / total if total else 1.0
+
+
+def mask_distance(a: GlyphMask, b: GlyphMask, shift: int = 2) -> float:
+    """The smallest :func:`mask_difference` with ``b`` shifted up to ``shift`` px.
+
+    Cell rects land on fractional pixel positions (the DOM renderer's cell
+    width is not a whole number), so the same glyph can sit a pixel apart in
+    two cells; this compares shapes, not positions.
+    """
+    if min(a.w, a.h, b.w, b.h) == 0:
+        return 1.0
+    return min(
+        _shifted_difference(a, b, dx, dy)
+        for dx in range(-shift, shift + 1)
+        for dy in range(-shift, shift + 1)
+    )
 
 
 def near_white_fraction(frame: Frame, *, threshold: int = 225, step: int = 4) -> float:
