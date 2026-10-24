@@ -8,9 +8,11 @@ import type {
   CoverageChunk,
   DragModifiers,
   DragObservations,
+  FrontendLogRecord,
   TerminalCellRow,
   TerminalInspection,
   TerminalMeasurement,
+  TerminalOutputTap,
 } from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
 import { isComposableControl, replayComposition } from "./composition";
@@ -88,6 +90,17 @@ export interface BridgeDeps {
    * terminal is registered for `tabId`. Optional like `measureTerminal`.
    */
   loseTerminalWebglContext?: (tabId: string) => boolean | undefined;
+  /**
+   * The raw output stream recorded for `tabId` (#4931), or `undefined` when
+   * the tab was never tapped. Optional — absent, `readTerminalOutput` fails
+   * with a clear "not available" error.
+   */
+  readTerminalOutput?: (tabId: string) => TerminalOutputTap | undefined;
+  /**
+   * The frontend Log Viewer's retained history, oldest first (#4931).
+   * Optional — absent, `readFrontendLog` fails with a clear error.
+   */
+  readFrontendLog?: () => FrontendLogRecord[];
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -1131,6 +1144,31 @@ export async function dispatchCommand(
         return fail("loseTerminalWebglContext", `no terminal registered for tab "${tabId}"`);
       }
       return ok("loseTerminalWebglContext", lost);
+    }
+
+    case "readTerminalOutput": {
+      if (!deps.readTerminalOutput) {
+        return fail("readTerminalOutput", "terminal output tap is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("readTerminalOutput", "no active terminal to read");
+      const tap = deps.readTerminalOutput(tabId);
+      if (tap === undefined) {
+        return fail("readTerminalOutput", `no output recorded for tab "${tabId}"`);
+      }
+      return ok("readTerminalOutput", tap);
+    }
+
+    case "readFrontendLog": {
+      if (!deps.readFrontendLog) {
+        return fail("readFrontendLog", "frontend log history is not available");
+      }
+      const needle = command.contains;
+      const entries = deps.readFrontendLog();
+      return ok(
+        "readFrontendLog",
+        needle ? entries.filter((entry) => entry.message.includes(needle)) : entries
+      );
     }
 
     case "getState": {

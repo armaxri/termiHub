@@ -2286,7 +2286,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-KB-13        | macOS: Cmd+F opens Monaco find in an editor tab, terminal search in a terminal tab      | Automated (already)  | useKeyboardShortcuts.test.ts find routing (#787) (+ guided test_input_routing.py::test_context_aware_find_routing)                  |
 | MT-KB-14        | Editor-delegation toggle reverts to global-first behavior                               | Automated (already)  | useKeyboardShortcuts.test.ts 'reverts to global-first behavior…' + KeyboardSettings.test.tsx                                        |
 | MT-LOCAL-03     | WSL connection — no welcome banner flash                                                | Guided-manual pytest | test_guided_shells_and_tools.py::test_wsl_tab_opens_without_banner_flash                                                            |
-| MT-LOCAL-05     | SSH connection — no setup command flash                                                 | Guided-manual pytest | test_visual_rendering.py::test_no_ssh_connect_setup_flash                                                                           |
+| MT-LOCAL-05     | SSH connection — no setup command flash                                                 | Automated (#4931)    | test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash                                                              |
 | MT-LOCAL-09     | Enter key submits commands (default CR line ending)                                     | Automated (already)  | tests/system/tests/test_enter_submits_command.py + src-tauri line_ending.rs::bare_enter_stays_cr_by_default                         |
 | MT-LOCAL-08     | macOS key repeat works                                                                  | Guided-manual pytest | test_guided_shells_and_tools.py::test_macos_key_repeat                                                                              |
 | MT-NET-10       | Ping — live latency chart and stats                                                     | Automated (already)  | tests/system/tests/test_network_tools_live.py::test_ping_streams_stats_and_chart                                                    |
@@ -2481,7 +2481,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Backup of trusted host keys and plugins (#3515)** — Automated. src-tauri/src/backup/tests_restart.rs::restored_host_key_and_plugins_after_restart_connect_without_a_prompt (host-key verifier trusts the restored key with no prompt; plugin manager lists the restored plugin); src-tauri/src/backup/tests_trust.rs::trust_stores_round_trip_and_load_in_the_real_stores; src-tauri/src/backup/tests_trust.rs::merge_is_a_union_that_keeps_existing_keys_on_conflict; …
 - **Zoomed tab repaints terminal content immediately (#1823)** — Automated + Release gate. src/components/Terminal/TerminalRegistry.test.tsx 'fits the addon and forces a full viewport repaint so reparented content shows'; src/components/Terminal/TerminalRegistry.test.tsx 'fits once the container is laid out at a sane size' · gate: MT-UI-42
 - **OSC 133 command marks: gutter marks and prompt jumps (#3415)** — Automated + Release gate. tests/system/tests/test_terminal_command_marks.py::TestTerminalCommandMarks::test_marks_record_exit_codes_and_copy_exact_output[bash/zsh] (real shell: exit codes 0/1, Copy Last Command Output is exactly the seq output) / test_sh_records_no_marks; core/src/backends/local_shell_osc133_tests.rs (real bash/zsh PTY emit C … D;exit around the output, sh emits none); src/services/commandMarks.real-shell.test.ts (captured bash/zsh streams through real xterm); src/services/commandMarks.test.ts 'tracks a full A/B/C/D cycle with its exit code and output lines' / 'jumps back through prompts from the bottom, then forward again'; … · gate: MT-UI-43
-- **Terminal output stays in order under scrolling output (#1849)** — Automated + Release gate. src/components/Terminal/Terminal.output-repaint.test.tsx 'forces a full-viewport refresh after appended output'; src/components/Terminal/Terminal.output-repaint.test.tsx 'still refreshes when the user has scrolled up (stale rows stay correct)' · gate: MT-LOCAL-30
+- **Terminal output stays in order under scrolling output (#1849)** — Automated + Release gate. src/components/Terminal/Terminal.output-repaint.test.tsx 'forces a full-viewport refresh after appended output'; src/components/Terminal/Terminal.output-repaint.test.tsx 'still refreshes when the user has scrolled up (stale rows stay correct)'; tests/system/tests/test_windows_shells.py::test_cmd_output_paints_in_order (MT-LOCAL-30, live on Windows, #4931)
 - **Terminal inline images render (SIXEL / iTerm2, PROD-057, PR #3442)** — Automated + Release gate. tests/system/tests/test_terminal_inline_images.py::TestTerminalInlineImages::test_sixel_and_iterm2_images_are_stored_without_escape_noise / test_setting_off_stores_nothing_and_prints_no_noise / test_reconnect_keeps_the_text_around_images; src/components/Terminal/inlineImages.real-addon.test.ts (real addon: SIXEL + iTerm2 stored, no escape noise, setting off stores none, reconnect snapshot keeps text only); src/components/Terminal/Terminal.inline-images.test.tsx 'loads the image addon by default with the conservative memory limits' / 'toggles the addon live when the setting changes'; … · gate: MT-UI-44
 - **Shipped CSP: no violations in the editor, terminal and plugin UI (WA-CI-035, #3627)** — Automated + Tracked + Release gate. src/security/cspConfig.test.ts 'carries only allow-listed directives and sources'; src/security/cspConfig.test.ts 'allows exactly this platform's plugin origin in script-src (#2266/#3627)'; …; tests/system/tests/test_csp.py (integration lane on Linux, macOS and Windows: Shiki-highlighted editor, SIXEL image, clock-widget JS plugin, each with zero violations; all 7 tests, both SIXEL paths included, green on all three OSes in the develop nightly 38881548571 (Linux job 116909259411, Windows 116909259340) and develop run 38865336234, #4076. The SIXEL image is printed twice: from a local shell and over a loopback Telnet session (#4076). On Windows the local shell runs on the sideloaded ConPTY host, because the inbox ConPTY drops a SIXEL DCS, #4121/#4129) · gate: MT-APP-02
 - **Browse Plugins and Install from URL (PROD-048, #3715)** — Automated + Release gate. src-tauri/src/commands/plugin_fetch_tests.rs::strict_fetch_refuses_plain_http_before_any_request; src-tauri/src/commands/plugin_fetch_tests.rs::download_verified_stores_only_a_matching_file; … · gate: MT-APP-03
@@ -2655,7 +2655,7 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 
 Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does all the setup and asks only for the irreducible look, click or physical step. From `tests/system/`: `./pytest.sh --manual -s` (or `./scripts/run-guided-manual.sh -k <suite>` from the repo root), which writes a sign-off report to `tests/reports/`. Platform-scoped tests run only on their OS (override with `--manual-platform`). See [Guided-Manual Tests in the Python Harness](#guided-manual-tests-in-the-python-harness-preferred) for how they work.
 
-- [ ] `test_visual_rendering.py` — glyphs, ANSI colours, box drawing, scrollbar, startup / SSH-connect flash, black bottom bar, OS app icon
+- [ ] `test_visual_rendering.py` — glyphs, ANSI colours, box drawing, scrollbar, startup flash, black bottom bar, OS app icon
 - [ ] `test_external_app.py` — VS Code / OS file manager launch, clipboard copy/paste keys, SSH agent, X11 window
 - [ ] `test_input_routing.py` — real keypresses, drags, right-click and OS file drop
 - [ ] `test_guided_native_input.py` — MT-NIN-01 … 07 (native drag-and-drop), MT-NIN-10 … 16 (IME, dead keys, emoji picker; commit-once automated, #3059), MT-NIN-20 … 24 (native focus), MT-NIN-30/31 (right-click paste, real Caps Lock)
@@ -2663,7 +2663,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_app_os.py` — MT-APP-02 … 05 (CSP, plugin install over HTTPS, single instance, MobaXterm import), MT-WIN-01 … 04 (macOS Dock and quit paths), MT-SHI-01 … 06 (external spawn and OS context menus), MT-FB-30 … 32 (large folder, drag out, open in file manager)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-05, MT-UI-13, MT-UI-40 … 56 (theme, paint and layout judgements)
-- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/30 … 33 (WSL flash, key repeat, CMD paint, Git install, output flood, twenty GPU tabs), MT-SSH-01/50/51/52 (Agnoster, X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
+- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/31 (WSL flash, key repeat, Git install), MT-SSH-01/50/51/52 (Agnoster, X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent, MT-SER-02 (clean Windows without a Nerd Font). Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 Steps that would quit termiHub by name (AppleScript `quit app "termiHub"`, Log Out) are skipped while another termiHub, such as an installed copy, is running: the harness only ever acts on the test instance's PID.
@@ -2703,7 +2703,7 @@ Guided-manual suites:
 | Suite                                                                                      | Covers (manual IDs)                                                                        | The human step                                                                                                                                                                                                                             |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)                 | worked examples (visual / dialog)                                                          | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                             |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py)               | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16/19, MT-LOCAL-05           | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup/connect white-flash, no black bottom bar, OS app icon) — screenshot attached                                                         |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py)               | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16/19                        | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup white-flash, no black bottom bar, OS app icon) — screenshot attached                                                                 |
 | [`test_external_app.py`](../tests/system/tests/test_external_app.py)                       | MT-FB-04/14/15/16/21/22/23, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04            | confirm the external result — VS Code launched, the OS file manager / VS Code workspace opened, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
 | [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)                     | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20                    | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder)      |
 | [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-01..07/10..16/20..24/30/31                                                          | the native OS drag, IME composition, dead key, emoji picker or app switch (harness asserts the shell listing, the copied file, the torn-off tab's session in the new window, the saved name)                                               |
@@ -2711,10 +2711,10 @@ Guided-manual suites:
 | [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-02..05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30..32                                  | the Dock / app-menu quit, a second launch, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                                        |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                               | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                                                                   |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-05/13/40..56                                                                         | judge theme, paint and layout in the state the harness set                                                                                                                                                                                 |
-| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/30..33, MT-SSH-01/50..52, MT-NET-16/21                                      | watch the shell paint, the X window, the traceroute / chart                                                                                                                                                                                |
+| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-01/50..52, MT-NET-16/21                                          | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                                                                                                               |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, MT-SER-02, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                                                              |
 
-> **MT-UI-01/16/19, MT-LOCAL-05 — startup/connect white-flash + app icon (#1003).**
+> **MT-UI-01/16/19 — startup white-flash + app icon (#1003).**
 > Follow-up to #915 (delivered in PR #943): the remaining timing- and OS-level
 > visual items were added to
 > [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py).
@@ -2727,12 +2727,8 @@ Guided-manual suites:
 >   with the dark background (#1e1e1e) already painted — no white flash before the
 >   app's first paint. Watch the window during the relaunch (re-run if you looked
 >   away).
-> - **MT-LOCAL-05 (no SSH connect / setup-command flash).** The harness drives the
->   full password-SSH connect (create → Save & Connect → answer the prompt → land
->   in the terminal); the operator confirms the remote prompt appeared cleanly with
->   no flash of setup/wrapper commands and no white/black flicker. Needs the Docker
->   SSH password container (`ssh_fixtures`); skips when no container runtime is
->   available.
+> - **MT-LOCAL-05 (no SSH connect / setup-command flash)** is automated since
+>   #4931 — see [Output-stream flash and flood grades](#output-stream-flash-and-flood-grades-4931).
 > - **MT-UI-16 (no black bar at the terminal bottom).** The harness opens a
 >   terminal and prints a line; the operator confirms the terminal background fills
 >   to the bottom of the pane — no black strip between the last row and the pane
@@ -2742,6 +2738,49 @@ Guided-manual suites:
 >   confirms the custom termiHub icon is shown, not a generic default.
 >
 > Run them under `./pytest.sh --manual -k visual -s` with an operator.
+
+### Output-stream flash and flood grades (#4931)
+
+Four former guided checks run as plain integration tests (part of #4927):
+
+| ID          | Test                                                                                  | Runs on                    | What it asserts                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MT-LOCAL-05 | `test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash`              | Linux (Docker SSH fixture) | the raw output tap shows no painted text wiped before the prompt, and no shell-integration setup bytes after the first OSC 133;A prompt                                             |
+| (companion) | `test_output_flash_and_flood.py::test_local_shell_start_paints_no_flash`              | all                        | the same no-flash grade on the default local shell (also proves the tap on every WebView engine)                                                                                    |
+| MT-LOCAL-32 | `test_output_flash_and_flood.py::test_output_flood_stays_bounded_and_ctrl_c_stops_it` | all (Git Bash on Windows)  | `yes` for 30 s: RSS growth of the app plus its WebView processes, p95 bridge round trip, time from Ctrl+C until output stops and until a command answers, no `write data discarded` |
+| MT-LOCAL-33 | `test_performance.py::test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl`  | all                        | each of 40 tabs paints its text when shown, hidden tabs hold no WebGL context, and the Log Viewer never logged `webgl context lost`                                                 |
+| MT-LOCAL-30 | `test_windows_shells.py::test_cmd_output_paints_in_order`                             | Windows                    | three 400-file `git status` listings in cmd.exe are unbroken blocks with the prompt after them; `dir /s` over `System32\drivers` finishes within its bound                          |
+
+The raw output tap is the bridge verb `readTerminalOutput` (see
+[test-bridge.md](test-bridge.md)); the memory sampler finds the WebView processes
+from the app's own PID only (descendants on Linux and Windows, WebKit XPC
+services by their responsible PID on macOS), never by app name. MT-LOCAL-03
+(the WSL variant) stays guided: no CI lane runs the desktop app against a real
+WSL distribution.
+
+**Thresholds.** Every run records each measured value as a
+`measure:<test>:<name>` line in its `[termihub-test-timing]` summary (per OS,
+with the threshold as `deadline`), so they can be re-sized from CI evidence with
+`scripts/system-test-timing.py`. Current values, sized from the bulk integration
+lane (2 xdist workers on macOS/Windows): six recorded flood rounds per OS
+(dispatch runs 40053707527 and 40059671630), after three rounds per OS had
+passed looser provisional bounds in run 40047063122:
+
+| Measurement (MT-LOCAL-32 unless noted)              | Observed max (Linux / macOS / Windows) | Threshold (Linux / macOS / Windows) |
+| --------------------------------------------------- | -------------------------------------- | ----------------------------------- |
+| RSS growth over the 30 s flood, app + WebView (MiB) | 173.5 / 338.2 / 85.4                   | 350 / 600 / 200                     |
+| p95 bridge round trip during the flood (s)          | 4.71 / 3.14 / 1.94                     | 10 / 7 / 5                          |
+| Ctrl+C → output stopped (s)                         | 3.55 / 0.67 / 3.76                     | 8                                   |
+| Ctrl+C → a command answers (s)                      | 4.84 / 2.38 / 5.28                     | 12                                  |
+| `dir /s` over `System32\drivers` (s, MT-LOCAL-30)   | — / — / 1.06                           | 15                                  |
+
+The memory grade compares the median RSS of the first and last 5 s of the
+flood, so one GC spike does not decide it; it catches runaway growth, not a
+slow leak: between runs the growth swings from −185 to +338 MiB on macOS
+(WKWebView process attribution, memory compression) and up to ~170 MiB on
+Linux. The guided check's "prompt back within about a second" is not what CI
+runners deliver under a flood (1.3–5.3 s observed), so the bound is on the
+measured spread instead.
 
 <!-- -->
 
@@ -2777,7 +2816,9 @@ ported to the guided-manual suites above, and the runner, the corpus and its CI
 step were deleted.
 [`test_manual_corpus.py`](../tests/system/tests/test_manual_corpus.py) (normal,
 non-integration lane) keeps it that way: each retired id must stay named in the
-docstring of a `manual`-marked test, and the legacy files must not come back.
+docstring of a `manual`-marked test, or be listed in its `AUTOMATED_IDS` with
+the automated test whose docstring names it (#4927), and the legacy files must
+not come back.
 The id → test mapping is in the PR that closed #919.
 
 The #919 real-hardware list was reconciled against CI at the same time. Only the
@@ -2796,6 +2837,9 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MT-LOCAL-01, 07                       | `tests/system/tests/test_local_shell.py`                                                                                                                                                 |
 | MT-LOCAL-09, 10                       | `tests/system/tests/test_cross_platform.py`                                                                                                                                              |
+| MT-LOCAL-05, 32                       | `tests/system/tests/test_output_flash_and_flood.py` (raw output tap, flood sampler, #4931)                                                                                               |
+| MT-LOCAL-30                           | `tests/system/tests/test_windows_shells.py::test_cmd_output_paints_in_order` (Windows)                                                                                                   |
+| MT-LOCAL-33                           | `tests/system/tests/test_performance.py` (PERF-03b)                                                                                                                                      |
 | MT-LOCAL-02, 04, 06, 11–20            | `tests/system/tests/test_windows_shells.py` (Windows-only; WSL cases skip without WSL2)                                                                                                  |
 | MT-SSH-04–06, 10–12, 20–33, 35        | `tests/system/tests/test_ssh*.py`                                                                                                                                                        |
 | MT-SSH-19 (X11 backward-compat)       | `tests/system/tests/test_connection_forms.py`                                                                                                                                            |
