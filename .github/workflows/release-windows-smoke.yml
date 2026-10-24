@@ -25,7 +25,15 @@ name: Release Windows Smoke
 #      forced kill,
 #   7. downloads the standalone agent binary, checks its .sha256 sidecar and
 #      attestation, and runs `termihub-agent --version`,
-#   8. uninstalls silently and asserts the uninstall entry and binaries are gone.
+#   8. uninstalls silently and asserts the uninstall entry, the binaries and
+#      the Start menu shortcut are gone.
+#
+# Since #4933 it also grades, on the installed MSI, what used to be guided-manual
+# checks: termihub.exe embeds every image of the repository's icon.ico and the
+# main window carries an icon (MT-UI-19); the lifecycle run minimises the main
+# window and a bare relaunch must restore it, and a portable copy launched twice
+# is refused with its dialog (MT-APP-04); the log holds no CSP violation
+# (MT-APP-02).
 #
 # In parallel, plugin-lpac-per-machine.yml installs the same MSI on its own
 # runner and loads the echo-backend plugin in its LPAC through the installed
@@ -96,15 +104,17 @@ jobs:
 
     steps:
       - name: Checkout code
-        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011),
-        # verify-conpty-bundle.ps1 with its pins (#4121) and the MSI version
+        # Only for scripts/internal/release-smoke-*.ps1 (#4011, #4933),
+        # verify-conpty-bundle.ps1 with its pins (#4121), the MSI version
         # mapping + asserts (msi-version.mjs, msi-product-version.ps1,
-        # assert-msi-display-version.ps1, #4441).
+        # assert-msi-display-version.ps1, #4441) and the repository icon the
+        # executable's is compared with (#4933).
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             scripts/internal
             src-tauri/packaging/windows
+            src-tauri/icons
           persist-credentials: false
 
       - name: Download MSI and agent binary
@@ -253,11 +263,33 @@ jobs:
           ./scripts/internal/verify-conpty-bundle.ps1 -Dir $dir
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+          # The Start menu shortcut (MSI Shortcut table: ProgramMenuFolder\termiHub)
+          # must point at the installed exe; the uninstall step checks it is removed.
+          $lnks = @(Get-ChildItem -Recurse -Filter 'termiHub.lnk' -ErrorAction SilentlyContinue -Path @(
+            (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'),
+            (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs')
+          ))
+          if ($lnks.Count -eq 0) {
+            Write-Output "::error::no termiHub Start menu shortcut after install"
+            exit 1
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          foreach ($lnk in $lnks) {
+            $target = $shell.CreateShortcut($lnk.FullName).TargetPath
+            Write-Output "Start menu shortcut: $($lnk.FullName) -> $target"
+            if ($target -ne $exe) {
+              Write-Output "::error::Start menu shortcut $($lnk.FullName) points at '$target', not $exe"
+              exit 1
+            }
+          }
+          $startMenu = $lnks[0].FullName
+
           # The uninstall key of an MSI install is named after its ProductCode.
           $productCode = $entry.PSChildName
           "exe=$exe" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "product_code=$productCode" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "start_menu=$startMenu" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
       # The plugin runner (#4202) is bundled next to termihub.exe like the RDP
       # helper. It must start without a VC++ redistributable (static CRT,
@@ -269,6 +301,16 @@ jobs:
         run: |
           set -euo pipefail
           scripts/internal/verify-plugin-runner-bundle.sh "$(cygpath -u "$EXE")"
+
+      # The taskbar / Explorer icon (#4933, MT-UI-19): every image of the
+      # repository's icon.ico is embedded in termihub.exe byte for byte.
+      - name: Verify the embedded app icon
+        shell: pwsh
+        env:
+          EXE: ${{ steps.install.outputs.exe }}
+        run: |
+          ./scripts/internal/release-smoke-exe-icon.ps1 -Exe $env:EXE -Ico src-tauri/icons/icon.ico
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Run termihub.exe --version
         shell: pwsh
@@ -371,15 +413,27 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $appLog = Join-Path $env:LOCALAPPDATA 'com.termihub.app\logs\termihub.log'
+          # A portable copy of the install dir (portable.marker next to the exe)
+          # grades the same-folder double launch (#3100, MT-APP-04, #4933).
+          $portable = Join-Path $env:RUNNER_TEMP 'portable'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -LiteralPath $portable
+          Copy-Item -Recurse -LiteralPath $env:DIR -Destination $portable
+          New-Item -ItemType File -Path (Join-Path $portable 'portable.marker') | Out-Null
           try {
+            # -MinimizeCheck: a bare relaunch must restore the minimised main
+            # window; -IconCheck: the main window carries an icon (#4933).
             ./scripts/internal/release-smoke-app-lifecycle.ps1 -Exe $env:EXE -Log $appLog `
-              -Version $env:VERSION -Close window -ClearLog `
+              -Version $env:VERSION -Close window -ClearLog -MinimizeCheck -IconCheck `
+              -PortableExe (Join-Path $portable (Split-Path -Leaf $env:EXE)) `
               -OutDir (Join-Path $env:LOG_DIR 'lifecycle')
             $code = $LASTEXITCODE
           } finally {
-            # Anything still running out of the install dir would block uninstall.
-            Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($env:DIR, 'OrdinalIgnoreCase') } |
-              Stop-Process -Force -ErrorAction SilentlyContinue
+            # Anything still running out of the install dir would block uninstall;
+            # a leftover portable copy is only ever one this step launched.
+            Get-Process | Where-Object {
+              $_.Path -and ($_.Path.StartsWith($env:DIR, 'OrdinalIgnoreCase') -or
+                $_.Path.StartsWith($portable, 'OrdinalIgnoreCase'))
+            } | Stop-Process -Force -ErrorAction SilentlyContinue
           }
           exit $code
 
@@ -405,6 +459,7 @@ jobs:
         env:
           PRODUCT_CODE: ${{ steps.install.outputs.product_code }}
           EXE: ${{ steps.install.outputs.exe }}
+          START_MENU: ${{ steps.install.outputs.start_menu }}
         run: |
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:LOG_DIR 'msi-uninstall.log'
@@ -437,7 +492,11 @@ jobs:
             Write-Output "::error::$conpty still present after uninstall"
             exit 1
           }
-          Write-Output "uninstall removed the registry entry and the binaries"
+          if (Test-Path -LiteralPath $env:START_MENU) {
+            Write-Output "::error::Start menu shortcut $env:START_MENU still present after uninstall"
+            exit 1
+          }
+          Write-Output "uninstall removed the registry entry, the binaries and the Start menu shortcut"
 
       - name: Summary
         if: always()
