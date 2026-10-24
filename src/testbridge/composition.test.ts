@@ -171,7 +171,13 @@ describe("dispatchCommand compose", () => {
 });
 
 describe("dispatchCommand readTerminalCells", () => {
-  const ROWS: TerminalCellRow[] = [{ y: 3, text: "日", cells: [{ x: 0, chars: "日", width: 2 }] }];
+  const ROWS: TerminalCellRow[] = [
+    {
+      y: 3,
+      text: "日",
+      cells: [{ x: 0, chars: "日", width: 2, fg: "#dde1ec", bg: "#0f1117", bold: false }],
+    },
+  ];
 
   it("reads the active tab with the filter, normalising a JSON null to no filter", async () => {
     const calls: [string, string | undefined][] = [];

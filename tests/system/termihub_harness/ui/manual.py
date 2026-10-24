@@ -73,6 +73,7 @@ class ManualUi(HarnessMixin):
         *,
         label: Optional[str] = None,
         screenshot: bool = False,
+        evidence: Optional[str] = None,
     ) -> None:
         """Confirm a result the harness already produced — no operator action.
 
@@ -88,8 +89,13 @@ class ManualUi(HarnessMixin):
         no benefit. Pass ``screenshot=True`` only where a capture is both
         reliable and worth the wait; it saves a PNG under the artifacts dir and
         references its path (never the raw data URL).
+
+        ``evidence`` is the path of an image the harness already saved — e.g.
+        a native window capture or contact sheet (#4937), which shows the GPU
+        canvas the DOM screenshot cannot. It is shown and recorded in place of
+        a bridge screenshot.
         """
-        shot = self._capture_screenshot(label) if screenshot else None
+        shot = evidence or (self._capture_screenshot(label) if screenshot else None)
         result = self._manual_prompter.step(instruction, expected, screenshot=shot)
         self._record("observe", instruction, expected, result, screenshot=shot)
         self._enforce(result, instruction)

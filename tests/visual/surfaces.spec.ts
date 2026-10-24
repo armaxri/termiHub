@@ -11,8 +11,10 @@
  * (unlock and password dialog spacing), MT-UI-54 (Settings rows styled on a
  * fresh start, also at a narrow Settings tab), MT-UI-55 (Settings section
  * headers at the minimum window and on one row when wide) and the look of
- * MT-UI-56 (imported workspace confirmations at every window size). The layout
- * rules they assert live in expectations.ts.
+ * MT-UI-56 (imported workspace confirmations at every window size); and since
+ * #4954 MT-UI-53 (sidebar rows at the default and minimum width: cut names keep
+ * a tooltip, row actions show on hover and focus, overflow items act like
+ * their buttons). The layout rules they assert live in expectations.ts.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -23,9 +25,24 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { allowedBy, ALLOWLIST, type AllowEntry } from "./allowlist";
 import type { VisualScenario } from "./harness/mockBackend";
 import { STORED_SECRET_CONNECTIONS } from "./harness/storedSecretIds";
-import { oneRowHeaderIssues, settingsFieldIssues, stackedGapIssues } from "./expectations";
+import {
+  cutNames,
+  oneRowHeaderIssues,
+  rowActionIssues,
+  settingsFieldIssues,
+  stackedGapIssues,
+} from "./expectations";
 import { auditLayout, type LayoutIssue } from "./layoutAudit";
-import { SCREENS, SIDEBAR_WIDTHS, SIDEBARS, STORE_DIALOGS, USAGE_DIR, WINDOWS } from "./surfaces";
+import {
+  SCREENS,
+  SIDEBAR_ROWS,
+  SIDEBAR_WIDTHS,
+  SIDEBARS,
+  STORE_DIALOGS,
+  USAGE_DIR,
+  WINDOWS,
+  type SidebarRowKind,
+} from "./surfaces";
 import { styledPrimitiveClasses } from "./uiClasses";
 
 const STYLED_CLASSES = styledPrimitiveClasses();
@@ -159,6 +176,123 @@ async function showSidebar(page: Page, view: string): Promise<void> {
   await page.locator("[data-testid=sidebar]").waitFor();
 }
 
+/** The minimum sidebar width the resize handle allows. */
+async function sidebarMinWidth(page: Page): Promise<number> {
+  const min = Number(
+    await page.locator("[data-testid=sidebar-resize-handle]").getAttribute("aria-valuemin")
+  );
+  expect(min, "sidebar resize handle exposes its minimum").toBeGreaterThan(0);
+  return min;
+}
+
+/** Move the pointer off the sidebar, drop keyboard focus, and wait for tooltips to close. */
+async function rest(page: Page): Promise<void> {
+  const size = page.viewportSize() ?? { width: 800, height: 600 };
+  // In steps, like a real pointer: Radix keeps a tooltip open while the
+  // pointer could still be heading for it, and closes once a move leaves.
+  await page.mouse.move(size.width - 1, size.height - 1, { steps: 4 });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(page.locator("[role=tooltip]")).toHaveCount(0);
+}
+
+/**
+ * MT-UI-53 (#4954): every cut name of one row kind exposes its full text — as
+ * a native `title`, or as the tooltip that hovering the start of the name opens.
+ */
+async function cutNameIssues(
+  page: Page,
+  kind: SidebarRowKind,
+  requireCut: boolean
+): Promise<LayoutIssue[]> {
+  const rows = `[data-testid=sidebar] ${kind.row}`;
+  const cut = await page.evaluate(cutNames, { rows, name: kind.name });
+  const issues: LayoutIssue[] = [];
+  if (requireCut && cut.length === 0) {
+    issues.push({
+      kind: "expectation",
+      where: `${kind.kind} rows`,
+      detail: "no name is cut at this width, so the tooltip check saw nothing (seed a longer one)",
+    });
+  }
+  for (const { index, text } of cut.filter((c) => !c.titled)) {
+    const where = `${kind.kind} row "${text.slice(0, 40)}"`;
+    const name = page.locator(rows).nth(index).locator(kind.name).first();
+    // Hover the start of the name: on hover the row's actions overlay its end.
+    const box = await name.boundingBox();
+    const y = (box?.height ?? 16) / 2;
+    const reached = await name
+      .hover({ position: { x: 4, y }, timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!reached || !box) {
+      issues.push({
+        kind: "expectation",
+        where,
+        detail: "the start of the cut name cannot be hovered (covered on hover)",
+      });
+      await rest(page);
+      continue;
+    }
+    // The first pointer contact arms TruncatedText; Radix opens on the next move.
+    await page.mouse.move(box.x + 8, box.y + y);
+    const shown = await page
+      .locator("[role=tooltip]")
+      .filter({ hasText: text })
+      .first()
+      .waitFor({ state: "attached", timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!shown) {
+      issues.push({
+        kind: "expectation",
+        where,
+        detail: "the name is cut but neither a title nor a hover tooltip shows the full text",
+      });
+    }
+    await rest(page);
+  }
+  return issues;
+}
+
+/**
+ * MT-UI-53 (#4954): hovering a row, and keyboard focus on it, shows its actions
+ * unclipped. Checks every row of the kind (each state has its own action set).
+ */
+async function rowRevealIssues(page: Page, kind: SidebarRowKind): Promise<LayoutIssue[]> {
+  const rows = page.locator(`[data-testid=sidebar] ${kind.row}`);
+  const count = await rows.count();
+  if (count === 0) {
+    return [{ kind: "expectation", where: `${kind.kind} rows`, detail: "no row rendered" }];
+  }
+  const issues: LayoutIssue[] = [];
+  const args = { row: "[data-visual-row]", actions: kind.actions };
+  for (let i = 0; i < count; i++) {
+    const row = rows.nth(i);
+    await row.evaluate((el) => {
+      for (const n of document.querySelectorAll("[data-visual-row]")) {
+        n.removeAttribute("data-visual-row");
+      }
+      el.setAttribute("data-visual-row", "");
+    });
+    await row.hover({ position: { x: 4, y: 4 } });
+    await settle(page);
+    issues.push(...(await page.evaluate(rowActionIssues, { ...args, via: "hover" })));
+    await rest(page);
+    // Keyboard focus: the row itself when it is in the tab order (roving
+    // tabindex), else its first focusable part.
+    await row.evaluate((el) => {
+      const target = el.matches("[tabindex]")
+        ? el
+        : el.querySelector<HTMLElement>("[tabindex], button, a[href]");
+      (target as HTMLElement | null)?.focus();
+    });
+    await settle(page);
+    issues.push(...(await page.evaluate(rowActionIssues, { ...args, via: "focus" })));
+    await rest(page);
+  }
+  return issues;
+}
+
 for (const win of WINDOWS) {
   test.describe(`window ${win.name}`, () => {
     test.use({ viewport: { width: win.width, height: win.height } });
@@ -214,10 +348,7 @@ for (const win of WINDOWS) {
     test("sidebars fit at default and minimum width", async ({ page }, testInfo) => {
       const report = new SurfaceReport(page, testInfo, win.name);
       await boot(page);
-      const minWidth = Number(
-        await page.locator("[data-testid=sidebar-resize-handle]").getAttribute("aria-valuemin")
-      );
-      expect(minWidth, "sidebar resize handle exposes its minimum").toBeGreaterThan(0);
+      const minWidth = await sidebarMinWidth(page);
       for (const view of SIDEBARS) {
         await showSidebar(page, view);
         for (const width of SIDEBAR_WIDTHS) {
@@ -240,6 +371,31 @@ for (const win of WINDOWS) {
             await page.mouse.move(win.width - 1, win.height - 1);
             await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
           }
+        }
+      }
+      await report.finish();
+    });
+
+    test("sidebar rows keep cut names readable and show actions on hover and focus", async ({
+      page,
+    }, testInfo) => {
+      // MT-UI-53 (#4954): on every seeded row kind, at the default and the
+      // minimum sidebar width.
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page);
+      const minWidth = await sidebarMinWidth(page);
+      for (const kind of SIDEBAR_ROWS) {
+        await showSidebar(page, kind.view);
+        for (const width of SIDEBAR_WIDTHS) {
+          const min = width.width === "aria-valuemin";
+          await store(page, "setSidebarWidth", min ? minWidth : width.width);
+          await settle(page);
+          await rest(page);
+          const extra = [
+            ...(await cutNameIssues(page, kind, min)),
+            ...(await rowRevealIssues(page, kind)),
+          ];
+          await report.check(`rows/${kind.kind}@${width.name}`, "[data-testid=sidebar]", extra);
         }
       }
       await report.finish();
@@ -410,6 +566,165 @@ for (const win of WINDOWS) {
     }
   });
 }
+
+/** One toolbar action as rendered inline: its accessible name and form. */
+interface InlineToolbarAction {
+  label: string;
+  /** Opens a drop-down instead of acting (a sub-menu in the overflow menu). */
+  menu: boolean;
+  disabled: boolean;
+}
+
+/** The inline actions of every width-responsive toolbar in the sidebar, in order. */
+async function inlineToolbarActions(page: Page): Promise<InlineToolbarAction[][]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll("[data-testid=sidebar] .ui-toolbar")].map((bar) =>
+      [
+        ...bar.querySelectorAll<HTMLButtonElement>(":scope > button:not(.ui-toolbar__overflow)"),
+      ].map((b) => ({
+        label: b.getAttribute("aria-label") ?? "",
+        menu: b.getAttribute("aria-haspopup") === "menu",
+        disabled: b.disabled,
+      }))
+    )
+  );
+}
+
+/** The `index`-th toolbar of the sidebar. */
+function toolbar(page: Page, index: number) {
+  return page.locator("[data-testid=sidebar] .ui-toolbar").nth(index);
+}
+
+/**
+ * Commands the app sends on its own timer, not because of an action: the
+ * services poll and the debounced settings save after a sidebar resize.
+ */
+const BACKGROUND_COMMANDS = ["record_frontend_log", "get_embedded_server_states", "save_settings"];
+
+/**
+ * What an action visibly did: the IPC commands it sent (intents by kind), the
+ * tabs and active tab, open dialogs, toasts, the sidebar view, and the items
+ * of the last menu it opened.
+ */
+async function actionEffect(page: Page, since: number): Promise<unknown> {
+  await settle(page);
+  await page.waitForTimeout(300);
+  return page.evaluate(
+    ([mark, background]) => {
+      const text = (el: Element) => (el.textContent ?? "").trim().replace(/\s+/g, " ");
+      const menus = [...document.querySelectorAll("[role=menu]")];
+      const state = window.__visual.store.getState() as unknown as { sidebarView: string };
+      return {
+        ipc: (window.__VISUAL_INVOKED__ ?? []).slice(mark).filter((c) => !background.includes(c)),
+        tabs: [...document.querySelectorAll(".tab:not(.tab--drag-overlay)")].map(text),
+        active: [...document.querySelectorAll(".tab--active")].map(text),
+        dialogs: [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].map(
+          (d) =>
+            d.getAttribute("aria-label") ?? text(d.querySelector("h1, h2, h3") ?? d).slice(0, 60)
+        ),
+        toasts: [...document.querySelectorAll("[data-sonner-toast]")].map(text),
+        sidebarView: state.sidebarView,
+        menu: menus.length
+          ? [...menus[menus.length - 1].querySelectorAll("[role=menuitem]")].map(text)
+          : [],
+      };
+    },
+    [since, BACKGROUND_COMMANDS] as const
+  );
+}
+
+/** How many IPC commands the app has sent so far. */
+async function invokedCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window.__VISUAL_INVOKED__ ?? []).length);
+}
+
+/** Fresh app with `view` open at `width`. */
+async function bootSidebar(page: Page, view: string, width: number | "min"): Promise<void> {
+  await boot(page);
+  await showSidebar(page, view);
+  await store(page, "setSidebarWidth", width === "min" ? await sidebarMinWidth(page) : width);
+  await settle(page);
+}
+
+/** A sidebar width at which every toolbar shows all its actions labelled. */
+const WIDE_SIDEBAR = 560;
+
+test.describe("sidebar overflow menus", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  for (const view of SIDEBARS) {
+    test(`${view}: overflow items do what their toolbar buttons do`, async ({ page }) => {
+      // MT-UI-53 (#4954): at the minimum width every action a toolbar shows
+      // at a wide width is still reachable (inline or in the "…" menu), and
+      // each overflow item has the same effect as its button. Each trigger
+      // runs on a freshly booted app so the two effects are comparable.
+      test.setTimeout(300_000);
+      await bootSidebar(page, view, WIDE_SIDEBAR);
+      const wide = await inlineToolbarActions(page);
+      await store(page, "setSidebarWidth", await sidebarMinWidth(page));
+      await settle(page);
+      const narrow = await inlineToolbarActions(page);
+      expect(narrow.length, "same toolbars at both widths").toBe(wide.length);
+
+      const overflowed: Array<{ bar: number; action: InlineToolbarAction }> = [];
+      for (let bar = 0; bar < wide.length; bar++) {
+        const trigger = toolbar(page, bar).locator(":scope > .ui-toolbar__overflow");
+        if ((await trigger.count()) === 0) {
+          expect(narrow[bar], `toolbar ${bar} keeps every action inline`).toEqual(wide[bar]);
+          continue;
+        }
+        await trigger.click();
+        const items = await page
+          .locator("[role=menu]")
+          .last()
+          .locator(":scope [role=menuitem]")
+          .allInnerTexts();
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toHaveCount(0);
+        const inline = new Set(narrow[bar].map((a) => a.label));
+        for (const action of wide[bar]) {
+          if (inline.has(action.label)) continue;
+          expect
+            .soft(
+              items.map((t) => t.trim()),
+              `toolbar ${bar}: "${action.label}" is in the overflow menu`
+            )
+            .toContain(action.label);
+          if (!action.disabled) overflowed.push({ bar, action });
+        }
+      }
+      test.info().annotations.push({
+        type: "info",
+        description: `${overflowed.length} overflowed action(s) compared`,
+      });
+
+      for (const { bar, action } of overflowed) {
+        await bootSidebar(page, view, WIDE_SIDEBAR);
+        let mark = await invokedCount(page);
+        await toolbar(page, bar)
+          .locator(":scope > button", { hasNot: page.locator(".ui-toolbar__overflow") })
+          .and(page.getByRole("button", { name: action.label, exact: true }))
+          .click({ timeout: 10_000 });
+        const viaButton = await actionEffect(page, mark);
+
+        await bootSidebar(page, view, "min");
+        await toolbar(page, bar)
+          .locator(":scope > .ui-toolbar__overflow")
+          .click({ timeout: 10_000 });
+        mark = await invokedCount(page);
+        const item = page
+          .locator("[role=menu]")
+          .last()
+          .getByRole("menuitem", { name: action.label, exact: true });
+        // A drop-down action is a sub-menu here: opening it is its effect.
+        if (action.menu) await item.press("ArrowRight", { timeout: 10_000 });
+        else await item.click({ timeout: 10_000 });
+        const viaMenu = await actionEffect(page, mark);
+        expect.soft(viaMenu, `"${action.label}" from the overflow menu`).toEqual(viaButton);
+      }
+    });
+  }
+});
 
 /** The Settings tab width MT-UI-54 narrows to. */
 const NARROW_SETTINGS = 420;

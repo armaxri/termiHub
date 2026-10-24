@@ -37,6 +37,71 @@ export const SIDEBARS = [
   "plugins",
 ] as const;
 
+/**
+ * One kind of sidebar row the row checks (#4954, MT-UI-53) grade: where its
+ * rows render, the element holding the name, and the action controls that
+ * must be visible and usable while the row is hovered or holds keyboard focus.
+ * Every kind is seeded (harness/mockBackend.ts) with a name long enough to be
+ * cut at the minimum sidebar width.
+ */
+export interface SidebarRowKind {
+  /** Short id used in surface names. */
+  kind: string;
+  /** The sidebar view the rows render in. */
+  view: (typeof SIDEBARS)[number];
+  /** Selector of one row, inside the sidebar. */
+  row: string;
+  /** Selector of the row's name, inside the row. */
+  name: string;
+  /** Selector of the row's action controls, inside the row. */
+  actions: string;
+}
+
+export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
+  {
+    kind: "connection",
+    view: "connections",
+    row: ".connection-tree__item-row",
+    name: ".connection-tree__label",
+    actions: ".connection-tree__connect, .connection-tree__persistent-actions button",
+  },
+  {
+    kind: "agent",
+    view: "connections",
+    row: ".connection-list__group-header--agent",
+    name: ".connection-list__group-title",
+    actions: ".connection-list__group-actions button",
+  },
+  {
+    kind: "tunnel",
+    view: "tunnels",
+    row: "[data-testid^=tunnel-item-]",
+    name: ".sidebar-list-item__name",
+    actions: ".sidebar-list-item__actions button",
+  },
+  {
+    kind: "service",
+    view: "services",
+    row: ".sidebar-list-item",
+    name: ".sidebar-list-item__name",
+    actions: ".sidebar-list-item__actions button",
+  },
+  {
+    kind: "http-monitor",
+    view: "network-tools",
+    row: ".network-sidebar__monitor",
+    name: ".network-sidebar__monitor-url",
+    actions: ":scope > button:not(.network-sidebar__monitor-info)",
+  },
+  {
+    kind: "workspace",
+    view: "workspaces",
+    row: ".sidebar-list-item",
+    name: ".sidebar-list-item__name",
+    actions: ".sidebar-list-item__actions button",
+  },
+];
+
 /** Dialogs opened by one app-store action (the unlock and shortcuts tests are separate). */
 export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: unknown[] }> = [
   { name: "command-palette", action: "setCommandPaletteOpen", args: [true] },
@@ -89,12 +154,13 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
 ];
 
 /**
- * Tests per window: settings, imported confirmations, sidebars, unlock,
- * shortcuts, the connection editor with stored secrets, the plugin update
- * dialog with an access diff, the MobaXterm import from Settings, the Settings
- * create-file prompt, and STORE_DIALOGS; plus the one narrow Settings tab test.
+ * Tests per window: settings, imported confirmations, sidebars, sidebar rows,
+ * unlock, shortcuts, the connection editor with stored secrets, the plugin
+ * update dialog with an access diff, the MobaXterm import from Settings, the
+ * Settings create-file prompt, and STORE_DIALOGS; plus the one narrow Settings
+ * tab test and one overflow-menu parity test per sidebar.
  */
-export const EXPECTED_TESTS = WINDOWS.length * (9 + STORE_DIALOGS.length) + 1;
+export const EXPECTED_TESTS = WINDOWS.length * (10 + STORE_DIALOGS.length) + 1 + SIDEBARS.length;
 
 const RESULTS = join(import.meta.dirname, "test-results");
 /** Where every surface's screenshot goes (uploaded as a CI artifact). */

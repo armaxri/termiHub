@@ -58,6 +58,8 @@ const MEASUREMENT: TerminalMeasurement = {
     viewportClientBottom: 420,
     hscrollBarHeight: 0,
   },
+  screenRect: { left: 260, top: 80, width: 624, height: 408 },
+  page: { devicePixelRatio: 2, innerWidth: 1280, innerHeight: 800 },
   decorations: [],
   viewportY: 0,
   baseY: 0,

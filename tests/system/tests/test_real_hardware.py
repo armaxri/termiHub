@@ -56,7 +56,10 @@ What stays here:
   this is the end-to-end walk on real hardware and a real network.
 - **MT-AGENT-28** (container half): a Docker container session through a
   Windows-hosted agent. GitHub's Windows runners only run Windows containers.
-- **MT-SER-02**: bundled Nerd Font glyphs on a clean Windows install.
+
+MT-SER-02 (bundled Nerd Font glyphs on a clean Windows install) is graded on
+the Windows runner, which has no Nerd Font installed, from a native window
+capture since #4937 (``test_native_capture_grades.py``).
 """
 
 from __future__ import annotations
@@ -255,21 +258,3 @@ class TestRealHardware(
         )
         self.disconnect_agent(agent["name"])
 
-    # ── MT-SER-02: bundled Nerd Font on a clean Windows install ──────────────
-    @pytest.mark.manual(platforms=["windows"])
-    def test_bundled_nerd_font_on_clean_windows(self):
-        """MT-SER-02: glyphs render on a Windows machine with no Nerd Font installed."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        # The marker is concatenated so only the output (not the echoed command) holds it.
-        self.run_command(
-            "Write-Output ('NF-' + 'OK [' + [char]0xE0A0 + ' ' + [char]0xE0B0 + ' ' "
-            "+ [char]0xF07C + ']')"
-        )
-        self.wait_for_output("NF-OK")
-        self.manual_observe(
-            "This machine has no Nerd Font installed (check Settings > Personalization "
-            "> Fonts). Look at the glyphs between the brackets.",
-            "A branch, a powerline arrow and a folder icon render from the bundled font; "
-            "no empty boxes.",
-        )
