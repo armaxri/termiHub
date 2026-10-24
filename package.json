@@ -98,7 +98,9 @@
     "auditConfig": {
       "ignoreGhsas": [
         "GHSA-p98j-92pf-mc4p",
-        "GHSA-6688-9rhm-gjv2"
+        "GHSA-6688-9rhm-gjv2",
+        "GHSA-cg2g-xh64-v4q7",
+        "GHSA-mrv2-3pqr-j5jr"
       ]
     },
     "onlyBuiltDependencies": [

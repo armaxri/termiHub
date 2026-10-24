@@ -98,10 +98,12 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
 
 ### Accepted advisories (`pnpm.auditConfig.ignoreGhsas`)
 
-| GHSA                  | Package (path)                               | Severity | Why accepted                                                                              | Unblocked by                                         |
-| --------------------- | -------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `GHSA-p98j-92pf-mc4p` | dompurify 3.4.15 (`monaco-editor>dompurify`) | low      | IN_PLACE-only; Monaco never sets `IN_PLACE`, and the shipped copy is vendored (see below) | a monaco-editor release vendoring DOMPurify >=3.4.16 |
-| `GHSA-6688-9rhm-gjv2` | dompurify 3.4.15 (`monaco-editor>dompurify`) | low      | same as above                                                                             | a monaco-editor release vendoring DOMPurify >=3.4.16 |
+| GHSA                  | Package (path)                               | Severity | Why accepted                                                                                                           | Unblocked by                                         |
+| --------------------- | -------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `GHSA-p98j-92pf-mc4p` | dompurify 3.4.15 (`monaco-editor>dompurify`) | low      | IN_PLACE-only; Monaco never sets `IN_PLACE`, and the shipped copy is vendored (see below)                              | a monaco-editor release vendoring DOMPurify >=3.4.16 |
+| `GHSA-6688-9rhm-gjv2` | dompurify 3.4.15 (`monaco-editor>dompurify`) | low      | same as above                                                                                                          | a monaco-editor release vendoring DOMPurify >=3.4.16 |
+| `GHSA-cg2g-xh64-v4q7` | dompurify 3.4.15 (`monaco-editor>dompurify`) | critical | SAFE_FOR_TEMPLATES-only; Monaco runs its own bundled copy and never sets it; accepted by maintainer 2026-10-24 (#4917) | a monaco-editor release vendoring DOMPurify >=3.4.17 |
+| `GHSA-mrv2-3pqr-j5jr` | dompurify 3.4.15 (`monaco-editor>dompurify`) | high     | IN_PLACE-only; Monaco runs its own bundled copy and never sets it; accepted by maintainer 2026-10-24 (#4917)           | a monaco-editor release vendoring DOMPurify >=3.4.17 |
 
 Why these are accepted rather than overridden (#4156): monaco-editor 0.57.0 declares
 `dompurify: 3.4.15` but never imports the npm package. It ships a **vendored, pre-bundled copy**
@@ -111,8 +113,12 @@ A `monaco-editor>dompurify` override only swaps the unused `node_modules` copy: 
 `@license DOMPurify 3.4.15` in the Monaco chunk. It would silence the audit without changing a
 shipped byte. Both advisories need DOMPurify's `IN_PLACE` mode, and Monaco's `domSanitize.js`
 calls `sanitize` only with `RETURN_DOM_FRAGMENT` / `RETURN_TRUSTED_TYPE`, so the vendored copy
-is not reachable through them. Remove both ids when Monaco ships a release pinning
-DOMPurify >=3.4.16 (0.57.0 is the latest stable as of 2026-10-06), then bump monaco-editor.
+is not reachable through them. The same holds for GHSA-cg2g-xh64-v4q7 (needs
+`SAFE_FOR_TEMPLATES`) and GHSA-mrv2-3pqr-j5jr (needs `IN_PLACE`), accepted by the maintainer on
+2026-10-24 (#4917): neither option is set anywhere in `monaco-editor/esm`, and `src/` does not
+use DOMPurify directly. Remove the first two ids when Monaco ships a release pinning
+DOMPurify >=3.4.16 and the last two when it pins >=3.4.17 (0.57.0 is the latest stable as of
+2026-10-24), then bump monaco-editor.
 Earlier `dompurify` overrides (removed in #3482) had the same blind spot.
 
 ### Accepted risks (Rust advisories and pre-release crates)
