@@ -6,6 +6,7 @@ import re
 
 from termihub_harness.output_stream import (
     PROMPT_MARK,
+    consecutive_runs,
     describe,
     find_flashes,
     first_match_offset,
@@ -78,3 +79,14 @@ def test_describe_bounds_the_repr():
     assert describe("a\x1b[2J") == repr("a\x1b[2J")
     long = describe("x" * 50, limit=10)
     assert long.startswith("'xxxxxxxxxx... (+40 chars)") or "+40 chars" in long
+
+
+def test_consecutive_runs_finds_unbroken_listings_only():
+    names = ["f-0", "f-1", "f-2"]
+    text = "\n".join(
+        ["C:\\r>git status", "  f-0", "  f-1", "  f-2", "", "C:\\r>git status", "  f-0",
+         "C:\\r>", "  f-1", "  f-2", "  f-0", "  f-1", "  f-2"]
+    )
+    assert consecutive_runs(text, names) == [1, 10]
+    assert consecutive_runs(text, []) == []
+    assert consecutive_runs("f-0", names) == []

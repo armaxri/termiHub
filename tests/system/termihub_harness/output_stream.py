@@ -125,6 +125,24 @@ def markers_in(raw: str, markers: Sequence[str]) -> list[str]:
     return [marker for marker in markers if marker in shown]
 
 
+def consecutive_runs(text: str, items: Sequence[str]) -> list[int]:
+    """Line indices where every one of ``items`` appears on consecutive lines, in order.
+
+    Reads a reconstructed terminal buffer (``readTerminal``): a long listing
+    that painted in order is one unbroken run of lines; a prompt or repaint
+    spliced into it breaks the run, so that occurrence is not reported.
+    """
+    if not items:
+        return []
+    lines = text.splitlines()
+    span = len(items)
+    return [
+        i
+        for i in range(len(lines) - span + 1)
+        if all(items[k] in lines[i + k] for k in range(span))
+    ]
+
+
 def describe(raw: str, limit: int = 4000) -> str:
     """A bounded ``repr`` of a raw stream for failure messages and evidence."""
     shown = raw if len(raw) <= limit else raw[:limit] + f"... (+{len(raw) - limit} chars)"

@@ -29,7 +29,12 @@ when no WSL2 distribution is installed (mirroring the backend's own detection).
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
+from pathlib import Path
 
 import pytest
 
@@ -44,12 +49,22 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.git_bash import detect_git_bash
+from termihub_harness.output_stream import consecutive_runs
 from termihub_harness.shell import is_absolute_path
 from termihub_harness.wsl import detect_wsl_distros
 
 pytestmark = pytest.mark.integration
 
 _IS_WINDOWS = sys.platform.startswith("win")
+
+#: MT-LOCAL-30: untracked files per ``git status`` listing (more than a
+#: screenful, so the listing scrolls while it paints) and listings per run.
+CMD_PAINT_FILES = 400
+CMD_PAINT_RUNS = 3
+#: A cmd.exe prompt line (``C:\path>``), as the reconstructed buffer shows it.
+CMD_PROMPT = re.compile(r"^[A-Za-z]:\\.*>")
+#: Ceiling for ``dir /s`` over ``System32\drivers`` (provisional, being sized).
+CMD_DIR_S_BUDGET = 60.0
 
 skip_on_non_windows = pytest.mark.skipif(
     not _IS_WINDOWS, reason="Windows shells and WSL are a Windows-only feature"
@@ -145,6 +160,49 @@ class TestWindowsShells(
         marker = "WIN_CMD_MARKER"
         self.run_command(f"echo {marker}")
         assert marker in self.wait_for_output(marker)
+
+    # ── MT-LOCAL-30: cmd.exe paints long output in order ────────────────────────
+    def test_cmd_output_paints_in_order(self):
+        """MT-LOCAL-30: repeated ``git status`` with 400 untracked files paints
+        each listing as one unbroken block with the prompt after it, and a
+        ``dir /s`` completes within its bound."""
+        repo = Path(tempfile.mkdtemp(prefix="thub-cmd-paint-"))
+        try:
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            names = [f"untracked-{i:03d}.txt" for i in range(CMD_PAINT_FILES)]
+            for name in names:
+                (repo / name).write_text("x", encoding="utf-8")
+            self.close_all_tabs()
+            self.create_local_connection(
+                unique_name("cmd-paint"), shell="cmd", starting_directory=str(repo), connect=True
+            )
+            self.wait(self.has_terminal, what="the cmd tab")
+            tab_id = self.wait(self.active_tab, what="the active cmd tab")["id"]
+            for _ in range(CMD_PAINT_RUNS):
+                self.run_command("git status")
+                self.run_command("")
+                self.run_command("")
+
+            def painted() -> str | None:
+                text = self.driver.read_terminal(tab_id)
+                return text if len(consecutive_runs(text, names)) >= CMD_PAINT_RUNS else None
+
+            text = self.wait(painted, timeout=90.0, what="three unbroken git status listings")
+            lines = text.splitlines()
+            for start in consecutive_runs(text, names):
+                after = lines[start + len(names) : start + len(names) + 8]
+                assert any(CMD_PROMPT.match(line) for line in after), (
+                    f"no cmd prompt after the listing at line {start}: {after}"
+                )
+
+            started = time.monotonic()
+            self.run_command(r'dir /s "%SystemRoot%\System32\drivers" & echo DIR^-DONE')
+            self.wait_for_output("DIR-DONE", tab_id=tab_id, timeout=120.0)
+            elapsed = time.monotonic() - started
+            print(f"\n[termihub-measure] cmd-paint dir_s_seconds={elapsed:.2f}")
+            assert elapsed <= CMD_DIR_S_BUDGET, f"dir /s took {elapsed:.1f}s"
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
 
     # ── MT-LOCAL-15: a saved Git Bash connection spawns and echoes a POSIX marker
     #    (skips when Git for Windows is not installed) ─────────────────────────────
