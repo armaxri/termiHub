@@ -2274,7 +2274,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-NET-17       | HTTP Monitor — periodic checks and chart                                                | Automated (already)  | test_network_tools_live.py::test_http_monitor_check_and_chart                                                                       |
 | MT-NET-18       | HTTP Monitor — sidebar monitor row                                                      | Automated (already)  | test_network_tools_live.py::test_http_monitor_shows_in_sidebar                                                                      |
 | MT-NET-19       | Remote agent — network.open_ports via JSON-RPC                                          | Automated (this PR)  | `test_network_tools_agent_live.py` + agent `live_agent_tcp_tool_run_open_ports_*` (#3692)                                           |
-| MT-NET-21       | Ping / HTTP Monitor — readable latency chart (uPlot)                                    | Guided-manual pytest | test_guided_shells_and_tools.py::test_latency_charts_are_readable                                                                   |
+| MT-NET-21       | Ping / HTTP Monitor — readable latency chart (uPlot)                                    | Guided-manual pytest | test_guided_shells_and_tools.py::test_latency_charts_are_readable (trace + ms read-out machine-checked, #4930)                      |
 | MT-NET-22       | Traceroute / Port Scanner — error on unresolvable host (Stop works)                     | Automated (already)  | TraceroutePanel.error.test.tsx + PortScannerPanel.error.test.tsx + TraceroutePanel.footer.test.tsx                                  |
 | MT-NET-20       | Port Scanner — CIDR / multi-target scan                                                 | Automated (already)  | core/src/network/port_scan.rs (CIDR / comma-list parse + per-host results)                                                          |
 | MT-PORT-01      | Portable mode activates via portable.marker                                             | Automated (already)  | src-tauri/tests/portable_launch.rs (per PR) + test_portable_mode.py::TestPortableMarker (nightly)                                   |
@@ -2358,15 +2358,15 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-UI-02        | No white transitions during startup                                                     | Guided-manual pytest | test_visual_rendering.py::test_no_startup_white_flash                                                                               |
 | MT-UI-03        | Dark theme restart — no white flash                                                     | Guided-manual pytest | test_visual_rendering.py::test_no_startup_white_flash (dark is the default theme)                                                   |
 | MT-UI-04        | System theme follows OS preference                                                      | Automated (already)  | src/themes/engine.test.ts 'resolves system mode to dark when OS prefers dark' (and light)                                           |
-| MT-UI-05        | OS theme toggle — app switches automatically                                            | Guided-manual pytest | test_guided_look_and_feel.py::test_os_theme_toggle_switches_app_live                                                                |
+| MT-UI-05        | OS theme toggle — app switches automatically                                            | Automated (#4930)    | test_theme_grades.py::test_os_theme_toggle_switches_app_live                                                                        |
 | MT-UI-09        | System theme applies immediately                                                        | Automated (already)  | engine.test.ts system mode + test_theme_layout.py::test_switching_theme_updates_state_and_css_variables                             |
 | MT-UI-10        | Settings tab drag between panels                                                        | Automated (#3693)    | tests/system/tests/test_settings.py::test_settings_tab_drags_to_another_panel_keeping_its_icon                                      |
 | MT-UI-11        | Vertical resize handle works                                                            | Automated (#3693)    | test_split_views.py::test_dragging_the_vertical_divider_resizes_left_right_panels (+ horizontal twin)                               |
 | MT-UI-12        | 1px line between split panels                                                           | Automated (#3693)    | test_split_views.py::test_left_right_split_draws_a_1px_border_between_panels                                                        |
-| MT-UI-13        | Single panel — border blends with sidebar                                               | Guided-manual pytest | test_guided_look_and_feel.py::test_single_panel_border_blends_with_sidebar                                                          |
+| MT-UI-13        | Single panel — border blends with sidebar                                               | Automated (#4930)    | test_theme_grades.py::test_single_panel_border_blends_with_sidebar                                                                  |
 | MT-UI-14        | Horizontal split border                                                                 | Automated (#3693)    | test_split_views.py::test_left_right_split_draws_a_1px_border_between_panels                                                        |
 | MT-UI-15        | Vertical split border                                                                   | Automated (#3693)    | test_split_views.py::test_top_bottom_split_draws_a_1px_border_between_panels                                                        |
-| MT-UI-16        | No black bar at bottom of terminal                                                      | Guided-manual pytest | test_visual_rendering.py::test_no_black_bar_at_terminal_bottom                                                                      |
+| MT-UI-16        | No black bar at bottom of terminal                                                      | Automated (#4930)    | test_layout_grades.py::test_no_black_bar_at_terminal_bottom                                                                         |
 | MT-UI-19        | App icon in dock/taskbar                                                                | Guided-manual pytest | test_visual_rendering.py::test_app_icon_in_dock_or_taskbar                                                                          |
 | MT-UI-26        | Right-click shows context menu by default on macOS/Linux                                | Guided-manual pytest | test_input_routing.py::test_terminal_context_menu_and_quick_copy_paste                                                              |
 | MT-UI-27        | Quick Copy/Paste copies selected text on right-click                                    | Guided-manual pytest | test_input_routing.py::test_terminal_context_menu_and_quick_copy_paste                                                              |
@@ -2377,8 +2377,8 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-UI-32        | Zoom overlay follows panel focus switching                                              | Automated (already)  | src/store/appStore.test.ts 'follows zoom to the new panel's active tab…'                                                            |
 | MT-UI-33        | Zoom overlay follows tab switching within the zoomed panel                              | Automated (already)  | appStore.test.ts 'follows zoom to any tab type when switching in the same panel'                                                    |
 | MT-UI-34        | OS file drop targets the individual pane under the cursor                               | Guided-manual pytest | test_input_routing.py::test_os_file_drop_onto_pane                                                                                  |
-| MT-UI-35        | Terminal right-edge scrollbar shows only when scrollback exceeds viewport               | Guided-manual pytest | test_visual_rendering.py::test_vertical_scrollbar_appearance                                                                        |
-| MT-UI-36        | Vertical scrollbar is the same in normal and horizontal-scroll modes                    | Guided-manual pytest | test_visual_rendering.py::test_vertical_scrollbar_appearance                                                                        |
+| MT-UI-35        | Terminal right-edge scrollbar shows only when scrollback exceeds viewport               | Automated (#4930)    | test_layout_grades.py::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes                                          |
+| MT-UI-36        | Vertical scrollbar is the same in normal and horizontal-scroll modes                    | Automated (#4930)    | test_layout_grades.py::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes                                          |
 | MT-UI-37        | Open tabs and layout are restored after an app restart                                  | Automated (#3693)    | tests/system/tests/test_session_restore_ui.py::test_tabs_split_and_groups_are_restored_after_restart                                |
 | MT-UI-38        | Disabling Restore Last Session starts the app fresh                                     | Automated (already)  | src/store/appStore.lastSession.test.ts + appStore.restoreMode.test.ts                                                               |
 | MT-UI-39        | Disconnect overlay explains the exit cause and suppresses for user kills                | Automated (already)  | src/components/Terminal/TerminalDisconnectOverlay.test.tsx (+ .exitInfo.test.tsx)                                                   |
@@ -2630,14 +2630,14 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 
 Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does all the setup and asks only for the irreducible look, click or physical step. From `tests/system/`: `./pytest.sh --manual -s` (or `./scripts/run-guided-manual.sh -k <suite>` from the repo root), which writes a sign-off report to `tests/reports/`. Platform-scoped tests run only on their OS (override with `--manual-platform`). See [Guided-Manual Tests in the Python Harness](#guided-manual-tests-in-the-python-harness-preferred) for how they work.
 
-- [ ] `test_visual_rendering.py` — glyphs, ANSI colours, box drawing, scrollbar, startup / SSH-connect flash, black bottom bar, OS app icon
+- [ ] `test_visual_rendering.py` — glyphs, ANSI colours, box drawing, startup / SSH-connect flash, OS app icon
 - [ ] `test_external_app.py` — VS Code / OS file manager launch, clipboard copy/paste keys, SSH agent, X11 window
 - [ ] `test_input_routing.py` — real keypresses, drags, right-click and OS file drop
 - [ ] `test_guided_native_input.py` — MT-NIN-01 … 07 (native drag-and-drop), MT-NIN-10 … 16 (IME, dead keys, emoji picker; commit-once automated, #3059), MT-NIN-20 … 24 (native focus), MT-NIN-30/31 (right-click paste, real Caps Lock)
 - [ ] `test_guided_credentials.py` — MT-CRED-01/02/03 (secret in the OS store), MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock), MT-CRED-17 (dialog spacing), MT-CRED-18 (keychain backup restore)
 - [ ] `test_guided_app_os.py` — MT-APP-02 … 05 (CSP, plugin install over HTTPS, single instance, MobaXterm import), MT-WIN-01 … 04 (macOS Dock and quit paths), MT-SHI-01 … 06 (external spawn and OS context menus), MT-FB-30 … 32 (large folder, drag out, open in file manager)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
-- [ ] `test_guided_look_and_feel.py` — MT-UI-05, MT-UI-13, MT-UI-40 … 56 (theme, paint and layout judgements)
+- [ ] `test_guided_look_and_feel.py` — MT-UI-40, 42, 44, 46, 53 … 56 (paint and layout judgements; the theme, layout and scrollbar items are automated since #4930)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/30 … 33 (WSL flash, key repeat, CMD paint, Git install, output flood, twenty GPU tabs), MT-SSH-01/50/51/52 (Agnoster, X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent, MT-SER-02 (clean Windows without a Nerd Font). Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
@@ -2678,18 +2678,18 @@ Guided-manual suites:
 | Suite                                                                                      | Covers (manual IDs)                                                                        | The human step                                                                                                                                                                                                                             |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)                 | worked examples (visual / dialog)                                                          | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                             |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py)               | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16/19, MT-LOCAL-05           | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup/connect white-flash, no black bottom bar, OS app icon) — screenshot attached                                                         |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py)               | MT-SSH-02, MT-UI-31, MT-SER-01/02, MT-UI-01/19, MT-LOCAL-05                                | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, no startup/connect white-flash, OS app icon) — screenshot attached                                                                                                |
 | [`test_external_app.py`](../tests/system/tests/test_external_app.py)                       | MT-FB-04/14/15/16/21/22/23, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04            | confirm the external result — VS Code launched, the OS file manager / VS Code workspace opened, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
 | [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)                     | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20                    | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder)      |
 | [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-01..07/10..16/20..24/30/31                                                          | the native OS drag, IME composition, dead key, emoji picker or app switch (harness asserts the shell listing, the copied file, the torn-off tab's session in the new window, the saved name)                                               |
 | [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-01/02/03/11..18                                                                    | answer the Touch ID / Windows Hello / polkit sheet, look in the OS credential store                                                                                                                                                        |
 | [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-02..05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30..32                                  | the Dock / app-menu quit, a second launch, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                                        |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                               | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                                                                   |
-| [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-05/13/40..56                                                                         | judge theme, paint and layout in the state the harness set                                                                                                                                                                                 |
+| [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/42/44/46/53..56                                                                   | judge paint and layout in the state the harness set                                                                                                                                                                                        |
 | [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/30..33, MT-SSH-01/50..52, MT-NET-16/21                                      | watch the shell paint, the X window, the traceroute / chart                                                                                                                                                                                |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, MT-SER-02, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                                                              |
 
-> **MT-UI-01/16/19, MT-LOCAL-05 — startup/connect white-flash + app icon (#1003).**
+> **MT-UI-01/19, MT-LOCAL-05 — startup/connect white-flash + app icon (#1003).**
 > Follow-up to #915 (delivered in PR #943): the remaining timing- and OS-level
 > visual items were added to
 > [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py).
@@ -2708,10 +2708,6 @@ Guided-manual suites:
 >   no flash of setup/wrapper commands and no white/black flicker. Needs the Docker
 >   SSH password container (`ssh_fixtures`); skips when no container runtime is
 >   available.
-> - **MT-UI-16 (no black bar at the terminal bottom).** The harness opens a
->   terminal and prints a line; the operator confirms the terminal background fills
->   to the bottom of the pane — no black strip between the last row and the pane
->   edge / status bar.
 > - **MT-UI-19 (OS app icon).** The harness ensures the app is running and focused;
 >   the operator checks the dock (macOS) / taskbar (Windows) / launcher (Linux) and
 >   confirms the custom termiHub icon is shown, not a generic default.
@@ -2759,6 +2755,44 @@ running termiHub; the local X server is provisioned per platform (epic #1047,
 | Forwarded channel, `DISPLAY`, graceful degradation                                                                                       | `core/tests/ssh_x11.rs`, `test_ssh.py::TestSshX11Display` against the `ssh-x11` fixture                                             |
 | In-container Xvfb render (`render-check.sh`)                                                                                             | `core/tests/ssh_x11.rs::x11_fixture_render_check_maps_a_window` runs it over a termiHub SSH session (integration-fixtures workflow) |
 | A real window on the operator's display, per-OS install UX, no orphan server                                                             | Release gate: MT-SSH-50 (Linux, native X), MT-SSH-51 (macOS, XQuartz), MT-SSH-52 (Windows, VcXsrv via winget)                       |
+
+### Theme, layout and scrollbar grades (#4930)
+
+Fifteen look-and-feel checks an operator used to judge by eye are graded by the
+integration lane instead (step 3 of #4927). They read what the WebView
+resolved and judge it with WCAG maths, so no screenshot comparison is involved:
+
+| Suite                                                                                    | Grades                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_theme_grades.py`](../tests/system/tests/test_theme_grades.py)                     | MT-UI-02..09 (Light reaches every chrome surface, AA text), MT-UI-05 (System follows an OS light/dark flip live), MT-UI-13 (one visible edge between sidebar and panel), MT-UI-41 (thumbs visible at rest in every theme), MT-UI-49/52 (editor follows the theme, live), MT-UI-50 (latency chart and Save Theme re-colour live)                   |
+| [`test_layout_grades.py`](../tests/system/tests/test_layout_grades.py)                   | MT-UI-16 (no strip under the last row), MT-UI-35/36 (thumb only with scrollback, same gutter in both modes), MT-UI-45 (sidebar laid out at first contact, three cold launches), MT-UI-47/48 (zoom overlay leaves Escape to the program; its menu is live above the scrim), MT-UI-51 (thumb right of the text, horizontal bar clears the last row) |
+| [`test_terminal_command_marks.py`](../tests/system/tests/test_terminal_command_marks.py) | MT-UI-43 (green/red OSC 133 gutter bars, no overlap, jump highlight)                                                                                                                                                                                                                                                                              |
+
+MT-NET-21 stays guided, but the harness first checks that the chart drew its
+trace and the legend reads ms; the operator only judges readability.
+
+The building blocks:
+
+- `termihub_harness/colors.py` parses computed colours (`rgb()`, `rgba()`,
+  `color(srgb …)`, hex tokens) and computes the WCAG contrast ratio, mirroring
+  `src/themes/contrast.ts`. A translucent colour such as a scrollbar thumb is
+  composited onto its surface first.
+- `measure_terminal` also reports the gutter thumb's geometry and computed
+  colour, the text area's right edge, the last row's bottom, the container and
+  xterm theme backgrounds, the horizontal bar height and the rendered
+  decorations (OSC 133 bars, prompt flash).
+- Monaco's root and gutter carry `editor-surface` / `editor-gutter`, and the
+  latency chart canvas carries `latency-chart-canvas` for `sample_canvas`.
+- `termihub_harness/os_appearance.py` flips the OS appearance for MT-UI-05:
+  System Events `appearance preferences` on macOS, `AppsUseLightTheme` plus a
+  `WM_SETTINGCHANGE` broadcast on Windows, and a private `xsettingsd` on the
+  Linux Xvfb display (installed on the integration runner). It acts only on a
+  GitHub runner, or locally when you set `TERMIHUB_ALLOW_OS_APPEARANCE=1`, and
+  it always restores the appearance it found. On Linux it refuses a display
+  that already has an XSETTINGS manager, so it can never re-theme a desktop
+  session. Without the opt-in a local run skips MT-UI-05. On a macOS runner
+  that refuses System Events automation, the test skips with that reason; on
+  Linux and Windows CI a toggle that cannot act fails the test.
 
 ### Retirement of the YAML corpus (#919)
 

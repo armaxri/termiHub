@@ -11,12 +11,15 @@ attaches a screenshot to the report via the bridge ``screenshot`` verb (#900) so
 the visual evidence is captured.
 
 Covered (#915): ANSI colours (MT-SSH-02), 256-colour (MT-SSH-02), box-drawing
-(MT-UI-31), Nerd Font / Powerline glyphs (MT-SER-01/02), theme colours
-(MT-UI-02..09), and vertical scrollbar appearance (MT-UI-35/36).
+(MT-UI-31) and Nerd Font / Powerline glyphs (MT-SER-01/02).
 
 Added (#1003): no startup white-flash (MT-UI-01), no SSH connect / setup-command
-flash (MT-LOCAL-05), no black bar at the bottom of the terminal (MT-UI-16), and
-the OS-level app icon (MT-UI-19). These are timing- and OS-level checks that stay
+flash (MT-LOCAL-05) and the OS-level app icon (MT-UI-19).
+
+Retired (#4930): theme colours (MT-UI-02..09), vertical scrollbar appearance
+(MT-UI-35/36) and the black bar at the terminal bottom (MT-UI-16) are graded
+automatically from computed styles and ``measure_terminal`` in
+``test_theme_grades.py`` / ``test_layout_grades.py``. These are timing- and OS-level checks that stay
 operator-confirmed, but the harness still automates everything around them — the
 cold relaunch, the SSH connect, opening the terminal, and showing the screen — so
 the operator only has to *look*.
@@ -36,8 +39,6 @@ from termihub_harness import (
     ConnectionsUi,
     ManualUi,
     PasswordPromptUi,
-    SETTINGS_REGION,
-    SettingsUi,
     SidebarUi,
     SshUi,
     SystemTest,
@@ -59,7 +60,6 @@ _BOX = "┌───┐\\n│ hi │\\n└───┘"
 class TestVisualRendering(
     TerminalUi,
     TabsUi,
-    SettingsUi,
     SidebarUi,
     ConnectionsUi,
     PasswordPromptUi,
@@ -129,50 +129,6 @@ class TestVisualRendering(
             label="powerline-glyphs",
         )
 
-    # ── Theme colours (MT-UI-02..09) ─────────────────────────────────────────
-    def test_light_theme_applies(self):
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.open_settings_category("appearance")
-        self.driver.select("appearance-theme-select", "light")
-        self.wait(
-            lambda: self.projection_region_cache(SETTINGS_REGION).get("theme") == "light",
-            what="the light theme to apply",
-        )
-        try:
-            self.manual_observe(
-                "Look at the whole app window (sidebar, tabs, panels, status bar).",
-                "Everything switched to the light theme -- light backgrounds with "
-                "dark, readable text across all chrome, no leftover dark patches.",
-                label="theme-light",
-            )
-        finally:
-            # Restore the default so later suites start from a known theme.
-            self.driver.select("appearance-theme-select", "dark")
-            self.wait(
-                lambda: self.projection_region_cache(SETTINGS_REGION).get("theme") == "dark",
-                what="the theme to restore to dark",
-            )
-
-    # ── Vertical scrollbar appearance (MT-UI-35/36) ──────────────────────────
-    def test_vertical_scrollbar_appearance(self):
-        self.close_all_tabs()
-        self.ensure_terminal()
-        # Fill well past one screen so a scrollbar is warranted, then scroll up.
-        self.run_command('for i in $(seq 1 200); do echo "scrollback line $i"; done')
-        self.wait_for_output("scrollback line 200")
-        self.driver.scroll_terminal(-80)
-        self.manual_observe(
-            "Move the mouse over the terminal and look at its right edge while "
-            "scrolled up into history; then move the mouse away.",
-            "The vertical scrollbar is a thin, subtle themed bar that fades in "
-            "on hover and fades out when the mouse leaves (auto-hide, VS Code "
-            "style) -- no always-on bright bar, no jarring default-OS scrollbar. "
-            "Its style matches the tab-bar/list scrollbars elsewhere in the app.",
-            label="scrollbar",
-        )
-        self.driver.scroll_terminal(to_bottom=True)
-
     # ── No startup white-flash (MT-UI-01) ────────────────────────────────────
     def test_no_startup_white_flash(self):
         """Cold-relaunch the app; the operator watches the window background.
@@ -223,29 +179,6 @@ class TestVisualRendering(
             "wrapper commands before the prompt, no white/black flicker as the "
             "session opened.",
             label="ssh-connect-no-flash",
-        )
-
-    # ── No black bar at the bottom of the terminal (MT-UI-16) ────────────────
-    def test_no_black_bar_at_terminal_bottom(self):
-        """Open a terminal with a prompt; the operator checks the bottom edge.
-
-        A stray black bar at the bottom of the terminal is a layout/sizing
-        artefact (the xterm rows not filling the pane) the bridge cannot measure
-        reliably, so it stays operator-confirmed. The harness automates standing
-        up the terminal and getting a prompt on screen.
-        """
-        self.close_all_tabs()
-        self.ensure_terminal()
-        # Make the bottom rows clearly the prompt, not blank padding.
-        self.run_command("echo bottom-bar-check")
-        self.wait_for_output("bottom-bar-check")
-        self.manual_observe(
-            "Look at the very bottom edge of the terminal pane, below the last "
-            "line of output.",
-            "The terminal background fills all the way to the bottom of the pane "
-            "-- no black bar / empty strip between the last row and the pane "
-            "edge or status bar.",
-            label="terminal-no-black-bar",
         )
 
     # ── OS-level app icon (MT-UI-19) ─────────────────────────────────────────

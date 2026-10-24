@@ -10,7 +10,10 @@ This guard keeps it that way:
 - the legacy runner and corpus do not come back;
 - every retired item id is named in the docstring of a test function in a
   ``manual``-marked suite, so a later refactor cannot silently drop an item
-  from the release gate.
+  from the release gate;
+- or, once an item is automated (the #4927 campaign), it is listed in
+  ``AUTOMATED_IDS`` with the automated test whose docstring names it, and no
+  guided test still claims it.
 
 Pure ``ast`` parsing of the test modules — no app, bridge or Docker — so it runs
 in the normal (non-integration) lane.
@@ -50,6 +53,30 @@ RETIRED_YAML_IDS = frozenset(
     """.split()
 )
 
+_THEME = "test_theme_grades.py"
+_LAYOUT = "test_layout_grades.py"
+
+#: Manual items retired into automated (non-``manual``) tests, mapped to the
+#: ``<module>::<test function>`` whose docstring names the id (#4927). Covers
+#: retired YAML items and later guided-only ones (MT-UI-16/35/36).
+AUTOMATED_IDS: dict[str, str] = {
+    # #4930: theme, layout and scrollbar grades from computed styles + measure_terminal.
+    "MT-UI-05": f"{_THEME}::test_os_theme_toggle_switches_app_live",
+    "MT-UI-13": f"{_THEME}::test_single_panel_border_blends_with_sidebar",
+    "MT-UI-16": f"{_LAYOUT}::test_no_black_bar_at_terminal_bottom",
+    "MT-UI-35": f"{_LAYOUT}::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes",
+    "MT-UI-36": f"{_LAYOUT}::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes",
+    "MT-UI-41": f"{_THEME}::test_scrollbar_thumb_visible_at_rest_in_every_theme",
+    "MT-UI-43": "test_terminal_command_marks.py::test_gutter_bars_and_jump_highlight",
+    "MT-UI-45": f"{_LAYOUT}::test_sidebar_paints_fully_on_cold_launch",
+    "MT-UI-47": f"{_LAYOUT}::test_zoom_overlay_leaves_escape_to_terminal",
+    "MT-UI-48": f"{_LAYOUT}::test_context_menu_in_zoomed_terminal_above_overlay",
+    "MT-UI-49": f"{_THEME}::test_every_light_theme_gets_a_light_editor",
+    "MT-UI-50": f"{_THEME}::test_charts_and_primary_buttons_follow_live_theme",
+    "MT-UI-51": f"{_LAYOUT}::test_terminal_and_breadcrumb_scrollbars_follow_global_style",
+    "MT-UI-52": f"{_THEME}::test_editor_background_matches_panes_in_every_theme",
+}
+
 _ID = re.compile(r"\bMT-[A-Z]+-\d+\b")
 
 
@@ -85,13 +112,49 @@ def test_legacy_runner_and_corpus_stay_deleted():
     assert not list((REPO_ROOT / "tests" / "manual").glob("*.yaml"))
 
 
-def test_every_retired_yaml_item_has_a_guided_test():
+def test_every_retired_yaml_item_has_a_guided_or_automated_test():
     found = manual_test_ids()
-    missing = sorted(RETIRED_YAML_IDS - found.keys())
+    missing = sorted(RETIRED_YAML_IDS - found.keys() - AUTOMATED_IDS.keys())
     assert not missing, (
-        "retired YAML items no longer named in any manual test docstring: "
+        "retired YAML items named in no manual test docstring and not in AUTOMATED_IDS: "
         f"{', '.join(missing)}"
     )
+
+
+def _test_docstring(module: str, function: str, tests_dir: Path = TESTS_DIR) -> str | None:
+    """The docstring of test ``function`` in ``module`` (``None`` if it is missing)."""
+    path = tests_dir / module
+    if not path.exists():
+        return None
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.FunctionDef) and node.name == function:
+            return ast.get_docstring(node) or ""
+    return None
+
+
+def test_every_automated_item_names_its_test():
+    wrong = []
+    for item_id, target in sorted(AUTOMATED_IDS.items()):
+        module, function = target.split("::")
+        doc = _test_docstring(module, function)
+        if doc is None or item_id not in _ID.findall(doc):
+            wrong.append(f"{item_id} -> {target}")
+    assert not wrong, f"automated items whose test is missing or does not name them: {wrong}"
+
+
+def test_automated_items_live_in_automated_suites():
+    manual_modules = {
+        path.name
+        for path in TESTS_DIR.glob("test_*.py")
+        if _is_manual_module(ast.parse(path.read_text(encoding="utf-8")))
+    }
+    in_manual = {i: t for i, t in AUTOMATED_IDS.items() if t.split("::")[0] in manual_modules}
+    assert not in_manual, f"automated items mapped into a manual suite: {in_manual}"
+
+
+def test_automated_items_are_no_longer_guided():
+    still_guided = {i: t for i, t in manual_test_ids().items() if i in AUTOMATED_IDS}
+    assert not still_guided, f"automated items still claimed by a guided test: {still_guided}"
 
 
 def test_retired_id_list_has_no_duplicates_and_expected_size():
