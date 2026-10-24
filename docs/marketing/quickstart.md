@@ -3,6 +3,8 @@
 > **Draft for review (MKT-3).** Install → first local shell → first SSH connection, using
 > the real UI flow and the real scripts (`scripts/setup.sh`, `scripts/dev.sh`). Steps are
 > verified against the current repo. `TODO(maintainer)` marks where screenshots help.
+>
+> Last verified against `develop` at `652dff95f` (2026-10-24).
 
 ## 1. Get termiHub
 
@@ -29,7 +31,7 @@ cd termiHub
 
 `./scripts/setup.sh` installs all frontend and Rust dependencies and does an initial build;
 `./scripts/dev.sh` launches the app in development mode. See the README's Development
-section for prerequisites (Node.js 18+, pnpm, Rust, and the Tauri v2 platform packages).
+section for prerequisites (Node.js 20.19+, pnpm, Rust, and the Tauri v2 platform packages).
 
 > TODO(maintainer): screenshot of the freshly-launched empty window (activity bar +
 > sidebar + empty terminal view).
@@ -55,8 +57,9 @@ You now have a working terminal. To save it as a reusable connection, use the fl
    - **Type** — **SSH**
    - **Host** and **Port** (default `22`)
    - **Username**
-   - **Auth Method** — **Password** (prompted at connect) or **SSH Key** (set **Key Path**,
-     e.g. `~/.ssh/id_ed25519`)
+   - **Method** — **SSH Key** (the default; set **Key Path**, e.g. `~/.ssh/id_ed25519`),
+     **Password** (asked at connect unless saved), **SSH Agent**, or
+     **Keyboard-Interactive (OTP / 2FA)**
 3. Click **Save**.
 4. **Double-click** the connection (or right-click → **Connect**) to open a session. With
    password auth, termiHub prompts for the password; it is not written to the config file.
@@ -68,7 +71,7 @@ You now have a working terminal. To save it as a reusable connection, use the fl
 > ssh-copy-id -i ~/.ssh/id_ed25519.pub user@hostname
 > ```
 >
-> Then set **Auth Method → SSH Key** and **Key Path → `~/.ssh/id_ed25519`**. See the
+> Then set **Method → SSH Key** and **Key Path → `~/.ssh/id_ed25519`**. See the
 > README's SSH Configuration section for platform-specific agent/keychain setup.
 
 ## 4. Browse remote files
@@ -102,9 +105,10 @@ few protocol limits the editor calls out (an **FTP** badge in the editor toolbar
   tabs to distinguish prod / staging / dev.
 - **Open the command palette** — **Cmd+P** (macOS) / **Ctrl+Shift+P** (Win/Linux) to search
   and run any command.
-- **Try a tunnel or a network tool** — set up local/remote/dynamic SSH forwarding, or run
-  ping / traceroute / port scan / DNS / HTTP monitor / Wake-on-LAN from the Network Tools
-  sidebar.
+- **Try a tunnel or a network tool** — set up local/remote/dynamic SSH forwarding in the SSH
+  connection editor's **Port Forwarding** section, or run ping / traceroute / port scan /
+  DNS / HTTP monitor / Wake-on-LAN from the Network Tools sidebar (experimental: turn on
+  **Settings → General → Allow Experimental Features** first).
 
 For the full usage guide, SSH options, serial setup, and troubleshooting, see the main
 [README](../../README.md).
