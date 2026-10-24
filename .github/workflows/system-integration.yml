@@ -66,9 +66,9 @@ on:
         options: [both, develop, main, dispatched]
         default: both
       arm64:
-        description: "Add the linux-arm64 legs (auto = Wednesdays UTC only, #4934)"
+        description: "linux-arm64 legs: auto = Wednesdays UTC; only = arm64 legs alone (#4934)"
         type: choice
-        options: [auto, always, never]
+        options: [auto, always, only, never]
         default: auto
   # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
   # commit (the release candidate), instead of the develop/main branch tips. The
@@ -150,7 +150,8 @@ jobs:
         # The linux-arm64 legs (#4934) cost a second full Linux run, so they run
         # weekly: on Wednesdays UTC (the weekly main cron and that day's develop
         # nightly), on every release-candidate call (the release gate covers
-        # aarch64), and when a dispatch asks for them. `never` drops them.
+        # aarch64), and when a dispatch asks for them. `never` drops them;
+        # `only` runs the arm64 legs alone (a cheap re-grade of an arm64 fix).
         shell: bash
         env:
           RC_REF: ${{ inputs.ref }}
@@ -159,6 +160,11 @@ jobs:
           base='"ubuntu-latest","macos-latest","windows-latest"'
           arm=false
           case "${ARM64:-auto}" in
+            only)
+              echo 'oses=["ubuntu-24.04-arm"]' >> "$GITHUB_OUTPUT"
+              echo "linux-arm64 legs only"
+              exit 0
+              ;;
             always) arm=true ;;
             never) arm=false ;;
             *)

@@ -647,7 +647,7 @@ harness' loopback sshd (`TERMIHUB_LIVE_AGENT=1`). Its skip-guard lanes are
 so it is **weekly**: the `setup` job adds it on Wednesdays (UTC, the weekly `main`
 cron and that day's `develop` nightly) and on every release-candidate call, so a
 release is always graded on aarch64. Add it to any dispatch with `-f arm64=always`
-(or drop it with `-f arm64=never`):
+(drop it with `-f arm64=never`, or run only the arm64 legs with `-f arm64=only`):
 
 ```bash
 gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched -f arm64=always
