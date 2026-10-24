@@ -74,9 +74,6 @@ function latestValuePlugin(): uPlot.Plugin {
   };
 }
 
-/** `data-testid` of the chart's canvas, sampled by the theme grades (#4930). */
-const LATENCY_CHART_CANVAS_TESTID = "latency-chart-canvas";
-
 /**
  * Real-time latency line chart backed by uPlot, with a zero-baselined ms y axis,
  * an elapsed-time x axis, hover read-out, and drop markers for timeouts.
@@ -152,7 +149,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
     makeOptions,
     // Recreate on structural options (axis mode / height); useUplot adds the theme.
     recreateDeps: [intervalMs, height],
-    canvasTestId: LATENCY_CHART_CANVAS_TESTID,
+    canvasTestId: "latency-chart-canvas", // sampled by the theme grades (#4930)
     onUpdate: (plot) => {
       // Refresh drop positions before setData triggers the plugin's redraw.
       dropsRef.current = chart.drops;

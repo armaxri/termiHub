@@ -53,8 +53,9 @@ export const EDITOR_GUTTER_TESTID = "editor-gutter";
  * whichever element is absent.
  */
 export function tagMonacoSurface(domNode: Element | null | undefined): void {
-  domNode?.setAttribute("data-testid", EDITOR_SURFACE_TESTID);
-  domNode?.querySelector(".margin")?.setAttribute("data-testid", EDITOR_GUTTER_TESTID);
+  // Literal ids (not the constants) so the static testid catalog sees them.
+  domNode?.setAttribute("data-testid", "editor-surface");
+  domNode?.querySelector(".margin")?.setAttribute("data-testid", "editor-gutter");
 }
 
 /**
