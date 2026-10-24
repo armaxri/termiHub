@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { Terminal } from "./Terminal";
+import { SHOW_FIT_STALL_MS, Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 import { resetSessionInputGatesForTests } from "@/services/sessionInputGate";
@@ -547,5 +547,23 @@ describe("input typed right after a tab is shown (#4942)", () => {
     act(() => ipc.emitOutput?.(new TextEncoder().encode("echo PERF05-31\r\n")));
     await drainMicrotasks();
     expect(ipc.log).toEqual(['input "echo PERF05-31\\n"', "resize 100x24"]);
+  });
+
+  it("runs a stalled show-time fit itself instead of releasing input ahead of it", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    // Shown, input typed, and no frame comes (a busy or throttled view): the
+    // deferred fit that would resize the PTY never runs on its own.
+    renderTerminal(true, true);
+    void sendInput("session-swap", "echo PERF05-05\n");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, SHOW_FIT_STALL_MS + 20));
+    });
+    // The terminal fitted itself: the resize goes out first, input still waits.
+    expect(ipc.log).toEqual(["resize 100x30"]);
+
+    await applyPendingResizes();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "echo PERF05-05\\n"']);
   });
 });
