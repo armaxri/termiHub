@@ -125,6 +125,9 @@ class TestNativeCaptureGrades(
         self.create_local_connection(name, shell=self.posix_shell_name(), connect=True)
         tab = self.wait(lambda: self.find_tab(name), what=f"the {name!r} tab")["id"]
         self.wait(lambda: self.driver.read_terminal(tab).strip(), what="the shell prompt")
+        # Before the payload: switching renderer (macOS) refits and reflows the
+        # buffer, which would move the rows read below.
+        self.use_capturable_renderer(tab)
         body = "".join(f"{line}{ESC}[0m\n" for line in lines) + "TH_CAPTURE_DONE\n"
         self.write_home_bytes(PAYLOAD, body.encode("utf-8"))
         self.wait(
