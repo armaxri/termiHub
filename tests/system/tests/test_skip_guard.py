@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from termihub_harness import skip_guard as sg
+from termihub_harness.manual import manual_skip_reason
 
 _ALLOWLIST = sg.parse_allowlist(
     {
@@ -102,6 +103,88 @@ def test_more_skips_than_the_baseline_fails():
     assert not verdict.ok
     assert any("exceed the committed baseline of 3" in problem for problem in verdict.problems)
     assert _evaluate("bulk-linux", skips[:3]).ok
+
+
+def _manual_gate(i):
+    return sg.Skip(f"tests/test_m.py::t{i}", _MANUAL.reason, manual=True)
+
+
+def test_guided_manual_gate_skips_do_not_count_against_the_baseline():
+    """#4921: the guided-manual port added ~129 manual tests; their gate skips
+    must not push a lane over max_skips, however many there are."""
+    verdict = _evaluate("bulk-linux", [_manual_gate(i) for i in range(50)], collected=100)
+    assert verdict.ok, verdict.problems
+
+
+def test_the_baseline_still_counts_every_other_skip_next_to_manual_ones():
+    zsh = "zsh is not installed on this host"
+    others = [sg.Skip(f"tests/test_terminal_command_marks.py::t{i}", zsh) for i in range(4)]
+    manual = [_manual_gate(i) for i in range(20)]
+    verdict = _evaluate("bulk-linux", manual + others, collected=100)
+    assert not verdict.ok
+    assert any(
+        "4 skips exceed the committed baseline of 3" in problem
+        and "20 guided-manual skip(s) not counted" in problem
+        for problem in verdict.problems
+    ), verdict.problems
+    assert _evaluate("bulk-linux", manual + others[:3], collected=100).ok
+
+
+def test_a_manual_gate_reason_without_the_marker_still_counts():
+    """The exemption needs the marker, not just a lookalike reason string."""
+    lookalike = [sg.Skip(f"tests/test_a.py::t{i}", _MANUAL.reason) for i in range(4)]
+    assert not any(skip.is_manual_gate for skip in lookalike)
+    assert not _evaluate("bulk-linux", lookalike).ok
+
+
+def test_a_manual_test_skipped_for_another_reason_still_counts():
+    """A manual test that passed its gate but then skipped on an environment
+    gap is a real skip, not a gate skip."""
+    zsh = "zsh is not installed on this host"
+    skips = [
+        sg.Skip(f"tests/test_terminal_command_marks.py::t{i}", zsh, manual=True) for i in range(4)
+    ]
+    assert not any(skip.is_manual_gate for skip in skips)
+    verdict = _evaluate("bulk-linux", skips)
+    assert any("exceed the committed baseline" in problem for problem in verdict.problems)
+
+
+def test_manual_gate_skips_still_need_their_allowlist_entry():
+    strict = sg.parse_allowlist({"max_skips": {"bulk-linux": 100}, "allowed": []})
+    gate = _manual_gate(0)
+    verdict = sg.evaluate("bulk-linux", collected=10, skips=[gate], allowlist=strict)
+    assert not verdict.ok
+    assert verdict.unexpected == [gate]
+
+
+@pytest.mark.parametrize(
+    "enabled, interactive, platforms",
+    [(False, True, None), (True, False, None), (True, True, ["windows"])],
+    ids=["no-manual-flag", "no-tty", "wrong-platform"],
+)
+def test_every_manual_gate_reason_is_recognised(enabled, interactive, platforms):
+    """Keeps MANUAL_GATE_REASON in step with manual.manual_skip_reason."""
+    reason = manual_skip_reason(
+        enabled=enabled, interactive=interactive, selected_platform="linux", platforms=platforms
+    )
+    assert reason is not None
+    assert sg.Skip("tests/test_m.py::t", reason, manual=True).is_manual_gate
+
+
+def test_the_committed_allowlist_admits_the_default_manual_gate_reason_on_every_lane():
+    allowlist = sg.load_allowlist()
+    reason = manual_skip_reason(
+        enabled=False, interactive=False, selected_platform="linux", platforms=None
+    )
+    gate = sg.Skip("tests/test_m.py::T::t", reason, manual=True)
+    for lane in allowlist.max_skips:
+        assert any(entry.matches(gate) for entry in allowlist.for_lane(lane)), lane
+
+
+def test_the_summary_notes_uncounted_manual_skips():
+    skips = [_manual_gate(0), _manual_gate(1), _NO_RUNTIME]
+    lines = sg.format_summary(skips, fully_skipped=[], verdict=None)
+    assert "3 skipped test(s), 2 distinct reason(s) (2 guided-manual, not counted" in lines[0]
 
 
 def test_require_fixtures_fails_on_a_fixture_skip_even_when_allowlisted():
@@ -320,3 +403,54 @@ def test_skip_allowlist_json_is_valid_json():
         "display-macos",
         "display-windows",
     }
+
+
+@pytest.mark.parametrize(
+    "marked, expected_rc",
+    [(True, 0), (False, 1)],
+    ids=["manual-marker-exempt", "unmarked-counts"],
+)
+def test_the_conftest_hook_exempts_manual_gate_skips_from_the_baseline(
+    tmp_path, marked, expected_rc
+):
+    """End to end (#4921): on a lane whose committed baseline is 0, a real
+    ``@pytest.mark.manual`` test gated off by conftest keeps the run green,
+    while an unmarked test skipping with the same reason still reds it."""
+    harness_root = Path(sg.__file__).resolve().parents[1]
+    assert sg.load_allowlist().max_skips["display-linux"] == 0
+    reason = "guided-manual test: pass --manual to run (skipped by default)"
+    body = (
+        "@pytest.mark.manual\ndef test_guided():\n    pass\n"
+        if marked
+        else f"def test_guided():\n    pytest.skip({reason!r})\n"
+    )
+    test_file = tmp_path / "test_guarded_manual.py"
+    source = f"import pytest\n\ndef test_runs():\n    pass\n\n{body}"
+    test_file.write_text(source, encoding="utf-8")
+    env = {**os.environ, sg.LANE_ENV: "display-linux"}
+    env.pop(sg.REQUIRE_FIXTURES_ENV, None)
+    env.pop("GITHUB_STEP_SUMMARY", None)
+    env.pop("PYTEST_XDIST_WORKER", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "conftest",
+            "--rootdir",
+            str(harness_root),
+            "-c",
+            str(harness_root / "pyproject.toml"),
+            str(test_file),
+        ],
+        cwd=harness_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == expected_rc, result.stdout + result.stderr
+    assert reason in result.stdout

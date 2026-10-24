@@ -1,25 +1,25 @@
 // Structural guard for the daily lockfile chore's pre-PR gate (#3755, #4465).
 //
-// Without a dedicated token (#4469), .github/workflows/cargo-update-lockfile.yml
-// pushes its PR with GITHUB_TOKEN, and pushes made with GITHUB_TOKEN trigger no
-// workflows: the PR carries no check runs, so "auto-merge once CI is green"
-// merges it at once. That is how
-// #4460 landed a lockfile that did not compile (primefield 0.14.0 vs the -rc
-// p256/p384/p521 stack) and failed the pre-release tripwire, breaking every
-// Rust build of develop (#4465).
+// .github/workflows/cargo-update-lockfile.yml pushes its PR with GITHUB_TOKEN,
+// and pushes made with GITHUB_TOKEN trigger no pull_request workflows. While
+// the chore still auto-merged, that is how #4460 landed a lockfile that did not
+// compile (primefield 0.14.0 vs the -rc p256/p384/p521 stack) and failed the
+// pre-release tripwire, breaking every Rust build of develop (#4465).
 //
-// The chore job therefore gates itself. These tests pin that wiring so a later
-// edit cannot silently drop a check or arm auto-merge ahead of it:
+// The chore job therefore gates itself, and since #4912 it never merges at all:
+// a maintainer decides. These tests pin that wiring so a later edit cannot
+// silently drop a check or bring auto-merge back:
 //   - the gate step runs `cargo check --workspace --all-targets --all-features
 //     --locked`, the pre-release tripwire and cargo-deny, after `cargo update`
 //     and before the PR step;
-//   - the PR step only marks the PR ready / enables auto-merge when the gate
-//     passed, and otherwise opens a draft and disables auto-merge;
+//   - the PR step only marks the PR ready when the gate passed, and otherwise
+//     opens a draft;
+//   - nothing arms auto-merge or merges; the PR is assigned to the maintainer,
+//     who is asked for review, and the per-PR CI is dispatched on it (#4912);
 //   - a failed gate turns the job red;
 //   - no step that compiles unreviewed crates can reach the write token: the
 //     gate runs in a read-only job, and only the separate PR job holds secrets;
-//   - the App token / PAT / GITHUB_TOKEN fallback order, and that the App token
-//     is minted only after the gate, right before the PR step (#4469).
+//   - GITHUB_TOKEN is the only token: the App/PAT machinery of #4469 is gone.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
@@ -192,18 +192,13 @@ describe("cargo-update-lockfile.yml PR step honours the gate", () => {
     expect(run).toContain('gh pr ready "$UPDATE_BRANCH" --undo');
   });
 
-  it("enables auto-merge only after the failing-gate branch has exited", () => {
-    const failBlock = run.indexOf('if [ "$GATE_PASSED" != "true" ]; then\n            gh pr merge');
-    expect(failBlock).toBeGreaterThan(-1);
-    const block = run.slice(failBlock, run.indexOf("\n          fi", failBlock));
-    expect(block).toContain('gh pr merge "$UPDATE_BRANCH" --disable-auto');
-    expect(block).toContain("exit 0");
-
-    const auto = run.indexOf('gh pr merge "$UPDATE_BRANCH" --auto --merge');
-    expect(auto).toBeGreaterThan(failBlock);
-    // Exactly one place arms auto-merge, and it is the merge-commit form.
-    expect(run.match(/--auto\b/g)).toHaveLength(1);
-    expect(run).not.toMatch(/--squash|--rebase/);
+  it("never arms auto-merge or merges the PR (#4912)", () => {
+    // The only `gh pr merge` left drops an auto-merge an older run armed.
+    expect(WORKFLOW).not.toMatch(/--auto\b/);
+    expect(WORKFLOW.match(/gh pr merge\b[^\n]*/g)).toEqual([
+      'gh pr merge "$UPDATE_BRANCH" --disable-auto 2>/dev/null || true',
+    ]);
+    expect(WORKFLOW).not.toMatch(/--squash|--rebase|--admin/);
   });
 });
 
@@ -236,7 +231,7 @@ describe("cargo-update-lockfile.yml keeps the write token away from the gate", (
     expect(WORKFLOW).toMatch(/^permissions:\n {2}contents: read\n\n/m);
     expect(jobText(GATE_JOB)).not.toMatch(/permissions:|: write/);
     expect(jobText(PR_JOB)).toMatch(
-      /\n {4}permissions:\n {6}contents: write\n {6}pull-requests: write\n/
+      /\n {4}permissions:\n {6}contents: write\n {6}pull-requests: write\n {6}actions: write\n/
     );
   });
 
@@ -254,12 +249,14 @@ describe("cargo-update-lockfile.yml keeps the write token away from the gate", (
     expect(prJob).not.toMatch(/setup-rust|rust-cache|apt-get|pnpm|npm (ci|install)|install-action/);
   });
 
-  it("scopes each secret to the step that needs it", () => {
+  it("scopes the token to the steps that need it", () => {
     const holders = steps(PR_JOB)
       .filter((s) => s.text.includes("secrets."))
       .map((s) => s.name);
-    expect(holders).toEqual(["Mint the lockfile App token", "Open or update pull request"]);
-    expect(step("Mint the lockfile App token", PR_JOB).text).not.toContain("GITHUB_TOKEN");
+    expect(holders).toEqual([
+      "Open or update pull request",
+      "Dispatch per-PR CI on the lockfile branch",
+    ]);
     // Not at job level either: the job env sits between the job id and `steps:`.
     const prJob = jobText(PR_JOB);
     const header = prJob.slice(0, prJob.indexOf("    steps:\n"));
@@ -269,60 +266,64 @@ describe("cargo-update-lockfile.yml keeps the write token away from the gate", (
   });
 });
 
-// #4469: an App token or PAT makes the PR run the normal per-PR CI, so
-// `gh pr merge --auto` waits for the required checks; GITHUB_TOKEN stays the
-// fallback that behaves exactly as before.
-describe("cargo-update-lockfile.yml token selection (#4469)", () => {
-  const mint = step("Mint the lockfile App token", PR_JOB);
+// #4912: GITHUB_TOKEN only. The App/PAT chain of #4469 existed to let an
+// unattended auto-merge wait for real CI; with a human merging, it is gone.
+describe("cargo-update-lockfile.yml uses GITHUB_TOKEN only (#4912)", () => {
+  it("holds no App token, PAT or other secret", () => {
+    expect(WORKFLOW).not.toMatch(/LOCKFILE_APP|LOCKFILE_PAT|create-github-app-token|TOKEN_KIND/);
+    const secrets = new Set(WORKFLOW.match(/secrets\.[A-Za-z_]+/g));
+    expect([...secrets]).toEqual(["secrets.GITHUB_TOKEN"]);
+  });
+
+  it("pushes with the step-scoped GITHUB_TOKEN", () => {
+    const pr = step("Open or update pull request", PR_JOB);
+    expect(pr.text).toContain("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
+    expect(pr.text).toContain("printf 'x-access-token:%s' \"$GH_TOKEN\"");
+  });
+});
+
+describe("cargo-update-lockfile.yml hands the PR to the maintainer (#4912)", () => {
   const pr = step("Open or update pull request", PR_JOB);
+  const run = pr.text.slice(pr.text.indexOf("run: |"));
 
-  it("mints the App token with a SHA-pinned create-github-app-token", () => {
-    expect(mint.text).toMatch(/uses: actions\/create-github-app-token@[0-9a-f]{40} # v\d/);
-    expect(mint.text).toContain("id: app-token");
+  it("assigns the PR to the maintainer and requests their review", () => {
+    expect(jobText(PR_JOB)).toMatch(/\n {6}MAINTAINER: armaxri\n/);
+    expect(run).toContain('gh pr edit "$UPDATE_BRANCH" --add-assignee "$MAINTAINER"');
+    expect(run).toContain('gh pr edit "$UPDATE_BRANCH" --add-reviewer "$MAINTAINER"');
   });
 
-  it("mints only when the App is configured", () => {
-    expect(mint.text).toContain("if: vars.LOCKFILE_APP_CLIENT_ID != ''");
-    expect(mint.text).toContain("client-id: ${{ vars.LOCKFILE_APP_CLIENT_ID }}");
-    expect(mint.text).toContain("private-key: ${{ secrets.LOCKFILE_APP_PRIVATE_KEY }}");
+  it("says plainly in the PR body that it waits for a maintainer decision", () => {
+    expect(run).toContain("**Waiting for a maintainer decision.**");
+    expect(run).toContain("never merged automatically");
   });
+});
 
-  it("asks for contents and pull-requests write and nothing else", () => {
-    const permissions = mint.text.match(/permission-[a-z-]+: \w+/g);
-    expect(permissions).toEqual(["permission-contents: write", "permission-pull-requests: write"]);
-    // This repository only: no owner/repositories widening.
-    expect(mint.text).not.toMatch(/\n\s+(owner|repositories):/);
-  });
+describe("cargo-update-lockfile.yml dispatches per-PR CI on its branch (#4912)", () => {
+  const dispatch = step("Dispatch per-PR CI on the lockfile branch", PR_JOB);
 
-  it("prefers the App token, then LOCKFILE_PAT, then GITHUB_TOKEN", () => {
-    expect(pr.text).toContain(
-      "GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.LOCKFILE_PAT || secrets.GITHUB_TOKEN }}"
+  it("runs after the PR step, only on a passing gate", () => {
+    expect(indexOf("Dispatch per-PR CI", PR_JOB)).toBe(
+      indexOf("Open or update pull request", PR_JOB) + 1
     );
-    expect(pr.text).toContain(
-      "TOKEN_KIND: ${{ steps.app-token.outputs.token && 'app' || secrets.LOCKFILE_PAT && 'pat' || 'github-token' }}"
+    expect(dispatch.text).toContain("if: needs.cargo-update.outputs.passed == 'true'");
+  });
+
+  it("dispatches Code Quality, Build and Security Audit on the chore branch", () => {
+    expect(dispatch.text).toContain("for wf in code-quality.yml build.yml security-audit.yml; do");
+    expect(dispatch.text).toContain(
+      'gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$UPDATE_BRANCH"'
     );
   });
 
-  it("mints after the gate job and right before the PR step", () => {
-    // After the gate: the gate lives in another job that open-pr needs.
-    expect(steps(PR_JOB).some((s) => s.name.includes("Gate the refreshed lockfile"))).toBe(false);
-    expect(jobText(PR_JOB)).toMatch(/\n {4}needs: cargo-update\n/);
-    // Immediately followed by the one step that uses it.
-    const m = indexOf("Mint the lockfile App token", PR_JOB);
-    expect(indexOf("Open or update pull request", PR_JOB)).toBe(m + 1);
-    expect(indexOf("Apply the refreshed lockfiles", PR_JOB)).toBeLessThan(m);
-    // Only the PR step reads the minted token.
-    const readers = steps(PR_JOB)
-      .filter((s) => s.text.includes("steps.app-token.outputs.token"))
-      .map((s) => s.name);
-    expect(readers).toEqual(["Open or update pull request"]);
-  });
-
-  it("still pushes and arms auto-merge through the same single path", () => {
-    const run = pr.text.slice(pr.text.indexOf("run: |"));
-    expect(run).toContain("printf 'x-access-token:%s' \"$GH_TOKEN\"");
-    expect(run.match(/--auto\b/g)).toHaveLength(1);
-    // The PR body tells reviewers which CI the PR gets.
-    expect(run).toContain('if [ "$TOKEN_KIND" = "github-token" ]; then');
-  });
+  it.each(["code-quality.yml", "build.yml", "security-audit.yml"])(
+    "%s accepts workflow_dispatch",
+    (file) => {
+      const text = readFileSync(path.join(ROOT, ".github/workflows", file), "utf8");
+      const on = text.slice(
+        text.indexOf("\non:\n"),
+        text.search(/\n(concurrency|permissions|jobs):/)
+      );
+      expect(on).toMatch(/\n {2}workflow_dispatch:/);
+    }
+  );
 });

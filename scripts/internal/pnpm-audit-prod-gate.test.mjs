@@ -53,7 +53,11 @@ function runGate(jsonFile, extraEnv = {}) {
 describeUnix("pnpm-audit-prod-gate.sh", () => {
   it("hard-fails on a real high/critical production advisory", () => {
     const f = fixture("advisory.json", {
-      advisories: { 1234: { severity: "high" } },
+      advisories: {
+        1234: { severity: "high" },
+        1235: { severity: "high" },
+        1236: { severity: "critical" },
+      },
       metadata: {
         vulnerabilities: { info: 0, low: 0, moderate: 0, high: 2, critical: 1 },
         totalDependencies: 174,
@@ -71,6 +75,33 @@ describeUnix("pnpm-audit-prod-gate.sh", () => {
       },
     });
     expect(runGate(f).status).toBe(1);
+  });
+
+  it("passes when every high/critical advisory is in ignoreGhsas (#4917)", () => {
+    // pnpm drops ignored GHSAs from `advisories` but still counts them in
+    // metadata.vulnerabilities; the gate must trust the advisories list.
+    const f = fixture("ignored.json", {
+      advisories: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 3, moderate: 0, high: 1, critical: 1 },
+        totalDependencies: 174,
+      },
+    });
+    const r = runGate(f);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("clean");
+  });
+
+  it("still fails on a non-ignored advisory alongside ignored ones", () => {
+    const f = fixture("mixed.json", {
+      advisories: { 99: { severity: "critical", github_advisory_id: "GHSA-x" } },
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 2 },
+      },
+    });
+    const r = runGate(f);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("0 high and 1 critical");
   });
 
   it("passes a clean tree, ignoring lower-severity advisories", () => {

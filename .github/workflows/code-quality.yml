@@ -12,6 +12,10 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
+  # The daily lockfile chore dispatches this on its PR branch (#4912): its
+  # GITHUB_TOKEN-pushed PR gets no pull_request run. Like a push, a dispatch
+  # runs every area on every platform (detect-changes reports all on).
+  workflow_dispatch:
 
 # Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
 # to develop, cancels the in-flight run for the older commit, so a merge burst
@@ -1750,6 +1754,11 @@ jobs:
           python-version: '3.12'
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
+
+      # The OS credential store reader's unit test runs a private gnome-keyring
+      # for real (tests/system/tests/test_os_store.py, #4929).
+      - name: Install the Secret Service tools
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring libsecret-tools
 
       - name: Run machinery suite
         run: ./tests/system/pytest.sh -m "not integration" -q
