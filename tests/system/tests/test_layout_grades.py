@@ -43,6 +43,8 @@ pytestmark = pytest.mark.integration
 _WIN = sys.platform == "win32"
 _ZOOM_MOD = {"meta": True} if sys.platform == "darwin" else {"ctrl": True}
 CTX_HSCROLL = "tab-context-horizontal-scroll"
+#: Terminal.css `--hscroll-bar`: the horizontal bar's height in that mode.
+HSCROLL_BAR_PX = 10
 # Prints READY, then reads ONE raw key and prints its code as K:<n> (ESC = 27).
 # The READY marker is split in the typed text so only the output matches it.
 _READ_ONE_KEY = (
@@ -52,9 +54,10 @@ _READ_ONE_KEY = (
     "tr -d ' '); stty sane; echo K:$k"
 )
 _LONG_LINES = (
-    "1..30 | ForEach-Object { 'x' * 400 }"
+    # Enough lines to keep scrollback once horizontal mode stops wrapping them.
+    "1..120 | ForEach-Object { 'x' * 400 }"
     if _WIN
-    else "for i in $(seq 1 30); do printf 'x%.0s' $(seq 1 400); echo; done"
+    else "for i in $(seq 1 120); do printf 'x%.0s' $(seq 1 400); echo; done"
 )
 
 
@@ -168,15 +171,19 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
         try:
             m = self._measure_when(
                 tab,
-                lambda m: m["paint"]["horizontalScroll"] and m["paint"]["hscrollBarHeight"] > 0,
-                "the horizontal scrollbar to show for the long lines",
+                lambda m: m["paint"]["horizontalScroll"]
+                and m.get("proposed")
+                and m["grid"]["cols"] > m["proposed"]["cols"],
+                "the long lines to overflow the viewport horizontally",
             )
             bar, paint = m["scrollbar"], m["paint"]
             assert bar["thumbVisible"], bar
             assert bar["thumbLeft"] >= paint["textRight"] - 0.5, f"thumb over text: {bar} {paint}"
-            assert paint["rowsBottom"] <= paint["viewportClientBottom"] + 0.5, (
-                f"the horizontal bar covers the last row: {paint}"
-            )
+            # The strip under the last row holds the whole horizontal bar, whether
+            # the engine lays it out (classic: it shrinks the client area) or
+            # overlays it (GTK overlay scrollbars: client area unchanged).
+            strip = paint["viewportClientBottom"] + paint["hscrollBarHeight"] - paint["rowsBottom"]
+            assert strip >= HSCROLL_BAR_PX - 0.5, f"the horizontal bar covers the last row: {paint}"
         finally:
             self._set_hscroll(tab, False)
         self.open_file_browser()

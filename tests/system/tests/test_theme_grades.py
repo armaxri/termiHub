@@ -32,6 +32,7 @@ import pytest
 from termihub_harness import (
     EditorUi,
     FilesUi,
+    LayoutUi,
     NetworkToolsUi,
     SettingsUi,
     SidebarUi,
@@ -59,6 +60,7 @@ UI_TEXT = 3.0
 MAX_INVISIBLE_EDGE = 1.25
 
 _LATENCY_CANVAS = "latency-chart-canvas"
+SPLIT_H = "terminal-view-split-horizontal"
 
 
 class TestThemeGrades(
@@ -69,6 +71,7 @@ class TestThemeGrades(
     SettingsUi,
     EditorUi,
     FilesUi,
+    LayoutUi,
     NetworkToolsUi,
     SystemTest,
 ):
@@ -272,9 +275,11 @@ class TestThemeGrades(
         self.close_all_tabs()
         self.set_theme("dark")
         dark_accent, dark_grid = self.root_color("--accent-color"), self.root_color("--border-primary")
+        # Settings stays in this panel; the chart gets its own panel, so the
+        # theme switch never hides (and unmounts) it.
+        self.driver.click(SPLIT_H)
+        self.wait(lambda: self.leaf_count() == 2, what="a second panel for the chart")
         self.start_ping("127.0.0.1")
-        ping_tab = (self.active_tab() or {}).get("id")
-        assert ping_tab, "the ping panel opened no tab"
         try:
             self.wait(lambda: self.driver.exists(_LATENCY_CANVAS), what="the latency chart")
             self.wait(
@@ -285,7 +290,6 @@ class TestThemeGrades(
             self.set_theme("light")
             light_accent = self.root_color("--accent-color")
             light_grid = self.root_color("--border-primary")
-            self._show(ping_tab)
 
             def recoloured() -> bool:
                 pixels = self.canvas_pixels(_LATENCY_CANVAS)

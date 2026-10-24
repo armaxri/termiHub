@@ -51,6 +51,24 @@ function backgroundOf(el: Element): string {
   return (el.ownerDocument.defaultView ?? window).getComputedStyle(el).backgroundColor;
 }
 
+/** Whether a computed colour paints nothing (fully transparent). */
+function isTransparent(color: string): boolean {
+  return color === "" || color === "transparent" || /^rgba\(.*,\s*0\)$/.test(color);
+}
+
+/**
+ * The background that actually shows behind `el`: its own computed colour, or
+ * the first ancestor's that is not transparent (the registered element is an
+ * unpainted wrapper inside the `.terminal-container` that paints the bg).
+ */
+function paintedBackgroundOf(el: Element): string {
+  for (let node: Element | null = el; node; node = node.parentElement) {
+    const color = backgroundOf(node);
+    if (!isTransparent(color)) return color;
+  }
+  return backgroundOf(el);
+}
+
 /**
  * The gutter scrollbar's laid-out track and thumb, or `null` when not mounted.
  * Horizontal geometry is relative to the terminal container's left edge, so a
@@ -99,7 +117,7 @@ function measurePaint(element: HTMLElement, xterm: TerminalHandles["xterm"]): Te
   return {
     textRight,
     rowsBottom: screenRect ? screenRect.top - box.top + xterm.rows * cellHeight : null,
-    containerBackground: backgroundOf(element),
+    containerBackground: paintedBackgroundOf(element),
     themeBackground: xterm.options.theme?.background ?? null,
     horizontalScroll: horizontal,
     viewportClientBottom:

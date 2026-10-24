@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from ..colors import Rgba, parse_color
-from .base import HarnessMixin
+from .base import UNSAVED_DISCARD, HarnessMixin
 from .settings import SETTINGS_REGION
 
 #: The built-in themes (Settings > Appearance > Theme values).
@@ -92,8 +92,16 @@ class ThemeUi(HarnessMixin):
         return self.current_theme() or ""
 
     def cancel_theme_editor(self) -> None:
+        """Cancel the editor, discarding edits (answers the unsaved-changes prompt)."""
         self.driver.click("theme-editor-cancel")
-        self.wait(lambda: not self.driver.exists("theme-editor-dialog"), what="the editor closed")
+
+        def closed() -> bool:
+            if self.driver.exists(UNSAVED_DISCARD):
+                self.driver.click(UNSAVED_DISCARD)
+            return not self.driver.exists("theme-editor-dialog")
+
+        self.wait(closed, what="the theme editor to close")
+        self.wait_root_settled()
 
     def delete_active_custom_theme(self) -> None:
         """Delete the selected custom theme (the app falls back to Dark)."""

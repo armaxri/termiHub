@@ -772,7 +772,7 @@ export interface TerminalPaint {
   textRight: number | null;
   /** Bottom of the last grid row (`rows x cell height` below the screen top). */
   rowsBottom: number | null;
-  /** The container's computed `background-color` (what shows under spare px). */
+  /** The computed background behind the cells (the container's, or the first painted ancestor's). */
   containerBackground: string;
   /** The background xterm's theme paints the cells with; `null` when unset. */
   themeBackground: string | null;

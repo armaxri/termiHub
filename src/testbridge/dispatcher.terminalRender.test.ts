@@ -232,6 +232,15 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     expect(measureTerminal(handles).paint.horizontalScroll).toBe(true);
   });
 
+  it("reads the painted ancestor's background when the element itself is transparent", () => {
+    const host = document.createElement("div");
+    host.style.backgroundColor = "rgb(1, 2, 3)";
+    handles.element.replaceWith(host);
+    host.appendChild(handles.element);
+    expect(measureTerminal(handles).paint.containerBackground).toBe("rgb(1, 2, 3)");
+    host.replaceWith(handles.element);
+  });
+
   it("lists rendered decorations with their classes and colour", () => {
     expect(measureTerminal(handles).decorations).toEqual([]);
     const bar = document.createElement("div");
