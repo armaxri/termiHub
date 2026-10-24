@@ -60,9 +60,10 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
-import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
+import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
+import { holdSessionInput } from "@/services/sessionInputGate";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
@@ -862,11 +863,16 @@ export function Terminal({
         // Every PTY resize goes through this sender: concurrent resize_terminal
         // invokes can be applied out of order by the backend, which would leave
         // the PTY at a stale size the dedupe above never corrects (#4841).
-        const sendResize = createOrderedResize(resizeTerminal, (err, r) =>
-          frontendLog(
-            "terminal",
-            `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
-          )
+        // Input typed while a resize is in flight waits for it, so the shell
+        // echoes it at the grid the terminal already shows (#4942).
+        const sendResize = createOrderedResize(
+          resizeTerminal,
+          (err, r) =>
+            frontendLog(
+              "terminal",
+              `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
+            ),
+          (sid) => holdSessionInput(sid, "resize")
         );
 
         // Output batching: stage chunks and flush in a single RAF callback.
@@ -1941,41 +1947,72 @@ export function Terminal({
   useLayoutEffect(() => {
     isOnScreenRef.current = isOnScreen;
     webglRendererRef.current?.setVisible(isOnScreen);
-    if (!isOnScreen || !hiddenFitPendingRef.current) return;
+    if (!isOnScreen) return;
     // Run the fit deferred while off screen (#4863) once the renderer leased
     // above has measured (next frame), so it lands on the grid the terminal is
     // shown with: one PTY resize. Fitting twice to the same grid is a no-op, so
     // the re-fits on show (visibility effect, renderer swap) send nothing more.
-    hiddenFitPendingRef.current = false;
-    let ran = false;
-    const rafId = requestAnimationFrame(() => {
-      ran = true;
-      const xterm = xtermRef.current;
-      const fitAddon = fitAddonRef.current;
-      const el = terminalElRef.current;
-      // Hidden again before the frame: the effect cleanup re-armed the fit.
-      if (!xterm || !fitAddon || !el || !isOnScreenRef.current) return;
-      // Same degenerate-fit guards as every other fit path (#2693, #2700): a
-      // ~0-sized container is left to the ResizeObserver to re-fit.
-      if (!isFitReady(el)) return;
-      try {
-        if (horizontalScrollingRef.current) {
-          applyHorizontalScrollResize(xterm, fitAddon, el);
-        } else if (isProposedFitSafe(fitAddon)) {
-          fitAddon.fit();
+    let fitRafId: number | null = null;
+    let fitRan = false;
+    if (hiddenFitPendingRef.current) {
+      hiddenFitPendingRef.current = false;
+      fitRafId = requestAnimationFrame(() => {
+        fitRan = true;
+        const xterm = xtermRef.current;
+        const fitAddon = fitAddonRef.current;
+        const el = terminalElRef.current;
+        // Hidden again before the frame: the effect cleanup re-armed the fit.
+        if (!xterm || !fitAddon || !el || !isOnScreenRef.current) return;
+        // Same degenerate-fit guards as every other fit path (#2693, #2700): a
+        // ~0-sized container is left to the ResizeObserver to re-fit.
+        if (!isFitReady(el)) return;
+        try {
+          if (horizontalScrollingRef.current) {
+            applyHorizontalScrollResize(xterm, fitAddon, el);
+          } else if (isProposedFitSafe(fitAddon)) {
+            fitAddon.fit();
+          }
+          // As after a ResizeObserver fit: re-pin the bottom and re-render the thumb.
+          if (!userScrolledUpRef.current) xterm.scrollToBottom();
+          scrollbarRef.current?.update();
+        } catch (err) {
+          // Once per show; the next ResizeObserver fit re-fits.
+          frontendLog("terminal", `deferred fit on show failed tab=${tabId}: ${errorMessage(err)}`);
         }
-        // As after a ResizeObserver fit: re-pin the bottom and re-render the thumb.
-        if (!userScrolledUpRef.current) xterm.scrollToBottom();
-        scrollbarRef.current?.update();
-      } catch (err) {
-        // Once per show; the next ResizeObserver fit re-fits.
-        frontendLog("terminal", `deferred fit on show failed tab=${tabId}: ${errorMessage(err)}`);
+      });
+    }
+    // Hold input until the shown grid has settled (#4942). Showing can change
+    // the grid (renderer swap re-fit, the deferred fit above, the slot adopting
+    // the element, a ResizeObserver fit once the panel is laid out), and input
+    // sent before that resize would reach the shell at the old width while the
+    // terminal displays the new one. Checked each frame: released once the
+    // container is laid out and a fit would keep xterm's grid; any resize a fit
+    // sent meanwhile holds input itself until applied. The gate bounds the hold
+    // if the grid never settles or frames stall (occluded window).
+    const showSessionId = sessionIdRef.current;
+    const releaseShowHold = showSessionId ? holdSessionInput(showSessionId, "show") : null;
+    let showHoldRafId: number | null = null;
+    const releaseWhenSettled = () => {
+      showHoldRafId = null;
+      // Horizontal scrolling pins the column count, so only the frame is awaited.
+      const settled =
+        horizontalScrollingRef.current ||
+        isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
+      if (!settled) {
+        showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+        return;
       }
-    });
+      releaseShowHold?.();
+    };
+    if (releaseShowHold) showHoldRafId = requestAnimationFrame(releaseWhenSettled);
     return () => {
-      cancelAnimationFrame(rafId);
-      // Hidden (or unmounted) before the frame ran: the fit is still owed.
-      if (!ran) hiddenFitPendingRef.current = true;
+      if (fitRafId !== null) {
+        cancelAnimationFrame(fitRafId);
+        // Hidden (or unmounted) before the frame ran: the fit is still owed.
+        if (!fitRan) hiddenFitPendingRef.current = true;
+      }
+      if (showHoldRafId !== null) cancelAnimationFrame(showHoldRafId);
+      releaseShowHold?.();
     };
   }, [isOnScreen, tabId]);
 

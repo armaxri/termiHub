@@ -1056,9 +1056,34 @@ scripts\internal\real-keychain-tests.cmd    # Windows
 
 CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`; the
 `.cmd` twin on Windows),
-reusing the already-built lib test binary. The guided end-to-end check in the
-real app is MT-CRED-18 on the
-[release-gating checklist](#release-gating-manual-checklist).
+reusing the already-built lib test binary. The end-to-end check in the real app
+(MT-CRED-18) is automated in the integration lane by
+[`test_os_credential_store.py`](../tests/system/tests/test_os_credential_store.py),
+see [OS credential stores in the harness](#os-credential-stores-in-the-harness-4929).
+
+### OS credential stores in the harness (#4929)
+
+[`test_os_credential_store.py`](../tests/system/tests/test_os_credential_store.py)
+drives the built app through its UI and reads the OS credential store directly
+with [`termihub_harness/os_store.py`](../tests/system/termihub_harness/os_store.py).
+It replaced the guided-manual checks MT-CRED-01/02/03 (a saved password lands in
+the OS store under service `termiHub` and account `<connection-id>:password`)
+and MT-CRED-18 (a backup restore imports its credentials after the startup swap
+and leaves no `termiHub-backup-restore` seal key; a failed swap, forced by
+locking the restored `connections.json`, keeps everything unchanged). A suite
+opts in with `os_credential_store = True`; the harness opens the store before
+the app launches and closes it afterwards.
+
+| Platform | Store                                                                                                                                 | Secret value checked                     | Failed-swap lock                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------- |
+| macOS    | a temporary keychain made the per-user default; runs only in CI or with `TERMIHUB_REAL_KEYCHAIN_TESTS=1`, otherwise the suite skips   | no: presence only (reading would prompt) | `chflags uchg`                      |
+| Linux    | a private D-Bus session bus with its own `gnome-keyring-daemon` in a temporary directory; needs `gnome-keyring` and `libsecret-tools` | yes, with `secret-tool lookup`           | `sudo -n chattr +i`                 |
+| Windows  | the user's Credential Manager under run-unique connection ids, deleted afterwards; seal keys are found by listing target names only   | yes, with `CredReadW`                    | a held handle that shares read only |
+
+The backup is made in master-password mode: a backup with credentials taken
+from the OS keychain asks the OS to verify the user (Touch ID, Windows Hello,
+polkit), which no CI runner can answer. The switch to OS-keychain mode then
+migrates the password into the OS store.
 
 ### Live WSL distro lane (Windows, #4008)
 
@@ -2252,9 +2277,9 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-CONN-33      | Delete multiple selected connections                                                    | Automated (#3689)    | ConnectionList.multiselect.test.tsx 'Ctrl+Click two of three, context-menu Delete, confirm'                                         |
 | MT-CONN-34      | Connection changes sync across parallel instances                                       | Automated (#4000)    | test_connection_sync.py::test_external_add_and_delete_sync_into_running_app                                                         |
 | MT-CONN-32      | Drag connection out of folder to root                                                   | Automated (#3689)    | src/utils/connectionDropTarget.test.ts 'root drop (MT-CONN-32)'                                                                     |
-| MT-CRED-01      | Windows Credential Manager stores credentials                                           | Guided-manual pytest | test_guided_credentials.py::test_windows_credential_manager_holds_the_secret                                                        |
-| MT-CRED-02      | macOS Keychain stores credentials                                                       | Guided-manual pytest | test_guided_credentials.py::test_macos_keychain_holds_the_secret                                                                    |
-| MT-CRED-03      | Linux Secret Service stores credentials                                                 | Guided-manual pytest | test_guided_credentials.py::test_linux_secret_service_holds_the_secret                                                              |
+| MT-CRED-01      | Windows Credential Manager stores credentials                                           | Automated (#4929)    | test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store                                                   |
+| MT-CRED-02      | macOS Keychain stores credentials                                                       | Automated (#4929)    | test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store                                                   |
+| MT-CRED-03      | Linux Secret Service stores credentials                                                 | Automated (#4929)    | test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store                                                   |
 | MT-CRED-04      | Master-password store auto-locks after the timeout                                      | Automated (#3690)    | src-tauri credential/auto_lock.rs fake-clock tests (expiry locks the store + emits both events)                                     |
 | MT-XPLAT-03     | X11 forwarding on macOS/Linux                                                           | Guided-manual pytest | test_external_app.py::test_x11_forwarding_window_appears                                                                            |
 | MT-SVC-04       | FTP server basic transfer                                                               | Automated (already)  | tests/system/tests/test_embedded_services.py::test_ftp_file_transfer                                                                |
@@ -2661,7 +2686,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_external_app.py` — VS Code / OS file manager launch, clipboard copy/paste keys, SSH agent, X11 window
 - [ ] `test_input_routing.py` — real keypresses, drags, right-click and OS file drop
 - [ ] `test_guided_native_input.py` — MT-NIN-01 … 07 (native drag-and-drop), MT-NIN-10 … 16 (IME, dead keys, emoji picker; commit-once automated, #3059), MT-NIN-20 … 24 (native focus), MT-NIN-30/31 (right-click paste, real Caps Lock)
-- [ ] `test_guided_credentials.py` — MT-CRED-01/02/03 (secret in the OS store), MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock), MT-CRED-17 (dialog spacing), MT-CRED-18 (keychain backup restore)
+- [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock), MT-CRED-17 (dialog spacing). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929): check the integration lane is green on all three OSes instead
 - [ ] `test_guided_app_os.py` — MT-APP-02 … 05 (CSP, plugin install over HTTPS, single instance, MobaXterm import), MT-WIN-01 … 04 (macOS Dock and quit paths), MT-SHI-01 … 06 (external spawn and OS context menus), MT-FB-30 … 32 (large folder, drag out, open in file manager)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-05, MT-UI-13, MT-UI-40 … 56 (theme, paint and layout judgements)
@@ -2709,7 +2734,7 @@ Guided-manual suites:
 | [`test_external_app.py`](../tests/system/tests/test_external_app.py)                       | MT-FB-04/14/15/16/21/22/23, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04            | confirm the external result — VS Code launched, the OS file manager / VS Code workspace opened, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
 | [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)                     | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20                    | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder)      |
 | [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-01..07/10..16/20..24/30/31                                                          | the native OS drag, IME composition, dead key, emoji picker or app switch (harness asserts the shell listing, the copied file, the torn-off tab's session in the new window, the saved name)                                               |
-| [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-01/02/03/11..18                                                                    | answer the Touch ID / Windows Hello / polkit sheet, look in the OS credential store                                                                                                                                                        |
+| [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..17                                                                             | answer the Touch ID / Windows Hello / polkit sheet                                                                                                                                                                                         |
 | [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-02..05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30..32                                  | the Dock / app-menu quit, a second launch, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                                        |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                               | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                                                                   |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-05/13/40..56                                                                         | judge theme, paint and layout in the state the harness set                                                                                                                                                                                 |
@@ -2747,28 +2772,11 @@ Guided-manual suites:
 
 <!-- -->
 
-> **MT-CRED-01/02/03 — OS credential stores (PR #956).** Walked by [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py). As of #956 the app has a
-> native **OS Keychain** credential mode (alongside `master_password` and `none`),
-> backed by the `keyring` crate. These are platform-scoped guided-manual checks —
-> the harness can drive the in-app side (switch to OS Keychain mode in
-> Settings → Security, save a connection with "Save password"), but confirming the
-> secret actually landed in the OS store is the irreducibly-manual step:
->
-> - **MT-CRED-02 (macOS Keychain).** After saving a credential in OS Keychain mode,
->   open **Keychain Access** and search for service **`termiHub`** — confirm an entry
->   exists whose account is `<connection-id>:password` (or `:key_passphrase`).
-> - **MT-CRED-01 (Windows Credential Manager).** Open **Control Panel → Credential
->   Manager → Windows Credentials** (or `cmdkey /list`) and confirm a generic
->   credential under the **`termiHub`** target with the matching account.
-> - **MT-CRED-03 (Linux Secret Service).** With a Secret Service provider running
->   (GNOME Keyring / KWallet), use **`secret-tool search service termiHub`** (or
->   Seahorse) and confirm the stored secret appears.
->
-> The cross-platform saved-credential _behaviour_ (round-trips, re-prompt, removal)
-> is covered by [`test_credential_store.py`](../tests/system/tests/test_credential_store.py);
-> only the "appears in the OS store" assertion is manual. Migration _out of_ the OS
-> Keychain mode is not yet implemented (the OS stores are not portably enumerable),
-> so switching away from it does not migrate existing entries.
+> **MT-CRED-01/02/03 — OS credential stores (PR #956).** Automated since #4929
+> by [`test_os_credential_store.py`](../tests/system/tests/test_os_credential_store.py),
+> which reads the macOS Keychain, Linux Secret Service or Windows Credential
+> Manager directly in a throwaway store (see
+> [OS credential stores in the harness](#os-credential-stores-in-the-harness-4929)).
 
 New irreducibly-manual checks are written as guided-manual pytest tests (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 

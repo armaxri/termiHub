@@ -57,6 +57,7 @@ import type {
 } from "@/types/diagnostics";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
+import { whenSessionInputOpen } from "@/services/sessionInputGate";
 import type { AgentConnectResult } from "@/types/generated/AgentConnectResult";
 import type { AgentConnectionsData } from "@/types/generated/AgentConnectionsData";
 import type { AgentCoordinatedUpdateResult } from "@/types/generated/AgentCoordinatedUpdateResult";
@@ -732,9 +733,15 @@ export async function listSpawnOptions(): Promise<SpawnOptions> {
   return await invoke<SpawnOptions>("list_spawn_options");
 }
 
-/** Send input data to a terminal session */
+/**
+ * Send input data to a terminal session.
+ *
+ * Ordered behind the session's pending PTY resize (#4942): while the terminal
+ * has adopted a grid the PTY does not have yet, the input waits (bounded) so the
+ * shell echoes it at the width the terminal shows. See `sessionInputGate`.
+ */
 export async function sendInput(sessionId: SessionId, data: string): Promise<void> {
-  await invoke("send_input", { sessionId, data });
+  await whenSessionInputOpen(sessionId, () => invoke("send_input", { sessionId, data }));
 }
 
 /**
@@ -1675,7 +1682,7 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
 export type { TransferQueueState, TransferProgress };
 
 /**
- * Rejection raised by {@link runTransfer} when a transfer settles via a
+ * Rejection raised by {@link runTrackedTransfer} when a transfer settles via a
  * terminal `transfer-progress` event (`cancelled` / `error`), as opposed to an
  * early/synchronous failure that never reached the background transfer.
  *
@@ -1701,19 +1708,18 @@ export class TransferTerminalError extends Error {
  * Start a background transfer and await its terminal `transfer-progress` event.
  *
  * The backend runs transfers in the background on a dedicated channel and
- * returns a `transferId` synchronously (#1245). This bridges that fire-and-return
- * command to the existing await-completion callers: it resolves with the bytes
- * transferred on `done`, and rejects with a {@link TransferTerminalError} on
- * `cancelled` / `error`. The D3 UI can instead subscribe to `transfer-progress`
- * directly for live progress.
+ * returns a `transferId` synchronously (#1245). This bridges that
+ * fire-and-return command to the await-completion callers: it resolves with the
+ * bytes transferred on `done`, and rejects with a {@link TransferTerminalError}
+ * on `cancelled` / `error`. `onRegistered` sees the `transferId` the instant the
+ * start command returns, ahead of any progress event (#1632).
  *
- * The listener is attached BEFORE `start` runs (#4934): a small file can finish
- * before the start command even returns its id, and a listener attached after
- * that missed the `done` event, so the await (and a folder paste walking file
- * by file) hung forever. The linux-arm64 nightly leg hit it every run.
- * `onRegistered` fires once with the id the instant the start command returns.
+ * The listener is attached BEFORE `start` runs: a tiny file on a fast backend
+ * (an agent's ranged slices) settles before the command returns, and a listener
+ * attached afterwards would miss its `done` and hang the caller forever — the
+ * stalled folder paste of #4922.
  */
-async function runTransfer(
+async function runTrackedTransfer(
   start: () => Promise<string>,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
@@ -1922,7 +1928,8 @@ interface TransferSettlementWatch {
 /**
  * Start recording terminal `transfer-progress` events so a transfer's
  * settlement is never missed, however fast it runs — the race
- * {@link runTransfer} avoids by attaching it before the start command runs.
+ * a listener attached after the start command returns is exposed to when a
+ * transfer finishes first (#4922).
  */
 async function watchTransferSettlements(): Promise<TransferSettlementWatch> {
   const { listen } = await import("@tauri-apps/api/event");
@@ -2336,7 +2343,7 @@ export async function sessionDownload(
   localPath: string,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
-  return await runTransfer(
+  return await runTrackedTransfer(
     () =>
       invoke<string>("session_download", {
         sessionId,
@@ -2360,7 +2367,7 @@ export async function sessionUpload(
   remotePath: string,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
-  return await runTransfer(
+  return await runTrackedTransfer(
     () =>
       invoke<string>("session_upload", {
         sessionId,
@@ -2392,7 +2399,7 @@ export async function sessionCopyRemote(
   dstPath: string,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
-  return await runTransfer(
+  return await runTrackedTransfer(
     () =>
       invoke<string>("session_copy_remote", {
         srcSession,
