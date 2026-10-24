@@ -68,4 +68,52 @@ describe("shell redraw wait (#4958)", () => {
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(1);
   });
+
+  describe("waitForInputEcho", () => {
+    it("has nothing to wait for without input, or once output answered it", () => {
+      const wait = createShellRedrawWait();
+      expect(wait.waitForInputEcho(undefined)).toBeNull();
+
+      const inputAt = Date.now();
+      vi.advanceTimersByTime(5);
+      wait.notifyOutput();
+      expect(wait.waitForInputEcho(inputAt)).toBeNull();
+    });
+
+    it("has nothing to wait for once the input is older than the bound", () => {
+      const wait = createShellRedrawWait();
+      const inputAt = Date.now();
+      vi.advanceTimersByTime(RESIZE_REDRAW_WAIT_MS);
+      expect(wait.waitForInputEcho(inputAt)).toBeNull();
+    });
+
+    it("resolves on the echo of unanswered input", async () => {
+      const wait = createShellRedrawWait();
+      const inputAt = Date.now();
+      vi.advanceTimersByTime(1);
+      const done = vi.fn();
+      void wait.waitForInputEcho(inputAt)?.then(done);
+      await Promise.resolve();
+      expect(done).not.toHaveBeenCalled();
+
+      wait.notifyOutput();
+      await Promise.resolve();
+      expect(done).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves at the bound, counted from the input, when no echo comes", async () => {
+      const wait = createShellRedrawWait();
+      const inputAt = Date.now();
+      vi.advanceTimersByTime(100);
+      const done = vi.fn();
+      void wait.waitForInputEcho(inputAt)?.then(done);
+
+      vi.advanceTimersByTime(RESIZE_REDRAW_WAIT_MS - 101);
+      await Promise.resolve();
+      expect(done).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      expect(done).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -530,4 +530,22 @@ describe("input typed right after a tab is shown (#4942)", () => {
     });
     expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "quiet\\n"']);
   });
+
+  it("lets the shell echo input sent just before a resize first (#4958)", async () => {
+    await mountConnected();
+
+    // Typed (and sent), then the panel resizes before the shell echoed it.
+    await act(async () => {
+      await sendInput("session-swap", "echo PERF05-31\n");
+    });
+    resizeContainer(800, 480);
+    await drainMicrotasks();
+    // The resize waits: bash would redraw for it mid-echo and wipe the line.
+    expect(ipc.log).toEqual(['input "echo PERF05-31\\n"']);
+
+    // The echo arrives; now the resize goes out.
+    act(() => ipc.emitOutput?.(new TextEncoder().encode("echo PERF05-31\r\n")));
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(['input "echo PERF05-31\\n"', "resize 100x24"]);
+  });
 });
