@@ -76,21 +76,23 @@ SETTLE_QUIET_MS = 1500.0
 
 # ── MT-LOCAL-32 grade ─────────────────────────────────────────────────────────
 # Sized from measured CI runs of this test on the bulk integration lane (2
-# xdist workers on macOS/Windows): three flood rounds per OS in run 40053707527
-# plus the rounds of runs 40047063122 and the proving run. The observed maxima
+# xdist workers on macOS/Windows): six flood rounds per OS with recorded values
+# (three in dispatch run 40053707527, three attempts in 40059671630) plus three
+# that passed the looser provisional bounds in 40047063122. The observed maxima
 # and the headroom are in docs/testing.md → "Output-stream flash and flood
-# grades". Linux (WebKitGTK under Xvfb) is far noisier than the others, so the
-# memory and latency ceilings are per OS.
+# grades". RSS on macOS swings widely between runs (−185 to +338 MiB: WKWebView
+# process attribution and memory compression), Linux WebKitGTK under Xvfb is
+# slow, so the memory and latency ceilings are per OS.
 FLOOD_SECONDS = 30.0
 SAMPLE_INTERVAL = 0.5
 #: Median-RSS window compared at the start and the end of the flood.
 GROWTH_WINDOW = 5.0
 #: Ceiling on RSS growth across the flood (end-window median − start-window
-#: median), MiB. Observed max: Linux 173.5, macOS −41.1, Windows 40.6.
-MAX_FLOOD_GROWTH_MIB = {"linux": 350.0, "macos": 150.0, "windows": 150.0}
+#: median), MiB. Observed max: Linux 173.5, macOS 338.2, Windows 85.4.
+MAX_FLOOD_GROWTH_MIB = {"linux": 350.0, "macos": 600.0, "windows": 200.0}
 #: Ceiling on the 95th-percentile bridge round trip during the flood, seconds.
-#: Observed max: Linux 4.71, macOS 1.84, Windows 1.94.
-MAX_FLOOD_P95_LATENCY = {"linux": 10.0, "macos": 5.0, "windows": 5.0}
+#: Observed max: Linux 4.71, macOS 3.14, Windows 1.94.
+MAX_FLOOD_P95_LATENCY = {"linux": 10.0, "macos": 7.0, "windows": 5.0}
 #: Ceiling from Ctrl+C until the output stops (observed max 3.76 s, Windows).
 MAX_STOP_SECONDS = 8.0
 #: Ceiling from Ctrl+C until a marker command's output is back (observed max

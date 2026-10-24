@@ -2737,23 +2737,25 @@ WSL distribution.
 `measure:<test>:<name>` line in its `[termihub-test-timing]` summary (per OS,
 with the threshold as `deadline`), so they can be re-sized from CI evidence with
 `scripts/system-test-timing.py`. Current values, sized from the bulk integration
-lane (2 xdist workers on macOS/Windows): three flood rounds per OS in dispatch
-run 40053707527, after three rounds per OS had passed the looser provisional
-bounds in run 40047063122:
+lane (2 xdist workers on macOS/Windows): six recorded flood rounds per OS
+(dispatch runs 40053707527 and 40059671630), after three rounds per OS had
+passed looser provisional bounds in run 40047063122:
 
 | Measurement (MT-LOCAL-32 unless noted)              | Observed max (Linux / macOS / Windows) | Threshold (Linux / macOS / Windows) |
 | --------------------------------------------------- | -------------------------------------- | ----------------------------------- |
-| RSS growth over the 30 s flood, app + WebView (MiB) | 173.5 / −41.1 / 40.6                   | 350 / 150 / 150                     |
-| p95 bridge round trip during the flood (s)          | 4.71 / 1.84 / 1.94                     | 10 / 5 / 5                          |
+| RSS growth over the 30 s flood, app + WebView (MiB) | 173.5 / 338.2 / 85.4                   | 350 / 600 / 200                     |
+| p95 bridge round trip during the flood (s)          | 4.71 / 3.14 / 1.94                     | 10 / 7 / 5                          |
 | Ctrl+C → output stopped (s)                         | 3.55 / 0.67 / 3.76                     | 8                                   |
 | Ctrl+C → a command answers (s)                      | 4.84 / 2.38 / 5.28                     | 12                                  |
 | `dir /s` over `System32\drivers` (s, MT-LOCAL-30)   | — / — / 1.06                           | 15                                  |
 
 The memory grade compares the median RSS of the first and last 5 s of the
 flood, so one GC spike does not decide it; it catches runaway growth, not a
-slow leak (Linux WebKitGTK alone swings by up to ~170 MiB). The guided check's
-"prompt back within about a second" is not what CI runners deliver under a
-flood (1.6–5.3 s observed), so the bound is on the measured spread instead.
+slow leak: between runs the growth swings from −185 to +338 MiB on macOS
+(WKWebView process attribution, memory compression) and up to ~170 MiB on
+Linux. The guided check's "prompt back within about a second" is not what CI
+runners deliver under a flood (1.3–5.3 s observed), so the bound is on the
+measured spread instead.
 
 <!-- -->
 
@@ -2806,7 +2808,9 @@ ported to the guided-manual suites above, and the runner, the corpus and its CI
 step were deleted.
 [`test_manual_corpus.py`](../tests/system/tests/test_manual_corpus.py) (normal,
 non-integration lane) keeps it that way: each retired id must stay named in the
-docstring of a `manual`-marked test, and the legacy files must not come back.
+docstring of a `manual`-marked test, or be listed in its `AUTOMATED_IDS` with
+the automated test whose docstring names it (#4927), and the legacy files must
+not come back.
 The id → test mapping is in the PR that closed #919.
 
 The #919 real-hardware list was reconciled against CI at the same time. Only the
@@ -2825,6 +2829,9 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MT-LOCAL-01, 07                       | `tests/system/tests/test_local_shell.py`                                                                                                                                                 |
 | MT-LOCAL-09, 10                       | `tests/system/tests/test_cross_platform.py`                                                                                                                                              |
+| MT-LOCAL-05, 32                       | `tests/system/tests/test_output_flash_and_flood.py` (raw output tap, flood sampler, #4931)                                                                                               |
+| MT-LOCAL-30                           | `tests/system/tests/test_windows_shells.py::test_cmd_output_paints_in_order` (Windows)                                                                                                   |
+| MT-LOCAL-33                           | `tests/system/tests/test_performance.py` (PERF-03b)                                                                                                                                      |
 | MT-LOCAL-02, 04, 06, 11–20            | `tests/system/tests/test_windows_shells.py` (Windows-only; WSL cases skip without WSL2)                                                                                                  |
 | MT-SSH-04–06, 10–12, 20–33, 35        | `tests/system/tests/test_ssh*.py`                                                                                                                                                        |
 | MT-SSH-19 (X11 backward-compat)       | `tests/system/tests/test_connection_forms.py`                                                                                                                                            |
