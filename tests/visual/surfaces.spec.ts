@@ -11,8 +11,10 @@
  * (unlock and password dialog spacing), MT-UI-54 (Settings rows styled on a
  * fresh start, also at a narrow Settings tab), MT-UI-55 (Settings section
  * headers at the minimum window and on one row when wide) and the look of
- * MT-UI-56 (imported workspace confirmations at every window size). The layout
- * rules they assert live in expectations.ts.
+ * MT-UI-56 (imported workspace confirmations at every window size); and since
+ * #4954 MT-UI-53 (sidebar rows at the default and minimum width: cut names keep
+ * a tooltip, row actions show on hover and focus, overflow items act like
+ * their buttons). The layout rules they assert live in expectations.ts.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";

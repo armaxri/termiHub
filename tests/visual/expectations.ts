@@ -3,8 +3,8 @@
  *
  * Unlike the generic audit in layoutAudit.ts, these encode the layout a surface
  * is designed to have, taken from the guided-manual checks they replaced
- * (#4928): MT-CRED-17 (dialog spacing), MT-UI-54 (Settings row layout) and
- * MT-UI-55 (Settings section headers). Each function runs INSIDE the page
+ * (#4928): MT-CRED-17 (dialog spacing), MT-UI-54 (Settings row layout),
+ * MT-UI-55 (Settings section headers) and MT-UI-53 (sidebar rows, #4954). Each function runs INSIDE the page
  * (`page.evaluate(fn, args)`), so it must stay self-contained: no imports, no
  * references to module scope. Each returns `expectation` issues.
  */
