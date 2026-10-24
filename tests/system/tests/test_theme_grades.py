@@ -51,11 +51,9 @@ pytestmark = pytest.mark.integration
 #: theme clears it (lowest: Solarized Light thumb over the sidebar, ~1.5:1);
 #: a transparent-at-rest thumb (the #3144 regression) reads 1.0.
 MIN_THUMB_CONTRAST = 1.4
-#: WCAG AA for body text.
+#: WCAG AA for body text — also the floor for the secondary-text chrome
+#: (status bar), which every built-in Light/Dark token now clears.
 AA_TEXT = 4.5
-#: WCAG AA for large text / UI components: the floor for the secondary-text
-#: chrome (status bar), which sits at ~4.3:1 in Light.
-UI_TEXT = 3.0
 #: A border this close to its own surface is not a visible second line.
 MAX_INVISIBLE_EDGE = 1.25
 
@@ -145,10 +143,10 @@ class TestThemeGrades(
             assert same_color(bg, self.root_color(token)), f"{surface} {bg.hex()} is not {token}"
             if light:
                 assert is_light(bg), f"{surface} background {bg.hex()} stayed dark in Light"
-        for surface, minimum in (("sidebar", AA_TEXT), ("status-bar", UI_TEXT)):
+        for surface in ("sidebar", "status-bar"):
             bg = self.opaque_background(surface, page)
             ratio = contrast(self.style_color("color", surface), bg)
-            assert ratio >= minimum, f"{surface} text is {ratio:.2f}:1 on {bg.hex()}"
+            assert ratio >= AA_TEXT, f"{surface} text is {ratio:.2f}:1 on {bg.hex()}"
         tab_bg = self.opaque_background(f"tab-{tab}", self.opaque_background("tab-bar", page))
         ratio = contrast(self.style_color("color", f"tab-{tab}"), tab_bg)
         assert ratio >= AA_TEXT, f"active tab title is {ratio:.2f}:1 on {tab_bg.hex()}"
