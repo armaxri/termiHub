@@ -10,13 +10,14 @@ answers the system sheet or looks in the OS store.
 
 The saved-credential *behaviour* (round-trips, re-prompt, removal, auto-lock)
 is automated in ``test_credential_store.py`` and the vault export/import
-round-trip in ``test_native_dialogs.py``.
+round-trip in ``test_native_dialogs.py``. The checks that only looked in the OS
+store are automated in ``test_os_credential_store.py`` (#4929): MT-CRED-01/02/03
+(secret lands in the OS store) and MT-CRED-18 (backup restore of keychain
+credentials across the startup swap, including the failed swap).
 
-Covered: MT-CRED-01/02/03 (secret lands in the OS store), MT-CRED-11/13/14
-(system authentication for keychain export/backup), MT-CRED-12/15/16
-(biometric unlock of the master-password store), MT-CRED-17 (unlock and
-password dialog spacing) and MT-CRED-18 (backup restore of keychain
-credentials across the startup swap).
+Covered: MT-CRED-11/13/14 (system authentication for keychain export/backup),
+MT-CRED-12/15/16 (biometric unlock of the master-password store) and
+MT-CRED-17 (unlock and password dialog spacing).
 
 Run with ``./pytest.sh --manual -k guided_credentials -s``.
 """
@@ -104,38 +105,6 @@ class TestGuidedCredentials(
         self.close_all_tabs()
         self._use_os_keychain()
         return self._save_ssh_password(label)
-
-    # ── MT-CRED-01/02/03: the secret lands in the OS store ───────────────────
-    @pytest.mark.manual(platforms=["windows"])
-    def test_windows_credential_manager_holds_the_secret(self):
-        """MT-CRED-01."""
-        name = self._keychain_with_one_secret("cred-wincm")
-        self.manual_step(
-            f"The harness saved a password for {name!r} in OS Keychain mode. Open "
-            "Control Panel > Credential Manager > Windows Credentials (or run "
-            "`cmdkey /list`) and search for termiHub.",
-            "A generic credential under the termiHub target exists for the connection.",
-        )
-
-    @pytest.mark.manual(platforms=["macos"])
-    def test_macos_keychain_holds_the_secret(self):
-        """MT-CRED-02."""
-        name = self._keychain_with_one_secret("cred-keychain")
-        self.manual_step(
-            f"The harness saved a password for {name!r} in OS Keychain mode. Open "
-            "Keychain Access and search for termiHub.",
-            "An entry with service termiHub and account '<connection-id>:password' exists.",
-        )
-
-    @pytest.mark.manual(platforms=["linux"])
-    def test_linux_secret_service_holds_the_secret(self):
-        """MT-CRED-03."""
-        name = self._keychain_with_one_secret("cred-secretsvc")
-        self.manual_step(
-            f"The harness saved a password for {name!r} in OS Keychain mode. Run "
-            "`secret-tool search service termiHub` (or open Seahorse / KWallet).",
-            "The stored secret for the connection is listed.",
-        )
 
     # ── MT-CRED-11/13/14: system authentication for keychain export ──────────
     @pytest.mark.manual(platforms=["macos"])
@@ -265,37 +234,3 @@ class TestGuidedCredentials(
             "It shows the same clear gap between its text and the field.",
         )
         self.cancel_password_prompt()
-
-    # ── MT-CRED-18: backup restore of keychain credentials ───────────────────
-    @pytest.mark.manual(platforms=["macos", "windows", "linux"])
-    def test_backup_restore_imports_keychain_credentials_after_startup_swap(self):
-        """MT-CRED-18."""
-        name = self._keychain_with_one_secret("cred-restore")
-        self.open_settings_category("backup")
-        self.manual_step(
-            f"Back up everything… with Credentials. Change the saved password of {name!r}, "
-            "then Restore… the backup with a section and Credentials (Overwrite) and "
-            "click Restore and restart.",
-            "The app restarts (the harness follows it next).",
-        )
-        self.adopt_app_self_restart(timeout=120.0)
-        self.manual_step(
-            f"Connect {name!r} and search the OS store for 'termiHub-backup-restore' "
-            "(Keychain Access / Credential Manager / `secret-tool search service "
-            "termiHub-backup-restore`).",
-            "The backup's password is used with no warning; no 'termiHub-backup-restore' "
-            "entry is left.",
-        )
-        self.manual_step(
-            f"Lock macros.json in {self.config_dir} (macOS `chflags uchg`; Linux `sudo "
-            "chattr +i`; Windows hold it open with [IO.File]::Open(path,'Open','Read',"
-            "'None')), restore again and click Restore and restart.",
-            "The app restarts (the harness follows it next).",
-        )
-        self.adopt_app_self_restart(timeout=120.0)
-        self.manual_step(
-            "Check the startup notice, then unlock the file again (chflags nouchg / "
-            "chattr -i / close PowerShell) and search the OS store once more.",
-            "The restart warned 'Restoring the backup failed. Your previous data was kept "
-            "unchanged.'; the password is unchanged and no seal-key entry remains.",
-        )
