@@ -57,6 +57,9 @@ RETIRED_YAML_IDS = frozenset(
     """.split()
 )
 
+_THEME = "test_theme_grades.py"
+_LAYOUT = "test_layout_grades.py"
+
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
 #: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
 #: or to a repo-relative file whose text names it (one of :data:`_FILE_PREFIXES`):
@@ -106,6 +109,21 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-UI-55": "tests/visual/surfaces.spec.ts",
     # The revoke flow is unit-tested; its look is a rendered visual surface.
     "MT-UI-56": "src/components/Settings/ImportedWorkspaceConfirmations.test.tsx",
+    # #4930: theme, layout and scrollbar grades from computed styles + measure_terminal.
+    "MT-UI-05": f"{_THEME}::test_os_theme_toggle_switches_app_live",
+    "MT-UI-13": f"{_THEME}::test_single_panel_border_blends_with_sidebar",
+    "MT-UI-16": f"{_LAYOUT}::test_no_black_bar_at_terminal_bottom",
+    "MT-UI-35": f"{_LAYOUT}::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes",
+    "MT-UI-36": f"{_LAYOUT}::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes",
+    "MT-UI-41": f"{_THEME}::test_scrollbar_thumb_visible_at_rest_in_every_theme",
+    "MT-UI-43": "test_terminal_command_marks.py::test_gutter_bars_and_jump_highlight",
+    "MT-UI-45": f"{_LAYOUT}::test_sidebar_paints_fully_on_cold_launch",
+    "MT-UI-47": f"{_LAYOUT}::test_zoom_overlay_leaves_escape_to_terminal",
+    "MT-UI-48": f"{_LAYOUT}::test_context_menu_in_zoomed_terminal_above_overlay",
+    "MT-UI-49": f"{_THEME}::test_every_light_theme_gets_a_light_editor",
+    "MT-UI-50": f"{_THEME}::test_charts_and_primary_buttons_follow_live_theme",
+    "MT-UI-51": f"{_LAYOUT}::test_terminal_and_breadcrumb_scrollbars_follow_global_style",
+    "MT-UI-52": f"{_THEME}::test_editor_background_matches_panes_in_every_theme",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
@@ -113,7 +131,10 @@ AUTOMATED_IDS: dict[str, str] = {
 LATER_GUIDED_IDS = frozenset(
     {
         "MT-LOCAL-05",
+        "MT-UI-16",
         "MT-UI-19",
+        "MT-UI-35",
+        "MT-UI-36",
         "MT-KB-09",
         "MT-KB-10",
         "MT-KB-11",
