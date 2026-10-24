@@ -145,6 +145,19 @@ class SystemTest:
     #: that needs the app to find no SSH agent.
     unset_app_env: ClassVar[tuple[str, ...]] = ()
 
+    @classmethod
+    def extra_app_env(cls, request: pytest.FixtureRequest) -> dict[str, str]:
+        """Environment variables to set for the suite's app, on top of the
+        harness's (#4953). Called once per suite, before the app launches.
+
+        Override it to point the app at a suite-owned service, e.g. a private
+        ``ssh-agent`` socket as ``SSH_AUTH_SOCK``. Register the service's
+        teardown with ``request.addfinalizer``: finalizers added here run after
+        the app has exited. A ``pytest.skip`` here skips the whole suite before
+        any app starts.
+        """
+        return {}
+
     #: Run the suite's app against a throwaway OS credential store (#4929): a
     #: temporary macOS keychain, a private gnome-keyring, or test-scoped items
     #: in Windows Credential Manager (see :mod:`termihub_harness.os_store`).
@@ -178,6 +191,7 @@ class SystemTest:
         manual = bool(request.config.getoption("manual"))
         force_echo = bool(request.config.getoption("app_log_echo"))
         echo_logs = force_echo or not manual
+        suite_env = request.cls.extra_app_env(request)
         store = None
         if request.cls.os_credential_store:
             try:
@@ -190,6 +204,7 @@ class SystemTest:
             shims = HandoffShims(request.cls.external_app_shims)
             request.cls.shims = shims
         extra_env = {
+            **suite_env,
             **(store.app_env() if store is not None else {}),
             **(shims.app_env() if shims is not None else {}),
         }
