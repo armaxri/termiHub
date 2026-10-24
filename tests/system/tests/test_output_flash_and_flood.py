@@ -182,9 +182,7 @@ class TestOutputFlood(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, 
     def reset_before_rerun(self) -> None:
         self.reset_tabs()
 
-    def _flood_samples(
-        self, sampler: ProcessTreeSampler, tab_id: str
-    ) -> tuple[list[MemorySample], list[float]]:
+    def _flood_samples(self, sampler: ProcessTreeSampler) -> tuple[list[MemorySample], list[float]]:
         """Sample RSS and time a bridge round trip every interval for the flood."""
         samples: list[MemorySample] = []
         latencies: list[float] = []
@@ -231,7 +229,7 @@ class TestOutputFlood(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, 
             lambda: self.driver.read_terminal_output(tab_id)["truncated"],
             what="the flood to start",
         )
-        samples, latencies = self._flood_samples(sampler, tab_id)
+        samples, latencies = self._flood_samples(sampler)
 
         interrupted_at = time.monotonic()
         self.driver.terminal_input("\x03", tab_id=tab_id)
