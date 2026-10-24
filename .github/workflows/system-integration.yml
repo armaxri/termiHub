@@ -380,6 +380,8 @@ jobs:
         # secret-tool; without them that suite skips and the skip guard fails.
         # xsettingsd lets the MT-UI-05 grade flip the Xvfb display's GTK theme
         # light/dark (#4930).
+        # xdotool finds the forwarded X11 window on the Xvfb display for the
+        # MT-XPLAT-03 grade (test_ssh.py, #4932).
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -399,6 +401,7 @@ jobs:
             dbus-x11 \
             xvfb \
             xsettingsd \
+            xdotool \
             socat \
             libasound2-dev
 
