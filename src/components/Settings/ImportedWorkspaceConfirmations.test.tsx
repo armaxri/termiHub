@@ -133,7 +133,7 @@ describe("ImportedWorkspaceConfirmations (#4445)", () => {
     expect(unused.textContent).toContain("Command abababababab");
   });
 
-  it("revokes one confirmation after the dialog confirms, and persists it", async () => {
+  it("revokes one confirmation after the dialog confirms, and persists it (MT-UI-56)", async () => {
     seedSettings({ workspaceImportAllowlist: [cmdKey, connKey] });
     await render();
     await until(() => expect(byTestId(`imported-confirmation-revoke-${cmdKey}`)).not.toBeNull());
@@ -159,7 +159,7 @@ describe("ImportedWorkspaceConfirmations (#4445)", () => {
     expect(currentSettingsView().workspaceImportAllowlist).toEqual([cmdKey]);
   });
 
-  it("revokes all confirmations and leaves an empty, persisted allowlist", async () => {
+  it("revokes all confirmations and leaves an empty, persisted allowlist (MT-UI-56)", async () => {
     seedSettings({ workspaceImportAllowlist: [cmdKey, connKey, staleKey] });
     await render();
 
@@ -174,7 +174,7 @@ describe("ImportedWorkspaceConfirmations (#4445)", () => {
     expect(byTestId("imported-confirmations-revoke-all")).toBeNull();
   });
 
-  it("a revoked command asks for confirmation again in the editor and at launch", async () => {
+  it("a revoked command asks for confirmation again in the editor and at launch (MT-UI-56)", async () => {
     seedSettings({ workspaceImportAllowlist: [cmdKey] });
     await render(true);
     const editorRow = () => byTestId("workspace-imported-item-0-0-0-cmd")?.textContent ?? "";

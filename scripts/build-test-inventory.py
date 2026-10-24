@@ -155,7 +155,6 @@ MACHINERY_CATEGORIES = frozenset(
         "dev_local",
         "fixtures",
         "guided_helpers",
-        "manual_examples",
         "manual_mode",
         "mixins",
         "orchestrator",

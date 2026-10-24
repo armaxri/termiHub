@@ -593,8 +593,9 @@ single guided test interactively (use `-s` so the prompts reach your console):
 
 A `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes,
 platform, timestamps) is written to [`tests/reports/`](../reports/) at the end of
-the session. See the worked examples in
-[`tests/test_manual_examples.py`](tests/test_manual_examples.py). This replaced
+the session. Copy an existing suite such as
+[`tests/test_guided_look_and_feel.py`](tests/test_guided_look_and_feel.py) as a
+template. This replaced
 the standalone YAML runner (`scripts/test-manual.py` + `tests/manual/*.yaml`),
 retired in #919; every manual test now lives here.
 

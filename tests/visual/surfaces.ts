@@ -91,9 +91,10 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
 /**
  * Tests per window: settings, imported confirmations, sidebars, unlock,
  * shortcuts, the connection editor with stored secrets, the plugin update
- * dialog with an access diff, the MobaXterm import from Settings, and STORE_DIALOGS.
+ * dialog with an access diff, the MobaXterm import from Settings, the Settings
+ * create-file prompt, and STORE_DIALOGS; plus the one narrow Settings tab test.
  */
-export const EXPECTED_TESTS = WINDOWS.length * (8 + STORE_DIALOGS.length);
+export const EXPECTED_TESTS = WINDOWS.length * (9 + STORE_DIALOGS.length) + 1;
 
 const RESULTS = join(import.meta.dirname, "test-results");
 /** Where every surface's screenshot goes (uploaded as a CI artifact). */
