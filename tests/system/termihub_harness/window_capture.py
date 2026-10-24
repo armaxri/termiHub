@@ -382,8 +382,11 @@ def _capture_linux(pid: int) -> Frame:
     return parse_xwd(dump.stdout)
 
 
-def _macos_window(pid: int) -> int:
-    """The number of the largest on-screen window owned by ``pid`` (CoreGraphics)."""
+def _macos_window(pid: int) -> tuple[int, tuple[float, float, float, float]]:
+    """The largest on-screen window owned by ``pid``: its number and its bounds.
+
+    Bounds are ``(x, y, width, height)`` in screen points (CoreGraphics).
+    """
     import ctypes
     from ctypes import c_bool, c_char_p, c_double, c_int, c_long, c_uint32, c_void_p
 
@@ -410,7 +413,7 @@ def _macos_window(pid: int) -> int:
     utf8 = 0x08000100
     keys = {
         name: cf.CFStringCreateWithCString(None, name.encode(), utf8)
-        for name in ("kCGWindowOwnerPID", "kCGWindowNumber", "kCGWindowBounds", "Width", "Height")
+        for name in ("kCGWindowOwnerPID", "kCGWindowNumber", "kCGWindowBounds", "X", "Y", "Width", "Height")
     }
 
     def number(d: int, key: str) -> Optional[float]:
@@ -424,7 +427,7 @@ def _macos_window(pid: int) -> int:
     windows = cg.CGWindowListCopyWindowInfo(on_screen_only | exclude_desktop, 0)
     if not windows:
         raise CaptureUnavailable("CGWindowListCopyWindowInfo returned no window list")
-    best: Optional[int] = None
+    best: Optional[tuple[int, tuple[float, float, float, float]]] = None
     best_area = -1.0
     try:
         for i in range(cf.CFArrayGetCount(windows)):
@@ -432,10 +435,11 @@ def _macos_window(pid: int) -> int:
             if number(info, "kCGWindowOwnerPID") != pid:
                 continue
             bounds = cf.CFDictionaryGetValue(info, keys["kCGWindowBounds"])
-            area = (number(bounds, "Width") or 0) * (number(bounds, "Height") or 0)
+            rect = tuple(number(bounds, k) or 0.0 for k in ("X", "Y", "Width", "Height"))
+            area = rect[2] * rect[3]
             wid = number(info, "kCGWindowNumber")
             if wid is not None and area > best_area:
-                best, best_area = int(wid), area
+                best, best_area = (int(wid), rect), area  # type: ignore[assignment]
     finally:
         cf.CFRelease(windows)
         for ref in keys.values():
@@ -446,13 +450,19 @@ def _macos_window(pid: int) -> int:
 
 
 def _capture_macos(pid: int) -> Frame:
-    wid = _macos_window(pid)
+    """Capture the window by number, or (``TERMIHUB_MACOS_CAPTURE=region``) the
+    screen region under it — the test window is pinned always-on-top."""
+    wid, (x, y, w, h) = _macos_window(pid)
     if not shutil.which("screencapture"):
         raise CaptureUnavailable("screencapture is not available")
+    if os.environ.get("TERMIHUB_MACOS_CAPTURE") == "region":
+        target = ["-R", f"{x:.0f},{y:.0f},{w:.0f},{h:.0f}"]
+    else:
+        target = ["-o", f"-l{wid}"]
     fd, name = tempfile.mkstemp(suffix=".bmp", prefix="termihub-capture-")
     os.close(fd)
     try:
-        done = _run(["screencapture", "-x", "-o", f"-l{wid}", "-t", "bmp", name])
+        done = _run(["screencapture", "-x", *target, "-t", "bmp", name])
         data = Path(name).read_bytes()
         if done.returncode != 0 or not data:
             raise CaptureUnavailable(
