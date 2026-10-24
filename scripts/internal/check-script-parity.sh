@@ -88,6 +88,11 @@ ALLOWLIST=(
   # Release app-lifecycle smoke (#4011): the Linux/macOS half; the Windows leg
   # drives the installed app via PowerShell, so its twin is a .ps1, not a .cmd.
   "scripts/internal/release-smoke-app-lifecycle.sh" # release CI smoke (-> .ps1 on Windows)
+  # Release install-smoke extras (#4933): the bundle-icon check runs on the
+  # macOS/Linux release smokes (the Windows exe icon is release-smoke-exe-icon.ps1),
+  # and the Gatekeeper/quarantine check is inherently macOS-only.
+  "scripts/internal/release-smoke-bundle-icon.sh" # release CI smoke, macOS/Linux (-> .ps1 on Windows)
+  "scripts/internal/release-smoke-gatekeeper.sh"  # release CI smoke, macOS-only (Gatekeeper)
   # Test-only signing-key guard (#4083): CI-only gate run by agent.yml on every
   # agent build (Windows leg via `shell: bash`, i.e. Git Bash) and by release.yml
   # on Ubuntu; never run by hand, so a `.cmd` twin would be dead weight.
