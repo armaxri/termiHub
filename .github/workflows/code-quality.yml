@@ -1751,6 +1751,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
 
+      # The OS credential store reader's unit test runs a private gnome-keyring
+      # for real (tests/system/tests/test_os_store.py, #4929).
+      - name: Install the Secret Service tools
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring libsecret-tools
+
       - name: Run machinery suite
         run: ./tests/system/pytest.sh -m "not integration" -q
 
