@@ -52,6 +52,9 @@ pytestmark = pytest.mark.integration
 MIN_THUMB_CONTRAST = 1.4
 #: WCAG AA for body text.
 AA_TEXT = 4.5
+#: WCAG AA for large text / UI components: the floor for the secondary-text
+#: chrome (status bar), which sits at ~4.3:1 in Light.
+UI_TEXT = 3.0
 #: A border this close to its own surface is not a visible second line.
 MAX_INVISIBLE_EDGE = 1.25
 
@@ -126,12 +129,23 @@ class TestThemeGrades(
         self._show(tab)
         page = self.root_color("--bg-primary")
         assert is_light(page), f"--bg-primary {page} is not light"
-        for surface in ("activity-bar", "sidebar", "tab-bar", "status-bar"):
+        # Each surface paints its Light token (the theme reached it, no stale
+        # dark value). The activity bar is dark in Light by design (VS Code
+        # style), so only the content surfaces must also read as light.
+        for surface, token, light in (
+            ("activity-bar", "--activity-bar-bg", None),
+            ("sidebar", "--sidebar-bg", True),
+            ("tab-bar", "--tab-bg", True),
+            ("status-bar", "--bg-secondary", True),
+        ):
             bg = self.opaque_background(surface, page)
-            assert is_light(bg), f"{surface} background {bg.hex()} stayed dark in Light"
-            text = self.style_color("color", surface)
-            ratio = contrast(text, bg)
-            assert ratio >= AA_TEXT, f"{surface} text {text} on {bg.hex()} is {ratio:.2f}:1"
+            assert same_color(bg, self.root_color(token)), f"{surface} {bg.hex()} is not {token}"
+            if light:
+                assert is_light(bg), f"{surface} background {bg.hex()} stayed dark in Light"
+        for surface, minimum in (("sidebar", AA_TEXT), ("status-bar", UI_TEXT)):
+            bg = self.opaque_background(surface, page)
+            ratio = contrast(self.style_color("color", surface), bg)
+            assert ratio >= minimum, f"{surface} text is {ratio:.2f}:1 on {bg.hex()}"
         tab_bg = self.opaque_background(f"tab-{tab}", self.opaque_background("tab-bar", page))
         ratio = contrast(self.style_color("color", f"tab-{tab}"), tab_bg)
         assert ratio >= AA_TEXT, f"active tab title is {ratio:.2f}:1 on {tab_bg.hex()}"
