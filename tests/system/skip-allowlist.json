@@ -13,11 +13,13 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921)",
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom",
     "bulk-linux": 55,
+    "bulk-linux-arm64": 16,
     "bulk-macos": 210,
     "bulk-windows": 220,
     "display-linux": 0,
+    "display-linux-arm64": 0,
     "display-macos": 0,
     "display-windows": 0
   },
@@ -34,6 +36,7 @@
       "nodeid": "test_ssh\\.py",
       "lanes": [
         "bulk-linux",
+        "bulk-linux-arm64",
         "bulk-macos",
         "bulk-windows"
       ],
@@ -43,6 +46,7 @@
       "reason": "^no WSL2 distribution installed on this host$",
       "lanes": [
         "bulk-linux",
+        "bulk-linux-arm64",
         "bulk-macos",
         "bulk-windows"
       ],
@@ -52,6 +56,7 @@
       "reason": "^Windows shells and WSL are a Windows-only feature$",
       "lanes": [
         "bulk-linux",
+        "bulk-linux-arm64",
         "bulk-macos"
       ],
       "why": "the Windows shell/WSL suite cannot run off Windows"
@@ -60,6 +65,7 @@
       "reason": "^Git Bash \\(Git for Windows\\) is not installed on this host$",
       "lanes": [
         "bulk-linux",
+        "bulk-linux-arm64",
         "bulk-macos"
       ],
       "why": "Git Bash exists only on Windows"
@@ -68,7 +74,8 @@
       "reason": "^zsh is not installed on this host$",
       "nodeid": "test_terminal_command_marks\\.py",
       "lanes": [
-        "bulk-linux"
+        "bulk-linux",
+        "bulk-linux-arm64"
       ],
       "why": "the ubuntu runner image ships no zsh; bash and sh run"
     },

@@ -26,6 +26,16 @@ name: System Integration (nightly)
 # long-standing Docker-daemon caveat in ADR-5 and the SSH-tunnel macOS carve-out
 # (docs/testing.md).
 #
+# linux-arm64 leg (#4934): the bulk lane and the display-critical grades also
+# run on GitHub's native `ubuntu-24.04-arm` (aarch64) runner, with the same
+# Docker fixtures (every base image is multi-arch), a static aarch64-musl
+# deployed agent, and the live agent deploy over a loopback sshd. It stands in
+# for most of the Raspberry Pi sessions (#470 agent binary on aarch64, #473
+# SSH/agent flows, #585 integration suite on aarch64). It is WEEKLY, not daily:
+# the `setup` job adds it on Wednesdays (UTC), on every release-candidate call,
+# and on a dispatch with `-f arm64=always`. A real Pi (its kernel, page size and
+# LAN) and the physical USB serial adapter stay manual (docs/testing.md).
+#
 # Trigger by hand from the Actions tab ("Run workflow") to validate a change to
 # the harness, the fixtures, or this workflow without waiting for the nightly run.
 
@@ -55,6 +65,11 @@ on:
         # this option (be up to date with develop).
         options: [both, develop, main, dispatched]
         default: both
+      arm64:
+        description: "linux-arm64 legs: auto = Wednesdays UTC; only = arm64 legs alone (#4934)"
+        type: choice
+        options: [auto, always, only, never]
+        default: auto
   # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
   # commit (the release candidate), instead of the develop/main branch tips. The
   # Release workflow then requires that candidate run to be green on the tag's sha.
@@ -91,10 +106,14 @@ jobs:
   # (default both; `dispatched` → the dispatch ref's exact sha), a
   # release-candidate call → its exact sha. Emitted as a JSON
   # array the matrix below expands over (each entry is a checkout ref).
+  #
+  # It also resolves the runner list (#4934): the three hosted OSes always, plus
+  # the linux-arm64 runner on a weekly cadence (see the header).
   setup:
     runs-on: ubuntu-latest
     outputs:
       branches: ${{ steps.pick.outputs.branches }}
+      oses: ${{ steps.oses.outputs.oses }}
     steps:
       - id: pick
         shell: bash
@@ -127,6 +146,40 @@ jobs:
             esac
           fi
 
+      - id: oses
+        # The linux-arm64 legs (#4934) cost a second full Linux run, so they run
+        # weekly: on Wednesdays UTC (the weekly main cron and that day's develop
+        # nightly), on every release-candidate call (the release gate covers
+        # aarch64), and when a dispatch asks for them. `never` drops them;
+        # `only` runs the arm64 legs alone (a cheap re-grade of an arm64 fix).
+        shell: bash
+        env:
+          RC_REF: ${{ inputs.ref }}
+          ARM64: ${{ github.event.inputs.arm64 }}
+        run: |
+          base='"ubuntu-latest","macos-latest","windows-latest"'
+          arm=false
+          case "${ARM64:-auto}" in
+            only)
+              echo 'oses=["ubuntu-24.04-arm"]' >> "$GITHUB_OUTPUT"
+              echo "linux-arm64 legs only"
+              exit 0
+              ;;
+            always) arm=true ;;
+            never) arm=false ;;
+            *)
+              if [ -n "${RC_REF}" ] || [ "$(date -u +%u)" = "3" ]; then
+                arm=true
+              fi
+              ;;
+          esac
+          if [ "$arm" = true ]; then
+            echo "oses=[${base},\"ubuntu-24.04-arm\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo "oses=[${base}]" >> "$GITHUB_OUTPUT"
+          fi
+          echo "linux-arm64 legs: $arm"
+
   system-integration:
     needs: setup
     name: System-Test Harness (integration lane, ${{ matrix.os }} · ${{ matrix.branch }})
@@ -155,7 +208,8 @@ jobs:
         # checks out its matrix.branch code below. main == develop until develop
         # advances past a release.
         branch: ${{ fromJSON(needs.setup.outputs.branches) }}
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # ubuntu-24.04-arm joins weekly (#4934); see the setup job.
+        os: ${{ fromJSON(needs.setup.outputs.oses) }}
 
     env:
       # webkit2gtk-only knobs — read solely by the Linux WebKitGTK webview under
@@ -201,7 +255,9 @@ jobs:
       # the grade (`-k "not (...)"`) and does not provision the native sshd the
       # Windows grade needs; the `display-grades` job below runs it on Windows
       # (CI-020, TIN-007). (#2579, #2618, #2626 cat B, #2634, #2646, #2669)
-      TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
+      # The linux-arm64 leg opts in too (#4934): the aarch64 release agent it
+      # builds is deployed over the same loopback sshd (Raspberry Pi #473).
+      TERMIHUB_LIVE_AGENT: ${{ matrix.os != 'windows-latest' && '1' || '' }}
 
       # Harness coverage (TOOL-005 follow-up, #3657), ADVISORY. The Linux leg
       # builds the test app instrumented (Istanbul frontend + cargo llvm-cov for
@@ -211,8 +267,9 @@ jobs:
       # (scripts/internal/fetch-integration-coverage.mjs). On for scheduled and
       # dispatched runs only: a called run (the release candidate gate) stays
       # uninstrumented so it tests the shipped bundle and binary. The recipe lives in
-      # scripts/internal/harness-coverage.sh, not here (#3664). macOS/Windows
-      # and the display-grades job below stay uninstrumented. Every coverage
+      # scripts/internal/harness-coverage.sh, not here (#3664). macOS/Windows,
+      # the weekly linux-arm64 leg (#4934) and the display-grades job below stay
+      # uninstrumented. Every coverage
       # step is continue-on-error: only the tests can red this lane.
       MEASURE_COVERAGE: ${{ matrix.os == 'ubuntu-latest' && !inputs.ref }}
 
@@ -393,6 +450,8 @@ jobs:
         # test's fixture timeout and visible as its own step. Linux only: the
         # macOS/Windows runners cannot host the Linux containers at all, so the
         # harness skips those suites there up front with that reason.
+        # On the linux-arm64 leg (#4934) the script builds aarch64-musl natively
+        # in the Rust Alpine image instead: cross-rs' stock images are amd64-only.
         if: runner.os == 'Linux'
         run: scripts/internal/build-system-test-agent.sh --install-cross
 
@@ -512,7 +571,8 @@ jobs:
         # Per-PR CI (code-quality.yml → Run Tests) deliberately does NOT get this.
         if: runner.os == 'Linux'
         env:
-          TERMIHUB_SKIP_GUARD_LANE: bulk-linux
+          # The linux-arm64 leg has its own baseline (#4934).
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'bulk-linux-arm64' || 'bulk-linux' }}
           TERMIHUB_REQUIRE_FIXTURES: "1"
         run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
@@ -703,7 +763,8 @@ jobs:
       fail-fast: false
       matrix:
         branch: ${{ fromJSON(needs.setup.outputs.branches) }}
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # ubuntu-24.04-arm joins weekly (#4934); see the setup job.
+        os: ${{ fromJSON(needs.setup.outputs.oses) }}
 
     env:
       # Same webkit2gtk-only knobs as the bulk lane (Linux WebKitGTK under Xvfb;
@@ -836,7 +897,7 @@ jobs:
         # on ANY skip here: both grades are opted in and must run.
         if: runner.os == 'Linux'
         env:
-          TERMIHUB_SKIP_GUARD_LANE: display-linux
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'display-linux-arm64' || 'display-linux' }}
         run: >-
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
