@@ -43,9 +43,14 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.os_input import HelperWindow
-from termihub_harness.ui.os_input_ui import cell_point, linux_window_manager, terminal_echo
+from termihub_harness.ui.os_input_ui import linux_window_manager, terminal_echo
 from termihub_harness.ui.terminal import NEW_TERMINAL
-from termihub_harness.ui.windows import SHORTCUT_FOCUS_TARGET, find_tab_by_session, window_tabs
+from termihub_harness.ui.windows import (
+    CLOSE_DIALOG_END,
+    SHORTCUT_FOCUS_TARGET,
+    find_tab_by_session,
+    window_tabs,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -163,6 +168,11 @@ class TestOsPointerGrades(
         self.wait(lambda: "torn-off" in torn.read_terminal(tab["id"]), what="its scrollback")
         assert self.tab_count() == 1
         assert find_tab_by_session(self.driver, session_id) is None
+        # Close the torn-off window so later suites see one window again.
+        torn.close_window()
+        self.wait(lambda: torn.exists(CLOSE_DIALOG_END), what="the torn window's close dialog")
+        torn.click(CLOSE_DIALOG_END)
+        self.wait(lambda: len(self.driver.windows()) == 1, what="the torn window to close")
 
     # ── MT-CONN-01: drag a connection into a folder ──────────────────────────
     def test_drag_connection_into_folder(self):
@@ -224,28 +234,17 @@ class TestOsPointerGrades(
         assert self.find_tab(name) is not None
 
     # ── MT-UI-26..28, MT-NIN-30: right-click in the terminal ─────────────────
-    def _select_word(self, tab_id: str, word: str, screen) -> None:
-        rows = self.driver.read_terminal_cells(word, tab_id=tab_id)
-        assert rows, f"{word!r} is not in the terminal buffer"
-        row = rows[-1]
-        measure = self.driver.measure_terminal(tab_id)
-        col = row["text"].index(word) + len(word) / 2
-        pad = float(self.driver.get_computed_style("--spacing-sm").rstrip("px") or 0)
-        rect = screen.rect(f"terminal-renderer-{tab_id}")
-        point = cell_point(screen, rect, measure, row["y"] - measure["viewportY"], col, pad)
-        self.os_input().click(*point, count=2)
-
     def _quick_copy_then_paste(self, tab_id: str) -> None:
         """Right-click with a selection copies it; with none it pastes once."""
         osi = self.os_input()
         marker = f"RCMARK{uuid.uuid4().hex[:10]}"
         self.run_command(f"echo {marker}")
         self.wait(
-            lambda: len(self.driver.read_terminal_cells(marker, tab_id=tab_id)) >= 2,
-            what="the marker on its own output row",
+            lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
+            what="the marker's output line",
         )
         screen = self.os_activate()
-        self._select_word(tab_id, marker, screen)
+        self.os_select_terminal_word(tab_id, marker, screen)
         renderer = f"terminal-renderer-{tab_id}"
         self.os_click(renderer, screen=screen, button="right")
         assert not self.driver.exists("terminal-context-copy-all"), "a menu opened"
