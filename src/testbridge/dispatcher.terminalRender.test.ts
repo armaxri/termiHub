@@ -38,7 +38,26 @@ const MEASUREMENT: TerminalMeasurement = {
   renderer: "webgl",
   webglCanvas: { width: 1248, height: 816 },
   domRows: null,
-  scrollbar: { trackHeight: 420, thumbVisible: false, thumbHeight: 0, thumbTop: 0 },
+  scrollbar: {
+    trackHeight: 420,
+    thumbVisible: false,
+    thumbHeight: 0,
+    thumbTop: 0,
+    gutterLeft: 628,
+    gutterWidth: 12,
+    thumbLeft: 0,
+    thumbWidth: 0,
+    thumbColor: "rgba(121, 121, 121, 0.5)",
+  },
+  paint: {
+    textRight: 624,
+    rowsBottom: 408,
+    containerBackground: "rgb(15, 17, 23)",
+    themeBackground: "#0f1117",
+    horizontalScroll: false,
+    viewportClientBottom: 420,
+    hscrollBarHeight: 0,
+  },
   viewportY: 0,
   baseY: 0,
 };
@@ -127,6 +146,7 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     const element = document.createElement("div");
     element.dataset.terminalRenderer = "dom";
     const viewport = document.createElement("div");
+    viewport.className = "terminal-scroll-viewport";
     element.appendChild(viewport);
     const gutter = document.createElement("div");
     gutter.className = "terminal-vscroll-gutter";
@@ -136,7 +156,12 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     element.appendChild(gutter);
     document.body.appendChild(element);
 
-    term = new XTerm({ cols: 80, rows: 24, allowProposedApi: true });
+    term = new XTerm({
+      cols: 80,
+      rows: 24,
+      allowProposedApi: true,
+      theme: { background: "#0f1117" },
+    });
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(viewport);
@@ -171,16 +196,39 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
   it("reads a hidden thumb as not visible and a shown one with its geometry", () => {
     const thumb = handles.element.querySelector<HTMLElement>(".terminal-vscroll-thumb")!;
     // Before the scrollbar controller has run (or with no scrollback) it is hidden.
-    expect(measureTerminal(handles).scrollbar).toEqual({
+    expect(measureTerminal(handles).scrollbar).toMatchObject({
       trackHeight: 0,
       thumbVisible: false,
       thumbHeight: 0,
       thumbTop: 0,
+      thumbLeft: 0,
+      thumbWidth: 0,
     });
     thumb.style.display = "none";
     expect(measureTerminal(handles).scrollbar?.thumbVisible).toBe(false);
     thumb.style.display = "block";
     expect(measureTerminal(handles).scrollbar?.thumbVisible).toBe(true);
+  });
+
+  it("reads the thumb's computed colour", () => {
+    const thumb = handles.element.querySelector<HTMLElement>(".terminal-vscroll-thumb")!;
+    thumb.style.backgroundColor = "rgb(121, 121, 121)";
+    expect(measureTerminal(handles).scrollbar?.thumbColor).toBe("rgb(121, 121, 121)");
+  });
+
+  it("reports the backgrounds behind the cells and the horizontal-scroll mode", () => {
+    handles.element.style.backgroundColor = "rgb(15, 17, 23)";
+    const paint = measureTerminal(handles).paint;
+    expect(paint.containerBackground).toBe("rgb(15, 17, 23)");
+    expect(paint.themeBackground).toBe("#0f1117");
+    expect(paint.horizontalScroll).toBe(false);
+    expect(paint.hscrollBarHeight).toBe(0);
+    // jsdom lays nothing out, so the edges are numbers but not meaningful here.
+    expect(typeof paint.textRight).toBe("number");
+    handles.element
+      .querySelector(".terminal-scroll-viewport")!
+      .classList.add("terminal-horizontal-scroll");
+    expect(measureTerminal(handles).paint.horizontalScroll).toBe(true);
   });
 
   it("returns null for the scrollbar when the gutter is not mounted", () => {

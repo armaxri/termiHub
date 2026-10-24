@@ -751,6 +751,37 @@ export interface TerminalScrollbarMeasurement {
   thumbHeight: number;
   /** Laid-out thumb top relative to the gutter's top, in CSS px. */
   thumbTop: number;
+  /** Gutter left edge relative to the terminal container's left, in CSS px. */
+  gutterLeft: number;
+  /** Laid-out gutter width, in CSS px. */
+  gutterWidth: number;
+  /** Thumb left edge relative to the container's left (`0` when hidden). */
+  thumbLeft: number;
+  /** Laid-out thumb width in CSS px (`0` when hidden). */
+  thumbWidth: number;
+  /** The thumb's computed `background-color` (the at-rest colour unless hovered). */
+  thumbColor: string;
+}
+
+/**
+ * Where a terminal's text paints and what is behind it (#4930). Positions are
+ * relative to the terminal container's top-left, in CSS px.
+ */
+export interface TerminalPaint {
+  /** Right edge of the visible text area; `null` before xterm has a screen. */
+  textRight: number | null;
+  /** Bottom of the last grid row (`rows x cell height` below the screen top). */
+  rowsBottom: number | null;
+  /** The container's computed `background-color` (what shows under spare px). */
+  containerBackground: string;
+  /** The background xterm's theme paints the cells with; `null` when unset. */
+  themeBackground: string | null;
+  /** Whether horizontal-scroll mode is on. */
+  horizontalScroll: boolean;
+  /** Bottom of the scroll viewport's client area (above any horizontal bar). */
+  viewportClientBottom: number | null;
+  /** Laid-out height of the native horizontal scrollbar (`0` when none). */
+  hscrollBarHeight: number;
 }
 
 /** A terminal's real render-path state, returned by `measureTerminal`. */
@@ -771,6 +802,8 @@ export interface TerminalMeasurement {
   domRows: string[] | null;
   /** The gutter scrollbar; `null` when the gutter is not mounted. */
   scrollbar: TerminalScrollbarMeasurement | null;
+  /** Text-area edges and backgrounds (#4930). */
+  paint: TerminalPaint;
   /** Scroll position, as `getTerminalViewport` reports it. */
   viewportY: number;
   baseY: number;

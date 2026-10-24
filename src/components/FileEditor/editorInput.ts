@@ -42,6 +42,21 @@ export function tagMonacoInput(domNode: Element | null | undefined): void {
   findMonacoInput(domNode)?.setAttribute("data-testid", EDITOR_INPUT_TESTID);
 }
 
+/** `data-testid` of Monaco's root (`.monaco-editor`), whose background is the editor's. */
+export const EDITOR_SURFACE_TESTID = "editor-surface";
+/** `data-testid` of Monaco's line-number gutter (`.margin`). */
+export const EDITOR_GUTTER_TESTID = "editor-gutter";
+
+/**
+ * Tag Monaco's root and gutter so the harness can read their computed
+ * backgrounds and grade that the editor follows the theme (#4930). A no-op for
+ * whichever element is absent.
+ */
+export function tagMonacoSurface(domNode: Element | null | undefined): void {
+  domNode?.setAttribute("data-testid", EDITOR_SURFACE_TESTID);
+  domNode?.querySelector(".margin")?.setAttribute("data-testid", EDITOR_GUTTER_TESTID);
+}
+
 /**
  * Editor-construction option overrides that make Monaco's hidden input reliably
  * addressable by the test bridge, keyed on whether the bridge is active.
