@@ -238,6 +238,8 @@ unmount.
 | `inspectTerminal`          | Read a terminal's OSC 133 marks and inline-image store         |
 | `measureTerminal`          | Read a terminal's real fit, cell size, renderer and thumb      |
 | `readTerminalCells`        | Read xterm's buffer cells: characters and column width         |
+| `readTerminalOutput`       | Read the raw stream a terminal was handed (flash grades)       |
+| `readFrontendLog`          | Read the Log Viewer history, optionally filtered by message    |
 | `compose`                  | Test-only: replay an IME composition on a control (see below)  |
 | `loseTerminalWebglContext` | Test-only: force a WebGL context loss (see below)              |
 | `sampleCanvas`             | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
@@ -379,6 +381,8 @@ scrollbar's thumb against a laid-out track — only exists in a real WebView.
   "webglCanvas": { "width": 1880, "height": 1360 }, // null on the DOM renderer
   "domRows": null, // painted row text on the DOM renderer
   "scrollbar": { "trackHeight": 690, "thumbVisible": true, "thumbHeight": 98, "thumbTop": 592 },
+  "screenRect": { "left": 260, "top": 80, "width": 940, "height": 680 }, // cell grid, page CSS px
+  "page": { "devicePixelRatio": 2, "innerWidth": 1280, "innerHeight": 800 },
   "viewportY": 260,
   "baseY": 260,
 }
@@ -393,7 +397,42 @@ and fail when no terminal is registered for it. Python:
 `driver.measure_terminal(tab_id=None)` and
 `driver.lose_terminal_webgl_context(tab_id=None)`; the suite (which also
 drives loss → DOM fallback → reacquire on the next tab show, #4426) is
-`tests/system/tests/test_terminal_render_paths.py`.
+`tests/system/tests/test_terminal_render_paths.py`. `screenRect` and `page`
+(#4937) let a native window capture be mapped onto the cell grid (see
+`termihub_harness/ui/native_capture.py`).
+
+### Raw output and frontend log (`readTerminalOutput`, `readFrontendLog`)
+
+`readTerminal` reads xterm's buffer, which only holds what is still there: text
+that was painted and then erased (a screen clear, a reset, an alternate-screen
+switch) is gone. `{ action: "readTerminalOutput", tabId? }` returns the raw
+stream the tab's xterm was handed since it was registered (#4931), escapes
+intact:
+
+```jsonc
+{
+  "output": "\u001b]7;file:///home/me\u0007me@host:~$ ", // bounded head (64 Ki chars)
+  "written": 1843, // data units written: chars for string writes, bytes for binary
+  "writes": 12,
+  "truncated": false, // more was written than `output` holds
+  "msSinceLastWrite": 41.5, // null before the first write
+}
+```
+
+The lazily loaded bridge installs the tap through the terminal registry's
+register observer, so a production bundle carries only that hook. Each tab keeps
+the head of its stream and counts the rest, at most 64 tabs at once, so a flood
+cannot grow it. A terminal registered before the bridge chunk loaded is not
+tapped (the verb then fails with `no output recorded`). Python:
+`driver.read_terminal_output(tab_id=None)`; the helpers that read it are in
+`termihub_harness/output_stream.py`.
+
+`{ action: "readFrontendLog", contains? }` returns the Log Viewer's retained
+frontend history (`[{ timestampMs, level, target, message }]`, oldest first),
+optionally only the entries whose message contains `contains`. Frontend DEBUG
+entries never reach the app's stdout log, so this is how a test asserts the
+terminal renderer transitions and the absence of `webgl context lost`. Python:
+`driver.read_frontend_log(contains=None)`.
 
 ### Glyph cells and IME composition (`readTerminalCells`, `compose`)
 
@@ -409,13 +448,18 @@ contains `contains` (scrollback too), or the visible viewport rows without it.
     "y": 12, // absolute buffer line
     "text": "日e\u0301",
     "cells": [
-      { "x": 0, "chars": "日", "width": 2 }, // wide character head
-      { "x": 1, "chars": "", "width": 0 }, // its spacer cell
-      { "x": 2, "chars": "e\u0301", "width": 1 }, // base + attached mark
+      { "x": 0, "chars": "日", "width": 2, "fg": "#dde1ec", "bg": "#0f1117", "bold": false }, // wide head
+      { "x": 1, "chars": "", "width": 0, "fg": "#dde1ec", "bg": "#0f1117", "bold": false }, // its spacer
+      { "x": 2, "chars": "e\u0301", "width": 1, "fg": "#cd3131", "bg": "#0f1117", "bold": true }, // base + mark
     ],
   },
 ]
 ```
+
+`fg` / `bg` are the colours the cell paints in (#4937): ANSI 0–15 from the live
+theme (xterm's defaults where it leaves one unset), 16–255 from the xterm cube
+and grey ramp, truecolour as-is, the default as the theme foreground /
+background, all after inverse video. `bold` is SGR 1.
 
 `{ action: "compose", testId?, tabId?, updates, commit }` replays an input
 method's DOM sequence on a control: `keydown` 229, `compositionstart`, then per

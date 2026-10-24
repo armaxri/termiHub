@@ -93,7 +93,7 @@ export function useKeyboardShortcuts() {
       const delegationEnabled = currentSettingsView().editorShortcutDelegation !== false;
       if (delegationEnabled && scope !== "global") {
         const ctx = activeContextFromTab(getActiveTab(useAppStore.getState()) ?? undefined);
-        if (!isScopeCompatible(scope, ctx, isEventFromTextInput(e))) {
+        if (!isScopeCompatible(scope, ctx, isEventFromTextInput(e), isEventFromTerminal(e))) {
           return;
         }
       }

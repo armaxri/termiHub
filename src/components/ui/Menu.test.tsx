@@ -228,6 +228,77 @@ describe("ui/Menu", () => {
     expect(q("ctx-del")!.classList.contains("ui-menu__item--danger")).toBe(true);
   });
 
+  describe("context menu opened by a right-press (#4915)", () => {
+    /**
+     * macOS (and GTK) fire `contextmenu` on the right button's *press*, so the
+     * release of that same press lands while the menu is already open. Radix
+     * treats a pointerup on an item without a pointerdown on it as a
+     * press-drag-release selection — on a terminal that silently picked the
+     * first item, Paste, so right-click looked like it pasted.
+     */
+    function renderContextMenu(onPaste: () => void, onCopy: () => void) {
+      act(() =>
+        root.render(
+          <ContextMenuRoot>
+            <ContextMenuTrigger asChild>
+              <div data-testid="area">area</div>
+            </ContextMenuTrigger>
+            <ContextMenuContent data-testid="ctx">
+              <MenuItem data-testid="paste" onSelect={onPaste}>
+                Paste
+              </MenuItem>
+              <MenuItem data-testid="copy" onSelect={onCopy}>
+                Copy All
+              </MenuItem>
+            </ContextMenuContent>
+          </ContextMenuRoot>
+        )
+      );
+      act(() => {
+        q("area")!.dispatchEvent(
+          new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 2 })
+        );
+        q("area")!.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            button: 2,
+            clientX: 5,
+            clientY: 5,
+          })
+        );
+      });
+    }
+
+    const pointer = (type: string, el: HTMLElement, button = 0) =>
+      act(() => {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button }));
+      });
+
+    it("does not select an item when the opening press is released over it", () => {
+      const onPaste = vi.fn();
+      renderContextMenu(onPaste, vi.fn());
+      expect(q("ctx")).not.toBeNull();
+
+      pointer("pointerup", q("paste")!, 2);
+
+      expect(onPaste).not.toHaveBeenCalled();
+      expect(q("ctx")).not.toBeNull();
+    });
+
+    it("still selects an item on a real click after the opening release", () => {
+      const onCopy = vi.fn();
+      renderContextMenu(vi.fn(), onCopy);
+      pointer("pointerup", q("paste")!, 2);
+
+      pointer("pointerdown", q("copy")!);
+      pointer("pointerup", q("copy")!);
+      act(() => q("copy")!.click());
+
+      expect(onCopy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("throws a clear error when a part is used outside a menu content", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => act(() => root.render(<MenuItem>orphan</MenuItem>))).toThrow(

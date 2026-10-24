@@ -248,7 +248,9 @@ class _SkipRecorder:
             self.collected.add(report.nodeid)
         if report.skipped and not hasattr(report, "wasxfail"):
             reason = skip_guard.skip_reason(report.longrepr)
-            self.skips[report.nodeid] = skip_guard.Skip(report.nodeid, reason)
+            # ``keywords`` carries the item's marker names, also across xdist.
+            manual = skip_guard.MANUAL_MARKER in (getattr(report, "keywords", None) or {})
+            self.skips[report.nodeid] = skip_guard.Skip(report.nodeid, reason, manual=manual)
         elif report.when == "call":
             self.ran.add(report.nodeid)
 

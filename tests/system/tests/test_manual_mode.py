@@ -311,6 +311,12 @@ class TestManualUiBehavior:
         rec = ui._manual_session.records[-1]
         assert rec.kind == "observe" and rec.screenshot is None
 
+    def test_observe_records_saved_evidence_instead_of_a_screenshot(self):
+        # A native capture the harness saved (#4937) is recorded as-is.
+        ui = self._ui(["y"])
+        ui.manual_observe("look", "green", screenshot=True, evidence="/tmp/sheet.png")
+        assert ui._manual_session.records[-1].screenshot == "/tmp/sheet.png"
+
     def test_recording_is_noop_without_session(self):
         ui = self._ui(["y"])
         ui._manual_session = None

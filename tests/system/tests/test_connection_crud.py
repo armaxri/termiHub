@@ -167,14 +167,24 @@ class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.wait(lambda: self.find_tab(f"Edit: {name1}") is not None, what="first edit tab")
         after_first = self.tab_count()
 
-        # Fully dismiss the first connection's context menu before driving the
-        # second. The edit menu item shares one testid across connections, and
+        # Wait for the first connection's context menu to unmount before driving
+        # the second. The edit menu item shares one testid across connections, and
         # ``connection_context_action`` clicks an already-mounted item on its
-        # first poll — so a menu left half-open under Windows nightly load makes
-        # the second action re-click the *first* connection's edit item,
-        # reactivating its tab instead of opening a new one, and no second tab
-        # ever appears (#2683).
-        self.dismiss_menu()
+        # first poll — so a menu still closing under Windows nightly load would
+        # make the second action re-click the *first* connection's edit item,
+        # reactivating its tab instead of opening a new one (#2683). This polls
+        # the real signal rather than pressing Escape: a bare Escape lands on the
+        # first editor's autofocused name input and cancels (closes) its tab,
+        # which is exactly how this test failed on Windows (#4968).
+        self.wait(
+            lambda: not self.driver.exists(self.CTX_EDIT),
+            what="the first connection's context menu to close",
+        )
+        # Pin focus in the first editor's name input, as WebView2 does on its own
+        # when the app is the foreground window. Without this the test only hit
+        # the Escape-cancels-the-editor path on Windows runs where the app held
+        # the foreground; with it, every platform exercises that focus state.
+        self.driver.press_key("Shift", self.EDITOR_NAME)
 
         self.connection_context_action(name2, self.CTX_EDIT)
         # Gate on the second connection's own edit tab (not just a count delta),

@@ -36,7 +36,8 @@ from typing import Callable, ClassVar, Optional, Sequence, TypeVar
 import pytest
 
 from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
-from . import deadlines, timing
+from . import deadlines, os_store, timing
+from .external_shims import HandoffShims
 from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance, require_test_bridge_build
@@ -144,6 +145,34 @@ class SystemTest:
     #: that needs the app to find no SSH agent.
     unset_app_env: ClassVar[tuple[str, ...]] = ()
 
+    @classmethod
+    def extra_app_env(cls, request: pytest.FixtureRequest) -> dict[str, str]:
+        """Environment variables to set for the suite's app, on top of the
+        harness's (#4953). Called once per suite, before the app launches.
+
+        Override it to point the app at a suite-owned service, e.g. a private
+        ``ssh-agent`` socket as ``SSH_AUTH_SOCK``. Register the service's
+        teardown with ``request.addfinalizer``: finalizers added here run after
+        the app has exited. A ``pytest.skip`` here skips the whole suite before
+        any app starts.
+        """
+        return {}
+
+    #: Run the suite's app against a throwaway OS credential store (#4929): a
+    #: temporary macOS keychain, a private gnome-keyring, or test-scoped items
+    #: in Windows Credential Manager (see :mod:`termihub_harness.os_store`).
+    #: The store is opened before the app launches and closed after it exits;
+    #: tests read it as ``self.os_store``. Skips the suite with the precise
+    #: reason when the platform's store cannot be used.
+    os_credential_store: ClassVar[bool] = False
+
+    #: Tools to shim on the suite app's ``PATH`` (#4932), e.g. ``("code",
+    #: "xdg-open")``: recording launchers that log every hand-off and exit 0
+    #: (see :mod:`termihub_harness.external_shims`). Only the app's own ``PATH``
+    #: changes; nothing is installed and no OS handler is touched. Tests read the
+    #: recorder as ``self.shims``.
+    external_app_shims: ClassVar[tuple[str, ...]] = ()
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -162,6 +191,34 @@ class SystemTest:
         manual = bool(request.config.getoption("manual"))
         force_echo = bool(request.config.getoption("app_log_echo"))
         echo_logs = force_echo or not manual
+        suite_env = request.cls.extra_app_env(request)
+        store = None
+        if request.cls.os_credential_store:
+            try:
+                store = os_store.open_store()
+            except os_store.OsStoreUnavailable as exc:
+                pytest.skip(f"OS credential store unavailable: {exc}")
+            request.cls.os_store = store
+        shims = None
+        if request.cls.external_app_shims:
+            shims = HandoffShims(request.cls.external_app_shims)
+            request.cls.shims = shims
+        extra_env = {
+            **suite_env,
+            **(store.app_env() if store is not None else {}),
+            **(shims.app_env() if shims is not None else {}),
+        }
+        try:
+            yield from cls._run_app(request, manual, echo_logs, extra_env or None)
+        finally:
+            if store is not None:
+                store.close()
+            if shims is not None:
+                shims.close()
+
+    @classmethod
+    def _run_app(cls, request, manual: bool, echo_logs: bool, extra_env):
+        """Launch the suite's app, yield while the suite runs, then tear it down."""
         try:
             # fresh isolated config dir per suite
             app = AppInstance(
@@ -169,6 +226,7 @@ class SystemTest:
                 portable=request.cls.portable_mode,
                 sandbox_profile=request.cls.sandbox_profile,
                 unset_env=request.cls.unset_app_env,
+                extra_env=extra_env,
             )
         except FileNotFoundError as exc:
             pytest.skip(str(exc))

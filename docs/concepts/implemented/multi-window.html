@@ -1544,10 +1544,9 @@ flowchart TB
         <div class="mockup-section">
           <h3>Mockup — <code>drag-future</code>: optional drag-to-tear affordance</h3>
           <div class="mockup-note">
-            Future only. A dragged tab detaches into a floating ghost
-            <span class="callout">N</span> that can be dropped on empty desktop (→ new window) or
-            another window's tab bar (→ move). v1 ships the commands; this is a later, additive
-            gesture.
+            A dragged tab detaches into a floating ghost <span class="callout">N</span> that can be
+            dropped on empty desktop (→ new window, shipped in #4916) or another window's tab bar (→
+            move, still future). The commands remain the primary mechanism.
           </div>
           <div style="display: flex; align-items: center; gap: 16px; padding: 12px 0">
             <div class="drag-ghost">
@@ -2196,7 +2195,10 @@ sequenceDiagram
                 <td>Drag a tab between windows</td>
                 <td><code>@dnd-kit</code> single-document; no cross-window drag</td>
                 <td>Deferred (constraint)</td>
-                <td>Shipped as commands; drag-to-tear gesture stays a future enhancement</td>
+                <td>
+                  Shipped as commands; releasing a dragged tab outside the window tears it off into
+                  a new window (#4916). Dropping onto another window's tab bar stays deferred
+                </td>
               </tr>
               <tr>
                 <td>4</td>
@@ -2238,10 +2240,12 @@ sequenceDiagram
             sessions so the Open Connections window badge covers every session.
           </li>
           <li>
-            <strong>Still deferred — drag-to-tear gesture.</strong> Tearing/moving tabs ships as
-            commands (Move to New Window / Move to Window ▸ N). A cross-window drag gesture remains
-            a future enhancement (blocked by <code>@dnd-kit</code> single-document + no Tauri
-            webview→webview drag).
+            <strong>Partly shipped — drag-to-tear gesture.</strong> Tearing/moving tabs ships as
+            commands (Move to New Window / Move to Window ▸ N). Releasing a dragged tab outside the
+            window (the pointer-up lands outside the viewport) now tears it off into a new window
+            through the same Move-to-New-Window hand-off (#4916). Dropping onto
+            <em>another window's</em> tab bar remains a future enhancement (blocked by
+            <code>@dnd-kit</code> single-document + no Tauri webview→webview drag).
           </li>
           <li>
             <strong>Still deferred — editor dirty-state transfer.</strong> Moving a Monaco editor

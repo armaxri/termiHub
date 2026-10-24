@@ -88,6 +88,15 @@ export function clearFrontendLogHistory(): void {
   startupBuffer.length = 0;
 }
 
+/**
+ * A copy of the replayable history, oldest first. Read-only access for the
+ * test bridge's `readFrontendLog` verb (#4931), which asserts on DEBUG entries
+ * that never reach the durable log.
+ */
+export function getFrontendLogHistory(): LogEntry[] {
+  return history.slice();
+}
+
 /** Options for {@link onFrontendLog}. */
 export interface FrontendLogSubscribeOptions {
   /**

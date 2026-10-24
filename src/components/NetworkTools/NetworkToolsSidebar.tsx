@@ -22,7 +22,7 @@ import {
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
-import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
+import { Button, Tooltip, TruncatedText, EmptyState, toast } from "@/components/ui";
 import { isMonitorStale, formatCheckedAgo } from "./monitorStaleness";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -76,7 +76,8 @@ function MonitorRow({
   onOpen,
 }: MonitorRowProps) {
   const { config, running, paused, lastResult } = monitor;
-  const shortUrl = config.url.replace(/^https?:\/\//, "").slice(0, 24);
+  // CSS cuts the URL to the row; TruncatedText then shows it in full (#4954).
+  const shortUrl = config.url.replace(/^https?:\/\//, "");
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
   // The status and age read as the button's description, its name being the
   // full URL (the visible one is truncated) (#4349).
@@ -116,7 +117,9 @@ function MonitorRow({
           }
           color="transparent"
         />
-        <span className="network-sidebar__monitor-url">{shortUrl}</span>
+        <TruncatedText className="network-sidebar__monitor-url" tooltip={config.url}>
+          {shortUrl}
+        </TruncatedText>
         {lastResult && (
           <span id={resultId} className="network-sidebar__monitor-status">
             {lastResult.ok ? `${lastResult.statusCode} · ${lastResult.latencyMs}ms` : "✗ down"}

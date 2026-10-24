@@ -407,7 +407,10 @@ process (each xdist worker) owns a temp `known_hosts` file
 `TERMIHUB_TEST_KNOWN_HOSTS_FILE`, which only a test-bridge build honours. The
 throwaway sshd endpoints pre-trust their host keys there. A suite that needs the
 app to miss a variable from your environment lists it in `unset_app_env` (for
-example `("SSH_AUTH_SOCK",)`).
+example `("SSH_AUTH_SOCK",)`). A suite that needs to set one overrides the
+`extra_app_env(request)` classmethod, which runs once before the app launches
+and returns the variables; `test_ssh_agent_auth.py` uses it to hand the app a
+private `ssh-agent` socket (`PrivateSshAgent`) as `SSH_AUTH_SOCK`.
 
 ### What `SystemTest` (the base) gives you
 
@@ -586,15 +589,16 @@ Operator verbs on `ManualUi`:
 single guided test interactively (use `-s` so the prompts reach your console):
 
 ```sh
-./pytest.sh --manual -k visual_rendering -s
+./pytest.sh --manual -k guided_look_and_feel -s
 # select a different platform's platform-scoped items:
 ./pytest.sh --manual --manual-platform=windows -s
 ```
 
 A `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes,
 platform, timestamps) is written to [`tests/reports/`](../reports/) at the end of
-the session. See the worked examples in
-[`tests/test_manual_examples.py`](tests/test_manual_examples.py). This replaced
+the session. Copy an existing suite such as
+[`tests/test_guided_look_and_feel.py`](tests/test_guided_look_and_feel.py) as a
+template. This replaced
 the standalone YAML runner (`scripts/test-manual.py` + `tests/manual/*.yaml`),
 retired in #919; every manual test now lives here.
 

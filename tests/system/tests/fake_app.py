@@ -115,6 +115,8 @@ def dispatcher_like(
     measurement: dict | None = None,
     webgl_lost: bool = True,
     cell_rows: list | None = None,
+    output_tap: dict | None = None,
+    frontend_log: list | None = None,
     screenshot: str | None = None,
     coverage: str | None = None,
     coverage_chunk: int = 4 * 1024 * 1024,
@@ -133,6 +135,9 @@ def dispatcher_like(
     ``cell_rows`` is the value ``readTerminalCells`` returns; its
     ``(tabId, contains)`` pairs are recorded under ``cellReads`` and each
     ``compose`` command under ``compositions``.
+    ``output_tap`` is the value ``readTerminalOutput`` returns (tab ids recorded
+    under ``outputReads``); ``frontend_log`` the entries ``readFrontendLog``
+    filters by its ``contains`` substring.
     ``screenshot`` is the data URL returned by the ``screenshot`` command.
     ``coverage`` is the serialized ``window.__coverage__`` that ``readCoverage``
     pages through in ``coverage_chunk``-character chunks (``None`` = an
@@ -159,6 +164,7 @@ def dispatcher_like(
         "measurements": [],
         "contextLosses": [],
         "cellReads": [],
+        "outputReads": [],
         "compositions": [],
         "events": [],
         "exits": [],
@@ -242,6 +248,22 @@ def dispatcher_like(
         if action == "loseTerminalWebglContext":
             recorded["contextLosses"].append(command.get("tabId"))
             return {"ok": True, "action": "loseTerminalWebglContext", "value": webgl_lost}
+        if action == "readTerminalOutput":
+            recorded["outputReads"].append(command.get("tabId"))
+            tap = output_tap or {
+                "output": terminal_text,
+                "written": len(terminal_text),
+                "writes": 1,
+                "truncated": False,
+                "msSinceLastWrite": 0,
+            }
+            return {"ok": True, "action": "readTerminalOutput", "value": tap}
+        if action == "readFrontendLog":
+            needle = command.get("contains")
+            entries = [
+                e for e in (frontend_log or []) if not needle or needle in e.get("message", "")
+            ]
+            return {"ok": True, "action": "readFrontendLog", "value": entries}
         if action == "readTerminalCells":
             recorded["cellReads"].append((command.get("tabId"), command.get("contains")))
             return {"ok": True, "action": "readTerminalCells", "value": cell_rows or []}

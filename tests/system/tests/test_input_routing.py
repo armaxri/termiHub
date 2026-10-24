@@ -15,24 +15,23 @@ operator only the irreducibly-manual step (the real drag / keypress / right-clic
 
 Covered:
 
-- **Shell-conflict key pass-through** (MT-KB-09/10/11) — Ctrl+W word delete,
-  Ctrl+B tmux prefix, Ctrl+\\ SIGQUIT: needs real PTY signal/byte observation.
-- **Pass-through toggle + context-aware routing** (MT-KB-12/13/14) — the
-  harness flips ``terminalKeyPassthrough`` / focuses an editor vs a terminal
-  (asserting the persisted flag + focus), the operator confirms the routing.
 - **Right-click terminal: context menu vs Quick Copy/Paste** (MT-UI-26..30) —
   the harness opens the real context menu (asserting its items), the operator
   exercises real-clipboard Quick Copy/Paste.
-- **Tab drag to edge / across groups** (MT-TAB-06/07) — drop targets outside the
-  bridge's dnd-kit coverage; harness asserts the resulting leaf count / panel
-  tree after the operator's drag. (Divider resize, MT-TAB-16, is fully automated
-  in ``test_split_views`` since #3693.)
 - **Drag a connection into a folder** (MT-CONN-01/24) — harness builds the
   connection + folder and asserts the connection's parent after the drop.
 - **Drag an editor tab between panels** (MT-FB-20) — harness opens an editor in a
   split and asserts which panel holds it after the drag.
 - **OS file drop onto a pane** (MT-UI-34) — native drag-drop coordinates; harness
   prepares the file + terminal, the operator drops and confirms the path lands.
+
+Retired to automation (#4928): the shell-chord pass-through, the pass-through
+toggle and the editor-vs-terminal Find routing (MT-KB-09 … 14) are pinned per PR
+by ``keybindings.test.ts``, ``terminalInputRouting.test.ts`` and
+``useKeyboardShortcuts.test.ts``; tab drag to a panel edge and into another
+panel (MT-TAB-06/07) are real drag gestures over the bridge in
+``test_layout_scrollback_ui``; divider resize (MT-TAB-16) is automated in
+``test_split_views`` since #3693.
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and run
 only under ``./pytest.sh --manual -k input_routing -s`` with an operator.
@@ -65,7 +64,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
 SPLIT_H = "terminal-view-split-horizontal"
 NEW_TERMINAL = "terminal-view-new-terminal"
-CLOSE_PANEL = "terminal-view-close-panel"
 
 
 class TestInputRouting(
@@ -84,12 +82,6 @@ class TestInputRouting(
     performs the gesture the synthetic bridge cannot reproduce."""
 
     # ── Helpers ──────────────────────────────────────────────────────────────
-    def _reset_to_single_terminal(self) -> None:
-        """Collapse any splits and leave exactly one terminal panel open."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.wait(lambda: self.leaf_count() == 1, what="a single panel")
-
     def _connection_folder(self, name: str) -> Optional[str]:
         """The ``folderId`` of the connection named ``name``, or None.
 
@@ -105,126 +97,6 @@ class TestInputRouting(
         target.write_text(contents, encoding="utf-8")
         return target
 
-    # ── Shell-conflict key pass-through (MT-KB-09/10/11) ──────────────────────
-    def test_shell_keys_pass_through_to_pty(self):
-        """Pass-through on: the harness types a command, the operator presses the
-        shell chords, and confirms the PTY (not an app shortcut) received them.
-
-        These chords (Ctrl+W word-delete, Ctrl+B tmux prefix, Ctrl+\\ SIGQUIT)
-        only reach the PTY through the real OS input pipeline — a synthetic
-        ``keydown`` cannot exercise xterm's key handler + the backend signal path.
-        """
-        self.close_all_tabs()
-        # Ensure pass-through is on (the default) so the chords reach the shell.
-        self.open_settings_category("keyboard")
-        self.wait(
-            lambda: self.driver.exists("keyboard-settings-passthrough"),
-            what="the pass-through toggle",
-        )
-        if self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is False:
-            self.driver.click("keyboard-settings-passthrough")
-        self.wait(
-            lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is not False,
-            what="pass-through to be enabled",
-        )
-
-        self.ensure_terminal()
-        self.run_command("echo READY_FOR_KEYS")
-        self.wait_for_output("READY_FOR_KEYS")
-
-        self.manual_step(
-            "Click into the terminal so it has focus, then:\n"
-            "  1. Type 'foo bar baz' (do NOT press Enter), then press Ctrl+W.\n"
-            "  2. Press Ctrl+\\ to send SIGQUIT to a running command:\n"
-            "       type  sleep 30  then Enter, then press Ctrl+\\.",
-            "Ctrl+W deletes the last word ('baz'), and Ctrl+\\ quits the sleep "
-            "with a 'Quit' / SIGQUIT message -- neither triggered an app shortcut.",
-        )
-
-        self.manual_step(
-            "If tmux is installed, run  tmux  then press Ctrl+B then % (split).",
-            "Ctrl+B reaches tmux as its prefix key (it splits the pane) rather "
-            "than triggering a termiHub shortcut. (Skip if tmux is unavailable.)",
-        )
-
-    # ── Pass-through toggle (MT-KB-12) ────────────────────────────────────────
-    def test_passthrough_toggle_changes_routing(self):
-        """The harness flips the pass-through setting off (asserting it persisted)
-        and the operator confirms a shell chord now triggers the app instead.
-
-        The toggle's *persistence* is fully harness-verified; only the resulting
-        routing change is operator-confirmed."""
-        self.close_all_tabs()
-        self.open_settings_category("keyboard")
-        self.wait(
-            lambda: self.driver.exists("keyboard-settings-passthrough"),
-            what="the pass-through toggle",
-        )
-        # Force it on first, then turn it off, so we always exercise the off path.
-        if self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is False:
-            self.driver.click("keyboard-settings-passthrough")
-            self.wait(
-                lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is not False,
-                what="pass-through to be enabled before the toggle test",
-            )
-        self.driver.click("keyboard-settings-passthrough")
-        self.wait(
-            lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is False,
-            what="pass-through to be disabled",
-        )
-
-        self.ensure_terminal()
-        self.manual_step(
-            "Pass-through is now OFF. Focus the terminal and press a chord bound "
-            "to an app shortcut (e.g. Ctrl+W if it maps to 'close tab').",
-            "With pass-through off the chord triggers the app shortcut instead of "
-            "reaching the shell.",
-        )
-
-        # Restore the default so later suites start from pass-through on.
-        self.open_settings_category("keyboard")
-        self.wait(
-            lambda: self.driver.exists("keyboard-settings-passthrough"),
-            what="the pass-through toggle",
-        )
-        self.driver.click("keyboard-settings-passthrough")
-        self.wait(
-            lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is not False,
-            what="pass-through to be restored",
-        )
-
-    # ── Context-aware routing: Cmd+F editor vs terminal (MT-KB-13/14) ─────────
-    def test_context_aware_find_routing(self):
-        """The harness focuses an editor, then a terminal; the operator presses the
-        Find shortcut in each and confirms it routes to the focused surface.
-
-        The harness builds + opens both surfaces (asserting they mount); the
-        OS-level shortcut dispatch + the resulting overlay are operator-confirmed."""
-        self.close_all_tabs()
-        # An editor surface: open a scratch file in the editor.
-        fname = f"{unique_name('find-route')}.txt"
-        self.ensure_terminal()
-        self.open_file_browser()
-        self.create_file_via_browser(fname)
-        self.open_file_in_editor(fname)
-        assert self.editor_status_present(), "editor did not mount for the routing test"
-
-        self.manual_step(
-            "The editor tab is focused. Press the Find shortcut "
-            "(macOS: Cmd+F  ·  Windows/Linux: Ctrl+F).",
-            "The editor's Find widget opens (Monaco), not the terminal search.",
-        )
-
-        # Now a terminal surface.
-        self.open_new_terminal()
-        self.wait(self.has_terminal, what="a terminal to focus for routing")
-        self.manual_step(
-            "Now click into the terminal pane to focus it and press the same Find "
-            "shortcut (macOS: Cmd+F  ·  Windows/Linux: Ctrl+F).",
-            "The terminal's search bar opens, not the editor Find widget -- the "
-            "shortcut routed to the context-appropriate surface.",
-        )
-
     # ── Right-click terminal: menu vs Quick Copy/Paste (MT-UI-26..30) ─────────
     def test_terminal_context_menu_and_quick_copy_paste(self):
         """The harness opens the real terminal context menu (asserting Copy All /
@@ -235,6 +107,13 @@ class TestInputRouting(
         ``terminal-context-trigger-<tab>`` testid; the actual clipboard transfer
         is operator-confirmed (the bridge cannot read the OS clipboard)."""
         self.close_all_tabs()
+        # MT-UI-26: a fresh profile leaves Right-Click Behavior unset (platform
+        # default), which is the context menu on macOS/Linux (#4915).
+        behavior = self.projection_region_cache(SETTINGS_REGION).get("rightClickBehavior")
+        assert behavior is None, (
+            f"Right-Click Behavior is {behavior!r}, expected the platform default "
+            "(unset) -- reset it in Settings > Terminal before this run"
+        )
         self.ensure_terminal()
         marker = "CTX_MENU_MARKER_5120"
         self.run_command(f"echo {marker}")
@@ -253,74 +132,36 @@ class TestInputRouting(
         self.driver.press_key("Escape")
 
         self.manual_step(
-            "Right-click inside the terminal pane to open its context menu, then "
-            "use 'Copy All' (or select text first and 'Copy Selection'). Paste "
-            "the result into any external editor.",
-            f"The pasted text contains {marker!r} -- the menu copied to the real "
-            "clipboard.",
-        )
-        self.manual_step(
-            "Now test Quick Copy/Paste on the terminal:\n"
-            "  - select terminal text with the mouse (Quick Copy: it goes to the "
-            "clipboard on selection, if enabled), and\n"
-            "  - middle-click or right-click to Quick Paste it back.",
-            "Quick Copy/Paste move text via the real clipboard as configured; the "
-            "right-click menu is not shown when Quick Paste is the bound action.",
+            "Right-click inside the terminal pane (a plain right-click, release "
+            "without moving). Then use 'Copy All' (or select text first and "
+            "'Copy Selection') and paste the result into any external editor.",
+            "The menu opens and stays open on the release -- nothing is pasted "
+            f"into the terminal -- and the pasted text contains {marker!r}.",
         )
 
-    # ── Drag tab to a panel edge → split (MT-TAB-06) ──────────────────────────
-    def test_drag_tab_to_edge_creates_split(self):
-        """The harness builds two tabs in one panel; the operator drags one to a
-        panel edge; the harness asserts a second leaf panel appeared.
-
-        Edge drop zones (``PanelDropZone``) render only during an active drag and
-        resolve through dnd-kit collision detection, which the synthetic
-        ``drag_to`` cannot reproduce -- so the drag is operator-driven, the
-        resulting split is harness-asserted from ``rootPanel``."""
-        self._reset_to_single_terminal()
-        self.driver.click(NEW_TERMINAL)
-        self.wait(lambda: self.tab_count() >= 2, what="a second tab to drag")
-        assert self.leaf_count() == 1
-
-        self.manual_step(
-            "Drag one of the two terminal tabs onto the LEFT (or RIGHT) edge of "
-            "the terminal pane and drop it there (a split-preview highlight "
-            "appears at the edge).",
-            "The pane splits into two side-by-side panels, each with a terminal.",
+        # MT-UI-27/28: Quick Copy/Paste is opt-in -- switch it on for the
+        # operator, and restore the platform default afterwards.
+        self.select_setting(
+            "terminal", "settings-right-click-behavior", "quickAction",
+            key="rightClickBehavior", expected="quickAction",
         )
-
-        self.wait(lambda: self.leaf_count() == 2, what="the drag to create a split")
-        assert self.driver.get_state("rootPanel.type") == "split"
-        assert self.driver.exists(CLOSE_PANEL)
-        self.close_all_tabs()
-
-    # ── Drag tab across groups (MT-TAB-07) ────────────────────────────────────
-    def test_drag_tab_across_groups(self):
-        """The harness builds a 2-panel split with a tab in the first; the operator
-        drags a tab from one panel into the other (a cross-group move); the
-        harness asserts the panel that now owns the tab changed."""
-        self._reset_to_single_terminal()
-        # Create a second panel (group) with its own terminal.
-        self.driver.click(SPLIT_H)
-        self.wait(lambda: self.leaf_count() == 2, what="two panels")
-        self.driver.click(NEW_TERMINAL)
-        # Two tabs in the active panel so one can be dragged to the other group.
-        self.driver.click(NEW_TERMINAL)
-        self.wait(lambda: self.tab_count() >= 3, what="tabs to move across groups")
-        before = self.driver.get_state("rootPanel")
-
-        self.manual_step(
-            "Drag a tab from one split panel into the CENTER of the OTHER panel "
-            "(drop onto the center zone, not an edge).",
-            "The tab moves into the other group; the source panel keeps its "
-            "remaining tab(s).",
-        )
-
-        self.wait(
-            lambda: self.driver.get_state("rootPanel") != before,
-            what="the panel tree to change after the cross-group move",
-        )
-        self.close_all_tabs()
+        try:
+            self.close_all_tabs()
+            self.ensure_terminal()
+            self.manual_step(
+                "Quick Copy/Paste is now on. In the terminal:\n"
+                "  - select some text with the mouse and right-click: it is copied "
+                "(the selection clears), then\n"
+                "  - right-click with nothing selected: the clipboard is pasted.",
+                "Right-click copies the selection or pastes when nothing is "
+                "selected; no menu is shown.",
+            )
+        finally:
+            self.select_setting(
+                "terminal", "settings-right-click-behavior", "__platform_default__",
+                key="rightClickBehavior", expected=None,
+            )
+            self.close_all_tabs()
 
     # ── Drag a connection into a folder (MT-CONN-01/24) ───────────────────────
     def test_drag_connection_into_folder(self):

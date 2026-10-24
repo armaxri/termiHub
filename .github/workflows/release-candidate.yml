@@ -8,7 +8,8 @@ name: "Release Candidate: Full Integration"
 # on that alone. This workflow runs EVERY integration lane, with no path filter, on
 # one exact commit — the commit it is dispatched on (`github.sha`):
 #
-#   * system-integration.yml  — bridge integration lane (Linux/macOS/Windows), the
+#   * system-integration.yml  — bridge integration lane (Linux/macOS/Windows, plus
+#                                linux-arm64 on every candidate, #4934), the
 #                                display-critical grades, the agent Docker suites
 #   * integration-fixtures.yml — core/tests against the live Docker fixtures and the
 #                                polkit D-Bus verifier

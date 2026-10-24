@@ -290,7 +290,7 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("toggle-sidebar");
   });
 
-  it("does not match toggle-sidebar for Ctrl+B (tmux prefix passes through)", () => {
+  it("does not match toggle-sidebar for Ctrl+B (tmux prefix passes through, MT-KB-10)", () => {
     const event = makeKeyEvent("b", { ctrl: true });
     expect(findMatchingAction(event)).toBeNull();
   });
@@ -314,7 +314,7 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("close-tab");
   });
 
-  it("does not match close-tab for Ctrl+W (readline delete-word passes through)", () => {
+  it("does not match close-tab for Ctrl+W (readline delete-word passes through, MT-KB-09)", () => {
     const event = makeKeyEvent("w", { ctrl: true });
     expect(findMatchingAction(event)).toBeNull();
   });
@@ -329,7 +329,7 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("split-right");
   });
 
-  it("does not match split-right for Ctrl+\\ (SIGQUIT passes through)", () => {
+  it("does not match split-right for Ctrl+\\ (SIGQUIT passes through, MT-KB-11)", () => {
     const event = makeKeyEvent("\\", { ctrl: true });
     expect(findMatchingAction(event)).toBeNull();
   });

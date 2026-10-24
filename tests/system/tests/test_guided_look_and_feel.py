@@ -8,25 +8,33 @@ width. The underlying rules are pinned by unit tests (named per item in
 scrollback, zoom, split, a sample file in the editor, the Settings category)
 and the operator looks.
 
-Covered: MT-UI-05, MT-UI-13, MT-UI-40..56.
+Covered: MT-UI-40, MT-UI-46. The theme, layout and scrollbar items
+(MT-UI-05, 13, 41, 43, 45, 47..52) are graded automatically by
+``test_theme_grades.py`` / ``test_layout_grades.py`` /
+``test_terminal_command_marks.py`` since #4930. MT-UI-54/55 (Settings layout)
+and MT-UI-56 (imported workspace confirmations) are automated by the rendered
+visual checks and unit tests (#4928), and MT-UI-53 (sidebar rows at real
+widths) by the rendered visual checks (#4954).
+
+Native window capture (#4937, ``test_native_paint_grades.py``) automates the
+zoom / split repaint (MT-UI-42), the inline images (MT-UI-44) and the
+cold-launch white flash that MT-UI-40 used to open with. MT-UI-40 and MT-UI-46
+are reduced to judging a saved image: the harness captures the window (by the
+test app's PID) and attaches a Dark | Light contact sheet, or the WebGL | DOM
+pair, so the operator confirms legibility and font choice from evidence that
+shows the GPU canvas.
 
 Run with ``./pytest.sh --manual -k guided_look_and_feel -s``.
 """
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from termihub_harness import (
     SETTINGS_REGION,
     ConnectionsUi,
-    EditorUi,
-    FilesUi,
-    LayoutUi,
     ManualUi,
-    NetworkToolsUi,
     SettingsUi,
     SidebarUi,
     SystemTest,
@@ -34,25 +42,20 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.native_capture import NativeCaptureUi, save_sheet
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
 THEME_SELECT = "appearance-theme-select"
-SPLIT_H = "terminal-view-split-horizontal"
-NEW_TERMINAL = "terminal-view-new-terminal"
-_ZOOM = "Cmd+Shift+Enter" if sys.platform == "darwin" else "Ctrl+Shift+Enter"
 
 
 class TestGuidedLookAndFeel(
+    NativeCaptureUi,
     TerminalUi,
     TabsUi,
-    LayoutUi,
     ConnectionsUi,
     SidebarUi,
     SettingsUi,
-    EditorUi,
-    FilesUi,
-    NetworkToolsUi,
     ManualUi,
     SystemTest,
 ):
@@ -70,52 +73,10 @@ class TestGuidedLookAndFeel(
             what=f"the {theme} theme",
         )
 
-    def _terminal_with_scrollback(self) -> None:
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command("seq 1 500" if sys.platform != "win32" else "1..500")
-        self.wait_for_output("500")
-
-    def _sample_file_in_editor(self) -> str:
-        self.ensure_terminal()
-        self.open_file_browser()
-        name = f"{unique_name('look')}.py"
-        self.create_file_via_browser(name)
-        self.open_file_in_editor(name)
-        return name
-
-    # ── MT-UI-05 / MT-UI-13 ──────────────────────────────────────────────────
-    def test_os_theme_toggle_switches_app_live(self):
-        """MT-UI-05."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self._theme("system")
-        self.manual_step(
-            "With the System theme selected, toggle the OS between dark and light mode.",
-            "termiHub switches theme automatically, without a restart.",
-        )
-        self._theme("dark")
-
-    def test_single_panel_border_blends_with_sidebar(self):
-        """MT-UI-13."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.wait(lambda: self.leaf_count() == 1, what="a single panel")
-        self.manual_observe(
-            "Look at the left border of the single terminal panel against the sidebar.",
-            "It blends naturally against the sidebar edge.",
-        )
-
-    # ── MT-UI-40 / MT-UI-41: light/dark sweep and scrollbars ─────────────────
+    # ── MT-UI-40: light/dark sweep ───────────────────────────────────────────
     def test_light_dark_look_sweep(self):
-        """MT-UI-40."""
+        """MT-UI-40 (the cold-launch flash is graded automatically since #4937)."""
         self._theme("dark")
-        self.restart_app()
-        self.manual_observe(
-            "The harness cold-relaunched the app in Dark.",
-            "No white or grey flash on first paint; Dark is deep blue-charcoal with "
-            "bright-blue accents.",
-        )
         self.create_local_connection(unique_name("toast"))
         self.manual_step(
             "Hover the success toast and Tab to its close X. Then connect a remote agent "
@@ -124,94 +85,24 @@ class TestGuidedLookAndFeel(
             "The close X is top-right with visible hover and focus ring; badges, banner and "
             "queue colours are legible.",
         )
+        dark = self.try_capture_app_window()
         self._theme("light")
-        self.manual_step(
-            "Re-check each surface in Light (the harness switched it), then answer.",
+        sheet = save_sheet([dark, self.try_capture_app_window()], "dark-light")
+        self.manual_observe(
+            "Re-check each surface in Light (the harness switched it)"
+            + (f"; the Dark | Light contact sheet is at {sheet}." if sheet else "."),
             "Every surface stays legible and on-theme in both Light and Dark.",
+            evidence=sheet,
         )
         self._theme("dark")
-
-    def test_scrollbar_thumb_visible_at_rest_in_every_theme(self):
-        """MT-UI-41."""
-        self._terminal_with_scrollback()
-        for theme in ("dark", "light", "solarized-dark"):
-            self._theme(theme)
-            self.switch_to_terminal_tab()
-            self.manual_step(
-                f"Theme {theme}: look at the terminal, sidebar and Settings scrollbars; "
-                "hover a thumb, then move away.",
-                "The thumb is visible without hovering, brightens on hover and returns; no "
-                "layout shift.",
-            )
-        self._theme("dark")
-
-    # ── MT-UI-42..46: macOS/WebGL paint ──────────────────────────────────────
-    @pytest.mark.manual(platforms=["macos"])
-    def test_zoomed_terminal_repaints_without_scrolling(self):
-        """MT-UI-42."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command("seq 1 200")
-        self.wait_for_output("200")
-        self.manual_step(
-            f"Zoom the tab ({_ZOOM}) and un-zoom a few times; then split the view and drag "
-            "the splitter.",
-            "Content shows at once at the new size without scrolling; the split terminal "
-            "reflows and repaints.",
-        )
-
-    @pytest.mark.manual(platforms=["macos"])
-    def test_osc133_gutter_bars_and_jump_highlight(self):
-        """MT-UI-43 (zsh)."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command("true")
-        self.run_command("false")
-        self.run_command("seq 1 200")
-        self.wait_for_output("200")
-        self.manual_step(
-            "Look at the gutter next to `true` and `false`, then press Cmd+Up.",
-            "A green bar by true, a red bar by false, no overlap; the seq prompt row is "
-            "briefly highlighted.",
-        )
-
-    @pytest.mark.manual(platforms=["macos", "windows"])
-    def test_inline_sixel_and_iterm2_images(self):
-        """MT-UI-44."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        how = (
-            "In the default PowerShell tab `cat` a .six file and an iTerm2 image file "
-            "(installed MSI, #4121)"
-            if sys.platform == "win32"
-            else "Run `img2sixel` on a PNG, then `imgcat` on a PNG"
-        )
-        self.manual_step(
-            f"{how}. Scroll the images out of view and back. Repeat with the DOM renderer "
-            "(Settings > Terminal).",
-            "Both pictures draw inline followed by the prompt and scroll with the text on "
-            "WebGL and DOM.",
-        )
-
-    @pytest.mark.manual(platforms=["macos"])
-    def test_sidebar_paints_fully_on_cold_launch(self):
-        """MT-UI-45."""
-        self.enable_experimental_features()
-        self.manual_step(
-            "Save one remote agent (Agents section, + New Agent, any host).",
-            "The agent is listed.",
-        )
-        for _ in range(3):
-            self.restart_app()
-            self.manual_observe(
-                "The harness cold-relaunched the app (narrow the window before one of the "
-                "launches).",
-                "Headers, filter box and all rows are laid out on first paint; no resize is "
-                "needed.",
-            )
 
     def test_cjk_combining_rtl_emoji_on_webgl(self):
-        """MT-UI-46 (Git Bash on Windows)."""
+        """MT-UI-46 (Git Bash on Windows).
+
+        The cell layout is asserted by ``test_terminal_glyph_shaping.py``; this
+        judges the fonts the renderers chose, from a WebGL | DOM contact sheet
+        of the native window capture (#4937).
+        """
         self.close_all_tabs()
         self.ensure_terminal()
         self.run_command(
@@ -219,160 +110,21 @@ class TestGuidedLookAndFeel(
             "👨\\342\\200\\215👩\\342\\200\\215👧|\\n'"
         )
         self.wait_for_output("שלום")
+        webgl = self.try_capture_app_window()
+        tab = self.switch_to_terminal_tab()["id"]
+        if self.driver.measure_terminal(tab).get("renderer") == "webgl":
+            self.driver.lose_terminal_webgl_context(tab)
+        self.wait(
+            lambda: self.driver.measure_terminal(tab).get("renderer") == "dom",
+            timeout=30,
+            what="the DOM renderer",
+        )
+        sheet = save_sheet([webgl, self.try_capture_app_window()], "webgl-dom")
         self.manual_observe(
-            "Look at the four printed lines.",
+            "Look at the four printed lines"
+            + (f" in the WebGL | DOM contact sheet ({sheet})." if sheet else " (now on DOM)."),
             "CJK fill two columns each and the '|' lines up; accents sit on é and ä; Hebrew "
-            "and Arabic use a real font; the family shows three emoji in six columns.",
+            "and Arabic use a real font; the family shows three emoji in six columns — in "
+            "both halves.",
+            evidence=sheet,
         )
-
-    # ── MT-UI-47 / MT-UI-48: zoom overlay modality ───────────────────────────
-    def test_zoom_overlay_leaves_escape_to_terminal(self):
-        """MT-UI-47."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.manual_step(
-            f"Run `vim`, press i, zoom ({_ZOOM}). Press Escape, type `:q!` Enter. Run "
-            "`less /etc/hosts`, wheel-scroll, quit. Tab through the overlay; right-click its "
-            "title > Set Color…. Press Shift+Escape.",
-            "Escape leaves insert mode and vim quits; the wheel scrolls less; Tab never "
-            "reaches the panels behind; the menu works; Shift+Escape closes the overlay.",
-        )
-
-    def test_context_menu_in_zoomed_terminal_above_overlay(self):
-        """MT-UI-48."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.manual_step(
-            f"Zoom the tab ({_ZOOM}); right-click its title in the overlay header; hover "
-            "each item, pick Rename, press Escape. Close the overlay, open Open Connections "
-            "with an SSH host that has monitoring on and click its refresh-interval button.",
-            "The menu draws fully above the scrim and every item works; the refresh menu "
-            "opens above the dialog and updates the label.",
-        )
-
-    # ── MT-UI-49..52: theme follows into editor, charts, scrollbars ──────────
-    def test_every_light_theme_gets_a_light_editor(self):
-        """MT-UI-49."""
-        self.close_all_tabs()
-        self._sample_file_in_editor()
-        for theme, look in (("solarized-light", "light"), ("light", "light"), ("dark", "dark")):
-            self._theme(theme)
-            self.manual_step(
-                f"Theme {theme}: look at the open editor tab.",
-                f"The editor is {look} (background and code text match the theme).",
-            )
-        self.manual_step(
-            "Create a custom theme based on Light, select it and look at the editor.",
-            "The editor is light, not a dark block inside a light app.",
-        )
-        self._theme("dark")
-
-    def test_charts_and_primary_buttons_follow_live_theme(self):
-        """MT-UI-50."""
-        self.close_all_tabs()
-        self._theme("dark")
-        self.start_ping("127.0.0.1")
-        self.manual_step(
-            "Let the latency chart draw, then switch Settings > Appearance to Light without "
-            "closing it. Create a custom theme with Accent #ffd700 and watch Save Theme.",
-            "The chart line, labels and grid switch to the light palette at once and keep "
-            "updating; the yellow-accent button text turns dark and readable.",
-        )
-        self.stop_ping()
-        self._theme("dark")
-
-    def test_terminal_and_breadcrumb_scrollbars_follow_global_style(self):
-        """MT-UI-51."""
-        self._terminal_with_scrollback()
-        self.manual_step(
-            "Keep the pointer off the terminal and look at the right edge; print long lines "
-            "(`yes $(printf x%.0s {1..300}) | head -50`); enable horizontal scrolling and "
-            "scroll right; open the file browser deep enough for the breadcrumb to overflow "
-            "and scroll it.",
-            "The vertical thumb is visible at rest in its own strip, never over text; the "
-            "horizontal thumb is visible and clears the last row; the breadcrumb shows the "
-            "app's thin scrollbar.",
-        )
-
-    def test_editor_background_matches_panes_in_every_theme(self):
-        """MT-UI-52."""
-        self.close_all_tabs()
-        self._sample_file_in_editor()
-        self.driver.click(SPLIT_H)
-        self.wait(lambda: self.leaf_count() == 2, what="two panels")
-        self.driver.click(NEW_TERMINAL)
-        for theme in ("dark", "light", "solarized-dark", "solarized-light"):
-            self._theme(theme)
-            self.manual_step(
-                f"Theme {theme}: compare the editor, its gutter and minimap with the "
-                "terminal pane.",
-                "They share the terminal background; syntax colours are unchanged.",
-            )
-        self.manual_step(
-            "Create a custom theme and change its Terminal background while watching the "
-            "editor.",
-            "The editor background repaints live without reopening the file.",
-        )
-        self._theme("dark")
-
-    # ── MT-UI-53..56: layout at real widths, Settings ────────────────────────
-    def test_every_sidebar_at_default_and_minimum_width(self):
-        """MT-UI-53."""
-        self.close_all_tabs()
-        self.enable_experimental_features()
-        self.manual_step(
-            "Create workspaces 'test' and 'ssh-production-cluster', a macro, a scheduled "
-            "workflow, a tunnel, a service, an HTTP monitor and a remote agent. Open every "
-            "sidebar at the default width, then drag the edge to the minimum (or Home on "
-            "the handle) and open every sidebar again; hover and Tab onto rows; use the '…' "
-            "overflow menus.",
-            "Nothing clips; overflowing toolbars keep the main action plus one '…' menu; "
-            "names use the full row with a tooltip when cut; row actions show on hover and "
-            "focus; Schedules/History/agent headers keep their buttons; the overflow actions "
-            "run like the buttons.",
-        )
-
-    def test_settings_fields_styled_on_fresh_start(self):
-        """MT-UI-54."""
-        self.restart_app()
-        self.open_settings_tab()
-        self.manual_step(
-            "Without opening any connection editor, visit every Settings category; narrow "
-            "the Settings tab to ~420 px for General and Sessions; then open a new SSH "
-            "connection editor.",
-            "Toggle rows: label + hint left, control right; input rows: label, control, "
-            "hint; the SSH key '…' button joins its input; action buttons sit right; the "
-            "connection editor is unchanged.",
-        )
-
-    def test_settings_headers_keep_buttons_at_minimum_window(self):
-        """MT-UI-55."""
-        self.open_settings_category("external-files")
-        self.manual_step(
-            "Resize the window to its minimum (800x600). Look at the External Connection "
-            "Files header and click Create File; check File Types, Custom Grammars and "
-            "Shell Integration headers; then widen until the header fits one row.",
-            "Buttons wrap below the title and stay clickable; the create prompt keeps its "
-            "field usable; other headers wrap too; once wide enough, title and buttons share "
-            "one row.",
-        )
-
-    def test_imported_workspace_confirmations_review_and_revoke(self):
-        """MT-UI-56."""
-        self.close_all_tabs()
-        self.manual_step(
-            "Import a workspace whose tab has an initialCommand (echo hello), open it in the "
-            "workspace editor and Confirm the command.",
-            "The command shows as confirmed.",
-        )
-        self.open_settings_category("security")
-        self.manual_step(
-            "In 'Imported Workspace Confirmations' click the trash icon > Revoke; reopen the "
-            "workspace editor and launch the workspace; confirm again, then Revoke All. "
-            "Repeat the look at 800x600.",
-            "It first lists '1 imported item is confirmed…'; after revoking nothing is "
-            "confirmed and launching waits for Confirm; Revoke All empties the list; nothing "
-            "clips at 800x600.",
-        )
-        # After Revoke All, settings.json no longer holds any confirmed entry.
-        assert not self.persisted_settings().get("workspaceImportAllowlist")

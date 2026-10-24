@@ -60,9 +60,11 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
-import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
+import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
+import { holdSessionInput, lastSessionInputAt } from "@/services/sessionInputGate";
+import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
@@ -293,6 +295,12 @@ interface TerminalProps {
    */
   replayScrollbackOnAttach?: boolean;
 }
+
+/**
+ * How long (ms) a just-shown terminal waits for its show-time fit before it
+ * runs the fit itself, so held input is not released ahead of a late resize.
+ */
+export const SHOW_FIT_STALL_MS = 150;
 
 /**
  * Manages an xterm.js instance and its PTY backend connection.
@@ -862,11 +870,30 @@ export function Terminal({
         // Every PTY resize goes through this sender: concurrent resize_terminal
         // invokes can be applied out of order by the backend, which would leave
         // the PTY at a stale size the dedupe above never corrects (#4841).
-        const sendResize = createOrderedResize(resizeTerminal, (err, r) =>
-          frontendLog(
-            "terminal",
-            `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
-          )
+        // The session's output after a resize tells that the shell redrew.
+        const redrawWait = createShellRedrawWait();
+        // Input typed while a resize is in flight waits for it, so the shell
+        // echoes it at the grid the terminal already shows (#4942).
+        const sendResize = createOrderedResize(
+          // Input sent just before is let the shell echo first (#4958): a
+          // resize landing mid-echo makes its redraw wipe the echoed line.
+          (sid, cols, rows) => {
+            const echo = redrawWait.waitForInputEcho(lastSessionInputAt(sid));
+            if (!echo) return resizeTerminal(sid, cols, rows);
+            return echo.then(() => resizeTerminal(sid, cols, rows));
+          },
+          (err, r) =>
+            frontendLog(
+              "terminal",
+              `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
+            ),
+          // Held until the resize is applied and then until the shell has
+          // redrawn for it (#4958): its SIGWINCH / ConPTY repaint would
+          // otherwise clobber input that arrived first.
+          (sid) => {
+            const release = holdSessionInput(sid, "resize");
+            return () => redrawWait.releaseAfterRedraw(release);
+          }
         );
 
         // Output batching: stage chunks and flush in a single RAF callback.
@@ -1046,6 +1073,7 @@ export function Terminal({
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          redrawWait.notifyOutput();
           // First output chunk for this session is our readiness signal for the
           // workspace-launch initial command (FEC-003). Idempotent via the guard.
           sendInitialCommand();
@@ -1226,6 +1254,8 @@ export function Terminal({
 
         cleanupRef.current = () => {
           unsubOutput();
+          // No more output will arrive to end a redraw wait: release its input.
+          redrawWait.releaseAll();
           unsubExit();
           // Cancel the pending initial-command fallback and block any further
           // send — the session is being torn down or replaced, so the command
@@ -1941,41 +1971,102 @@ export function Terminal({
   useLayoutEffect(() => {
     isOnScreenRef.current = isOnScreen;
     webglRendererRef.current?.setVisible(isOnScreen);
-    if (!isOnScreen || !hiddenFitPendingRef.current) return;
+    if (!isOnScreen) return;
     // Run the fit deferred while off screen (#4863) once the renderer leased
     // above has measured (next frame), so it lands on the grid the terminal is
     // shown with: one PTY resize. Fitting twice to the same grid is a no-op, so
     // the re-fits on show (visibility effect, renderer swap) send nothing more.
-    hiddenFitPendingRef.current = false;
-    let ran = false;
-    const rafId = requestAnimationFrame(() => {
-      ran = true;
+    let fitRafId: number | null = null;
+    let fitRan = false;
+    if (hiddenFitPendingRef.current) {
+      hiddenFitPendingRef.current = false;
+      fitRafId = requestAnimationFrame(() => {
+        fitRan = true;
+        const xterm = xtermRef.current;
+        const fitAddon = fitAddonRef.current;
+        const el = terminalElRef.current;
+        // Hidden again before the frame: the effect cleanup re-armed the fit.
+        if (!xterm || !fitAddon || !el || !isOnScreenRef.current) return;
+        // Same degenerate-fit guards as every other fit path (#2693, #2700): a
+        // ~0-sized container is left to the ResizeObserver to re-fit.
+        if (!isFitReady(el)) return;
+        try {
+          if (horizontalScrollingRef.current) {
+            applyHorizontalScrollResize(xterm, fitAddon, el);
+          } else if (isProposedFitSafe(fitAddon)) {
+            fitAddon.fit();
+          }
+          // As after a ResizeObserver fit: re-pin the bottom and re-render the thumb.
+          if (!userScrolledUpRef.current) xterm.scrollToBottom();
+          scrollbarRef.current?.update();
+        } catch (err) {
+          // Once per show; the next ResizeObserver fit re-fits.
+          frontendLog("terminal", `deferred fit on show failed tab=${tabId}: ${errorMessage(err)}`);
+        }
+      });
+    }
+    // Hold input until the shown grid has settled (#4942). Showing can change
+    // the grid (renderer swap re-fit, the deferred fit above, the slot adopting
+    // the element, a ResizeObserver fit once the panel is laid out), and input
+    // sent before that resize would reach the shell at the old width while the
+    // terminal displays the new one. Checked each frame: released once the
+    // container is laid out and a fit would keep xterm's grid; any resize a fit
+    // sent meanwhile holds input itself until applied. The gate bounds the hold
+    // if the grid never settles or frames stall (occluded window).
+    const showSessionId = sessionIdRef.current;
+    const releaseShowHold = showSessionId ? holdSessionInput(showSessionId, "show") : null;
+    let showHoldRafId: number | null = null;
+    let showFitStallTimer: ReturnType<typeof setTimeout> | null = null;
+    const isShownGridSettled = () =>
+      // Horizontal scrolling pins the column count, so only the frame is awaited.
+      horizontalScrollingRef.current ||
+      isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
+    const settleShowHold = () => {
+      if (showHoldRafId !== null) cancelAnimationFrame(showHoldRafId);
+      if (showFitStallTimer !== null) clearTimeout(showFitStallTimer);
+      showHoldRafId = null;
+      showFitStallTimer = null;
+      releaseShowHold?.();
+    };
+    const releaseWhenSettled = () => {
+      showHoldRafId = null;
+      if (!isShownGridSettled()) {
+        showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+        return;
+      }
+      settleShowHold();
+    };
+    // The fit the show owes normally runs within a frame. On a busy machine
+    // (or a throttled view) it can come much later, and input released by the
+    // gate's time bound would then reach the shell just before that resize
+    // (#4958). So once the wait stalls, run the owed fit here; its resize then
+    // holds input as usual.
+    const fitIfStalled = () => {
+      showFitStallTimer = null;
       const xterm = xtermRef.current;
       const fitAddon = fitAddonRef.current;
       const el = terminalElRef.current;
-      // Hidden again before the frame: the effect cleanup re-armed the fit.
-      if (!xterm || !fitAddon || !el || !isOnScreenRef.current) return;
-      // Same degenerate-fit guards as every other fit path (#2693, #2700): a
-      // ~0-sized container is left to the ResizeObserver to re-fit.
-      if (!isFitReady(el)) return;
+      if (isShownGridSettled() || !xterm || !fitAddon || !isFitReady(el)) return;
+      if (!isProposedFitSafe(fitAddon)) return;
+      frontendLog("terminal", `show-time fit stalled; fitting now tab=${tabId}`);
       try {
-        if (horizontalScrollingRef.current) {
-          applyHorizontalScrollResize(xterm, fitAddon, el);
-        } else if (isProposedFitSafe(fitAddon)) {
-          fitAddon.fit();
-        }
-        // As after a ResizeObserver fit: re-pin the bottom and re-render the thumb.
-        if (!userScrolledUpRef.current) xterm.scrollToBottom();
-        scrollbarRef.current?.update();
+        fitAddon.fit();
       } catch (err) {
-        // Once per show; the next ResizeObserver fit re-fits.
-        frontendLog("terminal", `deferred fit on show failed tab=${tabId}: ${errorMessage(err)}`);
+        frontendLog("terminal", `stalled show fit failed tab=${tabId}: ${errorMessage(err)}`);
       }
-    });
+      if (isShownGridSettled()) settleShowHold();
+    };
+    if (releaseShowHold) {
+      showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+      showFitStallTimer = setTimeout(fitIfStalled, SHOW_FIT_STALL_MS);
+    }
     return () => {
-      cancelAnimationFrame(rafId);
-      // Hidden (or unmounted) before the frame ran: the fit is still owed.
-      if (!ran) hiddenFitPendingRef.current = true;
+      if (fitRafId !== null) {
+        cancelAnimationFrame(fitRafId);
+        // Hidden (or unmounted) before the frame ran: the fit is still owed.
+        if (!fitRan) hiddenFitPendingRef.current = true;
+      }
+      settleShowHold();
     };
   }, [isOnScreen, tabId]);
 

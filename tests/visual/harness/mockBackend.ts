@@ -59,6 +59,11 @@ declare global {
     __VISUAL_SCENARIO__?: VisualScenario;
     /** Commands the app invoked that the mock has no explicit answer for. */
     __VISUAL_UNHANDLED__?: string[];
+    /**
+     * Every command the app invoked, in order (`intent_dispatch:<kind>` for an
+     * intent), so a check can compare what two triggers of one action did.
+     */
+    __VISUAL_INVOKED__?: string[];
   }
 }
 
@@ -114,6 +119,161 @@ const SCHEDULES = {
     },
   ],
 };
+
+/**
+ * Row data for the sidebars the wire fixtures leave empty (#4954), with names
+ * long enough to be cut at the minimum sidebar width so the row checks can see
+ * a cut name keep its tooltip.
+ */
+const LONG_CONNECTION = {
+  id: "Work/Production database replica in the Frankfurt datacenter",
+  name: "Production database replica in the Frankfurt datacenter",
+  folderId: "Work",
+  config: { type: "local", config: {} },
+};
+
+const AGENT_SETTINGS = {
+  enableDocker: true,
+  enableFileBrowser: true,
+  enableMonitoring: true,
+  logLevel: "info",
+  persistentScrollbackBufferSizeMb: 1,
+  startingDirectory: "~",
+  verboseTracing: false,
+};
+
+function agentRow(id: string, name: string, connectionState: string) {
+  return {
+    id,
+    name,
+    config: {
+      host: `${id}.example.com`,
+      port: 22,
+      username: "ops",
+      authMethod: "password",
+      allowSelfUpdate: false,
+      updateStrategy: "immediate",
+    },
+    agentSettings: AGENT_SETTINGS,
+    isExpanded: false,
+    connectionState,
+  };
+}
+
+/** The `agents` region: one connected and one dropped remote agent. */
+const AGENTS_VIEW = {
+  agents: [
+    agentRow("agent-lab", "Raspberry Pi in the lab behind the office firewall", "connected"),
+    agentRow("agent-edge", "Edge gateway in the Frankfurt datacenter rack", "disconnected"),
+  ],
+  sessions: {},
+  definitions: {},
+  folders: {},
+};
+
+const TUNNEL_STATS = {
+  bytesSent: 2048,
+  bytesReceived: 8192,
+  activeConnections: 1,
+  totalConnections: 3,
+};
+
+/** The `tunnels` region: a running local forward and a stopped dynamic one. */
+const TUNNELS_VIEW = {
+  tunnels: [
+    {
+      id: "tun-db",
+      name: "Postgres on the production database replica",
+      sshConnectionId: "Work/Build Box",
+      tunnelType: {
+        type: "local",
+        config: { localHost: "127.0.0.1", localPort: 15432, remoteHost: "db", remotePort: 5432 },
+      },
+      autoStart: false,
+      reconnectOnDisconnect: true,
+    },
+    {
+      id: "tun-socks",
+      name: "SOCKS proxy through the build box for the staging network",
+      sshConnectionId: "Work/Build Box",
+      tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+      autoStart: false,
+      reconnectOnDisconnect: false,
+    },
+  ],
+  states: {
+    "tun-db": { tunnelId: "tun-db", status: "connected", stats: TUNNEL_STATS },
+  },
+};
+
+/** Embedded services: a running HTTP share and a stopped FTP server. */
+const EMBEDDED_SERVERS = [
+  {
+    id: "srv-http",
+    name: "Release artifacts for the staging deployment",
+    serverType: "http",
+    rootDirectory: "/home/visual/releases",
+    bindHost: "127.0.0.1",
+    port: 8080,
+    autoStart: false,
+    readOnly: true,
+  },
+  {
+    id: "srv-ftp",
+    name: "Firmware images for the lab devices",
+    serverType: "ftp",
+    rootDirectory: "/home/visual/firmware",
+    bindHost: "0.0.0.0",
+    port: 2121,
+    autoStart: false,
+    readOnly: false,
+  },
+];
+
+const EMBEDDED_SERVER_STATES = [
+  {
+    serverId: "srv-http",
+    status: "running",
+    stats: { activeConnections: 0, totalConnections: 2, bytesSent: 4096, bytesReceived: 512 },
+    startedAt: STAMP,
+  },
+];
+
+/** HTTP monitors: a healthy running one and a paused one, both with long URLs. */
+const HTTP_MONITORS = [
+  {
+    config: {
+      id: "mon-api",
+      url: "https://api.staging.example.com/v2/health/readiness",
+      intervalMs: 30000,
+      method: "GET",
+      expectedStatus: 200,
+      timeoutMs: 5000,
+    },
+    running: true,
+    paused: false,
+    lastResult: {
+      monitorId: "mon-api",
+      statusCode: 200,
+      latencyMs: 42,
+      ok: true,
+      timestampMs: Date.parse(STAMP),
+    },
+  },
+  {
+    config: {
+      id: "mon-docs",
+      url: "https://documentation.internal.example.com/status",
+      intervalMs: 60000,
+      method: "HEAD",
+      expectedStatus: 200,
+      timeoutMs: 5000,
+    },
+    running: true,
+    paused: true,
+    lastResult: null,
+  },
+];
 
 /**
  * A fresh-install settings document (the backend's seed baseline), with the
@@ -293,8 +453,13 @@ function regionView(region: string, populated: boolean): unknown {
   if (region === "connections") {
     if (!populated) return {};
     const extra = window.__VISUAL_SCENARIO__?.storedSecrets ? STORED_SECRET_ROWS : [];
-    return { folders: wire.folders, connections: [...wire.connections, ...extra] };
+    return {
+      folders: wire.folders,
+      connections: [...wire.connections, LONG_CONNECTION, ...extra],
+    };
   }
+  if (region === "agents") return populated ? AGENTS_VIEW : {};
+  if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
   return {};
 }
 
@@ -305,6 +470,8 @@ export function handleCommand(cmd: string, args: Args): unknown {
   const scenario = window.__VISUAL_SCENARIO__ ?? {};
   const populated = scenario.populated ?? true;
   const wire = connectionsWire.loadConnectionsAndFolders;
+  const intentKind = (args?.intent as { kind?: string } | undefined)?.kind;
+  (window.__VISUAL_INVOKED__ ??= []).push(intentKind ? `${cmd}:${intentKind}` : cmd);
 
   switch (cmd) {
     // ── projection substrate ──
@@ -351,8 +518,6 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "get_agent_crash_notices":
     case "folder_paste_take_interrupted":
     case "get_recovery_warnings":
-    case "list_embedded_servers":
-    case "get_embedded_server_states":
     case "list_plugins":
       return [];
     case "list_available_shells":
@@ -376,6 +541,12 @@ export function handleCommand(cmd: string, args: Args): unknown {
       };
 
     // ── data the sidebars list ──
+    case "list_embedded_servers":
+      return populated ? EMBEDDED_SERVERS : [];
+    case "get_embedded_server_states":
+      return populated ? EMBEDDED_SERVER_STATES : [];
+    case "network_http_monitor_list":
+      return populated ? HTTP_MONITORS : [];
     case "load_connections_and_folders":
       return populated ? wire : { connections: [], folders: [], agents: [], externalErrors: [] };
     case "get_connection_types":
@@ -398,6 +569,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return populated ? SCHEDULES : { paused: false, schedules: [] };
     case "get_credential_store_status":
       return scenario.credentialStore ?? { mode: "none", status: "unavailable" };
+    case "unlock_credential_store":
+      // No master password matches, so the unlock dialog shows its error line.
+      throw new Error("invalid master password");
 
     // ── fire-and-forget ──
     case "record_frontend_log":

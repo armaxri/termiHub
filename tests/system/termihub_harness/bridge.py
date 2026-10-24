@@ -621,7 +621,19 @@ class Driver:
              "webglCanvas": {"width", "height"} | None,
              "domRows": [str, ...] | None,         # rows the DOM renderer painted
              "scrollbar": {"trackHeight", "thumbVisible",
-                           "thumbHeight", "thumbTop"} | None,
+                           "thumbHeight", "thumbTop",
+                           "gutterLeft", "gutterWidth",   # vs container left
+                           "thumbLeft", "thumbWidth",
+                           "thumbColor"} | None,          # computed colour
+             "paint": {"textRight", "rowsBottom",         # vs container (#4930)
+                       "containerBackground",              # computed colour
+                       "themeBackground",                  # xterm theme bg
+                       "horizontalScroll", "viewportClientBottom",
+                       "hscrollBarHeight"},
+             "decorations": [{"classes", "background",  # OSC 133 bars,
+                              "top", "left", "width", "height"}, ...],  # flash
+             "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px
+             "page": {"devicePixelRatio", "innerWidth", "innerHeight"},  # (#4937)
              "viewportY": int, "baseY": int}
 
         Read-only. Active tab unless ``tab_id`` is given.
@@ -641,7 +653,10 @@ class Driver:
               "text": str,              # the row's text, right-trimmed
               "cells": [{"x": int,      # column
                          "chars": str,  # base + attached combining/ZWJ marks
-                         "width": int}  # 2 = wide head, 0 = its spacer, 1 = narrow
+                         "width": int,  # 2 = wide head, 0 = its spacer, 1 = narrow
+                         "fg": str,     # "#rrggbb" it paints, via the theme (#4937)
+                         "bg": str,     # likewise, after inverse video
+                         "bold": bool}
                         , ...]}, ...]
 
         Read-only. Active tab unless ``tab_id`` is given.
@@ -675,6 +690,33 @@ class Driver:
                 "commit": commit,
             }
         )
+
+    def read_terminal_output(self, tab_id: Optional[str] = None) -> dict[str, Any]:
+        """Read the raw output stream a terminal was handed (#4931).
+
+        Everything written to the tab's xterm since it was registered, escapes
+        intact — including text that was later erased, which the buffer
+        :meth:`read_terminal` reads no longer holds. Returns::
+
+            {"output": str,               # the start of the stream (bounded head)
+             "written": int,              # data units written (chars / bytes)
+             "writes": int,               # write calls recorded
+             "truncated": bool,           # more was written than ``output`` holds
+             "msSinceLastWrite": float | None}
+
+        Read-only. Active tab unless ``tab_id`` is given.
+        """
+        return self._call({"action": "readTerminalOutput", "tabId": tab_id})
+
+    def read_frontend_log(self, contains: Optional[str] = None) -> list[dict[str, Any]]:
+        """Read the frontend Log Viewer history, oldest first (#4931).
+
+        Each entry is ``{"timestampMs", "level", "target", "message"}``; only
+        those whose message contains ``contains`` when given. Frontend DEBUG
+        entries (e.g. the terminal renderer transitions) never reach the app's
+        stdout log, so this is the way to assert on them. Read-only.
+        """
+        return self._call({"action": "readFrontendLog", "contains": contains})
 
     def lose_terminal_webgl_context(self, tab_id: Optional[str] = None) -> bool:
         """Force a real WebGL context loss on a terminal's renderer (#2988).

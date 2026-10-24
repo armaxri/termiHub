@@ -312,6 +312,34 @@ class TestFileBrowserLocal(
         assert not self.file_row_exists(name)
         self.switch_to_connections_sidebar()
 
+    # ── VS Code actions track availability (MT-FB-16/23, #4928) ─────────────
+    def test_vscode_menu_item_matches_availability(self):
+        """The file menu's 'Open in VS Code' item is present iff the app detected
+        VS Code (MT-FB-16): hidden when it is not installed, and the inverse."""
+        self._fresh_temp_browser()
+        name = f"e2e_fb_{unique_name('vscode')}.txt"
+        self.create_file_via_browser(name)
+        self.open_file_menu(name)
+        assert self.driver.exists("context-file-vscode") == bool(
+            self.driver.get_state("vscodeAvailable")
+        ), "VS Code menu item presence does not match vscodeAvailable"
+        self.dismiss_menu()
+        self.delete_entry(name)
+        self.switch_to_connections_sidebar()
+
+    def test_open_folder_vscode_toolbar_matches_availability(self):
+        """The toolbar 'open folder in VS Code' action is present iff the app
+        detected VS Code; the file-manager action is always there locally
+        (MT-FB-23, #2656)."""
+        self._fresh_temp_browser()
+        assert self.driver.exists(self.OPEN_IN_EXPLORER), (
+            "file-manager toolbar action should always be present in local mode"
+        )
+        assert self.driver.exists(self.OPEN_FOLDER_VSCODE) == bool(
+            self.driver.get_state("vscodeAvailable")
+        ), "VS Code toolbar action presence does not match vscodeAvailable"
+        self.switch_to_connections_sidebar()
+
     # ── Multi-delete partial failure (#1348 / #1394) ────────────────────────
     @pytest.mark.skipif(
         sys.platform == "win32", reason="relies on POSIX directory permissions"

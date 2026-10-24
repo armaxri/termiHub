@@ -65,6 +65,7 @@ import {
   localCopyStart,
   TransferTerminalError,
   sessionUpload,
+  sessionCopyRemote,
   sessionVscodeOpenRemote,
   vscodeAvailable,
   vscodeOpenLocal,
@@ -88,6 +89,7 @@ import {
   removeCredential,
   sessionMonitoringOpen,
 } from "./api";
+import { holdSessionInput } from "./sessionInputGate";
 
 describe("api service", () => {
   beforeEach(() => {
@@ -279,6 +281,22 @@ describe("api service", () => {
         connectId: "tab-agent",
         spawned: false,
         resilientReconnect: true,
+      });
+    });
+
+    it("sendInput waits while the session's input is held (#4942)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      const release = holdSessionInput("session-held", "resize");
+
+      const sent = sendInput("session-held", "x");
+      await Promise.resolve();
+      expect(mockedInvoke).not.toHaveBeenCalledWith("send_input", expect.anything());
+
+      release();
+      await sent;
+      expect(mockedInvoke).toHaveBeenCalledWith("send_input", {
+        sessionId: "session-held",
+        data: "x",
       });
     });
 
@@ -621,6 +639,43 @@ describe("api service", () => {
       });
 
       await expect(pending).rejects.toThrow("boom");
+    });
+
+    // #4922: a tiny file on a fast backend (an agent's ranged slices) settles
+    // before the start command returns. The listener must already be live then,
+    // or the `done` event is lost and the awaiting folder paste hangs forever.
+    const settlesBeforeReturn = (transferId: string) =>
+      mockedInvoke.mockImplementation(async () => {
+        transferListener?.({ payload: { transferId, phase: "done", transferred: 7 } });
+        return transferId;
+      });
+
+    it("sessionDownload never misses a transfer that settles before the command returns", async () => {
+      settlesBeforeReturn("fast-dl");
+
+      await expect(sessionDownload("agent-1", "/r/nested.txt", "/l/nested.txt")).resolves.toBe(7);
+      expect(transferListener).toBeUndefined();
+    });
+
+    it("sessionUpload never misses a transfer that settles before the command returns", async () => {
+      settlesBeforeReturn("fast-ul");
+
+      await expect(sessionUpload("agent-1", "/l/top.txt", "/r/top.txt")).resolves.toBe(7);
+      expect(transferListener).toBeUndefined();
+    });
+
+    it("sessionCopyRemote never misses a transfer that settles before the command returns", async () => {
+      settlesBeforeReturn("fast-cp");
+
+      await expect(sessionCopyRemote("a-1", "/x/top.txt", "b-1", "/y/top.txt")).resolves.toBe(7);
+      expect(transferListener).toBeUndefined();
+    });
+
+    it("sessionDownload stops listening when the start command fails", async () => {
+      mockedInvoke.mockRejectedValue(new Error("no such session"));
+
+      await expect(sessionDownload("gone", "/r/f", "/l/f")).rejects.toThrow("no such session");
+      expect(transferListener).toBeUndefined();
     });
 
     it("sessionVscodeOpenRemote invokes with session ID and remote path", async () => {

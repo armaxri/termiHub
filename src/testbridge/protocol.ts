@@ -429,6 +429,31 @@ export interface MeasureTerminalCommand {
 }
 
 /**
+ * Read the raw output stream a terminal was handed (#4931): everything written
+ * to its xterm since the tab was registered, escapes included, so a test can
+ * prove no setup / banner bytes were painted and then erased ("flashed")
+ * before the prompt — which the buffer that `readTerminal` reads cannot show.
+ * Returns a {@link TerminalOutputTap}; the head is bounded, the rest only
+ * counted. Read-only. When `tabId` is omitted the active tab is used.
+ */
+export interface ReadTerminalOutputCommand {
+  action: "readTerminalOutput";
+  tabId?: string;
+}
+
+/**
+ * Read the frontend Log Viewer's retained history (#4931), optionally only the
+ * entries whose message contains `contains`. Returns {@link FrontendLogRecord}s
+ * oldest first. Frontend DEBUG/INFO entries never reach the app's stdout log,
+ * so this is how a test asserts on them (e.g. the terminal renderer
+ * transitions and the absence of `webgl context lost`). Read-only.
+ */
+export interface ReadFrontendLogCommand {
+  action: "readFrontendLog";
+  contains?: string;
+}
+
+/**
  * Force a real GPU context loss on a terminal's WebGL renderer (#2988) via the
  * `WEBGL_lose_context` extension, so the harness can prove the renderer
  * degrades to the DOM renderer. Answers `true` when a live WebGL2 context was
@@ -723,6 +748,17 @@ export interface TerminalCell {
   chars: string;
   /** Column width: 2 = wide character head, 0 = its spacer cell, 1 = narrow. */
   width: number;
+  /**
+   * The colour the cell's glyph paints in, resolved through the terminal's
+   * theme palette (ANSI 0-15 from the theme, 16-255 from the xterm cube and
+   * grey ramp, truecolour as-is, default as the theme foreground), after
+   * inverse video (#4937).
+   */
+  fg: string;
+  /** The colour the cell's background paints in, resolved like {@link fg}. */
+  bg: string;
+  /** Whether the cell is bold (SGR 1). */
+  bold: boolean;
 }
 
 /** One buffer row's cell model, returned by `readTerminalCells`. */
@@ -751,6 +787,68 @@ export interface TerminalScrollbarMeasurement {
   thumbHeight: number;
   /** Laid-out thumb top relative to the gutter's top, in CSS px. */
   thumbTop: number;
+  /** Gutter left edge relative to the terminal container's left, in CSS px. */
+  gutterLeft: number;
+  /** Laid-out gutter width, in CSS px. */
+  gutterWidth: number;
+  /** Thumb left edge relative to the container's left (`0` when hidden). */
+  thumbLeft: number;
+  /** Laid-out thumb width in CSS px (`0` when hidden). */
+  thumbWidth: number;
+  /** The thumb's computed `background-color` (the at-rest colour unless hovered). */
+  thumbColor: string;
+}
+
+/**
+ * Where a terminal's text paints and what is behind it (#4930). Positions are
+ * relative to the terminal container's top-left, in CSS px.
+ */
+export interface TerminalPaint {
+  /** Right edge of the visible text area; `null` before xterm has a screen. */
+  textRight: number | null;
+  /** Bottom of the last grid row (`rows x cell height` below the screen top). */
+  rowsBottom: number | null;
+  /** The computed background behind the cells (the container's, or the first painted ancestor's). */
+  containerBackground: string;
+  /** The background xterm's theme paints the cells with; `null` when unset. */
+  themeBackground: string | null;
+  /** Whether horizontal-scroll mode is on. */
+  horizontalScroll: boolean;
+  /** Bottom of the scroll viewport's client area (above any horizontal bar). */
+  viewportClientBottom: number | null;
+  /** Laid-out height of the native horizontal scrollbar (`0` when none). */
+  hscrollBarHeight: number;
+}
+
+/** One rendered xterm decoration (OSC 133 gutter bar, prompt flash), #4930. */
+export interface TerminalDecoration {
+  /** The element's classes (e.g. `terminal-command-mark--failure`). */
+  classes: string[];
+  /** Its computed `background-color`. */
+  background: string;
+  /** Rect relative to the terminal container's top-left, in CSS px. */
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+/** A rect in the page's CSS px, relative to the viewport's top-left. */
+export interface PageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The page's own size and pixel ratio (#4937): a native window capture is in
+ * device px, so a test maps a {@link PageRect} into it with these.
+ */
+export interface PageMetrics {
+  devicePixelRatio: number;
+  innerWidth: number;
+  innerHeight: number;
 }
 
 /** A terminal's real render-path state, returned by `measureTerminal`. */
@@ -771,9 +869,39 @@ export interface TerminalMeasurement {
   domRows: string[] | null;
   /** The gutter scrollbar; `null` when the gutter is not mounted. */
   scrollbar: TerminalScrollbarMeasurement | null;
+  /** Text-area edges and backgrounds (#4930). */
+  paint: TerminalPaint;
+  /** Rendered decorations, in DOM order (#4930). */
+  decorations: TerminalDecoration[];
+  /** Where the cell grid (`.xterm-screen`) sits in the page; `null` before xterm has a screen (#4937). */
+  screenRect: PageRect | null;
+  /** The page's size and device pixel ratio (#4937). */
+  page: PageMetrics;
   /** Scroll position, as `getTerminalViewport` reports it. */
   viewportY: number;
   baseY: number;
+}
+
+/** A terminal's recorded output stream, returned by `readTerminalOutput`. */
+export interface TerminalOutputTap {
+  /** The start of the stream, decoded, escapes intact (bounded). */
+  output: string;
+  /** Data units written so far: characters for string writes, bytes for binary ones. */
+  written: number;
+  /** Number of `write` calls recorded. */
+  writes: number;
+  /** Whether more was written than `output` holds. */
+  truncated: boolean;
+  /** Milliseconds since the last write; `null` before the first one. */
+  msSinceLastWrite: number | null;
+}
+
+/** One frontend Log Viewer entry, returned by `readFrontendLog`. */
+export interface FrontendLogRecord {
+  timestampMs: number;
+  level: string;
+  target: string;
+  message: string;
 }
 
 /** The full set of commands the bridge understands. */
@@ -803,6 +931,8 @@ export type BridgeCommand =
   | ComposeCommand
   | MeasureTerminalCommand
   | LoseTerminalWebglContextCommand
+  | ReadTerminalOutputCommand
+  | ReadFrontendLogCommand
   | GetStateCommand
   | ScreenshotCommand
   | EmitEventCommand

@@ -46,7 +46,7 @@ function ZoomTitle({ title, icon, menu }: Pick<ZoomOverlayProps, "title" | "icon
   // its content, which would leave a menu portalled to `document.body` dead (#1868).
   const container = useModalPortalContainer();
   const label = (
-    <span className="zoom-overlay__label">
+    <span className="zoom-overlay__label" data-testid="zoom-overlay-title">
       <span className="zoom-overlay__icon" aria-hidden="true">
         {icon}
       </span>

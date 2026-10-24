@@ -1,28 +1,27 @@
 """Guided-manual shell, SSH-X11 and network-tool checks (#913).
 
 Ported from the retired ``tests/manual/{local-shell,ssh,network-tools}.yaml``.
-Each item needs something CI cannot judge: paint timing on real Windows
-(ConPTY / WebView2, WSL), real macOS key repeat, memory in the OS task
-manager, real GPU contexts, a native X window on the operator's desktop, raw
-ICMP for traceroute, or the readability of a canvas chart.
+Each item needs something CI cannot judge: a real WSL distribution, a real
+Git-for-Windows install, real macOS key repeat, a native X window on the
+operator's desktop, raw ICMP for traceroute, or the readability of a canvas
+chart.
 
-The harness opens the shells (twenty of them for MT-LOCAL-33), prepares the git
-repo with many untracked files, creates the X11 SSH connection against the
+The harness opens the shells, creates the X11 SSH connection against the
 ``ssh-x11`` fixture, and starts the traceroute / ping / HTTP monitor. The
 operator watches and judges.
 
-Covered: MT-LOCAL-03/08/30/31/32/33, MT-SSH-01/50/51/52, MT-NET-16/21.
+Covered: MT-LOCAL-03/08/31, MT-SSH-50/51/52, MT-NET-16/21. MT-LOCAL-30/32/33
+are automated since #4931 (``test_windows_shells.py``,
+``test_output_flash_and_flood.py``, ``test_performance.py``), MT-SSH-01 (the
+Agnoster segment) since #4937 on a native window capture
+(``test_native_capture_grades.py``).
 
 Run with ``./pytest.sh --manual -k guided_shells_and_tools -s``.
 """
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
+import re
 
 import pytest
 
@@ -43,13 +42,13 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.theme import ThemeUi, near
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
-NEW_TERMINAL = "terminal-view-new-terminal"
-
 
 class TestGuidedShellsAndTools(
+    ThemeUi,
     TerminalUi,
     TabsUi,
     ConnectionsUi,
@@ -86,10 +85,17 @@ class TestGuidedShellsAndTools(
         self.connect_connection(name)
         return name
 
-    # ── MT-LOCAL-03/30/31: Windows shells ────────────────────────────────────
+    # ── MT-LOCAL-03/31: Windows shells ───────────────────────────────────────
     @pytest.mark.manual(platforms=["windows"])
     def test_wsl_tab_opens_without_banner_flash(self):
-        """MT-LOCAL-03 (a WSL distribution installed)."""
+        """MT-LOCAL-03 (a WSL distribution installed).
+
+        Stays guided: no CI lane runs the desktop app against a real WSL
+        distribution. The SSH and local-shell variants of this flash grade are
+        automated in ``test_output_flash_and_flood.py`` (#4931); an operator can
+        confirm a WSL tab the same way with ``driver.read_terminal_output`` and
+        ``termihub_harness.output_stream.find_flashes``.
+        """
         self.close_all_tabs()
         self.open_wsl_editor()
         self.manual_step(
@@ -97,27 +103,6 @@ class TestGuidedShellsAndTools(
             "terminal as it opens.",
             "No welcome banner or setup commands flash; a clean prompt appears directly.",
         )
-
-    @pytest.mark.manual(platforms=["windows"])
-    def test_windows_cmd_output_paints_in_order(self):
-        """MT-LOCAL-30 (git on PATH)."""
-        repo = Path(tempfile.mkdtemp(prefix="thub-cmd-paint-"))
-        try:
-            subprocess.run(["git", "init", "-q", str(repo)], check=True)
-            for i in range(400):
-                (repo / f"untracked-{i:03d}.txt").write_text("x", encoding="utf-8")
-            self.close_all_tabs()
-            self.create_local_connection(
-                unique_name("cmd-paint"), shell="cmd", starting_directory=str(repo), connect=True
-            )
-            self.wait(self.has_terminal, what="the cmd tab")
-            self.manual_step(
-                "Run `git status`, press Enter twice; repeat a few times. Then run `dir /s`.",
-                "The file list is one block with the prompts after it; no resize is needed "
-                "and output does not slow down.",
-            )
-        finally:
-            shutil.rmtree(repo, ignore_errors=True)
 
     @pytest.mark.manual(platforms=["windows"])
     def test_guided_git_for_windows_install(self):
@@ -143,50 +128,6 @@ class TestGuidedShellsAndTools(
             "kkkk… repeats continuously with no delay and no accent picker.",
         )
 
-    # ── MT-LOCAL-32/33: output flood, twenty GPU tabs ────────────────────────
-    def test_output_flood_stays_bounded_and_ctrl_c_stops_it(self):
-        """MT-LOCAL-32."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        flood = "while ($true) { 'y' }" if sys.platform == "win32" else "yes"
-        self.run_command(flood)
-        self.manual_step(
-            f"`{flood}` is running. For 30 s watch termiHub (PID {self.app.pid}) in the OS "
-            "task manager and click around the UI, then press Ctrl+C in the terminal.",
-            "Memory stays roughly flat and the UI responds; output stops within about a "
-            "second and the prompt returns.",
-        )
-        log = self.app.log_path.read_text(encoding="utf-8", errors="replace")
-        assert "write data discarded" not in log
-
-    def test_twenty_terminal_tabs_render_and_release_gpu(self):
-        """MT-LOCAL-33."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        for _ in range(19):
-            self.driver.click(NEW_TERMINAL)
-        self.wait(lambda: self.tab_count() >= 20, timeout=120.0, what="twenty tabs")
-        listing = "Get-ChildItem" if sys.platform == "win32" else "ls"
-        for tab_id in self.tab_ids():
-            self.switch_to_tab(tab_id)
-            self.run_command(listing)
-        self.manual_step(
-            "Click through every tab, then split the view to show two side by side. Open "
-            "the Log Viewer and filter for 'renderer'.",
-            "Every tab shows sharp text promptly, none blank or garbled; switching logs "
-            "'renderer webgl (visible)' / 'renderer dom (hidden)'; no 'webgl context lost'.",
-        )
-
-    # ── MT-SSH-01: Agnoster prompt ───────────────────────────────────────────
-    def test_agnoster_prompt_has_no_black_rectangle(self):
-        """MT-SSH-01 (a Linux host with zsh + the Agnoster theme)."""
-        self.close_all_tabs()
-        self.manual_step(
-            "Connect an SSH session to a Linux host using zsh + Agnoster and look at the "
-            "user@machine prompt segment.",
-            "The segment blends with the terminal background; no black rectangle behind it.",
-        )
-
     # ── MT-SSH-50/51/52: X11 on the real desktop ─────────────────────────────
     @pytest.mark.manual(platforms=["linux"])
     @pytest.mark.usefixtures("ssh_x11_fixtures")
@@ -195,11 +136,13 @@ class TestGuidedShellsAndTools(
         self._x11_ssh_session()
         self.handle_password_prompt(SSH_PASSWORD)
         self.wait(self.has_terminal, what="the X11 SSH terminal")
+        # The forwarded window itself is graded on Xvfb by test_ssh.py (MT-XPLAT-03,
+        # #4932); the real desktop keeps the adopt-the-X-server and Wayland checks.
         self.manual_step(
             "Run `xeyes` in the SSH terminal. Then, on a Wayland-only session without "
             "XWayland, connect the same connection again.",
-            "No prompt (the running X server is adopted) and the xeyes window appears; "
-            "Wayland-only shows the XWayland install hint, not a generic error.",
+            "No prompt (your running X server is adopted); Wayland-only shows the "
+            "XWayland install hint, not a generic error.",
         )
 
     @pytest.mark.manual(platforms=["macos"])
@@ -247,12 +190,27 @@ class TestGuidedShellsAndTools(
         )
 
     def test_latency_charts_are_readable(self):
-        """MT-NET-21."""
+        """MT-NET-21.
+
+        The machine checks the chart first (#4930): the canvas paints the trace in
+        the accent colour and the legend reads the latest sample in ms. The
+        operator keeps only the readability glance.
+        """
         self.close_all_tabs()
         self.start_ping("8.8.8.8")
+        self.wait(lambda: self.driver.exists("latency-chart-canvas"), what="the latency chart")
+        accent = self.root_color("--accent-color")
+        self.wait(
+            lambda: near(self.canvas_pixels("latency-chart-canvas"), accent) > 0,
+            what="the chart to draw its latency trace",
+        )
+        self.wait(
+            lambda: re.search(r"\dms", self.driver.get_text("ping-chart") or ""),
+            what="the legend to read the latest sample in ms",
+        )
         self.manual_step(
-            "Let several replies arrive, then hover the latency chart (pull the network "
-            "cable briefly to get a dropped sample).",
+            "The harness confirmed the trace and the ms read-out. Hover the latency chart "
+            "(pull the network cable briefly to get a dropped sample).",
             "Uniform stroke width; ms gridlines from 0 with '…ms' labels; x axis in elapsed "
             "seconds; hover shows the exact latency; drops show a dashed marker and a gap.",
         )

@@ -2,11 +2,10 @@
 
 Ported from the retired ``tests/manual/{app,multi-window,shell-integration,
 file-browser}.yaml``. Each item ends in something only the OS owns: the macOS
-Dock and app menu, a second launch of an installed build, an Explorer / Finder /
-file-manager context menu, a real OS drag, a MobaXterm install. The harness
-builds the in-app state (shells, an unsaved editor, a 5000-file folder, the
-spawn request through the instance's private rendezvous) and the operator does
-and judges the OS-side step.
+Dock and app menu, an Explorer / Finder / file-manager context menu, a real OS
+drag, a MobaXterm install. The harness builds the in-app state (shells, an
+unsaved editor, a 5000-file folder, the spawn request through the instance's
+private rendezvous) and the operator does and judges the OS-side step.
 
 **Never quit termiHub by name.** The operator usually runs an installed termiHub
 beside the test instance. The harness never sends a by-name quit; the steps
@@ -14,7 +13,11 @@ that would (AppleScript ``quit app "termiHub"``, Log Out) first check for
 another termiHub process (:func:`termihub_harness.guided.running_other_termihub_pids`)
 and are skipped while one runs.
 
-Covered: MT-APP-02..05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30..32.
+Covered: MT-APP-03, MT-APP-05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30/31.
+(MT-FB-32, open in file manager, is graded by ``test_external_app_handoffs.py``
+since #4932.)
+(MT-APP-02, the production CSP, and MT-APP-04, single instance, are graded on
+the shipped artifacts by the release install smokes since #4933.)
 
 Run with ``./pytest.sh --manual -k guided_app_os -s``.
 """
@@ -22,7 +25,6 @@ Run with ``./pytest.sh --manual -k guided_app_os -s``.
 from __future__ import annotations
 
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
@@ -94,20 +96,7 @@ class TestGuidedAppOs(
         """Bring the test instance back after the operator quit it."""
         self.restart_app()
 
-    # ── MT-APP-02/03: production build CSP and plugin install (macOS) ────────
-    @pytest.mark.manual(platforms=["macos"])
-    def test_production_build_has_no_csp_violations(self):
-        """MT-APP-02 (run against a ./scripts/build.sh production build)."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.manual_step(
-            "In the production build: open the Log Viewer, a local shell, then a .sh "
-            "file in the editor. Turn on JS plugins and install "
-            "examples/plugins/clock-widget.",
-            "Terminal and editor are coloured, the clock widget shows, and the Log "
-            "Viewer has no csp entries.",
-        )
-
+    # ── MT-APP-03: plugin install over real HTTPS (macOS) ────────────────────
     @pytest.mark.manual(platforms=["macos"])
     def test_plugin_index_and_url_install_over_real_https(self):
         """MT-APP-03."""
@@ -117,18 +106,6 @@ class TestGuidedAppOs(
             "URL, paste a GitHub-hosted clock-widget URL with its SHA-256.",
             "The default index loads from main (no HTTP 404); the install dialog opens "
             "with the unsigned banner and nothing installs before you confirm.",
-        )
-
-    # ── MT-APP-04: single instance ───────────────────────────────────────────
-    def test_second_launch_raises_window_and_portable_double_launch_refused(self):
-        """MT-APP-04 (installed release build + a portable copy)."""
-        self.manual_step(
-            "Install and launch the release build and minimize its window. Launch the "
-            "installed app a second time. Then launch a portable copy, and launch the "
-            "same portable copy again.",
-            "No second window; the existing one un-minimizes with tabs intact. The "
-            "second portable launch shows 'termiHub is already running' naming the data "
-            "folder; after OK it exits and the first is untouched.",
         )
 
     # ── MT-APP-05: MobaXterm import (Windows) ────────────────────────────────
@@ -350,19 +327,3 @@ class TestGuidedAppOs(
             "tree; the originals stay.",
         )
 
-    def test_open_in_file_manager_opens_folders_never_an_app(self):
-        """MT-FB-32."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.open_file_browser()
-        extra = (
-            " On macOS browse to /Applications, right-click an .app and choose Open in Finder."
-            if sys.platform == "darwin"
-            else ""
-        )
-        self.manual_step(
-            "Click the toolbar's Open in Finder/Explorer/File Manager action, then "
-            f"right-click a folder row and choose the same action.{extra}",
-            "The file manager opens at the current folder, then at the clicked folder; "
-            "an .app is shown selected and does not start.",
-        )

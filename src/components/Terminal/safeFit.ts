@@ -86,3 +86,25 @@ export function isProposedFitSafe(
   }
   return !!dims && dims.cols >= MIN_SAFE_FIT_COLS && dims.rows >= 1;
 }
+
+/**
+ * Whether a shown terminal's grid has settled: its container is laid out and a
+ * fit would propose exactly the grid xterm already has (#4942).
+ *
+ * `false` while the element is still parked or ~0-sized, or while a fit is
+ * still owed (the proposed grid differs, e.g. a renderer swap or a container
+ * change not fitted yet). A just-shown terminal holds input until this holds,
+ * so input never reaches the shell ahead of the resize the show still owes.
+ */
+export function isGridSettled(
+  el: HTMLElement | null | undefined,
+  xterm: { cols: number; rows: number } | null | undefined,
+  fitAddon:
+    | { proposeDimensions: () => { cols: number; rows: number } | undefined }
+    | null
+    | undefined
+): boolean {
+  if (!xterm || !fitAddon || !isFitReady(el) || !isProposedFitSafe(fitAddon)) return false;
+  const dims = fitAddon.proposeDimensions();
+  return !!dims && dims.cols === xterm.cols && dims.rows === xterm.rows;
+}
