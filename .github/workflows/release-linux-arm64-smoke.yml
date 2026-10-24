@@ -72,19 +72,13 @@ jobs:
         id: tag
         env:
           TAG: ${{ inputs.tag }}
-          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           case "$TAG" in
             v*.*.*) ;;
-            # A dev pre-release only by hand (#4934): release.yml always
-            # passes a version tag.
-            dev-*)
-              if [ "$EVENT" != "workflow_dispatch" ]; then
-                echo "::error::a dev tag is accepted on a manual dispatch only: '$TAG'"
-                exit 1
-              fi
-              ;;
+            # A dev pre-release, for a manual dispatch (#4934); release.yml
+            # always passes a version tag.
+            dev-*) ;;
             *) echo "::error::not a version tag: '$TAG'"; exit 1 ;;
           esac
           echo "Resolved release tag: $TAG"

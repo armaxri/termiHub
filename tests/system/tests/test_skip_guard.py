@@ -397,9 +397,11 @@ def test_skip_allowlist_json_is_valid_json():
     data = json.loads(path.read_text(encoding="utf-8"))
     assert set(data["max_skips"]) - {"_comment"} == {
         "bulk-linux",
+        "bulk-linux-arm64",
         "bulk-macos",
         "bulk-windows",
         "display-linux",
+        "display-linux-arm64",
         "display-macos",
         "display-windows",
     }
