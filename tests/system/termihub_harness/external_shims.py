@@ -24,6 +24,10 @@ file manager opened. The interesting half of that question is machine-checkable:
   developer's own ``code`` / ``xdg-open`` are never run or touched. The
   directory is removed by :meth:`close`.
 
+Windows and macOS open folders without a ``PATH`` lookup, so for "Open in File
+Manager" there :func:`file_manager_folders` asks the file manager itself which
+folders it shows (Explorer always; Finder only on opt-in).
+
 The shims are executed by the app in the integration lane, and directly (on
 the host's own platform) by ``tests/test_external_shims.py`` in the normal lane.
 """

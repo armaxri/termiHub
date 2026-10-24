@@ -494,7 +494,7 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
 
 
     def test_forwarded_x11_client_opens_a_window_on_the_local_display(self):
-        """MT-XPLAT-03: a remote X11 client's window appears on the local display.
+        """MT-XPLAT-03, MT-SSH-15: a remote X11 client's window appears locally.
 
         Runs ``xeyes`` in an X11-forwarded session and asks the local X server
         (Xvfb on CI) for the window with ``xdotool search`` — the "a window

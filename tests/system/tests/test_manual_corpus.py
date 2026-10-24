@@ -58,6 +58,7 @@ RETIRED_YAML_IDS = frozenset(
 _THEME = "test_theme_grades.py"
 _LAYOUT = "test_layout_grades.py"
 _HANDOFF = "test_external_app_handoffs.py"
+_X11_WINDOW = "test_forwarded_x11_client_opens_a_window_on_the_local_display"
 
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
 #: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
@@ -107,7 +108,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-FB-22": f"{_HANDOFF}::test_open_folder_in_vscode_hands_the_folder_to_code",
     "MT-FB-32": f"{_HANDOFF}::test_open_in_file_manager_opens_folders_never_an_app",
     "MT-SSH-09": f"{_HANDOFF}::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab",
-    "MT-XPLAT-03": "test_ssh.py::test_forwarded_x11_client_opens_a_window_on_the_local_display",
+    "MT-XPLAT-03": f"test_ssh.py::{_X11_WINDOW}",
+    "MT-SSH-15": f"test_ssh.py::{_X11_WINDOW}",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
@@ -116,7 +118,7 @@ LATER_GUIDED_IDS = frozenset(
     {
         "MT-LOCAL-05", "MT-UI-16", "MT-UI-19", "MT-UI-35", "MT-UI-36",
         "MT-FB-04", "MT-FB-14", "MT-FB-15", "MT-FB-21", "MT-FB-22",
-        "MT-SSH-09", "MT-XPLAT-03",
+        "MT-SSH-09", "MT-SSH-15", "MT-XPLAT-03",
     }
 )
 
