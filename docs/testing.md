@@ -2864,7 +2864,8 @@ capture nor a screen capture contains the xterm WebGL canvas (the DOM, the
 inline-image canvas and the window chrome are all there), so on macOS the text
 grades first move the terminal to the DOM renderer through the production
 WebGL context-loss fallback. The WebGL renderer's paint is graded on Linux and
-Windows; the inline-image grade keeps WebGL on every OS.
+Windows; the inline-image grade keeps WebGL on every OS. Grading the macOS
+WebGL paint is tracked in #4970.
 
 A developer machine without the capture tooling (`xdotool` / `x11-apps` on
 Linux, Screen Recording permission for the terminal on macOS) skips these
