@@ -8,7 +8,9 @@ width. The underlying rules are pinned by unit tests (named per item in
 scrollback, zoom, split, a sample file in the editor, the Settings category)
 and the operator looks.
 
-Covered: MT-UI-05, MT-UI-13, MT-UI-40..56.
+Covered: MT-UI-05, MT-UI-13, MT-UI-40..53. MT-UI-54/55 (Settings layout) and
+MT-UI-56 (imported workspace confirmations) are automated by the rendered
+visual checks and unit tests (#4928).
 
 Run with ``./pytest.sh --manual -k guided_look_and_feel -s``.
 """
@@ -315,64 +317,23 @@ class TestGuidedLookAndFeel(
         )
         self._theme("dark")
 
-    # ── MT-UI-53..56: layout at real widths, Settings ────────────────────────
+    # ── MT-UI-53: sidebar rows at real widths ────────────────────────────────
     def test_every_sidebar_at_default_and_minimum_width(self):
-        """MT-UI-53."""
+        """MT-UI-53 (the row behaviour; fit and clipping are automated).
+
+        The rendered visual checks (#4712, ``tests/visual/surfaces.spec.ts``)
+        audit every sidebar at the default and minimum width at three window
+        sizes for overflow, clipped controls and over-truncated names, and open
+        each collapsed toolbar's overflow menu. They render no tunnel, service,
+        HTTP monitor or agent rows and do not hover or focus rows, so the row
+        behaviour stays here (#4928).
+        """
         self.close_all_tabs()
         self.enable_experimental_features()
         self.manual_step(
-            "Create workspaces 'test' and 'ssh-production-cluster', a macro, a scheduled "
-            "workflow, a tunnel, a service, an HTTP monitor and a remote agent. Open every "
-            "sidebar at the default width, then drag the edge to the minimum (or Home on "
-            "the handle) and open every sidebar again; hover and Tab onto rows; use the '…' "
-            "overflow menus.",
-            "Nothing clips; overflowing toolbars keep the main action plus one '…' menu; "
-            "names use the full row with a tooltip when cut; row actions show on hover and "
-            "focus; Schedules/History/agent headers keep their buttons; the overflow actions "
-            "run like the buttons.",
+            "Create a tunnel, a service, an HTTP monitor and a remote agent. Drag the "
+            "sidebar edge to the minimum (or Home on the handle) and open each sidebar; "
+            "hover and Tab onto rows; run each '…' overflow menu action.",
+            "Names use the full row with a tooltip when cut; row actions show on hover and "
+            "focus; the overflow actions run like the buttons.",
         )
-
-    def test_settings_fields_styled_on_fresh_start(self):
-        """MT-UI-54."""
-        self.restart_app()
-        self.open_settings_tab()
-        self.manual_step(
-            "Without opening any connection editor, visit every Settings category; narrow "
-            "the Settings tab to ~420 px for General and Sessions; then open a new SSH "
-            "connection editor.",
-            "Toggle rows: label + hint left, control right; input rows: label, control, "
-            "hint; the SSH key '…' button joins its input; action buttons sit right; the "
-            "connection editor is unchanged.",
-        )
-
-    def test_settings_headers_keep_buttons_at_minimum_window(self):
-        """MT-UI-55."""
-        self.open_settings_category("external-files")
-        self.manual_step(
-            "Resize the window to its minimum (800x600). Look at the External Connection "
-            "Files header and click Create File; check File Types, Custom Grammars and "
-            "Shell Integration headers; then widen until the header fits one row.",
-            "Buttons wrap below the title and stay clickable; the create prompt keeps its "
-            "field usable; other headers wrap too; once wide enough, title and buttons share "
-            "one row.",
-        )
-
-    def test_imported_workspace_confirmations_review_and_revoke(self):
-        """MT-UI-56."""
-        self.close_all_tabs()
-        self.manual_step(
-            "Import a workspace whose tab has an initialCommand (echo hello), open it in the "
-            "workspace editor and Confirm the command.",
-            "The command shows as confirmed.",
-        )
-        self.open_settings_category("security")
-        self.manual_step(
-            "In 'Imported Workspace Confirmations' click the trash icon > Revoke; reopen the "
-            "workspace editor and launch the workspace; confirm again, then Revoke All. "
-            "Repeat the look at 800x600.",
-            "It first lists '1 imported item is confirmed…'; after revoking nothing is "
-            "confirmed and launching waits for Confirm; Revoke All empties the list; nothing "
-            "clips at 800x600.",
-        )
-        # After Revoke All, settings.json no longer holds any confirmed entry.
-        assert not self.persisted_settings().get("workspaceImportAllowlist")

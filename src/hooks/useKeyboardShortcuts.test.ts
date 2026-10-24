@@ -251,7 +251,7 @@ describe("useKeyboardShortcuts", () => {
       expect(mockProcessKeyEvent).toHaveBeenCalled();
     });
 
-    it("dispatches normally when passthrough is explicitly disabled in settings", () => {
+    it("dispatches normally when passthrough is explicitly disabled in settings (MT-KB-12)", () => {
       seedSettings({ terminalKeyPassthrough: false });
       act(() => {
         root.render(createElement(KeyboardHarness));
@@ -659,7 +659,7 @@ describe("useKeyboardShortcuts", () => {
       useAppStore.getState().setActiveTab(id, panel.id);
     }
 
-    it("does NOT swallow find-in-terminal on an editor tab (regression for #787)", () => {
+    it("does NOT swallow find-in-terminal on an editor tab (regression for #787, MT-KB-13)", () => {
       addActiveTab("editor");
       const toggleSpy = vi.spyOn(useAppStore.getState(), "toggleTerminalSearch");
 
@@ -675,7 +675,7 @@ describe("useKeyboardShortcuts", () => {
       expect(toggleSpy).not.toHaveBeenCalled();
     });
 
-    it("opens the terminal search bar for find-in-terminal on a terminal tab", () => {
+    it("opens the terminal search bar for find-in-terminal on a terminal tab (MT-KB-13)", () => {
       addActiveTab("terminal");
       const toggleSpy = vi.spyOn(useAppStore.getState(), "toggleTerminalSearch");
 
@@ -706,7 +706,7 @@ describe("useKeyboardShortcuts", () => {
       expect(after).toBe(before + 1);
     });
 
-    it("reverts to global-first behavior when editor delegation is disabled", () => {
+    it("reverts to global-first behavior when editor delegation is disabled (MT-KB-14)", () => {
       seedSettings({ editorShortcutDelegation: false });
       addActiveTab("editor");
 

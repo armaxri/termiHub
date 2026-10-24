@@ -91,12 +91,12 @@ const ROUTING_CASES: RoutingCase[] = [
     expected: true,
   },
   {
-    name: "a shell-reserved key passes through before shortcut matching",
+    name: "a shell-reserved key passes through before shortcut matching (MT-KB-09, MT-KB-10, MT-KB-11)",
     keys: { shellReserved: true, action: "copy", appShortcut: true },
     expected: true,
   },
   {
-    name: "a shell-reserved key is matched as a shortcut when passthrough is off",
+    name: "a shell-reserved key is matched as a shortcut when passthrough is off (MT-KB-12)",
     ctx: { passthroughEnabled: false },
     keys: { shellReserved: true, action: "copy" },
     expected: false,
