@@ -45,3 +45,27 @@ describe("theme text contrast (WCAG 2.2 AA)", () => {
     }
   }
 });
+
+/**
+ * Secondary chrome text (#4948): `--text-secondary` renders on the status bar
+ * (`--bg-secondary`) and on inactive tab titles (`--tab-bg`). Light's value
+ * previously measured 4.34:1 and 4.08:1 on those surfaces.
+ *
+ * Dark `textSecondary` on `tabBg` is not pinned yet — it measures 4.31:1 and is
+ * tracked as a follow-up in #4956.
+ */
+describe("secondary chrome text contrast (WCAG 2.2 AA)", () => {
+  const cases = [
+    { theme: darkTheme, surface: "bgSecondary" as const },
+    { theme: lightTheme, surface: "bgSecondary" as const },
+    { theme: lightTheme, surface: "tabBg" as const },
+  ];
+
+  for (const { theme, surface } of cases) {
+    const fg = theme.colors.textSecondary;
+    const bg = theme.colors[surface];
+    it(`${theme.id} textSecondary (${fg}) meets AA on ${surface} (${bg})`, () => {
+      expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+  }
+});
