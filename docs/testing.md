@@ -513,7 +513,7 @@ testing because earlier UI audits read the code but never rendered it).
 
 ```bash
 pnpm exec playwright install chromium   # once per machine
-pnpm test:visual                        # whole suite, about 30 s locally
+pnpm test:visual                        # whole suite, about a minute locally
 VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
 ```
 
@@ -596,8 +596,10 @@ shows that its fix passes before it deletes them.
 
 The `Rendered Visual Checks` job in `code-quality.yml` runs on every PR that
 touches the `frontend` area (`tests/visual/` is part of it) and on every push to
-`develop` and `main`. It is part of the `PR Gate`. The suite itself takes well
-under a minute, and installing Chromium takes most of the job time.
+`develop` and `main`. It is part of the `PR Gate`. The suite itself takes a few
+minutes on the two CI workers; the sidebar row and overflow checks (#4954) are
+the slowest part, because they hover every row and boot a fresh app per
+overflow action.
 `scripts/ci-local.sh` runs the same check as the
 `Frontend: rendered visual checks` gate.
 
