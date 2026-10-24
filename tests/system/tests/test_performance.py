@@ -150,10 +150,14 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
         """Echo ``marker`` in the tab and wait for it to render; return resends.
 
         The marker shows twice once rendered: the echoed command and its
-        output. Input typed in the instant a tab is shown can be lost while the
-        shell redraws for the re-fit (seen on macOS CI, #4942), so a marker that
-        does not render within a few seconds is sent again (at most twice); the
-        resend count is reported, the render itself must still happen.
+        output. A marker typed in the instant a tab was shown used to render
+        only once (macOS CI, #4942): the input reached the shell before the
+        show-time PTY resize, so bash echoed the line for the old width on the
+        new grid. Input is now held until that resize settles (#4945), so a
+        marker must render on the first send. A marker that does not render
+        within a few seconds is still sent again (at most twice) so the caller
+        can tell "needed a resend" (a regression of #4945, failed by the
+        caller) apart from "never rendered" (raised here).
         """
         for attempt in range(3):
             self.driver.terminal_input(f"echo {marker}\n", tab_id=tab_id)
@@ -178,6 +182,7 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
 
         renderers: dict[str, str] = {}
         resends = 0
+        resent: list[str] = []
         for index, tab_id in enumerate(ids):
             self.switch_to_tab(tab_id)
             self.wait(
@@ -188,7 +193,10 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
                 lambda tab_id=tab_id: self.driver.read_terminal(tab_id).strip(),
                 what=f"tab #{index} to show its prompt",
             )
-            resends += self._echo_marker(tab_id, f"PERF05-{index:02d}", f"tab #{index}")
+            tab_resends = self._echo_marker(tab_id, f"PERF05-{index:02d}", f"tab #{index}")
+            if tab_resends:
+                resends += tab_resends
+                resent.append(f"tab #{index} ({tab_resends}x)")
             renderers[tab_id] = self._assert_tab_painted(tab_id, f"tab #{index}")["renderer"]
 
         # After the sweep only the shown tab may keep a context (hidden → DOM),
@@ -223,6 +231,9 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
         timing.record("measure:perf-05:marker_resends", resends, 0)
         timing.record("measure:perf-05:live_webgl_after", len(live_webgl), 1)
         timing.record("measure:perf-05:context_lost", len(lost), 0)
+        # Every marker must render on its first send: a resend means input
+        # typed on tab show was garbled again (#4942, fixed by #4945).
+        assert resends == 0, f"markers needed a resend after tab show: {resent}"
         assert not lost, f"WebGL context lost: {[e['message'] for e in lost]}"
         assert len(live_webgl) <= WEBGL_CONTEXT_CAPACITY, live_webgl
         assert set(live_webgl) <= {shown}, (

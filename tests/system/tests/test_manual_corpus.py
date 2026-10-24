@@ -147,6 +147,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-SSH-09": f"{_HANDOFF}::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab",
     "MT-XPLAT-03": f"test_ssh.py::{_X11_WINDOW}",
     "MT-SSH-15": f"test_ssh.py::{_X11_WINDOW}",
+    # #4953: agent auth against a private ssh-agent the suite starts itself.
+    "MT-SSH-07": "test_ssh_agent_auth.py::test_ssh_agent_auth_connects",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
@@ -180,6 +182,7 @@ LATER_GUIDED_IDS = frozenset(
         "MT-SSH-09",
         "MT-SSH-15",
         "MT-XPLAT-03",
+        "MT-SSH-07",
     }
 )
 

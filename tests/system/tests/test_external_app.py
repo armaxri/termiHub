@@ -15,7 +15,6 @@ clipboard pasted) via :meth:`ManualUi.manual_step` / :meth:`manual_confirm`.
 
 Covered:
 
-- **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07).
 - **Clipboard** — copy the terminal buffer via the tab menu and via the
   platform copy shortcut, and paste into the terminal (MT-KB-01..04).
 
@@ -26,91 +25,42 @@ for local and SFTP files and folders, Open in File Manager, the Setup SSH Agent
 tab — MT-FB-04/14/15/21/22, MT-SSH-09) are graded by
 ``test_external_app_handoffs.py`` through recording PATH shims, and the
 forwarded X11 window (MT-XPLAT-03, MT-SSH-15) by ``test_ssh.py`` with
-``xdotool`` on Xvfb (#4932).
+``xdotool`` on Xvfb (#4932). SSH agent auth (MT-SSH-07) runs unattended in
+``test_ssh_agent_auth.py`` against a private ssh-agent (#4953).
 
 **OS credential stores (MT-CRED-01/02/03)** live in
 ``test_guided_credentials.py``: the app has an OS-keychain storage mode (#956),
 and those tests check that a saved secret lands in the native store.
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and run
-only under ``./pytest.sh --manual -k external_app -s`` with an operator. The
-SSH agent case additionally needs the Docker SSH fixtures up; without a
-container runtime ``ssh_fixtures`` skips them cleanly.
+only under ``./pytest.sh --manual -k external_app -s`` with an operator.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from termihub_harness import (
-    ConnectionsUi,
     SidebarUi,
-    SSH_HOST,
-    SSH_KEYS_PORT,
-    SSH_USERNAME,
     ManualUi,
     SystemTest,
     TabsUi,
     TerminalUi,
-    agent_has_key,
     read_os_clipboard,
-    unique_name,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
-
-#: The agent-auth key the operator is asked to load into their ssh-agent; the
-#: ``ssh-keys`` fixture container (port 2203) authorizes it.
-_AGENT_KEY_FIXTURE = (
-    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "ssh-keys" / "ed25519"
-)
 
 
 class TestExternalApp(
     TerminalUi,
     TabsUi,
-    ConnectionsUi,
     SidebarUi,
     ManualUi,
     SystemTest,
 ):
     """External-app / OS-integration flows: harness sets up + triggers the action
     and verifies the in-app side; the operator confirms the external result."""
-
-    # ── SSH agent auth connects (MT-SSH-07) ──────────────────────────────────
-    @pytest.mark.usefixtures("ssh_fixtures")
-    def test_ssh_agent_auth_connects(self):
-        """Harness connects with the ``agent`` auth method and asserts a terminal
-        comes up — no password, no key path.
-
-        The precondition (the fixture key loaded into the operator's ssh-agent)
-        is *checked* programmatically rather than prompted: agent auth is only
-        possible if the agent holds that key, and that is machine-verifiable via
-        ``ssh-add -l`` fingerprints. So the test runs unattended when the key is
-        present and skips with the exact ``ssh-add`` command when it is not —
-        instead of gating an operator on a step a machine can confirm (#957).
-        """
-        self.close_all_tabs()
-        if not agent_has_key(_AGENT_KEY_FIXTURE):
-            pytest.skip(
-                "ssh-agent has not loaded the fixture key — run:\n"
-                f"      ssh-add {_AGENT_KEY_FIXTURE}\n"
-                "(authorized by the ssh-keys fixture container), then re-run."
-            )
-
-        name = unique_name("agent-auth")
-        self.create_ssh_connection(
-            name,
-            host=SSH_HOST,
-            port=SSH_KEYS_PORT,
-            username=SSH_USERNAME,
-            auth_method="agent",
-            connect=True,
-        )
-        # Agent auth needs no prompt — the session should establish on its own.
-        assert self.wait(self.has_terminal, what="the agent-authenticated terminal")
 
     # ── Clipboard copy/paste (MT-KB-01..04) ──────────────────────────────────
     def test_terminal_clipboard_copy_paste(self):
