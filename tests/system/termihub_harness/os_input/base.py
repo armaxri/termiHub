@@ -126,6 +126,8 @@ class OsInput:
     def __init__(self, pid: int, *, env: Optional[Mapping[str, str]] = None) -> None:
         self.pid = require_pid(pid)
         self._allowed = {self.pid}
+        #: 1 for a single click, 2 for the second press of a double-click, ...
+        self.click_state = 1
         self._env = env
 
     # ── PID bookkeeping ──────────────────────────────────────────────────────
@@ -190,12 +192,16 @@ class OsInput:
         chosen = window
         if exact and self._frontmost_window() is not None:
             # Several windows of one PID (multi-window): the PID alone does not
-            # prove which of them took the focus.
-            self._wait(
-                lambda: self._frontmost_window() == chosen.handle,
-                timeout,
-                f"window {chosen.handle} frontmost",
-            )
+            # prove which of them took the focus. Best effort — a caller that
+            # needs proof (calibration) checks where the pointer lands.
+            try:
+                self._wait(
+                    lambda: self._frontmost_window() == chosen.handle,
+                    min(timeout, 2.0),
+                    f"window {chosen.handle} frontmost",
+                )
+            except OsInputUnavailable:
+                pass
         self._settle()
 
     def key(self, combo: str, *, pid: Optional[int] = None) -> None:
@@ -227,10 +233,15 @@ class OsInput:
     ) -> None:
         """Move to ``(x, y)`` and click ``count`` times with ``button``."""
         self.pointer_move(x, y, pid=pid)
-        for _ in range(count):
-            self.pointer_button(True, button=button, pid=pid)
-            self.pointer_button(False, button=button, pid=pid)
-            time.sleep(0.05)
+        try:
+            for index in range(1, count + 1):
+                # macOS counts multi-clicks from a field on the event itself.
+                self.click_state = index
+                self.pointer_button(True, button=button, pid=pid)
+                self.pointer_button(False, button=button, pid=pid)
+                time.sleep(0.05)
+        finally:
+            self.click_state = 1
 
     def drag(
         self,

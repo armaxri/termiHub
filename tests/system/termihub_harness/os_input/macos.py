@@ -242,6 +242,7 @@ class MacOsInput(OsInput):
     def _post_mouse(self, kind: int, x: int, y: int, button: int) -> None:
         q = self._q
         event = q.CGEventCreateMouseEvent(None, kind, (x, y), button)
+        q.CGEventSetIntegerValueField(event, q.kCGMouseEventClickState, self.click_state)
         q.CGEventPost(q.kCGHIDEventTap, event)
         time.sleep(0.01)
 
