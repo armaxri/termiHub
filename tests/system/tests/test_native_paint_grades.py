@@ -31,6 +31,7 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    SettingsUi,
     LayoutUi,
     ShellFsUi,
     SidebarUi,
@@ -83,6 +84,7 @@ MIN_IMAGE_PIXELS = 400
 class TestNativePaintGrades(
     NativeCaptureUi,
     ThemeUi,
+    SettingsUi,
     TerminalUi,
     TabsUi,
     SidebarUi,

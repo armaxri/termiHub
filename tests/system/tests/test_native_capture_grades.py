@@ -37,6 +37,7 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    SettingsUi,
     ShellFsUi,
     SidebarUi,
     SystemTest,
@@ -94,6 +95,7 @@ def _system_nerd_fonts() -> list[str]:
 class TestNativeCaptureGrades(
     NativeCaptureUi,
     ThemeUi,
+    SettingsUi,
     TerminalUi,
     TabsUi,
     SidebarUi,
