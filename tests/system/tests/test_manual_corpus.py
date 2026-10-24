@@ -59,6 +59,8 @@ RETIRED_YAML_IDS = frozenset(
 
 _THEME = "test_theme_grades.py"
 _LAYOUT = "test_layout_grades.py"
+_CAPTURE = "test_native_capture_grades.py"
+_PAINT = "test_native_paint_grades.py"
 _HANDOFF = "test_external_app_handoffs.py"
 _X11_WINDOW = "test_forwarded_x11_client_opens_a_window_on_the_local_display"
 
@@ -126,6 +128,15 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-UI-50": f"{_THEME}::test_charts_and_primary_buttons_follow_live_theme",
     "MT-UI-51": f"{_LAYOUT}::test_terminal_and_breadcrumb_scrollbars_follow_global_style",
     "MT-UI-52": f"{_THEME}::test_editor_background_matches_panes_in_every_theme",
+    # #4937: graded on a native capture of the test app's window (by its PID).
+    "MT-SSH-01": f"{_CAPTURE}::test_agnoster_prompt_has_no_black_rectangle",
+    "MT-SSH-02": f"{_CAPTURE}::test_ansi_16_colours_paint_their_palette_colour",
+    "MT-UI-31": f"{_CAPTURE}::test_box_drawing_strokes_are_continuous",
+    "MT-SER-01": f"{_CAPTURE}::test_nerd_font_glyphs_render_from_the_bundled_font",
+    "MT-SER-02": f"{_CAPTURE}::test_nerd_font_glyphs_render_from_the_bundled_font",
+    "MT-UI-01": f"{_PAINT}::test_cold_launch_paints_no_white_frame",
+    "MT-UI-42": f"{_PAINT}::test_zoom_unzoom_and_split_repaint_without_scrolling",
+    "MT-UI-44": f"{_PAINT}::test_inline_images_paint_scroll_and_repaint_on_both_renderers",
     # #4932: recording PATH shims / OS queries for external-app hand-offs.
     "MT-FB-04": f"{_HANDOFF}::test_open_in_vscode_hands_the_local_file_to_code",
     "MT-FB-14": f"{_HANDOFF}::test_open_in_vscode_hands_the_local_file_to_code",
@@ -159,6 +170,10 @@ LATER_GUIDED_IDS = frozenset(
         "MT-TAB-07",
         "MT-FB-16",
         "MT-FB-23",
+        "MT-SSH-02",
+        "MT-UI-31",
+        "MT-SER-01",
+        "MT-UI-01",
         "MT-FB-04",
         "MT-FB-14",
         "MT-FB-15",
