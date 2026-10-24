@@ -636,6 +636,32 @@ the app-launching suites still run on a cadence:
 - **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR that touches the harness (`tests/system/`) runs it with `-m "not integration"` — every push to `develop`/`main` runs it regardless (#3325), so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
 - **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). The `develop` nightly is dispatched by [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml) at 05:05 UTC so it runs `develop`'s copy of the workflow (#4449); the lane's own cron grades `main` weekly. The job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
+**linux-arm64 leg (#4934).** The bulk lane and the display-critical grades
+also run on GitHub's native aarch64 runner, `ubuntu-24.04-arm`, with the same
+steps as the Linux leg: every fixture base image is multi-arch, the deployed-agent
+containers get a static `aarch64-unknown-linux-musl` test agent (built natively in
+the Rust Alpine image by `scripts/internal/build-system-test-agent.sh`, because
+cross-rs' stock images are amd64-only), and the live agent deploy runs over the
+harness' loopback sshd (`TERMIHUB_LIVE_AGENT=1`). Its skip-guard lanes are
+`bulk-linux-arm64` and `display-linux-arm64`. It costs a second full Linux run,
+so it is **weekly**: the `setup` job adds it on Wednesdays (UTC, the weekly `main`
+cron and that day's `develop` nightly) and on every release-candidate call, so a
+release is always graded on aarch64. Add it to any dispatch with `-f arm64=always`
+(drop it with `-f arm64=never`, or run only the arm64 legs with `-f arm64=only`):
+
+```bash
+gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched -f arm64=always
+```
+
+This covers most of what the Raspberry Pi sessions checked: the agent binary on
+aarch64 (#470), SSH and agent flows from an aarch64 client (#473), and the
+integration suite on aarch64 (#585). The arm64 `.deb` GUI launch is covered by
+[Release Linux arm64 Smoke](contributing.md#release-install-smokes) (#479). What
+stays manual is what a hosted runner cannot be: a **real Raspberry Pi** (its kernel,
+16K-page Pi 5 quirks, GPU/desktop session and real LAN, the optional
+`test_real_hardware.py` agent walk) and the **physical USB serial adapter**
+(MT-SER-09 physical variant).
+
 **Grading a feature branch before merge (#4726).** A manual dispatch normally
 picks `-f branch=develop|main|both` (dispatched with `--ref main`). To prove a
 nightly-only fix on its own branch, dispatch the lane _from that branch_ with
@@ -670,11 +696,12 @@ re-dispatch of the same branch supersedes only that branch's older run.
 The lane runs the app natively on each OS; only the **Docker fixtures** are
 Linux-only:
 
-| Leg                            | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
-| ------------------------------ | --------------------------------- | -------------------------------------------------------------------------- |
-| **Linux** (`ubuntu-latest`)    | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
-| **macOS** (`macos-latest`)     | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
-| **Windows** (`windows-latest`) | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
+| Leg                                          | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
+| -------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------- |
+| **Linux** (`ubuntu-latest`)                  | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
+| **macOS** (`macos-latest`)                   | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
+| **Windows** (`windows-latest`)               | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
+| **linux-arm64** (`ubuntu-24.04-arm`, weekly) | Run headless under Xvfb           | Run — same fixtures, native aarch64 images; aarch64-musl deployed agent    |
 
 The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
@@ -2191,7 +2218,7 @@ scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
 Every published release is install- and launch-smoked on hosted runners by five
 reusable workflows that the Release workflow calls before `mark-latest`, so a failing
 smoke keeps the release from becoming GitHub's latest release: Linux x64 and arm64 (which run this
-script or `--version`), macOS arm64 + Intel (DMG), Windows x64 (MSI), and the
+script headless under Xvfb; arm64 also checks the `.rpm` payload, #4934), macOS arm64 + Intel (DMG), Windows x64 (MSI), and the
 Windows arm64 agent binary (checksum, provenance, `--version`). The
 macOS and Windows smokes do not use this script — they launch the installed app and
 wait for its frontend's first IPC call to reach the backend in the durable app log,
