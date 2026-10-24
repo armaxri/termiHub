@@ -114,11 +114,17 @@ class ScreenMapper:
     def calibrate(
         cls, os_input: OsInput, driver: Any, *, pid: Optional[int] = None, timeout: float = 10.0
     ) -> "ScreenMapper":
-        windows = os_input.windows(pid)
-        if not windows:
-            raise OsInputUnavailable(f"PID {pid or os_input.pid} has no visible window")
+        try:
+            windows = os_input._wait(  # noqa: SLF001 — same package
+                lambda: os_input.windows(pid), timeout, "a visible window"
+            )
+        except OsInputUnavailable:
+            raise OsInputUnavailable(f"PID {pid or os_input.pid} has no visible window") from None
         for window in windows:
-            os_input.activate(window=window)
+            try:
+                os_input.activate(window=window, timeout=min(timeout, 5.0))
+            except OsInputUnavailable:
+                continue  # e.g. a hidden helper window that cannot take focus
             probe = driver.os_input_probe(reset=True)
             x, y = window.center
             os_input.pointer_move(x - 7, y - 7)

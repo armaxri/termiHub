@@ -85,6 +85,22 @@ class OsInputUi(HarnessMixin):
     def has_focus(self, driver: Optional[Driver] = None) -> bool:
         return bool((driver or self.driver).os_input_probe()["hasFocus"])
 
+    def os_select_terminal_word(self, tab_id: str, word: str, screen: ScreenMapper) -> None:
+        """Double-click ``word`` where it fills a terminal row of its own (real pointer)."""
+        rows = [
+            row
+            for row in self.driver.read_terminal_cells(word, tab_id=tab_id)
+            if row["text"].strip() == word
+        ]
+        assert rows, f"{word!r} has no output row of its own in the terminal buffer"
+        row = rows[-1]
+        measure = self.driver.measure_terminal(tab_id)
+        col = row["text"].index(word) + len(word) / 2
+        pad = float(self.driver.get_computed_style("--spacing-sm").rstrip("px") or 0)
+        rect = screen.rect(f"terminal-renderer-{tab_id}")
+        point = cell_point(screen, rect, measure, row["y"] - measure["viewportY"], col, pad)
+        self.os_input().click(*point, count=2)
+
 
 @contextlib.contextmanager
 def linux_window_manager() -> Iterator[None]:

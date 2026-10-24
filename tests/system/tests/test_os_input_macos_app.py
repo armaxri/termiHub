@@ -30,7 +30,12 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.ui.terminal import NEW_TERMINAL
-from termihub_harness.ui.windows import CLOSE_DIALOG, CLOSE_DIALOG_CANCEL, CLOSE_DIALOG_END
+from termihub_harness.ui.windows import (
+    CLOSE_DIALOG,
+    CLOSE_DIALOG_CANCEL,
+    CLOSE_DIALOG_END,
+    window_tabs,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -47,8 +52,14 @@ class TestOsMacAppLifecycle(
 ):
     """Dock reopen, Cmd+Q and Apple-event quits against the test instance."""
 
+    def _fresh(self) -> None:
+        """One window, app running: relaunch if an earlier test left more behind."""
+        if not self.app.is_running() or len(self.driver.windows()) != 1:
+            self.restart_app()
+
     def _shell_and_unsaved_editor(self) -> None:
         """A live shell plus an editor with an unsaved change: a quit must ask."""
+        self._fresh()
         self.close_all_tabs()
         self.ensure_terminal()
         self.open_file_browser()
@@ -72,6 +83,7 @@ class TestOsMacAppLifecycle(
         app keeps running (Dock dot); the Dock icon click (reopen) recreates a
         window."""
         self.os_input()
+        self._fresh()
         self.close_all_tabs()
         second = self.open_new_window()
         second.close_window()
@@ -89,13 +101,17 @@ class TestOsMacAppLifecycle(
         """MT-WIN-02: Cmd+Q with a live shell in two windows asks once; 'Quit &
         end sessions' closes every window and the app exits."""
         osi = self.os_input()
+        self._fresh()
         self.close_all_tabs()
         self.ensure_terminal()
         second = self.open_new_window()
         second.click(NEW_TERMINAL)
+        self.wait(lambda: window_tabs(second), what="window B's shell")
         osi.key("cmd+q")
-        self._quit_dialog()
-        self.driver.click(CLOSE_DIALOG_END)
+        # Each window that would lose a live session answers for itself.
+        for driver in (second, self.driver):
+            self.wait(lambda d=driver: d.exists(CLOSE_DIALOG), what="the quit dialog")
+            driver.click(CLOSE_DIALOG_END)
         self._wait_quit()
         self.restart_app()
         self.ensure_terminal()
@@ -113,7 +129,7 @@ class TestOsMacAppLifecycle(
         self._quit_dialog()
         self.driver.click(CLOSE_DIALOG_CANCEL)
         self.wait(lambda: not self.driver.exists(CLOSE_DIALOG), what="the dialog to close")
-        assert self.app.is_running() and self.has_terminal()
+        assert self.app.is_running() and self.tab_count() == 2
 
         osi.key("cmd+q")
         self._quit_dialog()

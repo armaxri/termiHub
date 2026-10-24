@@ -181,11 +181,21 @@ class OsInput:
     ) -> None:
         """Bring ``window`` (or ``pid``'s first window) to the front and wait for it."""
         target = self._check_target(window.pid if window is not None else pid)
+        exact = window is not None
         if window is None:
             found = self._wait(lambda: self._windows(target), timeout, f"a window of PID {target}")
             window = found[0]
         self._activate(window)
         self._wait(lambda: self._frontmost_pid() == target, timeout, f"PID {target} frontmost")
+        chosen = window
+        if exact and self._frontmost_window() is not None:
+            # Several windows of one PID (multi-window): the PID alone does not
+            # prove which of them took the focus.
+            self._wait(
+                lambda: self._frontmost_window() == chosen.handle,
+                timeout,
+                f"window {chosen.handle} frontmost",
+            )
         self._settle()
 
     def key(self, combo: str, *, pid: Optional[int] = None) -> None:
@@ -284,6 +294,10 @@ class OsInput:
 
     def _screen_size(self) -> tuple[int, int]:
         raise NotImplementedError
+
+    def _frontmost_window(self) -> Optional[int]:
+        """Handle of the focused top-level window, or ``None`` if unknowable."""
+        return None
 
     def _activate(self, window: OsWindow) -> None:
         raise NotImplementedError

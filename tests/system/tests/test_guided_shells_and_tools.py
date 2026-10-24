@@ -2,7 +2,7 @@
 
 Ported from the retired ``tests/manual/{local-shell,ssh,network-tools}.yaml``.
 Each item needs something CI cannot judge: a real WSL distribution, a real
-Git-for-Windows install, real macOS key repeat, a native X window on the
+Git-for-Windows install, a native X window on the
 operator's desktop, raw ICMP for traceroute, or the readability of a canvas
 chart.
 
@@ -10,9 +10,10 @@ The harness opens the shells, creates the X11 SSH connection against the
 ``ssh-x11`` fixture, and starts the traceroute / ping / HTTP monitor. The
 operator watches and judges.
 
-Covered: MT-LOCAL-03/08/31, MT-SSH-01/50/51/52, MT-NET-16/21. MT-LOCAL-30/32/33
+Covered: MT-LOCAL-03/31, MT-SSH-01/50/51/52, MT-NET-16/21. MT-LOCAL-30/32/33
 are automated since #4931 (``test_windows_shells.py``,
-``test_output_flash_and_flood.py``, ``test_performance.py``).
+``test_output_flash_and_flood.py``, ``test_performance.py``), MT-LOCAL-08 (macOS
+key repeat) since #4935 (``test_os_input_keyboard.py``).
 
 Run with ``./pytest.sh --manual -k guided_shells_and_tools -s``.
 """
@@ -113,17 +114,6 @@ class TestGuidedShellsAndTools(
             "Reopen the shell picker without restarting.",
             "The browser opened the Git download page; an 'Install Git for Windows' tab ran "
             "winget; Git Bash is now a normal row and the set-up entry is gone.",
-        )
-
-    # ── MT-LOCAL-08: macOS key repeat ────────────────────────────────────────
-    @pytest.mark.manual(platforms=["macos"])
-    def test_macos_key_repeat(self):
-        """MT-LOCAL-08."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.manual_step(
-            "Click into the terminal and hold `k` for 3 seconds.",
-            "kkkk… repeats continuously with no delay and no accent picker.",
         )
 
     # ── MT-SSH-01: Agnoster prompt ───────────────────────────────────────────

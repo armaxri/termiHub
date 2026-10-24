@@ -43,7 +43,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.os_input import HelperWindow, primary_modifier
-from termihub_harness.ui.os_input_ui import cell_point, linux_window_manager, terminal_echo
+from termihub_harness.ui.os_input_ui import linux_window_manager, terminal_echo
 from termihub_harness.ui.terminal import NEW_TERMINAL
 from termihub_harness.ui.windows import window_tabs
 
@@ -127,8 +127,9 @@ class TestOsKeyboardGrades(
         layout = osi.current_layout()  # type: ignore[attr-defined]
         osi.set_layout("us", "intl")  # type: ignore[attr-defined]
         try:
-            # US-International: ' is dead_acute, " (Shift+') dead_diaeresis.
-            yield [["'", "e"], ["shift+'", "u"]], "éü"
+            # US-International: the ' key is dead_acute, Shift+' dead_diaeresis.
+            # xdotool presses the key that carries the keysym in the active map.
+            yield [["dead_acute", "e"], ["dead_diaeresis", "u"]], "éü"
         finally:
             osi.set_layout(*layout)  # type: ignore[attr-defined]
 
@@ -210,18 +211,6 @@ class TestOsKeyboardGrades(
             self.cancel_password_prompt()
 
     # ── MT-KB-01..04: copy / paste shortcuts, plain Ctrl+C ───────────────────
-    def _select_word(self, tab_id: str, word: str, screen) -> None:
-        """Double-click ``word`` on its last row in the terminal (real pointer)."""
-        rows = self.driver.read_terminal_cells(word, tab_id=tab_id)
-        assert rows, f"{word!r} is not in the terminal buffer"
-        row = rows[-1]
-        measure = self.driver.measure_terminal(tab_id)
-        col = row["text"].index(word) + len(word) / 2
-        pad = float(self.driver.get_computed_style("--spacing-sm").rstrip("px") or 0)
-        rect = screen.rect(f"terminal-renderer-{tab_id}")
-        point = cell_point(screen, rect, measure, row["y"] - measure["viewportY"], col, pad)
-        self.os_input().click(*point, count=2)
-
     def test_copy_paste_shortcuts_and_plain_ctrl_c(self):
         """MT-KB-01, MT-KB-03: the platform copy shortcut (Cmd+C on macOS,
         Ctrl+Shift+C on Windows/Linux) puts the terminal selection on the OS
@@ -232,18 +221,21 @@ class TestOsKeyboardGrades(
         tab_id = self._shell()
         marker = f"KBMARK{uuid.uuid4().hex[:10]}"
         self.run_command(f"echo {marker}")
+        # The echoed command line may wrap; wait for the output line itself.
         self.wait(
-            lambda: len(self.driver.read_terminal_cells(marker, tab_id=tab_id)) >= 2,
-            what="the marker on its own output row",
+            lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
+            what="the marker's output line",
         )
         screen = self.os_activate()
-        self._select_word(tab_id, marker, screen)
+        self.os_select_terminal_word(tab_id, marker, screen)
         osi.key(COPY)
         self.wait(
             lambda: marker in (read_os_clipboard() or ""),
-            what=f"{marker!r} on the OS clipboard (has {(read_os_clipboard() or '')[:80]!r})",
+            what=f"{marker!r} on the OS clipboard",
         )
 
+        # Reading the clipboard can raise a console window (Windows PowerShell).
+        screen = self.os_activate()
         self._focus_terminal(tab_id, screen)
         osi.type_text("echo PASTE_")
         osi.key(PASTE)

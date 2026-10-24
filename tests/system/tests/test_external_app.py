@@ -16,8 +16,10 @@ clipboard pasted) via :meth:`ManualUi.manual_step` / :meth:`manual_confirm`.
 Covered:
 
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07).
-- **Clipboard** — copy the terminal buffer via the tab menu and via the
-  platform copy shortcut, and paste into the terminal (MT-KB-01..04).
+
+The clipboard checks — the tab menu's Copy, the platform copy/paste shortcuts
+and plain Ctrl+C (MT-KB-01..04) — are graded with real OS key events aimed at
+the test instance's PID by ``test_os_input_keyboard.py`` since #4935.
 
 The operator-free checks that the VS Code menu item and toolbar action track
 ``vscodeAvailable`` (MT-FB-16/23) moved to the automated
@@ -55,7 +57,6 @@ from termihub_harness import (
     TabsUi,
     TerminalUi,
     agent_has_key,
-    read_os_clipboard,
     unique_name,
 )
 
@@ -111,55 +112,3 @@ class TestExternalApp(
         )
         # Agent auth needs no prompt — the session should establish on its own.
         assert self.wait(self.has_terminal, what="the agent-authenticated terminal")
-
-    # ── Clipboard copy/paste (MT-KB-01..04) ──────────────────────────────────
-    def test_terminal_clipboard_copy_paste(self):
-        """Harness copies the terminal buffer via the tab menu and verifies it
-        landed on the OS clipboard (machine-checkable); the operator only
-        exercises the keyboard copy/paste shortcuts and Ctrl+C interrupt."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        marker = "CLIPBOARD_MARKER_7731"
-        self.run_command(f"echo {marker}")
-        self.wait_for_output(marker)
-
-        tab = self.active_tab()
-        assert tab is not None
-        # Harness-driven copy: the tab context menu copies the whole buffer.
-        self.driver.context_menu(f"tab-{tab['id']}")
-        self.wait(
-            lambda: self.driver.exists("tab-context-copy"),
-            what="the tab context menu",
-        )
-        self.driver.click("tab-context-copy")
-
-        # In-app verification (machine-checkable): the copy must actually land on
-        # the OS clipboard. Reading it back catches a silently-failing copy
-        # without depending on the operator's paste. The write is async, so poll
-        # briefly; the clipboard state is printed either way for diagnosis.
-        try:
-            self.wait(
-                lambda: (marker in (read_os_clipboard() or "")) or None,
-                timeout=5.0,
-                what=f"{marker!r} on the OS clipboard",
-            )
-            landed = True
-        except AssertionError:
-            landed = False
-        clip_head = (read_os_clipboard() or "")[:120]
-        print(f"[clipboard-check] marker landed on OS clipboard: {landed} · "
-              f"content head: {clip_head!r}")
-        assert landed, (
-            "'Copy All' did not put the terminal buffer on the OS "
-            f"clipboard — read back: {clip_head!r}"
-        )
-
-        # The copy is now machine-verified above, so the operator is asked only
-        # for the irreducibly-manual part: the keyboard copy/paste shortcuts and
-        # that plain Ctrl+C still interrupts (xterm key handling + SIGINT).
-        self.manual_step(
-            "In the terminal: select some text, copy it (Cmd+C, or Ctrl+Shift+C "
-            "on Windows/Linux), paste it back (Cmd+V / Ctrl+Shift+V). Then run a "
-            "command and press plain Ctrl+C.",
-            "Copy and paste worked, and plain Ctrl+C cancelled the command.",
-        )
