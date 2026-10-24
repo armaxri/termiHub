@@ -769,7 +769,7 @@ portable_double_launch() {
 wait_portable_lock() {
   local pid="$1" data="$2" holder i
   for ((i = 0; i < IPC_TIMEOUT; i++)); do
-    holder="$(tr -d '[:space:]' <"$data/.termihub.lock" 2>/dev/null || true)"
+    holder="$(tr -d '[:space:]' 2>/dev/null <"$data/.termihub.lock" || true)"
     if [ -n "$holder" ] && is_same_or_descendant "$holder" "$pid"; then return 0; fi
     alive "$pid" || return 1
     sleep 1
