@@ -7,10 +7,13 @@
     "with more skips than its max_skips baseline. 'reason' and the optional",
     "'nodeid' are Python regexes (re.search). Add an entry only for a genuine",
     "environment gap the lane can never close, and say why. Never allowlist a",
-    "'fixture unavailable' skip on Linux: fix the fixture instead."
+    "'fixture unavailable' skip on Linux: fix the fixture instead.",
+    "Guided-manual tests gated off by conftest (@pytest.mark.manual plus a",
+    "'guided-manual test' reason) need their entry but do not count against",
+    "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason",
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921)",
     "bulk-linux": 55,
     "bulk-macos": 210,
     "bulk-windows": 220,
