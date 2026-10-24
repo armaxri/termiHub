@@ -228,3 +228,22 @@ def test_save_sheet_writes_a_contact_sheet_or_nothing(tmp_path, monkeypatch):
     assert path is not None and path.endswith("sheet-pair.png")
     assert _png_rgb(open(path, "rb").read())[:2] == (2 + 2 + 3 * 8, 2 + 16)
     assert native_capture.save_sheet([a, None], "missing") is None
+
+
+def test_terminal_capture_maps_cells_from_the_grid_box():
+    from termihub_harness.ui.native_capture import TerminalCapture
+    from termihub_harness.window_capture import PageMapping
+
+    measure = {
+        "screenRect": {"left": 100, "top": 50, "width": 800, "height": 360},
+        "grid": {"cols": 100, "rows": 20},
+        "cell": {"width": 8, "height": 16},  # the glyph cell; rows are 18 tall
+        "viewportY": 10,
+        "paint": {"themeBackground": "#0f1117"},
+    }
+    cap = TerminalCapture(Frame.filled(2000, 1000, (0, 0, 0)), PageMapping(0, 30, 2), measure)
+    assert cap.cell_size == (16, 36)
+    assert cap.cell_rect(1, 2) == Rect(216, 202, 16, 36)
+    assert cap.buffer_cell_rect(1, 12) == cap.cell_rect(1, 2)
+    assert cap.row_visible(29) and not cap.row_visible(30)
+    assert cap.background == (15, 17, 23)

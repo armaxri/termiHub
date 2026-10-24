@@ -52,21 +52,27 @@ class TerminalCapture(NamedTuple):
     measure: dict[str, Any]
 
     @property
+    def css_cell(self) -> tuple[float, float]:
+        """One cell's CSS size: the grid's laid-out size over its cols x rows.
+
+        The renderer's own cell metric is not used: the DOM renderer lays rows
+        out at its line height, which can differ from the measured glyph cell,
+        while the ``.xterm-screen`` box always spans exactly the grid.
+        """
+        screen, grid = self.measure["screenRect"], self.measure["grid"]
+        return screen["width"] / grid["cols"], screen["height"] / grid["rows"]
+
+    @property
     def cell_size(self) -> tuple[float, float]:
         """One cell's size in capture pixels."""
-        cell = self.measure["cell"]
-        return cell["width"] * self.mapping.scale, cell["height"] * self.mapping.scale
+        w, h = self.css_cell
+        return w * self.mapping.scale, h * self.mapping.scale
 
     def cell_rect(self, col: int, row: int, cols: int = 1) -> Rect:
         """The capture rect of ``cols`` cells from ``(col, row)`` (viewport row)."""
         screen = self.measure["screenRect"]
-        cell = self.measure["cell"]
-        return self.mapping.rect(
-            screen["left"] + col * cell["width"],
-            screen["top"] + row * cell["height"],
-            cols * cell["width"],
-            cell["height"],
-        )
+        w, h = self.css_cell
+        return self.mapping.rect(screen["left"] + col * w, screen["top"] + row * h, cols * w, h)
 
     def buffer_cell_rect(self, col: int, y: int, cols: int = 1) -> Rect:
         """Like :meth:`cell_rect` for absolute buffer line ``y``."""
