@@ -591,6 +591,22 @@ describe("api service", () => {
       await pending;
     });
 
+    it("sessionDownload resolves when the transfer finishes before the command returns (#4934)", async () => {
+      // A small file can be done before `session_download` even returns its id.
+      // The listener must already be attached, or the done event is lost and
+      // the await hangs (a folder paste then stalls after its first file).
+      mockedInvoke.mockImplementation(() => {
+        if (!transferListener) throw new Error("listener not attached before the command ran");
+        transferListener({
+          payload: { transferId: "transfer-fast", phase: "done", transferred: 4 },
+        });
+        return Promise.resolve("transfer-fast");
+      });
+
+      await expect(sessionDownload("ssh-1", "/remote/a.txt", "/local/a.txt")).resolves.toBe(4);
+      expect(transferListener).toBeUndefined();
+    });
+
     it("sessionUpload invokes with correct params and returns bytes on the done event", async () => {
       mockedInvoke.mockResolvedValue("transfer-s2");
 

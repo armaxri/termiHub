@@ -13,9 +13,9 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921)",
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom",
     "bulk-linux": 55,
-    "bulk-linux-arm64": 55,
+    "bulk-linux-arm64": 16,
     "bulk-macos": 210,
     "bulk-windows": 220,
     "display-linux": 0,

@@ -1675,7 +1675,7 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
 export type { TransferQueueState, TransferProgress };
 
 /**
- * Rejection raised by {@link awaitTransfer} when a transfer settles via a
+ * Rejection raised by {@link runTransfer} when a transfer settles via a
  * terminal `transfer-progress` event (`cancelled` / `error`), as opposed to an
  * early/synchronous failure that never reached the background transfer.
  *
@@ -1698,36 +1698,33 @@ export class TransferTerminalError extends Error {
 }
 
 /**
- * Await the terminal `transfer-progress` event for `transferId`.
+ * Start a background transfer and await its terminal `transfer-progress` event.
  *
- * The backend now runs transfers in the background on a dedicated channel and
+ * The backend runs transfers in the background on a dedicated channel and
  * returns a `transferId` synchronously (#1245). This bridges that fire-and-return
  * command to the existing await-completion callers: it resolves with the bytes
  * transferred on `done`, and rejects with a {@link TransferTerminalError} on
  * `cancelled` / `error`. The D3 UI can instead subscribe to `transfer-progress`
  * directly for live progress.
+ *
+ * The listener is attached BEFORE `start` runs (#4934): a small file can finish
+ * before the start command even returns its id, and a listener attached after
+ * that missed the `done` event, so the await (and a folder paste walking file
+ * by file) hung forever. The linux-arm64 nightly leg hit it every run.
+ * `onRegistered` fires once with the id the instant the start command returns.
  */
-async function awaitTransfer(transferId: string): Promise<number> {
-  const { listen } = await import("@tauri-apps/api/event");
-  return await new Promise<number>((resolve, reject) => {
-    let unlisten: (() => void) | undefined;
-    void listen<TransferProgress>("transfer-progress", (event) => {
-      const p = event.payload;
-      if (p.transferId !== transferId) return;
-      if (p.phase === "done") {
-        unlisten?.();
-        resolve(p.transferred);
-      } else if (p.phase === "cancelled") {
-        unlisten?.();
-        reject(new TransferTerminalError("cancelled", "Transfer cancelled"));
-      } else if (p.phase === "error") {
-        unlisten?.();
-        reject(new TransferTerminalError("error", p.message ?? "Transfer failed"));
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-  });
+async function runTransfer(
+  start: () => Promise<string>,
+  onRegistered?: (transferId: string) => void
+): Promise<number> {
+  const watch = await watchTransferSettlements();
+  try {
+    const transferId = await start();
+    onRegistered?.(transferId);
+    return await watch.settled(transferId);
+  } finally {
+    watch.stop();
+  }
 }
 
 /** Cancel an in-flight SFTP transfer. Unknown/finished ids are a no-op (#1245). */
@@ -1925,8 +1922,7 @@ interface TransferSettlementWatch {
 /**
  * Start recording terminal `transfer-progress` events so a transfer's
  * settlement is never missed, however fast it runs — the race
- * {@link awaitTransfer} is exposed to when a transfer finishes before its
- * listener attaches.
+ * {@link runTransfer} avoids by attaching it before the start command runs.
  */
 async function watchTransferSettlements(): Promise<TransferSettlementWatch> {
   const { listen } = await import("@tauri-apps/api/event");
@@ -2340,13 +2336,15 @@ export async function sessionDownload(
   localPath: string,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
-  const transferId = await invoke<string>("session_download", {
-    sessionId,
-    remotePath,
-    localPath,
-  });
-  onRegistered?.(transferId);
-  return await awaitTransfer(transferId);
+  return await runTransfer(
+    () =>
+      invoke<string>("session_download", {
+        sessionId,
+        remotePath,
+        localPath,
+      }),
+    onRegistered
+  );
 }
 
 /**
@@ -2362,13 +2360,15 @@ export async function sessionUpload(
   remotePath: string,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
-  const transferId = await invoke<string>("session_upload", {
-    sessionId,
-    localPath,
-    remotePath,
-  });
-  onRegistered?.(transferId);
-  return await awaitTransfer(transferId);
+  return await runTransfer(
+    () =>
+      invoke<string>("session_upload", {
+        sessionId,
+        localPath,
+        remotePath,
+      }),
+    onRegistered
+  );
 }
 
 /**
@@ -2392,14 +2392,16 @@ export async function sessionCopyRemote(
   dstPath: string,
   onRegistered?: (transferId: string) => void
 ): Promise<number> {
-  const transferId = await invoke<string>("session_copy_remote", {
-    srcSession,
-    srcPath,
-    dstSession,
-    dstPath,
-  });
-  onRegistered?.(transferId);
-  return await awaitTransfer(transferId);
+  return await runTransfer(
+    () =>
+      invoke<string>("session_copy_remote", {
+        srcSession,
+        srcPath,
+        dstSession,
+        dstPath,
+      }),
+    onRegistered
+  );
 }
 
 /**
