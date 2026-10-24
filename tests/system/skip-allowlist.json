@@ -145,7 +145,7 @@
       "lanes": [
         "bulk-macos"
       ],
-      "why": "platform behaviour; graded manually as MT-WIN-01"
+      "why": "platform behaviour; graded as MT-WIN-01 by test_os_input_macos_app.py (#4935)"
     },
     {
       "reason": "^bash/zsh/sh local shells are POSIX-only$",
