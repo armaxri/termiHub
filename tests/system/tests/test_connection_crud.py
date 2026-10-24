@@ -157,7 +157,8 @@ class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.wait(lambda: self.find_tab(f"Edit: {name}") is not None, what="the edit tab")
         assert self.tab_count() == after_first
 
-    def test_multiple_editor_tabs_for_different_connections(self):
+    @pytest.mark.parametrize("_rep", range(4))
+    def test_multiple_editor_tabs_for_different_connections(self, _rep):
         name1 = unique_name("multi-a")
         name2 = unique_name("multi-b")
         self.create_local_connection(name1)

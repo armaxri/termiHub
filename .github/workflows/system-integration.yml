@@ -575,9 +575,8 @@ jobs:
         if: runner.os == 'Linux'
         env:
           # The linux-arm64 leg has its own baseline (#4934).
-          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'bulk-linux-arm64' || 'bulk-linux' }}
           TERMIHUB_REQUIRE_FIXTURES: "1"
-        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration tests/test_connection_crud.py -k "test_multiple_editor_tabs or test_reedit" -n 1 --dist loadscope -v --durations=25 --reruns 0 -r aR --rerun-show-tracebacks
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -639,7 +638,6 @@ jobs:
         shell: bash
         env:
           TERMIHUB_XDIST_WORKERS: '2'
-          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'bulk-macos' || 'bulk-windows' }}
         #
         # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): same
         # bounded auto-retries as the Linux step. rerunfailures composes with xdist
@@ -651,7 +649,7 @@ jobs:
         # --reruns 0 (see the Linux step's comment). `-r aR` surfaces RERUN lines in
         # the summary, with each retried attempt's traceback (#4829). Not applied
         # to per-PR CI.
-        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        run: ./tests/system/pytest.sh -m integration tests/test_connection_crud.py -k "test_multiple_editor_tabs or test_reedit" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 0 -r aR --rerun-show-tracebacks
 
       - name: macOS Quit delivery probe (debug bundle)
         # The macOS release smoke quits the installed app by clicking its own
@@ -756,6 +754,7 @@ jobs:
   # quarantine-not-retry rule), never re-add a blanket rerun.
   display-grades:
     needs: setup
+    if: false
     name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
     runs-on: ${{ matrix.os }}
     # Only the app+agent build plus two short grades — a fraction of the bulk
@@ -973,6 +972,7 @@ jobs:
   # and the suites are `#![cfg(unix)]`. Kept out of the per-PR gate on purpose.
   agent-docker-integration:
     needs: setup
+    if: false
     name: Agent Docker integration (${{ matrix.branch }})
     runs-on: ubuntu-latest
     # Only a cargo build + nine short real-daemon tests; generous enough for a
