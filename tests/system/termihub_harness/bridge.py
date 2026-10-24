@@ -632,6 +632,8 @@ class Driver:
                        "hscrollBarHeight"},
              "decorations": [{"classes", "background",  # OSC 133 bars,
                               "top", "left", "width", "height"}, ...],  # flash
+             "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px
+             "page": {"devicePixelRatio", "innerWidth", "innerHeight"},  # (#4937)
              "viewportY": int, "baseY": int}
 
         Read-only. Active tab unless ``tab_id`` is given.
@@ -651,7 +653,10 @@ class Driver:
               "text": str,              # the row's text, right-trimmed
               "cells": [{"x": int,      # column
                          "chars": str,  # base + attached combining/ZWJ marks
-                         "width": int}  # 2 = wide head, 0 = its spacer, 1 = narrow
+                         "width": int,  # 2 = wide head, 0 = its spacer, 1 = narrow
+                         "fg": str,     # "#rrggbb" it paints, via the theme (#4937)
+                         "bg": str,     # likewise, after inverse video
+                         "bold": bool}
                         , ...]}, ...]
 
         Read-only. Active tab unless ``tab_id`` is given.

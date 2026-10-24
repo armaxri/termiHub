@@ -381,6 +381,8 @@ scrollbar's thumb against a laid-out track — only exists in a real WebView.
   "webglCanvas": { "width": 1880, "height": 1360 }, // null on the DOM renderer
   "domRows": null, // painted row text on the DOM renderer
   "scrollbar": { "trackHeight": 690, "thumbVisible": true, "thumbHeight": 98, "thumbTop": 592 },
+  "screenRect": { "left": 260, "top": 80, "width": 940, "height": 680 }, // cell grid, page CSS px
+  "page": { "devicePixelRatio": 2, "innerWidth": 1280, "innerHeight": 800 },
   "viewportY": 260,
   "baseY": 260,
 }
@@ -395,7 +397,9 @@ and fail when no terminal is registered for it. Python:
 `driver.measure_terminal(tab_id=None)` and
 `driver.lose_terminal_webgl_context(tab_id=None)`; the suite (which also
 drives loss → DOM fallback → reacquire on the next tab show, #4426) is
-`tests/system/tests/test_terminal_render_paths.py`.
+`tests/system/tests/test_terminal_render_paths.py`. `screenRect` and `page`
+(#4937) let a native window capture be mapped onto the cell grid (see
+`termihub_harness/ui/native_capture.py`).
 
 ### Raw output and frontend log (`readTerminalOutput`, `readFrontendLog`)
 
@@ -444,13 +448,18 @@ contains `contains` (scrollback too), or the visible viewport rows without it.
     "y": 12, // absolute buffer line
     "text": "日e\u0301",
     "cells": [
-      { "x": 0, "chars": "日", "width": 2 }, // wide character head
-      { "x": 1, "chars": "", "width": 0 }, // its spacer cell
-      { "x": 2, "chars": "e\u0301", "width": 1 }, // base + attached mark
+      { "x": 0, "chars": "日", "width": 2, "fg": "#dde1ec", "bg": "#0f1117", "bold": false }, // wide head
+      { "x": 1, "chars": "", "width": 0, "fg": "#dde1ec", "bg": "#0f1117", "bold": false }, // its spacer
+      { "x": 2, "chars": "e\u0301", "width": 1, "fg": "#cd3131", "bg": "#0f1117", "bold": true }, // base + mark
     ],
   },
 ]
 ```
+
+`fg` / `bg` are the colours the cell paints in (#4937): ANSI 0–15 from the live
+theme (xterm's defaults where it leaves one unset), 16–255 from the xterm cube
+and grey ramp, truecolour as-is, the default as the theme foreground /
+background, all after inverse video. `bold` is SGR 1.
 
 `{ action: "compose", testId?, tabId?, updates, commit }` replays an input
 method's DOM sequence on a control: `keydown` 229, `compositionstart`, then per

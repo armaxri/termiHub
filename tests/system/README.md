@@ -589,7 +589,7 @@ Operator verbs on `ManualUi`:
 single guided test interactively (use `-s` so the prompts reach your console):
 
 ```sh
-./pytest.sh --manual -k visual_rendering -s
+./pytest.sh --manual -k guided_look_and_feel -s
 # select a different platform's platform-scoped items:
 ./pytest.sh --manual --manual-platform=windows -s
 ```

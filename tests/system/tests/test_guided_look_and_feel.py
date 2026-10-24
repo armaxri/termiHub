@@ -8,20 +8,26 @@ width. The underlying rules are pinned by unit tests (named per item in
 scrollback, zoom, split, a sample file in the editor, the Settings category)
 and the operator looks.
 
-Covered: MT-UI-40, MT-UI-42, MT-UI-44, MT-UI-46. The theme, layout and
-scrollbar items (MT-UI-05, 13, 41, 43, 45, 47..52) are graded automatically by
+Covered: MT-UI-40, MT-UI-46. The theme, layout and scrollbar items
+(MT-UI-05, 13, 41, 43, 45, 47..52) are graded automatically by
 ``test_theme_grades.py`` / ``test_layout_grades.py`` /
 ``test_terminal_command_marks.py`` since #4930. MT-UI-54/55 (Settings layout)
 and MT-UI-56 (imported workspace confirmations) are automated by the rendered
 visual checks and unit tests (#4928), and MT-UI-53 (sidebar rows at real
 widths) by the rendered visual checks (#4954).
 
+Native window capture (#4937, ``test_native_paint_grades.py``) automates the
+zoom / split repaint (MT-UI-42), the inline images (MT-UI-44) and the
+cold-launch white flash that MT-UI-40 used to open with. MT-UI-40 and MT-UI-46
+are reduced to judging a saved image: the harness captures the window (by the
+test app's PID) and attaches a Dark | Light contact sheet, or the WebGL | DOM
+pair, so the operator confirms legibility and font choice from evidence that
+shows the GPU canvas.
+
 Run with ``./pytest.sh --manual -k guided_look_and_feel -s``.
 """
 
 from __future__ import annotations
-
-import sys
 
 import pytest
 
@@ -36,14 +42,15 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.native_capture import NativeCaptureUi, save_sheet
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
 THEME_SELECT = "appearance-theme-select"
-_ZOOM = "Cmd+Shift+Enter" if sys.platform == "darwin" else "Ctrl+Shift+Enter"
 
 
 class TestGuidedLookAndFeel(
+    NativeCaptureUi,
     TerminalUi,
     TabsUi,
     ConnectionsUi,
@@ -68,14 +75,8 @@ class TestGuidedLookAndFeel(
 
     # ── MT-UI-40: light/dark sweep ───────────────────────────────────────────
     def test_light_dark_look_sweep(self):
-        """MT-UI-40."""
+        """MT-UI-40 (the cold-launch flash is graded automatically since #4937)."""
         self._theme("dark")
-        self.restart_app()
-        self.manual_observe(
-            "The harness cold-relaunched the app in Dark.",
-            "No white or grey flash on first paint; Dark is deep blue-charcoal with "
-            "bright-blue accents.",
-        )
         self.create_local_connection(unique_name("toast"))
         self.manual_step(
             "Hover the success toast and Tab to its close X. Then connect a remote agent "
@@ -84,48 +85,24 @@ class TestGuidedLookAndFeel(
             "The close X is top-right with visible hover and focus ring; badges, banner and "
             "queue colours are legible.",
         )
+        dark = self.try_capture_app_window()
         self._theme("light")
-        self.manual_step(
-            "Re-check each surface in Light (the harness switched it), then answer.",
+        sheet = save_sheet([dark, self.try_capture_app_window()], "dark-light")
+        self.manual_observe(
+            "Re-check each surface in Light (the harness switched it)"
+            + (f"; the Dark | Light contact sheet is at {sheet}." if sheet else "."),
             "Every surface stays legible and on-theme in both Light and Dark.",
+            evidence=sheet,
         )
         self._theme("dark")
 
-    # ── MT-UI-42 / 44 / 46: macOS/WebGL paint ────────────────────────────────
-    @pytest.mark.manual(platforms=["macos"])
-    def test_zoomed_terminal_repaints_without_scrolling(self):
-        """MT-UI-42."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command("seq 1 200")
-        self.wait_for_output("200")
-        self.manual_step(
-            f"Zoom the tab ({_ZOOM}) and un-zoom a few times; then split the view and drag "
-            "the splitter.",
-            "Content shows at once at the new size without scrolling; the split terminal "
-            "reflows and repaints.",
-        )
-
-    @pytest.mark.manual(platforms=["macos", "windows"])
-    def test_inline_sixel_and_iterm2_images(self):
-        """MT-UI-44."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        how = (
-            "In the default PowerShell tab `cat` a .six file and an iTerm2 image file "
-            "(installed MSI, #4121)"
-            if sys.platform == "win32"
-            else "Run `img2sixel` on a PNG, then `imgcat` on a PNG"
-        )
-        self.manual_step(
-            f"{how}. Scroll the images out of view and back. Repeat with the DOM renderer "
-            "(Settings > Terminal).",
-            "Both pictures draw inline followed by the prompt and scroll with the text on "
-            "WebGL and DOM.",
-        )
-
     def test_cjk_combining_rtl_emoji_on_webgl(self):
-        """MT-UI-46 (Git Bash on Windows)."""
+        """MT-UI-46 (Git Bash on Windows).
+
+        The cell layout is asserted by ``test_terminal_glyph_shaping.py``; this
+        judges the fonts the renderers chose, from a WebGL | DOM contact sheet
+        of the native window capture (#4937).
+        """
         self.close_all_tabs()
         self.ensure_terminal()
         self.run_command(
@@ -133,8 +110,21 @@ class TestGuidedLookAndFeel(
             "👨\\342\\200\\215👩\\342\\200\\215👧|\\n'"
         )
         self.wait_for_output("שלום")
+        webgl = self.try_capture_app_window()
+        tab = self.switch_to_terminal_tab()["id"]
+        if self.driver.measure_terminal(tab).get("renderer") == "webgl":
+            self.driver.lose_terminal_webgl_context(tab)
+        self.wait(
+            lambda: self.driver.measure_terminal(tab).get("renderer") == "dom",
+            timeout=30,
+            what="the DOM renderer",
+        )
+        sheet = save_sheet([webgl, self.try_capture_app_window()], "webgl-dom")
         self.manual_observe(
-            "Look at the four printed lines.",
+            "Look at the four printed lines"
+            + (f" in the WebGL | DOM contact sheet ({sheet})." if sheet else " (now on DOM)."),
             "CJK fill two columns each and the '|' lines up; accents sit on é and ä; Hebrew "
-            "and Arabic use a real font; the family shows three emoji in six columns.",
+            "and Arabic use a real font; the family shows three emoji in six columns — in "
+            "both halves.",
+            evidence=sheet,
         )
