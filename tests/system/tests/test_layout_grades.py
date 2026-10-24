@@ -191,6 +191,7 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
     # ── MT-UI-45 ─────────────────────────────────────────────────────────────
     def test_sidebar_paints_fully_on_cold_launch(self):
         """MT-UI-45: headers, filter and rows are laid out at first contact, 3 launches."""
+        self.switch_to_connections_sidebar()  # the view a relaunch restores
         name = unique_name("cold")
         conn = self.create_local_connection(name)
         row = connection_item_testid(self.require_connection(conn)["id"])
