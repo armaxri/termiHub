@@ -565,6 +565,165 @@ for (const win of WINDOWS) {
   });
 }
 
+/** One toolbar action as rendered inline: its accessible name and form. */
+interface InlineToolbarAction {
+  label: string;
+  /** Opens a drop-down instead of acting (a sub-menu in the overflow menu). */
+  menu: boolean;
+  disabled: boolean;
+}
+
+/** The inline actions of every width-responsive toolbar in the sidebar, in order. */
+async function inlineToolbarActions(page: Page): Promise<InlineToolbarAction[][]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll("[data-testid=sidebar] .ui-toolbar")].map((bar) =>
+      [
+        ...bar.querySelectorAll<HTMLButtonElement>(":scope > button:not(.ui-toolbar__overflow)"),
+      ].map((b) => ({
+        label: b.getAttribute("aria-label") ?? "",
+        menu: b.getAttribute("aria-haspopup") === "menu",
+        disabled: b.disabled,
+      }))
+    )
+  );
+}
+
+/** The `index`-th toolbar of the sidebar. */
+function toolbar(page: Page, index: number) {
+  return page.locator("[data-testid=sidebar] .ui-toolbar").nth(index);
+}
+
+/**
+ * Commands the app sends on its own timer, not because of an action: the
+ * services poll and the debounced settings save after a sidebar resize.
+ */
+const BACKGROUND_COMMANDS = ["record_frontend_log", "get_embedded_server_states", "save_settings"];
+
+/**
+ * What an action visibly did: the IPC commands it sent (intents by kind), the
+ * tabs and active tab, open dialogs, toasts, the sidebar view, and the items
+ * of the last menu it opened.
+ */
+async function actionEffect(page: Page, since: number): Promise<unknown> {
+  await settle(page);
+  await page.waitForTimeout(300);
+  return page.evaluate(
+    ([mark, background]) => {
+      const text = (el: Element) => (el.textContent ?? "").trim().replace(/\s+/g, " ");
+      const menus = [...document.querySelectorAll("[role=menu]")];
+      const state = window.__visual.store.getState() as unknown as { sidebarView: string };
+      return {
+        ipc: (window.__VISUAL_INVOKED__ ?? []).slice(mark).filter((c) => !background.includes(c)),
+        tabs: [...document.querySelectorAll(".tab:not(.tab--drag-overlay)")].map(text),
+        active: [...document.querySelectorAll(".tab--active")].map(text),
+        dialogs: [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].map(
+          (d) =>
+            d.getAttribute("aria-label") ?? text(d.querySelector("h1, h2, h3") ?? d).slice(0, 60)
+        ),
+        toasts: [...document.querySelectorAll("[data-sonner-toast]")].map(text),
+        sidebarView: state.sidebarView,
+        menu: menus.length
+          ? [...menus[menus.length - 1].querySelectorAll("[role=menuitem]")].map(text)
+          : [],
+      };
+    },
+    [since, BACKGROUND_COMMANDS] as const
+  );
+}
+
+/** How many IPC commands the app has sent so far. */
+async function invokedCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window.__VISUAL_INVOKED__ ?? []).length);
+}
+
+/** Fresh app with `view` open at `width`. */
+async function bootSidebar(page: Page, view: string, width: number | "min"): Promise<void> {
+  await boot(page);
+  await showSidebar(page, view);
+  await store(page, "setSidebarWidth", width === "min" ? await sidebarMinWidth(page) : width);
+  await settle(page);
+}
+
+/** A sidebar width at which every toolbar shows all its actions labelled. */
+const WIDE_SIDEBAR = 560;
+
+test.describe("sidebar overflow menus", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  for (const view of SIDEBARS) {
+    test(`${view}: overflow items do what their toolbar buttons do`, async ({ page }) => {
+      // MT-UI-53 (#4954): at the minimum width every action a toolbar shows
+      // at a wide width is still reachable (inline or in the "…" menu), and
+      // each overflow item has the same effect as its button. Each trigger
+      // runs on a freshly booted app so the two effects are comparable.
+      test.setTimeout(300_000);
+      await bootSidebar(page, view, WIDE_SIDEBAR);
+      const wide = await inlineToolbarActions(page);
+      await store(page, "setSidebarWidth", await sidebarMinWidth(page));
+      await settle(page);
+      const narrow = await inlineToolbarActions(page);
+      expect(narrow.length, "same toolbars at both widths").toBe(wide.length);
+
+      const overflowed: Array<{ bar: number; action: InlineToolbarAction }> = [];
+      for (let bar = 0; bar < wide.length; bar++) {
+        const trigger = toolbar(page, bar).locator(":scope > .ui-toolbar__overflow");
+        if ((await trigger.count()) === 0) {
+          expect(narrow[bar], `toolbar ${bar} keeps every action inline`).toEqual(wide[bar]);
+          continue;
+        }
+        await trigger.click();
+        const items = await page
+          .locator("[role=menu]")
+          .last()
+          .locator(":scope [role=menuitem]")
+          .allInnerTexts();
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toHaveCount(0);
+        const inline = new Set(narrow[bar].map((a) => a.label));
+        for (const action of wide[bar]) {
+          if (inline.has(action.label)) continue;
+          expect
+            .soft(
+              items.map((t) => t.trim()),
+              `toolbar ${bar}: "${action.label}" is in the overflow menu`
+            )
+            .toContain(action.label);
+          if (!action.disabled) overflowed.push({ bar, action });
+        }
+      }
+      test.info().annotations.push({
+        type: "info",
+        description: `${overflowed.length} overflowed action(s) compared`,
+      });
+
+      for (const { bar, action } of overflowed) {
+        await bootSidebar(page, view, WIDE_SIDEBAR);
+        let mark = await invokedCount(page);
+        await toolbar(page, bar)
+          .locator(":scope > button", { hasNot: page.locator(".ui-toolbar__overflow") })
+          .and(page.getByRole("button", { name: action.label, exact: true }))
+          .click({ timeout: 10_000 });
+        const viaButton = await actionEffect(page, mark);
+
+        await bootSidebar(page, view, "min");
+        await toolbar(page, bar)
+          .locator(":scope > .ui-toolbar__overflow")
+          .click({ timeout: 10_000 });
+        mark = await invokedCount(page);
+        const item = page
+          .locator("[role=menu]")
+          .last()
+          .getByRole("menuitem", { name: action.label, exact: true });
+        // A drop-down action is a sub-menu here: opening it is its effect.
+        if (action.menu) await item.press("ArrowRight", { timeout: 10_000 });
+        else await item.click({ timeout: 10_000 });
+        const viaMenu = await actionEffect(page, mark);
+        expect.soft(viaMenu, `"${action.label}" from the overflow menu`).toEqual(viaButton);
+      }
+    });
+  }
+});
+
 /** The Settings tab width MT-UI-54 narrows to. */
 const NARROW_SETTINGS = 420;
 
