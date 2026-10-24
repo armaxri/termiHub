@@ -46,6 +46,10 @@
 # and logs a clean exit on SIGTERM. The smoke must pass on the faithful stub and
 # FAIL on stubs that skip the clean-exit line or let a second instance keep
 # running, so the gate is proven to bite before a release ever depends on it.
+# The same stub covers the #4933 additions: a bare relaunch un-minimising the
+# window, a portable copy refused on a second launch, and the CSP log scan. Next
+# to it, release-smoke-bundle-icon.sh runs on a fake .deb root: the repository
+# icons pass, a placeholder or missing icon fails.
 #
 # A fifth section runs assert-no-test-bridge.sh (#4122) on dummy binaries: it
 # must pass one without the test-bridge build marker and fail on one with it.
@@ -99,6 +103,8 @@ SCRIPTS=(
   "scripts/internal/registry-mirror.sh"
   "scripts/internal/release-draft.sh"
   "scripts/internal/release-smoke-app-lifecycle.sh"
+  "scripts/internal/release-smoke-bundle-icon.sh"
+  "scripts/internal/release-smoke-gatekeeper.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
   "scripts/internal/setup-plugin-index-signing-key.sh"
@@ -597,6 +603,36 @@ lifecycle_run probe "quit probe fails, without an Apple event, when the menu is 
 lifecycle_run probe "quit probe fails when the clean-exit line is missing" fail \
   STUB_NO_CLEAN_EXIT=1
 rm -rf "$LS/lock" "$LS/lock.min" "$LS/portable/data"
+
+# --- release-smoke-bundle-icon.sh on a fake Linux install root (#4933) ---
+# The .deb layout tauri writes: a .desktop entry naming Icon=termihub and the
+# repository PNGs under hicolor. A placeholder icon in one size must fail.
+BI="$LC/bundle-icon"
+mkdir -p "$BI/root/usr/share/applications"
+printf '[Desktop Entry]\nExec=termihub\nIcon=termihub\nName=termiHub\n' \
+  >"$BI/root/usr/share/applications/termiHub.desktop"
+for pair in 32x32:32x32.png 128x128:128x128.png 256x256@2:128x128@2x.png; do
+  mkdir -p "$BI/root/usr/share/icons/hicolor/${pair%%:*}/apps"
+  cp "src-tauri/icons/${pair#*:}" "$BI/root/usr/share/icons/hicolor/${pair%%:*}/apps/termihub.png"
+done
+bundle_icon_run() { # <label> <expected exit>
+  local out rc=0
+  out="$(bash scripts/internal/release-smoke-bundle-icon.sh --icons src-tauri/icons \
+    --linux-root "$BI/root" 2>&1)" || rc=$?
+  if [ "$rc" -eq "$2" ]; then
+    echo "ok    bundle icon smoke: $1 (exit $rc)"
+  else
+    echo "::error file=scripts/internal/release-smoke-bundle-icon.sh::bundle icon smoke: $1:" \
+      "expected exit $2, got $rc"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+bundle_icon_run "passes the repository icons" 0
+cp src-tauri/icons/StoreLogo.png "$BI/root/usr/share/icons/hicolor/128x128/apps/termihub.png"
+bundle_icon_run "fails a placeholder icon in one size" 1
+rm "$BI/root/usr/share/icons/hicolor/"*/apps/termihub.png
+bundle_icon_run "fails when the theme has no icon" 1
 app_lifecycle_and_earlier_failures="$failures"
 
 # --- Release test-bridge guard (#4122) ---
