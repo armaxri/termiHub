@@ -55,34 +55,51 @@ export function usePaneListing(
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
   const pathRef = useRef("");
+  // The directory last asked for, and its listing while in flight. Until a
+  // listing resolves, `path` is empty: a refresh then joins the pending listing
+  // (or, after it failed, re-requests its directory) instead of listing "" —
+  // which superseded the first listing and stranded the pane (#4910).
+  const requestedRef = useRef("");
+  const inFlight = useRef<Promise<void> | null>(null);
 
   const navigate = useCallback(
-    async (target: string) => {
-      if (side === "remote" && !sessionId) return;
+    (target: string): Promise<void> => {
+      if ((side === "remote" && !sessionId) || !target) return Promise.resolve();
+      requestedRef.current = target;
       const seq = ++requestSeq.current;
+      const isLatest = () => seq === requestSeq.current;
       setLoading(true);
-      try {
-        const listed =
-          side === "local"
-            ? await localListDir(target)
-            : await sessionListFiles(sessionId as string, target);
-        if (seq !== requestSeq.current) return;
-        const resolved = resolveListedPath(target, listed);
-        pathRef.current = resolved;
-        setPath(resolved);
-        setEntries(sortEntries(listed, "name", "asc"));
-        setError(null);
-      } catch (err) {
-        if (seq !== requestSeq.current) return;
-        setError(errorMessage(err));
-      } finally {
-        if (seq === requestSeq.current) setLoading(false);
-      }
+      const listing = (async () => {
+        try {
+          const listed =
+            side === "local"
+              ? await localListDir(target)
+              : await sessionListFiles(sessionId as string, target);
+          if (!isLatest()) return;
+          const resolved = resolveListedPath(target, listed);
+          pathRef.current = resolved;
+          setPath(resolved);
+          setEntries(sortEntries(listed, "name", "asc"));
+          setError(null);
+        } catch (err) {
+          if (isLatest()) setError(errorMessage(err));
+        } finally {
+          if (isLatest()) {
+            setLoading(false);
+            inFlight.current = null;
+          }
+        }
+      })();
+      inFlight.current = listing;
+      return listing;
     },
     [side, sessionId]
   );
 
-  const refresh = useCallback(() => navigate(pathRef.current), [navigate]);
+  const refresh = useCallback((): Promise<void> => {
+    if (!pathRef.current && inFlight.current) return inFlight.current;
+    return navigate(pathRef.current || requestedRef.current);
+  }, [navigate]);
 
   const up = useCallback(async () => {
     const current = pathRef.current;
@@ -93,6 +110,8 @@ export function usePaneListing(
   // Initial listing, and a fresh start whenever the remote session changes.
   useEffect(() => {
     pathRef.current = "";
+    requestedRef.current = "";
+    inFlight.current = null;
     setPath("");
     setEntries([]);
     setError(null);
