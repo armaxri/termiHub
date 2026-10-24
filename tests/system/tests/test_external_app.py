@@ -15,11 +15,9 @@ clipboard pasted) via :meth:`ManualUi.manual_step` / :meth:`manual_confirm`.
 
 Covered:
 
-- **Open in VS Code** — local (MT-FB-04/14), SFTP (MT-FB-15), and the
-  "VS Code not installed → menu item hidden" path (MT-FB-16).
+- **Open in VS Code** — local (MT-FB-04/14) and SFTP (MT-FB-15).
 - **Local folder OS integration** (#2656) — open the OS file manager at the
-  current folder (MT-FB-21), open the folder as a VS Code workspace (MT-FB-22),
-  and the toolbar VS Code action tracking ``vscodeAvailable`` (MT-FB-23).
+  current folder (MT-FB-21) and open the folder as a VS Code workspace (MT-FB-22).
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07) and
   the "Setup SSH Agent" button in the connection editor (MT-SSH-09, #955).
 - **X11 forwarding** — enabling ``enableX11Forwarding`` on a connection, proving
@@ -28,6 +26,10 @@ Covered:
   remote X11 window appears (MT-SSH-14/15/16/18, MT-XPLAT-03).
 - **Clipboard** — copy the terminal buffer via the tab menu and via the
   platform copy shortcut, and paste into the terminal (MT-KB-01..04).
+
+The operator-free checks that the VS Code menu item and toolbar action track
+``vscodeAvailable`` (MT-FB-16/23) moved to the automated
+``test_file_browser_local.py`` (#4928).
 
 **OS credential stores (MT-CRED-01/02/03)** live in
 ``test_guided_credentials.py``: the app has an OS-keychain storage mode (#956),
@@ -140,24 +142,6 @@ class TestExternalApp(
             "VS Code shows that file.",
         )
 
-    # ── Open in VS Code: menu hidden when unavailable (MT-FB-16) ──────────────
-    def test_vscode_menu_item_matches_availability(self):
-        """The 'Open in VS Code' item is present iff the app detected VS Code.
-
-        Fully harness-verified (no operator step): the item's presence must track
-        ``vscodeAvailable``, which is exactly MT-FB-16's "menu item hidden" claim
-        plus its inverse.
-        """
-        self.close_all_tabs()
-        fname = f"{unique_name('vscode-avail')}.txt"
-        self._make_local_file(fname)
-
-        self.open_file_menu(fname)
-        assert self.driver.exists(_VSCODE_ITEM) == self._vscode_available(), (
-            "VS Code menu item presence does not match vscodeAvailable"
-        )
-        self.dismiss_menu()
-
     # ── Open file manager here: local (MT-FB-21, #2656) ──────────────────────
     def test_open_file_manager_local(self):
         """Harness opens a local file browser and triggers the toolbar
@@ -195,24 +179,6 @@ class TestExternalApp(
         self.manual_observe(
             f"termiHub opened {path} as a VS Code workspace.",
             "VS Code shows that folder as an open workspace.",
-        )
-
-    # ── Open-folder-in-VS-Code toolbar tracks availability (MT-FB-23, #2656) ──
-    def test_open_folder_vscode_toolbar_matches_availability(self):
-        """The toolbar "open folder in VS Code" action is present iff the app
-        detected VS Code. The file-manager action is always present locally.
-
-        Fully harness-verified (no operator step).
-        """
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.open_file_browser()
-
-        assert self.driver.exists(self.OPEN_IN_EXPLORER), (
-            "file-manager toolbar action should always be present in local mode"
-        )
-        assert self.driver.exists(self.OPEN_FOLDER_VSCODE) == self._vscode_available(), (
-            "VS Code toolbar action presence does not match vscodeAvailable"
         )
 
     # ── Open in VS Code: SFTP (MT-FB-15) ─────────────────────────────────────
