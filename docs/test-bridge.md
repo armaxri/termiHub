@@ -238,6 +238,8 @@ unmount.
 | `inspectTerminal`          | Read a terminal's OSC 133 marks and inline-image store         |
 | `measureTerminal`          | Read a terminal's real fit, cell size, renderer and thumb      |
 | `readTerminalCells`        | Read xterm's buffer cells: characters and column width         |
+| `readTerminalOutput`       | Read the raw stream a terminal was handed (flash grades)       |
+| `readFrontendLog`          | Read the Log Viewer history, optionally filtered by message    |
 | `compose`                  | Test-only: replay an IME composition on a control (see below)  |
 | `loseTerminalWebglContext` | Test-only: force a WebGL context loss (see below)              |
 | `sampleCanvas`             | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
@@ -394,6 +396,39 @@ and fail when no terminal is registered for it. Python:
 `driver.lose_terminal_webgl_context(tab_id=None)`; the suite (which also
 drives loss → DOM fallback → reacquire on the next tab show, #4426) is
 `tests/system/tests/test_terminal_render_paths.py`.
+
+### Raw output and frontend log (`readTerminalOutput`, `readFrontendLog`)
+
+`readTerminal` reads xterm's buffer, which only holds what is still there: text
+that was painted and then erased (a screen clear, a reset, an alternate-screen
+switch) is gone. `{ action: "readTerminalOutput", tabId? }` returns the raw
+stream the tab's xterm was handed since it was registered (#4931), escapes
+intact:
+
+```jsonc
+{
+  "output": "\u001b]7;file:///home/me\u0007me@host:~$ ", // bounded head (64 Ki chars)
+  "written": 1843, // data units written: chars for string writes, bytes for binary
+  "writes": 12,
+  "truncated": false, // more was written than `output` holds
+  "msSinceLastWrite": 41.5, // null before the first write
+}
+```
+
+The lazily loaded bridge installs the tap through the terminal registry's
+register observer, so a production bundle carries only that hook. Each tab keeps
+the head of its stream and counts the rest, at most 64 tabs at once, so a flood
+cannot grow it. A terminal registered before the bridge chunk loaded is not
+tapped (the verb then fails with `no output recorded`). Python:
+`driver.read_terminal_output(tab_id=None)`; the helpers that read it are in
+`termihub_harness/output_stream.py`.
+
+`{ action: "readFrontendLog", contains? }` returns the Log Viewer's retained
+frontend history (`[{ timestampMs, level, target, message }]`, oldest first),
+optionally only the entries whose message contains `contains`. Frontend DEBUG
+entries never reach the app's stdout log, so this is how a test asserts the
+terminal renderer transitions and the absence of `webgl context lost`. Python:
+`driver.read_frontend_log(contains=None)`.
 
 ### Glyph cells and IME composition (`readTerminalCells`, `compose`)
 
