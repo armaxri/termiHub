@@ -1,10 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   CURSOR_TRIGGER_SOURCE,
+  EDITOR_GUTTER_TESTID,
   EDITOR_INPUT_TESTID,
+  EDITOR_SURFACE_TESTID,
   findMonacoInput,
   moveEditorCursor,
   tagMonacoInput,
+  tagMonacoSurface,
   testInputEditorOptions,
 } from "./editorInput";
 
@@ -64,6 +67,22 @@ describe("Monaco hidden-input tagging (#2689)", () => {
     expect(() => tagMonacoInput(null)).not.toThrow();
     expect(() => tagMonacoInput(undefined)).not.toThrow();
     expect(findMonacoInput(editorDomNode(`<span></span>`))).toBeNull();
+  });
+});
+
+describe("tagMonacoSurface (#4930)", () => {
+  it("tags the editor root and its gutter for computed-style reads", () => {
+    const node = editorDomNode(`<div class="margin"></div>`);
+    tagMonacoSurface(node);
+    expect(node.getAttribute("data-testid")).toBe(EDITOR_SURFACE_TESTID);
+    expect(node.querySelector(".margin")?.getAttribute("data-testid")).toBe(EDITOR_GUTTER_TESTID);
+  });
+
+  it("is a no-op when the node or gutter is absent", () => {
+    expect(() => tagMonacoSurface(null)).not.toThrow();
+    const node = editorDomNode(`<span></span>`);
+    tagMonacoSurface(node);
+    expect(node.getAttribute("data-testid")).toBe(EDITOR_SURFACE_TESTID);
   });
 });
 

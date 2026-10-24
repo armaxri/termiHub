@@ -12,6 +12,8 @@ earlier methods never alias later ones.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -489,6 +491,51 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
             "no forwarded $DISPLAY in the remote shell — X11 forwarding was not "
             "negotiated"
         )
+
+
+    def test_forwarded_x11_client_opens_a_window_on_the_local_display(self):
+        """MT-XPLAT-03, MT-SSH-15: a remote X11 client's window appears locally.
+
+        Runs ``xeyes`` in an X11-forwarded session and asks the local X server
+        (Xvfb on CI) for the window with ``xdotool search`` — the "a window
+        appears" step the guided check used to leave to an operator (#4932).
+        Linux only: macOS needs XQuartz (MT-SSH-51) and Windows a VcXsrv
+        install (MT-SSH-52).
+        """
+        if not sys.platform.startswith("linux"):
+            pytest.skip("the X11 window grade is Linux-only (macOS: MT-SSH-51, Windows: MT-SSH-52)")
+        if not _local_x_server_available():
+            pytest.skip("no local X server to forward to (DISPLAY unset, no /tmp/.X11-unix)")
+        xdotool = shutil.which("xdotool")
+        if xdotool is None:
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                pytest.fail("xdotool is missing on the CI runner (system-integration.yml)")
+            pytest.skip("xdotool is not installed (apt install xdotool)")
+
+        name = unique_name("x11-window")
+        self.create_ssh_connection(
+            name, host=HOST, port=SSH_X11_PORT, username=SSH_USERNAME, connect=True
+        )
+        self.handle_password_prompt()
+        self.accept_host_key_prompt()
+        tab = self.wait(lambda: self.find_tab(name), what="the X11 SSH tab")
+        self.wait(self.has_terminal, what="the X11 SSH terminal")
+        title = f"thub-x11-{name}"
+        self.run_command(f"xeyes -name {title} & echo TH_X11''_STARTED")
+        self.wait_for_output("TH_X11_STARTED", tab_id=tab["id"])
+
+        def window_ids() -> list[str]:
+            done = subprocess.run(
+                [xdotool, "search", "--classname", title],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            return done.stdout.split()
+
+        try:
+            assert self.wait(window_ids, timeout=30.0, what=f"the forwarded {title} window")
+        finally:
+            self.run_command("kill %1")
+            self.close_all_tabs()
 
 
 # SSH-07 (X11 forwarding) was left unimplemented in the WebdriverIO suite because

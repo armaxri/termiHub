@@ -212,6 +212,7 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
         self.close_all_tabs()
 
     def test_drag_to_edge_preserves_scrollback(self):
+        """Dragging a tab onto a panel edge splits it into its own panel (MT-TAB-06)."""
         marker = "SCROLLBACK_EDGE_2583"
         term_id = self._fresh_terminal_with_marker(marker)
 
@@ -232,6 +233,7 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
         self.close_all_tabs()
 
     def test_drag_to_center_preserves_scrollback(self):
+        """Dragging a tab onto the center of another panel moves it there (MT-TAB-07)."""
         marker = "SCROLLBACK_CENTER_2583"
         term_id = self._fresh_terminal_with_marker(marker)
         source_panel = self._panel_of_tab(term_id)
@@ -288,6 +290,8 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
         self.close_all_tabs()
 
     def test_tab_move_across_groups_preserves_scrollback(self):
+        """Dragging a tab onto another tab group's chip moves it into that group
+        (the tab-group variant of MT-TAB-07)."""
         marker = "SCROLLBACK_XGROUP_2583"
         term_id = self._fresh_terminal_with_marker(marker)
         origin_group = self.driver.get_state("activeTabGroupId")

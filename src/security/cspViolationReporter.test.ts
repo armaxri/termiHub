@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 import {
   CSP_VIOLATION_SINK_TESTID,
   installCspViolationReporter,
@@ -57,5 +59,22 @@ describe("cspViolationReporter", () => {
       1
     );
     expect(sink(document)!.getAttribute("data-count")).toBe("1");
+  });
+
+  it("logs each violation at WARN so it reaches the durable log (#4933)", () => {
+    installCspViolationReporter(document);
+    const entries: LogEntry[] = [];
+    // Subscribing flushes the startup buffer; only the dispatch below counts.
+    const unsubscribe = onFrontendLog((entry) => entries.push(entry));
+    entries.length = 0;
+    dispatchViolation(document, { violatedDirective: "font-src", blockedURI: "data:warn-probe" });
+    unsubscribe();
+    const csp = entries.filter((e) => e.message.includes("font-src blocked data:warn-probe"));
+    expect(csp.length).toBeGreaterThan(0);
+    for (const entry of csp) {
+      expect(entry.level).toBe("WARN");
+      expect(entry.target).toBe("frontend::csp");
+      expect(entry.message).toMatch(/^violation: /);
+    }
   });
 });

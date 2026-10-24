@@ -76,7 +76,8 @@ describe("release-macos-smoke.yml checks the DMG layout (#4361)", () => {
     const body = stepBody(text, "Check the DMG keeps the drag-to-install layout");
     expect(body).toContain('scripts/internal/macos-dmg-layout.sh check "$DMG"');
     expect(body).not.toMatch(/continue-on-error|\|\| true/);
-    expect(text).toMatch(/sparse-checkout: scripts\/internal/);
+    // A one-line value or the first entry of a `|` list.
+    expect(text).toMatch(/sparse-checkout:(?: | \|\n\s+)scripts\/internal\n/);
   });
 });
 

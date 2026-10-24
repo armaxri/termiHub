@@ -235,7 +235,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   };
 
   return (
-    <div className={`tab-bar${isFocused ? " tab-bar--focused" : ""}`}>
+    <div className={`tab-bar${isFocused ? " tab-bar--focused" : ""}`} data-testid="tab-bar">
       <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
         <div
           className="tab-bar__tabs"

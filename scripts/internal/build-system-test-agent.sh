@@ -26,11 +26,18 @@
 #   1. The local cross images (localhost/termihub-cross:<target>, made by
 #      scripts/setup-agent-cross.sh) exist -> build with agent/Cross.toml, as
 #      scripts/build-agents.sh does on the normal local-dev path.
-#   2. Otherwise `cross build` with cross-rs' stock images (pulled from GHCR),
+#   2. Otherwise, on a non-x86_64 Linux host building its OWN arch (the
+#      linux-arm64 nightly leg on ubuntu-24.04-arm, #4934): a native build in
+#      the official Rust Alpine image (native musl, so ring / aws-lc-sys
+#      compile with the image's own C toolchain). cross-rs' stock images are
+#      linux/amd64 only, so they cannot run on an arm64 host without emulation.
+#      The image tag follows .github/rust-version.
+#   3. Otherwise `cross build` with cross-rs' stock images (pulled from GHCR),
 #      exactly like agent.yml / release.yml build the shipped Linux agents. The
 #      custom images only add an lld linker for Windows/Podman hosts.
 #   With --install-cross, a missing `cross` is first installed from the pinned,
-#   SHA256-verified cross-rs release in .github/cross-version (x86_64 Linux hosts).
+#   SHA256-verified cross-rs release in .github/cross-version (x86_64 Linux hosts;
+#   path 2 needs no cross at all).
 #   The harness passes it on CI only: before #4092 the integration lane had no
 #   `cross`, so every deployed-agent suite skipped there and never ran.
 #
@@ -144,28 +151,80 @@ install_cross() {
     export PATH="$bin_dir:$PATH"
 }
 
-if ! command -v cross >/dev/null 2>&1; then
-    if [ "$INSTALL_CROSS" = true ]; then
-        install_cross
+# Path 2: the host's own musl target on a non-x86_64 Linux host (see header).
+host_musl_target() {
+    case "$(uname -m)" in
+    aarch64 | arm64) echo "aarch64-unknown-linux-musl" ;;
+    armv7l) echo "armv7-unknown-linux-musleabihf" ;;
+    *) echo "" ;;
+    esac
+}
+
+native_container_build() {
+    local engine rust_version image
+    engine="$(container_cmd)"
+    rust_version="$(tr -d '[:space:]' <"$REPO_ROOT/.github/rust-version")"
+    if ! [[ "$rust_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "ERROR: malformed Rust version in .github/rust-version: '$rust_version'" >&2
+        return 1
     fi
-    if ! command -v cross >/dev/null 2>&1; then
-        echo "ERROR: cross-rs not found. Run ./scripts/setup-agent-cross.sh first" \
-            "(or pass --install-cross on an x86_64 Linux host)." >&2
+    image="rust:${rust_version}-alpine"
+    echo "Building $TARGET natively in $image ($engine) into $TARGET_DIR"
+    mkdir -p "$TARGET_DIR"
+    # Runs as root (apk needs it), then hands the outputs back to the caller's
+    # uid so a later cargo run on the host can reuse / clean them. CARGO_HOME
+    # lives under the target dir so the registry cache survives between runs
+    # without writing root-owned files into the host's ~/.cargo.
+    # The inner script expands $TARGET/$HOST_UID/... inside the container (they
+    # are passed with -e), so it is single-quoted on purpose.
+    # shellcheck disable=SC2016
+    "$engine" run --rm \
+        -v "$REPO_ROOT:/src" -w /src \
+        -e CARGO_HOME=/src/$TARGET_DIR/cargo-home \
+        -e CARGO_TARGET_DIR=/src/$TARGET_DIR \
+        -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+        -e TARGET="$TARGET" \
+        "$image" sh -euc '
+            apk add --no-cache musl-dev gcc g++ make cmake perl linux-headers >/dev/null
+            status=0
+            cargo build --release --target "$TARGET" -p termihub-agent \
+                --features test-hooks || status=$?
+            chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR"
+            exit "$status"
+        '
+}
+
+if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" != "x86_64" ] &&
+    [ "$TARGET" = "$(host_musl_target)" ] && ! has_local_cross_image; then
+    if ! command -v "$(container_cmd)" >/dev/null 2>&1; then
+        echo "ERROR: $(container_cmd) not found; the native $TARGET build runs in a container" >&2
         exit 1
     fi
-fi
-
-if has_local_cross_image; then
-    echo "Building $TARGET with the local cross image (agent/Cross.toml) into $TARGET_DIR"
-    CARGO_TARGET_DIR="$TARGET_DIR" CROSS_CONFIG=agent/Cross.toml \
-        cross build --release --target "$TARGET" -p termihub-agent --features test-hooks
+    native_container_build
 else
-    echo "Building $TARGET with cross-rs' stock image (no localhost/termihub-cross:$TARGET)" \
-        "into $TARGET_DIR"
-    # No CROSS_CONFIG: the repo-root workspace has no Cross.toml, so cross uses
-    # its stock GHCR image for the target, as agent.yml does.
-    env -u CROSS_CONFIG CARGO_TARGET_DIR="$TARGET_DIR" \
-        cross build --release --target "$TARGET" -p termihub-agent --features test-hooks
+    if ! command -v cross >/dev/null 2>&1; then
+        if [ "$INSTALL_CROSS" = true ]; then
+            install_cross
+        fi
+        if ! command -v cross >/dev/null 2>&1; then
+            echo "ERROR: cross-rs not found. Run ./scripts/setup-agent-cross.sh first" \
+                "(or pass --install-cross on an x86_64 Linux host)." >&2
+            exit 1
+        fi
+    fi
+
+    if has_local_cross_image; then
+        echo "Building $TARGET with the local cross image (agent/Cross.toml) into $TARGET_DIR"
+        CARGO_TARGET_DIR="$TARGET_DIR" CROSS_CONFIG=agent/Cross.toml \
+            cross build --release --target "$TARGET" -p termihub-agent --features test-hooks
+    else
+        echo "Building $TARGET with cross-rs' stock image (no localhost/termihub-cross:$TARGET)" \
+            "into $TARGET_DIR"
+        # No CROSS_CONFIG: the repo-root workspace has no Cross.toml, so cross uses
+        # its stock GHCR image for the target, as agent.yml does.
+        env -u CROSS_CONFIG CARGO_TARGET_DIR="$TARGET_DIR" \
+            cross build --release --target "$TARGET" -p termihub-agent --features test-hooks
+    fi
 fi
 
 if [ ! -f "$BINARY" ]; then

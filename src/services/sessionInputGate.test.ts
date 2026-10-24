@@ -3,6 +3,7 @@ import {
   INPUT_HOLD_MAX_MS,
   holdSessionInput,
   isSessionInputHeld,
+  lastSessionInputAt,
   resetSessionInputGatesForTests,
   whenSessionInputOpen,
 } from "./sessionInputGate";
@@ -130,5 +131,17 @@ describe("session input gate (#4942)", () => {
     const failing = whenSessionInputOpen("s1", () => Promise.reject(new Error("closed")));
     release();
     await expect(failing).rejects.toThrow("closed");
+  });
+
+  it("records when input was sent, not when it was queued", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    const release = holdSessionInput("s1", "resize");
+    void whenSessionInputOpen("s1", () => Promise.resolve());
+    expect(lastSessionInputAt("s1")).toBeUndefined();
+
+    vi.setSystemTime(1200);
+    release();
+    expect(lastSessionInputAt("s1")).toBe(1200);
   });
 });

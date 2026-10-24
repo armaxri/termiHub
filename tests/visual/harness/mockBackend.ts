@@ -398,6 +398,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return populated ? SCHEDULES : { paused: false, schedules: [] };
     case "get_credential_store_status":
       return scenario.credentialStore ?? { mode: "none", status: "unavailable" };
+    case "unlock_credential_store":
+      // No master password matches, so the unlock dialog shows its error line.
+      throw new Error("invalid master password");
 
     // ── fire-and-forget ──
     case "record_frontend_log":
