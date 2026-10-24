@@ -14,9 +14,10 @@ name: Cargo Update Lockfile
 # advisory fixes (e.g. ringbuf 0.5.2 for RUSTSEC-2026-0293) — into Cargo.lock
 # *proactively*, opening a single PR against develop so the bump lands once
 # instead of during a multi-PR scramble. It only opens a PR when the lockfile
-# actually changed, and best-effort enables auto-merge on that PR so it lands
-# hands-off once CI is green (needs repo auto-merge enabled — see below). The
-# fast manual fix path for anything that still slips through is documented in
+# actually changed. It NEVER merges that PR (maintainer decision 2026-10-24,
+# #4912: no automatic merging of dependency updates): it assigns the PR to the
+# maintainer, requests their review, and a human decides and merges. The fast
+# manual fix path for anything that still slips through is documented in
 # docs/ci-yanked-crate-runbook.md.
 #
 # Two lockfiles (#4357, SUP2-004): the workspace Cargo.lock AND
@@ -26,12 +27,12 @@ name: Cargo Update Lockfile
 # run (rdp-sidecar/deny.toml). Each `cargo check` runs only when its lockfile
 # changed; the tripwire reads both lockfiles; both cargo-deny runs always run.
 #
-# Gate before merge (#3755 CI-012, #4465): the refreshed lockfile must pass, in
-# the cargo-update job, before the PR is opened ready or armed for auto-merge:
+# Gate before review (#3755 CI-012, #4465): the refreshed lockfile must pass, in
+# the cargo-update job, before the PR is opened ready for review:
 #   1. `cargo check --workspace --all-targets --all-features --locked` — it
 #      compiles. #4460 moved primefield 0.14.0-rc.9 -> 0.14.0, which the -rc
-#      p256/p384/p521 stack does not build against, and auto-merged a lockfile
-#      that broke every Rust build of develop (#4465);
+#      p256/p384/p521 stack does not build against, and merged a lockfile that
+#      broke every Rust build of develop (#4465);
 #   2. the pre-release tripwire (scripts/internal/check-prerelease-crates.mjs
 #      against .github/prerelease-allowlist.json) — the same per-PR check Code
 #      Quality runs, which #4460 also failed (aead/argon2/blake2 left their -rc);
@@ -39,30 +40,23 @@ name: Cargo Update Lockfile
 #      licenses, sources).
 # If any check FAILS, the PR is still opened/updated so the change and its
 # failure are visible in one place, but as a DRAFT with the failing output in
-# its body, with auto-merge off — and the run then fails, so the scheduled run
-# goes red instead of silently proposing a broken lockfile. When a later run
-# passes, the PR is marked ready again.
+# its body — and the run then fails, so the scheduled run goes red instead of
+# silently proposing a broken lockfile. When a later run passes, the PR is
+# marked ready again.
 #
-# Which token pushes the PR (#4469), first one configured wins:
-#   1. a GitHub App installation token, minted by actions/create-github-app-token
-#      when the repo variable LOCKFILE_APP_CLIENT_ID is set (with the secret
-#      LOCKFILE_APP_PRIVATE_KEY): short-lived, scoped to this repo with
-#      contents:write + pull-requests:write, revoked when the job ends;
-#   2. a fine-grained PAT in the secret LOCKFILE_PAT;
-#   3. GITHUB_TOKEN (the default while neither is configured).
-# A push or PR made with an App token or a PAT triggers the normal PR workflows,
-# so the PR runs the full per-PR CI and `gh pr merge --auto` waits for develop's
-# required checks. A push made with GITHUB_TOKEN triggers NO workflows: the PR
-# carries no check runs, so auto-merge has nothing to wait for and merges at
-# once, and the in-job gate is the only merge guard. The gate runs with every
-# token kind, as defence in depth. Maintainer setup: docs/ci-yanked-crate-runbook.md.
+# Per-PR CI (#4912): the PR is pushed with GITHUB_TOKEN, and a push or PR made
+# with GITHUB_TOKEN triggers no pull_request/push workflows. A workflow_dispatch
+# made with GITHUB_TOKEN does run, so after a passing gate the open-pr job
+# dispatches Code Quality, Build and Security Audit on the chore branch. Their
+# check runs (incl. the required `PR Gate`) attach to the PR's head commit, so
+# the maintainer sees full CI before deciding.
 #
 # The gate compiles freshly-bumped, unreviewed crates (build scripts and proc
 # macros run), so it runs in its own job with a read-only GITHUB_TOKEN, no
 # persisted checkout credentials and no secret at all. Only the open-pr job, on a
 # fresh runner that compiles nothing, holds a write token: it takes the refreshed
-# lockfiles and the gate verdict from the cargo-update job, and mints the App
-# token (if configured) right before the one step that pushes and opens the PR.
+# lockfiles and the gate verdict from the cargo-update job, pushes the branch,
+# opens the PR and dispatches its CI.
 #
 # Daily (not weekly) because an advisory or yank is published upstream at an
 # arbitrary time: a weekly cadence left every open PR's Security Audit red for
@@ -92,7 +86,7 @@ concurrency:
   group: cargo-update-lockfile
   cancel-in-progress: true
 
-# Read-only by default; only the open-pr job is granted write (#4469).
+# Read-only by default; only the open-pr job is granted write (#4465).
 permissions:
   contents: read
 
@@ -283,24 +277,29 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  # The only job that holds a write token (#4465, #4469). It runs on a fresh
-  # runner, checks out develop without persisted credentials, compiles nothing
-  # and installs no packages, so no unreviewed crate's code runs next to it.
+  # The only job that holds a write token (#4465). It runs on a fresh runner,
+  # checks out develop without persisted credentials, compiles nothing and
+  # installs no packages, so no unreviewed crate's code runs next to it.
   open-pr:
     name: Open or update the lockfile PR
     needs: cargo-update
     if: needs.cargo-update.outputs.changed == 'true'
     runs-on: ubuntu-latest
 
-    # For the GITHUB_TOKEN fallback; an App token or PAT carries its own scopes.
+    # GITHUB_TOKEN only (#4912): push the branch, open/edit the PR and assign it
+    # (pull-requests also covers PR assignees and review requests), and dispatch
+    # the per-PR CI on the chore branch (actions).
     permissions:
       contents: write
       pull-requests: write
+      actions: write
 
     env:
       # Fixed automation branch: reused every run so repeated runs update the
       # same PR instead of opening a new one each day.
       UPDATE_BRANCH: chore/cargo-update-lockfile
+      # Who decides on the PR (#4912): assigned and asked for review each run.
+      MAINTAINER: armaxri
 
     steps:
       - name: Checkout the gated develop commit
@@ -322,28 +321,10 @@ jobs:
           cp "$RUNNER_TEMP/lockfile-pr/Cargo.lock" Cargo.lock
           cp "$RUNNER_TEMP/lockfile-pr/rdp-sidecar.Cargo.lock" rdp-sidecar/Cargo.lock
 
-      # Token order (#4469): App token > LOCKFILE_PAT > GITHUB_TOKEN. Minted only
-      # here, after the gate job finished and right before the one step that
-      # uses it; actions/create-github-app-token revokes it when the job ends.
-      # Skipped (and the run behaves as before) while the App is not configured.
-      - name: Mint the lockfile App token
-        id: app-token
-        if: vars.LOCKFILE_APP_CLIENT_ID != ''
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.LOCKFILE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.LOCKFILE_APP_PRIVATE_KEY }}
-          # This repository only (the default), with the two scopes the PR step
-          # needs and nothing else.
-          permission-contents: write
-          permission-pull-requests: write
-
       - name: Open or update pull request
         env:
-          # The only step that holds a write token (#4465). The first configured
-          # token wins; TOKEN_KIND tells the script which one it got.
-          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.LOCKFILE_PAT || secrets.GITHUB_TOKEN }}
-          TOKEN_KIND: ${{ steps.app-token.outputs.token && 'app' || secrets.LOCKFILE_PAT && 'pat' || 'github-token' }}
+          # Step-scoped write token (#4465).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GATE_PASSED: ${{ needs.cargo-update.outputs.passed }}
           GATE_FAILED: ${{ needs.cargo-update.outputs.failed }}
           GATE_LOG: ${{ runner.temp }}/lockfile-pr/lockfile-gate.log
@@ -352,7 +333,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          echo "Pushing the lockfile PR with token kind: $TOKEN_KIND" >> "$GITHUB_STEP_SUMMARY"
 
           # Recreate the automation branch from the gated develop commit plus
           # the refreshed lockfiles. Force applies ONLY to this bot-owned
@@ -371,6 +351,11 @@ jobs:
           # lines wrapped to <=100 chars. Deliberately no "Closes #" keyword —
           # this recurring chore closes nothing.
           BODY=$(cat <<'EOF'
+          > [!IMPORTANT]
+          > **Waiting for a maintainer decision.** This PR is never merged automatically
+          > (no auto-merge of dependency updates, #4912). Review the lockfile diff and
+          > the CI checks, then merge it (merge commit) or close it.
+
           Automated lockfile refresh from the daily `cargo update` chore
           (see `.github/workflows/cargo-update-lockfile.yml`, issue #2645).
           Covers both `Cargo.lock` and `rdp-sidecar/Cargo.lock` (#4357).
@@ -385,36 +370,15 @@ jobs:
           (and `cargo check --locked` for rdp-sidecar), the pre-release tripwire and
           `cargo deny` for both lockfiles (#4465, #4357).
 
-          This PR best-effort enables auto-merge, so it lands on its own once
-          CI is green **if the repo has auto-merge enabled**
-          (Settings -> General -> "Allow auto-merge"). If auto-merge is off the
-          enable step no-ops and this PR waits for a human — the `automation`
-          label flags it for pickup. Maintainer: enabling repo auto-merge makes
-          this fully hands-off.
+          CI: this PR is pushed with `GITHUB_TOKEN`, which starts no pull_request
+          workflows, so the chore dispatches Code Quality, Build and Security Audit
+          on this branch itself; their checks (incl. `PR Gate`) show on this PR.
+          If they are missing, re-run the chore or close and reopen this PR.
 
           See `docs/ci-yanked-crate-runbook.md` for the manual fix path when
           something slips through between runs.
           EOF
           )
-
-          # Which CI this PR gets depends on the token that pushed it (#4469).
-          if [ "$TOKEN_KIND" = "github-token" ]; then
-            CI_NOTE=$(cat <<'EOF'
-          This PR is pushed with `GITHUB_TOKEN`, so no other workflow runs on it by
-          itself and auto-merge does not wait for CI: the in-job gate above is the
-          merge guard. To run the full CI, close and reopen this PR. To make the
-          chore run full CI on its own, configure the lockfile App token (#4469).
-          EOF
-            )
-          else
-            CI_NOTE=$(cat <<'EOF'
-          This PR is pushed with a dedicated token (GitHub App or fine-grained PAT,
-          #4469), so the normal per-PR CI runs on it and auto-merge waits for
-          develop's required checks.
-          EOF
-            )
-          fi
-          BODY="$(printf '%s\n\n%s\n' "$BODY" "$CI_NOTE")"
 
           # Gate failed: say so at the top of the body, with each failing check's
           # output, so a reviewer sees why the PR is a draft without opening the
@@ -423,7 +387,7 @@ jobs:
             BODY="$(
               printf '%s\n' '> [!WARNING]'
               printf '%s\n' "> **This lockfile fails the lockfile gate (${GATE_FAILED:-unknown})**,"
-              printf '%s\n\n' '> so this PR is a draft with auto-merge off. Do not merge it as is.'
+              printf '%s\n\n' '> so this PR is a draft. Do not merge it as is.'
               printf '%s\n\n' 'Run: '"$RUN_URL"
               printf '%s\n' '<details><summary>Failing gate output</summary>'
               printf '\n%s\n' '```'
@@ -460,35 +424,43 @@ jobs:
               --body "$BODY"
           fi
 
-          # Never queue a gate-failing lockfile for auto-merge; drop any auto-merge
-          # a previous passing run enabled.
-          if [ "$GATE_PASSED" != "true" ]; then
-            gh pr merge "$UPDATE_BRANCH" --disable-auto 2>/dev/null || true
-            echo "Draft PR: the refreshed lockfile fails the gate ($GATE_FAILED); auto-merge off." \
-              >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+          # An earlier version of this chore armed auto-merge; drop any that is
+          # still set so nothing merges without the maintainer (#4912).
+          gh pr merge "$UPDATE_BRANCH" --disable-auto 2>/dev/null || true
 
-          # Best-effort hands-off merge: enable auto-merge so the PR lands by
-          # itself once CI passes. This is a no-op unless the repo has auto-merge
-          # enabled (Settings -> General -> "Allow auto-merge"); if it is off,
-          # the command fails and we swallow it so the chore still succeeds — the
-          # `automation` label leaves the PR for a human to merge. Merge commit
-          # only, per the repo git workflow (never squash/rebase).
-          if gh pr merge "$UPDATE_BRANCH" --auto --merge; then
-            if [ "$TOKEN_KIND" = "github-token" ]; then
-              # No check runs on a GITHUB_TOKEN push: auto-merge fires at once.
-              echo "Auto-merge enabled for $UPDATE_BRANCH; with GITHUB_TOKEN it merges" \
-                "without waiting for CI (the in-job gate passed)." >> "$GITHUB_STEP_SUMMARY"
+          # Notify the maintainer (#4912). Best-effort, so a notification hiccup
+          # never hides the PR itself: assignment and the review request are
+          # separate calls, and either failing only warns.
+          gh pr edit "$UPDATE_BRANCH" --add-assignee "$MAINTAINER" ||
+            echo "::warning::Could not assign the lockfile PR to $MAINTAINER."
+          gh pr edit "$UPDATE_BRANCH" --add-reviewer "$MAINTAINER" ||
+            echo "::warning::Could not request review from $MAINTAINER."
+          echo "Lockfile PR waits for a maintainer decision (assigned to $MAINTAINER)." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # Per-PR CI on the chore branch (#4912). The push above used GITHUB_TOKEN,
+      # which triggers no pull_request workflow; a GITHUB_TOKEN workflow_dispatch
+      # does. Each dispatched run checks out the chore branch and reports its
+      # check runs on the PR's head commit. Skipped on a failing gate: that PR is
+      # a draft that must not be merged as is.
+      - name: Dispatch per-PR CI on the lockfile branch
+        if: needs.cargo-update.outputs.passed == 'true'
+        env:
+          # Step-scoped token (#4465); `actions: write` is what dispatch needs.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          failed=0
+          for wf in code-quality.yml build.yml security-audit.yml; do
+            if gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$UPDATE_BRANCH"; then
+              echo "Dispatched $wf on $UPDATE_BRANCH." >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "Auto-merge enabled for $UPDATE_BRANCH; it waits for the required checks." \
-                >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+              echo "::warning::Could not dispatch $wf on $UPDATE_BRANCH."
             fi
-          else
-            echo "::notice::Could not enable auto-merge (repo auto-merge likely disabled)." \
-              "PR left for manual merge — see the 'automation' label."
-            echo "Auto-merge not enabled — repo auto-merge is likely off." \
-              "The PR is labelled \`automation\` and waits for a human merge." \
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "Some CI was not dispatched; close and reopen the PR to run it." \
               >> "$GITHUB_STEP_SUMMARY"
           fi
 

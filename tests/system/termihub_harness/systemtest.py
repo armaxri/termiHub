@@ -36,7 +36,7 @@ from typing import Callable, ClassVar, Optional, Sequence, TypeVar
 import pytest
 
 from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
-from . import deadlines, timing
+from . import deadlines, os_store, timing
 from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance, require_test_bridge_build
@@ -144,6 +144,14 @@ class SystemTest:
     #: that needs the app to find no SSH agent.
     unset_app_env: ClassVar[tuple[str, ...]] = ()
 
+    #: Run the suite's app against a throwaway OS credential store (#4929): a
+    #: temporary macOS keychain, a private gnome-keyring, or test-scoped items
+    #: in Windows Credential Manager (see :mod:`termihub_harness.os_store`).
+    #: The store is opened before the app launches and closed after it exits;
+    #: tests read it as ``self.os_store``. Skips the suite with the precise
+    #: reason when the platform's store cannot be used.
+    os_credential_store: ClassVar[bool] = False
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -162,6 +170,22 @@ class SystemTest:
         manual = bool(request.config.getoption("manual"))
         force_echo = bool(request.config.getoption("app_log_echo"))
         echo_logs = force_echo or not manual
+        store = None
+        if request.cls.os_credential_store:
+            try:
+                store = os_store.open_store()
+            except os_store.OsStoreUnavailable as exc:
+                pytest.skip(f"OS credential store unavailable: {exc}")
+            request.cls.os_store = store
+        try:
+            yield from cls._run_app(request, manual, echo_logs, store)
+        finally:
+            if store is not None:
+                store.close()
+
+    @classmethod
+    def _run_app(cls, request, manual: bool, echo_logs: bool, store):
+        """Launch the suite's app, yield while the suite runs, then tear it down."""
         try:
             # fresh isolated config dir per suite
             app = AppInstance(
@@ -169,6 +193,7 @@ class SystemTest:
                 portable=request.cls.portable_mode,
                 sandbox_profile=request.cls.sandbox_profile,
                 unset_env=request.cls.unset_app_env,
+                extra_env=store.app_env() if store is not None else None,
             )
         except FileNotFoundError as exc:
             pytest.skip(str(exc))

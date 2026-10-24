@@ -317,11 +317,17 @@ jobs:
         # the virtual serial-port suites; without it those integration tests skip.
         # libasound2-dev lets the app build script build the RDP sidecar the RDP
         # suite needs (#4004); without it that suite skips.
+        # gnome-keyring + libsecret-tools back the OS credential store suite
+        # (test_os_credential_store.py, #4929): it runs the app against a
+        # private gnome-keyring on its own D-Bus session and reads it with
+        # secret-tool; without them that suite skips and the skip guard fails.
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            gnome-keyring \
+            libsecret-tools \
             libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
