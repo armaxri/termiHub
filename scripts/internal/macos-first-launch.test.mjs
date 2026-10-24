@@ -195,3 +195,13 @@ describe("docs/marketing/quickstart.md", () => {
     expect(unscopedRightClickOpen(quickstart.replace(/\n>\s*/g, " "))).toEqual([]);
   });
 });
+
+describe("scripts/internal/release-smoke-gatekeeper.sh (#4933)", () => {
+  const smoke = repoFile("scripts/internal/release-smoke-gatekeeper.sh");
+
+  it("clears the quarantine with the same xattr command the first-launch steps give", () => {
+    expect(FIRST_LAUNCH_STEPS).toContain("xattr -dr com.apple.quarantine");
+    expect(smoke).toContain("QUARANTINE=com.apple.quarantine");
+    expect(smoke).toMatch(/^xattr -dr "\$QUARANTINE" "\$APP"$/m);
+  });
+});
