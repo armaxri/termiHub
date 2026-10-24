@@ -316,13 +316,20 @@ jobs:
         # plus xvfb, so the app has a virtual X display to launch into. socat backs
         # the virtual serial-port suites; without it those integration tests skip.
         # libasound2-dev lets the app build script build the RDP sidecar the RDP
-        # suite needs (#4004); without it that suite skips. xsettingsd lets the
-        # MT-UI-05 grade flip the Xvfb display's GTK theme light/dark (#4930).
+        # suite needs (#4004); without it that suite skips.
+        # gnome-keyring + libsecret-tools back the OS credential store suite
+        # (test_os_credential_store.py, #4929): it runs the app against a
+        # private gnome-keyring on its own D-Bus session and reads it with
+        # secret-tool; without them that suite skips and the skip guard fails.
+        # xsettingsd lets the MT-UI-05 grade flip the Xvfb display's GTK theme
+        # light/dark (#4930).
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            gnome-keyring \
+            libsecret-tools \
             libwebkit2gtk-4.1-dev \
             build-essential \
             curl \

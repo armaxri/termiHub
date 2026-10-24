@@ -91,4 +91,56 @@ describe("createOrderedResize", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(calls[1].args).toEqual(["s2", 90, 30]);
   });
+
+  describe("input hold (#4942)", () => {
+    /** A hold spy: records take/release per session. */
+    function holdSpy() {
+      const events: string[] = [];
+      const hold = vi.fn((sessionId: string) => {
+        events.push(`hold ${sessionId}`);
+        return () => events.push(`release ${sessionId}`);
+      });
+      return { events, hold };
+    }
+
+    it("holds input synchronously from the request until the resize settles", async () => {
+      const { send, calls } = deferredSend();
+      const { events, hold } = holdSpy();
+      const resize = createOrderedResize(send, vi.fn(), hold);
+
+      resize("s1", 85, 37);
+      expect(events).toEqual(["hold s1"]);
+
+      calls[0].resolve();
+      await flush();
+      expect(events).toEqual(["hold s1", "release s1"]);
+    });
+
+    it("keeps one hold across coalesced resizes until the last is applied", async () => {
+      const { send, calls } = deferredSend();
+      const { events, hold } = holdSpy();
+      const resize = createOrderedResize(send, vi.fn(), hold);
+
+      resize("s1", 80, 24);
+      resize("s1", 85, 37);
+      calls[0].resolve();
+      await flush();
+      expect(events).toEqual(["hold s1"]);
+
+      calls[1].resolve();
+      await flush();
+      expect(events).toEqual(["hold s1", "release s1"]);
+    });
+
+    it("releases the hold when the resize fails", async () => {
+      const { send, calls } = deferredSend();
+      const { events, hold } = holdSpy();
+      const resize = createOrderedResize(send, vi.fn(), hold);
+
+      resize("s1", 85, 37);
+      calls[0].reject(new Error("gone"));
+      await flush();
+      expect(events).toEqual(["hold s1", "release s1"]);
+    });
+  });
 });

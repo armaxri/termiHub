@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isFitReady, isProposedFitSafe, MIN_FIT_PX, MIN_SAFE_FIT_COLS } from "./safeFit";
+import {
+  isFitReady,
+  isGridSettled,
+  isProposedFitSafe,
+  MIN_FIT_PX,
+  MIN_SAFE_FIT_COLS,
+} from "./safeFit";
 
 /** A div reporting fixed layout dimensions (jsdom has no layout). */
 function sizedEl(width: number, height: number): HTMLElement {
@@ -73,5 +79,31 @@ describe("isProposedFitSafe (#2700 degenerate-proposed-dimensions guard)", () =>
     expect(isProposedFitSafe(fitAddonProposing({ cols: MIN_SAFE_FIT_COLS, rows: 1 }))).toBe(true);
     expect(isProposedFitSafe(fitAddonProposing({ cols: 40, rows: 27 }))).toBe(true);
     expect(isProposedFitSafe(fitAddonProposing({ cols: 85, rows: 36 }))).toBe(true);
+  });
+});
+
+describe("isGridSettled (#4942 show-time input hold)", () => {
+  const laidOut = { offsetWidth: 800, offsetHeight: 600 } as HTMLElement;
+  const parked = { offsetWidth: 1, offsetHeight: 1 } as HTMLElement;
+  const propose = (cols: number, rows: number) => ({ proposeDimensions: () => ({ cols, rows }) });
+
+  it("is settled when a fit would keep xterm's grid", () => {
+    expect(isGridSettled(laidOut, { cols: 85, rows: 27 }, propose(85, 27))).toBe(true);
+  });
+
+  it("is not settled while a fit is still owed", () => {
+    expect(isGridSettled(laidOut, { cols: 80, rows: 27 }, propose(85, 27))).toBe(false);
+  });
+
+  it("is not settled while the element is parked", () => {
+    expect(isGridSettled(parked, { cols: 85, rows: 27 }, propose(85, 27))).toBe(false);
+  });
+
+  it("is not settled on a degenerate proposal or without a fit addon", () => {
+    expect(isGridSettled(laidOut, { cols: 2, rows: 1 }, propose(2, 1))).toBe(false);
+    expect(isGridSettled(laidOut, { cols: 85, rows: 27 }, null)).toBe(false);
+    expect(
+      isGridSettled(laidOut, { cols: 85, rows: 27 }, { proposeDimensions: () => undefined })
+    ).toBe(false);
   });
 });

@@ -2,13 +2,17 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
+import {
+  setTerminalRegisterObserver,
+  useTerminalRegistry,
+} from "@/components/Terminal/TerminalRegistry";
 import { listWindows } from "@/services/api";
 import { setNativeDialogStub } from "@/services/nativeDialog";
 import { getActiveTab, getComposedLayout, useAppStore } from "@/store/appStore";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendLog, getFrontendLogHistory } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
+import { readTerminalOutput, tapTerminalOutput } from "./outputTap";
 import { inspectTerminal } from "./terminalInspection";
 import { loseTerminalWebglContext, measureTerminal } from "./terminalRender";
 import { readTerminalCells } from "./terminalCells";
@@ -56,6 +60,10 @@ type BridgeDispatch = (
  */
 let runnerClient: BridgeWebSocketClient | undefined;
 let latestDispatch: BridgeDispatch | undefined;
+
+// Tap every terminal's raw output stream from the moment this chunk loads
+// (#4931), so the flash grades see the bytes painted before the first prompt.
+if (isTestBridgeEnabled()) setTerminalRegisterObserver(tapTerminalOutput);
 
 /**
  * The projection recorder is page-scoped like the runner socket, not per-mount:
@@ -119,6 +127,16 @@ export function TestBridge() {
         const handles = getTerminalHandles(tabId);
         return handles ? loseTerminalWebglContext(handles) : undefined;
       },
+      // The raw output stream each terminal was handed, and the Log Viewer
+      // history (#4931): what the flash and renderer grades assert on.
+      readTerminalOutput: (tabId) => readTerminalOutput(tabId),
+      readFrontendLog: () =>
+        getFrontendLogHistory().map(({ timestampMs, level, target, message }) => ({
+          timestampMs: timestampMs ?? 0,
+          level,
+          target,
+          message,
+        })),
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       // Augment the raw store state with the composed layout (#2562): the layout
       // is no longer stored as `rootPanel` / `tabGroups` / `activePanelId` /
