@@ -1,6 +1,6 @@
 """Read the OS clipboard from the harness (issue #957).
 
-The guided-manual clipboard test drives the app's "Copy to Clipboard", then had
+The guided-manual clipboard test drives the app's "Copy All", then had
 the operator paste into an external editor to judge the result — but whether the
 copy actually reached the OS clipboard is machine-checkable. :func:`read_os_clipboard`
 reads it per-OS so the test can auto-assert the copy landed and reserve the
