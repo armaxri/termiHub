@@ -60,7 +60,7 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
-import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
+import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
 import { holdSessionInput } from "@/services/sessionInputGate";
@@ -1981,15 +1981,30 @@ export function Terminal({
         }
       });
     }
-    // Hold input until the show-time fits have run (#4942). Showing can change
-    // the grid (the renderer swap re-fit and the deferred fit above both run
-    // next frame), and input sent before them would reach the shell at the old
-    // width while the terminal displays the new one. Each fit's PTY resize then
-    // holds input itself until applied. This frame is requested after both
-    // fits, so it runs after them; the gate bounds the hold if frames stall.
+    // Hold input until the shown grid has settled (#4942). Showing can change
+    // the grid (renderer swap re-fit, the deferred fit above, the slot adopting
+    // the element, a ResizeObserver fit once the panel is laid out), and input
+    // sent before that resize would reach the shell at the old width while the
+    // terminal displays the new one. Checked each frame: released once the
+    // container is laid out and a fit would keep xterm's grid; any resize a fit
+    // sent meanwhile holds input itself until applied. The gate bounds the hold
+    // if the grid never settles or frames stall (occluded window).
     const showSessionId = sessionIdRef.current;
     const releaseShowHold = showSessionId ? holdSessionInput(showSessionId, "show") : null;
-    const showHoldRafId = releaseShowHold ? requestAnimationFrame(releaseShowHold) : null;
+    let showHoldRafId: number | null = null;
+    const releaseWhenSettled = () => {
+      showHoldRafId = null;
+      // Horizontal scrolling pins the column count, so only the frame is awaited.
+      const settled =
+        horizontalScrollingRef.current ||
+        isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
+      if (!settled) {
+        showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+        return;
+      }
+      releaseShowHold?.();
+    };
+    if (releaseShowHold) showHoldRafId = requestAnimationFrame(releaseWhenSettled);
     return () => {
       if (fitRafId !== null) {
         cancelAnimationFrame(fitRafId);
