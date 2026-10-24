@@ -2736,8 +2736,24 @@ WSL distribution.
 **Thresholds.** Every run records each measured value as a
 `measure:<test>:<name>` line in its `[termihub-test-timing]` summary (per OS,
 with the threshold as `deadline`), so they can be re-sized from CI evidence with
-`scripts/system-test-timing.py`. The values in the tests are provisional until
-sized from measured runs.
+`scripts/system-test-timing.py`. Current values, sized from the bulk integration
+lane (2 xdist workers on macOS/Windows): three flood rounds per OS in dispatch
+run 40053707527, after three rounds per OS had passed the looser provisional
+bounds in run 40047063122:
+
+| Measurement (MT-LOCAL-32 unless noted)              | Observed max (Linux / macOS / Windows) | Threshold (Linux / macOS / Windows) |
+| --------------------------------------------------- | -------------------------------------- | ----------------------------------- |
+| RSS growth over the 30 s flood, app + WebView (MiB) | 173.5 / −41.1 / 40.6                   | 350 / 150 / 150                     |
+| p95 bridge round trip during the flood (s)          | 4.71 / 1.84 / 1.94                     | 10 / 5 / 5                          |
+| Ctrl+C → output stopped (s)                         | 3.55 / 0.67 / 3.76                     | 8                                   |
+| Ctrl+C → a command answers (s)                      | 4.84 / 2.38 / 5.28                     | 12                                  |
+| `dir /s` over `System32\drivers` (s, MT-LOCAL-30)   | — / — / 1.06                           | 15                                  |
+
+The memory grade compares the median RSS of the first and last 5 s of the
+flood, so one GC spike does not decide it; it catches runaway growth, not a
+slow leak (Linux WebKitGTK alone swings by up to ~170 MiB). The guided check's
+"prompt back within about a second" is not what CI runners deliver under a
+flood (1.6–5.3 s observed), so the bound is on the measured spread instead.
 
 <!-- -->
 

@@ -151,7 +151,7 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
 
         The marker shows twice once rendered: the echoed command and its
         output. Input typed in the instant a tab is shown can be lost while the
-        shell redraws for the re-fit (seen on macOS CI, #4931), so a marker that
+        shell redraws for the re-fit (seen on macOS CI, #4942), so a marker that
         does not render within a few seconds is sent again (at most twice); the
         resend count is reported, the render itself must still happen.
         """

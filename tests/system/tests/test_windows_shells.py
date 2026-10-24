@@ -64,8 +64,9 @@ CMD_PAINT_FILES = 400
 CMD_PAINT_RUNS = 3
 #: A cmd.exe prompt line (``C:\path>``), as the reconstructed buffer shows it.
 CMD_PROMPT = re.compile(r"^[A-Za-z]:\\.*>")
-#: Ceiling for ``dir /s`` over ``System32\drivers`` (provisional, being sized).
-CMD_DIR_S_BUDGET = 60.0
+#: Ceiling for ``dir /s`` over ``System32\drivers``: observed 1.06 s on the
+#: windows-latest integration lane (#4931); ~14x headroom for a loaded runner.
+CMD_DIR_S_BUDGET = 15.0
 
 skip_on_non_windows = pytest.mark.skipif(
     not _IS_WINDOWS, reason="Windows shells and WSL are a Windows-only feature"

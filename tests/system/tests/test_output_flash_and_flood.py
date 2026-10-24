@@ -25,8 +25,9 @@ tests only the core crate, where ``live_wsl_session_sources_init_script_
 silently_self_cleans_and_tracks_cwd`` already asserts the setup body never
 reaches the terminal).
 
-Every run prints ``[termihub-measure]`` lines; the thresholds below are sized
-from those (see ``docs/testing.md`` → "Output flood thresholds").
+Every run records its measurements in the ``[termihub-test-timing]`` summary
+(``measure:*`` ops); the thresholds below are sized from those (see
+``docs/testing.md`` → "Output-stream flash and flood grades").
 """
 
 from __future__ import annotations
@@ -73,19 +74,28 @@ SETUP_MARKERS = ("__termihub_osc7", "__termihub_si", "PROMPT_COMMAND", "precmd_f
 #: settled (no more setup or prompt bytes in flight).
 SETTLE_QUIET_MS = 1500.0
 
-# ── MT-LOCAL-32 grade (provisional, being sized from measured CI runs) ───────
+# ── MT-LOCAL-32 grade ─────────────────────────────────────────────────────────
+# Sized from measured CI runs of this test on the bulk integration lane (2
+# xdist workers on macOS/Windows): three flood rounds per OS in run 40053707527
+# plus the rounds of runs 40047063122 and the proving run. The observed maxima
+# and the headroom are in docs/testing.md → "Output-stream flash and flood
+# grades". Linux (WebKitGTK under Xvfb) is far noisier than the others, so the
+# memory and latency ceilings are per OS.
 FLOOD_SECONDS = 30.0
 SAMPLE_INTERVAL = 0.5
 #: Median-RSS window compared at the start and the end of the flood.
 GROWTH_WINDOW = 5.0
-#: Ceiling on RSS growth across the flood (end-window median − start-window median).
-MAX_FLOOD_GROWTH_MIB = 400.0
-#: Ceiling on the 95th-percentile bridge round trip during the flood.
-MAX_FLOOD_P95_LATENCY = 5.0
-#: Ceiling from Ctrl+C until the output stops.
-MAX_STOP_SECONDS = 5.0
-#: Ceiling from Ctrl+C until a marker command's output is back.
-MAX_PROMPT_SECONDS = 10.0
+#: Ceiling on RSS growth across the flood (end-window median − start-window
+#: median), MiB. Observed max: Linux 173.5, macOS −41.1, Windows 40.6.
+MAX_FLOOD_GROWTH_MIB = {"linux": 350.0, "macos": 150.0, "windows": 150.0}
+#: Ceiling on the 95th-percentile bridge round trip during the flood, seconds.
+#: Observed max: Linux 4.71, macOS 1.84, Windows 1.94.
+MAX_FLOOD_P95_LATENCY = {"linux": 10.0, "macos": 5.0, "windows": 5.0}
+#: Ceiling from Ctrl+C until the output stops (observed max 3.76 s, Windows).
+MAX_STOP_SECONDS = 8.0
+#: Ceiling from Ctrl+C until a marker command's output is back (observed max
+#: 5.28 s, Windows).
+MAX_PROMPT_SECONDS = 12.0
 
 
 def measure(tag: str, budgets: Optional[dict[str, float]] = None, **values: object) -> None:
@@ -221,8 +231,7 @@ class TestOutputFlood(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, 
 
         return self.wait(stopped, timeout=60.0, what="the flood output to stop")
 
-    @pytest.mark.parametrize("round_no", [1, 2, 3])
-    def test_output_flood_stays_bounded_and_ctrl_c_stops_it(self, round_no):
+    def test_output_flood_stays_bounded_and_ctrl_c_stops_it(self):
         """MT-LOCAL-32."""
         self.close_all_tabs()
         self.ensure_posix_terminal()
@@ -251,17 +260,19 @@ class TestOutputFlood(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, 
         prompt_seconds = time.monotonic() - interrupted_at
 
         start, end, growth = windowed_growth(samples, window=GROWTH_WINDOW)
+        host = timing.os_name()
+        max_growth = MAX_FLOOD_GROWTH_MIB[host]
+        max_p95 = MAX_FLOOD_P95_LATENCY[host]
         p95 = percentile(latencies, 95)
         written = self.driver.read_terminal_output(tab_id)["written"]
         measure(
             "output-flood",
             {
-                "growth_mib": MAX_FLOOD_GROWTH_MIB,
-                "p95_latency_s": MAX_FLOOD_P95_LATENCY,
+                "growth_mib": max_growth,
+                "p95_latency_s": max_p95,
                 "stop_s": MAX_STOP_SECONDS,
                 "prompt_s": MAX_PROMPT_SECONDS,
             },
-            round=f"{round_no}",
             webview_processes=webviews,
             idle_mib=round(mib(before.rss), 1),
             start_mib=round(mib(start), 1),
@@ -278,10 +289,10 @@ class TestOutputFlood(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, 
         )
         assert self.app.is_running(), "the app died during the flood"
         assert "write data discarded" not in self.app.read_log()
-        assert mib(growth) <= MAX_FLOOD_GROWTH_MIB, (
+        assert mib(growth) <= max_growth, (
             f"RSS grew {mib(growth):.1f} MiB during the flood "
             f"({mib(start):.0f} → {mib(end):.0f} MiB)"
         )
-        assert p95 <= MAX_FLOOD_P95_LATENCY, f"p95 bridge round trip {p95:.2f}s during the flood"
+        assert p95 <= max_p95, f"p95 bridge round trip {p95:.2f}s during the flood"
         assert stop_seconds <= MAX_STOP_SECONDS, f"output kept coming {stop_seconds:.2f}s"
         assert prompt_seconds <= MAX_PROMPT_SECONDS, f"prompt back after {prompt_seconds:.2f}s"
