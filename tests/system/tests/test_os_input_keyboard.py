@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -45,7 +46,7 @@ from termihub_harness import (
 from termihub_harness.os_input import HelperWindow, primary_modifier
 from termihub_harness.ui.os_input_ui import linux_window_manager, terminal_echo
 from termihub_harness.ui.terminal import NEW_TERMINAL
-from termihub_harness.ui.windows import window_tabs
+from termihub_harness.ui.windows import CLOSE_DIALOG_END, window_tabs
 
 pytestmark = pytest.mark.integration
 
@@ -79,6 +80,7 @@ class TestOsKeyboardGrades(
     def _shell(self, folder: Path | None = None) -> str:
         """A fresh local shell (optionally ``cd``-ed into ``folder``); its tab id."""
         self.close_all_tabs()
+        self.wait(lambda: self.tab_count() == 0, what="every tab to close")
         self.ensure_terminal()
         tab = self.active_tab()
         assert tab is not None
@@ -97,6 +99,18 @@ class TestOsKeyboardGrades(
             ),
             what=f"the {tag} echo",
         )[0]
+
+    def _close_window(self, driver) -> None:
+        """Close a secondary window, ending its sessions if it asks."""
+        if driver.window_label not in self.driver.windows():
+            return
+        driver.close_window()
+        try:
+            self.wait(lambda: driver.exists(CLOSE_DIALOG_END), timeout=5.0, what="close dialog")
+            driver.click(CLOSE_DIALOG_END)
+        except AssertionError:
+            pass
+        self.wait(lambda: len(self.driver.windows()) == 1, what="the window to close")
 
     def _scratch_editor(self, folder: Path) -> Path:
         """Open a new empty file in ``folder`` in the editor; return its path."""
@@ -156,6 +170,7 @@ class TestOsKeyboardGrades(
 
             path = self._scratch_editor(folder)
             self.focus_editor()
+            time.sleep(0.5)  # let Monaco's input take the focus before the first key
             self._press(sequences)
             osi.key(f"{MOD}+s")
             self._wait_file(path, expected)
@@ -242,6 +257,8 @@ class TestOsKeyboardGrades(
         osi.type_text("_\n")
         assert self._wait_echo(tab_id, "PASTE") == marker
 
+        # A click clears the selection: Ctrl+C with a selection copies instead.
+        self._focus_terminal(tab_id, screen)
         sleeper = "Start-Sleep 60" if sys.platform == "win32" else "sleep 60"
         osi.type_text(f"{sleeper}\n")
         self.wait(lambda: "sleep 60" in self.driver.read_terminal(tab_id).lower(), what="sleep")
@@ -295,27 +312,38 @@ class TestOsKeyboardGrades(
         the new-terminal shortcut opens its tab in the focused window."""
         osi = self.os_input()
         tab_a = self._shell()
-        second = self.open_new_window()
-        second.click(NEW_TERMINAL)
-        tab_b = self.wait(lambda: window_tabs(second), what="a shell in window B")[0]["id"]
-        self.wait(lambda: second.read_terminal(tab_b).strip(), what="window B's prompt")
-
         screen_a = self.os_activate()
-        self._focus_terminal(tab_a, screen_a)
-        osi.type_text("echo WA_aaa_\n")
-        screen_b = self.os_activate(second)
-        self.os_click(f"terminal-renderer-{tab_b}", screen=screen_b)
-        osi.type_text("echo WB_bbb_\n")
+        second = self.open_new_window()
+        try:
+            # A smaller window B leaves part of A uncovered, so a real click can
+            # bring either one to the front whatever the stacking order.
+            second.resize_window(560, 380)
+            second.click(NEW_TERMINAL)
+            tab_b = self.wait(lambda: window_tabs(second), what="a shell in window B")[0]["id"]
+            self.wait(lambda: second.read_terminal(tab_b).strip(), what="window B's prompt")
+            screen_b = self.screen(second)
+            self.os_click(f"terminal-renderer-{tab_b}", screen=screen_b)
+            self.wait(lambda: self.has_focus(second), what="window B to take the focus")
+            osi.type_text("echo WB_bbb_\n")
+            assert self._wait_echo(tab_b, "WB", driver=second) == "bbb"
 
-        assert self._wait_echo(tab_a, "WA") == "aaa"
-        assert self._wait_echo(tab_b, "WB", driver=second) == "bbb"
-        assert "WB_" not in self.driver.read_terminal(tab_a)
-        assert "WA_" not in second.read_terminal(tab_b)
+            self.os_click(f"terminal-renderer-{tab_a}", screen=screen_a, fx=0.92, fy=0.85)
+            self.wait(lambda: self.has_focus(self.driver), what="window A to take the focus")
+            osi.type_text("echo WA_aaa_\n")
+            assert self._wait_echo(tab_a, "WA") == "aaa"
+            assert "WB_" not in self.driver.read_terminal(tab_a)
+            assert "WA_" not in second.read_terminal(tab_b)
 
-        main_before, second_before = len(window_tabs(self.driver)), len(window_tabs(second))
-        osi.key(f"{MOD}+shift+`")
-        self.wait(lambda: len(window_tabs(second)) == second_before + 1, what="the new tab in B")
-        assert len(window_tabs(self.driver)) == main_before, "window A gained a tab"
+            main_before = len(window_tabs(self.driver))
+            second_before = len(window_tabs(second))
+            osi.key(f"{MOD}+shift+`")
+            self.wait(
+                lambda: len(window_tabs(self.driver)) == main_before + 1,
+                what="the new tab in the focused window A",
+            )
+            assert len(window_tabs(second)) == second_before, "window B gained a tab"
+        finally:
+            self._close_window(second)
 
     # ── MT-SHI-02: external spawn brings the window to the front ─────────────
     def test_external_spawn_brings_window_to_front(self):

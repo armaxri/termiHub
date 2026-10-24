@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -122,7 +123,14 @@ class TestOsPointerGrades(
             osi.activate(helper.pid)
             self.wait(lambda: not self.has_focus(), what="termiHub to lose focus")
             osi.click(*screen.point(f"terminal-renderer-{right}"), pid=helper.pid)
-            self.wait(lambda: osi.frontmost_pid() == self.app.pid, what="termiHub frontmost")
+            try:
+                self.wait(lambda: osi.frontmost_pid() == self.app.pid, what="termiHub frontmost")
+            except AssertionError as exc:
+                downs = self.trusted_events(kind="pointerdown")
+                raise AssertionError(
+                    f"{exc}; front is PID {osi.frontmost_pid()} (helper {helper.pid}), "
+                    f"termiHub saw {len(downs)} trusted pointerdown(s): {downs[-1:]}"
+                ) from None
             osi.type_text("echo CLK_abc_\n")
         if sys.platform == "darwin":
             # macOS: the first click may only activate the window; typing goes to
@@ -201,6 +209,7 @@ class TestOsPointerGrades(
         there and still shows its file."""
         osi = self.os_input()
         self.close_all_tabs()
+        self.wait(lambda: self.tab_count() == 0, what="every tab to close")
         folder = Path(tempfile.mkdtemp(prefix="thub-editor-dnd-"))
         self.ensure_terminal()
         self.run_command(f'cd "{folder}"')
@@ -292,7 +301,11 @@ class TestOsPointerGrades(
     def _menu_opens_without_paste(self, tab_id: str) -> None:
         """A real right-click opens the terminal menu and inserts nothing."""
         self.run_command("echo MENU_ready_")
-        self.wait_for_output("MENU_ready_", tab_id=tab_id)
+        self.wait(
+            lambda: self.driver.read_terminal(tab_id).count("MENU_ready_") >= 2,
+            what="the echo's output line",
+        )
+        time.sleep(0.5)  # let the prompt redraw settle before the snapshot
         before = self.driver.read_terminal(tab_id)
         screen = self.os_activate()
         self.os_click(f"terminal-renderer-{tab_id}", screen=screen, button="right")
