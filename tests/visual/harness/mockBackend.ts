@@ -59,6 +59,11 @@ declare global {
     __VISUAL_SCENARIO__?: VisualScenario;
     /** Commands the app invoked that the mock has no explicit answer for. */
     __VISUAL_UNHANDLED__?: string[];
+    /**
+     * Every command the app invoked, in order (`intent_dispatch:<kind>` for an
+     * intent), so a check can compare what two triggers of one action did.
+     */
+    __VISUAL_INVOKED__?: string[];
   }
 }
 
@@ -465,6 +470,8 @@ export function handleCommand(cmd: string, args: Args): unknown {
   const scenario = window.__VISUAL_SCENARIO__ ?? {};
   const populated = scenario.populated ?? true;
   const wire = connectionsWire.loadConnectionsAndFolders;
+  const intentKind = (args?.intent as { kind?: string } | undefined)?.kind;
+  (window.__VISUAL_INVOKED__ ??= []).push(intentKind ? `${cmd}:${intentKind}` : cmd);
 
   switch (cmd) {
     // ── projection substrate ──

@@ -23,9 +23,24 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { allowedBy, ALLOWLIST, type AllowEntry } from "./allowlist";
 import type { VisualScenario } from "./harness/mockBackend";
 import { STORED_SECRET_CONNECTIONS } from "./harness/storedSecretIds";
-import { oneRowHeaderIssues, settingsFieldIssues, stackedGapIssues } from "./expectations";
+import {
+  cutNames,
+  oneRowHeaderIssues,
+  rowActionIssues,
+  settingsFieldIssues,
+  stackedGapIssues,
+} from "./expectations";
 import { auditLayout, type LayoutIssue } from "./layoutAudit";
-import { SCREENS, SIDEBAR_WIDTHS, SIDEBARS, STORE_DIALOGS, USAGE_DIR, WINDOWS } from "./surfaces";
+import {
+  SCREENS,
+  SIDEBAR_ROWS,
+  SIDEBAR_WIDTHS,
+  SIDEBARS,
+  STORE_DIALOGS,
+  USAGE_DIR,
+  WINDOWS,
+  type SidebarRowKind,
+} from "./surfaces";
 import { styledPrimitiveClasses } from "./uiClasses";
 
 const STYLED_CLASSES = styledPrimitiveClasses();
@@ -159,6 +174,123 @@ async function showSidebar(page: Page, view: string): Promise<void> {
   await page.locator("[data-testid=sidebar]").waitFor();
 }
 
+/** The minimum sidebar width the resize handle allows. */
+async function sidebarMinWidth(page: Page): Promise<number> {
+  const min = Number(
+    await page.locator("[data-testid=sidebar-resize-handle]").getAttribute("aria-valuemin")
+  );
+  expect(min, "sidebar resize handle exposes its minimum").toBeGreaterThan(0);
+  return min;
+}
+
+/** Move the pointer off the sidebar, drop keyboard focus, and wait for tooltips to close. */
+async function rest(page: Page): Promise<void> {
+  const size = page.viewportSize() ?? { width: 800, height: 600 };
+  // In steps, like a real pointer: Radix keeps a tooltip open while the
+  // pointer could still be heading for it, and closes once a move leaves.
+  await page.mouse.move(size.width - 1, size.height - 1, { steps: 4 });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(page.locator("[role=tooltip]")).toHaveCount(0);
+}
+
+/**
+ * MT-UI-53 (#4954): every cut name of one row kind exposes its full text — as
+ * a native `title`, or as the tooltip that hovering the start of the name opens.
+ */
+async function cutNameIssues(
+  page: Page,
+  kind: SidebarRowKind,
+  requireCut: boolean
+): Promise<LayoutIssue[]> {
+  const rows = `[data-testid=sidebar] ${kind.row}`;
+  const cut = await page.evaluate(cutNames, { rows, name: kind.name });
+  const issues: LayoutIssue[] = [];
+  if (requireCut && cut.length === 0) {
+    issues.push({
+      kind: "expectation",
+      where: `${kind.kind} rows`,
+      detail: "no name is cut at this width, so the tooltip check saw nothing (seed a longer one)",
+    });
+  }
+  for (const { index, text } of cut.filter((c) => !c.titled)) {
+    const where = `${kind.kind} row "${text.slice(0, 40)}"`;
+    const name = page.locator(rows).nth(index).locator(kind.name).first();
+    // Hover the start of the name: on hover the row's actions overlay its end.
+    const box = await name.boundingBox();
+    const y = (box?.height ?? 16) / 2;
+    const reached = await name
+      .hover({ position: { x: 4, y }, timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!reached || !box) {
+      issues.push({
+        kind: "expectation",
+        where,
+        detail: "the start of the cut name cannot be hovered (covered on hover)",
+      });
+      await rest(page);
+      continue;
+    }
+    // The first pointer contact arms TruncatedText; Radix opens on the next move.
+    await page.mouse.move(box.x + 8, box.y + y);
+    const shown = await page
+      .locator("[role=tooltip]")
+      .filter({ hasText: text })
+      .first()
+      .waitFor({ state: "attached", timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!shown) {
+      issues.push({
+        kind: "expectation",
+        where,
+        detail: "the name is cut but neither a title nor a hover tooltip shows the full text",
+      });
+    }
+    await rest(page);
+  }
+  return issues;
+}
+
+/**
+ * MT-UI-53 (#4954): hovering a row, and keyboard focus on it, shows its actions
+ * unclipped. Checks every row of the kind (each state has its own action set).
+ */
+async function rowRevealIssues(page: Page, kind: SidebarRowKind): Promise<LayoutIssue[]> {
+  const rows = page.locator(`[data-testid=sidebar] ${kind.row}`);
+  const count = await rows.count();
+  if (count === 0) {
+    return [{ kind: "expectation", where: `${kind.kind} rows`, detail: "no row rendered" }];
+  }
+  const issues: LayoutIssue[] = [];
+  const args = { row: "[data-visual-row]", actions: kind.actions };
+  for (let i = 0; i < count; i++) {
+    const row = rows.nth(i);
+    await row.evaluate((el) => {
+      for (const n of document.querySelectorAll("[data-visual-row]")) {
+        n.removeAttribute("data-visual-row");
+      }
+      el.setAttribute("data-visual-row", "");
+    });
+    await row.hover({ position: { x: 4, y: 4 } });
+    await settle(page);
+    issues.push(...(await page.evaluate(rowActionIssues, { ...args, via: "hover" })));
+    await rest(page);
+    // Keyboard focus: the row itself when it is in the tab order (roving
+    // tabindex), else its first focusable part.
+    await row.evaluate((el) => {
+      const target = el.matches("[tabindex]")
+        ? el
+        : el.querySelector<HTMLElement>("[tabindex], button, a[href]");
+      (target as HTMLElement | null)?.focus();
+    });
+    await settle(page);
+    issues.push(...(await page.evaluate(rowActionIssues, { ...args, via: "focus" })));
+    await rest(page);
+  }
+  return issues;
+}
+
 for (const win of WINDOWS) {
   test.describe(`window ${win.name}`, () => {
     test.use({ viewport: { width: win.width, height: win.height } });
@@ -214,10 +346,7 @@ for (const win of WINDOWS) {
     test("sidebars fit at default and minimum width", async ({ page }, testInfo) => {
       const report = new SurfaceReport(page, testInfo, win.name);
       await boot(page);
-      const minWidth = Number(
-        await page.locator("[data-testid=sidebar-resize-handle]").getAttribute("aria-valuemin")
-      );
-      expect(minWidth, "sidebar resize handle exposes its minimum").toBeGreaterThan(0);
+      const minWidth = await sidebarMinWidth(page);
       for (const view of SIDEBARS) {
         await showSidebar(page, view);
         for (const width of SIDEBAR_WIDTHS) {
@@ -240,6 +369,31 @@ for (const win of WINDOWS) {
             await page.mouse.move(win.width - 1, win.height - 1);
             await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
           }
+        }
+      }
+      await report.finish();
+    });
+
+    test("sidebar rows keep cut names readable and show actions on hover and focus", async ({
+      page,
+    }, testInfo) => {
+      // MT-UI-53 (#4954): on every seeded row kind, at the default and the
+      // minimum sidebar width.
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page);
+      const minWidth = await sidebarMinWidth(page);
+      for (const kind of SIDEBAR_ROWS) {
+        await showSidebar(page, kind.view);
+        for (const width of SIDEBAR_WIDTHS) {
+          const min = width.width === "aria-valuemin";
+          await store(page, "setSidebarWidth", min ? minWidth : width.width);
+          await settle(page);
+          await rest(page);
+          const extra = [
+            ...(await cutNameIssues(page, kind, min)),
+            ...(await rowRevealIssues(page, kind)),
+          ];
+          await report.check(`rows/${kind.kind}@${width.name}`, "[data-testid=sidebar]", extra);
         }
       }
       await report.finish();
