@@ -31,6 +31,14 @@ interface Gate {
 
 const gates = new Map<string, Gate>();
 
+/** When input was last handed to each session's send (ms epoch). */
+const lastSentAt = new Map<string, number>();
+
+/** When input was last sent to `sessionId` (ms epoch), if ever. */
+export function lastSessionInputAt(sessionId: string): number | undefined {
+  return lastSentAt.get(sessionId);
+}
+
 /**
  * Hold `sessionId`'s input until the returned release is called (idempotent).
  *
@@ -83,11 +91,15 @@ export function isSessionInputHeld(sessionId: string): boolean {
  * hold is released, after all input queued before it.
  */
 export function whenSessionInputOpen<T>(sessionId: string, send: () => Promise<T>): Promise<T> {
+  const sendNow = (): Promise<T> => {
+    lastSentAt.set(sessionId, Date.now());
+    return send();
+  };
   const gate = gates.get(sessionId);
-  if (!gate) return send();
+  if (!gate) return sendNow();
   return new Promise<T>((resolve, reject) => {
     gate.queue.push(() => {
-      send().then(resolve, reject);
+      sendNow().then(resolve, reject);
     });
   });
 }
@@ -95,4 +107,5 @@ export function whenSessionInputOpen<T>(sessionId: string, send: () => Promise<T
 /** Drop every gate (tests only). Queued input is discarded, not sent. */
 export function resetSessionInputGatesForTests(): void {
   gates.clear();
+  lastSentAt.clear();
 }

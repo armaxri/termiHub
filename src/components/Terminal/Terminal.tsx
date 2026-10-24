@@ -63,7 +63,7 @@ import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInp
 import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
-import { holdSessionInput } from "@/services/sessionInputGate";
+import { holdSessionInput, lastSessionInputAt } from "@/services/sessionInputGate";
 import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
@@ -869,7 +869,13 @@ export function Terminal({
         // Input typed while a resize is in flight waits for it, so the shell
         // echoes it at the grid the terminal already shows (#4942).
         const sendResize = createOrderedResize(
-          resizeTerminal,
+          // Input sent just before is let the shell echo first (#4958): a
+          // resize landing mid-echo makes its redraw wipe the echoed line.
+          (sid, cols, rows) => {
+            const echo = redrawWait.waitForInputEcho(lastSessionInputAt(sid));
+            if (!echo) return resizeTerminal(sid, cols, rows);
+            return echo.then(() => resizeTerminal(sid, cols, rows));
+          },
           (err, r) =>
             frontendLog(
               "terminal",

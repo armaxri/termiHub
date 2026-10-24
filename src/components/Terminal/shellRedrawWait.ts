@@ -13,6 +13,11 @@
  * the signal that the program has caught up. Input stays held until that chunk
  * arrived (plus a short quiet period for a multi-chunk repaint), bounded by
  * {@link RESIZE_REDRAW_WAIT_MS} for a program that does not redraw at all.
+ *
+ * The same race runs the other way round: input already sent, a resize right
+ * behind it. The program then redraws for the resize while it is still
+ * echoing the input. So a resize also waits (bounded) until the session has
+ * answered the most recent input with output — its echo.
  */
 
 /** Longest wait (ms) for a redraw after a resize before input is released anyway. */
@@ -26,6 +31,12 @@ export interface ShellRedrawWait {
   /** Report a chunk of session output. */
   notifyOutput(): void;
   /**
+   * A promise resolving once the session produced output after input sent at
+   * `inputAt` (ms epoch), or `maxMs` after it — or `null` (nothing to wait
+   * for) when there is no such input, it was answered, or it is older.
+   */
+  waitForInputEcho(inputAt: number | undefined, maxMs?: number): Promise<void> | null;
+  /**
    * Call `release` once output arrived after this call (then
    * `quietMs` later) or after `maxMs`, whichever comes first. Exactly once.
    */
@@ -38,24 +49,43 @@ export interface ShellRedrawWait {
 export function createShellRedrawWait(): ShellRedrawWait {
   /** Pending waits: each maps to the callback run on the next output chunk. */
   const pending = new Map<() => void, () => void>();
+  let lastOutputAt = 0;
+
+  /** Run `onDone` on the next output chunk or after `ms`, exactly once. */
+  const nextOutputOr = (ms: number, onOutput: (finish: () => void) => void, onDone: () => void) => {
+    const finish = (): void => {
+      if (!pending.has(finish)) return;
+      pending.delete(finish);
+      clearTimeout(bound);
+      onDone();
+    };
+    const bound = setTimeout(finish, ms);
+    pending.set(finish, () => onOutput(finish));
+  };
 
   return {
     notifyOutput() {
+      lastOutputAt = Date.now();
       for (const onOutput of [...pending.values()]) onOutput();
+    },
+    waitForInputEcho(inputAt, maxMs = RESIZE_REDRAW_WAIT_MS) {
+      if (inputAt === undefined || lastOutputAt > inputAt) return null;
+      const remaining = inputAt + maxMs - Date.now();
+      if (remaining <= 0) return null;
+      return new Promise<void>((resolve) => nextOutputOr(remaining, (finish) => finish(), resolve));
     },
     releaseAfterRedraw(release, maxMs = RESIZE_REDRAW_WAIT_MS, quietMs = RESIZE_REDRAW_QUIET_MS) {
       let quiet: ReturnType<typeof setTimeout> | null = null;
-      const finish = (): void => {
-        if (!pending.has(finish)) return;
-        pending.delete(finish);
-        clearTimeout(bound);
-        if (quiet !== null) clearTimeout(quiet);
-        release();
-      };
-      const bound = setTimeout(finish, maxMs);
-      pending.set(finish, () => {
-        if (quiet === null) quiet = setTimeout(finish, quietMs);
-      });
+      nextOutputOr(
+        maxMs,
+        (finish) => {
+          quiet ??= setTimeout(finish, quietMs);
+        },
+        () => {
+          if (quiet !== null) clearTimeout(quiet);
+          release();
+        }
+      );
     },
     releaseAll() {
       for (const finish of [...pending.keys()]) finish();
