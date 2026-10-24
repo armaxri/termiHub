@@ -8,8 +8,10 @@
  * driven. This installs a `securitypolicyviolation` listener that makes any
  * violation observable in two places:
  *
- * - the in-app **LogViewer** (via {@link frontendLog}), for a developer
- *   inspecting a running build, and
+ * - the in-app **LogViewer** and, at WARN, the durable `termihub.log` (via
+ *   {@link frontendWarn}), for a developer inspecting a running build and for
+ *   the release install smokes, which scan the shipped app's log for
+ *   `[csp] violation:` lines (#4933), and
  * - a hidden DOM **sink** (`data-testid="csp-violations"`) whose `data-count`
  *   attribute the system-test bridge reads, so an automated boot/render check
  *   can assert **zero** violations under the shipped CSP (see
@@ -19,7 +21,7 @@
  * it is inert on a healthy build and safe to install unconditionally.
  */
 
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendWarn } from "@/utils/frontendLog";
 
 /** `data-testid` of the hidden element the test bridge reads violation state from. */
 export const CSP_VIOLATION_SINK_TESTID = "csp-violations";
@@ -49,7 +51,7 @@ function recordViolation(sink: HTMLElement, e: SecurityPolicyViolationEvent): vo
   sink.setAttribute("data-count", String(count));
   const detail = `${e.violatedDirective} blocked ${e.blockedURI || "(inline)"}`;
   sink.textContent = `${sink.textContent ?? ""}${detail}\n`;
-  frontendLog("csp", `violation: ${detail} (source ${e.sourceFile ?? "?"}:${e.lineNumber ?? 0})`);
+  frontendWarn("csp", `violation: ${detail} (source ${e.sourceFile ?? "?"}:${e.lineNumber ?? 0})`);
 }
 
 /**
