@@ -415,4 +415,55 @@ describe("input typed right after a tab is shown (#4942)", () => {
 
     expect(ipc.log).toEqual(['input "q"']);
   });
+
+  it("waits for a show-time resize that lands frames later (panel laid out late)", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    // Shown into a panel that is not laid out yet: the show frame cannot fit.
+    h.state.containerWidth = 0;
+    h.state.containerHeight = 0;
+    renderTerminal(true, true);
+    void sendInput("session-swap", "echo PERF05-26\n");
+    act(() => flushRaf());
+    await drainMicrotasks();
+    act(() => flushRaf());
+    await drainMicrotasks();
+    // Still nothing on the wire: the grid the tab will show is not known yet.
+    expect(ipc.log).toEqual([]);
+
+    // The panel reaches its size; the ResizeObserver fit resizes the PTY, and
+    // only once that is applied does the input go out.
+    resizeContainer(800, 600);
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30"]);
+    await applyPendingResizes();
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "echo PERF05-26\\n"']);
+  });
+
+  it("waits while the shown grid still differs from what a fit proposes", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    // A fit is owed (the container changed while hidden) but the frame that
+    // would run it has not come yet: two frames pass with the deferred fit
+    // swallowed, as when the element is still parked at show time.
+    const fitSpy = vi.spyOn(h.state.xterm as { resize: (c: number, r: number) => void }, "resize");
+    fitSpy.mockImplementation(() => undefined);
+    renderTerminal(true, true);
+    void sendInput("session-swap", "late\n");
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual([]);
+
+    // The owed fit finally applies (here through a ResizeObserver pass).
+    fitSpy.mockRestore();
+    resizeContainer(800, 600);
+    await applyPendingResizes();
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "late\\n"']);
+  });
 });
