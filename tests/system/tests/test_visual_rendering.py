@@ -2,30 +2,28 @@
 
 Pixel- and timing-level rendering the DOM/store bridge cannot assert: glyph
 shaping, ANSI colour fidelity, box-drawing joins, theme colours, scrollbar
-styling and startup/connect white-flashes. Following the guided-manual contract
-(#914), the harness sets up the **exact** state — opens a terminal, emits the
-precise escape sequences, switches the theme, performs a cold relaunch, or drives
-the SSH connect — and then asks the operator only to *look* and confirm. Each
-uses :meth:`manual_observe`, which attaches a screenshot to the report via the
-bridge ``screenshot`` verb (#900) so the visual evidence is captured.
+styling and the startup white-flash. Following the guided-manual contract (#914),
+the harness sets up the **exact** state — opens a terminal, emits the precise
+escape sequences, switches the theme, or performs a cold relaunch — and then asks
+the operator only to *look* and confirm. Each uses :meth:`manual_observe`, which
+attaches a screenshot to the report via the bridge ``screenshot`` verb (#900) so
+the visual evidence is captured.
 
 Covered (#915): ANSI colours (MT-SSH-02), 256-colour (MT-SSH-02), box-drawing
 (MT-UI-31), Nerd Font / Powerline glyphs (MT-SER-01/02), theme colours
 (MT-UI-02..09), and vertical scrollbar appearance (MT-UI-35/36).
 
-Added (#1003): no startup white-flash (MT-UI-01), no SSH connect / setup-command
-flash (MT-LOCAL-05) and no black bar at the bottom of the terminal (MT-UI-16).
-(The OS-level app icon, MT-UI-19, is graded on the shipped artifacts by the
-release install smokes since #4933.) These are timing-level checks that stay
+Added (#1003): no startup white-flash (MT-UI-01) and no black bar at the bottom
+of the terminal (MT-UI-16). These are timing-level checks that stay
 operator-confirmed, but the harness still automates everything around them — the
-cold relaunch, the SSH connect, opening the terminal, and showing the screen — so
-the operator only has to *look*.
+cold relaunch, opening the terminal, and showing the screen — so the operator
+only has to *look*. The OS-level app icon (MT-UI-19) is graded on the shipped
+artifacts by the release install smokes since #4933, and the SSH connect /
+setup-command flash (MT-LOCAL-05) is automated since #4931 by the raw output tap
+(``test_output_flash_and_flood.py``).
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and
-run only under ``./pytest.sh --manual -k visual -s`` with an operator. The SSH
-connect-flash case additionally needs the Docker SSH containers (the
-``ssh_fixtures`` session fixture, which skips gracefully when no container
-runtime is available).
+run only under ``./pytest.sh --manual -k visual -s`` with an operator.
 """
 
 from __future__ import annotations
@@ -43,7 +41,6 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
-    unique_name,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
@@ -197,32 +194,6 @@ class TestVisualRendering(
             "painted -- no white flash between the OS window appearing and the "
             "app's first paint.",
             label="startup-no-white-flash",
-        )
-
-    # ── No SSH connect / setup-command flash (MT-LOCAL-05) ───────────────────
-    @pytest.mark.usefixtures("ssh_fixtures")
-    def test_no_ssh_connect_setup_flash(self):
-        """Drive the password-SSH connect; the operator watches for a flash.
-
-        Whether setup/wrapper commands briefly flash before the remote prompt is
-        a timing artefact of the connect handshake the bridge cannot assert, so
-        it stays operator-confirmed. The harness automates the whole connect —
-        create the connection, Save & Connect, answer the password prompt, land
-        in the terminal — so the operator only has to watch the terminal open.
-        Needs the Docker SSH password container (``ssh_fixtures``); skips when no
-        container runtime is available.
-        """
-        self.close_all_tabs()
-        # Full automated connect (create + Save & Connect + password + terminal).
-        # The operator should watch the terminal area while this runs.
-        self.connect_ssh_password(unique_name("ssh-flash"))
-        self.manual_observe(
-            "Watch the terminal you just connected to as it opened (re-run if "
-            "you looked away -- the SSH session was just established).",
-            "The remote shell prompt appeared cleanly -- no flash of setup / "
-            "wrapper commands before the prompt, no white/black flicker as the "
-            "session opened.",
-            label="ssh-connect-no-flash",
         )
 
     # ── No black bar at the bottom of the terminal (MT-UI-16) ────────────────

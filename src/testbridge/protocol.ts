@@ -429,6 +429,31 @@ export interface MeasureTerminalCommand {
 }
 
 /**
+ * Read the raw output stream a terminal was handed (#4931): everything written
+ * to its xterm since the tab was registered, escapes included, so a test can
+ * prove no setup / banner bytes were painted and then erased ("flashed")
+ * before the prompt — which the buffer that `readTerminal` reads cannot show.
+ * Returns a {@link TerminalOutputTap}; the head is bounded, the rest only
+ * counted. Read-only. When `tabId` is omitted the active tab is used.
+ */
+export interface ReadTerminalOutputCommand {
+  action: "readTerminalOutput";
+  tabId?: string;
+}
+
+/**
+ * Read the frontend Log Viewer's retained history (#4931), optionally only the
+ * entries whose message contains `contains`. Returns {@link FrontendLogRecord}s
+ * oldest first. Frontend DEBUG/INFO entries never reach the app's stdout log,
+ * so this is how a test asserts on them (e.g. the terminal renderer
+ * transitions and the absence of `webgl context lost`). Read-only.
+ */
+export interface ReadFrontendLogCommand {
+  action: "readFrontendLog";
+  contains?: string;
+}
+
+/**
  * Force a real GPU context loss on a terminal's WebGL renderer (#2988) via the
  * `WEBGL_lose_context` extension, so the harness can prove the renderer
  * degrades to the DOM renderer. Answers `true` when a live WebGL2 context was
@@ -776,6 +801,28 @@ export interface TerminalMeasurement {
   baseY: number;
 }
 
+/** A terminal's recorded output stream, returned by `readTerminalOutput`. */
+export interface TerminalOutputTap {
+  /** The start of the stream, decoded, escapes intact (bounded). */
+  output: string;
+  /** Data units written so far: characters for string writes, bytes for binary ones. */
+  written: number;
+  /** Number of `write` calls recorded. */
+  writes: number;
+  /** Whether more was written than `output` holds. */
+  truncated: boolean;
+  /** Milliseconds since the last write; `null` before the first one. */
+  msSinceLastWrite: number | null;
+}
+
+/** One frontend Log Viewer entry, returned by `readFrontendLog`. */
+export interface FrontendLogRecord {
+  timestampMs: number;
+  level: string;
+  target: string;
+  message: string;
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
@@ -803,6 +850,8 @@ export type BridgeCommand =
   | ComposeCommand
   | MeasureTerminalCommand
   | LoseTerminalWebglContextCommand
+  | ReadTerminalOutputCommand
+  | ReadFrontendLogCommand
   | GetStateCommand
   | ScreenshotCommand
   | EmitEventCommand

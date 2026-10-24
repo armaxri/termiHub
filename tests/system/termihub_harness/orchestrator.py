@@ -24,7 +24,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable, IO, Optional, Sequence
+from typing import Callable, IO, Mapping, Optional, Sequence
 
 import psutil
 
@@ -320,12 +320,17 @@ class AppInstance:
         portable: Optional[str] = None,
         sandbox_profile: bool = False,
         unset_env: Sequence[str] = (),
+        extra_env: Optional[Mapping[str, str]] = None,
     ) -> None:
         """Create an unstarted instance.
 
         ``unset_env`` names variables the app (and :meth:`run_cli`) must not
         inherit from the harness, e.g. ``SSH_AUTH_SOCK`` for a suite that needs
         the app to see no SSH agent.
+
+        ``extra_env`` sets variables for the app (and :meth:`run_cli`) on top of
+        the harness environment, e.g. the private D-Bus session bus of a
+        throwaway OS credential store (:mod:`termihub_harness.os_store`).
 
         ``portable`` selects the **portable launch mode** (#3691): ``"marker"``
         or ``"data"`` (see :mod:`termihub_harness.portable`). The built app is
@@ -344,6 +349,7 @@ class AppInstance:
         """
         binary = app_binary_path()
         self._unset_env = tuple(unset_env)
+        self._extra_env = dict(extra_env or {})
         self._portable = portable
         self._portable_root: Optional[Path] = None
         self._profile_home: Optional[Path] = None
@@ -416,6 +422,7 @@ class AppInstance:
         env.update(self._profile_overrides())
         # Read the harness's per-run known_hosts, never the user's (#4339).
         env.update(known_hosts.app_env())
+        env.update(self._extra_env)
         for name in self._unset_env:
             env.pop(name, None)
         return env
@@ -478,6 +485,7 @@ class AppInstance:
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         env.update(self._profile_overrides())
         env.update(known_hosts.app_env())
+        env.update(self._extra_env)
         for name in self._unset_env:
             env.pop(name, None)
         return env

@@ -91,6 +91,20 @@ function buildSearchDecorations(): ISearchDecorationOptions {
  */
 export const PASTE_DEBOUNCE_MS = 300;
 
+/** Called with every terminal instance as it is registered. */
+export type TerminalRegisterObserver = (tabId: string, xterm: XTerm) => void;
+
+let registerObserver: TerminalRegisterObserver | null = null;
+
+/**
+ * Observe terminal registrations (`null` stops). Only the lazily loaded test
+ * bridge sets this, to tap each terminal's raw output stream (#4931), so a
+ * production bundle carries just this hook, not the tap.
+ */
+export function setTerminalRegisterObserver(observer: TerminalRegisterObserver | null): void {
+  registerObserver = observer;
+}
+
 /** A registered terminal's live objects, see `getTerminalHandles`. */
 export interface TerminalHandles {
   element: HTMLDivElement;
@@ -261,6 +275,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       registryRef.current.set(tabId, element);
       xtermRegistryRef.current.set(tabId, xterm);
       fitAddonRegistryRef.current.set(tabId, fitAddon);
+      registerObserver?.(tabId, xterm);
       if (deferFitIfOffScreen) {
         deferFitRegistryRef.current.set(tabId, deferFitIfOffScreen);
       } else {
