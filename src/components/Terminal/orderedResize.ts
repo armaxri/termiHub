@@ -13,6 +13,11 @@
  * requested while one is in flight replaces any queued one, and goes out once
  * the in-flight invoke settles. The last requested size is always the last one
  * the backend applies.
+ *
+ * While a resize is queued or in flight, the terminal already shows the new grid
+ * but the PTY does not have it yet. `holdInput` (the session input gate) holds
+ * the session's input for exactly that window, so a keystroke typed after a fit
+ * reaches the shell after the size it was typed at (#4942).
  */
 
 /** A resize request: the session to resize and its new grid. */
@@ -28,18 +33,26 @@ export type ResizeSend = (sessionId: string, cols: number, rows: number) => Prom
 /** Requests a PTY resize; delivery is ordered and coalesced to the latest size. */
 export type OrderedResize = (sessionId: string, cols: number, rows: number) => void;
 
+/** Holds a session's input until the returned release is called. */
+export type HoldInput = (sessionId: string) => () => void;
+
 /**
  * Create an {@link OrderedResize} for one terminal.
  *
  * `onError` receives a failed send's error; the next queued resize still goes
- * out, so one failure never stalls later resizes.
+ * out, so one failure never stalls later resizes. `holdInput`, when given, is
+ * taken synchronously when a resize is requested and released once the last
+ * queued resize has settled (applied or failed).
  */
 export function createOrderedResize(
   send: ResizeSend,
-  onError: (err: unknown, request: ResizeRequest) => void
+  onError: (err: unknown, request: ResizeRequest) => void,
+  holdInput?: HoldInput
 ): OrderedResize {
   let inFlight = false;
   let queued: ResizeRequest | null = null;
+  // One input hold per session with a resize queued or in flight.
+  const holds = new Map<string, () => void>();
 
   const pump = async (): Promise<void> => {
     inFlight = true;
@@ -53,10 +66,13 @@ export function createOrderedResize(
       }
     }
     inFlight = false;
+    for (const release of holds.values()) release();
+    holds.clear();
   };
 
   return (sessionId, cols, rows) => {
     queued = { sessionId, cols, rows };
+    if (holdInput && !holds.has(sessionId)) holds.set(sessionId, holdInput(sessionId));
     if (!inFlight) void pump();
   };
 }

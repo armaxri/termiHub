@@ -57,6 +57,7 @@ import type {
 } from "@/types/diagnostics";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
+import { whenSessionInputOpen } from "@/services/sessionInputGate";
 import type { AgentConnectResult } from "@/types/generated/AgentConnectResult";
 import type { AgentConnectionsData } from "@/types/generated/AgentConnectionsData";
 import type { AgentCoordinatedUpdateResult } from "@/types/generated/AgentCoordinatedUpdateResult";
@@ -732,9 +733,15 @@ export async function listSpawnOptions(): Promise<SpawnOptions> {
   return await invoke<SpawnOptions>("list_spawn_options");
 }
 
-/** Send input data to a terminal session */
+/**
+ * Send input data to a terminal session.
+ *
+ * Ordered behind the session's pending PTY resize (#4942): while the terminal
+ * has adopted a grid the PTY does not have yet, the input waits (bounded) so the
+ * shell echoes it at the width the terminal shows. See `sessionInputGate`.
+ */
 export async function sendInput(sessionId: SessionId, data: string): Promise<void> {
-  await invoke("send_input", { sessionId, data });
+  await whenSessionInputOpen(sessionId, () => invoke("send_input", { sessionId, data }));
 }
 
 /**
