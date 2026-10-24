@@ -6,11 +6,12 @@ inside the webview. These grades move the **real** OS pointer with
 element's DOM rect — so window activation, implicit pointer grabs and releases
 outside the window go through the OS exactly as for a user.
 
-Retires the guided checks MT-NIN-22 (a click into an inactive window focuses
-the clicked pane), MT-NIN-07 (a tab released outside the window tears off),
-MT-CONN-01 (drag a connection into a folder), MT-FB-20 (drag an editor tab to
-another panel), MT-UI-26..28 (right-click: menu by default, opt-in Quick
-Copy/Paste) and MT-NIN-30 (Windows right-click pastes once).
+Retires the guided checks MT-NIN-07 (a tab released outside the window tears
+off), MT-CONN-01 (drag a connection into a folder), MT-FB-20 (drag an editor tab
+to another panel), MT-UI-26..28/30 (right-click: menu by default, opt-in Quick
+Copy/Paste) and MT-NIN-30 (Windows right-click pastes once). MT-NIN-22 (a click
+into an inactive window) stays guided: the injected click did not move the
+window focus reliably on the CI runners.
 
 Integration lane (nightly); on a developer machine the suite skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.
@@ -43,8 +44,7 @@ from termihub_harness import (
     folder_toggle_testid,
     unique_name,
 )
-from termihub_harness.os_input import HelperWindow
-from termihub_harness.ui.os_input_ui import linux_window_manager, terminal_echo
+from termihub_harness.ui.os_input_ui import has_line, linux_window_manager, terminal_echo
 from termihub_harness.ui.terminal import NEW_TERMINAL
 from termihub_harness.ui.windows import (
     CLOSE_DIALOG_END,
@@ -80,22 +80,6 @@ class TestOsPointerGrades(
     """Real pointer gestures into the test instance, graded from the app state."""
 
     # ── Helpers ──────────────────────────────────────────────────────────────
-    def _two_shell_panes(self) -> tuple[str, str]:
-        """A left and a right pane, each with a shell; ``(left_tab, right_tab)``."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        left = self.active_tab()["id"]  # type: ignore[index]
-        self.driver.click(SPLIT_H)
-        self.wait(lambda: self.leaf_count() == 2, what="two panes")
-        self.driver.click(NEW_TERMINAL)
-        right = self.wait(
-            lambda: next((t["id"] for t in window_tabs(self.driver) if t["id"] != left), None),
-            what="a shell in the right pane",
-        )
-        self.wait(lambda: self.driver.read_terminal(right).strip(), what="the right prompt")
-        assert self.panel_of_tab(left) != self.panel_of_tab(right)
-        return left, right
-
     def _wait_echo(self, tab_id: str, tag: str) -> str:
         return self.wait(
             lambda: (lambda got: None if got is None else [got])(
@@ -104,44 +88,44 @@ class TestOsPointerGrades(
             what=f"the {tag} echo",
         )[0]
 
-    def _helper_clear_of(self, screen, test_id: str) -> HelperWindow:
-        """A helper window placed so it does not cover ``test_id``."""
-        x, y = screen.point(test_id)
-        left = 20 if x > screen.window.x + 420 else int(x) + 200
-        return HelperWindow((left, 20, 360, 200))
-
-    # ── MT-NIN-22: click into an inactive window ─────────────────────────────
-    def test_click_into_inactive_window_focuses_clicked_pane(self):
-        """MT-NIN-22: with another app focused, one click into the right shell
-        activates termiHub and typing lands in that pane, never the other."""
+    # ── MT-FB-20: drag an editor tab to another panel ────────────────────────
+    def test_drag_editor_tab_between_panels(self):
+        """MT-FB-20: an editor tab dropped on the centre of the other panel moves
+        there and still shows its file."""
         osi = self.os_input()
-        left, right = self._two_shell_panes()
+        self.close_all_tabs()
+        self.wait(lambda: self.tab_count() == 0, what="every tab to close")
+        folder = Path(tempfile.mkdtemp(prefix="thub-editor-dnd-"))
+        self.ensure_terminal()
+        self.run_command(f'cd "{folder}"')
+        self.open_file_browser()
+        self.wait_for_path_contains(folder.name)
+        name = f"{unique_name('editor-dnd')}.txt"
+        self.create_file_via_browser(name)
+        self.open_file_in_editor(name)
+        editor = self.find_tab(name)
+        assert editor is not None
+        source_panel = self.panel_of_tab(editor["id"])
+        self.driver.click(SPLIT_H)
+        self.wait(lambda: self.leaf_count() == 2, what="a second panel")
+        self.driver.click(NEW_TERMINAL)
+        target = self.wait(
+            lambda: next(
+                (t for t in window_tabs(self.driver) if self.panel_of_tab(t["id"]) != source_panel),
+                None,
+            ),
+            what="a terminal in the other panel",
+        )
+        self.wait(lambda: self.driver.read_terminal(target["id"]).strip(), what="its prompt")
         screen = self.os_activate()
-        self.os_click(f"terminal-renderer-{left}", screen=screen)
-        with self._helper_clear_of(screen, f"terminal-renderer-{right}") as helper:
-            osi.allow_pid(helper.pid)
-            osi.activate(helper.pid)
-            self.wait(lambda: not self.has_focus(), what="termiHub to lose focus")
-            osi.click(*screen.point(f"terminal-renderer-{right}"), pid=helper.pid)
-            try:
-                self.wait(lambda: osi.frontmost_pid() == self.app.pid, what="termiHub frontmost")
-            except AssertionError as exc:
-                downs = self.trusted_events(kind="pointerdown")
-                raise AssertionError(
-                    f"{exc}; front is PID {osi.frontmost_pid()} (helper {helper.pid}), "
-                    f"termiHub saw {len(downs)} trusted pointerdown(s): {downs[-1:]}"
-                ) from None
-            osi.type_text("echo CLK_abc_\n")
-        if sys.platform == "darwin":
-            # macOS: the first click may only activate the window; typing goes to
-            # the pane drawn focused — never to an unfocused one.
-            active = self.active_tab()["id"]  # type: ignore[index]
-            assert self._wait_echo(active, "CLK") == "abc"
-            other = left if active == right else right
-            assert "CLK_abc_" not in self.driver.read_terminal(other)
-        else:
-            assert self._wait_echo(right, "CLK") == "abc"
-            assert "CLK_abc_" not in self.driver.read_terminal(left)
+        osi.drag(
+            screen.point(f"tab-{editor['id']}"), screen.point(f"terminal-renderer-{target['id']}")
+        )
+        self.wait(
+            lambda: self.panel_of_tab(editor["id"]) == self.panel_of_tab(target["id"]),
+            what="the editor tab in the other panel",
+        )
+        assert self.find_tab(name) is not None
 
     # ── MT-NIN-07: tab tear-off ──────────────────────────────────────────────
     def test_tab_drag_released_outside_window_tears_off(self):
@@ -205,45 +189,6 @@ class TestOsPointerGrades(
             what="the connection to move into the folder",
         )
 
-    # ── MT-FB-20: drag an editor tab to another panel ────────────────────────
-    def test_drag_editor_tab_between_panels(self):
-        """MT-FB-20: an editor tab dropped on the centre of the other panel moves
-        there and still shows its file."""
-        osi = self.os_input()
-        self.close_all_tabs()
-        self.wait(lambda: self.tab_count() == 0, what="every tab to close")
-        folder = Path(tempfile.mkdtemp(prefix="thub-editor-dnd-"))
-        self.ensure_terminal()
-        self.run_command(f'cd "{folder}"')
-        self.open_file_browser()
-        self.wait_for_path_contains(folder.name)
-        name = f"{unique_name('editor-dnd')}.txt"
-        self.create_file_via_browser(name)
-        self.open_file_in_editor(name)
-        editor = self.find_tab(name)
-        assert editor is not None
-        source_panel = self.panel_of_tab(editor["id"])
-        self.driver.click(SPLIT_H)
-        self.wait(lambda: self.leaf_count() == 2, what="a second panel")
-        self.driver.click(NEW_TERMINAL)
-        target = self.wait(
-            lambda: next(
-                (t for t in window_tabs(self.driver) if self.panel_of_tab(t["id"]) != source_panel),
-                None,
-            ),
-            what="a terminal in the other panel",
-        )
-        self.wait(lambda: self.driver.read_terminal(target["id"]).strip(), what="its prompt")
-        screen = self.os_activate()
-        osi.drag(
-            screen.point(f"tab-{editor['id']}"), screen.point(f"terminal-renderer-{target['id']}")
-        )
-        self.wait(
-            lambda: self.panel_of_tab(editor["id"]) == self.panel_of_tab(target["id"]),
-            what="the editor tab in the other panel",
-        )
-        assert self.find_tab(name) is not None
-
     # ── MT-UI-26..28, MT-NIN-30: right-click in the terminal ─────────────────
     def _quick_copy_then_paste(self, tab_id: str) -> None:
         """Right-click with a selection copies it; with none it pastes once."""
@@ -251,7 +196,7 @@ class TestOsPointerGrades(
         marker = f"RCMARK{uuid.uuid4().hex[:10]}"
         self.run_command(f"echo {marker}")
         self.wait(
-            lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
+            lambda: has_line(self.driver.read_terminal(tab_id), marker),
             what="the marker's output line",
         )
         screen = self.os_activate()

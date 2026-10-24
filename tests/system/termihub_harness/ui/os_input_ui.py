@@ -131,6 +131,11 @@ def terminal_echo(text: str, tag: str) -> Optional[str]:
     return None
 
 
+def has_line(text: str, line: str) -> bool:
+    """Whether ``text`` has a row that is exactly ``line`` (an output line)."""
+    return any(row.strip() == line for row in text.splitlines())
+
+
 def cell_point(
     screen: ScreenMapper, renderer_rect: dict, measure: dict, row: int, col: float, pad_x: float
 ) -> tuple[float, float]:

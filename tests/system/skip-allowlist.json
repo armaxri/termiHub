@@ -13,11 +13,11 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; #4935 adds the platform-only OS-input grades (Linux/arm64 +5, macOS +1, Windows +6)",
-    "bulk-linux": 60,
-    "bulk-linux-arm64": 21,
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5)",
+    "bulk-linux": 59,
+    "bulk-linux-arm64": 20,
     "bulk-macos": 211,
-    "bulk-windows": 226,
+    "bulk-windows": 225,
     "display-linux": 0,
     "display-linux-arm64": 0,
     "display-macos": 0,
@@ -188,16 +188,6 @@
         "bulk-windows"
       ],
       "why": "X11 forwarding is not offered on Windows"
-    },
-    {
-      "reason": "^press-and-hold is a macOS feature$",
-      "nodeid": "test_os_input_keyboard\\.py",
-      "lanes": [
-        "bulk-linux",
-        "bulk-linux-arm64",
-        "bulk-windows"
-      ],
-      "why": "MT-LOCAL-08 grades the macOS accent picker; other OSes have none (#4935)"
     },
     {
       "reason": "^X keyboard maps \\(Linux\\)$",

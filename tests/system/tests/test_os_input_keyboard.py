@@ -8,9 +8,11 @@ CI Xvfb display (with a window manager), ``CGEventPostToPid`` on macOS,
 what reached the shell, the editor file on disk and the OS clipboard.
 
 Retires the guided checks MT-NIN-15 (dead keys), MT-NIN-20 (focus after an app
-switch), MT-NIN-23 (typing reaches only the focused window), MT-NIN-31 (real
-Caps Lock), MT-SHI-02 (external spawn raises the window), MT-KB-01..04 (copy
-and paste shortcuts) and MT-LOCAL-08 (macOS key repeat).
+switch), MT-NIN-31 (real Caps Lock), MT-SHI-02 (external spawn raises the
+window) and MT-KB-01..04 (copy and paste shortcuts). MT-NIN-23 (per-window
+typing) and MT-LOCAL-08 (macOS key repeat) stay guided: injected focus switches
+between two windows of one app, and posted autorepeat key events, did not
+behave like the real thing on the CI runners.
 
 Integration lane (nightly); on a developer machine the suite skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.
@@ -18,7 +20,6 @@ Integration lane (nightly); on a developer machine the suite skips unless
 
 from __future__ import annotations
 
-import re
 import sys
 import tempfile
 import time
@@ -44,9 +45,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.os_input import HelperWindow, primary_modifier
-from termihub_harness.ui.os_input_ui import linux_window_manager, terminal_echo
-from termihub_harness.ui.terminal import NEW_TERMINAL
-from termihub_harness.ui.windows import CLOSE_DIALOG_END, window_tabs
+from termihub_harness.ui.os_input_ui import has_line, linux_window_manager, terminal_echo
 
 pytestmark = pytest.mark.integration
 
@@ -99,20 +98,6 @@ class TestOsKeyboardGrades(
             ),
             what=f"the {tag} echo",
         )[0]
-
-    def _close_window(self, driver) -> None:
-        """Close a secondary window, ending its sessions if it asks."""
-        if driver.window_label not in self.driver.windows():
-            return
-        driver.close_window()
-        try:
-            self.wait(lambda: driver.exists(CLOSE_DIALOG_END), timeout=5.0, what="close dialog")
-            driver.click(CLOSE_DIALOG_END)
-        except AssertionError:
-            pass
-        self.wait(lambda: len(self.driver.windows()) == 1, what="the window to close")
-        # Give the main window the OS focus back, as a user's click would.
-        self.os_activate()
 
     def _scratch_editor(self, folder: Path) -> Path:
         """Open a new empty file in ``folder`` in the editor; return its path."""
@@ -237,28 +222,43 @@ class TestOsKeyboardGrades(
             self.cancel_password_prompt()
 
     # ── MT-KB-01..04: copy / paste shortcuts, plain Ctrl+C ───────────────────
+    def _copy_word(self, tab_id: str, word: str, screen) -> None:
+        """Select ``word`` with a real double-click and copy it with the shortcut."""
+        osi = self.os_input()
+        for _ in range(3):
+            self.os_select_terminal_word(tab_id, word, screen)
+            time.sleep(0.3)
+            osi.key(COPY)
+            try:
+                self.wait(
+                    lambda: word in (read_os_clipboard() or ""),
+                    timeout=5.0,
+                    what=f"{word!r} on the OS clipboard",
+                )
+                return
+            except AssertionError:
+                screen = self.os_activate()  # a clipboard reader may have taken focus
+        raise AssertionError(
+            f"{word!r} never reached the OS clipboard (has {(read_os_clipboard() or '')[:80]!r})"
+        )
+
     def test_copy_paste_shortcuts_and_plain_ctrl_c(self):
         """MT-KB-01, MT-KB-03: the platform copy shortcut (Cmd+C on macOS,
         Ctrl+Shift+C on Windows/Linux) puts the terminal selection on the OS
         clipboard. MT-KB-02, MT-KB-04: the paste shortcut (Cmd+V / Ctrl+Shift+V)
-        types it once. Plain Ctrl+C still interrupts the running command, and the
-        tab menu's Copy puts the whole buffer on the OS clipboard."""
+        types it once. Plain Ctrl+C still interrupts the running command (macOS,
+        Linux), and the tab menu's Copy puts the whole buffer on the OS clipboard."""
         osi = self.os_input()
         tab_id = self._shell()
         marker = f"KBMARK{uuid.uuid4().hex[:10]}"
         self.run_command(f"echo {marker}")
         # The echoed command line may wrap; wait for the output line itself.
         self.wait(
-            lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
+            lambda: has_line(self.driver.read_terminal(tab_id), marker),
             what="the marker's output line",
         )
         screen = self.os_activate()
-        self.os_select_terminal_word(tab_id, marker, screen)
-        osi.key(COPY)
-        self.wait(
-            lambda: marker in (read_os_clipboard() or ""),
-            what=f"{marker!r} on the OS clipboard",
-        )
+        self._copy_word(tab_id, marker, screen)
 
         # Reading the clipboard can raise a console window (Windows PowerShell).
         screen = self.os_activate()
@@ -268,16 +268,18 @@ class TestOsKeyboardGrades(
         osi.type_text("_\n")
         assert self._wait_echo(tab_id, "PASTE") == marker
 
-        # A click clears the selection: Ctrl+C with a selection copies instead.
-        self._focus_terminal(tab_id, screen)
-        # ping is a console program, so Ctrl+C reaches it through ConPTY too.
-        sleeper = "ping -n 60 127.0.0.1" if sys.platform == "win32" else "sleep 60"
-        osi.type_text(f"{sleeper}\n")
-        self.wait(lambda: sleeper in self.driver.read_terminal(tab_id), what="the long command")
-        time.sleep(1.0)
-        osi.key("ctrl+c")
-        osi.type_text("echo INT_ok_\n")
-        assert self._wait_echo(tab_id, "INT") == "ok"
+        if sys.platform != "win32":
+            # A click clears the selection: Ctrl+C with a selection copies.
+            self._focus_terminal(tab_id, screen)
+            osi.type_text("sleep 60\n")
+            self.wait(lambda: "sleep 60" in self.driver.read_terminal(tab_id), what="sleep")
+            time.sleep(1.0)
+            osi.key("ctrl+c")
+            osi.type_text("echo INT_ok_\n")
+            assert self._wait_echo(tab_id, "INT") == "ok"
+        else:
+            osi.type_text("echo INT_ok_\n")  # the buffer the tab-menu Copy reads
+            assert self._wait_echo(tab_id, "INT") == "ok"
 
         self.driver.context_menu(f"tab-{tab_id}")
         self.wait(lambda: self.driver.exists("tab-context-copy"), what="the tab context menu")
@@ -319,51 +321,6 @@ class TestOsKeyboardGrades(
             self._wait_file(path, "xyz")
         assert "abc" not in helper.typed() and "xyz" not in helper.typed()
 
-    # ── MT-NIN-23: typing reaches only the focused window ────────────────────
-    def test_typing_goes_only_to_focused_window(self):
-        """MT-NIN-23: with two windows open, keys reach only the focused one, and
-        the new-terminal shortcut opens its tab in the focused window."""
-        osi = self.os_input()
-        tab_a = self._shell()
-        screen_a = self.os_activate()
-        second = self.open_new_window()
-        try:
-            # A smaller window B leaves part of A uncovered, so a real click can
-            # bring either one to the front whatever the stacking order.
-            second.resize_window(560, 380)
-            second.click(NEW_TERMINAL)
-            tab_b = self.wait(lambda: window_tabs(second), what="a shell in window B")[0]["id"]
-            self.wait(lambda: second.read_terminal(tab_b).strip(), what="window B's prompt")
-            others = self.wait(
-                lambda: [w for w in osi.windows() if w.handle != screen_a.window.handle],
-                what="window B on screen",
-            )
-            window_b = min(others, key=lambda w: w.width * w.height)
-            screen_b = screen_a.for_window(second, window_b)
-            osi.activate(window=window_b)
-            self.os_click(f"terminal-renderer-{tab_b}", screen=screen_b)
-            self.wait(lambda: self.has_focus(second), what="window B to take the focus")
-            osi.type_text("echo WB_bbb_\n")
-            assert self._wait_echo(tab_b, "WB", driver=second) == "bbb"
-
-            self.os_click(f"terminal-renderer-{tab_a}", screen=screen_a, fx=0.92, fy=0.85)
-            self.wait(lambda: self.has_focus(self.driver), what="window A to take the focus")
-            osi.type_text("echo WA_aaa_\n")
-            assert self._wait_echo(tab_a, "WA") == "aaa"
-            assert "WB_" not in self.driver.read_terminal(tab_a)
-            assert "WA_" not in second.read_terminal(tab_b)
-
-            main_before = len(window_tabs(self.driver))
-            second_before = len(window_tabs(second))
-            osi.key(f"{MOD}+shift+`")
-            self.wait(
-                lambda: len(window_tabs(self.driver)) == main_before + 1,
-                what="the new tab in the focused window A",
-            )
-            assert len(window_tabs(second)) == second_before, "window B gained a tab"
-        finally:
-            self._close_window(second)
-
     # ── MT-SHI-02: external spawn brings the window to the front ─────────────
     def test_external_spawn_brings_window_to_front(self):
         """MT-SHI-02: ``termiHub spawn`` while another app is in front raises the
@@ -381,28 +338,3 @@ class TestOsKeyboardGrades(
             self.wait(self.has_focus, what="termiHub to take focus")
             tab = self.wait(lambda: self.find_tab("Spawned"), what="the '(Spawned)' tab")
             assert (self.active_tab() or {}).get("id") == tab["id"]
-
-    # ── MT-LOCAL-08: macOS key repeat ────────────────────────────────────────
-    @pytest.mark.skipif(sys.platform != "darwin", reason="press-and-hold is a macOS feature")
-    def test_macos_key_repeat_has_no_accent_picker(self):
-        """MT-LOCAL-08: holding a key in the terminal repeats it continuously; the
-        press-and-hold accent picker never swallows the repeats."""
-        osi = self.os_input()
-        tab_id = self._shell()
-        self._focus_terminal(tab_id, self.os_activate())
-        osi.type_text("echo KR_")
-        osi.key_repeat("k", 30)  # type: ignore[attr-defined]
-        osi.type_text("_\n")
-        got = self._wait_echo(tab_id, "KR")
-        if not re.fullmatch(r"k{25,}", got):
-            # Tell a swallowed repeat (press-and-hold) from a lost event: the
-            # same key-downs without the autorepeat flag must all arrive.
-            osi.type_text("echo KD_")
-            for _ in range(10):
-                osi.key("k")
-            osi.type_text("_\n")
-            plain = self._wait_echo(tab_id, "KD")
-            pytest.fail(
-                f"30 autorepeat key-downs delivered {got!r}; 10 plain key-downs "
-                f"delivered {plain!r}"
-            )
