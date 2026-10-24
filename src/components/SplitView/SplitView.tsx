@@ -89,7 +89,14 @@ import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import { ZoomOverlay } from "./ZoomOverlay";
 import { useTerminalRightClickRouting } from "./terminalRightClick";
-import { describePointerHits, resolveTabDrop, type PointerHit } from "./resolveTabDrop";
+import {
+  describePointerHits,
+  dispatchTabDrop,
+  isOutsideViewport,
+  resolveTabDrop,
+  type Point,
+  type PointerHit,
+} from "./resolveTabDrop";
 import { errorMessage } from "@/utils/errorMessage";
 import "./SplitView.css";
 
@@ -258,6 +265,7 @@ export function SplitView() {
   const moveTab = useAppStore((s) => s.moveTab);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const moveTabToGroup = useAppStore((s) => s.moveTabToGroup);
+  const moveTabToWindow = useAppStore((s) => s.moveTabToWindow);
   const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
@@ -325,6 +333,14 @@ export function SplitView() {
     [rootPanel, setDraggingTabId]
   );
 
+  // A drag can end without a drop: Escape, a window resize, or the window being
+  // hidden all make dnd-kit cancel instead of calling onDragEnd. Clear the drag
+  // state either way so no ghost overlay or "dragging" flag survives (MT-NIN-07).
+  const handleDragCancel = useCallback(() => {
+    setActiveDragTab(null);
+    setDraggingTabId(null);
+  }, [setDraggingTabId]);
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setActiveDragTab(null);
@@ -334,18 +350,21 @@ export function SplitView() {
       const tabId = dndId(active.id);
       const fromPanelId = readDndPanelId(active.data.current);
 
+      // The release point: the activating pointer position plus the drag delta.
+      // Outside the viewport it means the tab was torn off the window (#4916).
+      const ae = asPointerEvent(event.activatorEvent);
+      const dropPoint: Point | null = ae
+        ? { x: ae.clientX + event.delta.x, y: ae.clientY + event.delta.y }
+        : null;
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+
       // Drops outside every registered droppable may still land on targets
       // outside the DndContext (group chips, the new-group button). Use
       // elementsFromPoint (plural) to look through the DragOverlay, which may sit
       // at the same coordinates and would block elementFromPoint.
       let pointerHits: PointerHit[] = [];
-      if (!over) {
-        const ae = asPointerEvent(event.activatorEvent);
-        if (ae) {
-          pointerHits = describePointerHits(
-            document.elementsFromPoint(ae.clientX + event.delta.x, ae.clientY + event.delta.y)
-          );
-        }
+      if (!over && dropPoint && !isOutsideViewport(dropPoint, viewport)) {
+        pointerHits = describePointerHits(document.elementsFromPoint(dropPoint.x, dropPoint.y));
       }
 
       const action = resolveTabDrop({
@@ -355,27 +374,18 @@ export function SplitView() {
         overPanelId: over ? readDndPanelId(over.data.current) : undefined,
         rootPanel,
         pointerHits,
+        dropPoint,
+        viewport,
       });
       if (!fromPanelId) return;
-      switch (action.kind) {
-        case "moveToGroup":
-          moveTabToGroup(tabId, fromPanelId, action.groupId);
-          break;
-        case "newGroup":
-          addTabGroupWithTab(tabId, fromPanelId);
-          break;
-        case "split":
-          splitPanelWithTab(tabId, fromPanelId, action.targetPanelId, action.edge);
-          break;
-        case "move":
-          moveTab(tabId, fromPanelId, action.toPanelId, action.index);
-          break;
-        case "reorder":
-          reorderTabs(action.panelId, action.oldIndex, action.newIndex);
-          break;
-        case "none":
-          break;
-      }
+      dispatchTabDrop(action, tabId, fromPanelId, {
+        moveTabToGroup,
+        addTabGroupWithTab,
+        splitPanelWithTab,
+        moveTab,
+        reorderTabs,
+        moveTabToWindow,
+      });
     },
     [
       rootPanel,
@@ -384,6 +394,7 @@ export function SplitView() {
       moveTab,
       splitPanelWithTab,
       moveTabToGroup,
+      moveTabToWindow,
       setDraggingTabId,
     ]
   );
@@ -416,6 +427,7 @@ export function SplitView() {
               sensors={sensors}
               onDragStart={isActive ? handleDragStart : undefined}
               onDragEnd={isActive ? handleDragEnd : undefined}
+              onDragCancel={isActive ? handleDragCancel : undefined}
             >
               <PanelNodeRenderer
                 node={panelTree}
