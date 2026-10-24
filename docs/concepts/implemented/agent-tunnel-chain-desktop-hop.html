@@ -101,7 +101,7 @@
             Follow-up to <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a> · Part
             of <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a></span
           >
-          <span><code>docs/concepts/future/agent-tunnel-chain-desktop-hop.html</code></span>
+          <span><code>docs/concepts/implemented/agent-tunnel-chain-desktop-hop.html</code></span>
         </div>
       </header>
 
@@ -130,7 +130,7 @@
           loopback opens its listen port on the <em>agent's</em> <code>127.0.0.1</code>. Only
           processes on the agent can use it — a database client on the user's desktop pointed at
           <code>localhost:5432</code> connects to nothing. The
-          <a href="stateless-ui-agent-tunnel-endpoints.html">endpoint-semantics sub-concept</a>
+          <a href="../future/stateless-ui-agent-tunnel-endpoints.html">endpoint-semantics sub-concept</a>
           named this the <strong>reachability trap</strong> and shipped one remediation under
           <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a>:
           <strong>Widen bind</strong>, which rewrites the agent listener to <code>0.0.0.0</code> so
@@ -215,7 +215,7 @@
         <ul>
           <li>
             Re-designing agent-hosted tunnels or endpoint semantics — those are settled in
-            <a href="stateless-ui-agent-tunnel-endpoints.html">#2155</a> and this builds strictly on
+            <a href="../future/stateless-ui-agent-tunnel-endpoints.html">#2155</a> and this builds strictly on
             top of them (the <code>host</code> field, the reachability warning, the
             <code>ReachableFrom</code> runtime classification).
           </li>
@@ -1241,7 +1241,7 @@ sequenceDiagram
           rendering with combined/degraded status, and the SSH-via resolution). Tracked under
           <a href="https://github.com/armaxri/termiHub/issues/2597">#2597</a>. This concept settled
           the deferred "Chain a hop to this computer" remediation from
-          <a href="stateless-ui-agent-tunnel-endpoints.html">the endpoint-semantics sub-concept</a>
+          <a href="../future/stateless-ui-agent-tunnel-endpoints.html">the endpoint-semantics sub-concept</a>
           (Open Design Decision #1). Its dependency,
           <a href="https://github.com/armaxri/termiHub/issues/2185">#2185</a> (agent-hosted
           forwarding), and the endpoint-semantics/reachability groundwork (<a

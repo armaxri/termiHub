@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly from a main tag edit this file directly.
 -->
 
-## [0.1.0] - 2026-07-20
+## [0.1.0] - Unreleased
 
-First public beta release of termiHub — a cross-platform terminal hub for local shells, SSH (with ProxyJump/jump-host support), serial, telnet, Docker, SFTP/FTP file transfer, embedded servers, network diagnostics, and remote-desktop (VNC/RDP) connections, unified in one workspace.
+First public beta release of termiHub — a cross-platform terminal hub for local shells, SSH (with ProxyJump/jump-host support), serial, telnet, Docker, SFTP/FTP file transfer, embedded servers and network diagnostics (both experimental), and remote-desktop (VNC/RDP, experimental) connections, unified in one workspace.
 
 ### Added
 
