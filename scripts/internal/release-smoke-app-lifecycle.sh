@@ -89,7 +89,8 @@
 #                is reported as skipped; a window still minimised is a failure.
 #   --portable-exe  the executable of a portable copy of the app: a
 #                portable.marker file must sit next to it (next to the .app on
-#                macOS). Its data/ folder is deleted first. The second launch's
+#                macOS, in usr/bin for an extracted AppImage's AppRun). Its data/
+#                folder is deleted first. The second launch's
 #                error dialog is dismissed the platform's way (x11:
 #                WM_DELETE_WINDOW to its windows; applevent: its OK button
 #                through System Events; sigterm: SIGTERM); a dialog that cannot
@@ -156,9 +157,13 @@ if [ "$MINIMIZE_CHECK" = true ] && [ "$CLOSE" != applevent ]; then
 fi
 if [ -n "$PORTABLE_EXE" ]; then
   [ -x "$PORTABLE_EXE" ] || die "--portable-exe '$PORTABLE_EXE' is not an executable file"
+  # Where the app looks for the marker (utils/portable.rs): next to its binary,
+  # or next to the .app on macOS. An extracted AppImage's AppRun starts the
+  # binary in usr/bin.
   PORTABLE_BASE="$(dirname "$PORTABLE_EXE")"
   case "$PORTABLE_EXE" in
     */Contents/MacOS/*) PORTABLE_BASE="$(dirname "$(dirname "$(dirname "$PORTABLE_BASE")")")" ;;
+    */AppRun) PORTABLE_BASE="$PORTABLE_BASE/usr/bin" ;;
   esac
   [ -f "$PORTABLE_BASE/portable.marker" ] ||
     die "no portable.marker in '$PORTABLE_BASE' (the --portable-exe copy must be portable)"
@@ -186,6 +191,7 @@ CLEAN_EXIT="termiHub exited cleanly"
 FORWARDED="single-instance: opening forwarded workspace"
 CSP_VIOLATION="[csp] violation:"
 PORTABLE_HELD="termiHub is already running from this folder"
+PORTABLE_LOCKED="Portable data directory locked"
 
 FORWARD_NAME="SmokeDemo"
 FORWARD_FILE_NAME="SmokeForwardedFile"
@@ -705,7 +711,7 @@ portable_double_launch() {
   if wait_portable_lock "$first" "$data"; then
     pass "portable: the first copy took the data-dir lock ($data)"
   else
-    fail "portable: the first copy did not lock $data within ${IPC_TIMEOUT}s"
+    fail "portable: the first copy did not log its banner and '$PORTABLE_LOCKED' within ${IPC_TIMEOUT}s"
     cat "$OUT/launch-portable1.log"
     kill -KILL "$first" 2>/dev/null || true
     return 0
@@ -764,13 +770,17 @@ portable_double_launch() {
   wait_exit "$first" "$EXIT_TIMEOUT" || true
 }
 
-# wait_portable_lock <pid> <data dir>: the data-dir lock file names the pid (or
-# a descendant: an AppImage's AppRun may start the binary as a child).
+# wait_portable_lock <pid> <data dir>: the copy's own log (data/logs) shows its
+# banner, naming the pid (or a descendant: an AppImage's AppRun may start the
+# binary as a child), and the data-dir lock taken. The lock file itself is not
+# read: on Windows the OS lock makes it unreadable while held.
 wait_portable_lock() {
-  local pid="$1" data="$2" holder i
+  local pid="$1" plog="$2/logs/termihub.log" holder i
   for ((i = 0; i < IPC_TIMEOUT; i++)); do
-    holder="$(tr -d '[:space:]' 2>/dev/null <"$data/.termihub.lock" || true)"
-    if [ -n "$holder" ] && is_same_or_descendant "$holder" "$pid"; then return 0; fi
+    if grep -qF -- "$PORTABLE_LOCKED" "$plog" 2>/dev/null; then
+      holder="$(banner_pid "$(grep -F -- "$BANNER" "$plog" | head -n1)")"
+      [ -n "$holder" ] && is_same_or_descendant "$holder" "$pid" && return 0
+    fi
     alive "$pid" || return 1
     sleep 1
   done

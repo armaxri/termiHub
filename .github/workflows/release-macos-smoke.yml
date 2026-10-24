@@ -25,6 +25,15 @@ name: Release macOS Smoke
 #   8. downloads the matching standalone agent binary, checks its .sha256 sidecar
 #      and attestation, and runs `termihub-agent --version`.
 #
+# Since #4933 it also grades, on the shipped DMG, what used to be guided-manual
+# checks: the bundle's Dock icon is the repository's icon.icns (MT-UI-19); the
+# lifecycle run minimises the window and a bare relaunch must restore it, a
+# portable copy launched twice is refused with its dialog (MT-APP-04), and the
+# log holds no CSP violation (MT-APP-02); and the Gatekeeper path of the
+# unsigned beta (scripts/internal/release-smoke-gatekeeper.sh): a quarantined
+# DMG's app is rejected by spctl, the README's `xattr -dr` clears it, and it
+# then starts through LaunchServices.
+#
 # The Intel leg matters most: release.yml cross-compiles the macos-x64 DMG on an
 # Apple-Silicon runner, so without this leg the Intel binary is never executed on
 # CI at all. It runs on GitHub's Intel macOS image (macos-15-intel; macos-13 is
@@ -32,8 +41,9 @@ name: Release macOS Smoke
 # Rosetta on an arm64 host.
 #
 # Unsigned beta (maintainer decision): the bundle is ad-hoc signed, not Developer
-# ID signed or notarized, so Gatekeeper (`spctl`) always rejects it. spctl's
-# verdict is logged as advisory only — it is not a gate.
+# ID signed or notarized, so Gatekeeper (`spctl`) always rejects it. The verify
+# step logs spctl's verdict; the Gatekeeper step asserts that rejection on a
+# quarantined copy, and that the README's workaround then lets the app start.
 #
 # The GUI launch check does not use scripts/smoke-test.sh: its macOS path drives
 # the app through System Events (osascript), which needs Accessibility/Automation
@@ -105,11 +115,14 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
-        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011),
-        # verify-rdp-helper-bundle.sh (#4222) and macos-dmg-layout.sh (#4361).
+        # Only for scripts/internal/release-smoke-*.sh (#4011, #4933),
+        # verify-rdp-helper-bundle.sh (#4222), macos-dmg-layout.sh (#4361) and
+        # the repository icons the bundle icon is compared with (#4933).
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          sparse-checkout: scripts/internal
+          sparse-checkout: |
+            scripts/internal
+            src-tauri/icons
           persist-credentials: false
 
       - name: Assert native runner architecture
@@ -243,6 +256,13 @@ jobs:
           echo "plugin runner architectures: $(lipo -archs "$(dirname "$EXE")/termihub-plugin-runner")"
           scripts/internal/verify-plugin-runner-bundle.sh "$EXE"
 
+      # The Dock icon (#4933, MT-UI-19): Info.plist's CFBundleIconFile is the
+      # repository's icon.icns, byte for byte.
+      - name: Verify the bundled app icon
+        env:
+          APP: ${{ steps.app.outputs.app }}
+        run: scripts/internal/release-smoke-bundle-icon.sh --icons src-tauri/icons --macos-app "$APP"
+
       - name: Run termihub --version
         env:
           EXE: ${{ steps.app.outputs.exe }}
@@ -340,10 +360,41 @@ jobs:
           # a direct Quit AppleEvent is only the fallback (#4076). If neither is
           # delivered, the script stops the app with SIGTERM and reports the
           # clean-exit check as skipped (a ::warning::), never as passed.
+          # --minimize-check minimises the window through System Events (by pid)
+          # before a bare relaunch, which must restore it; a portable copy of the
+          # app (portable.marker next to the .app) launched twice must be refused
+          # (#3100, MT-APP-04, #4933).
+          APP="$(dirname "$(dirname "$(dirname "$EXE")")")"
+          portable="$RUNNER_TEMP/portable"
+          rm -rf "$portable"
+          mkdir -p "$portable"
+          ditto "$APP" "$portable/$(basename "$APP")"
+          touch "$portable/portable.marker"
           ./scripts/internal/release-smoke-app-lifecycle.sh \
             --exe "$EXE" --log "$HOME/Library/Logs/com.termihub.app/termihub.log" \
             --version "$VERSION" --close applevent --bundle-id com.termihub.app \
-            --clear-log --out lifecycle 2>&1 | tee lifecycle.log
+            --clear-log --out lifecycle --minimize-check \
+            --portable-exe "$portable/$(basename "$APP")/Contents/MacOS/$(basename "$EXE")" \
+            2>&1 | tee lifecycle.log
+
+      # What a user meets after downloading the unsigned beta (#4933): the
+      # quarantined app is rejected by Gatekeeper, the README's
+      # `xattr -dr com.apple.quarantine` clears it, and it then starts through
+      # LaunchServices (`open -n`). Only the pid its banner names is stopped.
+      - name: Gatekeeper and quarantine (unsigned beta)
+        env:
+          DMG: ${{ steps.download.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          rc=0
+          ./scripts/internal/release-smoke-gatekeeper.sh --dmg "$DMG" \
+            --out "$RUNNER_TEMP/gatekeeper" --launch --clear-log \
+            --log "$HOME/Library/Logs/com.termihub.app/termihub.log" \
+            2>&1 | tee gatekeeper.log || rc=$?
+          # Keep the logs, not the copied app, for the artifact.
+          mkdir -p gatekeeper
+          cp "$RUNNER_TEMP"/gatekeeper/*.log gatekeeper/ 2>/dev/null || true
+          exit "$rc"
 
       - name: Run termihub-agent --version
         env:
@@ -384,6 +435,8 @@ jobs:
             app.log
             lifecycle.log
             lifecycle/
+            gatekeeper.log
+            gatekeeper/
             agent-version.log
           if-no-files-found: ignore
           retention-days: 14

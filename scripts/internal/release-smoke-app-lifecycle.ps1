@@ -83,6 +83,7 @@ $ForwardName = 'SmokeDemo'
 $ForwardFileName = 'SmokeForwardedFile'
 $CspViolation = '[csp] violation:'
 $PortableHeld = 'termiHub is already running from this folder'
+$PortableLocked = 'Portable data directory locked'
 
 if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "-Exe '$Exe' is not a file" }
 if ($PortableExe) {
@@ -218,6 +219,13 @@ function Invoke-BareRelaunch($First) {
   else { Fail "bare relaunch: the running window is still minimised ${LogTimeout}s after a relaunch" }
 }
 
+# A file another process may still be writing, as text ('' when missing).
+function Read-Shared([string] $Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return '' }
+  $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite, Delete')
+  try { return [IO.StreamReader]::new($fs).ReadToEnd() } finally { $fs.Dispose() }
+}
+
 # Dismiss the refused portable launch's error dialog, aimed only at its pid.
 function Close-Dialog($Proc) {
   if ($Close -eq 'signal') { & /bin/kill -TERM $Proc.Id; return $true }
@@ -234,19 +242,20 @@ function Invoke-PortableDoubleLaunch {
   $script:Exe = $PortableExe
   try {
     $first = Invoke-AppLaunch 'portable1'
+    # The copy's own log shows its banner (this pid) and the lock taken. The
+    # lock file itself is unreadable on Windows while the OS lock is held.
     $locked = $false
     for ($i = 0; $i -lt $IpcTimeout; $i++) {
-      $lock = Join-Path $data '.termihub.lock'
-      if (Test-Path -LiteralPath $lock) {
-        $fs = [IO.File]::Open($lock, 'Open', 'Read', 'ReadWrite, Delete')
-        try { $holder = [IO.StreamReader]::new($fs).ReadToEnd().Trim() } catch { $holder = '' } finally { $fs.Dispose() }
-        if ($holder -eq "$($first.Id)") { $locked = $true; break }
+      $text = Read-Shared $plog
+      if ($text.Contains($PortableLocked)) {
+        $line = $text -split "`n" | Where-Object { $_.Contains($Banner) } | Select-Object -First 1
+        if ($line -and $line -match ' pid=(\d+)' -and [int]$Matches[1] -eq $first.Id) { $locked = $true; break }
       }
       if ($first.HasExited) { break }
       Start-Sleep -Seconds 1
     }
     if (-not $locked) {
-      Fail "portable: the first copy did not lock $data within ${IpcTimeout}s"
+      Fail "portable: the first copy did not log its banner and '$PortableLocked' within ${IpcTimeout}s"
       return
     }
     Pass "portable: the first copy took the data-dir lock ($data)"
@@ -255,13 +264,7 @@ function Invoke-PortableDoubleLaunch {
     $refused = $false
     $text = ''
     for ($i = 0; $i -lt $LogTimeout; $i++) {
-      $text = ''
-      foreach ($f in @($errLog, $plog)) {
-        if (Test-Path -LiteralPath $f) {
-          $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')
-          try { $text += [IO.StreamReader]::new($fs).ReadToEnd() } finally { $fs.Dispose() }
-        }
-      }
+      $text = (Read-Shared $errLog) + (Read-Shared $plog)
       if ($text.Contains($PortableHeld)) { $refused = $true; break }
       if ($second.HasExited) { break }
       Start-Sleep -Seconds 1

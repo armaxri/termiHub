@@ -11,7 +11,12 @@ name: Release Linux Smoke
 # scripts/internal/release-smoke-app-lifecycle.sh (#4011): the durable app log's
 # banner (version + pid), no ANSI, "termiHub exited cleanly" after a real window
 # close, append across relaunch, single-instance forwarding of --workspace /
-# --workspace-file, and no clean-exit line after kill -9.
+# --workspace-file, and no clean-exit line after kill -9. Since #4933 it also
+# grades, on the shipped binaries, what used to be guided-manual checks: a bare
+# relaunch keeps the first instance (MT-APP-04), a portable copy of the AppImage
+# launched twice is refused with its "already running" dialog (MT-APP-04), the
+# app window carries an icon and the packages ship the repository icons
+# (MT-UI-19), and the log of both runs holds no CSP violation (MT-APP-02).
 #
 # release.yml calls this as a reusable workflow (workflow_call) after
 # verify-release and before mark-latest (#4281), so a failing smoke keeps the
@@ -195,6 +200,17 @@ jobs:
             scripts/internal/verify-rdp-helper-bundle.sh "$app"
           done
 
+      # The launcher icon (#4933, MT-UI-19): the .desktop entry's Icon= resolves
+      # to the repository PNGs in both packages, and the AppImage's .DirIcon too.
+      - name: Verify the bundled app icon (AppImage + .deb)
+        env:
+          APPRUN: ${{ steps.appimage.outputs.bin }}
+        run: |
+          set -euo pipefail
+          scripts/internal/release-smoke-bundle-icon.sh --icons src-tauri/icons \
+            --linux-root "$(dirname "$APPRUN")"
+          scripts/internal/release-smoke-bundle-icon.sh --icons src-tauri/icons --linux-root /
+
       - name: Smoke-test AppImage (headless)
         id: smoke_appimage
         # continue-on-error only so both smoke steps always run and report; the
@@ -240,9 +256,16 @@ jobs:
           # Both launches of the single-instance check must share one session bus
           # (the plugin's lock lives on D-Bus), so the whole script runs inside one
           # dbus-run-session. The log path is file_log.rs's Linux location.
+          # A portable copy of the extracted AppImage (portable.marker next to the
+          # binary in usr/bin) grades the same-folder double launch (#3100, #4933).
+          portable="$RUNNER_TEMP/portable-appimage"
+          rm -rf "$portable"
+          cp -a "$(dirname "$BIN")" "$portable"
+          touch "$portable/usr/bin/portable.marker"
           xvfb-run -a dbus-run-session -- ./scripts/internal/release-smoke-app-lifecycle.sh \
             --exe "$BIN" --log "$HOME/.local/share/com.termihub.app/logs/termihub.log" \
             --version "$VERSION" --close x11 --clear-log --out lifecycle-appimage \
+            --portable-exe "$portable/AppRun" \
             2>&1 | tee appimage-lifecycle.log
 
       - name: App log + single-instance smoke, .deb (headless)

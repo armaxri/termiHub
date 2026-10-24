@@ -408,9 +408,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$here/portable.marker" ]; then
   data="$here/data"
   mkdir -p "$data/logs"
-  plog() { printf '2026-01-01T00:00:00Z ERROR termihub_lib: %s\n' "$1" >>"$data/logs/termihub.log"; }
+  plog() { printf '2026-01-01T00:00:00Z  INFO termihub_lib: %s\n' "$1" >>"$data/logs/termihub.log"; }
+  plog "termiHub starting version=\"$STUB_VERSION\" pid=$$"
   if [ -n "${STUB_NO_DATA_LOCK:-}" ] || mkdir "$data/.stub-lock" 2>/dev/null; then
-    echo "$$" >"$data/.termihub.lock"
+    plog "Portable data directory locked"
     trap 'exit 0' TERM
   else
     msg="termiHub is already running from this folder. Data folder: $data"
