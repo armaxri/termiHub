@@ -2714,6 +2714,31 @@ Guided-manual suites:
 >
 > Run them under `./pytest.sh --manual -k visual -s` with an operator.
 
+### Output-stream flash and flood grades (#4931)
+
+Four former guided checks run as plain integration tests (part of #4927):
+
+| ID          | Test                                                                                  | Runs on                    | What it asserts                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MT-LOCAL-05 | `test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash`              | Linux (Docker SSH fixture) | the raw output tap shows no painted text wiped before the prompt, and no shell-integration setup bytes after the first OSC 133;A prompt                                             |
+| (companion) | `test_output_flash_and_flood.py::test_local_shell_start_paints_no_flash`              | all                        | the same no-flash grade on the default local shell (also proves the tap on every WebView engine)                                                                                    |
+| MT-LOCAL-32 | `test_output_flash_and_flood.py::test_output_flood_stays_bounded_and_ctrl_c_stops_it` | all (Git Bash on Windows)  | `yes` for 30 s: RSS growth of the app plus its WebView processes, p95 bridge round trip, time from Ctrl+C until output stops and until a command answers, no `write data discarded` |
+| MT-LOCAL-33 | `test_performance.py::test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl`  | all                        | each of 40 tabs paints its text when shown, hidden tabs hold no WebGL context, and the Log Viewer never logged `webgl context lost`                                                 |
+| MT-LOCAL-30 | `test_windows_shells.py::test_cmd_output_paints_in_order`                             | Windows                    | three 400-file `git status` listings in cmd.exe are unbroken blocks with the prompt after them; `dir /s` over `System32\drivers` finishes within its bound                          |
+
+The raw output tap is the bridge verb `readTerminalOutput` (see
+[test-bridge.md](test-bridge.md)); the memory sampler finds the WebView processes
+from the app's own PID only (descendants on Linux and Windows, WebKit XPC
+services by their responsible PID on macOS), never by app name. MT-LOCAL-03
+(the WSL variant) stays guided: no CI lane runs the desktop app against a real
+WSL distribution.
+
+**Thresholds.** Every run records each measured value as a
+`measure:<test>:<name>` line in its `[termihub-test-timing]` summary (per OS,
+with the threshold as `deadline`), so they can be re-sized from CI evidence with
+`scripts/system-test-timing.py`. The values in the tests are provisional until
+sized from measured runs.
+
 <!-- -->
 
 > **MT-CRED-01/02/03 — OS credential stores (PR #956).** Walked by [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py). As of #956 the app has a
