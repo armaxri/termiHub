@@ -12,6 +12,10 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
+  # The daily lockfile chore dispatches this on its PR branch (#4912): its
+  # GITHUB_TOKEN-pushed PR gets no pull_request run. Like a push, a dispatch
+  # runs every area on every platform (detect-changes reports all on).
+  workflow_dispatch:
 
 # Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
 # to develop, cancels the in-flight run for the older commit, so a merge burst

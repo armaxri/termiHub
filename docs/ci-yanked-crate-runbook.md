@@ -44,7 +44,7 @@ workflow runs `cargo update` **daily** (04:00 UTC) and on demand
 (`workflow_dispatch`). It pulls compatible patch/minor bumps — including
 off-yanked replacements and freshly-published advisory fixes — into `Cargo.lock`
 **and `rdp-sidecar/Cargo.lock`** (#4357) and opens a single PR against `develop`
-when either lockfile changed. Keeping the
+when either lockfile changed, for the maintainer to review and merge (#4912). Keeping the
 lockfile current means a freshly-yanked patch or advisory fix is usually already
 in `develop` before it can red PRs. The cadence is **daily** (previously weekly;
 see #2645): a weekly refresh left every open PR's Security Audit red for up to a
@@ -58,12 +58,12 @@ gh workflow run cargo-update-lockfile.yml --repo armaxri/termiHub
 
 Operational notes for that PR:
 
-- **It best-effort enables auto-merge.** After opening the PR the job runs
-  `gh pr merge --auto --merge`, so the refresh lands by itself once CI is green —
-  **if the repo has auto-merge enabled** (Settings → General → "Allow
-  auto-merge"). If that setting is off the command no-ops (swallowed so the chore
-  still succeeds) and the PR waits for a human. **Maintainer:** enabling repo
-  auto-merge makes this chore fully hands-off.
+- **It never merges; the maintainer decides.** Per the maintainer decision of
+  2026-10-24 (#4912) dependency updates are never merged automatically. The job
+  assigns the PR to `armaxri`, requests their review, and the PR body opens with
+  "Waiting for a maintainer decision". A human reviews the lockfile diff and the
+  CI checks, then merges it (merge commit) or closes it. The job also drops any
+  auto-merge an earlier version of the chore armed on the open PR.
 - **A lockfile that fails the gate opens as a draft, and the run fails.** Before
   opening the PR, the job itself runs the lockfile gate on the refreshed lock:
   `cargo check --workspace --all-targets --all-features --locked` (it compiles),
@@ -76,26 +76,31 @@ Operational notes for that PR:
   bump that does not compile, a pre-release bump off the allowlist, a crate
   yanked or flagged after the update, a new license, …), the PR is opened, or an
   open one converted, as a **draft** with the failing output at the top of its
-  body, auto-merge is disabled, and the workflow run fails so the red scheduled
-  run is noticed (#3755, #4465). Fix it with the manual path below on that branch
-  or a fresh one; the next passing run marks the PR ready again.
+  body, and the workflow run fails so the red scheduled run is noticed (#3755,
+  #4465). Fix it with the manual path below on that branch or a fresh one; the
+  next passing run marks the PR ready again.
 - **The PR carries the `automation` label** so the coordinator/maintainer can
-  spot and merge it fast when auto-merge is unavailable.
-- **Without a dedicated token, CI does not start automatically, so the in-job
-  gate is the merge guard.** By default the PR is pushed with the built-in
-  `GITHUB_TOKEN`, which does not trigger other workflows (a GitHub safeguard),
-  so it has no check runs and auto-merge does not wait for anything: that is how
-  #4460 merged a lockfile that broke every Rust build (#4465). The gate above is
-  what stops that now. To run the full CI on the PR anyway, close and reopen it
-  (or push an empty commit). Configure the lockfile App token
-  ([below](#make-the-chore-run-full-ci-app-or-pat-token)) to make full CI and a
-  CI-gated auto-merge the default. The repo setting **Settings → Actions →
-  General → "Allow GitHub Actions to create and approve pull requests"** must
-  be enabled for the `GITHUB_TOKEN` fallback to open the PR at all.
+  spot it fast.
+- **The job dispatches the per-PR CI itself.** The PR is pushed with the
+  built-in `GITHUB_TOKEN`, which does not trigger `pull_request`/`push`
+  workflows (a GitHub safeguard), but a `workflow_dispatch` made with
+  `GITHUB_TOKEN` does run. So after a passing gate the job runs
+  `gh workflow run` for **Code Quality**, **Build** and **Security Audit** with
+  `--ref chore/cargo-update-lockfile` (the job holds `actions: write` for this).
+  Their check runs, including the required `PR Gate`, attach to the PR's head
+  commit and show on the PR. A dispatch runs every area on every platform, like
+  a push to `develop`. If the checks are missing (a dispatch failed — the run
+  summary warns), close and reopen the PR, or merge `develop` into the branch:
+  either is a human-actor event that starts the normal per-PR CI. The repo
+  setting **Settings → Actions → General → "Allow GitHub Actions to create and
+  approve pull requests"** must be enabled for the job to open the PR at all.
+- **`GITHUB_TOKEN` only.** No GitHub App, PAT or other secret is involved; the
+  App/PAT token chain of #4469 existed only so an unattended auto-merge could
+  wait for real CI, and was removed with the auto-merge (#4912).
 - **The gate never sees a write token.** It compiles freshly-bumped, unreviewed
   crates, so it runs in a read-only job with no secrets. A separate job that
-  compiles nothing takes the refreshed lockfiles and the verdict, mints the
-  token, pushes the branch and opens the PR (#4465, #4469).
+  compiles nothing takes the refreshed lockfiles and the verdict, pushes the
+  branch, opens the PR and dispatches its CI (#4465).
 - **It uses a fixed automation branch** (`chore/cargo-update-lockfile`) that the
   job force-updates each run, so repeated runs refresh the same PR rather than
   piling up new ones. That force-update touches only this bot-owned branch —
@@ -114,42 +119,6 @@ Operational notes for that PR:
   `aead`, `aes-gcm`, `argon2` and `blake2` with exact `=…-rc.N` requirements
   (#4465). Lift those pins, with their allowlist entries, in a reviewed PR when
   russh moves to a stable RustCrypto line.
-
-### Make the chore run full CI (App or PAT token)
-
-With a dedicated token the chore's PR runs the normal per-PR CI, and
-`gh pr merge --auto` waits for `develop`'s required checks instead of firing at
-once (#4469). The workflow picks the first token that is configured:
-
-1. **GitHub App** (preferred: short-lived, scoped to this repo, revoked when the
-   job ends): repo variable `LOCKFILE_APP_CLIENT_ID` + repo secret
-   `LOCKFILE_APP_PRIVATE_KEY`.
-2. **Fine-grained PAT**: repo secret `LOCKFILE_PAT`.
-3. **`GITHUB_TOKEN`**: the default while neither is set; behaves as described
-   above (no CI on the PR, the in-job gate is the only merge guard).
-
-Maintainer checklist for the App:
-
-1. Create a GitHub App (Settings → Developer settings → GitHub Apps → New): no
-   webhook, **Repository permissions** only `Contents: Read and write` and
-   `Pull requests: Read and write` (`Metadata: Read` is added automatically).
-   Nothing else.
-2. Install it on `armaxri/termiHub` only ("Only select repositories").
-3. Generate a private key, then in the repo (Settings → Secrets and variables →
-   Actions) add the **variable** `LOCKFILE_APP_CLIENT_ID` (the App's Client ID)
-   and the **secret** `LOCKFILE_APP_PRIVATE_KEY` (the whole `.pem` file).
-4. Make sure auto-merge has something to wait for: `develop`'s required status
-   checks must be applied (`.github/branch-protection.json`, applied with
-   `scripts/internal/apply-branch-protection.sh --branch develop --apply`), and
-   repo auto-merge enabled (Settings → General → "Allow auto-merge").
-5. Run the chore (`gh workflow run cargo-update-lockfile.yml`): the run summary
-   says `token kind: app`, and the PR shows its CI checks.
-
-PAT alternative: a fine-grained PAT with access to this repository only and
-the same two permissions (`Contents` and `Pull requests`, read and write),
-stored as the secret `LOCKFILE_PAT`. It is long-lived and tied to a person, so
-prefer the App. Setting the App variable without the key secret fails the run
-loudly instead of silently falling back.
 
 ## Fast manual fix (when a yank or advisory slips through between runs)
 

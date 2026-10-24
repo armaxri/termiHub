@@ -96,7 +96,9 @@ run_audit() {
 
 # Classify a payload with Node (already a hard project dependency; jq is often
 # absent — see scripts/internal/autoformat.sh / #1084). Prints:
-#   "OK <high> <critical>"  when metadata.vulnerabilities parsed cleanly
+#   "OK <high> <critical>"  when metadata.vulnerabilities parsed cleanly; the
+#                           counts come from `advisories` (which honours
+#                           pnpm.auditConfig.ignoreGhsas) when that key exists
 #   "ERR"                   when the payload is missing / not valid audit JSON
 classify() {
   node -e '
@@ -107,6 +109,17 @@ classify() {
         const v = j && j.metadata && j.metadata.vulnerabilities;
         if (!v || typeof v.high !== "number" || typeof v.critical !== "number") {
           process.stdout.write("ERR");
+          return;
+        }
+        // pnpm drops ignoreGhsas entries (and, with --audit-level=high, anything
+        // below high) from advisories but still counts them in
+        // metadata.vulnerabilities, so prefer the advisories list when present:
+        // otherwise an accepted high/critical GHSA could never pass (#4917).
+        const adv = j.advisories;
+        if (adv && typeof adv === "object") {
+          const list = Object.values(adv);
+          const count = (sev) => list.filter((a) => a && a.severity === sev).length;
+          process.stdout.write("OK " + count("high") + " " + count("critical"));
           return;
         }
         process.stdout.write("OK " + v.high + " " + v.critical);
