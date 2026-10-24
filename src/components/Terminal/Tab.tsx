@@ -532,7 +532,7 @@ export function Tab({
           <FileSearch size={14} /> Open in Editor
         </MenuItem>
         <MenuItem onSelect={() => onCopyToClipboard?.()} data-testid="tab-context-copy">
-          <ClipboardCopy size={14} /> Copy to Clipboard
+          <ClipboardCopy size={14} /> Copy All
         </MenuItem>
         <MenuItem onSelect={() => onClear?.()} data-testid="tab-context-clear">
           <Eraser size={14} /> Clear Terminal

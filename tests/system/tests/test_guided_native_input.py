@@ -45,7 +45,7 @@ from termihub_harness import (
     WindowsUi,
     unique_name,
 )
-from termihub_harness.ui.windows import window_tabs
+from termihub_harness.ui.windows import find_tab_by_session, window_tabs
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
@@ -188,22 +188,48 @@ class TestGuidedNativeInput(
         )
         assert sorted(p.name for p in folder.iterdir()) == ["drag-out.txt"]
 
-    def test_tab_drag_released_outside_window_is_cancelled(self):
-        """MT-NIN-07."""
+    def test_tab_drag_released_outside_window_tears_off(self):
+        """MT-NIN-07 (#4916): a tab torn off the window opens in a new window."""
         self.close_all_tabs()
         self.ensure_terminal()
         self.driver.click(NEW_TERMINAL)
         self.wait(lambda: self.tab_count() == 2, what="two tabs")
+        moved = window_tabs(self.driver)[-1]
+        session_id = self.live_session_id(self.driver, moved["id"])
         before = self.driver.get_state("rootPanel")
+
+        # A drag that ends back inside the window, off every drop target, changes
+        # nothing and leaves no ghost state.
         self.manual_step(
-            "Drag one tab off the termiHub window, release over the desktop, click back "
-            "into termiHub and type in that tab.",
-            "No drag overlay, ghost tab or highlight is left and the terminal accepts "
-            "typing.",
+            "Drag one tab into the middle of the sidebar (or the activity bar if the "
+            "sidebar is hidden) and release it there, then click into that tab and type.",
+            "The tab stays where it was; no drag overlay, ghost tab or highlight is left "
+            "and the terminal accepts typing.",
         )
-        assert self.leaf_count() == 1 and self.tab_count() == 2
         assert len(self.driver.windows()) == 1
         assert self.driver.get_state("rootPanel") == before
+
+        # Released outside the window: the tab opens in a new window, session intact.
+        labels_before = set(self.driver.windows())
+        self.manual_step(
+            f"Run `echo torn-off` in the right-most tab ({moved.get('title', 'the new tab')}), "
+            "then drag that tab off the termiHub window and release it over the desktop. "
+            "Type in the tab in the new window.",
+            "A new termiHub window opens holding that tab, `torn-off` is still in its "
+            "scrollback and it accepts typing; the original window keeps one tab and shows "
+            "no drag overlay, ghost tab or highlight.",
+        )
+        self.wait(
+            lambda: set(self.driver.windows()) - labels_before, what="the torn-off window"
+        )
+        (label,) = set(self.driver.windows()) - labels_before
+        torn = self.driver.window(label)
+        self.wait(
+            lambda: find_tab_by_session(torn, session_id),
+            what="the moved session in the new window",
+        )
+        assert self.tab_count() == 1
+        assert find_tab_by_session(self.driver, session_id) is None
 
     # ── MT-NIN-10..16: IME, dead keys, emoji picker ──────────────────────────
     def _ime_in_terminal(self, setup: str, convert: str) -> None:
