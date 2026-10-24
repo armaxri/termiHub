@@ -16,10 +16,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { Terminal } from "./Terminal";
+import { SHOW_FIT_STALL_MS, Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 import { resetSessionInputGatesForTests } from "@/services/sessionInputGate";
+import { RESIZE_REDRAW_QUIET_MS, RESIZE_REDRAW_WAIT_MS } from "./shellRedrawWait";
 
 // Shared state reachable from the hoisted vi.mock factories below.
 const h = vi.hoisted(() => {
@@ -146,6 +147,8 @@ vi.mock("@/themes", () => ({
 const ipc = vi.hoisted(() => ({
   log: [] as string[],
   pendingResizes: [] as Array<() => void>,
+  /** The terminal's output subscription: what the shell's output reaches. */
+  emitOutput: null as null | ((data: Uint8Array) => void),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -175,7 +178,10 @@ vi.mock("@/services/api", async (importOriginal) => ({
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
-    subscribeOutput: vi.fn(() => vi.fn()),
+    subscribeOutput: vi.fn((_sessionId: string, cb: (data: Uint8Array) => void) => {
+      ipc.emitOutput = cb;
+      return vi.fn();
+    }),
     subscribeExit: vi.fn(() => vi.fn()),
   },
 }));
@@ -242,11 +248,27 @@ async function drainMicrotasks() {
 }
 
 /** Apply every resize invoke still on its way to the backend. */
-async function applyPendingResizes() {
+/** Apply every resize invoke still on its way to the backend, nothing more. */
+async function applyResizesOnly() {
   while (ipc.pendingResizes.length > 0) {
     ipc.pendingResizes.shift()?.();
     await drainMicrotasks();
   }
+}
+
+/** The shell redraws for a resize: one output chunk, then the quiet period passes. */
+async function shellRedraws() {
+  act(() => ipc.emitOutput?.(new TextEncoder().encode("\r$ ")));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, RESIZE_REDRAW_QUIET_MS + 10));
+  });
+}
+
+/** Apply every pending resize and let the shell redraw for it, like a real PTY. */
+async function applyPendingResizes() {
+  const applied = ipc.pendingResizes.length > 0;
+  await applyResizesOnly();
+  if (applied) await shellRedraws();
 }
 
 /** Run pending frames, then apply the resizes they sent. */
@@ -302,6 +324,7 @@ beforeEach(() => {
   h.resizeObserverCallbacks.length = 0;
   ipc.log.length = 0;
   ipc.pendingResizes.length = 0;
+  ipc.emitOutput = null;
   resetSessionInputGatesForTests();
 
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
@@ -465,5 +488,82 @@ describe("input typed right after a tab is shown (#4942)", () => {
     act(() => flushRaf());
     await drainMicrotasks();
     expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "late\\n"']);
+  });
+
+  it("holds input after the resize is applied until the shell redrew for it (#4958)", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    renderTerminal(true, true);
+    void sendInput("session-swap", "echo PERF05-16\n");
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30"]);
+
+    // Applied, but bash has not handled SIGWINCH yet (no redraw output): input
+    // sent now would be echoed and then wiped by that redraw.
+    await applyResizesOnly();
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30"]);
+
+    // The redraw arrives: after its quiet period the input goes out.
+    await shellRedraws();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "echo PERF05-16\\n"']);
+  });
+
+  it("releases input after a bounded wait when the shell never redraws", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    renderTerminal(true, true);
+    void sendInput("session-swap", "quiet\n");
+    act(() => flushRaf());
+    await drainMicrotasks();
+    await applyResizesOnly();
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30"]);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, RESIZE_REDRAW_WAIT_MS + 20));
+    });
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "quiet\\n"']);
+  });
+
+  it("lets the shell echo input sent just before a resize first (#4958)", async () => {
+    await mountConnected();
+
+    // Typed (and sent), then the panel resizes before the shell echoed it.
+    await act(async () => {
+      await sendInput("session-swap", "echo PERF05-31\n");
+    });
+    resizeContainer(800, 480);
+    await drainMicrotasks();
+    // The resize waits: bash would redraw for it mid-echo and wipe the line.
+    expect(ipc.log).toEqual(['input "echo PERF05-31\\n"']);
+
+    // The echo arrives; now the resize goes out.
+    act(() => ipc.emitOutput?.(new TextEncoder().encode("echo PERF05-31\r\n")));
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(['input "echo PERF05-31\\n"', "resize 100x24"]);
+  });
+
+  it("runs a stalled show-time fit itself instead of releasing input ahead of it", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    // Shown, input typed, and no frame comes (a busy or throttled view): the
+    // deferred fit that would resize the PTY never runs on its own.
+    renderTerminal(true, true);
+    void sendInput("session-swap", "echo PERF05-05\n");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, SHOW_FIT_STALL_MS + 20));
+    });
+    // The terminal fitted itself: the resize goes out first, input still waits.
+    expect(ipc.log).toEqual(["resize 100x30"]);
+
+    await applyPendingResizes();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "echo PERF05-05\\n"']);
   });
 });

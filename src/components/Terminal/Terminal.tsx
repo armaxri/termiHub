@@ -63,7 +63,8 @@ import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInp
 import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
-import { holdSessionInput } from "@/services/sessionInputGate";
+import { holdSessionInput, lastSessionInputAt } from "@/services/sessionInputGate";
+import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
@@ -294,6 +295,12 @@ interface TerminalProps {
    */
   replayScrollbackOnAttach?: boolean;
 }
+
+/**
+ * How long (ms) a just-shown terminal waits for its show-time fit before it
+ * runs the fit itself, so held input is not released ahead of a late resize.
+ */
+export const SHOW_FIT_STALL_MS = 150;
 
 /**
  * Manages an xterm.js instance and its PTY backend connection.
@@ -863,16 +870,30 @@ export function Terminal({
         // Every PTY resize goes through this sender: concurrent resize_terminal
         // invokes can be applied out of order by the backend, which would leave
         // the PTY at a stale size the dedupe above never corrects (#4841).
+        // The session's output after a resize tells that the shell redrew.
+        const redrawWait = createShellRedrawWait();
         // Input typed while a resize is in flight waits for it, so the shell
         // echoes it at the grid the terminal already shows (#4942).
         const sendResize = createOrderedResize(
-          resizeTerminal,
+          // Input sent just before is let the shell echo first (#4958): a
+          // resize landing mid-echo makes its redraw wipe the echoed line.
+          (sid, cols, rows) => {
+            const echo = redrawWait.waitForInputEcho(lastSessionInputAt(sid));
+            if (!echo) return resizeTerminal(sid, cols, rows);
+            return echo.then(() => resizeTerminal(sid, cols, rows));
+          },
           (err, r) =>
             frontendLog(
               "terminal",
               `resize → PTY ${r.cols}×${r.rows} failed tab=${tabId}: ${errorMessage(err)}`
             ),
-          (sid) => holdSessionInput(sid, "resize")
+          // Held until the resize is applied and then until the shell has
+          // redrawn for it (#4958): its SIGWINCH / ConPTY repaint would
+          // otherwise clobber input that arrived first.
+          (sid) => {
+            const release = holdSessionInput(sid, "resize");
+            return () => redrawWait.releaseAfterRedraw(release);
+          }
         );
 
         // Output batching: stage chunks and flush in a single RAF callback.
@@ -1052,6 +1073,7 @@ export function Terminal({
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          redrawWait.notifyOutput();
           // First output chunk for this session is our readiness signal for the
           // workspace-launch initial command (FEC-003). Idempotent via the guard.
           sendInitialCommand();
@@ -1232,6 +1254,8 @@ export function Terminal({
 
         cleanupRef.current = () => {
           unsubOutput();
+          // No more output will arrive to end a redraw wait: release its input.
+          redrawWait.releaseAll();
           unsubExit();
           // Cancel the pending initial-command fallback and block any further
           // send — the session is being torn down or replaced, so the command
@@ -1992,27 +2016,57 @@ export function Terminal({
     const showSessionId = sessionIdRef.current;
     const releaseShowHold = showSessionId ? holdSessionInput(showSessionId, "show") : null;
     let showHoldRafId: number | null = null;
+    let showFitStallTimer: ReturnType<typeof setTimeout> | null = null;
+    const isShownGridSettled = () =>
+      // Horizontal scrolling pins the column count, so only the frame is awaited.
+      horizontalScrollingRef.current ||
+      isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
+    const settleShowHold = () => {
+      if (showHoldRafId !== null) cancelAnimationFrame(showHoldRafId);
+      if (showFitStallTimer !== null) clearTimeout(showFitStallTimer);
+      showHoldRafId = null;
+      showFitStallTimer = null;
+      releaseShowHold?.();
+    };
     const releaseWhenSettled = () => {
       showHoldRafId = null;
-      // Horizontal scrolling pins the column count, so only the frame is awaited.
-      const settled =
-        horizontalScrollingRef.current ||
-        isGridSettled(terminalElRef.current, xtermRef.current, fitAddonRef.current);
-      if (!settled) {
+      if (!isShownGridSettled()) {
         showHoldRafId = requestAnimationFrame(releaseWhenSettled);
         return;
       }
-      releaseShowHold?.();
+      settleShowHold();
     };
-    if (releaseShowHold) showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+    // The fit the show owes normally runs within a frame. On a busy machine
+    // (or a throttled view) it can come much later, and input released by the
+    // gate's time bound would then reach the shell just before that resize
+    // (#4958). So once the wait stalls, run the owed fit here; its resize then
+    // holds input as usual.
+    const fitIfStalled = () => {
+      showFitStallTimer = null;
+      const xterm = xtermRef.current;
+      const fitAddon = fitAddonRef.current;
+      const el = terminalElRef.current;
+      if (isShownGridSettled() || !xterm || !fitAddon || !isFitReady(el)) return;
+      if (!isProposedFitSafe(fitAddon)) return;
+      frontendLog("terminal", `show-time fit stalled; fitting now tab=${tabId}`);
+      try {
+        fitAddon.fit();
+      } catch (err) {
+        frontendLog("terminal", `stalled show fit failed tab=${tabId}: ${errorMessage(err)}`);
+      }
+      if (isShownGridSettled()) settleShowHold();
+    };
+    if (releaseShowHold) {
+      showHoldRafId = requestAnimationFrame(releaseWhenSettled);
+      showFitStallTimer = setTimeout(fitIfStalled, SHOW_FIT_STALL_MS);
+    }
     return () => {
       if (fitRafId !== null) {
         cancelAnimationFrame(fitRafId);
         // Hidden (or unmounted) before the frame ran: the fit is still owed.
         if (!fitRan) hiddenFitPendingRef.current = true;
       }
-      if (showHoldRafId !== null) cancelAnimationFrame(showHoldRafId);
-      releaseShowHold?.();
+      settleShowHold();
     };
   }, [isOnScreen, tabId]);
 
