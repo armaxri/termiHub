@@ -89,6 +89,7 @@ import {
   removeCredential,
   sessionMonitoringOpen,
 } from "./api";
+import { holdSessionInput } from "./sessionInputGate";
 
 describe("api service", () => {
   beforeEach(() => {
@@ -280,6 +281,22 @@ describe("api service", () => {
         connectId: "tab-agent",
         spawned: false,
         resilientReconnect: true,
+      });
+    });
+
+    it("sendInput waits while the session's input is held (#4942)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      const release = holdSessionInput("session-held", "resize");
+
+      const sent = sendInput("session-held", "x");
+      await Promise.resolve();
+      expect(mockedInvoke).not.toHaveBeenCalledWith("send_input", expect.anything());
+
+      release();
+      await sent;
+      expect(mockedInvoke).toHaveBeenCalledWith("send_input", {
+        sessionId: "session-held",
+        data: "x",
       });
     });
 
