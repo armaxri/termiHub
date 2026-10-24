@@ -106,7 +106,9 @@ _LINUX_TOOLS = ("dbus-daemon", "gnome-keyring-daemon", "secret-tool")
     not sys.platform.startswith("linux") or any(shutil.which(t) is None for t in _LINUX_TOOLS),
     reason="needs Linux with dbus-daemon, gnome-keyring and secret-tool",
 )
-def test_private_gnome_keyring_round_trips_and_is_torn_down():
+def test_private_gnome_keyring_round_trips_and_is_torn_down(monkeypatch):
+    # The integration lane runs with GLib debug output on (#4929).
+    monkeypatch.setenv("G_MESSAGES_DEBUG", "all")
     store = os_store.SecretServiceStore()
     runtime = store._runtime
     try:

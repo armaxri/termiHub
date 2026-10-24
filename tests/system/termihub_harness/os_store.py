@@ -392,6 +392,9 @@ class SecretServiceStore(OsCredentialStore):
         env["XDG_DATA_HOME"] = str(self._data)
         env.pop("DBUS_SESSION_BUS_ADDRESS", None)
         env.pop("GNOME_KEYRING_CONTROL", None)
+        # The CI lane turns GLib debug output on (G_MESSAGES_DEBUG), which
+        # secret-tool prints on stdout ahead of the secret; keep it quiet.
+        env.pop("G_MESSAGES_DEBUG", None)
         return env
 
     def tool_env(self) -> dict[str, str]:
