@@ -2,21 +2,21 @@
 
 Pixel- and timing-level rendering the DOM/store bridge cannot assert: glyph
 shaping, ANSI colour fidelity, box-drawing joins, theme colours, scrollbar
-styling, startup/connect white-flashes, and OS-level chrome (the dock/taskbar
-icon). Following the guided-manual contract (#914), the harness sets up the
-**exact** state — opens a terminal, emits the precise escape sequences, switches
-the theme, performs a cold relaunch, or drives the SSH connect — and then asks
-the operator only to *look* and confirm. Each uses :meth:`manual_observe`, which
-attaches a screenshot to the report via the bridge ``screenshot`` verb (#900) so
-the visual evidence is captured.
+styling and startup/connect white-flashes. Following the guided-manual contract
+(#914), the harness sets up the **exact** state — opens a terminal, emits the
+precise escape sequences, switches the theme, performs a cold relaunch, or drives
+the SSH connect — and then asks the operator only to *look* and confirm. Each
+uses :meth:`manual_observe`, which attaches a screenshot to the report via the
+bridge ``screenshot`` verb (#900) so the visual evidence is captured.
 
 Covered (#915): ANSI colours (MT-SSH-02), 256-colour (MT-SSH-02), box-drawing
 (MT-UI-31), Nerd Font / Powerline glyphs (MT-SER-01/02), theme colours
 (MT-UI-02..09), and vertical scrollbar appearance (MT-UI-35/36).
 
 Added (#1003): no startup white-flash (MT-UI-01), no SSH connect / setup-command
-flash (MT-LOCAL-05), no black bar at the bottom of the terminal (MT-UI-16), and
-the OS-level app icon (MT-UI-19). These are timing- and OS-level checks that stay
+flash (MT-LOCAL-05) and no black bar at the bottom of the terminal (MT-UI-16).
+(The OS-level app icon, MT-UI-19, is graded on the shipped artifacts by the
+release install smokes since #4933.) These are timing-level checks that stay
 operator-confirmed, but the harness still automates everything around them — the
 cold relaunch, the SSH connect, opening the terminal, and showing the screen — so
 the operator only has to *look*.
@@ -246,22 +246,4 @@ class TestVisualRendering(
             "-- no black bar / empty strip between the last row and the pane "
             "edge or status bar.",
             label="terminal-no-black-bar",
-        )
-
-    # ── OS-level app icon (MT-UI-19) ─────────────────────────────────────────
-    def test_app_icon_in_dock_or_taskbar(self):
-        """The operator checks the OS dock/taskbar/launcher icon.
-
-        The app icon lives entirely in OS chrome outside the web view, so there
-        is nothing the bridge can set up or assert — it is purely operator-
-        confirmed. The harness only ensures the app is running and focused (a
-        terminal exists) so the icon is present in the dock/taskbar to inspect.
-        """
-        self.ensure_terminal()
-        self.manual_observe(
-            "Check the app icon in the dock (macOS), taskbar (Windows), or "
-            "launcher/dock (Linux) for the running app.",
-            "The custom termiHub icon is displayed -- not a generic / default "
-            "application icon.",
-            label="app-icon",
         )

@@ -10,7 +10,10 @@ This guard keeps it that way:
 - the legacy runner and corpus do not come back;
 - every retired item id is named in the docstring of a test function in a
   ``manual``-marked suite, so a later refactor cannot silently drop an item
-  from the release gate.
+  from the release gate;
+- or, once a release install smoke grades it on the shipped artifacts (#4933),
+  it is listed in :data:`RELEASE_SMOKE_IDS` with the smoke script that names it,
+  and no guided test still claims it.
 
 Pure ``ast`` parsing of the test modules — no app, bridge or Docker — so it runs
 in the normal (non-integration) lane.
@@ -50,6 +53,15 @@ RETIRED_YAML_IDS = frozenset(
     """.split()
 )
 
+#: Manual items the release install smokes (``.github/workflows/release-*-smoke.yml``)
+#: now grade on the shipped artifacts (#4933), mapped to the smoke script
+#: (repo-relative) whose text names the id. The guided test is deleted.
+RELEASE_SMOKE_IDS: dict[str, str] = {
+    "MT-APP-02": "scripts/internal/release-smoke-app-lifecycle.sh",
+    "MT-APP-04": "scripts/internal/release-smoke-app-lifecycle.sh",
+    "MT-UI-19": "scripts/internal/release-smoke-bundle-icon.sh",
+}
+
 _ID = re.compile(r"\bMT-[A-Z]+-\d+\b")
 
 
@@ -87,11 +99,22 @@ def test_legacy_runner_and_corpus_stay_deleted():
 
 def test_every_retired_yaml_item_has_a_guided_test():
     found = manual_test_ids()
-    missing = sorted(RETIRED_YAML_IDS - found.keys())
+    missing = sorted(RETIRED_YAML_IDS - found.keys() - RELEASE_SMOKE_IDS.keys())
     assert not missing, (
         "retired YAML items no longer named in any manual test docstring: "
         f"{', '.join(missing)}"
     )
+
+
+def test_release_smoke_items_name_their_script_and_are_no_longer_guided():
+    for item_id, script in RELEASE_SMOKE_IDS.items():
+        path = REPO_ROOT / script
+        assert path.is_file(), f"{item_id}: {script} does not exist"
+        assert item_id in _ID.findall(path.read_text(encoding="utf-8")), (
+            f"{item_id}: {script} does not name the item"
+        )
+    still_guided = sorted(RELEASE_SMOKE_IDS.keys() & manual_test_ids().keys())
+    assert not still_guided, f"release-smoke items still walked by a guided test: {still_guided}"
 
 
 def test_retired_id_list_has_no_duplicates_and_expected_size():
