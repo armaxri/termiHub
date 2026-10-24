@@ -34,6 +34,42 @@ function useMenuKind(part: string): MenuKind {
   return kind;
 }
 
+/**
+ * Guard against the right-press that opened a context menu selecting an item
+ * on its release (#4915). macOS and GTK fire `contextmenu` on the button's
+ * *press*, so the release of that same press lands on the already-open menu,
+ * and Radix reads a pointerup on an item that saw no pointerdown as a
+ * press-drag-release selection — on a terminal that silently picked the first
+ * item (Paste). `armed` is true from the moment a context menu opens until the
+ * first press inside it or the first release anywhere, and while it is true an
+ * item ignores the pointerup. Dropdown menus are unaffected: they open on a
+ * left press whose release is meant to be able to select.
+ */
+interface OpeningReleaseGuard {
+  armed: React.MutableRefObject<boolean>;
+}
+
+const OpeningReleaseGuardContext = createContext<OpeningReleaseGuard | null>(null);
+
+/**
+ * Composes an item's `onPointerUp` with the opening-release guard: inside a
+ * context menu, the release of the opening press is swallowed (default
+ * prevented, so Radix's own select-on-release handler skips it).
+ */
+function useGuardedPointerUp(
+  onPointerUp: React.PointerEventHandler<HTMLDivElement> | undefined
+): React.PointerEventHandler<HTMLDivElement> | undefined {
+  const guard = useContext(OpeningReleaseGuardContext);
+  if (!guard) return onPointerUp;
+  return (event) => {
+    onPointerUp?.(event);
+    if (guard.armed.current) {
+      guard.armed.current = false;
+      event.preventDefault();
+    }
+  };
+}
+
 /** Joins class names, skipping falsy entries. */
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -73,15 +109,36 @@ export type ContextMenuContentProps = React.ComponentPropsWithoutRef<
 export const ContextMenuContent = React.forwardRef<
   React.ElementRef<typeof RadixContextMenu.Content>,
   ContextMenuContentProps
->(function ContextMenuContent({ className, container, width, children, ...rest }, ref) {
+>(function ContextMenuContent(
+  { className, container, width, children, onPointerDownCapture, ...rest },
+  ref
+) {
+  // The content mounts when the menu opens, so the guard starts armed.
+  const armed = React.useRef(true);
+  const guard = React.useMemo<OpeningReleaseGuard>(() => ({ armed }), []);
+  React.useEffect(() => {
+    // A release that lands outside every item still ends the opening gesture.
+    // Bubble phase on window runs after the item's own handler has checked it.
+    const disarm = () => {
+      armed.current = false;
+    };
+    window.addEventListener("pointerup", disarm);
+    return () => window.removeEventListener("pointerup", disarm);
+  }, []);
   return (
     <RadixContextMenu.Portal container={container}>
       <RadixContextMenu.Content
         ref={ref}
         className={cx("ui-menu__content", width === "wide" && "ui-menu__content--wide", className)}
+        onPointerDownCapture={(event) => {
+          onPointerDownCapture?.(event);
+          armed.current = false;
+        }}
         {...rest}
       >
-        <MenuKindContext.Provider value="context">{children}</MenuKindContext.Provider>
+        <OpeningReleaseGuardContext.Provider value={guard}>
+          <MenuKindContext.Provider value="context">{children}</MenuKindContext.Provider>
+        </OpeningReleaseGuardContext.Provider>
       </RadixContextMenu.Content>
     </RadixContextMenu.Portal>
   );
@@ -148,15 +205,17 @@ export type MenuItemProps = React.ComponentPropsWithoutRef<typeof RadixDropdownM
 
 /** A selectable menu row. Fires `onSelect` and closes the menu (unless prevented). */
 export const MenuItem = React.forwardRef<HTMLDivElement, MenuItemProps>(function MenuItem(
-  { className, danger, icon, shortcut, hint, children, ...rest },
+  { className, danger, icon, shortcut, hint, children, onPointerUp, ...rest },
   ref
 ) {
   const kind = useMenuKind("MenuItem");
+  const guardedPointerUp = useGuardedPointerUp(onPointerUp);
   const Item = kind === "context" ? RadixContextMenu.Item : RadixDropdownMenu.Item;
   return (
     <Item
       ref={ref}
       className={cx("ui-menu__item", danger && "ui-menu__item--danger", className)}
+      onPointerUp={guardedPointerUp}
       {...rest}
     >
       <RowBody icon={icon} hint={hint} shortcut={shortcut}>
@@ -174,14 +233,19 @@ export type MenuCheckboxItemProps = React.ComponentPropsWithoutRef<
 
 /** A toggleable menu row; pair with {@link MenuItemIndicator} for the tick. */
 export const MenuCheckboxItem = React.forwardRef<HTMLDivElement, MenuCheckboxItemProps>(
-  function MenuCheckboxItem({ className, danger, icon, shortcut, hint, children, ...rest }, ref) {
+  function MenuCheckboxItem(
+    { className, danger, icon, shortcut, hint, children, onPointerUp, ...rest },
+    ref
+  ) {
     const kind = useMenuKind("MenuCheckboxItem");
+    const guardedPointerUp = useGuardedPointerUp(onPointerUp);
     const Item =
       kind === "context" ? RadixContextMenu.CheckboxItem : RadixDropdownMenu.CheckboxItem;
     return (
       <Item
         ref={ref}
         className={cx("ui-menu__item", danger && "ui-menu__item--danger", className)}
+        onPointerUp={guardedPointerUp}
         {...rest}
       >
         <RowBody icon={icon} hint={hint} shortcut={shortcut}>
@@ -214,13 +278,18 @@ export type MenuRadioItemProps = React.ComponentPropsWithoutRef<
 
 /** One choice inside a {@link MenuRadioGroup}; pair with {@link MenuItemIndicator}. */
 export const MenuRadioItem = React.forwardRef<HTMLDivElement, MenuRadioItemProps>(
-  function MenuRadioItem({ className, danger, icon, shortcut, hint, children, ...rest }, ref) {
+  function MenuRadioItem(
+    { className, danger, icon, shortcut, hint, children, onPointerUp, ...rest },
+    ref
+  ) {
     const kind = useMenuKind("MenuRadioItem");
+    const guardedPointerUp = useGuardedPointerUp(onPointerUp);
     const Item = kind === "context" ? RadixContextMenu.RadioItem : RadixDropdownMenu.RadioItem;
     return (
       <Item
         ref={ref}
         className={cx("ui-menu__item", danger && "ui-menu__item--danger", className)}
+        onPointerUp={guardedPointerUp}
         {...rest}
       >
         <RowBody icon={icon} hint={hint} shortcut={shortcut}>
