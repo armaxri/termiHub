@@ -380,6 +380,9 @@ jobs:
         # secret-tool; without them that suite skips and the skip guard fails.
         # xsettingsd lets the MT-UI-05 grade flip the Xvfb display's GTK theme
         # light/dark (#4930).
+        # xdotool + x11-apps (xwd) let the native capture grades find the app's
+        # window by its pid and dump its pixels (#4937); without them those
+        # grades skip and the skip guard fails the lane.
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -399,6 +402,8 @@ jobs:
             dbus-x11 \
             xvfb \
             xsettingsd \
+            xdotool \
+            x11-apps \
             socat \
             libasound2-dev
 
