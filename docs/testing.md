@@ -2826,6 +2826,12 @@ grid is mapped onto the capture with the `screenRect` and `page` fields of
 and `bold`. A failing grade saves the capture with the judged cells outlined
 under `tests/system/artifacts/`.
 
+They run in the nightly lane's serial `display-grades` job on Linux, macOS
+and Windows, not the bulk lane: each needs the app window alone and
+unoccluded, because macOS stops painting a WKWebView hidden behind another
+xdist worker's window. On macOS the harness also makes the test app frontmost
+(by its PID) before grading.
+
 A developer machine without the capture tooling (`xdotool` / `x11-apps` on
 Linux, Screen Recording permission for the terminal on macOS) skips these
 tests; the nightly lane installs the tooling, and an unexpected skip fails its

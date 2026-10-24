@@ -23,6 +23,7 @@ import pytest
 
 from ..artifacts import ARTIFACT_ROOT, sanitize_nodeid
 from ..bridge import BridgeError
+from ..display_runner import bring_app_foreground
 from ..pixel_grades import RGB, hex_rgb
 from ..window_capture import (
     CaptureUnavailable,
@@ -173,6 +174,9 @@ class NativeCaptureUi(HarnessMixin):
         passes; otherwise ``rects`` (the graded cells) and ``detail`` (what was
         seen) go into the failure and the saved capture.
         """
+        # macOS stops painting an occluded WKWebView: make the test app (by its
+        # PID, never its name) the frontmost one first. A no-op elsewhere.
+        bring_app_foreground(self.app.pid)
         deadline = time.monotonic() + timeout
         last: Optional[TerminalCapture] = None
         rects: list[Rect] = []
@@ -194,7 +198,8 @@ class NativeCaptureUi(HarnessMixin):
             + (f" (capture: {path})" if path else "")
             + (
                 f"; capture {last.frame.width}x{last.frame.height}, page mapped at "
-                f"{tuple(round(v, 1) for v in last.mapping)}"
+                f"{tuple(round(v, 1) for v in last.mapping)}, renderer "
+                f"{last.measure.get('renderer')}"
                 if last
                 else ""
             )

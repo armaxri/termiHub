@@ -380,9 +380,6 @@ jobs:
         # secret-tool; without them that suite skips and the skip guard fails.
         # xsettingsd lets the MT-UI-05 grade flip the Xvfb display's GTK theme
         # light/dark (#4930).
-        # xdotool + x11-apps (xwd) let the native capture grades find the app's
-        # window by its pid and dump its pixels (#4937); without them those
-        # grades skip and the skip guard fails the lane.
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -402,8 +399,6 @@ jobs:
             dbus-x11 \
             xvfb \
             xsettingsd \
-            xdotool \
-            x11-apps \
             socat \
             libasound2-dev
 
@@ -569,6 +564,10 @@ jobs:
         # intermittent reconnect regression reds that job on first failure instead
         # of being retried away here. `display-grades` runs the same two grades on
         # all three OSes with identical env, so nothing is lost by excluding them.
+        # The native window capture grades (test_native_capture_grades /
+        # test_native_paint_grades, #4937) run there too: they need the app
+        # window alone on screen — under two macOS xdist workers one app's
+        # WKWebView sits occluded behind the other's and never paints its terminal.
         # `-r aR` adds RERUN lines to the short summary so persistent flakes stay
         # visible for tracking; `--rerun-show-tracebacks` prints each retried
         # attempt's traceback there too, so a rerun that fails differently (e.g.
@@ -579,7 +578,7 @@ jobs:
           # The linux-arm64 leg has its own baseline (#4934).
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'bulk-linux-arm64' || 'bulk-linux' }}
           TERMIHUB_REQUIRE_FIXTURES: "1"
-        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -653,7 +652,7 @@ jobs:
         # --reruns 0 (see the Linux step's comment). `-r aR` surfaces RERUN lines in
         # the summary, with each retried attempt's traceback (#4829). Not applied
         # to per-PR CI.
-        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
       - name: macOS Quit delivery probe (debug bundle)
         # The macOS release smoke quits the installed app by clicking its own
@@ -756,6 +755,8 @@ jobs:
   # — #2669, the intent of the closed #2634. If a grade proves genuinely flaky here,
   # quarantine that specific test with a deterministic-fix tracker (the repo's
   # quarantine-not-retry rule), never re-add a blanket rerun.
+  # The native window capture grades (#4937) also run only here: they capture
+  # the app's own window (by pid) and need it alone on screen, unoccluded.
   display-grades:
     needs: setup
     name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
@@ -825,7 +826,9 @@ jobs:
 
       - name: Install system dependencies (Tauri + headless display)
         # Linux only: Tauri webview build deps + xvfb to give the app a display.
-        # No socat/Docker — these two grades need neither.
+        # No socat/Docker — these grades need neither. xdotool + x11-apps (xwd)
+        # let the native capture grades find the app window by its pid and dump
+        # its pixels (#4937).
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -840,7 +843,9 @@ jobs:
             patchelf \
             libgl1-mesa-dri \
             dbus-x11 \
-            xvfb
+            xvfb \
+            xdotool \
+            x11-apps
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
         # Same WebKitGTK-2.44+/ubuntu-24.04 sandbox fix as the bulk lane above: the
@@ -905,7 +910,7 @@ jobs:
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'display-linux-arm64' || 'display-linux' }}
         run: >-
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
-          -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+          -k "test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades" -v
           -n 1 --dist loadscope --reruns 0 -r aR
 
       - name: Run the display-critical grades (macOS/Windows, native display)
@@ -923,7 +928,7 @@ jobs:
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'display-macos' || 'display-windows' }}
         run: >-
           ./tests/system/pytest.sh -m integration
-          -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+          -k "test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades" -v
           -n 1 --dist loadscope --reruns 0 -r aR
 
       - name: Tear down the native sshd fixture (Windows)
