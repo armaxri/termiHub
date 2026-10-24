@@ -111,6 +111,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-CRED-17": "tests/visual/surfaces.spec.ts",
     "MT-UI-54": "tests/visual/surfaces.spec.ts",
     "MT-UI-55": "tests/visual/surfaces.spec.ts",
+    # #4954: row tooltips, hover/focus row actions and overflow-menu parity.
+    "MT-UI-53": "tests/visual/surfaces.spec.ts",
     # The revoke flow is unit-tested; its look is a rendered visual surface.
     "MT-UI-56": "src/components/Settings/ImportedWorkspaceConfirmations.test.tsx",
     # #4930: theme, layout and scrollbar grades from computed styles + measure_terminal.

@@ -8,12 +8,13 @@ width. The underlying rules are pinned by unit tests (named per item in
 scrollback, zoom, split, a sample file in the editor, the Settings category)
 and the operator looks.
 
-Covered: MT-UI-40, MT-UI-46, MT-UI-53. The theme, layout and scrollbar items
+Covered: MT-UI-40, MT-UI-46. The theme, layout and scrollbar items
 (MT-UI-05, 13, 41, 43, 45, 47..52) are graded automatically by
 ``test_theme_grades.py`` / ``test_layout_grades.py`` /
 ``test_terminal_command_marks.py`` since #4930. MT-UI-54/55 (Settings layout)
 and MT-UI-56 (imported workspace confirmations) are automated by the rendered
-visual checks and unit tests (#4928).
+visual checks and unit tests (#4928), and MT-UI-53 (sidebar rows at real
+widths) by the rendered visual checks (#4954).
 
 Native window capture (#4937, ``test_native_paint_grades.py``) automates the
 zoom / split repaint (MT-UI-42), the inline images (MT-UI-44) and the
@@ -126,25 +127,4 @@ class TestGuidedLookAndFeel(
             "and Arabic use a real font; the family shows three emoji in six columns — in "
             "both halves.",
             evidence=sheet,
-        )
-
-    # ── MT-UI-53: sidebar rows at real widths ────────────────────────────────
-    def test_every_sidebar_at_default_and_minimum_width(self):
-        """MT-UI-53 (the row behaviour; fit and clipping are automated).
-
-        The rendered visual checks (#4712, ``tests/visual/surfaces.spec.ts``)
-        audit every sidebar at the default and minimum width at three window
-        sizes for overflow, clipped controls and over-truncated names, and open
-        each collapsed toolbar's overflow menu. They render no tunnel, service,
-        HTTP monitor or agent rows and do not hover or focus rows, so the row
-        behaviour stays here (#4928).
-        """
-        self.close_all_tabs()
-        self.enable_experimental_features()
-        self.manual_step(
-            "Create a tunnel, a service, an HTTP monitor and a remote agent. Drag the "
-            "sidebar edge to the minimum (or Home on the handle) and open each sidebar; "
-            "hover and Tab onto rows; run each '…' overflow menu action.",
-            "Names use the full row with a tooltip when cut; row actions show on hover and "
-            "focus; the overflow actions run like the buttons.",
         )

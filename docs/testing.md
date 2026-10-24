@@ -513,7 +513,7 @@ testing because earlier UI audits read the code but never rendered it).
 
 ```bash
 pnpm exec playwright install chromium   # once per machine
-pnpm test:visual                        # whole suite, about 30 s locally
+pnpm test:visual                        # whole suite, about a minute locally
 VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
 ```
 
@@ -537,13 +537,23 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
   - every Settings category the nav lists, on a fresh start with no connection
     editor opened first;
   - every sidebar at the default width (260px) and at the minimum the resize
-    handle allows (its `aria-valuemin`, 170px today);
+    handle allows (its `aria-valuemin`, 200px today);
+  - the rows of every seeded row kind (connection, remote agent, tunnel,
+    service, HTTP monitor, workspace) at both widths (#4954, MT-UI-53): a name
+    cut by an ellipsis shows its full text in a `title` or in the tooltip that
+    hovering the start of the name opens, and hovering the row or giving it
+    keyboard focus shows every row action painted, unclipped and on top;
   - Settings → Security with confirmed imported workspace commands (#4445),
     and its revoke-all dialog;
   - the unlock, password-prompt, shortcuts, command-palette, customize-layout
     and export dialogs (the unlock dialog also with a wrong-password error);
   - Settings → External Files with the create-file prompt open;
-  - General and Sessions at a ~420px Settings tab (1024x700 only).
+  - General and Sessions at a ~420px Settings tab (1024x700 only);
+  - per sidebar at 1280x800 (#4954, MT-UI-53): every action a toolbar shows at
+    a wide sidebar is still reachable at the minimum width, and each item of
+    the "…" overflow menu has the same effect as its button (the IPC commands
+    sent, the tabs, dialogs, toasts and sidebar view it leaves), each trigger
+    on a freshly booted app.
 
   The spec drives the app through the store that `boot.ts` exposes, not through
   click paths.
@@ -560,6 +570,7 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
   | `console-error`   | the app logs a console error (React warnings included) while the surface renders                                          |
   | `expectation`     | a surface-specific check fails, for example the shortcuts overlay showing more than one shortcut column (#4711)           |
   | `expectation`     | an `expectations.ts` layout rule fails (#4928): dialog blocks keep a gap, Settings rows keep their layout                 |
+  | `expectation`     | a sidebar row check fails (#4954): a cut name without its full text, or a row action hidden or clipped on hover or focus  |
 
   Every surface is a separate soft assertion, so a failure names the surface
   and the window size, and one broken surface never hides the others.
@@ -585,8 +596,10 @@ shows that its fix passes before it deletes them.
 
 The `Rendered Visual Checks` job in `code-quality.yml` runs on every PR that
 touches the `frontend` area (`tests/visual/` is part of it) and on every push to
-`develop` and `main`. It is part of the `PR Gate`. The suite itself takes well
-under a minute, and installing Chromium takes most of the job time.
+`develop` and `main`. It is part of the `PR Gate`. The suite itself takes a few
+minutes on the two CI workers; the sidebar row and overflow checks (#4954) are
+the slowest part, because they hover every row and boot a fresh app per
+overflow action.
 `scripts/ci-local.sh` runs the same check as the
 `Frontend: rendered visual checks` gate.
 
@@ -2719,7 +2732,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
 - [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-WIN-01 … 04 (macOS Dock and quit paths), MT-SHI-01 … 06 (external spawn and OS context menus), MT-FB-30/31 (large folder, drag out)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
-- [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46, 53 (legibility, font choice and row behaviour, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
+- [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/31 (WSL flash, key repeat, Git install), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
