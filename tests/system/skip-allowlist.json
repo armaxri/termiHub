@@ -13,11 +13,11 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom",
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953)",
     "bulk-linux": 55,
     "bulk-linux-arm64": 16,
     "bulk-macos": 210,
-    "bulk-windows": 220,
+    "bulk-windows": 221,
     "display-linux": 0,
     "display-linux-arm64": 0,
     "display-macos": 0,
@@ -188,6 +188,14 @@
         "bulk-windows"
       ],
       "why": "X11 forwarding is not offered on Windows"
+    },
+    {
+      "reason": "^SSH agent auth on Windows uses the system OpenSSH agent pipe, which a test must not load keys into$",
+      "nodeid": "test_ssh_agent_auth\\.py",
+      "lanes": [
+        "bulk-windows"
+      ],
+      "why": "the app's Windows agent client only dials the system agent pipe (the developer's own agent); MT-SSH-07 is graded on Linux and macOS (#4953)"
     }
   ]
 }
