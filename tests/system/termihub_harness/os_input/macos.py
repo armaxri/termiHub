@@ -16,6 +16,8 @@ the harness; :meth:`MacOsInput.unavailable_reason` reports when it is missing.
 
 from __future__ import annotations
 
+import re
+import subprocess
 import time
 from typing import Any, Optional, Sequence
 
@@ -31,6 +33,8 @@ FLAGS = {
     "cmd": 0x00100000,
     "super": 0x00100000,
 }
+#: Windows below this ``kCGWindowLayer`` are app windows (0 normal, 3 floating).
+MAX_APP_WINDOW_LAYER = 20
 #: ``kCGEventFlagMaskAlphaShift`` — Caps Lock engaged.
 CAPS_LOCK_FLAG = 0x00010000
 
@@ -101,7 +105,10 @@ class MacOsInput(OsInput):
         for info in self._window_list():
             if int(info.get("kCGWindowOwnerPID", -1)) != pid:
                 continue
-            if int(info.get("kCGWindowLayer", 0)) != 0:
+            # The test window is pinned always-on-top under the bridge (#957),
+            # i.e. a floating level (3); menus, the Dock and the menu bar sit at
+            # 20 and above.
+            if not 0 <= int(info.get("kCGWindowLayer", 0)) < MAX_APP_WINDOW_LAYER:
                 continue
             bounds = info.get("kCGWindowBounds") or {}
             w, h = int(bounds.get("Width", 0)), int(bounds.get("Height", 0))
@@ -121,11 +128,23 @@ class MacOsInput(OsInput):
         return windows
 
     def _frontmost_pid(self) -> Optional[int]:
-        # Front-to-back order: the first normal-layer window is the active app's.
-        for info in self._window_list():
-            if int(info.get("kCGWindowLayer", -1)) == 0:
-                return int(info.get("kCGWindowOwnerPID", 0)) or None
-        return None
+        # The *active* application (the one keys go to), as Launch Services
+        # reports it. Window order cannot answer this: the always-on-top test
+        # window stays in front even while another app is active.
+        try:
+            asn = subprocess.run(
+                ["lsappinfo", "front"], capture_output=True, text=True, timeout=5
+            ).stdout.strip()
+            out = subprocess.run(
+                ["lsappinfo", "info", "-only", "pid", asn],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        match = re.search(r'"pid"\s*=\s*(\d+)', out)
+        return int(match.group(1)) if match else None
 
     def _screen_size(self) -> tuple[int, int]:
         bounds = self._q.CGDisplayBounds(self._q.CGMainDisplayID())

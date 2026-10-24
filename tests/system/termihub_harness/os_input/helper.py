@@ -26,7 +26,8 @@ from .base import OsInputUnavailable
 _TK_SCRIPT = r"""
 import json, sys, tkinter as tk
 x, y, w, h = (int(v) for v in sys.argv[1:5])
-root = tk.Tk()
+import os
+root = tk.Tk(className=f"thubhelper{os.getpid()}")
 root.title("termihub-os-input-helper")
 root.geometry(f"{w}x{h}+{x}+{y}")
 text = tk.Text(root)
@@ -35,12 +36,12 @@ text.focus_set()
 def on_key(event):
     print(json.dumps({"key": event.keysym, "char": event.char}), flush=True)
 root.bind_all("<Key>", on_key)
-root.after(200, lambda: print(json.dumps({"ready": True}), flush=True))
+root.after(300, lambda: print(json.dumps({"ready": True, "pid": os.getpid()}), flush=True))
 root.mainloop()
 """
 
 _APPKIT_SCRIPT = r"""
-import json, sys
+import json, os, sys
 from AppKit import (NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered,
                     NSEvent, NSKeyDownMask, NSMakeRect, NSScreen, NSTextView, NSWindow)
 x, y, w, h = (int(v) for v in sys.argv[1:5])
@@ -58,7 +59,7 @@ def on_key(event):
     print(json.dumps({"key": event.keyCode(), "char": event.characters() or ""}), flush=True)
     return event
 NSEvent.addLocalMonitorForEventsMatchingMask_handler_(NSKeyDownMask, on_key)
-print(json.dumps({"ready": True}), flush=True)
+print(json.dumps({"ready": True, "pid": os.getpid()}), flush=True)
 app.activateIgnoringOtherApps_(True)
 app.run()
 """
@@ -95,13 +96,19 @@ class HelperWindow:
         self._proc: Optional[subprocess.Popen[str]] = None
         self._lines: list[dict] = []
         self._ready = threading.Event()
+        self._pid: Optional[int] = None
         self._lock = threading.Lock()
 
     @property
     def pid(self) -> int:
-        if self._proc is None:
+        """PID of the process owning the window, as the helper reports it.
+
+        Not the launched process's: a virtualenv ``python`` on Windows is a
+        launcher that runs the real interpreter as a child.
+        """
+        if self._proc is None or self._pid is None:
             raise RuntimeError("helper window not started")
-        return self._proc.pid
+        return self._pid
 
     def start(self, timeout: float = 30.0) -> "HelperWindow":
         self._proc = subprocess.Popen(
@@ -116,7 +123,32 @@ class HelperWindow:
             output = self.output()
             self.close()
             raise OsInputUnavailable(f"helper window did not start within {timeout}s: {output}")
+        if sys.platform.startswith("linux"):
+            self._tag_x11_pid()
         return self
+
+    def _tag_x11_pid(self) -> None:
+        """Set ``_NET_WM_PID`` on the Tk window, which Tk itself never does.
+
+        The window is found by the helper's own unique class name
+        (``thubhelper<pid>``), a token the harness generated — never a title.
+        """
+        pid = self.pid
+        found = subprocess.run(
+            ["xdotool", "search", "--class", f"^thubhelper{pid}$"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout.split()
+        if not found:
+            raise OsInputUnavailable(f"helper window thubhelper{pid} not found on the display")
+        for wid in found:
+            subprocess.run(
+                ["xprop", "-id", wid, "-f", "_NET_WM_PID", "32c", "-set", "_NET_WM_PID", str(pid)],
+                capture_output=True,
+                timeout=15,
+                check=True,
+            )
 
     def _pump(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
@@ -128,6 +160,7 @@ class HelperWindow:
             with self._lock:
                 self._lines.append(line)
             if line.get("ready"):
+                self._pid = int(line.get("pid") or self._proc.pid)
                 self._ready.set()
 
     def output(self) -> list[dict]:

@@ -148,6 +148,12 @@ class LinuxOsInput(OsInput):
         except (OsInputUnavailable, ValueError):
             return None
 
+    def _frontmost_window(self) -> Optional[int]:
+        try:
+            return int(self._xdo("getwindowfocus").strip())
+        except (OsInputUnavailable, ValueError):
+            return None
+
     def _screen_size(self) -> tuple[int, int]:
         width, height = self._xdo("getdisplaygeometry").split()[:2]
         return int(width), int(height)
