@@ -11,9 +11,10 @@ This guard keeps it that way:
 - every retired item id is named in the docstring of a test function in a
   ``manual``-marked suite, so a later refactor cannot silently drop an item
   from the release gate;
-- or, once an item is automated (#4927), it is listed in
+- or, once an item is automated (the #4927 campaign), it is listed in
   :data:`AUTOMATED_IDS` and named in the docstring of that automated test,
-  which runs in the integration lane instead of waiting for an operator.
+  which runs in the integration lane instead of waiting for an operator, and
+  no guided test still claims it.
 
 Pure ``ast`` parsing of the test modules — no app, bridge or Docker — so it runs
 in the normal (non-integration) lane.
@@ -53,16 +54,30 @@ RETIRED_YAML_IDS = frozenset(
     """.split()
 )
 
-#: Retired items that an automated (not ``manual``-marked) test now covers
-#: (#4927), mapped to ``"<module>::<test function>"``. The guided-manual test
-#: is deleted when the item moves here.
+#: Manual items retired into automated (not ``manual``-marked) tests (#4927),
+#: mapped to the ``"<module>::<test function>"`` whose docstring names the id.
+#: The guided-manual test is deleted when the item moves here. Covers retired
+#: YAML items and later guided-only ones (see :data:`LATER_GUIDED_IDS`).
 AUTOMATED_IDS: dict[str, str] = {
     # #4929: the harness reads the OS credential store itself.
     "MT-CRED-01": "test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store",
     "MT-CRED-02": "test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store",
     "MT-CRED-03": "test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store",
     "MT-CRED-18": "test_os_credential_store.py::test_backup_restore_imports_credentials_into_the_os_store",
+    # #4931: flash, ordering, flood and hidden-tab memory checks.
+    "MT-LOCAL-05": "test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash",
+    "MT-LOCAL-30": "test_windows_shells.py::test_cmd_output_paints_in_order",
+    "MT-LOCAL-32": (
+        "test_output_flash_and_flood.py::test_output_flood_stays_bounded_and_ctrl_c_stops_it"
+    ),
+    "MT-LOCAL-33": (
+        "test_performance.py::test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl"
+    ),
 }
+
+#: Automated items that were never in the retired YAML corpus — they lived only
+#: as guided-manual tests before being automated.
+LATER_GUIDED_IDS = frozenset({"MT-LOCAL-05"})
 
 _ID = re.compile(r"\bMT-[A-Z]+-\d+\b")
 
@@ -105,7 +120,7 @@ def test_legacy_runner_and_corpus_stay_deleted():
     assert not list((REPO_ROOT / "tests" / "manual").glob("*.yaml"))
 
 
-def test_every_retired_yaml_item_has_a_guided_test():
+def test_every_retired_yaml_item_has_a_guided_or_automated_test():
     found = manual_test_ids()
     missing = sorted(RETIRED_YAML_IDS - found.keys() - AUTOMATED_IDS.keys())
     assert not missing, (
@@ -133,8 +148,16 @@ def test_automated_items_have_no_guided_test_left():
     assert not both, f"automated items still walked by a guided test: {both}"
 
 
-def test_automated_ids_are_retired_items():
-    assert not (AUTOMATED_IDS.keys() - RETIRED_YAML_IDS)
+def test_automated_ids_are_retired_or_later_guided_items():
+    unknown = sorted(AUTOMATED_IDS.keys() - RETIRED_YAML_IDS - LATER_GUIDED_IDS)
+    assert not unknown, (
+        f"AUTOMATED_IDS entries that are neither retired nor later-guided: {unknown}"
+    )
+
+
+def test_later_guided_ids_are_automated_and_not_retired_yaml():
+    assert LATER_GUIDED_IDS <= AUTOMATED_IDS.keys()
+    assert not (LATER_GUIDED_IDS & RETIRED_YAML_IDS)
 
 
 def test_retired_id_list_has_no_duplicates_and_expected_size():

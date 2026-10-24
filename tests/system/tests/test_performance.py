@@ -29,10 +29,11 @@ Divergence from the original, by design:
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 
-from termihub_harness import SystemTest, TabsUi, TerminalUi
+from termihub_harness import SystemTest, TabsUi, TerminalUi, timing
 
 pytestmark = pytest.mark.integration
 
@@ -42,6 +43,11 @@ TARGET_TERMINALS = 40
 #: Latency ceilings (seconds) mirrored from the original WebdriverIO thresholds.
 SWITCH_LATENCY_BUDGET = 2.0
 NEW_TERMINAL_BUDGET = 5.0
+
+#: Live WebGL contexts the terminal pool may hold at once
+#: (``DEFAULT_WEBGL_CONTEXT_CAPACITY`` in ``src/components/Terminal/webglRenderer.ts``,
+#: kept below the engines' cap of 16 so they never force-lose a context).
+WEBGL_CONTEXT_CAPACITY = 12
 
 
 class TestPerformance(TerminalUi, TabsUi, SystemTest):
@@ -126,6 +132,106 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
         elapsed = time.monotonic() - start
         print(f"  [PERF-03] opened terminal #{before + 1} in {elapsed * 1000:.0f}ms")
         assert elapsed < NEW_TERMINAL_BUDGET
+
+    def _assert_tab_painted(self, tab_id: str, label: str) -> dict[str, Any]:
+        """The shown terminal has a sane grid and its renderer painted text."""
+        m = self.driver.measure_terminal(tab_id)
+        assert m["renderer"] in ("webgl", "dom"), f"{label}: renderer {m['renderer']!r}"
+        assert m["container"]["width"] > 0 and m["container"]["height"] > 0, f"{label}: {m}"
+        assert m["grid"]["cols"] >= 20 and m["grid"]["rows"] >= 5, f"{label}: grid {m['grid']}"
+        if m["renderer"] == "webgl":
+            canvas = m["webglCanvas"] or {}
+            assert canvas.get("width", 0) > 0 and canvas.get("height", 0) > 0, f"{label}: {m}"
+        else:
+            assert any(row.strip() for row in m["domRows"] or []), f"{label}: blank DOM rows"
+        return m
+
+    def _echo_marker(self, tab_id: str, marker: str, label: str) -> int:
+        """Echo ``marker`` in the tab and wait for it to render; return resends.
+
+        The marker shows twice once rendered: the echoed command and its
+        output. Input typed in the instant a tab is shown can be lost while the
+        shell redraws for the re-fit (seen on macOS CI, #4942), so a marker that
+        does not render within a few seconds is sent again (at most twice); the
+        resend count is reported, the render itself must still happen.
+        """
+        for attempt in range(3):
+            self.driver.terminal_input(f"echo {marker}\n", tab_id=tab_id)
+            try:
+                self.wait(
+                    lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
+                    timeout=5.0 if attempt < 2 else 20.0,
+                    what=f"{label} to render its marker",
+                )
+                return attempt
+            except AssertionError:
+                if attempt == 2:
+                    raise
+        return 2
+
+    def test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl(self):
+        """MT-LOCAL-33: every one of (at least) twenty tabs renders text when
+        shown, hidden tabs hold no WebGL context, and no context is ever lost."""
+        self.ensure_terminals(TARGET_TERMINALS)
+        ids = self.tab_ids()
+        assert len(ids) >= 20
+
+        renderers: dict[str, str] = {}
+        resends = 0
+        for index, tab_id in enumerate(ids):
+            self.switch_to_tab(tab_id)
+            self.wait(
+                lambda tab_id=tab_id: (self.active_tab() or {}).get("id") == tab_id,
+                what=f"tab #{index} to activate",
+            )
+            self.wait(
+                lambda tab_id=tab_id: self.driver.read_terminal(tab_id).strip(),
+                what=f"tab #{index} to show its prompt",
+            )
+            resends += self._echo_marker(tab_id, f"PERF05-{index:02d}", f"tab #{index}")
+            renderers[tab_id] = self._assert_tab_painted(tab_id, f"tab #{index}")["renderer"]
+
+        # After the sweep only the shown tab may keep a context (hidden → DOM),
+        # and never more than the pool's capacity.
+        shown = (self.active_tab() or {}).get("id")
+
+        def live_webgl_tabs() -> list[str]:
+            return [t for t in ids if self.driver.measure_terminal(t)["renderer"] == "webgl"]
+
+        # The release on hide is not synchronous with the switch: give it a moment.
+        try:
+            live_webgl = self.wait(
+                lambda: (lambda live: (live,) if set(live) <= {shown} else None)(
+                    live_webgl_tabs()
+                ),
+                timeout=10.0,
+                what="hidden tabs to release their WebGL contexts",
+            )[0]
+        except AssertionError:
+            live_webgl = live_webgl_tabs()
+        log = self.driver.read_frontend_log("renderer ")
+        lost = self.driver.read_frontend_log("webgl context lost")
+        used_webgl = sorted({r for r in renderers.values()}) == ["webgl"] or any(
+            "renderer webgl (visible)" in e["message"] for e in log
+        )
+        print(
+            f"\n[termihub-measure] perf-05 tabs={len(ids)} "
+            f"renderers_when_shown={sorted(set(renderers.values()))} "
+            f"live_webgl_after={len(live_webgl)} renderer_log_entries={len(log)} "
+            f"context_lost={len(lost)} marker_resends={resends}"
+        )
+        timing.record("measure:perf-05:marker_resends", resends, 0)
+        timing.record("measure:perf-05:live_webgl_after", len(live_webgl), 1)
+        timing.record("measure:perf-05:context_lost", len(lost), 0)
+        assert not lost, f"WebGL context lost: {[e['message'] for e in lost]}"
+        assert len(live_webgl) <= WEBGL_CONTEXT_CAPACITY, live_webgl
+        assert set(live_webgl) <= {shown}, (
+            f"hidden tabs still hold a WebGL context: {sorted(set(live_webgl) - {shown})}"
+        )
+        if used_webgl:
+            messages = [e["message"] for e in log]
+            assert any("renderer webgl (visible)" in m for m in messages), messages[-20:]
+            assert any("renderer dom (hidden)" in m for m in messages), messages[-20:]
 
     def test_perf_04_close_all_terminals(self):
         # Closing every terminal cleans up to zero tabs within the budget.
