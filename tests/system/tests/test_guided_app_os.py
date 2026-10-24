@@ -13,7 +13,9 @@ that would (AppleScript ``quit app "termiHub"``, Log Out) first check for
 another termiHub process (:func:`termihub_harness.guided.running_other_termihub_pids`)
 and are skipped while one runs.
 
-Covered: MT-APP-03, MT-APP-05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30..32.
+Covered: MT-APP-03, MT-APP-05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30/31.
+(MT-FB-32, open in file manager, is graded by ``test_external_app_handoffs.py``
+since #4932.)
 (MT-APP-02, the production CSP, and MT-APP-04, single instance, are graded on
 the shipped artifacts by the release install smokes since #4933.)
 
@@ -23,7 +25,6 @@ Run with ``./pytest.sh --manual -k guided_app_os -s``.
 from __future__ import annotations
 
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
@@ -326,19 +327,3 @@ class TestGuidedAppOs(
             "tree; the originals stay.",
         )
 
-    def test_open_in_file_manager_opens_folders_never_an_app(self):
-        """MT-FB-32."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.open_file_browser()
-        extra = (
-            " On macOS browse to /Applications, right-click an .app and choose Open in Finder."
-            if sys.platform == "darwin"
-            else ""
-        )
-        self.manual_step(
-            "Click the toolbar's Open in Finder/Explorer/File Manager action, then "
-            f"right-click a folder row and choose the same action.{extra}",
-            "The file manager opens at the current folder, then at the clicked folder; "
-            "an .app is shown selected and does not start.",
-        )
