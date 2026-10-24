@@ -389,10 +389,31 @@ mkdir -p "$LS"
 # The stub mimics the installed app's observable contract: the startup banner,
 # the frontend IPC marker, the single-instance lock (a second launch hands its
 # --workspace / --workspace-file over and exits) and the shutdown breadcrumb on
-# SIGTERM. STUB_NO_CLEAN_EXIT / STUB_NO_SINGLE break one promise each.
+# SIGTERM. A bare relaunch un-minimises the window (the fake osascript keeps
+# that state in $STUB_LOCK.min). With a portable.marker next to it, the stub
+# instead takes its data/ lock and a second launch reports the lock as held and
+# waits for its "dialog" (SIGTERM) before exiting 1 (#3100).
+# STUB_NO_CLEAN_EXIT / STUB_NO_SINGLE / STUB_NO_RAISE / STUB_NO_DATA_LOCK break
+# one promise each; STUB_CSP_VIOLATION logs a CSP violation.
 cat >"$LS/stub-app" <<'STUB'
 #!/usr/bin/env bash
 set -u
+here="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$here/portable.marker" ]; then
+  data="$here/data"
+  mkdir -p "$data/logs"
+  plog() { printf '2026-01-01T00:00:00Z ERROR termihub_lib: %s\n' "$1" >>"$data/logs/termihub.log"; }
+  if [ -n "${STUB_NO_DATA_LOCK:-}" ] || mkdir "$data/.stub-lock" 2>/dev/null; then
+    echo "$$" >"$data/.termihub.lock"
+    trap 'exit 0' TERM
+  else
+    msg="termiHub is already running from this folder. Data folder: $data"
+    plog "$msg"
+    echo "$msg" >&2
+    trap 'exit 1' TERM
+  fi
+  while :; do sleep 0.2; done
+fi
 log() { printf '2026-01-01T00:00:00Z  INFO termihub_lib: %s\n' "$1" >>"$STUB_LOG"; }
 log "termiHub starting version=\"$STUB_VERSION\" pid=$$ log_file=$STUB_LOG"
 primary=true
@@ -414,10 +435,19 @@ on_term() {
 }
 trap on_term TERM
 log "Loading connections and folders"
+[ -z "${STUB_CSP_VIOLATION:-}" ] ||
+  log "[csp] violation: style-src blocked inline (source app.js:1)"
 while :; do
   for req in "$STUB_LOCK"/req.*; do
     case "$req" in *.tmp | *'*') continue ;; esac
-    { read -r flag; read -r value; } <"$req"
+    flag="" value=""
+    { read -r flag; read -r value; } <"$req" || true
+    if [ -z "$flag" ]; then
+      # A bare relaunch: no workspace to open, just raise the window.
+      rm -f "$req"
+      [ -n "${STUB_NO_RAISE:-}" ] || rm -f "$STUB_LOCK.min"
+      continue
+    fi
     name="$value"
     if [ "$flag" = "--workspace-file" ]; then
       # The definition's own name is the first "name" key (tab groups follow).
@@ -441,6 +471,21 @@ cat >"$LS/fakebin/osascript" <<'FAKE'
 set -u
 pid="$(cat "$STUB_LOCK/pid" 2>/dev/null || true)"
 case "$*" in
+  *AXMinimized*)
+    # minimized_state <pid> <minimize|query>
+    if [ -n "${FAKE_NO_MINIMIZE:-}" ]; then
+      echo "execution error: System Events got an error: Can't get window 1. (-1719)" >&2
+      exit 1
+    fi
+    target="${*: -2:1}"
+    [ "$target" = "$pid" ] || { echo "minimise aimed at pid $target, the app is pid $pid" >&2; exit 1; }
+    [ "${!#}" = minimize ] && touch "$STUB_LOCK.min"
+    if [ -e "$STUB_LOCK.min" ]; then echo true; else echo false; fi
+    ;;
+  *'click button 1'*)
+    # The portable second launch's dialog: its OK button ends that process.
+    kill -TERM "${!#}"
+    ;;
   *'"System Events"'*)
     if [ -n "${FAKE_NO_MENU:-}" ]; then
       echo "execution error: osascript is not allowed assistive access. (-1719)" >&2
@@ -472,20 +517,27 @@ chmod +x "$LS/fakebin/osascript"
 # only where pwsh is installed (GitHub's ubuntu runners have it). `applevent` is
 # the bash smoke with the macOS close path, against the fake osascript; `probe`
 # is the same with --quit-probe (run 1 and the menu Quit only, no bundle id).
+# The portable copy of the stub (#4933): the same script next to a portable.marker.
+mkdir -p "$LS/portable"
+cp "$LS/stub-app" "$LS/portable/stub-app"
+touch "$LS/portable/portable.marker"
 lifecycle_cmd() { # <sh|applevent|probe|ps1>: the smoke command line for the stub
   if [ "$1" = sh ]; then
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
-      --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out"
+      --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out" \
+      --portable-exe "$LS/portable/stub-app"
   elif [ "$1" = applevent ]; then
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
       --log "$LS/termihub.log" --version 9.8.7 --close applevent \
-      --bundle-id com.termihub.app --out "$LS/out"
+      --bundle-id com.termihub.app --out "$LS/out" --minimize-check \
+      --portable-exe "$LS/portable/stub-app"
   elif [ "$1" = probe ]; then
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
       --log "$LS/termihub.log" --version 9.8.7 --close applevent --quit-probe --out "$LS/out"
   else
     echo pwsh -NoProfile -File scripts/internal/release-smoke-app-lifecycle.ps1 -Exe "$LS/stub-app" \
-      -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out"
+      -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out" \
+      -PortableExe "$LS/portable/stub-app"
   fi
 }
 # lifecycle_run <kind> <label> <expect: pass|skip|fail> [VAR=value...]: run the
@@ -497,7 +549,7 @@ lifecycle_run() {
   shift 3
   read -r -a cmd <<<"$(lifecycle_cmd "$kind")"
   label="(${kind}) ${label}"
-  rm -rf "$LS/lock" "$LS/termihub.log"
+  rm -rf "$LS/lock" "$LS/lock.min" "$LS/termihub.log" "$LS/portable/data"
   out="$(env PATH="$LS/fakebin:$PATH" STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" \
     STUB_VERSION=9.8.7 SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 \
     "$@" "${cmd[@]}" 2>&1)" || rc=$?
@@ -524,6 +576,8 @@ for kind in "${lifecycle_kinds[@]}"; do
   lifecycle_run "$kind" "passes on a faithful stub app" pass
   lifecycle_run "$kind" "fails when the clean-exit line is missing" fail STUB_NO_CLEAN_EXIT=1
   lifecycle_run "$kind" "fails when a second instance keeps running" fail STUB_NO_SINGLE=1
+  lifecycle_run "$kind" "fails when the log holds a CSP violation" fail STUB_CSP_VIOLATION=1
+  lifecycle_run "$kind" "fails when a portable copy runs twice" fail STUB_NO_DATA_LOCK=1
 done
 lifecycle_run applevent "macOS Quit through the app's menu item" pass
 lifecycle_run applevent "falls back to a Quit AppleEvent when System Events refuses" pass \
@@ -532,6 +586,9 @@ lifecycle_run applevent "reports the clean exit as skipped when no Quit is deliv
   FAKE_NO_MENU=1 FAKE_NO_APPLEEVENT=1
 lifecycle_run applevent "fails when a delivered Quit leaves no clean-exit line" fail \
   STUB_NO_CLEAN_EXIT=1
+lifecycle_run applevent "fails when a relaunch leaves the window minimised" fail STUB_NO_RAISE=1
+lifecycle_run applevent "reports the un-minimise check as skipped when System Events refuses" \
+  skip FAKE_NO_MINIMIZE=1
 # The probe passes even with STUB_NO_SINGLE (it never relaunches). With the menu
 # refused it must fail, not fall back: the fake would accept the Apple event.
 lifecycle_run probe "quit probe passes on the menu Quit alone" pass STUB_NO_SINGLE=1
@@ -539,7 +596,7 @@ lifecycle_run probe "quit probe fails, without an Apple event, when the menu is 
   FAKE_NO_MENU=1
 lifecycle_run probe "quit probe fails when the clean-exit line is missing" fail \
   STUB_NO_CLEAN_EXIT=1
-rm -rf "$LS/lock"
+rm -rf "$LS/lock" "$LS/lock.min" "$LS/portable/data"
 app_lifecycle_and_earlier_failures="$failures"
 
 # --- Release test-bridge guard (#4122) ---

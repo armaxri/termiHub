@@ -16,6 +16,20 @@
 #          with `--workspace-file <file>` each exit while the first instance
 #          keeps running, and the first instance logs that it opened the
 #          forwarded workspace; `kill -9` leaves NO "exited cleanly" line.
+#   run 2  also: a bare second launch (no arguments) exits and leaves the first
+#          instance running (MT-APP-04); with --minimize-check the first
+#          instance's window is minimised before it, and must be un-minimised
+#          after it (macOS, through System Events by pid).
+#   after  the log holds no "[csp] violation:" line (MT-APP-02): the frontend's
+#          CSP reporter logs every blocked resource at WARN, so the shipped
+#          bundle's own CSP is graded on the shipped artifact.
+#   x11    after run 1, the app's X11 window carries an _NET_WM_ICON (the
+#          launcher/taskbar icon, MT-UI-19).
+#   --portable-exe: a portable copy (portable.marker next to it) is launched,
+#          and a second launch of the same copy is refused: it reports "termiHub
+#          is already running from this folder" naming the data folder, exits 1
+#          once its error dialog is dismissed, and the first copy keeps running
+#          (MT-APP-04, #3100).
 #
 # Used by the release install-smoke workflows (Linux AppImage + .deb under
 # xvfb + dbus-run-session, macOS .app). The Windows smoke runs the PowerShell
@@ -31,7 +45,7 @@
 # Usage:
 #   release-smoke-app-lifecycle.sh --exe <path> --log <path> --version <x.y.z> \
 #       --close x11|applevent|sigterm [--bundle-id <id>] [--out <dir>] [--clear-log] \
-#       [--quit-probe]
+#       [--quit-probe] [--minimize-check] [--portable-exe <path>]
 #
 #   --exe        the installed app executable (AppRun, /usr/bin/termihub,
 #                termiHub.app/Contents/MacOS/termihub)
@@ -69,6 +83,17 @@
 #                delivered FAILS instead of being skipped. The macOS leg of the
 #                system-integration workflow runs this against the debug bundle
 #                to prove the menu Quit works on a hosted runner (#4076).
+#   --minimize-check  (--close applevent only) minimise the running window
+#                through System Events before the bare relaunch and require it
+#                to be un-minimised afterwards. A minimise System Events refuses
+#                is reported as skipped; a window still minimised is a failure.
+#   --portable-exe  the executable of a portable copy of the app: a
+#                portable.marker file must sit next to it (next to the .app on
+#                macOS). Its data/ folder is deleted first. The second launch's
+#                error dialog is dismissed the platform's way (x11:
+#                WM_DELETE_WINDOW to its windows; applevent: its OK button
+#                through System Events; sigterm: SIGTERM); a dialog that cannot
+#                be dismissed is reported as skipped and the process killed.
 #
 # Exit status: 0 when every check passed (or was explicitly skipped), 1 otherwise.
 
@@ -86,6 +111,8 @@ BUNDLE_ID=""
 OUT=""
 CLEAR_LOG=false
 QUIT_PROBE=false
+MINIMIZE_CHECK=false
+PORTABLE_EXE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --help | -h)
@@ -100,6 +127,8 @@ while [ $# -gt 0 ]; do
     --out) OUT="${2:-}"; shift 2 ;;
     --clear-log) CLEAR_LOG=true; shift ;;
     --quit-probe) QUIT_PROBE=true; shift ;;
+    --minimize-check) MINIMIZE_CHECK=true; shift ;;
+    --portable-exe) PORTABLE_EXE="${2:-}"; shift 2 ;;
     *)
       echo "error: unknown argument '$1' (see --help)" >&2
       exit 2
@@ -122,6 +151,18 @@ case "$CLOSE" in
     ;;
   *) die "--close must be x11, applevent or sigterm" ;;
 esac
+if [ "$MINIMIZE_CHECK" = true ] && [ "$CLOSE" != applevent ]; then
+  die "--minimize-check needs --close applevent (System Events)"
+fi
+if [ -n "$PORTABLE_EXE" ]; then
+  [ -x "$PORTABLE_EXE" ] || die "--portable-exe '$PORTABLE_EXE' is not an executable file"
+  PORTABLE_BASE="$(dirname "$PORTABLE_EXE")"
+  case "$PORTABLE_EXE" in
+    */Contents/MacOS/*) PORTABLE_BASE="$(dirname "$(dirname "$(dirname "$PORTABLE_BASE")")")" ;;
+  esac
+  [ -f "$PORTABLE_BASE/portable.marker" ] ||
+    die "no portable.marker in '$PORTABLE_BASE' (the --portable-exe copy must be portable)"
+fi
 if [ -s "$LOG" ] && [ "$CLEAR_LOG" != true ]; then
   die "'$LOG' exists and is not empty; pass --clear-log to let this smoke delete it"
 fi
@@ -143,6 +184,8 @@ IPC_MARKER="Loading connections and folders"
 BANNER="termiHub starting"
 CLEAN_EXIT="termiHub exited cleanly"
 FORWARDED="single-instance: opening forwarded workspace"
+CSP_VIOLATION="[csp] violation:"
+PORTABLE_HELD="termiHub is already running from this folder"
 
 FORWARD_NAME="SmokeDemo"
 FORWARD_FILE_NAME="SmokeForwardedFile"
@@ -291,6 +334,111 @@ quit_via_appleevent() {
     >"$OUT/osascript-quit.log" 2>&1
 }
 
+# x11_delete_windows <pid>: send WM_DELETE_WINDOW to every top-level X11
+# window of that pid (by _NET_WM_PID). No WM runs under xvfb, so this talks to
+# the X server directly. Fails when the pid has no such window.
+x11_delete_windows() {
+  python3 - "$1" <<'PY'
+import sys
+
+from Xlib import X, display, protocol
+
+pid = int(sys.argv[1])
+d = display.Display()
+root = d.screen().root
+NET_WM_PID = d.intern_atom("_NET_WM_PID")
+WM_PROTOCOLS = d.intern_atom("WM_PROTOCOLS")
+WM_DELETE_WINDOW = d.intern_atom("WM_DELETE_WINDOW")
+sent = 0
+for win in root.query_tree().children:
+    prop = win.get_full_property(NET_WM_PID, X.AnyPropertyType)
+    if not prop or int(prop.value[0]) != pid:
+        continue
+    if WM_DELETE_WINDOW not in (win.get_wm_protocols() or []):
+        continue
+    ev = protocol.event.ClientMessage(
+        window=win, client_type=WM_PROTOCOLS, data=(32, [WM_DELETE_WINDOW, X.CurrentTime, 0, 0, 0])
+    )
+    win.send_event(ev, event_mask=X.NoEventMask)
+    sent += 1
+d.flush()
+d.close()
+print(f"sent WM_DELETE_WINDOW to {sent} window(s) of pid {pid}")
+sys.exit(0 if sent else 1)
+PY
+}
+
+# x11_window_icon <pid>: true when a top-level X11 window of that pid carries a
+# non-empty _NET_WM_ICON, the icon a launcher/taskbar shows. Prints its size.
+x11_window_icon() {
+  python3 - "$1" <<'PY'
+import sys
+
+from Xlib import X, display
+
+pid = int(sys.argv[1])
+d = display.Display()
+root = d.screen().root
+NET_WM_PID = d.intern_atom("_NET_WM_PID")
+NET_WM_ICON = d.intern_atom("_NET_WM_ICON")
+best = None
+for win in root.query_tree().children:
+    prop = win.get_full_property(NET_WM_PID, X.AnyPropertyType)
+    if not prop or int(prop.value[0]) != pid:
+        continue
+    icon = win.get_full_property(NET_WM_ICON, X.AnyPropertyType)
+    if icon and len(icon.value) > 2 and icon.value[0] * icon.value[1] > 0:
+        best = (int(icon.value[0]), int(icon.value[1]))
+        break
+d.close()
+if best:
+    print(f"{best[0]}x{best[1]}")
+sys.exit(0 if best else 1)
+PY
+}
+
+# minimized_state <pid> <minimize|query>: through System Events, minimise the
+# first window of the process with that pid (minimize), then print whether it
+# is minimised ("true"/"false"). Output goes to osascript-minimize.log.
+minimized_state() {
+  with_timeout 30 osascript -e '
+on run argv
+  set targetPid to (item 1 of argv) as integer
+  set action to item 2 of argv
+  tell application "System Events"
+    set targetProc to first application process whose unix id is targetPid
+    tell targetProc
+      if action is "minimize" then
+        set value of attribute "AXMinimized" of window 1 to true
+        delay 1
+      end if
+      return (value of attribute "AXMinimized" of window 1) as text
+    end tell
+  end tell
+end run' "$1" "$2" >"$OUT/osascript-minimize.log" 2>&1
+}
+
+# dismiss_dialog <pid>: dismiss the error dialog a refused portable launch
+# shows, aimed only at that pid.
+dismiss_dialog() {
+  local pid="$1"
+  case "$CLOSE" in
+    sigterm) kill -TERM "$pid" ;;
+    x11) x11_delete_windows "$pid" >"$OUT/x11-dismiss.log" 2>&1 ;;
+    applevent)
+      with_timeout 30 osascript -e '
+on run argv
+  set targetPid to (item 1 of argv) as integer
+  tell application "System Events"
+    set targetProc to first application process whose unix id is targetPid
+    set frontmost of targetProc to true
+    tell targetProc to click button 1 of window 1
+  end tell
+end run' "$pid" >"$OUT/osascript-dismiss.log" 2>&1
+      ;;
+  esac
+}
+
 # close_for_real <app pid>: ask the app to quit the way a user does. Returns 0
 # when the request was delivered, 2 when the platform refused to deliver it.
 close_for_real() {
@@ -319,36 +467,8 @@ close_for_real() {
       ;;
     x11)
       # Send WM_DELETE_WINDOW to every top-level window of the process — what a
-      # window manager does when the user clicks the close button. No WM runs
-      # under xvfb, so talk to the X server directly.
-      python3 - "$pid" <<'PY'
-import sys
-
-from Xlib import X, display, protocol
-
-pid = int(sys.argv[1])
-d = display.Display()
-root = d.screen().root
-NET_WM_PID = d.intern_atom("_NET_WM_PID")
-WM_PROTOCOLS = d.intern_atom("WM_PROTOCOLS")
-WM_DELETE_WINDOW = d.intern_atom("WM_DELETE_WINDOW")
-sent = 0
-for win in root.query_tree().children:
-    prop = win.get_full_property(NET_WM_PID, X.AnyPropertyType)
-    if not prop or int(prop.value[0]) != pid:
-        continue
-    if WM_DELETE_WINDOW not in (win.get_wm_protocols() or []):
-        continue
-    ev = protocol.event.ClientMessage(
-        window=win, client_type=WM_PROTOCOLS, data=(32, [WM_DELETE_WINDOW, X.CurrentTime, 0, 0, 0])
-    )
-    win.send_event(ev, event_mask=X.NoEventMask)
-    sent += 1
-d.flush()
-d.close()
-print(f"sent WM_DELETE_WINDOW to {sent} window(s) of pid {pid}")
-sys.exit(0 if sent else 1)
-PY
+      # window manager does when the user clicks the close button.
+      x11_delete_windows "$pid"
       ;;
   esac
 }
@@ -381,6 +501,22 @@ else
 fi
 check_banner 0 "$RUN1" "run 1"
 APP1="$APP_PID"
+
+if [ "$CLOSE" = x11 ]; then
+  section "Run 1: the window carries the app icon (MT-UI-19)"
+  icon=""
+  for ((i = 0; i < LOG_TIMEOUT; i++)); do
+    if icon="$(x11_window_icon "$APP1" 2>"$OUT/x11-icon.log")"; then break; fi
+    icon=""
+    sleep 1
+  done
+  if [ -n "$icon" ]; then
+    pass "run 1: the app window carries a ${icon} _NET_WM_ICON"
+  else
+    fail "run 1: no app window of pid $APP1 carries an _NET_WM_ICON (a generic icon would show)"
+    sed 's/^/    | /' "$OUT/x11-icon.log"
+  fi
+fi
 
 section "Run 1: no ANSI escapes in the log"
 if LC_ALL=C grep -q $'\033' "$LOG"; then
@@ -487,6 +623,53 @@ second_launch() {
   fi
 }
 
+# bare_relaunch: a second launch without arguments exits and leaves the first
+# instance running; with --minimize-check the first instance's window is
+# minimised first and must come back.
+bare_relaunch() {
+  local minimized=false state pid code=0 i
+  if [ "$MINIMIZE_CHECK" = true ]; then
+    if minimized_state "$APP2" minimize && [ "$(cat "$OUT/osascript-minimize.log")" = true ]; then
+      pass "bare relaunch: the running window is minimised"
+      minimized=true
+    else
+      skip "System Events could not minimise the running window; the un-minimise check is not run"
+      sed 's/^/    | /' "$OUT/osascript-minimize.log"
+    fi
+  fi
+  launch bare-relaunch
+  pid="$LAUNCHED_PID"
+  if wait_exit "$pid" "$EXIT_TIMEOUT"; then
+    wait "$pid" 2>/dev/null || code=$?
+    pass "bare relaunch: the second instance exited (code $code)"
+  else
+    fail "bare relaunch: the second instance was still running after ${EXIT_TIMEOUT}s"
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  if alive "$APP2"; then
+    pass "bare relaunch: the first instance is still the one running"
+  else
+    fail "bare relaunch: the first instance (pid $APP2) is gone"
+  fi
+  [ "$minimized" = true ] || return 0
+  state=true
+  for ((i = 0; i < LOG_TIMEOUT; i++)); do
+    if minimized_state "$APP2" query; then
+      state="$(cat "$OUT/osascript-minimize.log")"
+      [ "$state" = false ] && break
+    fi
+    sleep 1
+  done
+  if [ "$state" = false ]; then
+    pass "bare relaunch: the running window was un-minimised"
+  else
+    fail "bare relaunch: the running window is still minimised ${LOG_TIMEOUT}s after a relaunch"
+    sed 's/^/    | /' "$OUT/osascript-minimize.log"
+  fi
+}
+
+section "Single instance: a bare relaunch raises the running window (MT-APP-04)"
+bare_relaunch
 section "Single instance: --workspace is forwarded"
 second_launch forward-name "$FORWARD_NAME" --workspace "$FORWARD_NAME"
 section "Single instance: --workspace-file is forwarded"
@@ -501,6 +684,102 @@ if log_since "$RUN1_BYTES" | grep -qF -- "$CLEAN_EXIT"; then
   fail "run 2 logged '$CLEAN_EXIT' although it was killed with SIGKILL"
 else
   pass "run 2 (SIGKILL) left no '$CLEAN_EXIT' line"
+fi
+
+section "The shipped CSP blocked nothing (MT-APP-02)"
+if grep -qF -- "$CSP_VIOLATION" "$LOG"; then
+  fail "the app logged CSP violations:"
+  grep -F -- "$CSP_VIOLATION" "$LOG" | head -n10 | sed 's/^/    | /'
+else
+  pass "no '$CSP_VIOLATION' line in the log of both runs"
+fi
+
+# portable_double_launch: the same portable copy launched twice. The second
+# launch must be refused by the data-dir lock (#3100) and leave the first alone.
+portable_double_launch() {
+  local data="$PORTABLE_BASE/data" plog first second i code=0 refused=false
+  plog="$data/logs/termihub.log"
+  rm -rf "$data"
+  launch portable1
+  first="$LAUNCHED_PID"
+  if wait_portable_lock "$first" "$data"; then
+    pass "portable: the first copy took the data-dir lock ($data)"
+  else
+    fail "portable: the first copy did not lock $data within ${IPC_TIMEOUT}s"
+    cat "$OUT/launch-portable1.log"
+    kill -KILL "$first" 2>/dev/null || true
+    return 0
+  fi
+  launch portable2
+  second="$LAUNCHED_PID"
+  for ((i = 0; i < LOG_TIMEOUT; i++)); do
+    if grep -qF -- "$PORTABLE_HELD" "$OUT/launch-portable2.log" ||
+      { [ -f "$plog" ] && grep -qF -- "$PORTABLE_HELD" "$plog"; }; then
+      refused=true
+      break
+    fi
+    alive "$second" || break
+    sleep 1
+  done
+  if [ "$refused" = true ]; then
+    pass "portable: the second launch reported '$PORTABLE_HELD'"
+    if cat "$OUT/launch-portable2.log" "$plog" 2>/dev/null |
+      grep -qF -- "$(basename "$PORTABLE_BASE")/data"; then
+      pass "portable: the refusal names the portable data folder"
+    else
+      fail "portable: the refusal does not name the data folder $data"
+    fi
+  else
+    fail "portable: the second launch did not report '$PORTABLE_HELD'"
+    cat "$OUT/launch-portable2.log"
+  fi
+  if alive "$second"; then
+    # Its error dialog is up; dismiss it the way a user clicks OK.
+    for ((i = 0; i < 10; i++)); do
+      dismiss_dialog "$second" && break
+      alive "$second" || break
+      sleep 1
+    done
+  fi
+  if wait_exit "$second" "$EXIT_TIMEOUT"; then
+    wait "$second" 2>/dev/null || code=$?
+    if [ "$code" -eq 1 ]; then
+      pass "portable: the refused launch exited (code 1) after its dialog"
+    else
+      fail "portable: the refused launch exited with code $code, expected 1"
+    fi
+  elif [ "$refused" = true ]; then
+    skip "portable: the refused launch's error dialog could not be dismissed; killing it"
+    kill -KILL "$second" 2>/dev/null || true
+  else
+    fail "portable: the second launch kept running"
+    kill -KILL "$second" 2>/dev/null || true
+  fi
+  if alive "$first"; then
+    pass "portable: the first copy is still running"
+  else
+    fail "portable: the first copy (pid $first) is gone"
+  fi
+  kill -KILL "$first" 2>/dev/null || true
+  wait_exit "$first" "$EXIT_TIMEOUT" || true
+}
+
+# wait_portable_lock <pid> <data dir>: the data-dir lock file names the pid (or
+# a descendant: an AppImage's AppRun may start the binary as a child).
+wait_portable_lock() {
+  local pid="$1" data="$2" holder i
+  for ((i = 0; i < IPC_TIMEOUT; i++)); do
+    holder="$(tr -d '[:space:]' <"$data/.termihub.lock" 2>/dev/null || true)"
+    if [ -n "$holder" ] && is_same_or_descendant "$holder" "$pid"; then return 0; fi
+    alive "$pid" || return 1
+    sleep 1
+  done
+  return 1
+}
+
+if [ -n "$PORTABLE_EXE" ]; then
+  section "Portable: the same copy launched twice is refused (MT-APP-04)"
+  EXE="$PORTABLE_EXE" portable_double_launch
 fi
 
 summary
