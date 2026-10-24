@@ -2,10 +2,9 @@
 
 Pixel- and timing-level rendering the DOM/store bridge cannot assert: glyph
 shaping, ANSI colour fidelity, box-drawing joins, theme colours, scrollbar
-styling, the startup white-flash, and OS-level chrome (the dock/taskbar
-icon). Following the guided-manual contract (#914), the harness sets up the
-**exact** state — opens a terminal, emits the precise escape sequences, switches
-the theme, or performs a cold relaunch — and then asks
+styling and the startup white-flash. Following the guided-manual contract (#914),
+the harness sets up the **exact** state — opens a terminal, emits the precise
+escape sequences, switches the theme, or performs a cold relaunch — and then asks
 the operator only to *look* and confirm. Each uses :meth:`manual_observe`, which
 attaches a screenshot to the report via the bridge ``screenshot`` verb (#900) so
 the visual evidence is captured.
@@ -13,14 +12,15 @@ the visual evidence is captured.
 Covered (#915): ANSI colours (MT-SSH-02), 256-colour (MT-SSH-02), box-drawing
 (MT-UI-31) and Nerd Font / Powerline glyphs (MT-SER-01/02).
 
-Added (#1003): no startup white-flash (MT-UI-01) and the OS-level app icon
-(MT-UI-19). These are timing- and OS-level checks that stay operator-confirmed,
-but the harness still automates everything around them — the cold relaunch and
-showing the screen — so the operator only has to *look*. The SSH connect / setup-command
-flash (MT-LOCAL-05) is automated since #4931 by the raw output tap
-(``test_output_flash_and_flood.py``). Theme colours (MT-UI-02..09), the
-vertical scrollbar (MT-UI-35/36) and the black bar at the terminal bottom
-(MT-UI-16) are graded automatically since #4930 (``test_theme_grades.py`` /
+Added (#1003): no startup white-flash (MT-UI-01). It is a timing-level check
+that stays operator-confirmed, but the harness still automates everything around
+it — the cold relaunch and showing the screen — so the operator only has to
+*look*. The OS-level app icon (MT-UI-19) is graded on the shipped artifacts by
+the release install smokes since #4933, and the SSH connect / setup-command flash
+(MT-LOCAL-05) is automated since #4931 by the raw output tap
+(``test_output_flash_and_flood.py``). Theme colours (MT-UI-02..09), the vertical
+scrollbar (MT-UI-35/36) and the black bar at the terminal bottom (MT-UI-16) are
+graded automatically since #4930 (``test_theme_grades.py`` /
 ``test_layout_grades.py``).
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and
@@ -148,22 +148,4 @@ class TestVisualRendering(
             "painted -- no white flash between the OS window appearing and the "
             "app's first paint.",
             label="startup-no-white-flash",
-        )
-
-    # ── OS-level app icon (MT-UI-19) ─────────────────────────────────────────
-    def test_app_icon_in_dock_or_taskbar(self):
-        """The operator checks the OS dock/taskbar/launcher icon.
-
-        The app icon lives entirely in OS chrome outside the web view, so there
-        is nothing the bridge can set up or assert — it is purely operator-
-        confirmed. The harness only ensures the app is running and focused (a
-        terminal exists) so the icon is present in the dock/taskbar to inspect.
-        """
-        self.ensure_terminal()
-        self.manual_observe(
-            "Check the app icon in the dock (macOS), taskbar (Windows), or "
-            "launcher/dock (Linux) for the running app.",
-            "The custom termiHub icon is displayed -- not a generic / default "
-            "application icon.",
-            label="app-icon",
         )

@@ -13,8 +13,9 @@ This guard keeps it that way:
   from the release gate;
 - or, once an item is automated (the #4927 campaign), it is listed in
   :data:`AUTOMATED_IDS` and named in the docstring of that automated test,
-  which runs in the integration lane instead of waiting for an operator, and
-  no guided test still claims it.
+  which runs in the integration lane instead of waiting for an operator — or,
+  when a release install smoke grades it on the shipped artifacts (#4933), named
+  in the text of that smoke script — and no guided test still claims it.
 
 Pure ``ast`` parsing of the test modules — no app, bridge or Docker — so it runs
 in the normal (non-integration) lane.
@@ -58,7 +59,9 @@ _THEME = "test_theme_grades.py"
 _LAYOUT = "test_layout_grades.py"
 
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
-#: mapped to the ``"<module>::<test function>"`` whose docstring names the id.
+#: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
+#: or to the repo-relative release install smoke script (``scripts/...``, run by
+#: ``.github/workflows/release-*-smoke.yml``) whose text names it (#4933).
 #: The guided-manual test is deleted when the item moves here. Covers retired
 #: YAML items and later guided-only ones (see :data:`LATER_GUIDED_IDS`).
 AUTOMATED_IDS: dict[str, str] = {
@@ -76,6 +79,10 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-LOCAL-33": (
         "test_performance.py::test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl"
     ),
+    # #4933: graded on the shipped artifacts by the release install smokes.
+    "MT-APP-02": "scripts/internal/release-smoke-app-lifecycle.sh",
+    "MT-APP-04": "scripts/internal/release-smoke-app-lifecycle.sh",
+    "MT-UI-19": "scripts/internal/release-smoke-bundle-icon.sh",
     # #4930: theme, layout and scrollbar grades from computed styles + measure_terminal.
     "MT-UI-05": f"{_THEME}::test_os_theme_toggle_switches_app_live",
     "MT-UI-13": f"{_THEME}::test_single_panel_border_blends_with_sidebar",
@@ -95,7 +102,7 @@ AUTOMATED_IDS: dict[str, str] = {
 
 #: Automated items that were never in the retired YAML corpus — they lived only
 #: as guided-manual tests before being automated.
-LATER_GUIDED_IDS = frozenset({"MT-LOCAL-05", "MT-UI-16", "MT-UI-35", "MT-UI-36"})
+LATER_GUIDED_IDS = frozenset({"MT-LOCAL-05", "MT-UI-16", "MT-UI-19", "MT-UI-35", "MT-UI-36"})
 
 _ID = re.compile(r"\bMT-[A-Z]+-\d+\b")
 
@@ -147,16 +154,23 @@ def test_every_retired_yaml_item_has_a_guided_or_automated_test():
     )
 
 
+def _names_item(item_id: str, test: str, automated: dict[str, list[str]]) -> bool:
+    if test.startswith("scripts/"):
+        path = REPO_ROOT / test
+        return path.is_file() and item_id in _ID.findall(path.read_text(encoding="utf-8"))
+    return test in automated.get(item_id, [])
+
+
 def test_automated_items_name_their_automated_test():
     automated = manual_test_ids(manual=False)
     wrong = {
         item_id: (test, automated.get(item_id, []))
         for item_id, test in AUTOMATED_IDS.items()
-        if test not in automated.get(item_id, [])
+        if not _names_item(item_id, test, automated)
     }
     assert not wrong, (
-        "AUTOMATED_IDS entries whose automated test does not exist or does not "
-        f"name the item in its docstring: {wrong}"
+        "AUTOMATED_IDS entries whose automated test (or release smoke script) does "
+        f"not exist or does not name the item: {wrong}"
     )
 
 
