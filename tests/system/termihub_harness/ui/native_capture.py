@@ -30,6 +30,7 @@ from ..window_capture import (
     PageMapping,
     Rect,
     capture_window,
+    contact_sheet,
     map_page,
     save_png,
 )
@@ -95,6 +96,17 @@ def save_capture(frame: Frame, label: str, rects: Iterable[Rect] = ()) -> Option
         return None
 
 
+def save_sheet(frames: list[Optional[Frame]], label: str) -> Optional[str]:
+    """Save ``frames`` side by side as a contact sheet under the test's artifacts dir.
+
+    Returns ``None`` (no sheet) when any frame is missing.
+    """
+    if not frames or any(f is None for f in frames):
+        return None
+    dest = ARTIFACT_ROOT / sanitize_nodeid(current_nodeid()) / f"sheet-{label}.png"
+    return str(save_png(contact_sheet([f for f in frames if f is not None]), dest))
+
+
 class NativeCaptureUi(HarnessMixin):
     """Capture the test app's window by PID and grade the painted terminal."""
 
@@ -113,6 +125,16 @@ class NativeCaptureUi(HarnessMixin):
         except CaptureUnavailable as exc:
             pytest.skip(f"native window capture unavailable: {exc}")
             raise  # unreachable; for type checkers
+
+    def try_capture_app_window(self) -> Optional[Frame]:
+        """Capture the launched app's window, or ``None`` when the OS cannot.
+
+        For guided tests, where a missing capture only loses evidence.
+        """
+        try:
+            return capture_window(self.app.pid)
+        except CaptureUnavailable:
+            return None
 
     def capture_terminal(self, tab_id: Optional[str] = None) -> TerminalCapture:
         """Capture the window and map the terminal ``tab_id`` (active tab) onto it."""

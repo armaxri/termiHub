@@ -10,9 +10,11 @@ The harness opens the shells, creates the X11 SSH connection against the
 ``ssh-x11`` fixture, and starts the traceroute / ping / HTTP monitor. The
 operator watches and judges.
 
-Covered: MT-LOCAL-03/08/31, MT-SSH-01/50/51/52, MT-NET-16/21. MT-LOCAL-30/32/33
+Covered: MT-LOCAL-03/08/31, MT-SSH-50/51/52, MT-NET-16/21. MT-LOCAL-30/32/33
 are automated since #4931 (``test_windows_shells.py``,
-``test_output_flash_and_flood.py``, ``test_performance.py``).
+``test_output_flash_and_flood.py``, ``test_performance.py``), MT-SSH-01 (the
+Agnoster segment) since #4937 on a native window capture
+(``test_native_capture_grades.py``).
 
 Run with ``./pytest.sh --manual -k guided_shells_and_tools -s``.
 """
@@ -124,16 +126,6 @@ class TestGuidedShellsAndTools(
         self.manual_step(
             "Click into the terminal and hold `k` for 3 seconds.",
             "kkkk… repeats continuously with no delay and no accent picker.",
-        )
-
-    # ── MT-SSH-01: Agnoster prompt ───────────────────────────────────────────
-    def test_agnoster_prompt_has_no_black_rectangle(self):
-        """MT-SSH-01 (a Linux host with zsh + the Agnoster theme)."""
-        self.close_all_tabs()
-        self.manual_step(
-            "Connect an SSH session to a Linux host using zsh + Agnoster and look at the "
-            "user@machine prompt segment.",
-            "The segment blends with the terminal background; no black rectangle behind it.",
         )
 
     # ── MT-SSH-50/51/52: X11 on the real desktop ─────────────────────────────

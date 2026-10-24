@@ -216,3 +216,15 @@ def test_missing_tool_is_reported_as_unavailable(monkeypatch):
     monkeypatch.setattr(wc.subprocess, "run", missing)
     with pytest.raises(CaptureUnavailable, match="not installed"):
         wc._run(["xdotool", "search"])
+
+
+def test_save_sheet_writes_a_contact_sheet_or_nothing(tmp_path, monkeypatch):
+    from termihub_harness.ui import native_capture
+
+    monkeypatch.setattr(native_capture, "ARTIFACT_ROOT", tmp_path)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/x.py::test_y (call)")
+    a = Frame.filled(2, 2, RED)
+    path = native_capture.save_sheet([a, a], "pair")
+    assert path is not None and path.endswith("sheet-pair.png")
+    assert _png_rgb(open(path, "rb").read())[:2] == (2 + 2 + 3 * 8, 2 + 16)
+    assert native_capture.save_sheet([a, None], "missing") is None
