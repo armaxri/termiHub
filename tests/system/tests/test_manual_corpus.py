@@ -59,6 +59,8 @@ RETIRED_YAML_IDS = frozenset(
 
 _THEME = "test_theme_grades.py"
 _LAYOUT = "test_layout_grades.py"
+_HANDOFF = "test_external_app_handoffs.py"
+_X11_WINDOW = "test_forwarded_x11_client_opens_a_window_on_the_local_display"
 
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
 #: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
@@ -124,6 +126,16 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-UI-50": f"{_THEME}::test_charts_and_primary_buttons_follow_live_theme",
     "MT-UI-51": f"{_LAYOUT}::test_terminal_and_breadcrumb_scrollbars_follow_global_style",
     "MT-UI-52": f"{_THEME}::test_editor_background_matches_panes_in_every_theme",
+    # #4932: recording PATH shims / OS queries for external-app hand-offs.
+    "MT-FB-04": f"{_HANDOFF}::test_open_in_vscode_hands_the_local_file_to_code",
+    "MT-FB-14": f"{_HANDOFF}::test_open_in_vscode_hands_the_local_file_to_code",
+    "MT-FB-15": f"{_HANDOFF}::test_open_in_vscode_over_sftp_uploads_the_edit_back",
+    "MT-FB-21": f"{_HANDOFF}::test_open_in_file_manager_opens_folders_never_an_app",
+    "MT-FB-22": f"{_HANDOFF}::test_open_folder_in_vscode_hands_the_folder_to_code",
+    "MT-FB-32": f"{_HANDOFF}::test_open_in_file_manager_opens_folders_never_an_app",
+    "MT-SSH-09": f"{_HANDOFF}::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab",
+    "MT-XPLAT-03": f"test_ssh.py::{_X11_WINDOW}",
+    "MT-SSH-15": f"test_ssh.py::{_X11_WINDOW}",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
@@ -145,6 +157,14 @@ LATER_GUIDED_IDS = frozenset(
         "MT-TAB-07",
         "MT-FB-16",
         "MT-FB-23",
+        "MT-FB-04",
+        "MT-FB-14",
+        "MT-FB-15",
+        "MT-FB-21",
+        "MT-FB-22",
+        "MT-SSH-09",
+        "MT-SSH-15",
+        "MT-XPLAT-03",
     }
 )
 

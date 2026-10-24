@@ -144,11 +144,13 @@ class TestGuidedShellsAndTools(
         self._x11_ssh_session()
         self.handle_password_prompt(SSH_PASSWORD)
         self.wait(self.has_terminal, what="the X11 SSH terminal")
+        # The forwarded window itself is graded on Xvfb by test_ssh.py (MT-XPLAT-03,
+        # #4932); the real desktop keeps the adopt-the-X-server and Wayland checks.
         self.manual_step(
             "Run `xeyes` in the SSH terminal. Then, on a Wayland-only session without "
             "XWayland, connect the same connection again.",
-            "No prompt (the running X server is adopted) and the xeyes window appears; "
-            "Wayland-only shows the XWayland install hint, not a generic error.",
+            "No prompt (your running X server is adopted); Wayland-only shows the "
+            "XWayland install hint, not a generic error.",
         )
 
     @pytest.mark.manual(platforms=["macos"])
