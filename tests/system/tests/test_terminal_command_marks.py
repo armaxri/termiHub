@@ -39,6 +39,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.colors import parse_color, same_color
 
 pytestmark = [
     pytest.mark.integration,
@@ -132,6 +133,53 @@ class TestTerminalCommandMarks(
         )
         # `false` printed nothing, so there is nothing to copy any more.
         assert self._marks(tab_id)["lastCommandOutput"] is None
+
+    def _decorations(self, tab_id: str, cls: str) -> list[dict[str, Any]]:
+        return [
+            d for d in self.driver.measure_terminal(tab_id)["decorations"] if cls in d["classes"]
+        ]
+
+    @pytest.mark.parametrize("shell", ["bash", "zsh"])
+    def test_gutter_bars_and_jump_highlight(self, shell: str, request: pytest.FixtureRequest):
+        """MT-UI-43: green bar by ``true``, red by ``false``, no overlap; a jump flashes.
+
+        Reads the rendered xterm decorations through ``measure_terminal`` (#4930):
+        their classes, computed colour (the success / error tokens) and rects.
+        """
+        tab_id = self._open_shell(shell, request)
+        self.wait(
+            lambda: (self._marks(tab_id) or {}).get("commands"),
+            what=f"{shell}'s first marked prompt",
+        )
+        self._send(tab_id, "true")
+        self.wait(lambda: self._finished_exit_codes(tab_id) == [0], what="`true` recorded")
+        self._send(tab_id, "false")
+        self.wait(lambda: self._finished_exit_codes(tab_id) == [0, 1], what="`false` recorded")
+        ok_bar, failed_bar = self.wait(
+            lambda: (
+                lambda ok, bad: (ok[0], bad[0]) if len(ok) == 1 and len(bad) == 1 else None
+            )(
+                self._decorations(tab_id, "terminal-command-mark--success"),
+                self._decorations(tab_id, "terminal-command-mark--failure"),
+            ),
+            what="one success and one failure gutter bar",
+        )
+        success = parse_color(self.driver.get_computed_style("--color-success"))
+        error = parse_color(self.driver.get_computed_style("--color-error"))
+        assert same_color(parse_color(ok_bar["background"]), success), ok_bar
+        assert same_color(parse_color(failed_bar["background"]), error), failed_bar
+        for bar in (ok_bar, failed_bar):
+            assert bar["width"] > 0 and bar["height"] > 0, bar
+        # Stacked, not overlapping: `false`'s prompt row is below `true`'s.
+        assert failed_bar["top"] >= ok_bar["top"] + ok_bar["height"] - 0.5, (ok_bar, failed_bar)
+
+        jump = {"meta": True} if sys.platform == "darwin" else {"ctrl": True, "shift": True}
+        self.driver.press_key("ArrowUp", f"terminal-input-{tab_id}", **jump)
+        self.wait(
+            lambda: self._decorations(tab_id, "terminal-prompt-flash"),
+            what="the jump-to-prompt highlight",
+            interval=0.05,
+        )
 
     def test_sh_records_no_marks(self, request: pytest.FixtureRequest):
         tab_id = self._open_shell("sh", request)
