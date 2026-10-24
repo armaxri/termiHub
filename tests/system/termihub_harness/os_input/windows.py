@@ -122,6 +122,9 @@ class WindowsOsInput(OsInput):
         hwnd = self._user32.GetForegroundWindow()
         return self._window_pid(hwnd) if hwnd else None
 
+    def _screen_size(self) -> tuple[int, int]:
+        return self._user32.GetSystemMetrics(0), self._user32.GetSystemMetrics(1)
+
     def _activate(self, window: OsWindow) -> None:
         user32 = self._user32
         hwnd = wintypes.HWND(window.handle)

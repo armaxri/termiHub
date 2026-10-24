@@ -148,7 +148,7 @@ class OsInput:
             )
         return target
 
-    def _require_global(self, target: int) -> None:
+    def _require_global(self, target: int, *, any_allowed: bool = False) -> None:
         if not global_injection_allowed(self._env):
             raise GlobalInjectionRefused(
                 "global OS input is refused outside a GitHub runner; set "
@@ -156,7 +156,8 @@ class OsInput:
                 "on the display"
             )
         front = self.frontmost_pid()
-        if front != target:
+        ok = front in self._allowed if any_allowed else front == target
+        if not ok:
             raise GlobalInjectionRefused(
                 f"frontmost window belongs to PID {front}, not the intended PID "
                 f"{target}; refusing to inject"
@@ -170,6 +171,10 @@ class OsInput:
     def frontmost_pid(self) -> Optional[int]:
         """PID owning the frontmost (focused) top-level window, if any."""
         return self._frontmost_pid()
+
+    def screen_size(self) -> tuple[int, int]:
+        """Width and height of the primary screen, in OS screen units."""
+        return self._screen_size()
 
     def activate(
         self, pid: Optional[int] = None, *, window: Optional[OsWindow] = None, timeout: float = 10.0
@@ -248,8 +253,11 @@ class OsInput:
         return target
 
     def _before_pointer(self, pid: Optional[int]) -> int:
+        # A pointer event lands wherever it is aimed, not on the focused window
+        # (a click into an inactive window is a grade of its own), so it only
+        # needs a harness-owned window frontmost — the test instance or a helper.
         target = self._check_target(pid)
-        self._require_global(target)
+        self._require_global(target, any_allowed=True)
         return target
 
     @staticmethod
@@ -272,6 +280,9 @@ class OsInput:
         raise NotImplementedError
 
     def _frontmost_pid(self) -> Optional[int]:
+        raise NotImplementedError
+
+    def _screen_size(self) -> tuple[int, int]:
         raise NotImplementedError
 
     def _activate(self, window: OsWindow) -> None:

@@ -32,6 +32,7 @@ Mixin → concern:
 - :class:`WorkflowUi`        — workflow-automation editor + sidebar (author / run)
 - :class:`RemoteDesktopUi`   — VNC/RDP tab: create, overlays, resolution, canvas pixels
 - :class:`WindowsUi`         — multi-window: open / move a tab into / close a native window
+- :class:`OsInputUi`         — real OS keys / clicks / drags aimed at the test instance's PID
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -50,6 +51,7 @@ from .files import FilesUi, file_row_testid
 from .jump_host import JumpHostUi
 from .layout import LayoutUi
 from .manual import ManualUi
+from .os_input_ui import OsInputUi
 from .lookups import (
     active_leaf,
     connection_item_testid,
@@ -96,6 +98,7 @@ __all__ = [
     "SettingsUi",
     "SETTINGS_REGION",
     "ManualUi",
+    "OsInputUi",
     "NetworkToolsUi",
     "PluginsUi",
     "RemoteDesktopUi",

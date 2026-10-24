@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from typing import Callable, Optional, Sequence
 
 from .base import GlobalInjectionRefused, OsInput, OsInputUnavailable, OsWindow, global_injection_allowed
@@ -147,6 +148,10 @@ class LinuxOsInput(OsInput):
         except (OsInputUnavailable, ValueError):
             return None
 
+    def _screen_size(self) -> tuple[int, int]:
+        width, height = self._xdo("getdisplaygeometry").split()[:2]
+        return int(width), int(height)
+
     def _activate(self, window: OsWindow) -> None:
         wid = str(window.handle)
         try:
@@ -200,3 +205,53 @@ class LinuxOsInput(OsInput):
         if variant:
             argv += ["-variant", variant]
         self._run(argv)
+
+
+class XWindowManager:
+    """Run ``openbox`` on a bare Xvfb display for the duration of a suite.
+
+    Click-to-focus, ``_NET_ACTIVE_WINDOW`` activation and window placement are
+    window-manager jobs; a bare Xvfb has none, so focus grades would test
+    nothing. Started only where global input is allowed (CI / opt-in) and only
+    when the display has no window manager yet — never replacing a desktop's.
+    """
+
+    def __init__(self, run: Optional[Runner] = None) -> None:
+        self._run = run or _default_runner
+        self._proc: Optional[subprocess.Popen] = None
+
+    def running(self) -> bool:
+        """Whether a EWMH window manager owns the display (``_NET_SUPPORTING_WM_CHECK``)."""
+        try:
+            out = self._run(["xprop", "-root", "_NET_SUPPORTING_WM_CHECK"])
+        except OsInputUnavailable:
+            return False
+        return "window id" in out
+
+    def start(self, timeout: float = 15.0) -> "XWindowManager":
+        if not global_injection_allowed():
+            raise GlobalInjectionRefused("starting a window manager is refused outside CI")
+        if shutil.which("xprop") is None or shutil.which("openbox") is None:
+            raise OsInputUnavailable("openbox/xprop are not installed (apt install openbox x11-utils)")
+        if self.running():
+            return self
+        self._proc = subprocess.Popen(
+            ["openbox", "--sm-disable"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        deadline = time.monotonic() + timeout
+        while not self.running():
+            if time.monotonic() >= deadline or self._proc.poll() is not None:
+                self.stop()
+                raise OsInputUnavailable("openbox did not take over the display")
+            time.sleep(0.2)
+        return self
+
+    def stop(self) -> None:
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()

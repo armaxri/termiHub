@@ -80,6 +80,7 @@ class FakeInput(OsInput):
         super().__init__(pid, **kw)
         self.is_global = is_global
         self.front = pid if front is None else front
+        self.screen = (1280, 1024)
         self.calls: list[tuple] = []
 
     def _windows(self, pid: int) -> list[OsWindow]:
@@ -87,6 +88,9 @@ class FakeInput(OsInput):
 
     def _frontmost_pid(self) -> Optional[int]:
         return self.front
+
+    def _screen_size(self) -> tuple[int, int]:
+        return self.screen
 
     def _activate(self, window: OsWindow) -> None:
         self.calls.append(("activate", window.pid))
@@ -128,6 +132,15 @@ def test_pointer_is_always_global_even_for_pid_routed_keys():
     assert fake.calls == [("key", 100, ("cmd",), "q")]
     with pytest.raises(GlobalInjectionRefused):
         fake.pointer_move(1, 2)
+
+
+def test_pointer_needs_a_harness_window_frontmost_not_the_target():
+    fake = FakeInput(100, front=555, env=CI)
+    with pytest.raises(GlobalInjectionRefused):
+        fake.click(1, 2)  # 555 is not harness-owned
+    fake.allow_pid(555)
+    fake.click(1, 2)  # a click from a helper window into the test instance
+    assert ("button", "left", True) in fake.calls
 
 
 def test_unknown_pids_are_refused_until_allowed():
@@ -340,7 +353,17 @@ def test_calibration_maps_client_to_screen():
     screen = ScreenMapper.calibrate(fake, driver)
     assert screen.offset == (100.0, 80.0)
     assert screen.point("x") == (100 + 60, 80 + 40)
-    assert screen.outside_below(10) == (500, 660)
+    assert screen.outside_point(10) == (500, 660)
+
+
+def test_outside_point_falls_back_when_the_window_reaches_the_screen_bottom():
+    fake = FakeInput(100, env=CI)  # window 100,50 800x600
+    fake.screen = (1024, 640)
+    screen = ScreenMapper.calibrate(fake, ProbeDriver())
+    assert screen.outside_point(60) == (960, 350)  # right of the window
+    fake.screen = (800, 600)
+    with pytest.raises(OsInputUnavailable, match="no screen space"):
+        ScreenMapper(fake, None, OsWindow(1, 100, 0, 0, 800, 600), (0, 0), 1.0).outside_point()
 
 
 def test_calibration_honours_device_pixel_ratio():

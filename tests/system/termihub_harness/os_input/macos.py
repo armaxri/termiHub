@@ -127,6 +127,10 @@ class MacOsInput(OsInput):
                 return int(info.get("kCGWindowOwnerPID", 0)) or None
         return None
 
+    def _screen_size(self) -> tuple[int, int]:
+        bounds = self._q.CGDisplayBounds(self._q.CGMainDisplayID())
+        return int(bounds.size.width), int(bounds.size.height)
+
     def _activate(self, window: OsWindow) -> None:
         from AppKit import (  # noqa: PLC0415
             NSApplicationActivateAllWindows,

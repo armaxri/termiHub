@@ -151,10 +151,25 @@ class ScreenMapper:
         rect = self.rect(test_id)
         return self.to_screen(rect["left"] + rect["width"] * fx, rect["top"] + rect["height"] * fy)
 
-    def outside_below(self, margin: float = 60.0) -> tuple[float, float]:
-        """A screen point just below the window (for drags released outside it)."""
-        x, _ = self.window.center
-        return x, self.window.y + self.window.height + margin
+    def outside_point(self, margin: float = 60.0) -> tuple[float, float]:
+        """An on-screen point just outside the window (for a drag released outside it).
+
+        Tries below, right, left and above the window, in that order; raises
+        when the window covers the whole screen.
+        """
+        win = self.window
+        cx, cy = win.center
+        width, height = self.os_input.screen_size()
+        candidates = [
+            (cx, win.y + win.height + margin),
+            (win.x + win.width + margin, cy),
+            (win.x - margin, cy),
+            (cx, win.y - margin),
+        ]
+        for x, y in candidates:
+            if 0 <= x < width and 0 <= y < height:
+                return x, y
+        raise OsInputUnavailable(f"window {win} leaves no screen space ({width}x{height}) outside it")
 
 
 def _wait_trusted_move(driver: Any, *, timeout: float) -> Optional[dict]:
