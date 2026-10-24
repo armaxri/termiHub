@@ -15,7 +15,12 @@ import {
   readRawRenderedCellHeight,
   readRawRenderedCellWidth,
 } from "@/components/Terminal/xtermDimensions";
-import type { TerminalMeasurement, TerminalPaint, TerminalScrollbarMeasurement } from "./protocol";
+import type {
+  TerminalDecoration,
+  TerminalMeasurement,
+  TerminalPaint,
+  TerminalScrollbarMeasurement,
+} from "./protocol";
 
 /** The minimal `WEBGL_lose_context` extension surface used here. */
 interface LoseContextExtension {
@@ -103,6 +108,27 @@ function measurePaint(element: HTMLElement, xterm: TerminalHandles["xterm"]): Te
   };
 }
 
+/**
+ * Every rendered xterm decoration (#4930): the OSC 133 gutter bars and the
+ * jump-to-prompt flash are DOM elements xterm positions over the screen, so
+ * their classes, computed colour and rect are what the user sees. Rects are
+ * relative to the container's top-left.
+ */
+function measureDecorations(element: HTMLElement): TerminalDecoration[] {
+  const box = element.getBoundingClientRect();
+  return Array.from(element.querySelectorAll<HTMLElement>(".xterm-decoration")).map((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      classes: Array.from(el.classList),
+      background: backgroundOf(el),
+      top: rect.top - box.top,
+      left: rect.left - box.left,
+      width: rect.width,
+      height: rect.height,
+    };
+  });
+}
+
 /** Read a registered terminal's real render-path state (`measureTerminal`). */
 export function measureTerminal({
   element,
@@ -128,6 +154,7 @@ export function measureTerminal({
     domRows: readDomRows(element),
     scrollbar: measureScrollbar(element),
     paint: measurePaint(element, xterm),
+    decorations: measureDecorations(element),
     viewportY: buffer.viewportY,
     baseY: buffer.baseY,
   };

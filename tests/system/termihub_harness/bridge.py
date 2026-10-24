@@ -630,6 +630,8 @@ class Driver:
                        "themeBackground",                  # xterm theme bg
                        "horizontalScroll", "viewportClientBottom",
                        "hscrollBarHeight"},
+             "decorations": [{"classes", "background",  # OSC 133 bars,
+                              "top", "left", "width", "height"}, ...],  # flash
              "viewportY": int, "baseY": int}
 
         Read-only. Active tab unless ``tab_id`` is given.

@@ -58,6 +58,7 @@ const MEASUREMENT: TerminalMeasurement = {
     viewportClientBottom: 420,
     hscrollBarHeight: 0,
   },
+  decorations: [],
   viewportY: 0,
   baseY: 0,
 };
@@ -229,6 +230,17 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
       .querySelector(".terminal-scroll-viewport")!
       .classList.add("terminal-horizontal-scroll");
     expect(measureTerminal(handles).paint.horizontalScroll).toBe(true);
+  });
+
+  it("lists rendered decorations with their classes and colour", () => {
+    expect(measureTerminal(handles).decorations).toEqual([]);
+    const bar = document.createElement("div");
+    bar.className = "xterm-decoration terminal-command-mark terminal-command-mark--failure";
+    bar.style.backgroundColor = "rgb(255, 0, 0)";
+    handles.element.querySelector(".xterm-screen")!.appendChild(bar);
+    const [decoration] = measureTerminal(handles).decorations;
+    expect(decoration.classes).toContain("terminal-command-mark--failure");
+    expect(decoration.background).toBe("rgb(255, 0, 0)");
   });
 
   it("returns null for the scrollbar when the gutter is not mounted", () => {

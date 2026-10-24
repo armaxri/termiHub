@@ -784,6 +784,19 @@ export interface TerminalPaint {
   hscrollBarHeight: number;
 }
 
+/** One rendered xterm decoration (OSC 133 gutter bar, prompt flash), #4930. */
+export interface TerminalDecoration {
+  /** The element's classes (e.g. `terminal-command-mark--failure`). */
+  classes: string[];
+  /** Its computed `background-color`. */
+  background: string;
+  /** Rect relative to the terminal container's top-left, in CSS px. */
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
 /** A terminal's real render-path state, returned by `measureTerminal`. */
 export interface TerminalMeasurement {
   /** The xterm grid the terminal (and its PTY) is sized to. */
@@ -804,6 +817,8 @@ export interface TerminalMeasurement {
   scrollbar: TerminalScrollbarMeasurement | null;
   /** Text-area edges and backgrounds (#4930). */
   paint: TerminalPaint;
+  /** Rendered decorations, in DOM order (#4930). */
+  decorations: TerminalDecoration[];
   /** Scroll position, as `getTerminalViewport` reports it. */
   viewportY: number;
   baseY: number;
