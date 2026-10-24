@@ -33,7 +33,7 @@ from typing import Any
 
 import pytest
 
-from termihub_harness import SystemTest, TabsUi, TerminalUi
+from termihub_harness import SystemTest, TabsUi, TerminalUi, timing
 
 pytestmark = pytest.mark.integration
 
@@ -146,6 +146,29 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
             assert any(row.strip() for row in m["domRows"] or []), f"{label}: blank DOM rows"
         return m
 
+    def _echo_marker(self, tab_id: str, marker: str, label: str) -> int:
+        """Echo ``marker`` in the tab and wait for it to render; return resends.
+
+        The marker shows twice once rendered: the echoed command and its
+        output. Input typed in the instant a tab is shown can be lost while the
+        shell redraws for the re-fit (seen on macOS CI, #4931), so a marker that
+        does not render within a few seconds is sent again (at most twice); the
+        resend count is reported, the render itself must still happen.
+        """
+        for attempt in range(3):
+            self.driver.terminal_input(f"echo {marker}\n", tab_id=tab_id)
+            try:
+                self.wait(
+                    lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
+                    timeout=5.0 if attempt < 2 else 20.0,
+                    what=f"{label} to render its marker",
+                )
+                return attempt
+            except AssertionError:
+                if attempt == 2:
+                    raise
+        return 2
+
     def test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl(self):
         """MT-LOCAL-33: every one of (at least) twenty tabs renders text when
         shown, hidden tabs hold no WebGL context, and no context is ever lost."""
@@ -154,22 +177,18 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
         assert len(ids) >= 20
 
         renderers: dict[str, str] = {}
+        resends = 0
         for index, tab_id in enumerate(ids):
             self.switch_to_tab(tab_id)
             self.wait(
                 lambda tab_id=tab_id: (self.active_tab() or {}).get("id") == tab_id,
                 what=f"tab #{index} to activate",
             )
-            marker = f"PERF05-{index:02d}"
-            self.driver.terminal_input(f"echo {marker}\n", tab_id=tab_id)
-            # The marker shows twice: the echoed command line and its output.
             self.wait(
-                lambda tab_id=tab_id, marker=marker: self.driver.read_terminal(tab_id).count(
-                    marker
-                )
-                >= 2,
-                what=f"tab #{index} to render its marker",
+                lambda tab_id=tab_id: self.driver.read_terminal(tab_id).strip(),
+                what=f"tab #{index} to show its prompt",
             )
+            resends += self._echo_marker(tab_id, f"PERF05-{index:02d}", f"tab #{index}")
             renderers[tab_id] = self._assert_tab_painted(tab_id, f"tab #{index}")["renderer"]
 
         # After the sweep only the shown tab may keep a context (hidden → DOM),
@@ -199,8 +218,11 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
             f"\n[termihub-measure] perf-05 tabs={len(ids)} "
             f"renderers_when_shown={sorted(set(renderers.values()))} "
             f"live_webgl_after={len(live_webgl)} renderer_log_entries={len(log)} "
-            f"context_lost={len(lost)}"
+            f"context_lost={len(lost)} marker_resends={resends}"
         )
+        timing.record("measure:perf-05:marker_resends", resends, 0)
+        timing.record("measure:perf-05:live_webgl_after", len(live_webgl), 1)
+        timing.record("measure:perf-05:context_lost", len(lost), 0)
         assert not lost, f"WebGL context lost: {[e['message'] for e in lost]}"
         assert len(live_webgl) <= WEBGL_CONTEXT_CAPACITY, live_webgl
         assert set(live_webgl) <= {shown}, (

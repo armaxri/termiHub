@@ -46,6 +46,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness import timing
 from termihub_harness.output_stream import (
     describe,
     find_flashes,
@@ -87,10 +88,21 @@ MAX_STOP_SECONDS = 5.0
 MAX_PROMPT_SECONDS = 10.0
 
 
-def measure(tag: str, **values: object) -> None:
-    """Print one ``[termihub-measure]`` evidence line (run with ``-s`` or see CI)."""
+def measure(tag: str, budgets: Optional[dict[str, float]] = None, **values: object) -> None:
+    """Record one run's evidence for sizing the thresholds.
+
+    Prints a ``[termihub-measure]`` line (visible on failure or with ``-s``) and
+    records every numeric value as a ``measure:<tag>:<name>`` sample in the
+    harness timing summary, so each CI run's ``[termihub-test-timing]`` lines
+    carry n / p50 / p95 / max per OS (with the threshold as ``deadline``) even
+    when the test passed and its output was captured.
+    """
     fields = " ".join(f"{k}={v}" for k, v in values.items())
     print(f"\n[termihub-measure] {tag} {fields}", flush=True)
+    for name, value in values.items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            budget = (budgets or {}).get(name, 0.0)
+            timing.record(f"measure:{tag}:{name}", float(value), budget)
 
 
 class _OutputTap:
@@ -243,19 +255,25 @@ class TestOutputFlood(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, 
         written = self.driver.read_terminal_output(tab_id)["written"]
         measure(
             "output-flood",
-            round=round_no,
+            {
+                "growth_mib": MAX_FLOOD_GROWTH_MIB,
+                "p95_latency_s": MAX_FLOOD_P95_LATENCY,
+                "stop_s": MAX_STOP_SECONDS,
+                "prompt_s": MAX_PROMPT_SECONDS,
+            },
+            round=f"{round_no}",
             webview_processes=webviews,
-            idle_mib=f"{mib(before.rss):.0f}",
-            start_mib=f"{mib(start):.0f}",
-            end_mib=f"{mib(end):.0f}",
-            growth_mib=f"{mib(growth):.1f}",
-            peak_mib=f"{mib(max(s.rss for s in samples)):.0f}",
-            p50_latency=f"{percentile(latencies, 50):.3f}",
-            p95_latency=f"{p95:.3f}",
-            max_latency=f"{max(latencies):.3f}",
-            stop_s=f"{stop_seconds:.2f}",
-            prompt_s=f"{prompt_seconds:.2f}",
-            written_mib=f"{mib(written):.0f}",
+            idle_mib=round(mib(before.rss), 1),
+            start_mib=round(mib(start), 1),
+            end_mib=round(mib(end), 1),
+            growth_mib=round(mib(growth), 1),
+            peak_mib=round(mib(max(s.rss for s in samples)), 1),
+            p50_latency_s=round(percentile(latencies, 50), 3),
+            p95_latency_s=round(p95, 3),
+            max_latency_s=round(max(latencies), 3),
+            stop_s=round(stop_seconds, 2),
+            prompt_s=round(prompt_seconds, 2),
+            written_mib=round(mib(written), 1),
             processes=sorted(set(samples[-1].processes.values())),
         )
         assert self.app.is_running(), "the app died during the flood"

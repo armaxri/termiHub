@@ -48,6 +48,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness import timing
 from termihub_harness.git_bash import detect_git_bash
 from termihub_harness.output_stream import consecutive_runs
 from termihub_harness.shell import is_absolute_path
@@ -200,6 +201,7 @@ class TestWindowsShells(
             self.wait_for_output("DIR-DONE", tab_id=tab_id, timeout=120.0)
             elapsed = time.monotonic() - started
             print(f"\n[termihub-measure] cmd-paint dir_s_seconds={elapsed:.2f}")
+            timing.record("measure:cmd-paint:dir_s_seconds", elapsed, CMD_DIR_S_BUDGET)
             assert elapsed <= CMD_DIR_S_BUDGET, f"dir /s took {elapsed:.1f}s"
         finally:
             shutil.rmtree(repo, ignore_errors=True)
