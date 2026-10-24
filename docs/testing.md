@@ -541,7 +541,9 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
   - Settings → Security with confirmed imported workspace commands (#4445),
     and its revoke-all dialog;
   - the unlock, password-prompt, shortcuts, command-palette, customize-layout
-    and export dialogs.
+    and export dialogs (the unlock dialog also with a wrong-password error);
+  - Settings → External Files with the create-file prompt open;
+  - General and Sessions at a ~420px Settings tab (1024x700 only).
 
   The spec drives the app through the store that `boot.ts` exposes, not through
   click paths.
@@ -557,6 +559,7 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
   | `unstyled-class`  | a class a `src/components/ui/` primitive emits is styled somewhere in `src/**/*.css`, but no loaded stylesheet defines it |
   | `console-error`   | the app logs a console error (React warnings included) while the surface renders                                          |
   | `expectation`     | a surface-specific check fails, for example the shortcuts overlay showing more than one shortcut column (#4711)           |
+  | `expectation`     | an `expectations.ts` layout rule fails (#4928): dialog blocks keep a gap, Settings rows keep their layout                 |
 
   Every surface is a separate soft assertion, so a failure names the surface
   and the window size, and one broken surface never hides the others.
@@ -636,6 +639,32 @@ the app-launching suites still run on a cadence:
 - **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR that touches the harness (`tests/system/`) runs it with `-m "not integration"` — every push to `develop`/`main` runs it regardless (#3325), so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
 - **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). The `develop` nightly is dispatched by [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml) at 05:05 UTC so it runs `develop`'s copy of the workflow (#4449); the lane's own cron grades `main` weekly. The job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
+**linux-arm64 leg (#4934).** The bulk lane and the display-critical grades
+also run on GitHub's native aarch64 runner, `ubuntu-24.04-arm`, with the same
+steps as the Linux leg: every fixture base image is multi-arch, the deployed-agent
+containers get a static `aarch64-unknown-linux-musl` test agent (built natively in
+the Rust Alpine image by `scripts/internal/build-system-test-agent.sh`, because
+cross-rs' stock images are amd64-only), and the live agent deploy runs over the
+harness' loopback sshd (`TERMIHUB_LIVE_AGENT=1`). Its skip-guard lanes are
+`bulk-linux-arm64` and `display-linux-arm64`. It costs a second full Linux run,
+so it is **weekly**: the `setup` job adds it on Wednesdays (UTC, the weekly `main`
+cron and that day's `develop` nightly) and on every release-candidate call, so a
+release is always graded on aarch64. Add it to any dispatch with `-f arm64=always`
+(drop it with `-f arm64=never`, or run only the arm64 legs with `-f arm64=only`):
+
+```bash
+gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched -f arm64=always
+```
+
+This covers most of what the Raspberry Pi sessions checked: the agent binary on
+aarch64 (#470), SSH and agent flows from an aarch64 client (#473), and the
+integration suite on aarch64 (#585). The arm64 `.deb` GUI launch is covered by
+[Release Linux arm64 Smoke](contributing.md#release-install-smokes) (#479). What
+stays manual is what a hosted runner cannot be: a **real Raspberry Pi** (its kernel,
+16K-page Pi 5 quirks, GPU/desktop session and real LAN, the optional
+`test_real_hardware.py` agent walk) and the **physical USB serial adapter**
+(MT-SER-09 physical variant).
+
 **Grading a feature branch before merge (#4726).** A manual dispatch normally
 picks `-f branch=develop|main|both` (dispatched with `--ref main`). To prove a
 nightly-only fix on its own branch, dispatch the lane _from that branch_ with
@@ -670,11 +699,12 @@ re-dispatch of the same branch supersedes only that branch's older run.
 The lane runs the app natively on each OS; only the **Docker fixtures** are
 Linux-only:
 
-| Leg                            | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
-| ------------------------------ | --------------------------------- | -------------------------------------------------------------------------- |
-| **Linux** (`ubuntu-latest`)    | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
-| **macOS** (`macos-latest`)     | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
-| **Windows** (`windows-latest`) | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
+| Leg                                          | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
+| -------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------- |
+| **Linux** (`ubuntu-latest`)                  | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
+| **macOS** (`macos-latest`)                   | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
+| **Windows** (`windows-latest`)               | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
+| **linux-arm64** (`ubuntu-24.04-arm`, weekly) | Run headless under Xvfb           | Run — same fixtures, native aarch64 images; aarch64-musl deployed agent    |
 
 The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
@@ -1057,6 +1087,33 @@ The backup is made in master-password mode: a backup with credentials taken
 from the OS keychain asks the OS to verify the user (Touch ID, Windows Hello,
 polkit), which no CI runner can answer. The switch to OS-keychain mode then
 migrates the password into the OS store.
+
+### External-app hand-offs in the harness (#4932)
+
+[`test_external_app_handoffs.py`](../tests/system/tests/test_external_app_handoffs.py)
+grades what the app hands to programs it does not own, without installing or
+starting any of them. A suite lists the tools to shim in
+`external_app_shims = ("code", "xdg-open")`; the harness then writes a
+recording launcher per tool (an `sh` script, or a `.cmd` file on Windows) into a
+temporary directory and puts it first on the **app's** `PATH` only
+([`termihub_harness/external_shims.py`](../tests/system/termihub_harness/external_shims.py)).
+Each launcher logs its argv and exits 0; `code --version` answers so the app
+detects VS Code, and `code --wait <file>` appends an edit to the file first, so
+the SFTP re-upload is visible on the server. No OS default handler changes and
+the developer's own VS Code or file manager never runs.
+
+| Hand-off                                         | Graded by                                                                                                           | Replaces               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Open in VS Code (file, folder, SFTP file)        | the `code` shim's argv; for SFTP the edited copy reaching the server                                                | MT-FB-04/14/15/22      |
+| Open in File Manager (toolbar, folder row, .app) | Linux: the `xdg-open` shim. Windows: Explorer's open folders (`Shell.Application`). macOS: no error, `.app` not run | MT-FB-21/32            |
+| Setup SSH Agent tab                              | the tab's `Agent pid` line (macOS/Linux); the elevated command in the PowerShell tab (Windows, CI or opt-in only)   | MT-SSH-09              |
+| Forwarded X11 window (`test_ssh.py`)             | `xdotool search` on the Xvfb display (Linux)                                                                        | MT-XPLAT-03, MT-SSH-15 |
+
+macOS opens folders through `/usr/bin/open`, which has no `PATH` lookup, and
+hosted runners refuse Finder automation, so a local run can add the Finder
+front-window check with `TERMIHUB_ALLOW_FINDER_QUERY=1` (it triggers the
+Automation permission prompt). The Windows Setup SSH Agent case raises a UAC
+prompt, so outside CI it runs only with `TERMIHUB_ALLOW_ELEVATION_PROMPT=1`.
 
 ### Live WSL distro lane (Windows, #4008)
 
@@ -2191,7 +2248,7 @@ scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
 Every published release is install- and launch-smoked on hosted runners by five
 reusable workflows that the Release workflow calls before `mark-latest`, so a failing
 smoke keeps the release from becoming GitHub's latest release: Linux x64 and arm64 (which run this
-script or `--version`), macOS arm64 + Intel (DMG), Windows x64 (MSI), and the
+script headless under Xvfb; arm64 also checks the `.rpm` payload, #4934), macOS arm64 + Intel (DMG), Windows x64 (MSI), and the
 Windows arm64 agent binary (checksum, provenance, `--version`). The
 macOS and Windows smokes do not use this script — they launch the installed app and
 wait for its frontend's first IPC call to reach the backend in the durable app log,
@@ -2254,22 +2311,22 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-CRED-02      | macOS Keychain stores credentials                                                       | Automated (#4929)    | test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store                                                   |
 | MT-CRED-03      | Linux Secret Service stores credentials                                                 | Automated (#4929)    | test_os_credential_store.py::test_saved_password_lands_in_the_os_credential_store                                                   |
 | MT-CRED-04      | Master-password store auto-locks after the timeout                                      | Automated (#3690)    | src-tauri credential/auto_lock.rs fake-clock tests (expiry locks the store + emits both events)                                     |
-| MT-XPLAT-03     | X11 forwarding on macOS/Linux                                                           | Guided-manual pytest | test_external_app.py::test_x11_forwarding_window_appears                                                                            |
+| MT-XPLAT-03     | X11 forwarding on macOS/Linux                                                           | Automated (#4932)    | test_ssh.py::TestSshX11Display::test_forwarded_x11_client_opens_a_window_on_the_local_display                                       |
 | MT-SVC-04       | FTP server basic transfer                                                               | Automated (already)  | tests/system/tests/test_embedded_services.py::test_ftp_file_transfer                                                                |
 | MT-SVC-05       | TFTP server read request                                                                | Automated (already)  | test_embedded_services.py::test_tftp_file_transfer                                                                                  |
 | MT-SVC-06       | Auto-start on application launch                                                        | Automated (this PR)  | test_embedded_services.py::test_auto_start_server_runs_after_app_restart                                                            |
-| MT-FB-04        | Open in VS Code from file browser                                                       | Guided-manual pytest | test_external_app.py::test_open_in_vscode_local (duplicate of MT-FB-14)                                                             |
+| MT-FB-04        | Open in VS Code from file browser                                                       | Automated (#4932)    | test_external_app_handoffs.py::test_open_in_vscode_hands_the_local_file_to_code (dup of MT-FB-14)                                   |
 | MT-FB-07        | WSL tab — file browser shows WSL path                                                   | Automated (already)  | src/components/Sidebar/FileBrowser.test.tsx (WSL UNC path) + test_windows_shells.py::test_wsl_file_browser_follows_cwd              |
 | MT-FB-08        | PowerShell tab — file browser shows Windows home                                        | Automated (#3694)    | FileBrowser.test.tsx useFileBrowserSync 'shows the Windows home … (MT-FB-08/09)'                                                    |
 | MT-FB-09        | Switch back to WSL — file browser returns                                               | Automated (#3694)    | FileBrowser.test.tsx useFileBrowserSync 'shows the Windows home … (MT-FB-08/09)'                                                    |
 | MT-FB-10        | Bash tab — file browser shows home directory                                            | Automated (#3694)    | FileBrowser.test.tsx useFileBrowserSync 'shows home, not the previous tab's path … (MT-FB-10)'                                      |
 | MT-FB-12        | New File button in SFTP mode                                                            | Automated (already)  | tests/system/tests/test_sftp_infra.py::test_sftp_new_file_via_browser                                                               |
-| MT-FB-14        | Open in VS Code — local mode                                                            | Guided-manual pytest | test_external_app.py::test_open_in_vscode_local                                                                                     |
-| MT-FB-15        | Open in VS Code — SFTP edit and re-upload                                               | Guided-manual pytest | test_external_app.py::test_open_in_vscode_sftp + FileBrowser.vscode-feedback.test.tsx                                               |
-| MT-FB-16        | VS Code not installed — menu item hidden                                                | Automated (this PR)  | FileBrowser.os-integration.test.tsx 'shows Open in VS Code for a file only when VS Code is available'                               |
-| MT-FB-21        | Open OS file manager at the current local folder                                        | Guided-manual pytest | test_external_app.py::test_open_file_manager_local (+ dispatch in FileBrowser.os-integration.test.tsx)                              |
-| MT-FB-22        | Open the current local folder as a VS Code workspace                                    | Guided-manual pytest | test_external_app.py::test_open_folder_in_vscode_local (+ dispatch in FileBrowser.os-integration.test.tsx)                          |
-| MT-FB-23        | Open-folder-in-VS-Code action tracks availability                                       | Automated (already)  | FileBrowser.os-integration.test.tsx 'hides the VS Code action when VS Code is unavailable'                                          |
+| MT-FB-14        | Open in VS Code — local mode                                                            | Automated (#4932)    | test_external_app_handoffs.py::test_open_in_vscode_hands_the_local_file_to_code                                                     |
+| MT-FB-15        | Open in VS Code — SFTP edit and re-upload                                               | Automated (#4932)    | test_external_app_handoffs.py::test_open_in_vscode_over_sftp_uploads_the_edit_back                                                  |
+| MT-FB-16        | VS Code not installed — menu item hidden                                                | Automated (#4928)    | test_file_browser_local.py::test_vscode_menu_item_matches_availability + FileBrowser.os-integration.test.tsx                        |
+| MT-FB-21        | Open OS file manager at the current local folder                                        | Automated (#4932)    | test_external_app_handoffs.py::test_open_in_file_manager_opens_folders_never_an_app                                                 |
+| MT-FB-22        | Open the current local folder as a VS Code workspace                                    | Automated (#4932)    | test_external_app_handoffs.py::test_open_folder_in_vscode_hands_the_folder_to_code                                                  |
+| MT-FB-23        | Open-folder-in-VS-Code action tracks availability                                       | Automated (#4928)    | test_file_browser_local.py::test_open_folder_vscode_toolbar_matches_availability + FileBrowser.os-integration.test.tsx              |
 | MT-FB-20        | Editor tab drag-and-drop between panels                                                 | Guided-manual pytest | test_input_routing.py::test_drag_editor_tab_between_panels                                                                          |
 | MT-KB-01        | macOS: Cmd+C copies terminal selection                                                  | Guided-manual pytest | test_external_app.py::test_terminal_clipboard_copy_paste                                                                            |
 | MT-KB-02        | macOS: Cmd+V pastes into terminal                                                       | Guided-manual pytest | test_external_app.py::test_terminal_clipboard_copy_paste                                                                            |
@@ -2279,12 +2336,12 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-KB-06        | Keyboard shortcuts overlay via chord                                                    | Automated (already)  | keybindings.test.ts chord + F1; useKeyboardShortcuts.test.ts 'opens the shortcuts overlay'; ShortcutsOverlay.test.tsx               |
 | MT-KB-07        | Keyboard settings panel                                                                 | Automated (already)  | src/components/Settings/KeyboardSettings.test.tsx (record, chord, reset) + keybindings.test.ts checkConflict                        |
 | MT-KB-08        | Platform-aware modifier keys                                                            | Automated (already)  | src/services/keybindings.test.ts (platform defaults, macDefault)                                                                    |
-| MT-KB-09        | Windows/Linux: Ctrl+W in shell deletes a word (not Close Tab)                           | Automated (already)  | keybindings.test.ts 'does not match close-tab for Ctrl+W' (+ guided test_input_routing.py::test_shell_keys_pass_through_to_pty)     |
-| MT-KB-10        | Windows/Linux: Ctrl+B reaches tmux prefix on remote SSH session                         | Automated (already)  | keybindings.test.ts Ctrl+B pass-through (+ guided test_input_routing.py::test_shell_keys_pass_through_to_pty)                       |
-| MT-KB-11        | Windows/Linux: Ctrl+\ sends SIGQUIT (does not split panel)                              | Automated (already)  | keybindings.test.ts 'does not match split-right for Ctrl+\\' (+ guided pass-through test)                                           |
-| MT-KB-12        | Pass-through toggle in Settings disables shell-key forwarding                           | Automated (already)  | src/hooks/useKeyboardShortcuts.test.ts 'terminal-focus pass-through'                                                                |
-| MT-KB-13        | macOS: Cmd+F opens Monaco find in an editor tab, terminal search in a terminal tab      | Automated (already)  | useKeyboardShortcuts.test.ts find routing (#787) (+ guided test_input_routing.py::test_context_aware_find_routing)                  |
-| MT-KB-14        | Editor-delegation toggle reverts to global-first behavior                               | Automated (already)  | useKeyboardShortcuts.test.ts 'reverts to global-first behavior…' + KeyboardSettings.test.tsx                                        |
+| MT-KB-09        | Windows/Linux: Ctrl+W in shell deletes a word (not Close Tab)                           | Automated (#4928)    | keybindings.test.ts 'does not match close-tab for Ctrl+W' + terminalInputRouting.test.ts shell-reserved pass-through                |
+| MT-KB-10        | Windows/Linux: Ctrl+B reaches tmux prefix on remote SSH session                         | Automated (#4928)    | keybindings.test.ts Ctrl+B pass-through + terminalInputRouting.test.ts shell-reserved pass-through                                  |
+| MT-KB-11        | Windows/Linux: Ctrl+\ sends SIGQUIT (does not split panel)                              | Automated (#4928)    | keybindings.test.ts 'does not match split-right for Ctrl+\\' + terminalInputRouting.test.ts shell-reserved pass-through             |
+| MT-KB-12        | Pass-through toggle in Settings disables shell-key forwarding                           | Automated (#4928)    | terminalInputRouting.test.ts passthrough off + useKeyboardShortcuts.test.ts 'terminal-focus pass-through'                           |
+| MT-KB-13        | macOS: Cmd+F opens Monaco find in an editor tab, terminal search in a terminal tab      | Automated (#4928)    | useKeyboardShortcuts.test.ts context-aware find routing (#787)                                                                      |
+| MT-KB-14        | Editor-delegation toggle reverts to global-first behavior                               | Automated (#4928)    | useKeyboardShortcuts.test.ts 'reverts to global-first behavior…' + KeyboardSettings.test.tsx                                        |
 | MT-LOCAL-03     | WSL connection — no welcome banner flash                                                | Guided-manual pytest | test_guided_shells_and_tools.py::test_wsl_tab_opens_without_banner_flash                                                            |
 | MT-LOCAL-05     | SSH connection — no setup command flash                                                 | Automated (#4931)    | test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash                                                              |
 | MT-LOCAL-09     | Enter key submits commands (default CR line ending)                                     | Automated (already)  | tests/system/tests/test_enter_submits_command.py + src-tauri line_ending.rs::bare_enter_stays_cr_by_default                         |
@@ -2299,7 +2356,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-NET-17       | HTTP Monitor — periodic checks and chart                                                | Automated (already)  | test_network_tools_live.py::test_http_monitor_check_and_chart                                                                       |
 | MT-NET-18       | HTTP Monitor — sidebar monitor row                                                      | Automated (already)  | test_network_tools_live.py::test_http_monitor_shows_in_sidebar                                                                      |
 | MT-NET-19       | Remote agent — network.open_ports via JSON-RPC                                          | Automated (this PR)  | `test_network_tools_agent_live.py` + agent `live_agent_tcp_tool_run_open_ports_*` (#3692)                                           |
-| MT-NET-21       | Ping / HTTP Monitor — readable latency chart (uPlot)                                    | Guided-manual pytest | test_guided_shells_and_tools.py::test_latency_charts_are_readable                                                                   |
+| MT-NET-21       | Ping / HTTP Monitor — readable latency chart (uPlot)                                    | Guided-manual pytest | test_guided_shells_and_tools.py::test_latency_charts_are_readable (trace + ms read-out machine-checked, #4930)                      |
 | MT-NET-22       | Traceroute / Port Scanner — error on unresolvable host (Stop works)                     | Automated (already)  | TraceroutePanel.error.test.tsx + PortScannerPanel.error.test.tsx + TraceroutePanel.footer.test.tsx                                  |
 | MT-NET-20       | Port Scanner — CIDR / multi-target scan                                                 | Automated (already)  | core/src/network/port_scan.rs (CIDR / comma-list parse + per-host results)                                                          |
 | MT-PORT-01      | Portable mode activates via portable.marker                                             | Automated (already)  | src-tauri/tests/portable_launch.rs (per PR) + test_portable_mode.py::TestPortableMarker (nightly)                                   |
@@ -2346,9 +2403,9 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-SSH-02       | Default bash prompt renders correctly                                                   | Guided-manual pytest | test_visual_rendering.py::test_no_ssh_connect_setup_flash                                                                           |
 | MT-SSH-03       | Local shell ANSI colors unaffected                                                      | Guided-manual pytest | test_visual_rendering.py::test_ansi_colours_render / test_256_colour_swatches_render                                                |
 | MT-SSH-07       | SSH agent auth still works                                                              | Guided-manual pytest | test_external_app.py::test_ssh_agent_auth_connects                                                                                  |
-| MT-SSH-09       | Setup SSH Agent button opens PowerShell                                                 | Guided-manual pytest | test_external_app.py::test_setup_agent_launcher_opens_helper                                                                        |
+| MT-SSH-09       | Setup SSH Agent button opens PowerShell                                                 | Automated (#4932)    | test_external_app_handoffs.py::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab                                            |
 | MT-SSH-14       | Docker SSH + X11 connection works                                                       | Automated (already)  | core/tests/ssh_x11.rs::x11_forwarding_delivers_channel_to_local_server                                                              |
-| MT-SSH-15       | X11 app window appears on local display                                                 | Guided-manual pytest | test_external_app.py::test_x11_forwarding_window_appears                                                                            |
+| MT-SSH-15       | X11 app window appears on local display                                                 | Automated (#4932)    | test_ssh.py::TestSshX11Display::test_forwarded_x11_client_opens_a_window_on_the_local_display                                       |
 | MT-SSH-16       | DISPLAY variable set correctly                                                          | Automated (#3687)    | test_ssh.py::TestSshX11Display::test_x11_session_sets_forwarded_display                                                             |
 | MT-SSH-18       | X11 graceful degradation without X server                                               | Automated (#3687)    | core/tests/ssh_x11.rs::x11_forwarding_degrades_gracefully_without_x_server                                                          |
 | MT-SSH-23       | High values show warning/critical colors                                                | Automated (this PR)  | src/components/StatusBar/monitoringSeverity.test.ts + PerCoreCpuBars.test.tsx                                                       |
@@ -2366,8 +2423,8 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-SSH-44       | Jump-host reconnection re-establishes the chain through the shared gateway              | Automated (#3688)    | core/tests/ssh_advanced.rs SSH-JUMP-07 + test_ssh_jump_host.py                                                                      |
 | MT-SSH-45       | Cancel aborts a slow/blocked SSH connect instead of waiting the timeout                 | Automated (already)  | core ssh/auth.rs::connect_aborts_when_token_cancelled + jump_host.rs + OpenConnectionsModal.connecting.test.tsx                     |
 | MT-SSH-46       | Show Connection Path popover live-probes each hop's status                              | Automated (already)  | src/components/Sidebar/ConnectionPathDialog.test.tsx                                                                                |
-| MT-TAB-06       | Drag tab to edge creates new split                                                      | Automated (already)  | tests/system/tests/test_layout_scrollback_ui.py::test_drag_to_edge_preserves_scrollback                                             |
-| MT-TAB-07       | Drag tab between groups                                                                 | Automated (already)  | test_layout_scrollback_ui.py::test_tab_move_across_groups_preserves_scrollback                                                      |
+| MT-TAB-06       | Drag tab to edge creates new split                                                      | Automated (#4928)    | test_layout_scrollback_ui.py::test_drag_to_edge_preserves_scrollback                                                                |
+| MT-TAB-07       | Drag tab between groups                                                                 | Automated (#4928)    | test_layout_scrollback_ui.py::test_drag_to_center_preserves_scrollback / test_tab_move_across_groups_preserves_scrollback           |
 | MT-TAB-08       | Save to File — native dialog opens                                                      | Automated (this PR)  | TerminalRegistry.saveAndPaste.test.tsx (default name) + pytest test_native_dialogs.py::test_save_terminal_to_file_writes_the_output |
 | MT-TAB-09       | Save to File — file is written                                                          | Automated (#4122)    | test_native_dialogs.py::test_save_terminal_to_file_writes_the_output                                                                |
 | MT-TAB-10       | Save to File — cancel does nothing                                                      | Automated (this PR)  | TerminalRegistry.saveAndPaste.test.tsx 'writes nothing and offers no tab when the dialog is cancelled'                              |
@@ -2383,15 +2440,15 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-UI-02        | No white transitions during startup                                                     | Guided-manual pytest | test_visual_rendering.py::test_no_startup_white_flash                                                                               |
 | MT-UI-03        | Dark theme restart — no white flash                                                     | Guided-manual pytest | test_visual_rendering.py::test_no_startup_white_flash (dark is the default theme)                                                   |
 | MT-UI-04        | System theme follows OS preference                                                      | Automated (already)  | src/themes/engine.test.ts 'resolves system mode to dark when OS prefers dark' (and light)                                           |
-| MT-UI-05        | OS theme toggle — app switches automatically                                            | Guided-manual pytest | test_guided_look_and_feel.py::test_os_theme_toggle_switches_app_live                                                                |
+| MT-UI-05        | OS theme toggle — app switches automatically                                            | Automated (#4930)    | test_theme_grades.py::test_os_theme_toggle_switches_app_live                                                                        |
 | MT-UI-09        | System theme applies immediately                                                        | Automated (already)  | engine.test.ts system mode + test_theme_layout.py::test_switching_theme_updates_state_and_css_variables                             |
 | MT-UI-10        | Settings tab drag between panels                                                        | Automated (#3693)    | tests/system/tests/test_settings.py::test_settings_tab_drags_to_another_panel_keeping_its_icon                                      |
 | MT-UI-11        | Vertical resize handle works                                                            | Automated (#3693)    | test_split_views.py::test_dragging_the_vertical_divider_resizes_left_right_panels (+ horizontal twin)                               |
 | MT-UI-12        | 1px line between split panels                                                           | Automated (#3693)    | test_split_views.py::test_left_right_split_draws_a_1px_border_between_panels                                                        |
-| MT-UI-13        | Single panel — border blends with sidebar                                               | Guided-manual pytest | test_guided_look_and_feel.py::test_single_panel_border_blends_with_sidebar                                                          |
+| MT-UI-13        | Single panel — border blends with sidebar                                               | Automated (#4930)    | test_theme_grades.py::test_single_panel_border_blends_with_sidebar                                                                  |
 | MT-UI-14        | Horizontal split border                                                                 | Automated (#3693)    | test_split_views.py::test_left_right_split_draws_a_1px_border_between_panels                                                        |
 | MT-UI-15        | Vertical split border                                                                   | Automated (#3693)    | test_split_views.py::test_top_bottom_split_draws_a_1px_border_between_panels                                                        |
-| MT-UI-16        | No black bar at bottom of terminal                                                      | Guided-manual pytest | test_visual_rendering.py::test_no_black_bar_at_terminal_bottom                                                                      |
+| MT-UI-16        | No black bar at bottom of terminal                                                      | Automated (#4930)    | test_layout_grades.py::test_no_black_bar_at_terminal_bottom                                                                         |
 | MT-UI-19        | App icon in dock/taskbar                                                                | Automated (#4933)    | release smokes: release-smoke-bundle-icon.sh (.icns, hicolor), release-smoke-exe-icon.ps1, lifecycle window-icon check              |
 | MT-UI-26        | Right-click shows context menu by default on macOS/Linux                                | Guided-manual pytest | test_input_routing.py::test_terminal_context_menu_and_quick_copy_paste                                                              |
 | MT-UI-27        | Quick Copy/Paste copies selected text on right-click                                    | Guided-manual pytest | test_input_routing.py::test_terminal_context_menu_and_quick_copy_paste                                                              |
@@ -2402,8 +2459,8 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-UI-32        | Zoom overlay follows panel focus switching                                              | Automated (already)  | src/store/appStore.test.ts 'follows zoom to the new panel's active tab…'                                                            |
 | MT-UI-33        | Zoom overlay follows tab switching within the zoomed panel                              | Automated (already)  | appStore.test.ts 'follows zoom to any tab type when switching in the same panel'                                                    |
 | MT-UI-34        | OS file drop targets the individual pane under the cursor                               | Guided-manual pytest | test_input_routing.py::test_os_file_drop_onto_pane                                                                                  |
-| MT-UI-35        | Terminal right-edge scrollbar shows only when scrollback exceeds viewport               | Guided-manual pytest | test_visual_rendering.py::test_vertical_scrollbar_appearance                                                                        |
-| MT-UI-36        | Vertical scrollbar is the same in normal and horizontal-scroll modes                    | Guided-manual pytest | test_visual_rendering.py::test_vertical_scrollbar_appearance                                                                        |
+| MT-UI-35        | Terminal right-edge scrollbar shows only when scrollback exceeds viewport               | Automated (#4930)    | test_layout_grades.py::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes                                          |
+| MT-UI-36        | Vertical scrollbar is the same in normal and horizontal-scroll modes                    | Automated (#4930)    | test_layout_grades.py::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes                                          |
 | MT-UI-37        | Open tabs and layout are restored after an app restart                                  | Automated (#3693)    | tests/system/tests/test_session_restore_ui.py::test_tabs_split_and_groups_are_restored_after_restart                                |
 | MT-UI-38        | Disabling Restore Last Session starts the app fresh                                     | Automated (already)  | src/store/appStore.lastSession.test.ts + appStore.restoreMode.test.ts                                                               |
 | MT-UI-39        | Disconnect overlay explains the exit cause and suppresses for user kills                | Automated (already)  | src/components/Terminal/TerminalDisconnectOverlay.test.tsx (+ .exitInfo.test.tsx)                                                   |
@@ -2516,8 +2573,8 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Agent version + update-state badge — light/dark colors (#1347)** — Automated + Release gate. src/components/StatusBar/StatusBar.agent-updates.test.tsx ('N agents · M updates available' label + tooltip, click opens Connections); src/components/AgentVersionBadge/AgentVersionBadge.test.tsx 'renders the version chip prefixed with v'; src/components/AgentVersionBadge/AgentVersionBadge.test.tsx 'applies the %s state modifier class'; … · gate: MT-UI-40
 - **File editor read-only badge + banner (#1325)** — Automated + Tracked + Release gate. src/components/FileEditor/FileEditor.test.tsx 'renders the badge + banner and shows the parsed permissions in the tooltip'; src/components/FileEditor/FileEditor.test.tsx 'dismisses the banner while keeping the badge'; src-tauri/src/files/sftp.rs::root_owned_file_is_detected_read_only_on_the_sudo_host and ::root_owned_file_is_detected_read_only_on_the_nosudo_host (live ssh-sudo/ssh-nosudo: root-owned file → readOnly, own file → writable, probe non-destructive); tests/system/tests/test_editor_permissions_live.py::TestEditorPermissionsLive::test_root_owned_file_is_read_only_on_the_sudo_host / test_root_owned_file_is_read_only_on_the_nosudo_host (live bridge: badge + dismissible banner, Edit with sudo instead of Save, no SFTP-only fallback); … · gate: MT-UI-40
 - **File editor elevated (sudo) edit mode (#1329)** — Automated + Tracked. src/components/FileEditor/FileEditor.test.tsx 'offers 'Edit with sudo' only when the file is read-only and exec-capable'; src/components/FileEditor/FileEditor.test.tsx 'routes an authorized save through the elevated command and shows the sudo marker'; src/components/FileEditor/FileEditor.test.tsx 'keeps the sudo password out of persisted tab and workspace state (#1329)' (last-session + workspace payloads, store, frontend log, every other IPC); src-tauri/src/session/manager/tests/log_secrecy.rs::sudo_password_of_an_elevated_save_stays_out_of_the_app_log (live ssh-sudo, trace file sink) and ::sudo_password_stays_out_of_the_app_log_against_an_in_process_server (per PR, no Docker); tests/system/tests/test_editor_permissions_live.py::TestEditorPermissionsLive::test_sudo_save_reprompts_a_wrong_password_then_writes_the_file (live bridge on ssh-sudo: wrong password re-prompted, right one saves, sudo badge, file rewritten on the host); …
-- **Open remote file in VS Code over the session path (#2307)** — Automated. src-tauri/src/session/manager/tests.rs::session_sftp_ops_error_when_browser_not_sftp_backed; src-tauri/src/session/manager/tests.rs::session_sftp_ops_error_when_session_unknown; … · guided: `test_external_app.py::test_open_in_vscode_sftp`
-- **Local folder OS integration: file manager + VS Code workspace (#2656)** — Automated. src/components/Sidebar/FileBrowser.os-integration.test.tsx 'renders both OS-integration actions in local mode'; src/components/Sidebar/FileBrowser.os-integration.test.tsx 'hides both actions in session mode'; … · guided: `test_external_app.py::test_open_file_manager_local` / `::test_open_folder_in_vscode_local`
+- **Open remote file in VS Code over the session path (#2307)** — Automated. src-tauri/src/session/manager/tests.rs::session_sftp_ops_error_when_browser_not_sftp_backed; src-tauri/src/session/manager/tests.rs::session_sftp_ops_error_when_session_unknown; … ; tests/system/tests/test_external_app_handoffs.py::TestSftpVscodeHandoff (`code --wait` shim edits the copy, the app uploads it back, #4932)
+- **Local folder OS integration: file manager + VS Code workspace (#2656)** — Automated. src/components/Sidebar/FileBrowser.os-integration.test.tsx 'renders both OS-integration actions in local mode'; src/components/Sidebar/FileBrowser.os-integration.test.tsx 'hides both actions in session mode'; … ; tests/system/tests/test_external_app_handoffs.py::TestLocalHandoffs (`code`/`xdg-open` PATH shims, Explorer query on Windows, #4932)
 - **File editor SFTP-only read-only fallback (#1330)** — Automated. src/components/FileEditor/FileEditor.test.tsx 'shows the fallback banner, disables Save, and offers copy/download without Edit-with-sudo'; src/components/FileEditor/FileEditor.test.tsx 'writes the buffer to the chosen writable remote path via Save a copy'; src-tauri/src/files/sftp.rs::sftp_only_host_takes_the_read_only_fallback_and_saves_a_copy (live ssh-sftp-only: not exec-capable, root-owned file readOnly, copy saved to home); tests/system/tests/test_sftp_only_host_live.py::TestSftpOnlyHostLive::test_root_owned_file_takes_the_fallback_and_saves_a_copy_to_home (live bridge: fallback banner with Save a copy… and Download, no Edit with sudo, Save disabled, the copy read back from the host); tests/system/tests/test_sftp_only_host_live.py (integration lane: Download through the stubbed native Save dialog with the Downloaded toast and the remote contents on disk — was MT-EDIT-01, #4128; also the file browser's Download and Upload); …
 - **Caps Lock warning on password fields (PR #1465, #1360)** — Automated + Release gate. src/components/PasswordInput/PasswordInput.test.tsx 'shows the caps-lock warning when Caps Lock is active during a keystroke'; src/components/PasswordInput/PasswordInput.test.tsx 'hides the caps-lock warning again once Caps Lock is released'; … · gate: MT-NIN-31
 - **SSH tunnel start/stop on macOS (manual carve-out, #933)** — Automated. tests/system/tests/test_ssh_tunnels.py::TestSshTunnels::test_save_and_start_connects / test_start_then_stop / test_tunnel_runs_alongside_an_ssh_session (every lane; on macOS against the native loopback sshd + an in-process HTTP server instead of Docker, and asserting `connected` plus TUNNEL_TEST_OK through the local port, #4005)
@@ -2655,14 +2712,14 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 
 Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does all the setup and asks only for the irreducible look, click or physical step. From `tests/system/`: `./pytest.sh --manual -s` (or `./scripts/run-guided-manual.sh -k <suite>` from the repo root), which writes a sign-off report to `tests/reports/`. Platform-scoped tests run only on their OS (override with `--manual-platform`). See [Guided-Manual Tests in the Python Harness](#guided-manual-tests-in-the-python-harness-preferred) for how they work.
 
-- [ ] `test_visual_rendering.py` — glyphs, ANSI colours, box drawing, scrollbar, startup flash, black bottom bar, OS app icon
-- [ ] `test_external_app.py` — VS Code / OS file manager launch, clipboard copy/paste keys, SSH agent, X11 window
-- [ ] `test_input_routing.py` — real keypresses, drags, right-click and OS file drop
+- [ ] `test_visual_rendering.py` — glyphs, ANSI colours, box drawing, startup flash
+- [ ] `test_external_app.py` — clipboard copy/paste keys, SSH agent auth. MT-FB-16/23 (VS Code actions track availability) are automated in `test_file_browser_local.py` (#4928); the VS Code, file-manager, Setup SSH Agent and X11-window hand-offs (MT-FB-04/14/15/21/22/32, MT-SSH-09/15, MT-XPLAT-03) in `test_external_app_handoffs.py` and `test_ssh.py` (#4932): check the integration lane is green on all three OSes instead
+- [ ] `test_input_routing.py` — right-click menu and Quick Copy/Paste, connection and editor-tab drags, OS file drop. MT-KB-09 … 14 (shell-chord pass-through, Find routing) and MT-TAB-06/07 (tab drags) are automated (#4928)
 - [ ] `test_guided_native_input.py` — MT-NIN-01 … 07 (native drag-and-drop), MT-NIN-10 … 16 (IME, dead keys, emoji picker; commit-once automated, #3059), MT-NIN-20 … 24 (native focus), MT-NIN-30/31 (right-click paste, real Caps Lock)
-- [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock), MT-CRED-17 (dialog spacing). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929): check the integration lane is green on all three OSes instead
-- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-WIN-01 … 04 (macOS Dock and quit paths), MT-SHI-01 … 06 (external spawn and OS context menus), MT-FB-30 … 32 (large folder, drag out, open in file manager)
+- [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
+- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-WIN-01 … 04 (macOS Dock and quit paths), MT-SHI-01 … 06 (external spawn and OS context menus), MT-FB-30/31 (large folder, drag out)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
-- [ ] `test_guided_look_and_feel.py` — MT-UI-05, MT-UI-13, MT-UI-40 … 56 (theme, paint and layout judgements)
+- [ ] `test_guided_look_and_feel.py` — MT-UI-40, 42, 44, 46, 53 (paint and layout judgements; the theme, layout and scrollbar items are automated since #4930). MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/31 (WSL flash, key repeat, Git install), MT-SSH-01/50/51/52 (Agnoster, X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent, MT-SER-02 (clean Windows without a Nerd Font). Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
@@ -2696,25 +2753,24 @@ A guided test is marked `@pytest.mark.manual` and mixes in `ManualUi`, whose ver
 ./pytest.sh --manual --manual-platform=windows -s   # select platform-scoped items
 ```
 
-At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes, platform, timestamps) is written to [`tests/reports/`](../tests/reports/). See the worked examples in [`tests/system/tests/test_manual_examples.py`](../tests/system/tests/test_manual_examples.py) and the harness [README](../tests/system/README.md#guided-manual-tests---manual).
+At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes, platform, timestamps) is written to [`tests/reports/`](../tests/reports/). Copy an existing suite such as [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py) as a template, and see the harness [README](../tests/system/README.md#guided-manual-tests---manual).
 
 Guided-manual suites:
 
-| Suite                                                                                      | Covers (manual IDs)                                                                        | The human step                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)                 | worked examples (visual / dialog)                                                          | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                             |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py)               | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16                           | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup white-flash, no black bottom bar) — screenshot attached                                                                              |
-| [`test_external_app.py`](../tests/system/tests/test_external_app.py)                       | MT-FB-04/14/15/16/21/22/23, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04            | confirm the external result — VS Code launched, the OS file manager / VS Code workspace opened, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
-| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)                     | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20                    | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder)      |
-| [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-01..07/10..16/20..24/30/31                                                          | the native OS drag, IME composition, dead key, emoji picker or app switch (harness asserts the shell listing, the copied file, the torn-off tab's session in the new window, the saved name)                                               |
-| [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..17                                                                             | answer the Touch ID / Windows Hello / polkit sheet                                                                                                                                                                                         |
-| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30..32                                   | the Dock / app-menu quit, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                                                         |
-| [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                               | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                                                                   |
-| [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-05/13/40..56                                                                         | judge theme, paint and layout in the state the harness set                                                                                                                                                                                 |
-| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-01/50..52, MT-NET-16/21                                          | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                                                                                                               |
-| [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, MT-SER-02, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                                                              |
+| Suite                                                                                      | Covers (manual IDs)                                                                        | The human step                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py)               | MT-SSH-02, MT-UI-31, MT-SER-01/02, MT-UI-01                                                | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, no startup white-flash) — screenshot attached                                                                             |
+| [`test_external_app.py`](../tests/system/tests/test_external_app.py)                       | MT-SSH-07, MT-KB-01..04                                                                    | load the fixture key into the ssh-agent and press the copy/paste shortcuts (harness verifies the in-app side: the agent-auth connect, the copy on the OS clipboard)                                |
+| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)                     | MT-UI-26..30/34, MT-CONN-01/24, MT-FB-20                                                   | perform the real drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: the context-menu items, the panel tree, the moved connection's folder) |
+| [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-01..07/10..16/20..24/30/31                                                          | the native OS drag, IME composition, dead key, emoji picker or app switch (harness asserts the shell listing, the copied file, the torn-off tab's session in the new window, the saved name)       |
+| [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..16                                                                             | answer the Touch ID / Windows Hello / polkit sheet                                                                                                                                                 |
+| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-WIN-01..04, MT-SHI-01..06, MT-FB-30/31                                    | the Dock / app-menu quit, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                 |
+| [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                               | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                           |
+| [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/42/44/46/53                                                                       | judge paint and layout in the state the harness set                                                                                                                                                |
+| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-01/50..52, MT-NET-16/21                                          | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                                                                       |
+| [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, MT-SER-02, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                      |
 
-> **MT-UI-01/16 — startup white-flash (#1003).**
+> **MT-UI-01 — startup white-flash (#1003).**
 > Follow-up to #915 (delivered in PR #943): the remaining timing- and OS-level
 > visual items were added to
 > [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py).
@@ -2729,10 +2785,6 @@ Guided-manual suites:
 >   away).
 > - **MT-LOCAL-05 (no SSH connect / setup-command flash)** is automated since
 >   #4931 — see [Output-stream flash and flood grades](#output-stream-flash-and-flood-grades-4931).
-> - **MT-UI-16 (no black bar at the terminal bottom).** The harness opens a
->   terminal and prints a line; the operator confirms the terminal background fills
->   to the bottom of the pane — no black strip between the last row and the pane
->   edge / status bar.
 > - **MT-UI-19 (OS app icon)** moved to the release install smokes (#4933): the
 >   shipped bundle's icons are compared byte for byte with `src-tauri/icons`.
 >
@@ -2804,7 +2856,46 @@ running termiHub; the local X server is provisioned per platform (epic #1047,
 | Setup dialog, connect-time consent, X Servers rows                                                                                       | Vitest (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`)                                             |
 | Forwarded channel, `DISPLAY`, graceful degradation                                                                                       | `core/tests/ssh_x11.rs`, `test_ssh.py::TestSshX11Display` against the `ssh-x11` fixture                                             |
 | In-container Xvfb render (`render-check.sh`)                                                                                             | `core/tests/ssh_x11.rs::x11_fixture_render_check_maps_a_window` runs it over a termiHub SSH session (integration-fixtures workflow) |
+| A forwarded X11 client's window on the app's display (Linux Xvfb)                                                                        | `test_ssh.py::TestSshX11Display` window grade via `xdotool search` (MT-XPLAT-03, MT-SSH-15, #4932)                                  |
 | A real window on the operator's display, per-OS install UX, no orphan server                                                             | Release gate: MT-SSH-50 (Linux, native X), MT-SSH-51 (macOS, XQuartz), MT-SSH-52 (Windows, VcXsrv via winget)                       |
+
+### Theme, layout and scrollbar grades (#4930)
+
+Fifteen look-and-feel checks an operator used to judge by eye are graded by the
+integration lane instead (step 3 of #4927). They read what the WebView
+resolved and judge it with WCAG maths, so no screenshot comparison is involved:
+
+| Suite                                                                                    | Grades                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_theme_grades.py`](../tests/system/tests/test_theme_grades.py)                     | MT-UI-02..09 (Light reaches every chrome surface, AA text), MT-UI-05 (System follows an OS light/dark flip live), MT-UI-13 (one visible edge between sidebar and panel), MT-UI-41 (thumbs visible at rest in every theme), MT-UI-49/52 (editor follows the theme, live), MT-UI-50 (latency chart and Save Theme re-colour live)                   |
+| [`test_layout_grades.py`](../tests/system/tests/test_layout_grades.py)                   | MT-UI-16 (no strip under the last row), MT-UI-35/36 (thumb only with scrollback, same gutter in both modes), MT-UI-45 (sidebar laid out at first contact, three cold launches), MT-UI-47/48 (zoom overlay leaves Escape to the program; its menu is live above the scrim), MT-UI-51 (thumb right of the text, horizontal bar clears the last row) |
+| [`test_terminal_command_marks.py`](../tests/system/tests/test_terminal_command_marks.py) | MT-UI-43 (green/red OSC 133 gutter bars, no overlap, jump highlight)                                                                                                                                                                                                                                                                              |
+
+MT-NET-21 stays guided, but the harness first checks that the chart drew its
+trace and the legend reads ms; the operator only judges readability.
+
+The building blocks:
+
+- `termihub_harness/colors.py` parses computed colours (`rgb()`, `rgba()`,
+  `color(srgb …)`, hex tokens) and computes the WCAG contrast ratio, mirroring
+  `src/themes/contrast.ts`. A translucent colour such as a scrollbar thumb is
+  composited onto its surface first.
+- `measure_terminal` also reports the gutter thumb's geometry and computed
+  colour, the text area's right edge, the last row's bottom, the container and
+  xterm theme backgrounds, the horizontal bar height and the rendered
+  decorations (OSC 133 bars, prompt flash).
+- Monaco's root and gutter carry `editor-surface` / `editor-gutter`, and the
+  latency chart canvas carries `latency-chart-canvas` for `sample_canvas`.
+- `termihub_harness/os_appearance.py` flips the OS appearance for MT-UI-05:
+  System Events `appearance preferences` on macOS, `AppsUseLightTheme` plus a
+  `WM_SETTINGCHANGE` broadcast on Windows, and a private `xsettingsd` on the
+  Linux Xvfb display (installed on the integration runner). It acts only on a
+  GitHub runner, or locally when you set `TERMIHUB_ALLOW_OS_APPEARANCE=1`, and
+  it always restores the appearance it found. On Linux it refuses a display
+  that already has an XSETTINGS manager, so it can never re-theme a desktop
+  session. Without the opt-in a local run skips MT-UI-05. On a macOS runner
+  that refuses System Events automation, the test skips with that reason; on
+  Linux and Windows CI a toggle that cannot act fails the test.
 
 ### Retirement of the YAML corpus (#919)
 
@@ -2816,8 +2907,9 @@ step were deleted.
 [`test_manual_corpus.py`](../tests/system/tests/test_manual_corpus.py) (normal,
 non-integration lane) keeps it that way: each retired id must stay named in the
 docstring of a `manual`-marked test, or be listed in its `AUTOMATED_IDS` with
-the automated test whose docstring names it (#4927), and the legacy files must
-not come back.
+the automated test whose docstring names it (#4927), or with the release smoke
+script, frontend unit test or rendered visual check file whose text names it
+(#4933, #4928), and the legacy files must not come back.
 The id → test mapping is in the PR that closed #919.
 
 The #919 real-hardware list was reconciled against CI at the same time. Only the
@@ -2857,7 +2949,8 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-FB-03, 13, 19                      | `tests/system/tests/test_sftp_infra.py`                                                                                                                                                  |
 | MT-FB-06, 17                          | _manual_ (serial not bridge-selectable; SFTP fault injection)                                                                                                                            |
 | MT-FB-05, 11, 18                      | `tests/system/tests/test_file_browser_local.py`                                                                                                                                          |
-| MT-FB-21, 22, 23                      | `tests/system/tests/test_external_app.py` (open OS file manager / VS Code workspace at the current local folder, #2656)                                                                  |
+| MT-FB-04, 14, 15, 21, 22, 32          | `tests/system/tests/test_external_app_handoffs.py` (`code` / `xdg-open` PATH shims, OS file-manager queries, #4932)                                                                      |
+| MT-FB-16, 23                          | `tests/system/tests/test_file_browser_local.py` (the VS Code actions track `vscodeAvailable`, #4928)                                                                                     |
 | EDITOR-01/STATUS/INDENT/LANG          | `tests/system/tests/test_editor.py`                                                                                                                                                      |
 | #504 (terminal auto-scroll)           | `tests/system/tests/test_terminal_auto_scroll.py`                                                                                                                                        |
 | MT-UI-06–08                           | `tests/system/tests/test_ui_state.py`                                                                                                                                                    |

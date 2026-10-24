@@ -54,7 +54,12 @@ import type { Writability } from "@/types/connection";
 import { onLocalFileChanged } from "@/services/events";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { SaveCopyDialog } from "./SaveCopyDialog";
-import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./editorInput";
+import {
+  tagMonacoInput,
+  tagMonacoSurface,
+  testInputEditorOptions,
+  moveEditorCursor,
+} from "./editorInput";
 import { isTestBridgeEnabled } from "@/testbridge/testMode";
 import { fireAndForget, frontendLog, frontendError } from "@/utils/frontendLog";
 import { registerEditorBuffer, takeCarriedBuffer } from "@/utils/editorBufferRegistry";
@@ -1483,6 +1488,7 @@ export function FileEditor({
       // (WebView2), a `<div class="native-edit-context">` — tag whichever exists
       // so the harness works on every webview (#2689).
       tagMonacoInput(editor.getDomNode());
+      tagMonacoSurface(editor.getDomNode());
 
       editor.addAction({
         id: "termihub-save",

@@ -14,8 +14,10 @@ This guard keeps it that way:
 - or, once an item is automated (the #4927 campaign), it is listed in
   :data:`AUTOMATED_IDS` and named in the docstring of that automated test,
   which runs in the integration lane instead of waiting for an operator — or,
-  when a release install smoke grades it on the shipped artifacts (#4933), named
-  in the text of that smoke script — and no guided test still claims it.
+  when a release install smoke grades it on the shipped artifacts (#4933), a
+  frontend unit test (vitest) pins it per PR or the rendered visual checks
+  (#4712) audit it, named in the text of that file — and no guided test still
+  claims it.
 
 Pure ``ast`` parsing of the test modules — no app, bridge or Docker — so it runs
 in the normal (non-integration) lane.
@@ -55,10 +57,17 @@ RETIRED_YAML_IDS = frozenset(
     """.split()
 )
 
+_THEME = "test_theme_grades.py"
+_LAYOUT = "test_layout_grades.py"
+_HANDOFF = "test_external_app_handoffs.py"
+_X11_WINDOW = "test_forwarded_x11_client_opens_a_window_on_the_local_display"
+
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
 #: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
-#: or to the repo-relative release install smoke script (``scripts/...``, run by
-#: ``.github/workflows/release-*-smoke.yml``) whose text names it (#4933).
+#: or to a repo-relative file whose text names it (one of :data:`_FILE_PREFIXES`):
+#: a release install smoke script (``scripts/...``, run by
+#: ``.github/workflows/release-*-smoke.yml``, #4933), a frontend unit test
+#: (``src/...``), or the rendered visual checks (``tests/visual/...``, #4712).
 #: The guided-manual test is deleted when the item moves here. Covers retired
 #: YAML items and later guided-only ones (see :data:`LATER_GUIDED_IDS`).
 AUTOMATED_IDS: dict[str, str] = {
@@ -80,11 +89,88 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-APP-02": "scripts/internal/release-smoke-app-lifecycle.sh",
     "MT-APP-04": "scripts/internal/release-smoke-app-lifecycle.sh",
     "MT-UI-19": "scripts/internal/release-smoke-bundle-icon.sh",
+    # #4928: guided checks that duplicated existing automation.
+    # Shell chords reach the PTY: no default binding claims them, they are
+    # shell-reserved, and the terminal router passes them through.
+    "MT-KB-09": "src/services/keybindings.test.ts",
+    "MT-KB-10": "src/services/keybindings.test.ts",
+    "MT-KB-11": "src/services/keybindings.test.ts",
+    "MT-KB-12": "src/components/Terminal/terminalInputRouting.test.ts",
+    "MT-KB-13": "src/hooks/useKeyboardShortcuts.test.ts",
+    "MT-KB-14": "src/hooks/useKeyboardShortcuts.test.ts",
+    # Real drag gestures over the bridge onto the dnd-kit drop zones (#2583).
+    "MT-TAB-06": "test_layout_scrollback_ui.py::test_drag_to_edge_preserves_scrollback",
+    "MT-TAB-07": "test_layout_scrollback_ui.py::test_drag_to_center_preserves_scrollback",
+    "MT-FB-16": "test_file_browser_local.py::test_vscode_menu_item_matches_availability",
+    "MT-FB-23": (
+        "test_file_browser_local.py::test_open_folder_vscode_toolbar_matches_availability"
+    ),
+    # Rendered visual checks (#4712) at 1280x800, 1024x700 and 800x600.
+    "MT-CRED-17": "tests/visual/surfaces.spec.ts",
+    "MT-UI-54": "tests/visual/surfaces.spec.ts",
+    "MT-UI-55": "tests/visual/surfaces.spec.ts",
+    # The revoke flow is unit-tested; its look is a rendered visual surface.
+    "MT-UI-56": "src/components/Settings/ImportedWorkspaceConfirmations.test.tsx",
+    # #4930: theme, layout and scrollbar grades from computed styles + measure_terminal.
+    "MT-UI-05": f"{_THEME}::test_os_theme_toggle_switches_app_live",
+    "MT-UI-13": f"{_THEME}::test_single_panel_border_blends_with_sidebar",
+    "MT-UI-16": f"{_LAYOUT}::test_no_black_bar_at_terminal_bottom",
+    "MT-UI-35": f"{_LAYOUT}::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes",
+    "MT-UI-36": f"{_LAYOUT}::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes",
+    "MT-UI-41": f"{_THEME}::test_scrollbar_thumb_visible_at_rest_in_every_theme",
+    "MT-UI-43": "test_terminal_command_marks.py::test_gutter_bars_and_jump_highlight",
+    "MT-UI-45": f"{_LAYOUT}::test_sidebar_paints_fully_on_cold_launch",
+    "MT-UI-47": f"{_LAYOUT}::test_zoom_overlay_leaves_escape_to_terminal",
+    "MT-UI-48": f"{_LAYOUT}::test_context_menu_in_zoomed_terminal_above_overlay",
+    "MT-UI-49": f"{_THEME}::test_every_light_theme_gets_a_light_editor",
+    "MT-UI-50": f"{_THEME}::test_charts_and_primary_buttons_follow_live_theme",
+    "MT-UI-51": f"{_LAYOUT}::test_terminal_and_breadcrumb_scrollbars_follow_global_style",
+    "MT-UI-52": f"{_THEME}::test_editor_background_matches_panes_in_every_theme",
+    # #4932: recording PATH shims / OS queries for external-app hand-offs.
+    "MT-FB-04": f"{_HANDOFF}::test_open_in_vscode_hands_the_local_file_to_code",
+    "MT-FB-14": f"{_HANDOFF}::test_open_in_vscode_hands_the_local_file_to_code",
+    "MT-FB-15": f"{_HANDOFF}::test_open_in_vscode_over_sftp_uploads_the_edit_back",
+    "MT-FB-21": f"{_HANDOFF}::test_open_in_file_manager_opens_folders_never_an_app",
+    "MT-FB-22": f"{_HANDOFF}::test_open_folder_in_vscode_hands_the_folder_to_code",
+    "MT-FB-32": f"{_HANDOFF}::test_open_in_file_manager_opens_folders_never_an_app",
+    "MT-SSH-09": f"{_HANDOFF}::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab",
+    "MT-XPLAT-03": f"test_ssh.py::{_X11_WINDOW}",
+    "MT-SSH-15": f"test_ssh.py::{_X11_WINDOW}",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
 #: as guided-manual tests before being automated.
-LATER_GUIDED_IDS = frozenset({"MT-LOCAL-05", "MT-UI-19"})
+LATER_GUIDED_IDS = frozenset(
+    {
+        "MT-LOCAL-05",
+        "MT-UI-16",
+        "MT-UI-19",
+        "MT-UI-35",
+        "MT-UI-36",
+        "MT-KB-09",
+        "MT-KB-10",
+        "MT-KB-11",
+        "MT-KB-12",
+        "MT-KB-13",
+        "MT-KB-14",
+        "MT-TAB-06",
+        "MT-TAB-07",
+        "MT-FB-16",
+        "MT-FB-23",
+        "MT-FB-04",
+        "MT-FB-14",
+        "MT-FB-15",
+        "MT-FB-21",
+        "MT-FB-22",
+        "MT-SSH-09",
+        "MT-SSH-15",
+        "MT-XPLAT-03",
+    }
+)
+
+#: Repo-relative locations an :data:`AUTOMATED_IDS` value may name as a file
+#: (rather than a ``module::test`` in this directory).
+_FILE_PREFIXES = ("scripts/", "src/", "tests/visual/")
 
 _ID = re.compile(r"\bMT-[A-Z]+-\d+\b")
 
@@ -137,7 +223,7 @@ def test_every_retired_yaml_item_has_a_guided_or_automated_test():
 
 
 def _names_item(item_id: str, test: str, automated: dict[str, list[str]]) -> bool:
-    if test.startswith("scripts/"):
+    if test.startswith(_FILE_PREFIXES):
         path = REPO_ROOT / test
         return path.is_file() and item_id in _ID.findall(path.read_text(encoding="utf-8"))
     return test in automated.get(item_id, [])
@@ -151,8 +237,8 @@ def test_automated_items_name_their_automated_test():
         if not _names_item(item_id, test, automated)
     }
     assert not wrong, (
-        "AUTOMATED_IDS entries whose automated test (or release smoke script) does "
-        f"not exist or does not name the item: {wrong}"
+        "AUTOMATED_IDS entries whose automated test (or named file) does not exist "
+        f"or does not name the item: {wrong}"
     )
 
 

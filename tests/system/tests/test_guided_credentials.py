@@ -16,8 +16,9 @@ store are automated in ``test_os_credential_store.py`` (#4929): MT-CRED-01/02/03
 credentials across the startup swap, including the failed swap).
 
 Covered: MT-CRED-11/13/14 (system authentication for keychain export/backup),
-MT-CRED-12/15/16 (biometric unlock of the master-password store) and
-MT-CRED-17 (unlock and password dialog spacing).
+MT-CRED-12/15/16 (biometric unlock of the master-password store). The unlock
+and password dialog spacing (MT-CRED-17) is automated by the rendered visual
+checks (``tests/visual/surfaces.spec.ts``, #4928).
 
 Run with ``./pytest.sh --manual -k guided_credentials -s``.
 """
@@ -205,32 +206,3 @@ class TestGuidedCredentials(
             "yes'; unlock shows one dialog; Cancel keeps the store locked and the master "
             "password still works.",
         )
-
-    # ── MT-CRED-17: unlock and password dialog spacing ───────────────────────
-    def test_unlock_and_password_dialogs_keep_text_field_and_links_apart(self):
-        """MT-CRED-17."""
-        self.close_all_tabs()
-        self.setup_master_password_store(_MASTER_PASSWORD)
-        self.restart_app()
-        self.wait(self.credential_store_locked, what="the store to be locked after restart")
-        self.open_unlock_dialog()
-        self.manual_step(
-            "In Unlock Credential Store click into the password field, then type a wrong "
-            "password and click Unlock.",
-            "The two-line description sits above the labelled field with a clear gap; the "
-            "focus ring touches neither the description nor 'Forgot password?'; the error "
-            "is its own line between the field and the reset link.",
-        )
-        self.handle_unlock_dialog(_MASTER_PASSWORD)
-        name = unique_name("cred-spacing")
-        self.create_ssh_connection(
-            name, host="127.0.0.1", port=1, username="guided", auth_method="password"
-        )
-        self.switch_to_connections_sidebar()
-        self.connect_connection(name)
-        self.wait(lambda: self.driver.exists("password-prompt-input"), what="the password prompt")
-        self.manual_observe(
-            "Look at the SSH Password prompt the harness opened.",
-            "It shows the same clear gap between its text and the field.",
-        )
-        self.cancel_password_prompt()

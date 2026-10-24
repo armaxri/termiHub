@@ -20,13 +20,22 @@ import { lightTheme } from "@/themes/light";
 import { solarizedLightTheme } from "@/themes/solarized-light";
 
 const ctorOpts: uPlot.Options[] = [];
+const canvases: HTMLCanvasElement[] = [];
 const destroy = vi.fn();
 
 vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 vi.mock("uplot", () => ({
   default: vi.fn().mockImplementation(function (this: unknown, opts: uPlot.Options) {
     ctorOpts.push(opts);
-    return { setData: vi.fn(), destroy, setSize: vi.fn(), setScale: vi.fn() };
+    const canvas = document.createElement("canvas");
+    canvases.push(canvas);
+    return {
+      setData: vi.fn(),
+      destroy,
+      setSize: vi.fn(),
+      setScale: vi.fn(),
+      ctx: { canvas },
+    };
   }),
 }));
 
@@ -102,6 +111,8 @@ describe("uPlot charts follow a live theme switch", () => {
     expect(light.series[1].stroke).toBe(lightTheme.colors.accentColor);
     expect(light.axes?.[0].stroke).toBe(lightTheme.colors.textSecondary);
     expect(light.axes?.[1].grid?.stroke).toBe(lightTheme.colors.borderPrimary);
+    // The rebuilt canvas keeps the testid the system-test grades sample (#4930).
+    expect(canvases[canvases.length - 1].dataset.testid).toBe("latency-chart-canvas");
   });
 
   it("does not rebuild the chart when the theme is unchanged by a data update", async () => {

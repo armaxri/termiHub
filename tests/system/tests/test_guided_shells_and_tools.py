@@ -19,6 +19,8 @@ Run with ``./pytest.sh --manual -k guided_shells_and_tools -s``.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from termihub_harness import (
@@ -38,11 +40,13 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.theme import ThemeUi, near
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
 
 class TestGuidedShellsAndTools(
+    ThemeUi,
     TerminalUi,
     TabsUi,
     ConnectionsUi,
@@ -140,11 +144,13 @@ class TestGuidedShellsAndTools(
         self._x11_ssh_session()
         self.handle_password_prompt(SSH_PASSWORD)
         self.wait(self.has_terminal, what="the X11 SSH terminal")
+        # The forwarded window itself is graded on Xvfb by test_ssh.py (MT-XPLAT-03,
+        # #4932); the real desktop keeps the adopt-the-X-server and Wayland checks.
         self.manual_step(
             "Run `xeyes` in the SSH terminal. Then, on a Wayland-only session without "
             "XWayland, connect the same connection again.",
-            "No prompt (the running X server is adopted) and the xeyes window appears; "
-            "Wayland-only shows the XWayland install hint, not a generic error.",
+            "No prompt (your running X server is adopted); Wayland-only shows the "
+            "XWayland install hint, not a generic error.",
         )
 
     @pytest.mark.manual(platforms=["macos"])
@@ -192,12 +198,27 @@ class TestGuidedShellsAndTools(
         )
 
     def test_latency_charts_are_readable(self):
-        """MT-NET-21."""
+        """MT-NET-21.
+
+        The machine checks the chart first (#4930): the canvas paints the trace in
+        the accent colour and the legend reads the latest sample in ms. The
+        operator keeps only the readability glance.
+        """
         self.close_all_tabs()
         self.start_ping("8.8.8.8")
+        self.wait(lambda: self.driver.exists("latency-chart-canvas"), what="the latency chart")
+        accent = self.root_color("--accent-color")
+        self.wait(
+            lambda: near(self.canvas_pixels("latency-chart-canvas"), accent) > 0,
+            what="the chart to draw its latency trace",
+        )
+        self.wait(
+            lambda: re.search(r"\dms", self.driver.get_text("ping-chart") or ""),
+            what="the legend to read the latest sample in ms",
+        )
         self.manual_step(
-            "Let several replies arrive, then hover the latency chart (pull the network "
-            "cable briefly to get a dropped sample).",
+            "The harness confirmed the trace and the ms read-out. Hover the latency chart "
+            "(pull the network cable briefly to get a dropped sample).",
             "Uniform stroke width; ms gridlines from 0 with '…ms' labels; x axis in elapsed "
             "seconds; hover shows the exact latency; drops show a dashed marker and a gap.",
         )

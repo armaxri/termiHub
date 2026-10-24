@@ -37,6 +37,7 @@ import pytest
 
 from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
 from . import deadlines, os_store, timing
+from .external_shims import HandoffShims
 from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance, require_test_bridge_build
@@ -152,6 +153,13 @@ class SystemTest:
     #: reason when the platform's store cannot be used.
     os_credential_store: ClassVar[bool] = False
 
+    #: Tools to shim on the suite app's ``PATH`` (#4932), e.g. ``("code",
+    #: "xdg-open")``: recording launchers that log every hand-off and exit 0
+    #: (see :mod:`termihub_harness.external_shims`). Only the app's own ``PATH``
+    #: changes; nothing is installed and no OS handler is touched. Tests read the
+    #: recorder as ``self.shims``.
+    external_app_shims: ClassVar[tuple[str, ...]] = ()
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -177,14 +185,24 @@ class SystemTest:
             except os_store.OsStoreUnavailable as exc:
                 pytest.skip(f"OS credential store unavailable: {exc}")
             request.cls.os_store = store
+        shims = None
+        if request.cls.external_app_shims:
+            shims = HandoffShims(request.cls.external_app_shims)
+            request.cls.shims = shims
+        extra_env = {
+            **(store.app_env() if store is not None else {}),
+            **(shims.app_env() if shims is not None else {}),
+        }
         try:
-            yield from cls._run_app(request, manual, echo_logs, store)
+            yield from cls._run_app(request, manual, echo_logs, extra_env or None)
         finally:
             if store is not None:
                 store.close()
+            if shims is not None:
+                shims.close()
 
     @classmethod
-    def _run_app(cls, request, manual: bool, echo_logs: bool, store):
+    def _run_app(cls, request, manual: bool, echo_logs: bool, extra_env):
         """Launch the suite's app, yield while the suite runs, then tear it down."""
         try:
             # fresh isolated config dir per suite
@@ -193,7 +211,7 @@ class SystemTest:
                 portable=request.cls.portable_mode,
                 sandbox_profile=request.cls.sandbox_profile,
                 unset_env=request.cls.unset_app_env,
-                extra_env=store.app_env() if store is not None else None,
+                extra_env=extra_env,
             )
         except FileNotFoundError as exc:
             pytest.skip(str(exc))

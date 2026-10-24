@@ -41,7 +41,7 @@ export const darkTheme: ThemeDefinition = {
 
     // Text
     textPrimary: "#dde1ec",
-    textSecondary: "#7b8597",
+    textSecondary: "#808a9c",
     // A11Y-007 / #2070: the raw design-system muted (#656e80) fails WCAG AA
     // (~3.4:1 on the sidebar surface). Lightened within the same modern
     // bluish-gray family to meet AA (5.0:1 on #161b24, 5.5:1 on #0f1117) —
