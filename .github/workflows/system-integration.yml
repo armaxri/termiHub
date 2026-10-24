@@ -378,6 +378,8 @@ jobs:
         # (test_os_credential_store.py, #4929): it runs the app against a
         # private gnome-keyring on its own D-Bus session and reads it with
         # secret-tool; without them that suite skips and the skip guard fails.
+        # xsettingsd lets the MT-UI-05 grade flip the Xvfb display's GTK theme
+        # light/dark (#4930).
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -396,6 +398,7 @@ jobs:
             libgl1-mesa-dri \
             dbus-x11 \
             xvfb \
+            xsettingsd \
             socat \
             libasound2-dev
 
