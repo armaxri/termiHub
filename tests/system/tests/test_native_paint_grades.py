@@ -101,7 +101,8 @@ class TestNativePaintGrades(
 
     @pytest.fixture(autouse=True)
     def _dark_theme(self):
-        if self.current_theme() != "dark":
+        # Unset means Dark (the default); selecting it again would write nothing.
+        if self.current_theme() not in (None, "dark"):
             self.set_theme("dark")
         yield
         self.remove_home(IMAGES_FILE)
