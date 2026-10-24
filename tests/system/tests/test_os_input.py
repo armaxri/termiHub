@@ -408,3 +408,17 @@ def test_unavailable_reason_off_ci(monkeypatch):
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv(os_input.GLOBAL_OPT_IN_ENV, raising=False)
     assert os_input.unavailable_reason() is not None
+
+
+def test_for_window_shifts_the_offset_by_the_frame_delta():
+    fake = FakeInput(100, env=CI)
+    screen = ScreenMapper.calibrate(fake, ProbeDriver(client=(400.0, 300.0)))
+    other = screen.for_window(None, OsWindow(2, 100, 140, 90, 500, 400))
+    assert other.offset == (screen.offset[0] + 40, screen.offset[1] + 40)
+    assert other.window.handle == 2
+
+
+def test_openbox_config_focuses_on_click():
+    from termihub_harness.os_input.linux import OPENBOX_RC
+
+    assert '<action name="Focus"/>' in OPENBOX_RC and 'context name="Client"' in OPENBOX_RC

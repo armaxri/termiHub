@@ -181,6 +181,8 @@ class TestOsPointerGrades(
         self.wait(lambda: torn.exists(CLOSE_DIALOG_END), what="the torn window's close dialog")
         torn.click(CLOSE_DIALOG_END)
         self.wait(lambda: len(self.driver.windows()) == 1, what="the torn window to close")
+        # Give the main window the OS focus back, as a user's click would.
+        self.os_activate()
 
     # ── MT-CONN-01: drag a connection into a folder ──────────────────────────
     def test_drag_connection_into_folder(self):
@@ -302,7 +304,7 @@ class TestOsPointerGrades(
         """A real right-click opens the terminal menu and inserts nothing."""
         self.run_command("echo MENU_ready_")
         self.wait(
-            lambda: self.driver.read_terminal(tab_id).count("MENU_ready_") >= 2,
+            lambda: terminal_echo(self.driver.read_terminal(tab_id), "MENU") == "ready",
             what="the echo's output line",
         )
         time.sleep(0.5)  # let the prompt redraw settle before the snapshot

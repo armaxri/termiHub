@@ -111,6 +111,8 @@ class TestOsKeyboardGrades(
         except AssertionError:
             pass
         self.wait(lambda: len(self.driver.windows()) == 1, what="the window to close")
+        # Give the main window the OS focus back, as a user's click would.
+        self.os_activate()
 
     def _scratch_editor(self, folder: Path) -> Path:
         """Open a new empty file in ``folder`` in the editor; return its path."""
@@ -268,9 +270,11 @@ class TestOsKeyboardGrades(
 
         # A click clears the selection: Ctrl+C with a selection copies instead.
         self._focus_terminal(tab_id, screen)
-        sleeper = "Start-Sleep 60" if sys.platform == "win32" else "sleep 60"
+        # ping is a console program, so Ctrl+C reaches it through ConPTY too.
+        sleeper = "ping -n 60 127.0.0.1" if sys.platform == "win32" else "sleep 60"
         osi.type_text(f"{sleeper}\n")
-        self.wait(lambda: "sleep 60" in self.driver.read_terminal(tab_id).lower(), what="sleep")
+        self.wait(lambda: sleeper in self.driver.read_terminal(tab_id), what="the long command")
+        time.sleep(1.0)
         osi.key("ctrl+c")
         osi.type_text("echo INT_ok_\n")
         assert self._wait_echo(tab_id, "INT") == "ok"
@@ -330,7 +334,13 @@ class TestOsKeyboardGrades(
             second.click(NEW_TERMINAL)
             tab_b = self.wait(lambda: window_tabs(second), what="a shell in window B")[0]["id"]
             self.wait(lambda: second.read_terminal(tab_b).strip(), what="window B's prompt")
-            screen_b = self.screen(second)
+            others = self.wait(
+                lambda: [w for w in osi.windows() if w.handle != screen_a.window.handle],
+                what="window B on screen",
+            )
+            window_b = min(others, key=lambda w: w.width * w.height)
+            screen_b = screen_a.for_window(second, window_b)
+            osi.activate(window=window_b)
             self.os_click(f"terminal-renderer-{tab_b}", screen=screen_b)
             self.wait(lambda: self.has_focus(second), what="window B to take the focus")
             osi.type_text("echo WB_bbb_\n")
@@ -384,4 +394,15 @@ class TestOsKeyboardGrades(
         osi.key_repeat("k", 30)  # type: ignore[attr-defined]
         osi.type_text("_\n")
         got = self._wait_echo(tab_id, "KR")
-        assert re.fullmatch(r"k{25,}", got), f"key repeat delivered {got!r}"
+        if not re.fullmatch(r"k{25,}", got):
+            # Tell a swallowed repeat (press-and-hold) from a lost event: the
+            # same key-downs without the autorepeat flag must all arrive.
+            osi.type_text("echo KD_")
+            for _ in range(10):
+                osi.key("k")
+            osi.type_text("_\n")
+            plain = self._wait_echo(tab_id, "KD")
+            pytest.fail(
+                f"30 autorepeat key-downs delivered {got!r}; 10 plain key-downs "
+                f"delivered {plain!r}"
+            )

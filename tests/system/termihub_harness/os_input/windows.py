@@ -86,6 +86,9 @@ class _GUITHREADINFO(ctypes.Structure):
     ]
 
 
+#: Smaller visible top-level windows are helper stubs, not app windows.
+MIN_WINDOW_SIZE = 64
+
 #: Keyboard layout ids (KLID) for :meth:`WindowsOsInput.set_layout`.
 KLID_US_INTERNATIONAL = "00020409"
 WM_INPUTLANGCHANGEREQUEST = 0x0050
@@ -131,12 +134,12 @@ class WindowsOsInput(OsInput):
         def visit(hwnd, _lparam):
             if not user32.IsWindowVisible(hwnd) or self._window_pid(hwnd) != pid:
                 return True
-            if user32.GetWindow(hwnd, 4):  # GW_OWNER: skip owned popups
-                return True
             rect = wintypes.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
             width, height = rect.right - rect.left, rect.bottom - rect.top
-            if width > 1 and height > 1:
+            # Skip tool/message stubs (16x16); a second app window may be owned
+            # by the first, so ownership is no filter.
+            if width > MIN_WINDOW_SIZE and height > MIN_WINDOW_SIZE:
                 found.append(OsWindow(int(hwnd), pid, rect.left, rect.top, width, height))
             return True
 

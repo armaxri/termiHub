@@ -125,19 +125,34 @@ class ScreenMapper:
                 os_input.activate(window=window, timeout=min(timeout, 5.0))
             except OsInputUnavailable:
                 continue  # e.g. a hidden helper window that cannot take focus
-            probe = driver.os_input_probe(reset=True)
-            x, y = window.center
-            os_input.pointer_move(x - 7, y - 7)
-            os_input.pointer_move(x, y)
-            event = _wait_trusted_move(driver, timeout=min(timeout, 3.0))
-            if event is None:
-                continue
-            scale = probe["devicePixelRatio"] if os_input.scale_is_device_pixel_ratio else 1.0
-            offset = (x - event["clientX"] * scale, y - event["clientY"] * scale)
-            return cls(os_input, driver, window, offset, scale)
+            cx, cy = window.center
+            # A freshly shown webview can miss the first move; nudge a few times.
+            for dx, dy in ((0, 0), (23, 17), (-19, 29)):
+                probe = driver.os_input_probe(reset=True)
+                x, y = cx + dx, cy + dy
+                os_input.pointer_move(x - 7, y - 7)
+                os_input.pointer_move(x, y)
+                event = _wait_trusted_move(driver, timeout=min(timeout, 2.0))
+                if event is None:
+                    continue
+                scale = probe["devicePixelRatio"] if os_input.scale_is_device_pixel_ratio else 1.0
+                offset = (x - event["clientX"] * scale, y - event["clientY"] * scale)
+                return cls(os_input, driver, window, offset, scale)
         raise OsInputUnavailable(
             f"no window of PID {pid or os_input.pid} received the calibration pointer move "
             f"(windows: {windows})"
+        )
+
+    def for_window(self, driver: Any, window: OsWindow) -> "ScreenMapper":
+        """A mapper for another window of the same app with identical chrome.
+
+        Its webview sits at the same offset inside its frame, so only the frame
+        position differs — for a second window the pointer cannot reach
+        uncovered (one of two stacked windows on macOS).
+        """
+        dx, dy = window.x - self.window.x, window.y - self.window.y
+        return ScreenMapper(
+            self.os_input, driver, window, (self.offset[0] + dx, self.offset[1] + dy), self.scale
         )
 
     def to_screen(self, client_x: float, client_y: float) -> tuple[float, float]:
