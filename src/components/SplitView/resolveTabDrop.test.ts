@@ -2,9 +2,16 @@
  * Table tests for the pure tab drag-and-drop routing extracted from
  * `SplitView.handleDragEnd` (TFE2-004, #4329).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { LeafPanel, PanelNode, TerminalTab } from "@/types/terminal";
-import { describePointerHits, resolveTabDrop, type TabDropInput } from "./resolveTabDrop";
+import {
+  describePointerHits,
+  dispatchTabDrop,
+  isOutsideViewport,
+  resolveTabDrop,
+  type TabDropInput,
+  type TabDropOps,
+} from "./resolveTabDrop";
 
 function tab(id: string, panelId: string): TerminalTab {
   return {
@@ -33,6 +40,8 @@ const root: PanelNode = {
   children: [leaf(LEFT, ["t1", "t2", "t3"]), leaf(RIGHT, ["u1", "u2"])],
 };
 
+const VIEWPORT = { width: 1280, height: 800 };
+
 function input(partial: Partial<TabDropInput>): TabDropInput {
   return {
     tabId: "t1",
@@ -41,6 +50,8 @@ function input(partial: Partial<TabDropInput>): TabDropInput {
     overPanelId: undefined,
     rootPanel: root,
     pointerHits: [],
+    dropPoint: { x: 100, y: 100 },
+    viewport: VIEWPORT,
     ...partial,
   };
 }
@@ -119,8 +130,111 @@ describe("resolveTabDrop", () => {
       input({ overId: "nope", overPanelId: LEFT }),
       { kind: "none" },
     ],
+    // Tear-off (#4916): released outside the window opens it in a new window.
+    [
+      "released left of the window tears the tab off",
+      input({ dropPoint: { x: -40, y: 200 } }),
+      { kind: "tearOff" },
+    ],
+    [
+      "released below the window tears the tab off",
+      input({ dropPoint: { x: 300, y: 950 } }),
+      { kind: "tearOff" },
+    ],
+    [
+      "outside the window wins over a droppable the overlay still overlaps",
+      input({ dropPoint: { x: 1290, y: 200 }, overId: `edge-${RIGHT}-right` }),
+      { kind: "tearOff" },
+    ],
+    [
+      "outside the window wins over a group chip at the clamped point",
+      input({
+        dropPoint: { x: 200, y: -5 },
+        pointerHits: [{ tabGroupId: "grp-2", newGroupButton: false }],
+      }),
+      { kind: "tearOff" },
+    ],
+    [
+      "outside the window with no source panel does nothing",
+      input({ fromPanelId: undefined, dropPoint: { x: -40, y: 200 } }),
+      { kind: "none" },
+    ],
+    [
+      "unknown drop point (non-pointer sensor) never tears off",
+      input({ dropPoint: null }),
+      { kind: "none" },
+    ],
+    [
+      "cancelled in-window release over a non-drop area is a no-op (MT-NIN-07)",
+      input({ dropPoint: { x: 640, y: 400 } }),
+      { kind: "none" },
+    ],
   ])("%s", (_label, given, expected) => {
     expect(resolveTabDrop(given)).toEqual(expected);
+  });
+});
+
+describe("isOutsideViewport", () => {
+  it.each([
+    [{ x: 0, y: 0 }, false],
+    [{ x: 1279, y: 799 }, false],
+    [{ x: 640, y: 400 }, false],
+    [{ x: -1, y: 400 }, true],
+    [{ x: 640, y: -1 }, true],
+    [{ x: 1280, y: 400 }, true],
+    [{ x: 640, y: 800 }, true],
+  ])("%o -> %s", (point, expected) => {
+    expect(isOutsideViewport(point, VIEWPORT)).toBe(expected);
+  });
+
+  it("treats a degenerate (zero-size) viewport as inside, never tearing off", () => {
+    expect(isOutsideViewport({ x: 5, y: 5 }, { width: 0, height: 0 })).toBe(false);
+  });
+});
+
+describe("dispatchTabDrop", () => {
+  function ops(): TabDropOps {
+    return {
+      moveTabToGroup: vi.fn(),
+      addTabGroupWithTab: vi.fn(),
+      splitPanelWithTab: vi.fn(),
+      moveTab: vi.fn(),
+      reorderTabs: vi.fn(),
+      moveTabToWindow: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it("routes a tear-off through the existing move-to-new-window path", () => {
+    const o = ops();
+    dispatchTabDrop({ kind: "tearOff" }, "t1", LEFT, o);
+    expect(o.moveTabToWindow).toHaveBeenCalledWith("t1", LEFT, { kind: "new" });
+    expect(o.moveTab).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a no-op drop", () => {
+    const o = ops();
+    dispatchTabDrop({ kind: "none" }, "t1", LEFT, o);
+    for (const fn of Object.values(o)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ kind: "moveToGroup", groupId: "g" } as const, "moveTabToGroup", ["t1", LEFT, "g"]],
+    [{ kind: "newGroup" } as const, "addTabGroupWithTab", ["t1", LEFT]],
+    [
+      { kind: "split", targetPanelId: RIGHT, edge: "left" } as const,
+      "splitPanelWithTab",
+      ["t1", LEFT, RIGHT, "left"],
+    ],
+    [{ kind: "move", toPanelId: RIGHT, index: 1 } as const, "moveTab", ["t1", LEFT, RIGHT, 1]],
+    [
+      { kind: "reorder", panelId: LEFT, oldIndex: 0, newIndex: 2 } as const,
+      "reorderTabs",
+      [LEFT, 0, 2],
+    ],
+  ])("routes %o to %s", (action, op, args) => {
+    const o = ops();
+    dispatchTabDrop(action, "t1", LEFT, o);
+    expect(o[op as keyof TabDropOps]).toHaveBeenCalledWith(...args);
   });
 });
 

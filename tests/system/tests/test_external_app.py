@@ -390,7 +390,7 @@ class TestExternalApp(
         print(f"[clipboard-check] marker landed on OS clipboard: {landed} · "
               f"content head: {clip_head!r}")
         assert landed, (
-            "'Copy to Clipboard' did not put the terminal buffer on the OS "
+            "'Copy All' did not put the terminal buffer on the OS "
             f"clipboard — read back: {clip_head!r}"
         )
 

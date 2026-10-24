@@ -65,20 +65,28 @@ export function isEventFromTextInput(e: KeyboardEvent): boolean {
  *
  * - `global` always fires.
  * - `terminal` fires only on a terminal tab when focus is not inside a text input.
+ *   The terminal's own xterm helper `<textarea>` does not count (`fromTerminal`):
+ *   every key typed into a focused terminal originates there, so treating it as
+ *   a text input would silently drop Cmd+Up/Down, find and clear (#4914).
  * - `editor-delegated` steps aside (returns `false`) whenever an editor/form is
  *   active or focus is inside a text input; otherwise it may fire.
  * - `yields-to-terminal` fires in every context: the terminal yield depends on
  *   the event's origin, which the key routers check themselves (#4773).
  * - `remote-desktop` never fires here: the remote-desktop canvas reads that
  *   binding itself (#4524).
+ *
+ * `editor-delegated` keeps bailing for the xterm textarea: the terminal's key
+ * router already runs copy/paste/select-all, and firing them here too would
+ * paste twice.
  */
 export function isScopeCompatible(
   scope: ShortcutScope,
   ctx: ActiveContext,
-  fromTextInput: boolean
+  fromTextInput: boolean,
+  fromTerminal = false
 ): boolean {
   if (scope === "global" || scope === "yields-to-terminal") return true;
-  if (scope === "terminal") return ctx === "terminal" && !fromTextInput;
+  if (scope === "terminal") return ctx === "terminal" && (!fromTextInput || fromTerminal);
   if (scope === "remote-desktop") return false;
   // editor-delegated
   return !(ctx === "editor" || ctx === "form" || fromTextInput);
