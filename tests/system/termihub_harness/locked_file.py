@@ -54,7 +54,7 @@ def _chflags(path: Path) -> Iterator[None]:
 def _chattr(path: Path) -> Iterator[None]:
     if shutil.which("chattr") is None:
         raise LockUnavailable("chattr is not on PATH (install e2fsprogs)")
-    if _run(["sudo", "-n", "true"]).returncode != 0:
+    if shutil.which("sudo") is None or _run(["sudo", "-n", "true"]).returncode != 0:
         raise LockUnavailable("locking a file on Linux needs passwordless sudo for chattr +i")
     _require(_run(["sudo", "-n", "chattr", "+i", str(path)]), f"chattr +i {path}")
     try:

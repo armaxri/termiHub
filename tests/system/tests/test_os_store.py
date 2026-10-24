@@ -156,3 +156,16 @@ def test_locked_file_cannot_be_replaced_and_is_unlocked_after(tmp_path):
 def test_locked_file_refuses_a_missing_file(tmp_path):
     with pytest.raises(locked_file.LockUnavailable, match="not a file"):
         locked_file.locked(tmp_path / "missing.json")
+
+
+def test_secret_tool_usernames_survive_split_streams():
+    # Ubuntu's secret-tool prints item headers on stdout, attributes on stderr.
+    stdout = "[/1]\nlabel = a\nsecret = x\n[/2]\nlabel = b\nsecret = y\n"
+    stderr = (
+        "attribute.service = termiHub\nattribute.username = conn-a:password\n"
+        "attribute.service = termiHub\nattribute.username = conn-b:password\n"
+    )
+    assert os_store.parse_secret_tool_usernames(stdout + "\n" + stderr) == {
+        "conn-a:password",
+        "conn-b:password",
+    }

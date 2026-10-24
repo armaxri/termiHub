@@ -281,6 +281,16 @@ def parse_secret_tool_search(text: str) -> list[dict[str, str]]:
     return items
 
 
+def parse_secret_tool_usernames(text: str) -> set[str]:
+    """Every ``attribute.username`` in ``secret-tool search`` output (both streams)."""
+    prefix = "attribute.username = "
+    return {
+        line.strip()[len(prefix) :]
+        for line in text.splitlines()
+        if line.strip().startswith(prefix)
+    }
+
+
 class SecretServiceStore(OsCredentialStore):
     """A private session bus with its own gnome-keyring, for the app and secret-tool."""
 
@@ -346,10 +356,35 @@ class SecretServiceStore(OsCredentialStore):
             raise OsStoreUnavailable(
                 f"the private gnome-keyring refused a write: {stored.stderr.strip()}"
             )
-        if self.value("probe", probe) != "probe-secret":
-            raise OsStoreUnavailable("the private gnome-keyring did not return the probe")
+        while self.value("probe", probe) != "probe-secret":
+            if time.monotonic() >= deadline:
+                raise OsStoreUnavailable(
+                    f"the private gnome-keyring did not return the probe: {self._diagnose(probe)}"
+                )
+            time.sleep(0.2)
         self.delete("probe", probe)
         print(f"[os_store] using a private gnome-keyring on {self._bus_address}")
+
+    def _diagnose(self, probe: str) -> str:
+        """What the store answers, for an unavailable-store message."""
+        parts = []
+        for args in (
+            ["secret-tool", "lookup", "service", probe, "username", "probe"],
+            ["secret-tool", "search", "--all", "service", probe],
+            [
+                "gdbus", "call", "--session", "--dest", "org.freedesktop.secrets",
+                "--object-path", "/org/freedesktop/secrets",
+                "--method", "org.freedesktop.Secret.Service.ReadAlias", "default",
+            ],
+        ):
+            if shutil.which(args[0]) is None:
+                continue
+            proc = _run(args, env=self.tool_env(), check=False)
+            parts.append(
+                f"`{' '.join(args[:3])}` -> {proc.returncode} "
+                f"out={proc.stdout.strip()!r} err={proc.stderr.strip()!r}"
+            )
+        return "; ".join(parts)
 
     def _base_env(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -374,10 +409,11 @@ class SecretServiceStore(OsCredentialStore):
             env=self.tool_env(),
             check=False,
         )
-        # secret-tool prints the item attributes on stdout and some versions
-        # put parts on stderr; parse both.
-        items = parse_secret_tool_search(proc.stdout + "\n" + proc.stderr)
-        return {i["username"] for i in items if i.get("service") == service and "username" in i}
+        # The search matched on the service already. secret-tool prints each
+        # item's header on stdout but (in some versions) its attributes on
+        # stderr, so the two streams cannot be re-joined per item: collect
+        # every username attribute from both.
+        return parse_secret_tool_usernames(proc.stdout + "\n" + proc.stderr)
 
     def value(self, account: str, service: str = SERVICE) -> Optional[str]:
         proc = _run(
