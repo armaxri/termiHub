@@ -137,7 +137,16 @@ class TestOsKeyboardGrades(
             yield [["alt+e", "e"], ["alt+u", "u"]], "éü"
             return
         if sys.platform == "win32":
-            pytest.skip("dead keys need a US-International layout on the WebView2 input thread")
+            from termihub_harness.os_input.windows import KLID_US_INTERNATIONAL
+
+            previous = osi.set_layout(KLID_US_INTERNATIONAL)  # type: ignore[attr-defined]
+            try:
+                # US-International: ' is dead acute, Shift+' dead diaeresis.
+                yield [["'", "e"], ["shift+'", "u"]], "éü"
+            finally:
+                if previous:
+                    osi.post_layout(previous)  # type: ignore[attr-defined]
+            return
         layout = osi.current_layout()  # type: ignore[attr-defined]
         osi.set_layout("us", "intl")  # type: ignore[attr-defined]
         try:

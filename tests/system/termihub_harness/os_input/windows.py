@@ -17,7 +17,13 @@ import time
 from ctypes import wintypes
 from typing import Any, Optional, Sequence
 
-from .base import OsInput, OsInputUnavailable, OsWindow
+from .base import (
+    GlobalInjectionRefused,
+    OsInput,
+    OsInputUnavailable,
+    OsWindow,
+    global_injection_allowed,
+)
 from .keymap import us_key_for_char, win_vk
 
 INPUT_MOUSE = 0
@@ -64,6 +70,25 @@ class _INPUTUNION(ctypes.Union):
 
 class _INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+class _GUITHREADINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND),
+        ("hwndFocus", wintypes.HWND),
+        ("hwndCapture", wintypes.HWND),
+        ("hwndMenuOwner", wintypes.HWND),
+        ("hwndMoveSize", wintypes.HWND),
+        ("hwndCaret", wintypes.HWND),
+        ("rcCaret", wintypes.RECT),
+    ]
+
+
+#: Keyboard layout ids (KLID) for :meth:`WindowsOsInput.set_layout`.
+KLID_US_INTERNATIONAL = "00020409"
+WM_INPUTLANGCHANGEREQUEST = 0x0050
 
 
 def modifier_vks(mods: Sequence[str]) -> list[int]:
@@ -185,6 +210,48 @@ class WindowsOsInput(OsInput):
                 self._key(pid, [], mapped[0])
                 continue
             self._send([self._key_input(0, False, unicode=char), self._key_input(0, True, unicode=char)])
+
+    # ── Keyboard layout ──────────────────────────────────────────────────────
+    def _focused_hwnd(self) -> Optional[int]:
+        """The focused window of the foreground thread (WebView2's input window)."""
+        user32 = self._user32
+        foreground = user32.GetForegroundWindow()
+        if not foreground:
+            return None
+        info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+        thread = user32.GetWindowThreadProcessId(foreground, None)
+        if user32.GetGUIThreadInfo(thread, ctypes.byref(info)) and info.hwndFocus:
+            return int(info.hwndFocus)
+        return int(foreground)
+
+    def set_layout(self, klid: str) -> int:
+        """Switch the focused window's input language to ``klid``; return the old HKL.
+
+        Asks the focused window itself (``WM_INPUTLANGCHANGEREQUEST``), as the
+        language bar does, after loading the layout. The focused window must
+        belong to the test instance (checked like any global input).
+        """
+        if not global_injection_allowed(self._env):
+            raise GlobalInjectionRefused("changing the keyboard layout is refused outside CI")
+        self._require_global(self.pid)
+        user32 = self._user32
+        user32.LoadKeyboardLayoutW.restype = ctypes.c_void_p
+        user32.GetKeyboardLayout.restype = ctypes.c_void_p
+        hkl = user32.LoadKeyboardLayoutW(klid, 1)  # KLF_ACTIVATE
+        if not hkl:
+            raise OsInputUnavailable(f"keyboard layout {klid} could not be loaded")
+        return self.post_layout(hkl)
+
+    def post_layout(self, hkl: int) -> int:
+        """Ask the focused window to use ``hkl``; return the HKL it had."""
+        user32 = self._user32
+        target = self._focused_hwnd()
+        if target is None:
+            raise OsInputUnavailable("no focused window to switch the layout of")
+        previous = user32.GetKeyboardLayout(user32.GetWindowThreadProcessId(target, None))
+        user32.PostMessageW(wintypes.HWND(target), WM_INPUTLANGCHANGEREQUEST, 0, ctypes.c_void_p(hkl))
+        time.sleep(0.5)
+        return int(previous or 0)
 
     # ── Pointer ──────────────────────────────────────────────────────────────
     def _pointer_move(self, pid: int, x: int, y: int) -> None:
