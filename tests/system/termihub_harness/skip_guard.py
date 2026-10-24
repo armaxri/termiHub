@@ -16,6 +16,10 @@ honest. A lane opts in by name (``TERMIHUB_SKIP_GUARD_LANE``, set per step in
   reason fails the lane;
 * a ``max_skips`` baseline — more skips than that fails the lane even when each
   reason is allowlisted (a new environment gap is a decision, not an accident).
+  Guided-manual tests skipped by their own gate (the ``manual`` marker *and* a
+  "guided-manual test" reason) do not count against it (#4921): no unattended
+  run can ever execute them, so their number tracks how many manual checks
+  exist, not how healthy the lane is. They still need their allowlist entry.
 
 Independently of the allowlist, a lane that collected nothing, or whose every
 collected test skipped, fails: a suite that ran zero tests proves nothing.
@@ -52,6 +56,13 @@ FIXTURE_UNAVAILABLE = re.compile(r"fixtures? unavailable", re.IGNORECASE)
 
 _TRUTHY = ("1", "true", "yes", "on")
 
+#: The pytest marker of a guided-manual test (registered in ``conftest.py``).
+MANUAL_MARKER = "manual"
+
+#: Matches every reason ``manual.manual_skip_reason`` gives when it gates a
+#: guided-manual test off (no ``--manual``, no TTY, wrong platform).
+MANUAL_GATE_REASON = re.compile(r"^guided-manual test\b")
+
 
 @dataclass(frozen=True)
 class Skip:
@@ -59,6 +70,14 @@ class Skip:
 
     nodeid: str
     reason: str
+    #: The test carries the ``manual`` marker (from the report's keywords).
+    manual: bool = False
+
+    @property
+    def is_manual_gate(self) -> bool:
+        """A guided-manual test skipped by its own gate, not by a fixture or
+        an environment gap inside it. Exempt from ``max_skips`` (#4921)."""
+        return self.manual and MANUAL_GATE_REASON.search(self.reason) is not None
 
 
 @dataclass(frozen=True)
@@ -159,6 +178,11 @@ def skip_reason(longrepr: Any) -> str:
     return text[len("Skipped: ") :] if text.startswith("Skipped: ") else text
 
 
+def counted_skips(skips: Iterable[Skip]) -> list[Skip]:
+    """The skips that count against ``max_skips``: all but guided-manual gate skips."""
+    return [skip for skip in skips if not skip.is_manual_gate]
+
+
 def evaluate(
     lane: str,
     *,
@@ -193,10 +217,12 @@ def evaluate(
                 if skip not in unexpected:
                     unexpected.append(skip)
     limit = allowlist.max_skips.get(lane)
-    if limit is not None and len(skips) > limit:
+    counted = counted_skips(skips)
+    if limit is not None and len(counted) > limit:
+        exempt = len(skips) - len(counted)
         problems.append(
-            f"{len(skips)} skips exceed the committed baseline of {limit} for lane '{lane}' "
-            f"(max_skips in {ALLOWLIST_PATH.name})"
+            f"{len(counted)} skips exceed the committed baseline of {limit} for lane '{lane}' "
+            f"(max_skips in {ALLOWLIST_PATH.name}; {exempt} guided-manual skip(s) not counted)"
         )
     return Verdict(
         lane=lane, collected=collected, skips=list(skips), unexpected=unexpected, problems=problems
@@ -220,7 +246,9 @@ def format_summary(
     for skip in skips:
         by_reason.setdefault(skip.reason, []).append(skip.nodeid)
     unexpected = {skip.nodeid for skip in verdict.unexpected} if verdict else set()
-    lines.append(f"{len(skips)} skipped test(s), {len(by_reason)} distinct reason(s)")
+    exempt = len(skips) - len(counted_skips(skips))
+    note = f" ({exempt} guided-manual, not counted against max_skips)" if exempt else ""
+    lines.append(f"{len(skips)} skipped test(s), {len(by_reason)} distinct reason(s){note}")
     for reason, nodeids in sorted(by_reason.items(), key=lambda item: (-len(item[1]), item[0])):
         flag = " [UNEXPECTED]" if any(nodeid in unexpected for nodeid in nodeids) else ""
         lines.append(f"- ({len(nodeids)}){flag} {reason}")
