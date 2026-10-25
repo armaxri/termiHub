@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { readTerminalCells } from "./terminalCells";
+import { paletteColor, readTerminalCells } from "./terminalCells";
 import type { TerminalCell } from "./protocol";
 
 const ZWJ = "‍";
@@ -124,8 +124,8 @@ describe("readTerminalCells against the real xterm with Unicode 11 (#3059)", () 
       y: 0,
       text: "ab",
       cells: [
-        { x: 0, chars: "a", width: 1 },
-        { x: 1, chars: "b", width: 1 },
+        { x: 0, chars: "a", width: 1, fg: "#ffffff", bg: "#000000", bold: false },
+        { x: 1, chars: "b", width: 1, fg: "#ffffff", bg: "#000000", bold: false },
       ],
     });
     expect(rows[1].cells).toEqual([]);
@@ -139,5 +139,79 @@ describe("readTerminalCells against the real xterm with Unicode 11 (#3059)", () 
       ["語", 2],
       ["", 0],
     ]);
+  });
+});
+
+describe("readTerminalCells colours and bold (#4937)", () => {
+  const theme = {
+    background: "#0f1117",
+    foreground: "#dde1ec",
+    black: "#0f1117",
+    red: "#cd3131",
+    brightBlue: "#3b8eea",
+  };
+  let term: XTerm;
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    term = new XTerm({ cols: 40, rows: 6, theme, allowProposedApi: true });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    term.open(host);
+  });
+
+  afterEach(() => {
+    term.dispose();
+    host.remove();
+  });
+
+  /** `[chars, fg, bg, bold]` of the cells after `marker`. */
+  async function colours(
+    data: string,
+    marker: string
+  ): Promise<[string, string, string, boolean][]> {
+    await write(term, `${data}\x1b[0m\r\n`);
+    return cellsAfter(term, marker).map((c) => [c.chars, c.fg, c.bg, c.bold]);
+  }
+
+  it("resolves default colours to the theme foreground and background", async () => {
+    expect(await colours("D:x", "D:")).toEqual([["x", "#dde1ec", "#0f1117", false]]);
+  });
+
+  it("resolves ANSI colours through the theme palette", async () => {
+    expect(await colours("A:\x1b[31mr\x1b[94mb\x1b[40m ", "A:")).toEqual([
+      ["r", "#cd3131", "#0f1117", false],
+      ["b", "#3b8eea", "#0f1117", false],
+      [" ", "#3b8eea", "#0f1117", false],
+    ]);
+  });
+
+  it("falls back to xterm's default for an ANSI colour the theme leaves unset", async () => {
+    expect(await colours("U:\x1b[32mg", "U:")).toEqual([["g", "#4e9a06", "#0f1117", false]]);
+  });
+
+  it("resolves 256-colour cube, grey ramp and truecolour backgrounds", async () => {
+    const cells = await colours(
+      "C:\x1b[48;5;196m \x1b[48;5;46m \x1b[48;5;21m \x1b[48;5;244m \x1b[48;2;1;2;3m ",
+      "C:"
+    );
+    expect(cells.map((c) => c[2])).toEqual(["#ff0000", "#00ff00", "#0000ff", "#808080", "#010203"]);
+  });
+
+  it("swaps the colours of an inverse cell and reports bold", async () => {
+    expect(await colours("I:\x1b[7;31mi\x1b[27;1mB", "I:")).toEqual([
+      ["i", "#0f1117", "#cd3131", false],
+      ["B", "#cd3131", "#0f1117", true],
+    ]);
+  });
+
+  it("builds the same 256-colour table as xterm", () => {
+    expect(paletteColor(theme, 1)).toBe("#cd3131");
+    expect(paletteColor(theme, 16)).toBe("#000000");
+    expect(paletteColor(theme, 226)).toBe("#ffff00");
+    expect(paletteColor(theme, 201)).toBe("#ff00ff");
+    expect(paletteColor(theme, 232)).toBe("#080808");
+    expect(paletteColor(theme, 255)).toBe("#eeeeee");
+    expect(paletteColor({ extendedAnsi: ["#123456"] }, 16)).toBe("#123456");
   });
 });

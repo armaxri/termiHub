@@ -397,7 +397,7 @@ builds if stale and tees a transcript):
 #### Session 1: Mac — look and feel, native input, macOS app paths (~4 h)
 
 ```bash
-./scripts/run-guided-manual.sh -k "visual_rendering or guided_look_and_feel"
+./scripts/run-guided-manual.sh -k "guided_look_and_feel"
 ./scripts/run-guided-manual.sh -k "input_routing or guided_native_input"
 ./scripts/run-guided-manual.sh -k "guided_app_os or guided_credentials"
 ```

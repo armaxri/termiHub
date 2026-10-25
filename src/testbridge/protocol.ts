@@ -748,6 +748,17 @@ export interface TerminalCell {
   chars: string;
   /** Column width: 2 = wide character head, 0 = its spacer cell, 1 = narrow. */
   width: number;
+  /**
+   * The colour the cell's glyph paints in, resolved through the terminal's
+   * theme palette (ANSI 0-15 from the theme, 16-255 from the xterm cube and
+   * grey ramp, truecolour as-is, default as the theme foreground), after
+   * inverse video (#4937).
+   */
+  fg: string;
+  /** The colour the cell's background paints in, resolved like {@link fg}. */
+  bg: string;
+  /** Whether the cell is bold (SGR 1). */
+  bold: boolean;
 }
 
 /** One buffer row's cell model, returned by `readTerminalCells`. */
@@ -822,6 +833,24 @@ export interface TerminalDecoration {
   height: number;
 }
 
+/** A rect in the page's CSS px, relative to the viewport's top-left. */
+export interface PageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The page's own size and pixel ratio (#4937): a native window capture is in
+ * device px, so a test maps a {@link PageRect} into it with these.
+ */
+export interface PageMetrics {
+  devicePixelRatio: number;
+  innerWidth: number;
+  innerHeight: number;
+}
+
 /** A terminal's real render-path state, returned by `measureTerminal`. */
 export interface TerminalMeasurement {
   /** The xterm grid the terminal (and its PTY) is sized to. */
@@ -844,6 +873,10 @@ export interface TerminalMeasurement {
   paint: TerminalPaint;
   /** Rendered decorations, in DOM order (#4930). */
   decorations: TerminalDecoration[];
+  /** Where the cell grid (`.xterm-screen`) sits in the page; `null` before xterm has a screen (#4937). */
+  screenRect: PageRect | null;
+  /** The page's size and device pixel ratio (#4937). */
+  page: PageMetrics;
   /** Scroll position, as `getTerminalViewport` reports it. */
   viewportY: number;
   baseY: number;

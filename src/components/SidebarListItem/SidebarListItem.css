@@ -50,7 +50,11 @@
 }
 
 .sidebar-list-item__name {
-  flex: 1 1 auto;
+  /* The name gives way first: with equal shrink factors a long name squeezed a
+     short type badge to "H…" at the minimum sidebar width (#4954). The badge
+     only shrinks once the name is gone, and its 50% cap keeps the name the
+     larger share. */
+  flex: 1 1000 auto;
   min-width: 0;
   font-size: var(--font-size-sm);
   color: var(--text-primary);

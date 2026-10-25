@@ -632,7 +632,14 @@ class ConnectionsUi(HarnessMixin):
                 return False
             # Clear any stale/half-open menu so its overlay does not block the
             # right-click, re-open on the current trigger, and click if it mounted.
-            self.driver.press_key("Escape")
+            # The Escape is aimed at the trigger, never the focused element: an
+            # open connection editor autofocuses its name input, and a bare
+            # Escape lands there and *cancels* (closes) that editor tab — which
+            # read as "no second edit tab" on Windows, where WebView2 honours the
+            # autofocus when the app is the foreground window (#4968). Radix's
+            # dismiss layer listens on the document, so the bubbled Escape still
+            # closes a stale menu.
+            self.driver.press_key("Escape", trigger)
             self.driver.context_menu(trigger)
             if self.driver.exists(action_test_id):
                 self.driver.click(action_test_id)
@@ -680,8 +687,11 @@ class ConnectionsUi(HarnessMixin):
             # Menu closed (or closed under us) — dismiss any stale/half-open menu
             # so its overlay does not make the toggle unhittable, re-open, and
             # click if the item mounted immediately (else retry on the next poll).
-            self.driver.press_key("Escape")
-            self.driver.context_menu(folder_toggle_testid(folder_id))
+            # Aimed at the toggle, not the focused element, so it cannot cancel a
+            # focused editor tab (see ``connection_context_action``, #4968).
+            toggle = folder_toggle_testid(folder_id)
+            self.driver.press_key("Escape", toggle)
+            self.driver.context_menu(toggle)
             if self.driver.exists(action_test_id):
                 self.driver.click(action_test_id)
                 return True
@@ -690,5 +700,10 @@ class ConnectionsUi(HarnessMixin):
         self.wait(opened_and_clicked, what=f"the folder menu action {action_test_id!r}")
 
     def dismiss_menu(self) -> None:
-        """Close any open context menu / dialog via Escape."""
+        """Close any open context menu / dialog via Escape.
+
+        The Escape goes to the *focused* element, so with a connection editor
+        focused it cancels (closes) that editor — use it only where that is
+        harmless, never to tidy up between edits whose tabs must survive (#4968).
+        """
         self.driver.press_key("Escape")

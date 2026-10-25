@@ -207,6 +207,25 @@ describe("ResponsiveToolbar", () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
+  it("runs the same handler from every overflow item as from its button (MT-UI-53)", () => {
+    const handlers = { new: vi.fn(), save: vi.fn(), export: vi.fn(), import: vi.fn() };
+    render(makeActions(handlers).map((a) => ({ ...a, primary: undefined })));
+    ro.resize(400);
+    for (const name of ALL_NAMES) act(() => liveButton(name)?.click());
+    const viaButtons = Object.values(handlers).map((h) => h.mock.calls.length);
+    expect(viaButtons).toEqual([1, 1, 1, 1]);
+
+    ro.resize(40);
+    for (const name of ALL_NAMES) {
+      openOverflow();
+      const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (el) => el.textContent === name
+      );
+      act(() => item?.click());
+    }
+    expect(Object.values(handlers).map((h) => h.mock.calls.length)).toEqual([2, 2, 2, 2]);
+  });
+
   it("goes straight from labels to the overflow menu just below the full width", () => {
     render();
     ro.resize(298);

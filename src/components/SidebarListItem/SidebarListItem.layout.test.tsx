@@ -74,7 +74,8 @@ describe("SidebarListItem — names get the full row width (#4709)", () => {
 
   it("lets the name take all remaining width and shrink below its content", () => {
     const name = rule(".sidebar-list-item__name");
-    expect(name).toMatch(/flex:\s*1 1 auto/);
+    // It also shrinks before a short type badge does (#4954).
+    expect(name).toMatch(/flex:\s*1 1000 auto/);
     expect(name).toMatch(/min-width:\s*0/);
     expect(name).toMatch(/text-overflow:\s*ellipsis/);
   });

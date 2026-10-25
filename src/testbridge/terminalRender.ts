@@ -16,6 +16,7 @@ import {
   readRawRenderedCellWidth,
 } from "@/components/Terminal/xtermDimensions";
 import type {
+  PageRect,
   TerminalDecoration,
   TerminalMeasurement,
   TerminalPaint,
@@ -147,6 +148,14 @@ function measureDecorations(element: HTMLElement): TerminalDecoration[] {
   });
 }
 
+/** The cell grid's rect in the page, or `null` before xterm has a screen (#4937). */
+function measureScreenRect(element: HTMLElement): PageRect | null {
+  const screen = element.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen) return null;
+  const rect = screen.getBoundingClientRect();
+  return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
 /** Read a registered terminal's real render-path state (`measureTerminal`). */
 export function measureTerminal({
   element,
@@ -156,6 +165,7 @@ export function measureTerminal({
   const proposed = fitAddon.proposeDimensions();
   const canvas = findWebglCanvas(element);
   const buffer = xterm.buffer.active;
+  const view = element.ownerDocument.defaultView ?? window;
   return {
     grid: { cols: xterm.cols, rows: xterm.rows },
     proposed:
@@ -173,6 +183,12 @@ export function measureTerminal({
     scrollbar: measureScrollbar(element),
     paint: measurePaint(element, xterm),
     decorations: measureDecorations(element),
+    screenRect: measureScreenRect(element),
+    page: {
+      devicePixelRatio: view.devicePixelRatio,
+      innerWidth: view.innerWidth,
+      innerHeight: view.innerHeight,
+    },
     viewportY: buffer.viewportY,
     baseY: buffer.baseY,
   };

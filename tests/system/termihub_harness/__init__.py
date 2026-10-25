@@ -138,7 +138,13 @@ from .dns_stub import STUB_EXPECTED_VALUES, StubDnsServer
 from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
 from .serial_echo import SerialEchoPair, SerialEchoUnavailable
-from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
+from .ssh_agent import (
+    PrivateSshAgent,
+    PrivateSshAgentUnavailable,
+    agent_has_key,
+    key_fingerprint,
+    sha256_fingerprints,
+)
 from .systemtest import RerunResetError, SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
@@ -327,6 +333,8 @@ __all__ = [
     "tftp_download",
     "TftpUnavailable",
     "agent_has_key",
+    "PrivateSshAgent",
+    "PrivateSshAgentUnavailable",
     "key_fingerprint",
     "sha256_fingerprints",
     "ensure_local_display",
