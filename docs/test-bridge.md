@@ -242,6 +242,7 @@ unmount.
 | `readFrontendLog`          | Read the Log Viewer history, optionally filtered by message    |
 | `compose`                  | Test-only: replay an IME composition on a control (see below)  |
 | `loseTerminalWebglContext` | Test-only: force a WebGL context loss (see below)              |
+| `readTerminalWebglFrame`   | Read back the pixels the WebGL renderer drew (see below)       |
 | `sampleCanvas`             | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
 | `getState`                 | Read app store state, optionally by dot-path                   |
 | `screenshot`               | Capture a PNG of the rendered app as a data URL (see below)    |
@@ -400,6 +401,31 @@ drives loss → DOM fallback → reacquire on the next tab show, #4426) is
 `tests/system/tests/test_terminal_render_paths.py`. `screenRect` and `page`
 (#4937) let a native window capture be mapped onto the cell grid (see
 `termihub_harness/ui/native_capture.py`).
+
+### WebGL readback (`readTerminalWebglFrame`)
+
+`{ action: "readTerminalWebglFrame", tabId?, repaint? }` reads back the pixels
+the terminal's WebGL renderer drew, inside the app (#4970). The hosted macOS
+runners' window server image never contains the WebGL canvas (every
+`screencapture`, `CGWindowListCreateImage` and ScreenCaptureKit path shows the
+bare terminal background), so the macOS text grades read the canvas this way.
+It answers `{ width, height, devicePixelRatio, rgb }`, where `rgb` is base64
+of `width * height * 3` row-major bytes and canvas pixel (x, y) is
+`.xterm-screen` CSS px (x, y) times `devicePixelRatio`, or `null` on the DOM
+renderer.
+
+The addon's context has `preserveDrawingBuffer: false`, so the canvas only
+holds pixels inside the animation frame that drew them (a later copy reads
+black). With `repaint: true` (the default) the bridge forces a full repaint and
+copies the canvas in that frame. With `repaint: false` it answers the last
+frame the renderer drew on its own: the first such read on a terminal arms a
+copy on every xterm `onRender` and seeds it with one forced repaint, so a
+renderer that stops drawing (a zoom or split that leaves the canvas stale)
+leaves a stale frame behind. It rejects when no animation frame arrives within
+5 s (an occluded, throttled web view). Python:
+`driver.read_terminal_webgl_frame(tab_id=None, repaint=True)`; decode it with
+`window_capture.frame_from_rgb_base64`, or use
+`NativeCaptureUi.capture_terminal_webgl`, which maps the cell grid onto it.
 
 ### Raw output and frontend log (`readTerminalOutput`, `readFrontendLog`)
 
