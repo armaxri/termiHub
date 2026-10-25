@@ -417,8 +417,3 @@ def test_for_window_shifts_the_offset_by_the_frame_delta():
     assert other.offset == (screen.offset[0] + 40, screen.offset[1] + 40)
     assert other.window.handle == 2
 
-
-def test_openbox_config_focuses_on_click():
-    from termihub_harness.os_input.linux import OPENBOX_RC
-
-    assert '<action name="Focus"/>' in OPENBOX_RC and 'context name="Client"' in OPENBOX_RC

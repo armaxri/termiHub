@@ -127,47 +127,6 @@ class TestOsPointerGrades(
         )
         assert self.find_tab(name) is not None
 
-    # ── MT-NIN-07: tab tear-off ──────────────────────────────────────────────
-    def test_tab_drag_released_outside_window_tears_off(self):
-        """MT-NIN-07 (#4916): a tab released inside the window off every drop
-        target changes nothing; released outside the window it opens in a new
-        window with its session intact."""
-        osi = self.os_input()
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.driver.click(NEW_TERMINAL)
-        self.wait(lambda: self.tab_count() == 2, what="two tabs")
-        moved = window_tabs(self.driver)[-1]
-        session_id = self.live_session_id(self.driver, moved["id"])
-        self.run_command("echo torn-off")
-        self.wait_for_output("torn-off", tab_id=moved["id"])
-        # Leave screen space around the window for the release outside it.
-        self.driver.resize_window(900, 620)
-        screen = self.os_activate()
-
-        before = self.driver.get_state("rootPanel")
-        osi.drag(screen.point(f"tab-{moved['id']}"), screen.point(SHORTCUT_FOCUS_TARGET))
-        self.wait(lambda: self.driver.get_state("rootPanel") == before, what="an unchanged layout")
-        assert len(self.driver.windows()) == 1
-
-        labels_before = set(self.driver.windows())
-        screen = self.os_activate()
-        osi.drag(screen.point(f"tab-{moved['id']}"), screen.outside_point())
-        self.wait(lambda: set(self.driver.windows()) - labels_before, what="the torn-off window")
-        (label,) = set(self.driver.windows()) - labels_before
-        torn = self.driver.window(label)
-        tab = self.wait(lambda: find_tab_by_session(torn, session_id), what="the moved session")
-        self.wait(lambda: "torn-off" in torn.read_terminal(tab["id"]), what="its scrollback")
-        assert self.tab_count() == 1
-        assert find_tab_by_session(self.driver, session_id) is None
-        # Close the torn-off window so later suites see one window again.
-        torn.close_window()
-        self.wait(lambda: torn.exists(CLOSE_DIALOG_END), what="the torn window's close dialog")
-        torn.click(CLOSE_DIALOG_END)
-        self.wait(lambda: len(self.driver.windows()) == 1, what="the torn window to close")
-        # Give the main window the OS focus back, as a user's click would.
-        self.os_activate()
-
     # ── MT-CONN-01: drag a connection into a folder ──────────────────────────
     def test_drag_connection_into_folder(self):
         """MT-CONN-01: dragging a root connection onto a folder nests it there."""
@@ -266,3 +225,46 @@ class TestOsPointerGrades(
             lambda: not self.driver.exists("terminal-context-copy-all"), what="the menu to close"
         )
         assert self.driver.read_terminal(tab_id) == before, "the right-click pasted"
+
+    # Last in the suite: after the torn-off window closes, the main window's
+    # toolbar no longer opens terminals on Linux/Windows (#4978).
+    # ── MT-NIN-07: tab tear-off ──────────────────────────────────────────────
+    def test_tab_drag_released_outside_window_tears_off(self):
+        """MT-NIN-07 (#4916): a tab released inside the window off every drop
+        target changes nothing; released outside the window it opens in a new
+        window with its session intact."""
+        osi = self.os_input()
+        self.close_all_tabs()
+        self.ensure_terminal()
+        self.driver.click(NEW_TERMINAL)
+        self.wait(lambda: self.tab_count() == 2, what="two tabs")
+        moved = window_tabs(self.driver)[-1]
+        session_id = self.live_session_id(self.driver, moved["id"])
+        self.run_command("echo torn-off")
+        self.wait_for_output("torn-off", tab_id=moved["id"])
+        # Leave screen space around the window for the release outside it.
+        self.driver.resize_window(900, 620)
+        screen = self.os_activate()
+
+        before = self.driver.get_state("rootPanel")
+        osi.drag(screen.point(f"tab-{moved['id']}"), screen.point(SHORTCUT_FOCUS_TARGET))
+        self.wait(lambda: self.driver.get_state("rootPanel") == before, what="an unchanged layout")
+        assert len(self.driver.windows()) == 1
+
+        labels_before = set(self.driver.windows())
+        screen = self.os_activate()
+        osi.drag(screen.point(f"tab-{moved['id']}"), screen.outside_point())
+        self.wait(lambda: set(self.driver.windows()) - labels_before, what="the torn-off window")
+        (label,) = set(self.driver.windows()) - labels_before
+        torn = self.driver.window(label)
+        tab = self.wait(lambda: find_tab_by_session(torn, session_id), what="the moved session")
+        self.wait(lambda: "torn-off" in torn.read_terminal(tab["id"]), what="its scrollback")
+        assert self.tab_count() == 1
+        assert find_tab_by_session(self.driver, session_id) is None
+        # Close the torn-off window so later suites see one window again.
+        torn.close_window()
+        self.wait(lambda: torn.exists(CLOSE_DIALOG_END), what="the torn window's close dialog")
+        torn.click(CLOSE_DIALOG_END)
+        self.wait(lambda: len(self.driver.windows()) == 1, what="the torn window to close")
+        # Give the main window the OS focus back, as a user's click would.
+        self.os_activate()

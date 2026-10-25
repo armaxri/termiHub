@@ -16,9 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tempfile
 import time
-from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from .base import GlobalInjectionRefused, OsInput, OsInputUnavailable, OsWindow, global_injection_allowed
@@ -217,24 +215,6 @@ class LinuxOsInput(OsInput):
         self._run(argv)
 
 
-#: Minimal openbox config: a press in a window focuses and raises it (what a
-#: desktop's click-to-focus does); everything else keeps openbox's defaults.
-OPENBOX_RC = """<?xml version="1.0" encoding="UTF-8"?>
-<openbox_config xmlns="http://openbox.org/3.4/rc">
-  <focus><focusNew>yes</focusNew><followMouse>no</followMouse></focus>
-  <mouse>
-    <context name="Client">
-      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
-      <mousebind button="Right" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
-    </context>
-    <context name="Frame">
-      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
-    </context>
-  </mouse>
-</openbox_config>
-"""
-
-
 class XWindowManager:
     """Run ``openbox`` on a bare Xvfb display for the duration of a suite.
 
@@ -263,13 +243,8 @@ class XWindowManager:
             raise OsInputUnavailable("openbox/xprop are not installed (apt install openbox x11-utils)")
         if self.running():
             return self
-        self._config = tempfile.NamedTemporaryFile(
-            "w", suffix="-openbox-rc.xml", delete=False, encoding="utf-8"
-        )
-        self._config.write(OPENBOX_RC)
-        self._config.close()
         self._proc = subprocess.Popen(
-            ["openbox", "--sm-disable", "--config-file", self._config.name],
+            ["openbox", "--sm-disable"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -283,9 +258,6 @@ class XWindowManager:
 
     def stop(self) -> None:
         proc, self._proc = self._proc, None
-        config, self._config = getattr(self, "_config", None), None
-        if config is not None:
-            Path(config.name).unlink(missing_ok=True)
         if proc is None:
             return
         proc.terminate()

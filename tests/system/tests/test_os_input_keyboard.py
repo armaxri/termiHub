@@ -278,6 +278,7 @@ class TestOsKeyboardGrades(
             osi.type_text("echo INT_ok_\n")
             assert self._wait_echo(tab_id, "INT") == "ok"
         else:
+            # Injected Ctrl+C does not interrupt the Windows shell yet (#4981).
             osi.type_text("echo INT_ok_\n")  # the buffer the tab-menu Copy reads
             assert self._wait_echo(tab_id, "INT") == "ok"
 
