@@ -2,18 +2,20 @@
 
 Ported from the retired ``tests/manual/{app,multi-window,shell-integration,
 file-browser}.yaml``. Each item ends in something only the OS owns: the macOS
-Dock and app menu, an Explorer / Finder / file-manager context menu, a real OS
-drag, a MobaXterm install. The harness builds the in-app state (shells, a
-5000-file folder, the spawn request through the instance's private rendezvous)
-and the operator does and judges the OS-side step.
+Dock and app menu, an Explorer / Finder / file-manager context menu, a
+MobaXterm install. The harness builds the in-app state (shells, the
+spawn request through the instance's private rendezvous) and the operator does
+and judges the OS-side step.
 
-Covered: MT-APP-03, MT-APP-05, MT-SHI-01, MT-SHI-03..06, MT-FB-30/31.
+Covered: MT-APP-03, MT-APP-05, MT-SHI-01, MT-SHI-03..06.
 (MT-WIN-01..04, the macOS Dock and quit paths, and MT-SHI-02, external spawn
 raising the window, are graded with real OS events aimed at the test
 instance's PID by ``test_os_input_macos_app.py`` / ``test_os_input_keyboard.py``
 since #4935 — never by app name.)
 (MT-FB-32, open in file manager, is graded by ``test_external_app_handoffs.py``
-since #4932.)
+since #4932; MT-FB-30, the 5000-file folder, by ``test_os_file_drop.py`` and
+MT-FB-31, dragging rows out to the OS, by ``test_os_file_drop_xdnd.py`` since
+#4936.)
 (MT-APP-02, the production CSP, and MT-APP-04, single instance, are graded on
 the shipped artifacts by the release install smokes since #4933.)
 
@@ -22,7 +24,6 @@ Run with ``./pytest.sh --manual -k guided_app_os -s``.
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -161,39 +162,5 @@ class TestGuidedAppOs(
             "No sudo prompt; only detected managers get the entry with the termiHub "
             "icon; the app focuses with a tab cd'd there; after uninstall all artifacts "
             "are gone and your own actions/scripts remain.",
-        )
-
-    # ── MT-FB-30..32: file browser and the OS file manager ───────────────────
-    def test_large_directory_scrolls_and_accepts_os_drop(self):
-        """MT-FB-30."""
-        folder = Path(tempfile.mkdtemp(prefix="thub-5000-"))
-        try:
-            for i in range(5000):
-                (folder / f"file-{i:05d}.txt").write_text("x", encoding="utf-8")
-            self.close_all_tabs()
-            self.ensure_terminal()
-            self.run_command(f'cd "{folder}"')
-            self.open_file_browser()
-            self.wait_for_path_contains(folder.name, timeout=60.0)
-            self.manual_step(
-                f"The file browser shows {folder} (5000 files). Scroll top to bottom "
-                "quickly, then drag a file from Finder/Explorer/Files onto the list.",
-                "Scrolling is smooth with one scrollbar and no freeze; the dropped file "
-                "is copied into the folder.",
-            )
-        finally:
-            shutil.rmtree(folder, ignore_errors=True)
-
-    def test_drag_files_out_to_the_os_file_manager(self):
-        """MT-FB-31 (on Linux run under X11 and under Wayland)."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.open_file_browser()
-        self.manual_step(
-            "Drag a local file, then a file+folder selection, onto the desktop. In an "
-            "SFTP session drag a remote folder out, hold until staged, drop. Repeat with "
-            "a file from a Docker or agent session.",
-            "Each drag lands a copy with its name; remote folders land with their full "
-            "tree; the originals stay.",
         )
 
