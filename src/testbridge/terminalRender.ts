@@ -7,10 +7,12 @@
  * scrollbar's thumb against a laid-out track — cannot be asserted in vitest
  * (see `Terminal.xterm-integration.test.ts`). These helpers expose exactly that
  * state from a real WebView so the Python bridge harness can assert it:
- * `measureTerminal` (read-only) and `loseTerminalWebglContext` (forces a real
- * GPU context loss so the DOM fallback runs).
+ * `measureTerminal` (read-only), `loseTerminalWebglContext` (forces a real
+ * GPU context loss so the DOM fallback runs) and `readTerminalWebglFrame`
+ * (reads back the pixels the WebGL renderer drew, #4970).
  */
 import type { TerminalHandles } from "@/components/Terminal/TerminalRegistry";
+import { errorMessage } from "@/utils/errorMessage";
 import {
   readRawRenderedCellHeight,
   readRawRenderedCellWidth,
@@ -21,6 +23,7 @@ import type {
   TerminalMeasurement,
   TerminalPaint,
   TerminalScrollbarMeasurement,
+  TerminalWebglFrame,
 } from "./protocol";
 
 /** The minimal `WEBGL_lose_context` extension surface used here. */
@@ -212,4 +215,146 @@ export function loseTerminalWebglContext({ element }: TerminalHandles): boolean 
   if (!ext) return false;
   ext.loseContext();
   return true;
+}
+
+/** How long `readTerminalWebglFrame` waits for the animation frame it reads in. */
+export const WEBGL_READBACK_TIMEOUT_MS = 5000;
+
+/** One copy of the WebGL canvas: backing-store size plus row-major RGB bytes. */
+interface CanvasCopy {
+  width: number;
+  height: number;
+  rgb: Uint8Array;
+}
+
+/** Base64 of `bytes`, encoded in chunks (`String.fromCharCode` has an arity cap). */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Copy `canvas` (any context type) into a 2D canvas and return its pixels as
+ * row-major RGB bytes. Alpha is dropped: the terminal canvas is opaque where
+ * it paints and the grades compare against opaque colours.
+ */
+function copyCanvas(canvas: HTMLCanvasElement): CanvasCopy {
+  const { width, height } = canvas;
+  const copy = canvas.ownerDocument.createElement("canvas");
+  copy.width = width;
+  copy.height = height;
+  const ctx = copy.getContext("2d");
+  if (!ctx) throw new Error("no 2D context to copy the WebGL canvas into");
+  ctx.drawImage(canvas, 0, 0);
+  const rgba = ctx.getImageData(0, 0, width, height).data;
+  const rgb = new Uint8Array(width * height * 3);
+  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+    rgb[j] = rgba[i];
+    rgb[j + 1] = rgba[i + 1];
+    rgb[j + 2] = rgba[i + 2];
+  }
+  return { width, height, rgb };
+}
+
+/** The wire form of a copy. */
+function toFrame(copy: CanvasCopy, view: Window): TerminalWebglFrame {
+  return {
+    width: copy.width,
+    height: copy.height,
+    devicePixelRatio: view.devicePixelRatio,
+    rgb: toBase64(copy.rgb),
+  };
+}
+
+/**
+ * The last frame each terminal's renderer drew on its own, for
+ * `repaint: false` reads. Armed on the first such read; from then on every
+ * xterm `onRender` (fired right after the renderer drew, inside the same
+ * animation frame, while the drawing buffer is still defined) copies the
+ * canvas. Test-mode only, and only for terminals a test reads this way.
+ */
+const naturalFrames = new WeakMap<TerminalHandles["xterm"], { latest: CanvasCopy | null }>();
+
+/**
+ * Force a full repaint and copy the canvas in the animation frame it draws in.
+ * `xterm.refresh` schedules the renderer's draw on the next animation frame;
+ * the copy runs from a callback requested *after* it — the same frame, after
+ * the draw, before the browser composites and discards the drawing buffer.
+ */
+function readRepainted(
+  canvas: HTMLCanvasElement,
+  xterm: TerminalHandles["xterm"],
+  view: Window
+): Promise<CanvasCopy> {
+  return new Promise((resolve, reject) => {
+    const timer = view.setTimeout(
+      () =>
+        reject(
+          new Error(
+            `no animation frame within ${WEBGL_READBACK_TIMEOUT_MS} ms (is the window occluded?)`
+          )
+        ),
+      WEBGL_READBACK_TIMEOUT_MS
+    );
+    xterm.refresh(0, xterm.rows - 1);
+    view.requestAnimationFrame(() => {
+      view.clearTimeout(timer);
+      try {
+        resolve(copyCanvas(canvas));
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(errorMessage(error)));
+      }
+    });
+  });
+}
+
+/**
+ * Read back what the terminal's WebGL renderer drew (#4970), or `null` on the
+ * DOM renderer. This sees the GPU output in-process, where the hosted macOS
+ * runners' window server image (every `screencapture`, `CGWindowListCreateImage`
+ * and ScreenCaptureKit path) does not contain the canvas.
+ *
+ * The addon's context has `preserveDrawingBuffer: false`, so the canvas only
+ * holds pixels inside the animation frame that drew them; a copy taken later
+ * reads black. So:
+ *
+ * - `repaint: true` (default) forces a full repaint and copies in that frame;
+ * - `repaint: false` returns the last frame the renderer drew *on its own*,
+ *   for grades of whether the app itself repainted (after a zoom or a split).
+ *   The first such read on a terminal arms the per-render copy and seeds it
+ *   with one forced repaint; every later read returns what the renderer drew
+ *   since, so a renderer that stops drawing leaves a stale frame behind.
+ *
+ * Rejects when no animation frame arrives (an occluded, throttled web view).
+ */
+export async function readTerminalWebglFrame(
+  { element, xterm }: TerminalHandles,
+  repaint = true
+): Promise<TerminalWebglFrame | null> {
+  const canvas = findWebglCanvas(element);
+  if (!canvas) return null;
+  const view = element.ownerDocument.defaultView ?? window;
+  if (repaint) return toFrame(await readRepainted(canvas, xterm, view), view);
+  let tracked = naturalFrames.get(xterm);
+  if (!tracked) {
+    const state: { latest: CanvasCopy | null } = { latest: null };
+    tracked = state;
+    naturalFrames.set(xterm, state);
+    xterm.onRender(() => {
+      const live = findWebglCanvas(element);
+      if (!live) return;
+      try {
+        state.latest = copyCanvas(live);
+      } catch {
+        // A copy that fails leaves the previous frame: the read reports it.
+      }
+    });
+    state.latest = await readRepainted(canvas, xterm, view);
+  }
+  if (!tracked.latest) throw new Error("the WebGL renderer has drawn no frame yet");
+  return toFrame(tracked.latest, view);
 }

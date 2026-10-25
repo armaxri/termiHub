@@ -11,6 +11,10 @@ the grade passes (the WebGL renderer paints on a later animation frame than
 the buffer write), and on timeout saves the last capture with the graded
 rects outlined under the test's artifacts dir, so a red run shows exactly
 which pixels were judged.
+
+On macOS the text grades read the WebGL renderer's own frames through the
+bridge instead (:meth:`NativeCaptureUi.capture_terminal_webgl`): no window
+server image on the hosted runners contains the WebGL canvas (#4970).
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from ..window_capture import (
     Rect,
     capture_window,
     contact_sheet,
+    frame_from_rgb_base64,
     map_page,
     save_png,
 )
@@ -42,6 +47,10 @@ _T = TypeVar("_T")
 
 #: How long a paint grade may take to pass before it fails.
 PAINT_TIMEOUT = 20.0
+
+
+class _NoWebglFrame(RuntimeError):
+    """A WebGL readback was asked of a terminal on the DOM renderer."""
 
 
 class TerminalCapture(NamedTuple):
@@ -144,26 +153,19 @@ class NativeCaptureUi(HarnessMixin):
         except CaptureUnavailable:
             return None
 
-    def use_capturable_renderer(self, tab_id: Optional[str] = None) -> str:
-        """Switch the terminal to a renderer whose pixels a capture can see.
+    def grades_webgl_readback(self, tab_id: Optional[str] = None) -> bool:
+        """Whether text grades read the WebGL canvas in-process instead of a capture.
 
-        On the hosted macOS runners the WebGL canvas never reaches the window
-        server's image (window and screen captures both show the bare terminal
-        background, while the DOM, the inline-image canvas and the window
-        itself are captured), so there the terminal is moved to the DOM
-        renderer through the production context-loss fallback. Linux and
-        Windows grade the WebGL renderer as is. Returns the live renderer.
+        On the hosted macOS runners no window server image contains the xterm
+        WebGL canvas — ``screencapture -l`` / ``-R``, ``CGWindowListCreateImage``
+        (every image option) and ScreenCaptureKit all show the bare terminal
+        background, while the canvas itself holds the right pixels (#4970). So
+        on macOS a live WebGL renderer is graded from its own readback
+        (:meth:`capture_terminal_webgl`). Linux and Windows grade the capture.
         """
-        renderer = self.driver.measure_terminal(tab_id).get("renderer") or ""
-        if sys.platform != "darwin" or renderer != "webgl":
-            return renderer
-        self.driver.lose_terminal_webgl_context(tab_id)
-        self.wait(
-            lambda: self.driver.measure_terminal(tab_id).get("renderer") == "dom",
-            timeout=30,
-            what="the DOM renderer (macOS captures show no WebGL output)",
-        )
-        return "dom"
+        if sys.platform != "darwin":
+            return False
+        return self.driver.measure_terminal(tab_id).get("renderer") == "webgl"
 
     def capture_terminal(self, tab_id: Optional[str] = None) -> TerminalCapture:
         """Capture the window and map the terminal ``tab_id`` (active tab) onto it."""
@@ -187,6 +189,38 @@ class NativeCaptureUi(HarnessMixin):
             raise AssertionError(f"cannot map the page onto the capture: {exc}") from exc
         return TerminalCapture(frame, mapping, measure)
 
+    def capture_terminal_webgl(
+        self, tab_id: Optional[str] = None, *, repaint: bool = True
+    ) -> Optional[TerminalCapture]:
+        """Read back the WebGL renderer's own pixels, mapped like a capture (#4970).
+
+        The bridge copies the WebGL canvas in the animation frame the renderer
+        draws in, so this sees the GPU output in-process — on macOS too, where
+        the window server's image lacks the canvas. The canvas spans the
+        ``.xterm-screen`` box, so the page maps onto it with that box's
+        top-left at the origin. Returns ``None`` on the DOM renderer.
+        ``repaint=False`` reads what the app drew without forcing a repaint.
+        """
+        measure = self.driver.measure_terminal(tab_id)
+        value = self.driver.read_terminal_webgl_frame(tab_id, repaint=repaint)
+        if value is None:
+            return None
+        if not measure.get("screenRect"):
+            raise AssertionError("measureTerminal has no screenRect — the app predates #4937")
+        frame = frame_from_rgb_base64(value["width"], value["height"], value["rgb"])
+        scale = float(value["devicePixelRatio"])
+        screen = measure["screenRect"]
+        mapping = PageMapping(-screen["left"] * scale, -screen["top"] * scale, scale)
+        return TerminalCapture(frame, mapping, measure)
+
+    def _paint_capture(self, tab_id: Optional[str], source: str) -> TerminalCapture:
+        if source == "capture":
+            return self.capture_terminal(tab_id)
+        cap = self.capture_terminal_webgl(tab_id, repaint=False)
+        if cap is None:
+            raise _NoWebglFrame("the terminal is not on the WebGL renderer")
+        return cap
+
     def wait_for_terminal_paint(
         self,
         grade: Callable[[TerminalCapture], tuple[Optional[_T], list[Rect], str]],
@@ -196,17 +230,27 @@ class NativeCaptureUi(HarnessMixin):
         timeout: float = PAINT_TIMEOUT,
         label: Optional[str] = None,
         text_layer: bool = True,
+        source: str = "auto",
     ) -> _T:
         """Capture and ``grade`` until it passes; on timeout fail with evidence.
 
         ``grade`` returns ``(result, rects, detail)``: a truthy ``result``
         passes; otherwise ``rects`` (the graded cells) and ``detail`` (what was
-        seen) go into the failure and the saved capture. ``text_layer=False``
-        keeps the WebGL renderer on macOS, for grades of layers a capture does
-        see there (the inline-image canvas).
+        seen) go into the failure and the saved capture.
+
+        ``source`` picks the pixels: ``"capture"`` the native window capture,
+        ``"webgl"`` the WebGL renderer's own frames (``readTerminalWebglFrame``
+        without a forced repaint, so a renderer that stops drawing fails the
+        grade), ``"auto"`` the readback for a text grade on macOS (see
+        :meth:`grades_webgl_readback`) and the capture otherwise.
+        ``text_layer=False`` marks a grade of a layer the macOS capture does
+        see (the inline-image canvas), which always uses the capture.
         """
-        if text_layer:
-            self.use_capturable_renderer(tab_id)
+        if source not in ("auto", "capture", "webgl"):
+            raise ValueError(f"unknown paint source {source!r}")
+        if source == "auto":
+            webgl = text_layer and self.grades_webgl_readback(tab_id)
+            source = "webgl" if webgl else "capture"
         # macOS stops painting an occluded WKWebView: make the test app (by its
         # PID, never its name) the frontmost one first. A no-op elsewhere.
         bring_app_foreground(self.app.pid)
@@ -216,12 +260,14 @@ class NativeCaptureUi(HarnessMixin):
         detail = "no capture was graded"
         while True:
             try:
-                last = self.capture_terminal(tab_id)
+                last = self._paint_capture(tab_id, source)
                 result, rects, detail = grade(last)
                 if result:
                     return result
             except BridgeError as exc:
                 detail = f"bridge: {exc}"
+            except _NoWebglFrame as exc:
+                detail = str(exc)
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.3)
@@ -232,7 +278,7 @@ class NativeCaptureUi(HarnessMixin):
             + (
                 f"; capture {last.frame.width}x{last.frame.height}, page mapped at "
                 f"{tuple(round(v, 1) for v in last.mapping)}, renderer "
-                f"{last.measure.get('renderer')}"
+                f"{last.measure.get('renderer')}, source {source}"
                 if last
                 else ""
             )

@@ -14,7 +14,11 @@ import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
 import { readTerminalOutput, tapTerminalOutput } from "./outputTap";
 import { inspectTerminal } from "./terminalInspection";
-import { loseTerminalWebglContext, measureTerminal } from "./terminalRender";
+import {
+  loseTerminalWebglContext,
+  measureTerminal,
+  readTerminalWebglFrame,
+} from "./terminalRender";
 import { readTerminalCells } from "./terminalCells";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
@@ -126,6 +130,12 @@ export function TestBridge() {
         if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
         const handles = getTerminalHandles(tabId);
         return handles ? loseTerminalWebglContext(handles) : undefined;
+      },
+      // The WebGL renderer's own pixels, read back in its draw frame (#4970):
+      // what macOS window captures cannot see. Read-only.
+      readTerminalWebglFrame: (tabId, repaint) => {
+        const handles = getTerminalHandles(tabId);
+        return handles ? readTerminalWebglFrame(handles, repaint) : undefined;
       },
       // The raw output stream each terminal was handed, and the Log Viewer
       // history (#4931): what the flash and renderer grades assert on.

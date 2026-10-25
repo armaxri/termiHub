@@ -22,6 +22,12 @@ WebGL canvas, so each test captures the test app's own window through the OS
   black rectangle. The bytes are the ones zsh + Agnoster send; the transport
   (local shell here, SSH in the field) does not change what xterm paints.
 
+On macOS no window server image contains the WebGL canvas, so these grades
+read the WebGL renderer's own frames through the bridge there instead
+(``readTerminalWebglFrame``, #4970); Linux and Windows grade the capture.
+``test_webgl_readback_paints_the_ansi_palette`` grades that readback on every
+OS, so the path macOS relies on is cross-checked where the capture agrees.
+
 The payload is written to a home file and ``cat``-ed, so no escape sequence
 is typed into the shell. Runs in the integration lane on every OS.
 """
@@ -125,9 +131,6 @@ class TestNativeCaptureGrades(
         self.create_local_connection(name, shell=self.posix_shell_name(), connect=True)
         tab = self.wait(lambda: self.find_tab(name), what=f"the {name!r} tab")["id"]
         self.wait(lambda: self.driver.read_terminal(tab).strip(), what="the shell prompt")
-        # Before the payload: switching renderer (macOS) refits and reflows the
-        # buffer, which would move the rows read below.
-        self.use_capturable_renderer(tab)
         body = "".join(f"{line}{ESC}[0m\n" for line in lines) + "TH_CAPTURE_DONE\n"
         self.write_home_bytes(PAYLOAD, body.encode("utf-8"))
         self.wait(
@@ -183,6 +186,21 @@ class TestNativeCaptureGrades(
             lambda cap: self._fill_grade(cap, fg_row, cols, "fg"),
             what="every ANSI foreground block to paint its colour",
             tab_id=tab,
+        )
+
+    def test_webgl_readback_paints_the_ansi_palette(self):
+        """#4970: the WebGL readback macOS grades from sees the palette on every OS."""
+        bg = "RB:" + "".join(f"{ESC}[{code}m  " for code in ANSI_BG)
+        tab = self._show([bg], "RB:")
+        if self.driver.measure_terminal(tab).get("renderer") != "webgl":
+            pytest.fail("the terminal is not on the WebGL renderer; the readback has nothing to read")
+        row = self._row(tab, "RB:")
+        cols = list(range(3, 3 + 2 * len(ANSI_BG)))
+        self.wait_for_terminal_paint(
+            lambda cap: self._fill_grade(cap, row, cols, "bg"),
+            what="the WebGL readback to show every ANSI background",
+            tab_id=tab,
+            source="webgl",
         )
 
     def test_256_colour_swatches_paint_without_gaps(self):

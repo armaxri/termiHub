@@ -14,6 +14,7 @@ import type {
   TerminalInspection,
   TerminalMeasurement,
   TerminalOutputTap,
+  TerminalWebglFrame,
 } from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
 import { isComposableControl, replayComposition } from "./composition";
@@ -92,6 +93,14 @@ export interface BridgeDeps {
    * terminal is registered for `tabId`. Optional like `measureTerminal`.
    */
   loseTerminalWebglContext?: (tabId: string) => boolean | undefined;
+  /**
+   * Read back the pixels a terminal's WebGL renderer drew (#4970): `null` on
+   * the DOM renderer, `undefined` when no terminal is registered for the tab.
+   */
+  readTerminalWebglFrame?: (
+    tabId: string,
+    repaint: boolean
+  ) => Promise<TerminalWebglFrame | null> | undefined;
   /**
    * The raw output stream recorded for `tabId` (#4931), or `undefined` when
    * the tab was never tapped. Optional — absent, `readTerminalOutput` fails
@@ -1146,6 +1155,23 @@ export async function dispatchCommand(
         return fail("loseTerminalWebglContext", `no terminal registered for tab "${tabId}"`);
       }
       return ok("loseTerminalWebglContext", lost);
+    }
+
+    case "readTerminalWebglFrame": {
+      if (!deps.readTerminalWebglFrame) {
+        return fail("readTerminalWebglFrame", "webgl readback is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("readTerminalWebglFrame", "no active terminal");
+      const pending = deps.readTerminalWebglFrame(tabId, command.repaint ?? true);
+      if (pending === undefined) {
+        return fail("readTerminalWebglFrame", `no terminal registered for tab "${tabId}"`);
+      }
+      try {
+        return ok("readTerminalWebglFrame", await pending);
+      } catch (error) {
+        return fail("readTerminalWebglFrame", errorMessage(error));
+      }
     }
 
     case "readTerminalOutput": {

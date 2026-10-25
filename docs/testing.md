@@ -2925,12 +2925,14 @@ New irreducibly-manual checks are written as guided-manual pytest tests (epic [#
 The DOM `screenshot` verb never sees the xterm WebGL canvas, the inline-image
 layer or the native window before the web view's first paint. These grades
 capture the test app's own window through the OS instead and check its pixels
-(part of #4927):
+(part of #4927; on macOS the text grades read the WebGL canvas in-process, see
+below):
 
 | ID               | Test                                                                                         | What it asserts                                                                                                            |
 | ---------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | MT-SSH-02 (both) | `test_native_capture_grades.py::test_ansi_16_colours_paint_their_palette_colour`             | each of the 16 ANSI backgrounds and `█` foregrounds paints the colour `readTerminalCells` resolves from the theme          |
 |                  | `test_native_capture_grades.py::test_256_colour_swatches_paint_without_gaps`                 | five 256-colour swatches paint the xterm cube colours, with no background-coloured pixel between cells                     |
+| #4970            | `test_native_capture_grades.py::test_webgl_readback_paints_the_ansi_palette`                 | the WebGL readback the macOS grades use shows each ANSI background in its palette colour, on every OS                      |
 | MT-UI-31         | `test_native_capture_grades.py::test_box_drawing_strokes_are_continuous`                     | every border of a drawn box has an unbroken pixel row / column across the cell boundaries                                  |
 | MT-SER-01/02     | `test_native_capture_grades.py::test_nerd_font_glyphs_render_from_the_bundled_font`          | Powerline / Nerd Font glyphs have ink and a different shape from an unassigned codepoint (tofu); no runner has a Nerd Font |
 | MT-SSH-01        | `test_native_capture_grades.py::test_agnoster_prompt_has_no_black_rectangle`                 | the Agnoster `user@host` segment (ANSI black background) paints the terminal background, not a black rectangle             |
@@ -2958,13 +2960,26 @@ unoccluded, because macOS stops painting a WKWebView hidden behind another
 xdist worker's window. On macOS the harness also makes the test app frontmost
 (by its PID) before grading.
 
-**macOS grades the DOM renderer.** On the hosted macOS runners neither a window
-capture nor a screen capture contains the xterm WebGL canvas (the DOM, the
-inline-image canvas and the window chrome are all there), so on macOS the text
-grades first move the terminal to the DOM renderer through the production
-WebGL context-loss fallback. The WebGL renderer's paint is graded on Linux and
-Windows; the inline-image grade keeps WebGL on every OS. Grading the macOS
-WebGL paint is tracked in #4970.
+**macOS grades the WebGL readback (#4970).** On the hosted macOS runners no
+window server image contains the xterm WebGL canvas. Probe runs tried
+`screencapture -l <window>` and `-R <region>`, `CGWindowListCreateImage` with
+every image option, and ScreenCaptureKit (`SCScreenshotManager` with a
+desktop-independent window filter): all of them show the DOM, the inline-image
+canvas and the window chrome, but the terminal area is bare background. The
+canvas itself does hold the right pixels, read back inside the app. So on macOS
+the text grades read the WebGL renderer's own frames through the bridge
+(`readTerminalWebglFrame`, see [test-bridge.md](test-bridge.md)) and map the
+cell grid onto them; Linux and Windows grade the capture. The readback reads
+without forcing a repaint: it returns the last frame the renderer drew on its
+own, so the MT-UI-42 repaint grade still fails when the renderer stops drawing.
+`test_webgl_readback_paints_the_ansi_palette` grades the readback on every OS,
+so the path macOS relies on is cross-checked where the capture agrees, and the
+MT-UI-46 contact sheet uses the readback for its WebGL half on macOS.
+
+The residual on macOS: the readback is the canvas, not the composited window,
+so something drawn over the terminal (a stray overlay) or a compositing fault
+in the window server is not seen there. Linux and Windows grade the composited
+window; on macOS that last step is only seen on a real Mac.
 
 A developer machine without the capture tooling (`xdotool` / `x11-apps` on
 Linux, Screen Recording permission for the terminal on macOS) skips these
