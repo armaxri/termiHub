@@ -306,6 +306,18 @@ def dispatcher_like(
             return {"ok": True, "action": "closeWindow"}
         if action == "listWindows":
             return {"ok": True, "action": "listWindows", "value": [{"label": "main"}]}
+        if action == "osInputProbe":
+            return {
+                "ok": True,
+                "action": "osInputProbe",
+                "value": {
+                    "events": [],
+                    "devicePixelRatio": 1,
+                    "innerWidth": 1280,
+                    "innerHeight": 800,
+                    "hasFocus": True,
+                },
+            }
         if action == "readCoverage":
             if coverage is None:
                 return {"ok": True, "action": "readCoverage", "value": None}

@@ -306,6 +306,22 @@ class Driver:
         """The backend window registry: ``[{"label", "tabCount"?}, …]`` (#1900)."""
         return self._call({"action": "listWindows"})
 
+    def os_input_probe(
+        self, test_id: Optional[str] = None, *, reset: bool = False
+    ) -> dict[str, Any]:
+        """What OS-level input reached this window's document (#4935).
+
+        Arms a capture-phase recorder of key/pointer events on first use and
+        returns ``{"events": [...], "devicePixelRatio", "innerWidth",
+        "innerHeight", "hasFocus", "rect"?}``. Each event carries ``isTrusted``
+        (true only for input the OS delivered), its key/modifier state and its
+        client/screen coordinates. ``test_id`` adds that element's client rect;
+        ``reset`` clears the recording. Used by
+        :mod:`termihub_harness.os_input` to calibrate screen coordinates and to
+        prove an injected event arrived.
+        """
+        return self._call({"action": "osInputProbe", "testId": test_id, "reset": reset or None})
+
     def _call(self, command: Command, *, timeout: Optional[float] = None) -> Any:
         # Drop None-valued keys so the wire form matches the in-process client:
         # JSON.stringify omits `undefined`, and the dispatcher distinguishes an

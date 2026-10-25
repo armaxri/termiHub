@@ -1,4 +1,4 @@
-"""Guided-manual native input: OS drag-and-drop, IME, dead keys, focus (#913).
+"""Guided-manual native input: OS drag-and-drop, IME, emoji picker, focus (#913).
 
 Ported from the retired ``tests/manual/native-input.yaml`` (TIN-017, #3764).
 The bridge injects synthetic DOM events inside the webview, so three paths
@@ -8,17 +8,21 @@ candidate window) and real window focus. ``test_input_routing.py`` walks the
 plain drags; this suite covers the rest.
 
 The harness builds the exact scene (split panes, shells, scratch files with
-awkward names, an open editor, a second window, an open connection editor) and,
-where the result is observable, asserts it afterwards: the dropped files are
-listed by the shell, the dropped file landed in the folder, the tab stayed put,
-the connection saved with its IME-typed name, the new tab opened only in the
-focused window. The operator performs the native gesture and judges what only
-the screen shows (preedit placement, highlights, cursor style).
+awkward names, an open editor, an open connection editor) and, where the result
+is observable, asserts it afterwards: the dropped files are listed by the
+shell, the dropped file landed in the folder, the connection saved with its
+IME-typed name. The operator performs the native gesture and judges what only
+the screen shows (preedit placement, highlights, candidate window).
 
-Covered: MT-NIN-01..07 (native drag-and-drop), MT-NIN-10..16 (IME, dead keys,
-emoji picker), MT-NIN-20..24 (native focus), MT-NIN-30/31 (right-click paste,
-real Caps Lock). The IME commit-once logic is automated in
-``test_ime_composition.py``.
+Covered: MT-NIN-01..06 (native file drag-and-drop), MT-NIN-10..14 and 16 (IME,
+emoji picker), MT-NIN-21..24 (focus after the native Save dialog, a click into
+an inactive window, per-window typing, remote-desktop key release on blur). The
+IME commit-once logic is automated in ``test_ime_composition.py``. Real OS key
+and pointer events retired MT-NIN-07 (tab tear-off), MT-NIN-15 (dead keys),
+MT-NIN-20 (focus after an app switch), MT-NIN-30 (Windows right-click paste) and
+MT-NIN-31 (real Caps Lock) into ``test_os_input_keyboard.py`` /
+``test_os_input_pointer.py`` (#4935). MT-NIN-22/23 stay guided: injected clicks
+did not move the window focus reliably on the CI runners (see #4935's PR).
 
 Run with ``./pytest.sh --manual -k guided_native_input -s``.
 """
@@ -37,7 +41,6 @@ from termihub_harness import (
     FilesUi,
     LayoutUi,
     ManualUi,
-    PasswordPromptUi,
     SidebarUi,
     SystemTest,
     TabsUi,
@@ -45,7 +48,7 @@ from termihub_harness import (
     WindowsUi,
     unique_name,
 )
-from termihub_harness.ui.windows import find_tab_by_session, window_tabs
+from termihub_harness.ui.windows import window_tabs
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
@@ -62,7 +65,6 @@ class TestGuidedNativeInput(
     SidebarUi,
     EditorUi,
     FilesUi,
-    PasswordPromptUi,
     WindowsUi,
     ManualUi,
     SystemTest,
@@ -90,7 +92,7 @@ class TestGuidedNativeInput(
         self.open_file_in_editor(name)
         return name
 
-    # ── MT-NIN-01..07: native drag-and-drop ──────────────────────────────────
+    # ── MT-NIN-01..06: native file drag-and-drop ─────────────────────────────
     def test_multi_file_drop_is_quoted_per_platform(self):
         """MT-NIN-01."""
         folder = self._scratch_dir("nin01")
@@ -188,50 +190,7 @@ class TestGuidedNativeInput(
         )
         assert sorted(p.name for p in folder.iterdir()) == ["drag-out.txt"]
 
-    def test_tab_drag_released_outside_window_tears_off(self):
-        """MT-NIN-07 (#4916): a tab torn off the window opens in a new window."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.driver.click(NEW_TERMINAL)
-        self.wait(lambda: self.tab_count() == 2, what="two tabs")
-        moved = window_tabs(self.driver)[-1]
-        session_id = self.live_session_id(self.driver, moved["id"])
-        before = self.driver.get_state("rootPanel")
-
-        # A drag that ends back inside the window, off every drop target, changes
-        # nothing and leaves no ghost state.
-        self.manual_step(
-            "Drag one tab into the middle of the sidebar (or the activity bar if the "
-            "sidebar is hidden) and release it there, then click into that tab and type.",
-            "The tab stays where it was; no drag overlay, ghost tab or highlight is left "
-            "and the terminal accepts typing.",
-        )
-        assert len(self.driver.windows()) == 1
-        assert self.driver.get_state("rootPanel") == before
-
-        # Released outside the window: the tab opens in a new window, session intact.
-        labels_before = set(self.driver.windows())
-        self.manual_step(
-            f"Run `echo torn-off` in the right-most tab ({moved.get('title', 'the new tab')}), "
-            "then drag that tab off the termiHub window and release it over the desktop. "
-            "Type in the tab in the new window.",
-            "A new termiHub window opens holding that tab, `torn-off` is still in its "
-            "scrollback and it accepts typing; the original window keeps one tab and shows "
-            "no drag overlay, ghost tab or highlight.",
-        )
-        self.wait(
-            lambda: set(self.driver.windows()) - labels_before, what="the torn-off window"
-        )
-        (label,) = set(self.driver.windows()) - labels_before
-        torn = self.driver.window(label)
-        self.wait(
-            lambda: find_tab_by_session(torn, session_id),
-            what="the moved session in the new window",
-        )
-        assert self.tab_count() == 1
-        assert find_tab_by_session(self.driver, session_id) is None
-
-    # ── MT-NIN-10..16: IME, dead keys, emoji picker ──────────────────────────
+    # ── MT-NIN-10..14, 16: IME, emoji picker ─────────────────────────────────
     def _ime_in_terminal(self, setup: str, convert: str) -> None:
         self.close_all_tabs()
         self.ensure_terminal()
@@ -293,22 +252,6 @@ class TestGuidedNativeInput(
         )
         self.wait(lambda: self.find_connection("日本語"), what="the connection named 日本語")
 
-    def test_dead_key_composition_in_terminal_and_editor(self):
-        """MT-NIN-15."""
-        self.close_all_tabs()
-        self._open_scratch_editor("deadkey")
-        self.switch_to_terminal_tab()
-        keys = (
-            "Option+e then e, and Option+u then u (ABC layout)"
-            if sys.platform == "darwin"
-            else "' then e, then ` then space (US-International)"
-        )
-        self.manual_step(
-            f"In the terminal type `echo ` then {keys}; then do the same in the editor tab.",
-            "Each composed character arrives once with no bare accent before it, in both "
-            "the terminal and the editor.",
-        )
-
     def test_os_emoji_picker_inserts_into_terminal_and_editor(self):
         """MT-NIN-16."""
         self.close_all_tabs()
@@ -323,22 +266,7 @@ class TestGuidedNativeInput(
         )
         assert "👍" in self.wait_for_output("👍", tab_id=tab["id"])
 
-    # ── MT-NIN-20..24: native focus ──────────────────────────────────────────
-    def test_focus_survives_app_switch(self):
-        """MT-NIN-20."""
-        self.close_all_tabs()
-        self._open_scratch_editor("focus")
-        self.driver.click(SPLIT_H)
-        self.wait(lambda: self.leaf_count() == 2, what="two panes")
-        self.driver.click(NEW_TERMINAL)
-        switch = "Cmd+Tab" if sys.platform == "darwin" else "Alt+Tab"
-        self.manual_step(
-            f"Click into the shell, {switch} away and back, type `abc`. Click into the "
-            f"editor, {switch} away and back, type `xyz`.",
-            "The cursor draws unfocused while away; `abc` lands in the shell and `xyz` at "
-            "the editor caret, without clicking.",
-        )
-
+    # ── MT-NIN-21..24: native focus ──────────────────────────────────────────
     def test_focus_returns_after_native_save_dialog(self):
         """MT-NIN-21."""
         self.close_all_tabs()
@@ -389,32 +317,3 @@ class TestGuidedNativeInput(
             "The remote editor receives lowercase abc and the canvas takes input after one "
             "click.",
         )
-
-    # ── MT-NIN-30/31: right-click paste, real Caps Lock ──────────────────────
-    @pytest.mark.manual(platforms=["windows"])
-    def test_windows_right_click_pastes_once(self):
-        """MT-NIN-30."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.manual_step(
-            "Copy `echo-once-2595`. Right-click the terminal once with no selection; try "
-            "Ctrl+V and the context-menu Paste; then right-click with a selection.",
-            "Each paste inserts the text exactly once; right-click with a selection copies.",
-        )
-
-    def test_real_caps_lock_toggles_password_warning(self):
-        """MT-NIN-31."""
-        self.close_all_tabs()
-        name = unique_name("capslock")
-        self.create_ssh_connection(
-            name, host="127.0.0.1", port=1, username="guided", auth_method="password"
-        )
-        self.switch_to_connections_sidebar()
-        self.connect_connection(name)
-        self.wait(lambda: self.driver.exists("password-prompt-input"), what="the password prompt")
-        self.manual_step(
-            "Turn Caps Lock on and type in the password prompt; press Caps Lock again.",
-            "An amber 'Caps Lock is on' warning appears under the field and disappears when "
-            "Caps Lock turns off.",
-        )
-        self.cancel_password_prompt()

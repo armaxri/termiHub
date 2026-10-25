@@ -382,6 +382,11 @@ jobs:
         # light/dark (#4930).
         # xdotool finds the forwarded X11 window on the Xvfb display for the
         # MT-XPLAT-03 grade (test_ssh.py, #4932).
+        # The OS-input grades (test_os_input_*.py, #4935) inject real keys and
+        # pointer events with xdotool and need: openbox + x11-utils (a window
+        # manager for click-to-focus / activation, started by the suite),
+        # x11-xkb-utils (setxkbmap: US-International / German layouts),
+        # xclip (read the OS clipboard) and python3-tk (the "other app" window).
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -402,6 +407,11 @@ jobs:
             xvfb \
             xsettingsd \
             xdotool \
+            openbox \
+            x11-utils \
+            x11-xkb-utils \
+            xclip \
+            python3-tk \
             socat \
             libasound2-dev
 
