@@ -503,7 +503,7 @@ jobs:
         # inside a per-suite fixture under its bring-up timeout. The harness'
         # ComposeFixture then finds them already up; profile-gated fixtures
         # (agent/stress/fault/ftp/vnc/rdp) are brought up on demand by the suites
-        # that need them. The agent/vnc/rdp/ftp images are pre-BUILT here too
+        # that need them. The agent/vnc/rdp/ftp/traceroute images are pre-BUILT here too
         # (not started, #4315/#4479): built cold inside a test they raced the
         # harness' 300 s compose timeout, which in CI strict mode now fails the
         # suite. The agent images COPY the static-musl agent the step above
@@ -530,7 +530,8 @@ jobs:
           (cd tests/system && uv run --frozen python -m termihub_harness.stage_agent)
           for attempt in 1 2 3; do
             docker compose -f tests/docker/docker-compose.yml \
-              --profile agent --profile vnc --profile rdp --profile ftp build && break
+              --profile agent --profile vnc --profile rdp --profile ftp \
+              --profile traceroute build && break
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             echo "::warning::fixture image build failed (attempt $attempt/3)"
             sleep $((attempt * 15))
