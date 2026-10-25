@@ -215,6 +215,17 @@
         "bulk-windows"
       ],
       "why": "the app's Windows agent client only dials the system agent pipe (the developer's own agent); MT-SSH-07 is graded on Linux and macOS (#4953)"
+    },
+    {
+      "reason": "^network unavailable: cannot reach raw\\.githubusercontent\\.com ",
+      "nodeid": "test_plugin_discovery_https\\.py",
+      "lanes": [
+        "bulk-linux",
+        "bulk-linux-arm64",
+        "bulk-macos",
+        "bulk-windows"
+      ],
+      "why": "#4961: MT-APP-03 fetches the real plugin index and a pinned package from GitHub. termihub_harness/https_probe.py skips only when GitHub gives no answer or a 5xx/429 (an outage is not a termiHub bug); a 404 or any other answer is graded and fails"
     }
   ]
 }
