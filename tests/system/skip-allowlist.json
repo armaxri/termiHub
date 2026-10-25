@@ -13,11 +13,11 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5)",
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5); #4964 +1 macOS/Windows for the Linux-only traceroute chain",
     "bulk-linux": 59,
     "bulk-linux-arm64": 20,
-    "bulk-macos": 211,
-    "bulk-windows": 226,
+    "bulk-macos": 212,
+    "bulk-windows": 227,
     "display-linux": 0,
     "display-linux-arm64": 0,
     "display-macos": 0,
@@ -100,6 +100,15 @@
         "bulk-macos"
       ],
       "why": "macOS runners ship no Docker"
+    },
+    {
+      "reason": "^the traceroute hop fixture needs a Linux host attached to the Docker bridge$",
+      "nodeid": "test_network_tools_traceroute\\.py",
+      "lanes": [
+        "bulk-macos",
+        "bulk-windows"
+      ],
+      "why": "#4964: the hosted macOS/Windows runners have no Linux Docker daemon whose bridge the host sits on; the multi-hop chain runs on the Linux lanes"
     },
     {
       "reason": "the docker daemon runs windows containers",

@@ -181,6 +181,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-WIN-04": f"{_OS_MAC}::test_dock_quit_applescript_quit_and_logout",
     # #4953: agent auth against a private ssh-agent the suite starts itself.
     "MT-SSH-07": "test_ssh_agent_auth.py::test_ssh_agent_auth_connects",
+    # #4964: traced through a two-router Docker chain, unprivileged (IP_RECVERR).
+    "MT-NET-16": "test_network_tools_traceroute.py::test_traceroute_hops_stream_in_and_complete",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
