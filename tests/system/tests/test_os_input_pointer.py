@@ -147,6 +147,9 @@ class TestOsPointerGrades(
             lambda: self.require_connection(conn_name).get("folderId") == folder["id"],
             what="the connection to move into the folder",
         )
+        # On Linux/Windows the first click after this drag is swallowed (#4978):
+        # spend it on a harmless target so later steps are not affected.
+        self.os_click("connection-filter-input", screen=screen)
 
     # ── MT-UI-26..28, MT-NIN-30: right-click in the terminal ─────────────────
     def _quick_copy_then_paste(self, tab_id: str) -> None:
@@ -226,8 +229,7 @@ class TestOsPointerGrades(
         )
         assert self.driver.read_terminal(tab_id) == before, "the right-click pasted"
 
-    # Last in the suite: after the torn-off window closes, the main window's
-    # toolbar no longer opens terminals on Linux/Windows (#4978).
+    # Last in the suite: it leaves a resized window behind.
     # ── MT-NIN-07: tab tear-off ──────────────────────────────────────────────
     def test_tab_drag_released_outside_window_tears_off(self):
         """MT-NIN-07 (#4916): a tab released inside the window off every drop
