@@ -5,9 +5,3 @@
   its ordinary UDP probe socket (`IP_RECVERR`, the `tracepath` method) instead of
   failing with "insufficient privileges". macOS and Windows behave as before
   (#4964).
-
-### Testing
-
-- Traceroute (MT-NET-16) is graded unattended on the Linux integration lane
-  against a new two-router Docker chain (compose profile `traceroute`) with three
-  fixed hops; the guided-manual prompt is retired (#4964).
