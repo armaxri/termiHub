@@ -60,6 +60,7 @@ pytestmark = [
 
 FB_LIST = "file-browser-list"
 FB_OVERLAY = "file-browser-drag-overlay"
+FB_FILTER = "file-browser-filter"
 PARTNER_SIZE = (260, 200)
 #: Window size that leaves screen room for a partner window beside it.
 APP_SIZE = (900, 620)
@@ -223,6 +224,8 @@ class TestXdndFileDrop(_XdndSuite, TerminalUi, TabsUi, LayoutUi, SidebarUi, File
             self.clear_entry_filter()
             self.wait(lambda: self.file_row_exists("zz-folder"), what="the folder row")
             screen = self.os_activate()
+            # The first click after a real drag can be swallowed (#4978): spend it.
+            self.os_click(FB_FILTER, screen=screen)
             self.os_click(file_row_testid("drag-out.txt"), screen=screen)
             osi.key_down("ctrl")
             try:
