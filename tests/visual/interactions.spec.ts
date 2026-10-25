@@ -20,16 +20,14 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { MONITOR_KEY, VISUAL_SESSION_ID, type VisualScenario } from "./harness/mockBackend";
+import { MONITOR_KEY, MONITOR_SESSION_ID, VISUAL_SESSION_ID } from "./harness/interactionIds";
+import type { VisualScenario } from "./harness/mockBackend";
+import type { VisualHandle } from "./harness/visualHandle";
 
-type StoreState = Record<string, (...args: unknown[]) => unknown> & Record<string, unknown>;
 declare global {
   interface Window {
-    __visual: {
-      store: { getState(): StoreState };
-      emit(event: string, payload: unknown): Promise<void>;
-      applyTheme(setting: string): void;
-    };
+    /** What the harness exposes (see harness/boot.ts). */
+    __visual: VisualHandle;
   }
 }
 
@@ -68,7 +66,12 @@ async function terminalWithScrollback(page: Page): Promise<string> {
     () =>
       window.__visual.store
         .getState()
-        .addTab("Visual", "local", { type: "local", config: {} }, { contentType: "terminal" }) as string
+        .addTab(
+          "Visual",
+          "local",
+          { type: "local", config: {} },
+          { contentType: "terminal" }
+        ) as string
   );
   await page.waitForFunction(() => window.__VISUAL_INVOKED__?.includes("create_connection"));
   await page.locator(THUMB).waitFor({ state: "attached" });
@@ -170,7 +173,8 @@ function focusInside(page: Page, root: string): Promise<{ inside: boolean; where
   return page.evaluate((sel) => {
     const el = document.activeElement;
     const tagged = el?.closest("[data-testid]");
-    const where = tagged?.getAttribute("data-testid") ?? el?.tagName.toLowerCase() ?? "none";
+    const tag = el?.tagName.toLowerCase() ?? "none";
+    const where = `${tagged?.getAttribute("data-testid") ?? "?"}/${tag}${el?.ariaLabel ? `[${el.ariaLabel}]` : ""}`;
     return { inside: !!el && !!document.querySelector(sel)?.contains(el), where };
   }, root);
 }
@@ -228,6 +232,7 @@ test("MT-UI-47: Tab and Shift+Tab never leave the zoom overlay", async ({ page }
   expect(behind, "focusable controls behind the overlay").toBeGreaterThan(0);
   // A focused terminal keeps Tab for its program, so start from the header.
   await page.locator(`${ZOOM} button`).first().focus();
+  let moves = 0;
   for (const shift of [false, true]) {
     const key = shift ? "Shift+Tab" : "Tab";
     for (let i = 0; i < 8; i++) {
@@ -236,13 +241,18 @@ test("MT-UI-47: Tab and Shift+Tab never leave the zoom overlay", async ({ page }
         () => !!document.activeElement?.closest(".xterm")
       );
       if (terminalFocused) await page.locator(`${ZOOM} button`).first().focus();
+      const from = (await focusInside(page, ZOOM)).where;
       await page.keyboard.press(key);
       const focus = await focusInside(page, ZOOM);
-      expect(focus.inside, `${key} #${i + 1} moved focus behind the overlay to ${focus.where}`).toBe(
-        true
-      );
+      if (focus.where !== from) moves++;
+      expect(
+        focus.inside,
+        `${key} #${i + 1} moved focus behind the overlay to ${focus.where}`
+      ).toBe(true);
     }
   }
+  // Tab really moved focus around the overlay (not stuck on one control).
+  expect(moves, "Tab never moved focus at all").toBeGreaterThan(0);
   await expect(page.locator(ZOOM)).toBeVisible();
 });
 
@@ -256,6 +266,18 @@ test("MT-UI-48: the refresh-interval menu opens above Open Connections", async (
   await trigger.click();
   const option = page.locator(`[data-testid="monitor-interval-${MONITOR_KEY}-5000"]`);
   await option.waitFor();
+  // Radix places the popper off-screen until it has measured it; wait for the
+  // menu to land fully inside the window.
+  await expect
+    .poll(
+      () =>
+        option.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
+        }),
+      { message: "the refresh-interval menu to open inside the window" }
+    )
+    .toBe(true);
   // Every menu item is the topmost element at its own centre: nothing of the
   // dialog (or its scrim) paints over the menu.
   const covered = await page.evaluate((key) => {
@@ -275,13 +297,12 @@ test("MT-UI-48: the refresh-interval menu opens above Open Connections", async (
   }, MONITOR_KEY);
   expect(covered.count, "refresh-interval options rendered").toBeGreaterThan(1);
   expect(covered.bad, "refresh-interval options covered by the dialog").toEqual([]);
-  const before = (await page.evaluate(() => window.__VISUAL_INVOKED__ ?? [])).length;
   await option.click();
   await expect(option).toHaveCount(0);
-  const invoked = (await page.evaluate(() => window.__VISUAL_INVOKED__ ?? [])).slice(before);
-  expect(invoked.some((c) => c.startsWith("intent_dispatch:monitor")), invoked.join(", ")).toBe(
-    true
-  );
+  // The pick reaches the backend for this host's monitor session.
+  await expect
+    .poll(() => page.evaluate(() => window.__VISUAL_MONITOR_INTERVALS__ ?? []))
+    .toEqual([`${MONITOR_SESSION_ID}:5000`]);
   // The dialog stays open: the pick closed only the menu.
   await expect(trigger).toBeVisible();
 });

@@ -20,6 +20,7 @@ import {
   PLUGIN_UPDATE_TRUST,
 } from "./pluginUpdatePreview";
 import { STORED_SECRET_CONNECTIONS } from "./storedSecretIds";
+import { MONITOR_KEY, MONITOR_SESSION_ID, VISUAL_SESSION_ID } from "./interactionIds";
 import { MOBAXTERM_CANDIDATES, MOBAXTERM_PREVIEW } from "./mobaxtermImportPreview";
 
 /** Per-test knobs the spec sets before the app boots. */
@@ -61,12 +62,6 @@ export interface VisualScenario {
   monitoring?: boolean;
 }
 
-/** The session id `create_connection` answers with under the `terminal` scenario. */
-export const VISUAL_SESSION_ID = "visual-session-1";
-
-/** The monitored SSH host the `monitoring` scenario seeds. */
-export const MONITOR_KEY = "ops@build-box.example.com:22";
-
 declare global {
   interface Window {
     __VISUAL_SCENARIO__?: VisualScenario;
@@ -77,6 +72,8 @@ declare global {
      * intent), so a check can compare what two triggers of one action did.
      */
     __VISUAL_INVOKED__?: string[];
+    /** `sessionId:intervalMs` of every refresh-interval change the app asked for (#4949). */
+    __VISUAL_MONITOR_INTERVALS__?: string[];
   }
 }
 
@@ -462,7 +459,7 @@ const MONITORS_VIEW = {
     [MONITOR_KEY]: {
       key: MONITOR_KEY,
       host: MONITOR_KEY,
-      monitorSessionId: "visual-monitor-1",
+      monitorSessionId: MONITOR_SESSION_ID,
       stats: null,
       loading: false,
       error: null,
@@ -622,6 +619,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return "/home/visual/.local/share/termihub/termihub.log";
     case "local_list_dir":
       return [];
+    case "session_monitoring_set_interval":
+      (window.__VISUAL_MONITOR_INTERVALS__ ??= []).push(`${args?.sessionId}:${args?.intervalMs}`);
+      return null;
     case "create_connection":
       return scenario.terminal ? VISUAL_SESSION_ID : null;
     case "plugin:dialog|open":
