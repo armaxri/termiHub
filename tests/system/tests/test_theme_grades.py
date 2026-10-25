@@ -13,7 +13,8 @@ latency chart's painted pixels — and grades it with the WCAG helpers in
   acts on a CI runner or with ``TERMIHUB_ALLOW_OS_APPEARANCE=1`` and always
   restores it);
 - MT-UI-13 — the single panel's edge does not double against the sidebar;
-- MT-UI-41 — scrollbar thumbs are visible at rest in every built-in theme;
+- MT-UI-41 — scrollbar thumbs are visible at rest in every built-in theme
+  (the hover brightening needs a real pointer: tests/visual/interactions.spec.ts);
 - MT-UI-49 / MT-UI-52 — the editor follows the theme (light themes get a
   light editor; editor and gutter share the terminal background, live);
 - MT-UI-50 — the latency chart and primary buttons follow a live theme switch.
