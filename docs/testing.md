@@ -1190,6 +1190,39 @@ repeat) stay guided too: on the hosted runners an injected click did not move
 the window focus reliably, and autorepeat key events posted to the PID never
 reached the webview.
 
+### Native file drop grades (#4936)
+
+Tauri catches an OS file drag in the native window and hands the page four
+window events (`tauri://drag-enter`, `-over`, `-drop`, `-leave`) with physical
+webview coordinates; `useOsFileDrop` hit-tests them against its drop zones. Two
+suites grade the two halves:
+
+- **The app half, on every OS.** `OsDropUi` emits exactly those events through
+  the bridge's `emitEvent` verb (a global emit reaches every window's
+  `onDragDropEvent` listener, so no extra verb is needed) at an element's
+  physical point: the drop highlight, the pane under the cursor, the quoting,
+  the copy and the upload run unchanged.
+- **The native half, on Linux.** `termihub_harness/os_input/xdnd` starts GTK
+  windows the harness owns: a drag **source** offering files as
+  `text/uri-list`, and a drop **target** that records the URIs and copies the
+  files into its own folder. The real pointer (XTEST, by PID, refused unless
+  the frontmost window is the test instance or one of these partners) drags
+  between them and the app, through WebKitGTK's XDND drop target and the
+  app's GTK drag source (`drag_out_start`). CI installs `python3-gi` and
+  `gir1.2-gtk-3.0` for them.
+
+| Suite                                                                          | Grades                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`test_os_file_drop.py`](../tests/system/tests/test_os_file_drop.py)           | MT-NIN-01 (three awkward names quoted per platform; the shell receives exactly those paths), MT-UI-34 (the highlight follows the cursor between two panes and the drop lands only in the pane under it; nothing on the tab bar), MT-NIN-05 (drop onto the file browser copies), MT-FB-30 (5000 entries stay virtualised and accept a drop) |
+| [`test_os_file_drop_xdnd.py`](../tests/system/tests/test_os_file_drop_xdnd.py) | real XDND drops onto the terminal and the file browser (MT-NIN-01/05 natively, the X11 half of MT-NIN-04), MT-NIN-06 (a row dragged out lands in the other app's folder; dragged back over termiHub it neither highlights nor inserts), MT-FB-31 (a file, a file+folder selection and an SFTP folder with its tree drag out)               |
+| [`test_vnc_file_transfer.py`](../tests/system/tests/test_vnc_file_transfer.py) | MT-RD-10 (two files and a folder dropped on a tunnelled VNC session: the overlay names the folder and SSH host, the tree uploads, a second drop keeps both)                                                                                                                                                                                |
+
+Still guided: MT-NIN-02 (a real scaled display), MT-NIN-03 (two displays with
+different scale factors) and MT-NIN-04 under Wayland (XTEST cannot drive a
+Wayland drag), which also covers dragging a row out under Wayland. Docker and
+agent drag-outs stage through the backend (unit-tested) and then use the same
+native drag as the local and SFTP cases.
+
 ### Live WSL distro lane (Windows, #4008)
 
 The WSL backend's pure logic is unit-tested on every platform, but the regular
@@ -2534,7 +2567,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-UI-31        | Box-drawing characters render without gaps                                              | Automated (#4937)    | test_native_capture_grades.py::test_box_drawing_strokes_are_continuous                                                              |
 | MT-UI-32        | Zoom overlay follows panel focus switching                                              | Automated (already)  | src/store/appStore.test.ts 'follows zoom to the new panel's active tab…'                                                            |
 | MT-UI-33        | Zoom overlay follows tab switching within the zoomed panel                              | Automated (already)  | appStore.test.ts 'follows zoom to any tab type when switching in the same panel'                                                    |
-| MT-UI-34        | OS file drop targets the individual pane under the cursor                               | Guided-manual pytest | test_input_routing.py::test_os_file_drop_onto_pane                                                                                  |
+| MT-UI-34        | OS file drop targets the individual pane under the cursor                               | Automated (#4936)    | test_os_file_drop.py::test_drop_targets_only_the_pane_under_the_cursor                                                              |
 | MT-UI-35        | Terminal right-edge scrollbar shows only when scrollback exceeds viewport               | Automated (#4930)    | test_layout_grades.py::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes                                          |
 | MT-UI-36        | Vertical scrollbar is the same in normal and horizontal-scroll modes                    | Automated (#4930)    | test_layout_grades.py::test_vertical_scrollbar_only_with_scrollback_and_same_in_both_modes                                          |
 | MT-UI-37        | Open tabs and layout are restored after an app restart                                  | Automated (#3693)    | tests/system/tests/test_session_restore_ui.py::test_tabs_split_and_groups_are_restored_after_restart                                |
@@ -2702,22 +2735,19 @@ The bridge injects synthetic DOM events inside the webview, so three things
 never go through it. OS pointer drag-and-drop: Tauri takes OS file drops in the
 native window and reports physical screen coordinates. IME composition: the OS
 input method owns the preedit and the candidate window. Real window focus: only
-the OS can move focus to another app and back. The drop zones have stable
-testids and component tests, but the native half of these paths is covered only
-by hand. Two places gate it for a release:
+the OS can move focus to another app and back. OS file drops are graded
+automatically since #4936 (see [Native file drop grades](#native-file-drop-grades-4936)),
+and the connection and editor-tab drags, the tab tear-off, dead keys, Caps Lock
+and the app-switch focus check with real OS input since #4935 (see
+[Real OS input grades](#real-os-input-grades-4935)).
+**[`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)**
+(guided-manual, all release-gating) covers the rest.
 
-- **`test_input_routing.py`** (guided-manual) walks a single-file OS drop onto
-  a terminal pane. The connection and editor-tab drags, the tab tear-off, dead
-  keys, Caps Lock and the app-switch focus check are graded with real OS input since
-  #4935 (see [Real OS input grades](#real-os-input-grades-4935)).
-- **[`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)**
-  (guided-manual, all release-gating) covers the rest.
-
-| Area          | Items          | What it checks                                                                                                                                                                                                                                                                                                                                 |
-| ------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drag-and-drop | MT-NIN-01 … 07 | Multi-file drop quoting (POSIX single quotes vs Windows double quotes), pane hit-testing on scaled and mixed-DPI displays, Wayland vs X11 (Linux), drop onto the file browser, native drag-out, a tab torn off the window opening in a new window with its live session (a drag released back over the window's non-drop area changes nothing) |
-| IME           | MT-NIN-10 … 16 | Native preedit and candidate window per platform (IMK / TSF / IBus-Fcitx5 under Wayland and X11), the real IME's Enter / Escape order in the editor and form fields, dead keys, the OS emoji picker                                                                                                                                            |
-| Focus         | MT-NIN-20 … 24 | Focus survives an app switch, returns after a native Save dialog, first click into an inactive window (macOS differs), per-window keyboard routing, remote-desktop key release on blur                                                                                                                                                         |
+| Area          | Items          | What it checks                                                                                                                                                                                                                  |
+| ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drag-and-drop | MT-NIN-02 … 04 | Pane hit-testing on a real scaled display and across displays with different scale factors, drop in and drag out under Wayland (quoting, the file-browser drop, X11 and drag-out are automated, #4936; the tab tear-off, #4935) |
+| IME           | MT-NIN-10 … 16 | Native preedit and candidate window per platform (IMK / TSF / IBus-Fcitx5 under Wayland and X11), the real IME's Enter / Escape order in the editor and form fields, dead keys, the OS emoji picker                             |
+| Focus         | MT-NIN-20 … 24 | Focus survives an app switch, returns after a native Save dialog, first click into an inactive window (macOS differs), per-window keyboard routing, remote-desktop key release on blur                                          |
 
 **IME commit behaviour is automated (#3059).** The `compose` bridge verb replays
 an input method's DOM sequence (`keydown` 229, `compositionstart`,
@@ -2776,12 +2806,13 @@ tests moved to WebdriverIO in #458 and #459, the drags stayed manual because
 **Recommendation: do not revive it.** It would bring back a second driver stack,
 pinned per-OS driver versions and a CI dependency, against #799's invariant. In
 return it would automate only the in-app drags, which the guided suite already
-walks, and none of OS drop, IME or focus. The native-input manual matrix plus
-`test_input_routing.py` stays the release gate. Only OS-level input injection
+walks, and none of OS drop, IME or focus. The native-input manual matrix stays
+the release gate for what is left. Only OS-level input injection
 would automate the native pipeline: `xdotool`/`ydotool` on Linux, `SendInput`
 on Windows, `CGEvent` on macOS. That project landed as
-[Real OS input grades](#real-os-input-grades-4935) (#4935); it still cannot drive
-a real IME candidate window.
+[Real OS input grades](#real-os-input-grades-4935) (#4935) and
+[Native file drop grades](#native-file-drop-grades-4936) (#4936); it still cannot
+drive a real IME candidate window.
 
 ### Release-gating manual checklist
 
@@ -2789,11 +2820,10 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 
 Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does all the setup and asks only for the irreducible look, click or physical step. From `tests/system/`: `./pytest.sh --manual -s` (or `./scripts/run-guided-manual.sh -k <suite>` from the repo root), which writes a sign-off report to `tests/reports/`. Platform-scoped tests run only on their OS (override with `--manual-platform`). See [Guided-Manual Tests in the Python Harness](#guided-manual-tests-in-the-python-harness-preferred) for how they work.
 
-- [ ] `test_input_routing.py` — OS file drop (right-click, connection and editor-tab drags are graded by `test_os_input_pointer.py`, #4935). MT-KB-09 … 14 (shell-chord pass-through, Find routing) and MT-TAB-06/07 (tab drags) are automated (#4928)
-- [ ] `test_guided_native_input.py` — MT-NIN-01 … 06 (native file drag-and-drop), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-21 … 24 (Save-dialog focus, click into an inactive window, per-window typing, remote-desktop key release). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
+- [ ] `test_guided_native_input.py` — MT-NIN-02 … 04 (file drops on a scaled display, across displays, under Wayland; MT-NIN-01/05/06 are automated, #4936), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-21 … 24 (Save-dialog focus, click into an inactive window, per-window typing, remote-desktop key release). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
 - [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
-- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-SHI-01 and 03 … 06 (external spawn and OS context menus; MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID, #4935), MT-FB-30/31 (large folder, drag out)
-- [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
+- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-SHI-01 and 03 … 06 (external spawn and OS context menus; MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID, #4935; MT-FB-30/31 are automated, #4936)
+- [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/31 (WSL flash, key repeat, Git install), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
@@ -2832,16 +2862,15 @@ At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` r
 
 Guided-manual suites:
 
-| Suite                                                                                      | Covers (manual IDs)                                                             | The human step                                                                                                                                                                                     |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)                     | MT-UI-34                                                                        | perform the real drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: the context-menu items, the panel tree, the moved connection's folder) |
-| [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-01..06/10..14/16/21..24                                                  | the native OS drag, IME composition, dead key, emoji picker or app switch (harness asserts the shell listing, the copied file, the torn-off tab's session in the new window, the saved name)       |
-| [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..16                                                                  | answer the Touch ID / Windows Hello / polkit sheet                                                                                                                                                 |
-| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-SHI-01/03..06, MT-FB-30/31                                     | the Dock / app-menu quit, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                 |
-| [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                    | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                           |
-| [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                                                                     |
-| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-50..52, MT-NET-16/21                                  | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                                                                       |
-| [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                      |
+| Suite                                                                                      | Covers (manual IDs)                                                             | The human step                                                                                                                                          |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-02..04/10..14/16/21..24                                                  | the native OS drag on a scaled display or under Wayland, IME composition, emoji picker or the focus step (harness asserts the saved name and the focus) |
+| [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..16                                                                  | answer the Touch ID / Windows Hello / polkit sheet                                                                                                      |
+| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-SHI-01/03..06                                                  | the Dock / app-menu quit, an OS context menu (harness runs `termiHub spawn` through the instance's private rendezvous)                                  |
+| [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..09/11..13                                                             | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                |
+| [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                          |
+| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-50..52, MT-NET-16/21                                  | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                            |
+| [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                           |
 
 ### Output-stream flash and flood grades (#4931)
 
@@ -3066,6 +3095,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-FB-04, 14, 15, 21, 22, 32                                                                           | `tests/system/tests/test_external_app_handoffs.py` (`code` / `xdg-open` PATH shims, OS file-manager queries, #4932)                                                                      |
 | MT-NIN-07, 15, 20, 30, 31; MT-KB-01–04; MT-UI-26–28, 30; MT-CONN-01; MT-FB-20; MT-SHI-02; MT-WIN-01–04 | `tests/system/tests/test_os_input_*.py` (real OS input by PID, #4935)                                                                                                                    |
 | MT-FB-16, 23                                                                                           | `tests/system/tests/test_file_browser_local.py` (the VS Code actions track `vscodeAvailable`, #4928)                                                                                     |
+| MT-NIN-01, 05, 06; MT-UI-34; MT-FB-30, 31; MT-RD-10                                                    | `test_os_file_drop.py`, `test_os_file_drop_xdnd.py`, `test_vnc_file_transfer.py` (synthetic Tauri drop events; real X11 XDND, #4936)                                                     |
 | EDITOR-01/STATUS/INDENT/LANG                                                                           | `tests/system/tests/test_editor.py`                                                                                                                                                      |
 | #504 (terminal auto-scroll)                                                                            | `tests/system/tests/test_terminal_auto_scroll.py`                                                                                                                                        |
 | MT-UI-06–08                                                                                            | `tests/system/tests/test_ui_state.py`                                                                                                                                                    |
