@@ -7,10 +7,12 @@
  * scrollbar's thumb against a laid-out track — cannot be asserted in vitest
  * (see `Terminal.xterm-integration.test.ts`). These helpers expose exactly that
  * state from a real WebView so the Python bridge harness can assert it:
- * `measureTerminal` (read-only) and `loseTerminalWebglContext` (forces a real
- * GPU context loss so the DOM fallback runs).
+ * `measureTerminal` (read-only), `loseTerminalWebglContext` (forces a real
+ * GPU context loss so the DOM fallback runs) and `readTerminalWebglFrame`
+ * (reads back the pixels the WebGL renderer drew, #4970).
  */
 import type { TerminalHandles } from "@/components/Terminal/TerminalRegistry";
+import { errorMessage } from "@/utils/errorMessage";
 import {
   readRawRenderedCellHeight,
   readRawRenderedCellWidth,
@@ -21,6 +23,7 @@ import type {
   TerminalMeasurement,
   TerminalPaint,
   TerminalScrollbarMeasurement,
+  TerminalWebglFrame,
 } from "./protocol";
 
 /** The minimal `WEBGL_lose_context` extension surface used here. */
@@ -212,4 +215,86 @@ export function loseTerminalWebglContext({ element }: TerminalHandles): boolean 
   if (!ext) return false;
   ext.loseContext();
   return true;
+}
+
+/** How long `readTerminalWebglFrame` waits for the animation frame it reads in. */
+export const WEBGL_READBACK_TIMEOUT_MS = 5000;
+
+/** Base64 of `bytes`, encoded in chunks (`String.fromCharCode` has an arity cap). */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Copy `canvas` (any context type) into a 2D canvas and return its pixels as
+ * row-major RGB bytes, base64-encoded. Alpha is dropped: the terminal canvas
+ * is opaque where it paints and the grades compare against opaque colours.
+ */
+export function copyCanvasRgb(canvas: HTMLCanvasElement): {
+  width: number;
+  height: number;
+  rgb: string;
+} {
+  const { width, height } = canvas;
+  const copy = canvas.ownerDocument.createElement("canvas");
+  copy.width = width;
+  copy.height = height;
+  const ctx = copy.getContext("2d");
+  if (!ctx) throw new Error("no 2D context to copy the WebGL canvas into");
+  ctx.drawImage(canvas, 0, 0);
+  const rgba = ctx.getImageData(0, 0, width, height).data;
+  const rgb = new Uint8Array(width * height * 3);
+  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+    rgb[j] = rgba[i];
+    rgb[j + 1] = rgba[i + 1];
+    rgb[j + 2] = rgba[i + 2];
+  }
+  return { width, height, rgb: toBase64(rgb) };
+}
+
+/**
+ * Read back what the terminal's WebGL renderer drew (#4970), or `null` on the
+ * DOM renderer.
+ *
+ * The addon's context has `preserveDrawingBuffer: false`, so its drawing
+ * buffer is only defined until the browser composites the frame. The read
+ * therefore forces a full repaint (`xterm.refresh`, which schedules the
+ * renderer's draw on the next animation frame) and copies the canvas from an
+ * animation-frame callback requested *after* it — the same frame, after the
+ * draw, before compositing. This sees the GPU output in-process, where the
+ * hosted macOS runners' window server image does not contain the canvas.
+ * Rejects when no animation frame arrives (an occluded, throttled web view).
+ */
+export function readTerminalWebglFrame({
+  element,
+  xterm,
+}: TerminalHandles): Promise<TerminalWebglFrame | null> {
+  const canvas = findWebglCanvas(element);
+  if (!canvas) return Promise.resolve(null);
+  const view = element.ownerDocument.defaultView ?? window;
+  return new Promise((resolve, reject) => {
+    const timer = view.setTimeout(
+      () =>
+        reject(
+          new Error(
+            `no animation frame within ${WEBGL_READBACK_TIMEOUT_MS} ms (is the window occluded?)`
+          )
+        ),
+      WEBGL_READBACK_TIMEOUT_MS
+    );
+    xterm.refresh(0, xterm.rows - 1);
+    view.requestAnimationFrame(() => {
+      view.clearTimeout(timer);
+      try {
+        resolve({ ...copyCanvasRgb(canvas), devicePixelRatio: view.devicePixelRatio });
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(errorMessage(error)));
+      }
+    });
+  });
 }

@@ -466,6 +466,33 @@ export interface LoseTerminalWebglContextCommand {
 }
 
 /**
+ * Read back the pixels the terminal's WebGL renderer drew (#4970), in-process.
+ * The bridge forces a full repaint and copies the WebGL canvas in the same
+ * animation frame the renderer draws in (before the browser composites and
+ * discards the drawing buffer), so it sees the GPU output even where the OS
+ * window capture does not (the hosted macOS runners). Answers `null` when the
+ * terminal has no WebGL canvas (it is on the DOM renderer). Test-mode only.
+ * When `tabId` is omitted the active tab is used.
+ */
+export interface ReadTerminalWebglFrameCommand {
+  action: "readTerminalWebglFrame";
+  tabId?: string;
+}
+
+/**
+ * One WebGL canvas readback (#4970): `width` x `height` backing-store pixels,
+ * `rgb` the base64 of `width * height * 3` bytes, row-major from the top-left.
+ * The canvas spans the `.xterm-screen` box, so canvas pixel (x, y) is screen
+ * CSS px (x, y) / `devicePixelRatio`.
+ */
+export interface TerminalWebglFrame {
+  width: number;
+  height: number;
+  devicePixelRatio: number;
+  rgb: string;
+}
+
+/**
  * Read a slice of the app store. `path` is an optional dot-path into the state
  * (e.g. `"activePanelId"` or `"rootPanel.activeTabId"`). When omitted, a curated
  * snapshot of serializable state is returned.
@@ -931,6 +958,7 @@ export type BridgeCommand =
   | ComposeCommand
   | MeasureTerminalCommand
   | LoseTerminalWebglContextCommand
+  | ReadTerminalWebglFrameCommand
   | ReadTerminalOutputCommand
   | ReadFrontendLogCommand
   | GetStateCommand

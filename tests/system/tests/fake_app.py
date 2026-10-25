@@ -114,6 +114,7 @@ def dispatcher_like(
     inspection: dict | None = None,
     measurement: dict | None = None,
     webgl_lost: bool = True,
+    webgl_frame: dict | None = None,
     cell_rows: list | None = None,
     output_tap: dict | None = None,
     frontend_log: list | None = None,
@@ -131,7 +132,8 @@ def dispatcher_like(
     by default); the inspected tab ids are recorded under ``inspections``.
     ``measurement`` is the value ``measureTerminal`` returns and ``webgl_lost``
     what ``loseTerminalWebglContext`` answers; their tab ids are recorded under
-    ``measurements`` / ``contextLosses``.
+    ``measurements`` / ``contextLosses``. ``webgl_frame`` is the value
+    ``readTerminalWebglFrame`` returns (tab ids recorded under ``webglReads``).
     ``cell_rows`` is the value ``readTerminalCells`` returns; its
     ``(tabId, contains)`` pairs are recorded under ``cellReads`` and each
     ``compose`` command under ``compositions``.
@@ -163,6 +165,7 @@ def dispatcher_like(
         "inspections": [],
         "measurements": [],
         "contextLosses": [],
+        "webglReads": [],
         "cellReads": [],
         "outputReads": [],
         "compositions": [],
@@ -248,6 +251,9 @@ def dispatcher_like(
         if action == "loseTerminalWebglContext":
             recorded["contextLosses"].append(command.get("tabId"))
             return {"ok": True, "action": "loseTerminalWebglContext", "value": webgl_lost}
+        if action == "readTerminalWebglFrame":
+            recorded["webglReads"].append(command.get("tabId"))
+            return {"ok": True, "action": "readTerminalWebglFrame", "value": webgl_frame}
         if action == "readTerminalOutput":
             recorded["outputReads"].append(command.get("tabId"))
             tap = output_tap or {

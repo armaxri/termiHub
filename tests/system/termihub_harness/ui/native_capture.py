@@ -33,6 +33,7 @@ from ..window_capture import (
     Rect,
     capture_window,
     contact_sheet,
+    frame_from_rgb_base64,
     map_page,
     save_png,
 )
@@ -185,6 +186,27 @@ class NativeCaptureUi(HarnessMixin):
         except CaptureUnavailable as exc:
             save_capture(frame, "unmapped")
             raise AssertionError(f"cannot map the page onto the capture: {exc}") from exc
+        return TerminalCapture(frame, mapping, measure)
+
+    def capture_terminal_webgl(self, tab_id: Optional[str] = None) -> Optional[TerminalCapture]:
+        """Read back the WebGL renderer's own pixels, mapped like a capture (#4970).
+
+        The bridge copies the WebGL canvas in the animation frame the renderer
+        draws in, so this sees the GPU output in-process — on macOS too, where
+        the window server's image lacks the canvas. The canvas spans the
+        ``.xterm-screen`` box, so the page maps onto it with that box's
+        top-left at the origin. Returns ``None`` on the DOM renderer.
+        """
+        measure = self.driver.measure_terminal(tab_id)
+        value = self.driver.read_terminal_webgl_frame(tab_id)
+        if value is None:
+            return None
+        if not measure.get("screenRect"):
+            raise AssertionError("measureTerminal has no screenRect — the app predates #4937")
+        frame = frame_from_rgb_base64(value["width"], value["height"], value["rgb"])
+        scale = float(value["devicePixelRatio"])
+        screen = measure["screenRect"]
+        mapping = PageMapping(-screen["left"] * scale, -screen["top"] * scale, scale)
         return TerminalCapture(frame, mapping, measure)
 
     def wait_for_terminal_paint(
