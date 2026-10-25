@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { dirname, join, resolve } from "path";
+import path, { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 /**
@@ -19,6 +19,14 @@ import { fileURLToPath } from "url";
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = resolve(UI_DIR, "..", "..");
 const MAIN_ENTRY = join(SRC_DIR, "main.tsx");
+
+/**
+ * `file` relative to `base`, with forward slashes on every platform (#4975).
+ * `pathApi` is injectable so the Windows behaviour can be checked on POSIX.
+ */
+function posixRelative(base: string, file: string, pathApi: typeof path.posix = path): string {
+  return pathApi.relative(base, file).split(pathApi.sep).join("/");
+}
 
 /** Class families owned by the primitive layer. */
 const PRIMITIVE_CLASS = /^(?:ui-|settings-form)[a-z0-9_-]*[a-z0-9]$/;
@@ -102,6 +110,20 @@ function definesClass(css: string, className: string): boolean {
   return new RegExp(`\\.${escaped}(?![a-zA-Z0-9_-])`).test(css);
 }
 
+describe("posixRelative (#4975)", () => {
+  it("normalises native Windows separators to forward slashes", () => {
+    const base = "C:\\repo\\src";
+    const file = "C:\\repo\\src\\components\\ui\\ui.css";
+    expect(posixRelative(base, file, path.win32)).toBe("components/ui/ui.css");
+  });
+
+  it("leaves POSIX paths unchanged", () => {
+    expect(posixRelative("/repo/src", "/repo/src/styles/global.css", path.posix)).toBe(
+      "styles/global.css"
+    );
+  });
+});
+
 describe("ui primitive CSS is always loaded (#4708)", () => {
   const sheets = alwaysLoadedStylesheets();
   const corpus = Array.from(sheets)
@@ -109,7 +131,7 @@ describe("ui primitive CSS is always loaded (#4708)", () => {
     .join("\n");
 
   it("loads ui.css and the global stylesheet chain", () => {
-    const names = Array.from(sheets).map((s) => s.slice(SRC_DIR.length + 1));
+    const names = Array.from(sheets).map((s) => posixRelative(SRC_DIR, s));
     expect(names).toContain("components/ui/ui.css");
     expect(names).toContain("styles/global.css");
   });
@@ -125,7 +147,7 @@ describe("ui primitive CSS is always loaded (#4708)", () => {
     const missing: string[] = [];
     for (const src of primitiveSources()) {
       for (const cls of emittedClasses(src)) {
-        if (!definesClass(corpus, cls)) missing.push(`${src.slice(UI_DIR.length + 1)}: .${cls}`);
+        if (!definesClass(corpus, cls)) missing.push(`${posixRelative(UI_DIR, src)}: .${cls}`);
       }
     }
     expect(
