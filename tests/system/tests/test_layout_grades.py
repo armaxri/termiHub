@@ -15,6 +15,10 @@ thumb, text edge, horizontal bar), computed styles, and the store:
   title menu works, and only Shift+Escape closes the overlay;
 - MT-UI-48 — the zoomed tab's title menu is live above the modal scrim.
 
+Tab containment in the zoom overlay (MT-UI-47) and the refresh-interval menu
+above Open Connections (MT-UI-48) need a real keyboard and pointer, which the
+bridge cannot synthesise; tests/visual/interactions.spec.ts grades them (#4949).
+
 Runs in the integration lane against the built app. Shell commands branch
 between POSIX shells and the Windows default PowerShell.
 """

@@ -20,6 +20,7 @@ import {
   PLUGIN_UPDATE_TRUST,
 } from "./pluginUpdatePreview";
 import { STORED_SECRET_CONNECTIONS } from "./storedSecretIds";
+import { MONITOR_KEY, MONITOR_SESSION_ID, VISUAL_SESSION_ID } from "./interactionIds";
 import { MOBAXTERM_CANDIDATES, MOBAXTERM_PREVIEW } from "./mobaxtermImportPreview";
 
 /** Per-test knobs the spec sets before the app boots. */
@@ -52,6 +53,13 @@ export interface VisualScenario {
    * `preview_mobaxterm_import` with a mixed preview (#4850).
    */
   mobaxtermImport?: boolean;
+  /**
+   * Answer `create_connection` with {@link VISUAL_SESSION_ID}, so a terminal
+   * tab gets a live session the spec feeds output to through `emit` (#4949).
+   */
+  terminal?: boolean;
+  /** Seed one live SSH host monitor ({@link MONITOR_KEY}) for Open Connections (#4949). */
+  monitoring?: boolean;
 }
 
 declare global {
@@ -64,6 +72,8 @@ declare global {
      * intent), so a check can compare what two triggers of one action did.
      */
     __VISUAL_INVOKED__?: string[];
+    /** `sessionId:intervalMs` of every refresh-interval change the app asked for (#4949). */
+    __VISUAL_MONITOR_INTERVALS__?: string[];
   }
 }
 
@@ -443,6 +453,25 @@ const STORED_SECRET_KEYS: Record<string, { fields: string[]; hops: string[] }> =
   },
 };
 
+/** The `system-monitors` region: one live SSH host monitor at the default interval. */
+const MONITORS_VIEW = {
+  monitors: {
+    [MONITOR_KEY]: {
+      key: MONITOR_KEY,
+      host: MONITOR_KEY,
+      monitorSessionId: MONITOR_SESSION_ID,
+      stats: null,
+      loading: false,
+      error: null,
+      status: "live",
+      sampleCount: 2,
+      paused: false,
+      intervalMs: 2000,
+    },
+  },
+  statsCache: {},
+};
+
 function settingsFor(scenario: VisualScenario): unknown {
   return scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
 }
@@ -460,6 +489,9 @@ function regionView(region: string, populated: boolean): unknown {
   }
   if (region === "agents") return populated ? AGENTS_VIEW : {};
   if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
+  if (region === "system-monitors") {
+    return window.__VISUAL_SCENARIO__?.monitoring ? MONITORS_VIEW : {};
+  }
   return {};
 }
 
@@ -587,6 +619,11 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return "/home/visual/.local/share/termihub/termihub.log";
     case "local_list_dir":
       return [];
+    case "session_monitoring_set_interval":
+      (window.__VISUAL_MONITOR_INTERVALS__ ??= []).push(`${args?.sessionId}:${args?.intervalMs}`);
+      return null;
+    case "create_connection":
+      return scenario.terminal ? VISUAL_SESSION_ID : null;
     case "plugin:dialog|open":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
     case "preview_plugin":
