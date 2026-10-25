@@ -21,6 +21,7 @@ from termihub_harness.window_capture import (
     contact_sheet,
     encode_png,
     frame_from_bgra,
+    frame_from_rgb_base64,
     map_page,
     parse_bmp,
     parse_xwd,
@@ -82,6 +83,20 @@ def test_parse_bmp_honours_bitfield_masks():
 def test_parse_bmp_rejects_other_files():
     with pytest.raises(ValueError):
         parse_bmp(b"\x89PNG" + b"\x00" * 60)
+
+
+def test_frame_from_rgb_base64_decodes_the_webgl_readback():
+    # The readTerminalWebglFrame payload (#4970): row-major RGB, base64.
+    frame = frame_from_rgb_base64(2, 1, "/wAAAAD/")
+    assert (frame.width, frame.height) == (2, 1)
+    assert frame.pixel(0, 0) == RED and frame.pixel(1, 0) == BLUE
+
+
+def test_frame_from_rgb_base64_rejects_bad_payloads():
+    with pytest.raises(ValueError, match="not base64"):
+        frame_from_rgb_base64(1, 1, "%%%")
+    with pytest.raises(ValueError, match="bytes"):
+        frame_from_rgb_base64(2, 1, "/wAA")
 
 
 def _xwd(*, byte_order: int, stride_pad: int = 0, ncolors: int = 0, name: bytes = b"w\x00") -> bytes:
