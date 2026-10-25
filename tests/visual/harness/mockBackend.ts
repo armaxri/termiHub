@@ -52,7 +52,20 @@ export interface VisualScenario {
    * `preview_mobaxterm_import` with a mixed preview (#4850).
    */
   mobaxtermImport?: boolean;
+  /**
+   * Answer `create_connection` with {@link VISUAL_SESSION_ID}, so a terminal
+   * tab gets a live session the spec feeds output to through `emit` (#4949).
+   */
+  terminal?: boolean;
+  /** Seed one live SSH host monitor ({@link MONITOR_KEY}) for Open Connections (#4949). */
+  monitoring?: boolean;
 }
+
+/** The session id `create_connection` answers with under the `terminal` scenario. */
+export const VISUAL_SESSION_ID = "visual-session-1";
+
+/** The monitored SSH host the `monitoring` scenario seeds. */
+export const MONITOR_KEY = "ops@build-box.example.com:22";
 
 declare global {
   interface Window {
@@ -443,6 +456,25 @@ const STORED_SECRET_KEYS: Record<string, { fields: string[]; hops: string[] }> =
   },
 };
 
+/** The `system-monitors` region: one live SSH host monitor at the default interval. */
+const MONITORS_VIEW = {
+  monitors: {
+    [MONITOR_KEY]: {
+      key: MONITOR_KEY,
+      host: MONITOR_KEY,
+      monitorSessionId: "visual-monitor-1",
+      stats: null,
+      loading: false,
+      error: null,
+      status: "live",
+      sampleCount: 2,
+      paused: false,
+      intervalMs: 2000,
+    },
+  },
+  statsCache: {},
+};
+
 function settingsFor(scenario: VisualScenario): unknown {
   return scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
 }
@@ -460,6 +492,9 @@ function regionView(region: string, populated: boolean): unknown {
   }
   if (region === "agents") return populated ? AGENTS_VIEW : {};
   if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
+  if (region === "system-monitors") {
+    return window.__VISUAL_SCENARIO__?.monitoring ? MONITORS_VIEW : {};
+  }
   return {};
 }
 
@@ -587,6 +622,8 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return "/home/visual/.local/share/termihub/termihub.log";
     case "local_list_dir":
       return [];
+    case "create_connection":
+      return scenario.terminal ? VISUAL_SESSION_ID : null;
     case "plugin:dialog|open":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
     case "preview_plugin":
