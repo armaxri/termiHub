@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
-import {
-  DndContext,
-  DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { DndContext, DragEndEvent, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
@@ -81,7 +75,7 @@ export function ShellIntegrationSettings() {
   // (Space to lift, arrows to move, Space to drop); the Move up/down buttons are
   // the simpler keyboard path (A11Y2-003, #4329).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const platform = getPlatform();

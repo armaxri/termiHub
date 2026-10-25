@@ -5,13 +5,13 @@ import {
   useDraggable,
   useDndContext,
   useDroppable,
-  PointerSensor,
   useSensor,
   useSensors,
   pointerWithin,
   DragEndEvent,
   DragStartEvent,
 } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import {
   FolderPlus,
@@ -810,7 +810,7 @@ export function ConnectionList() {
   const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
   const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
 
-  const pointerSensor = useSensor(PointerSensor, {
+  const pointerSensor = useSensor(ReleaseScopedPointerSensor, {
     activationConstraint: { distance: 8 },
   });
   const sensors = useSensors(pointerSensor);

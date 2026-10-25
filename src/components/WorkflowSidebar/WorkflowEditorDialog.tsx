@@ -3,7 +3,8 @@ import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { Plus } from "lucide-react";
-import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { DndContext, DragEndEvent, useSensor, useSensors } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import {
   Modal,
@@ -154,7 +155,9 @@ export function WorkflowEditorDialog({
   // triggers, or saving would write the old id back (#3603).
   useFollowConnectionIdChanges(setTriggers, remapWorkflowTriggers, open);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(
+    useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 5 } })
+  );
 
   // Reload the working copy each time a workflow is opened so a prior edit never
   // leaks in and cancel truly discards.
