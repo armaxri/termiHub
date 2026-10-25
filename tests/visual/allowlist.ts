@@ -22,16 +22,7 @@ export interface AllowEntry {
   match: RegExp;
 }
 
-export const ALLOWLIST: AllowEntry[] = [
-  {
-    // Five or six hover actions overlay the whole name of a tunnel or service
-    // row at the minimum sidebar width, so its tooltip cannot be reached.
-    issue: 4972,
-    kind: "expectation",
-    surface: /^rows\/(tunnel|service)@min$/,
-    match: /the start of the cut name cannot be hovered/,
-  },
-];
+export const ALLOWLIST: AllowEntry[] = [];
 
 const STRICT = (process.env.VISUAL_STRICT ?? "").split(",").filter(Boolean);
 

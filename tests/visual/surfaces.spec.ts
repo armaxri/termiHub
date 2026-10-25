@@ -24,6 +24,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import { allowedBy, ALLOWLIST, type AllowEntry } from "./allowlist";
 import type { VisualScenario } from "./harness/mockBackend";
+import type { VisualHandle } from "./harness/visualHandle";
 import { STORED_SECRET_CONNECTIONS } from "./harness/storedSecretIds";
 import {
   cutNames,
@@ -47,11 +48,10 @@ import { styledPrimitiveClasses } from "./uiClasses";
 
 const STYLED_CLASSES = styledPrimitiveClasses();
 
-/** The app store the harness exposes (see harness/boot.ts). */
-type StoreState = Record<string, (...args: unknown[]) => unknown>;
 declare global {
   interface Window {
-    __visual: { store: { getState(): StoreState } };
+    /** What the harness exposes (see harness/boot.ts). */
+    __visual: VisualHandle;
   }
 }
 
