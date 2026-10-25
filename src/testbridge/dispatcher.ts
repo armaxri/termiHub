@@ -9,6 +9,7 @@ import type {
   DragModifiers,
   DragObservations,
   FrontendLogRecord,
+  OsInputProbeResult,
   TerminalCellRow,
   TerminalInspection,
   TerminalMeasurement,
@@ -17,6 +18,7 @@ import type {
 import { errorMessage } from "@/utils/errorMessage";
 import { isComposableControl, replayComposition } from "./composition";
 import { frontendDurableInfo } from "@/utils/frontendLog";
+import { armInputProbe, inputProbeEvents } from "./inputProbe";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -1232,6 +1234,29 @@ export async function dispatchCommand(
       } catch (error) {
         return fail("listWindows", errorMessage(error));
       }
+    }
+
+    case "osInputProbe": {
+      const doc = ownerDocument(deps.root);
+      const view = doc.defaultView ?? window;
+      let rect: OsInputProbeResult["rect"];
+      if (command.testId != null) {
+        const el = findByTestId(deps.root, command.testId);
+        if (!el) return fail("osInputProbe", `no element with data-testid="${command.testId}"`);
+        const r = (el as HTMLElement).getBoundingClientRect();
+        rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+      }
+      const events = inputProbeEvents();
+      armInputProbe(doc, command.reset === true);
+      const result: OsInputProbeResult = {
+        events: command.reset === true ? [] : events,
+        devicePixelRatio: view.devicePixelRatio,
+        innerWidth: view.innerWidth,
+        innerHeight: view.innerHeight,
+        hasFocus: doc.hasFocus(),
+        ...(rect ? { rect } : {}),
+      };
+      return ok("osInputProbe", result);
     }
 
     case "readCoverage": {

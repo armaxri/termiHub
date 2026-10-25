@@ -120,7 +120,7 @@ class TestGuidedShellsAndTools(
     # ── MT-LOCAL-08: macOS key repeat ────────────────────────────────────────
     @pytest.mark.manual(platforms=["macos"])
     def test_macos_key_repeat(self):
-        """MT-LOCAL-08."""
+        """MT-LOCAL-08 (posted autorepeat key events do not reach the webview, #4935)."""
         self.close_all_tabs()
         self.ensure_terminal()
         self.manual_step(

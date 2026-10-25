@@ -31,6 +31,11 @@ dependencies = [
     # pyftpdlib: in-process FTP server for the app-independent transfer-checker
     # tests (test-only; the FTP checker itself uses only the stdlib ftplib).
     "pyftpdlib>=1.5",
+    # pyobjc: Quartz events, window list and Apple events by PID for the macOS
+    # OS-level input grades (termihub_harness/os_input, #4935).
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
 ]
 
 [tool.uv]

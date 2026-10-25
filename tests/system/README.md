@@ -23,6 +23,7 @@ contract, kept in parity with the TypeScript dispatcher (`src/testbridge/`). See
 | `termihub_harness/orchestrator.py` | `AppInstance` / `AgentInstance` process lifecycle                        |
 | `termihub_harness/fixtures.py`     | Docker/Podman container fixtures (SSH, …)                                |
 | `termihub_harness/transfers.py`    | FTP (stdlib `ftplib`) / TFTP (`tftpy`) download checkers (SVC-12/13)     |
+| `termihub_harness/os_input/`       | Real OS keys/pointer aimed at the test instance's PID (#4935)            |
 | `tests/`                           | pytest tests + `fake_app.py` (a WS client stand-in)                      |
 | `conftest.py`                      | `bridge` / `app` / `agent` / `ssh_fixtures` / `telnet_fixtures` fixtures |
 | `pytest.sh` / `pytest.cmd`         | uv wrapper around `python -m pytest` (bootstraps the venv from uv.lock)  |
