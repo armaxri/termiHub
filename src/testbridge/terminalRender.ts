@@ -268,12 +268,17 @@ export function copyCanvasRgb(canvas: HTMLCanvasElement): {
  * animation-frame callback requested *after* it — the same frame, after the
  * draw, before compositing. This sees the GPU output in-process, where the
  * hosted macOS runners' window server image does not contain the canvas.
+ *
+ * `repaint: false` skips the forced repaint, for grades of whether the app
+ * itself repainted (a zoom or split that leaves the canvas stale): the copy
+ * then holds whatever the renderer drew on its own — the frame it draws in
+ * that animation frame, or the last presented one.
  * Rejects when no animation frame arrives (an occluded, throttled web view).
  */
-export function readTerminalWebglFrame({
-  element,
-  xterm,
-}: TerminalHandles): Promise<TerminalWebglFrame | null> {
+export function readTerminalWebglFrame(
+  { element, xterm }: TerminalHandles,
+  repaint = true
+): Promise<TerminalWebglFrame | null> {
   const canvas = findWebglCanvas(element);
   if (!canvas) return Promise.resolve(null);
   const view = element.ownerDocument.defaultView ?? window;
@@ -287,7 +292,7 @@ export function readTerminalWebglFrame({
         ),
       WEBGL_READBACK_TIMEOUT_MS
     );
-    xterm.refresh(0, xterm.rows - 1);
+    if (repaint) xterm.refresh(0, xterm.rows - 1);
     view.requestAnimationFrame(() => {
       view.clearTimeout(timer);
       try {

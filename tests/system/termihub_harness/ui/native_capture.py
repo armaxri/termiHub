@@ -188,7 +188,9 @@ class NativeCaptureUi(HarnessMixin):
             raise AssertionError(f"cannot map the page onto the capture: {exc}") from exc
         return TerminalCapture(frame, mapping, measure)
 
-    def capture_terminal_webgl(self, tab_id: Optional[str] = None) -> Optional[TerminalCapture]:
+    def capture_terminal_webgl(
+        self, tab_id: Optional[str] = None, *, repaint: bool = True
+    ) -> Optional[TerminalCapture]:
         """Read back the WebGL renderer's own pixels, mapped like a capture (#4970).
 
         The bridge copies the WebGL canvas in the animation frame the renderer
@@ -196,9 +198,10 @@ class NativeCaptureUi(HarnessMixin):
         the window server's image lacks the canvas. The canvas spans the
         ``.xterm-screen`` box, so the page maps onto it with that box's
         top-left at the origin. Returns ``None`` on the DOM renderer.
+        ``repaint=False`` reads what the app drew without forcing a repaint.
         """
         measure = self.driver.measure_terminal(tab_id)
-        value = self.driver.read_terminal_webgl_frame(tab_id)
+        value = self.driver.read_terminal_webgl_frame(tab_id, repaint=repaint)
         if value is None:
             return None
         if not measure.get("screenRect"):

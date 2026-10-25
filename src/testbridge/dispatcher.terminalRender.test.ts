@@ -152,7 +152,9 @@ describe("dispatchCommand readTerminalWebglFrame", () => {
     const deps = depsWith({ getActiveTabId: () => "tab-1", readTerminalWebglFrame: read });
     const res = await dispatchCommand({ action: "readTerminalWebglFrame" }, deps);
     expect(res).toEqual({ ok: true, action: "readTerminalWebglFrame", value: FRAME });
-    expect(read).toHaveBeenCalledWith("tab-1");
+    expect(read).toHaveBeenCalledWith("tab-1", true);
+    await dispatchCommand({ action: "readTerminalWebglFrame", repaint: false }, deps);
+    expect(read).toHaveBeenLastCalledWith("tab-1", false);
   });
 
   it("answers null on the DOM renderer", async () => {
@@ -387,6 +389,14 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
       rgb: "/wAAAAD/",
     });
     expect(drawImage).toHaveBeenCalledWith(canvas, 0, 0);
+  });
+
+  it("skips the forced repaint with repaint: false", async () => {
+    handles.element.querySelector(".xterm-screen")!.appendChild(document.createElement("canvas"));
+    const refresh = vi.spyOn(term, "refresh");
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    void readTerminalWebglFrame(handles, false).catch(() => {});
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("rejects readTerminalWebglFrame when no animation frame arrives", async () => {

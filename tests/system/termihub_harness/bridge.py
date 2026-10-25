@@ -729,7 +729,11 @@ class Driver:
         return self._call({"action": "loseTerminalWebglContext", "tabId": tab_id})
 
     def read_terminal_webgl_frame(
-        self, tab_id: Optional[str] = None, *, timeout: Optional[float] = None
+        self,
+        tab_id: Optional[str] = None,
+        *,
+        repaint: bool = True,
+        timeout: Optional[float] = None,
     ) -> Optional[dict[str, Any]]:
         """Read back the pixels a terminal's WebGL renderer drew (#4970).
 
@@ -739,9 +743,14 @@ class Driver:
         Returns ``{"width", "height", "devicePixelRatio", "rgb"}`` (``rgb`` is
         base64 of row-major RGB bytes; decode with
         :func:`termihub_harness.window_capture.frame_from_rgb_base64`), or
-        ``None`` on the DOM renderer. Active tab unless ``tab_id`` is given.
+        ``None`` on the DOM renderer. ``repaint=False`` skips the forced repaint,
+        for grades of whether the app repainted on its own. Active tab unless
+        ``tab_id`` is given.
         """
-        return self._call({"action": "readTerminalWebglFrame", "tabId": tab_id}, timeout=timeout)
+        return self._call(
+            {"action": "readTerminalWebglFrame", "tabId": tab_id, "repaint": repaint},
+            timeout=timeout,
+        )
 
     def get_state(self, path: Optional[str] = None, *, timeout: Optional[float] = None) -> Any:
         return self._call({"action": "getState", "path": path}, timeout=timeout)

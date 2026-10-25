@@ -133,9 +133,9 @@ export function TestBridge() {
       },
       // The WebGL renderer's own pixels, read back in its draw frame (#4970):
       // what macOS window captures cannot see. Read-only.
-      readTerminalWebglFrame: (tabId) => {
+      readTerminalWebglFrame: (tabId, repaint) => {
         const handles = getTerminalHandles(tabId);
-        return handles ? readTerminalWebglFrame(handles) : undefined;
+        return handles ? readTerminalWebglFrame(handles, repaint) : undefined;
       },
       // The raw output stream each terminal was handed, and the Log Viewer
       // history (#4931): what the flash and renderer grades assert on.

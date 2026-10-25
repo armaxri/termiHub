@@ -477,6 +477,11 @@ export interface LoseTerminalWebglContextCommand {
 export interface ReadTerminalWebglFrameCommand {
   action: "readTerminalWebglFrame";
   tabId?: string;
+  /**
+   * Force a full repaint first (default `true`). `false` reads what the app
+   * drew on its own, for repaint grades.
+   */
+  repaint?: boolean;
 }
 
 /**

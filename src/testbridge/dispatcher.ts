@@ -95,7 +95,10 @@ export interface BridgeDeps {
    * Read back the pixels a terminal's WebGL renderer drew (#4970): `null` on
    * the DOM renderer, `undefined` when no terminal is registered for the tab.
    */
-  readTerminalWebglFrame?: (tabId: string) => Promise<TerminalWebglFrame | null> | undefined;
+  readTerminalWebglFrame?: (
+    tabId: string,
+    repaint: boolean
+  ) => Promise<TerminalWebglFrame | null> | undefined;
   /**
    * The raw output stream recorded for `tabId` (#4931), or `undefined` when
    * the tab was never tapped. Optional — absent, `readTerminalOutput` fails
@@ -1158,7 +1161,7 @@ export async function dispatchCommand(
       }
       const tabId = command.tabId ?? deps.getActiveTabId();
       if (!tabId) return fail("readTerminalWebglFrame", "no active terminal");
-      const pending = deps.readTerminalWebglFrame(tabId);
+      const pending = deps.readTerminalWebglFrame(tabId, command.repaint ?? true);
       if (pending === undefined) {
         return fail("readTerminalWebglFrame", `no terminal registered for tab "${tabId}"`);
       }
