@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
   pointerWithin,
   useSensor,
   useSensors,
@@ -13,6 +12,7 @@ import {
   type DragPendingEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { Copy, MoveRight } from "lucide-react";
 import type { FileEntry } from "@/types/connection";
 import { describeEntries, type FileTransferOperation } from "@/utils/fileDragMove";
@@ -105,7 +105,9 @@ export function FileBrowserDndProvider({
 }: FileBrowserDndProviderProps) {
   // An 8px activation distance keeps plain clicks, double-clicks and the
   // right-click context menu working on rows.
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 8 } })
+  );
   const [dragging, setDragging] = useState<FileEntry[] | null>(null);
   const [copyMode, setCopyMode] = useState(false);
   const copyRef = useRef(false);
