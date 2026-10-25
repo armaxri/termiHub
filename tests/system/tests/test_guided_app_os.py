@@ -12,6 +12,8 @@ Covered: MT-APP-03, MT-APP-05, MT-SHI-01, MT-SHI-03..06.
 raising the window, are graded with real OS events aimed at the test
 instance's PID by ``test_os_input_macos_app.py`` / ``test_os_input_keyboard.py``
 since #4935 — never by app name.)
+(MT-SHI-04..06 are one glance each: their OS artifacts are asserted by
+``test_shell_integration_artifacts.py`` since #4963.)
 (MT-FB-32, open in file manager, is graded by ``test_external_app_handoffs.py``
 since #4932; MT-FB-30, the 5000-file folder, by ``test_os_file_drop.py`` and
 MT-FB-31, dragging rows out to the OS, by ``test_os_file_drop_xdnd.py`` since
@@ -124,43 +126,52 @@ class TestGuidedAppOs(
         )
 
     # ── MT-SHI-04..06: OS context-menu integration ───────────────────────────
+    # The artifacts Install writes and Uninstall removes (HKCU keys, Quick Action
+    # bundles, Nautilus/Dolphin/Thunar/XDG entries, foreign entries kept) are
+    # asserted by test_shell_integration_artifacts.py (#4963), and the click →
+    # spawn path by test_external_spawn.py. What stays is one glance: the OS
+    # file manager actually renders the menu from them. This writes the real
+    # per-user registration and uninstalls it again afterwards.
+    def _glance_at_context_menu(self, where: str) -> None:
+        self.open_settings_category("shell-integration")
+        self.driver.click("shell-integration-add-entry")
+        self.wait(
+            lambda: self.driver.exists("shell-integration-entry-save"),
+            what="the Add Entry dialog",
+        )
+        self.driver.click("shell-integration-entry-save")
+        self.driver.click("shell-integration-reinstall")
+        self.wait(
+            lambda: self.driver.get_text("shell-integration-status-text") == "Registered",
+            what="Registered after Install",
+        )
+        try:
+            self.manual_step(
+                f"The harness installed an 'Open in termiHub' entry for folders. {where}",
+                "'Open in termiHub' is listed (with the termiHub icon).",
+            )
+        finally:
+            self.driver.click("shell-integration-uninstall")
+
     @pytest.mark.manual(platforms=["windows"])
     def test_explorer_shows_and_removes_open_in_termihub(self):
-        """MT-SHI-04."""
-        self.open_settings_category("shell-integration")
-        self.manual_step(
-            "Add 3 entries (one Extended, one with Files target) and Install. In "
-            "Explorer right-click a folder, the folder background and a file, also with "
-            "Shift; click an entry. Then Uninstall and right-click again.",
-            "No UAC prompt; entries sit in one termiHub submenu, Extended only on Shift; "
-            "the app comes forward with a tab cd'd there (file: its parent); after "
-            "uninstall no entry remains.",
-        )
+        """MT-SHI-04 (glance; artifacts automated, #4963)."""
+        self._glance_at_context_menu("In Explorer right-click a folder.")
 
     @pytest.mark.manual(platforms=["macos"])
     def test_macos_finder_quick_actions_and_services(self):
-        """MT-SHI-05 (termiHub.app installed in /Applications)."""
-        self.open_settings_category("shell-integration")
-        self.manual_step(
-            "Install an entry with Folders + Files. In Finder right-click a folder > "
-            "Quick Actions (enable under Keyboard > Services; `pbs -flush` if missing) and "
-            "run it on a folder, a file and three items, and via the Services menu. Then "
-            "Uninstall and right-click again.",
-            "No password prompt; the entry is under Quick Actions and Services; one "
-            "session per item cd'd to the folder (file: its location); after uninstall "
-            "only termiHub's Quick Action is gone.",
+        """MT-SHI-05 (glance; artifacts automated, #4963)."""
+        self._glance_at_context_menu(
+            "In Finder right-click a folder > Quick Actions (run "
+            "`/System/Library/CoreServices/pbs -flush` first if it is missing)."
         )
 
     @pytest.mark.manual(platforms=["linux"])
     def test_linux_file_managers_show_and_run_open_in_termihub(self):
-        """MT-SHI-06 (Nautilus, Dolphin and/or Thunar)."""
-        self.open_settings_category("shell-integration")
-        self.manual_step(
-            "Install, then right-click a folder in each manager (Files: Scripts; "
-            "Dolphin: Actions; Thunar; Open With) and run the entry. Uninstall and "
-            "right-click again.",
-            "No sudo prompt; only detected managers get the entry with the termiHub "
-            "icon; the app focuses with a tab cd'd there; after uninstall all artifacts "
-            "are gone and your own actions/scripts remain.",
+        """MT-SHI-06 (glance; artifacts automated, #4963)."""
+        self._glance_at_context_menu(
+            "Right-click a folder in your file manager > Open With (Other "
+            "Application); the Nautilus/Dolphin/Thunar menus also need their "
+            "toggles on the Shell Integration page."
         )
 
