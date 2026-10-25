@@ -184,6 +184,17 @@ def test_measure_terminal_round_trip(bridge):
         assert handler.recorded["contextLosses"] == ["tab-2"]
 
 
+def test_read_terminal_webgl_frame_round_trip(bridge):
+    # 2x1 canvas: one red, one blue pixel (#4970).
+    frame = {"width": 2, "height": 1, "devicePixelRatio": 1, "rgb": "/wAAAAD/"}
+    handler = dispatcher_like(webgl_frame=frame)
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        assert driver.read_terminal_webgl_frame(tab_id="tab-3") == frame
+        assert handler.recorded["webglReads"] == ["tab-3"]
+
+
 def test_read_terminal_cells_round_trip(bridge):
     rows = [{"y": 4, "text": "日", "cells": [{"x": 0, "chars": "日", "width": 2}]}]
     handler = dispatcher_like(cell_rows=rows)

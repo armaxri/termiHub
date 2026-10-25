@@ -6,7 +6,8 @@
   (Option+E then E → é on the ABC/US layout).
 - **Pointer** events have no per-PID route that WKWebView honours, so they are
   posted at the HID tap (``CGEventPost``) — global, and held to the base class'
-  GitHub-runner/opt-in rule and frontmost-PID check.
+  GitHub-runner/opt-in rule and frontmost-PID check. So are **autorepeat**
+  key-downs (:meth:`MacOsInput.key_repeat`): AppKit drops them on the PID route.
 - **Apple events** (reopen, quit, quit-for-logout) are addressed with
   ``typeKernelProcessID`` — the PID, never an app name or bundle id.
 
@@ -201,22 +202,48 @@ class MacOsInput(OsInput):
     def _key_state(self, pid: int, key: str, down: bool) -> None:
         self._post_key(pid, mac_keycode(key), down, 0)
 
-    def key_repeat(self, key: str, count: int, *, interval: float = 0.035) -> None:
+    def key_repeat(
+        self, key: str, count: int, *, interval: float = 0.035, delay: float = 0.5
+    ) -> None:
         """Hold ``key``: one key-down, ``count`` autorepeat key-downs, one key-up.
 
-        Autorepeat events carry ``kCGKeyboardEventAutorepeat``, which is what
-        AppKit's press-and-hold (accent picker) reacts to.
+        Autorepeat key-downs carry ``kCGKeyboardEventAutorepeat``, which is what
+        AppKit's press-and-hold (accent picker) swallows while it is enabled.
+        ``delay`` mirrors the system's initial repeat delay.
+
+        These go through the **HID tap**, so they are global (GitHub runner or
+        opt-in, the test instance frontmost before every event). The PID route
+        does not work for them (#4980): AppKit drops every autorepeat key-down
+        posted with ``CGEventPostToPid``, in a plain ``NSTextView`` as much as in
+        WKWebView and whatever ``ApplePressAndHoldEnabled`` says. Posted at the
+        HID tap they arrive as ``isARepeat`` key-downs, and press-and-hold
+        swallows them exactly as it swallows a held physical key (CI probe runs
+        40223402586 and 40225119750). The system never synthesises repeats for a
+        posted key-down held down, so each repeat is posted explicitly.
         """
-        target = self._before_key(None)
+        target = self._check_target(None)
         q = self._q
         code = mac_keycode(key)
-        self._post_key(target, code, True, 0)
-        for _ in range(count):
-            event = q.CGEventCreateKeyboardEvent(None, code, True)
-            q.CGEventSetIntegerValueField(event, q.kCGKeyboardEventAutorepeat, 1)
-            q.CGEventPostToPid(target, event)
-            time.sleep(interval)
-        self._post_key(target, code, False, 0)
+
+        def post(down: bool, repeat: bool = False) -> None:
+            self._require_global(target)
+            event = q.CGEventCreateKeyboardEvent(None, code, down)
+            q.CGEventSetFlags(event, CAPS_LOCK_FLAG if self.caps_lock_engaged else 0)
+            if repeat:
+                q.CGEventSetIntegerValueField(event, q.kCGKeyboardEventAutorepeat, 1)
+            q.CGEventPost(q.kCGHIDEventTap, event)
+
+        post(True)
+        try:
+            time.sleep(delay)
+            for _ in range(count):
+                post(True, repeat=True)
+                time.sleep(interval)
+        finally:
+            # Always release: a key left down at the HID level outlives the test.
+            event = q.CGEventCreateKeyboardEvent(None, code, False)
+            q.CGEventPost(q.kCGHIDEventTap, event)
+            time.sleep(self.KEY_DELAY)
 
     def _type(self, pid: int, text: str) -> None:
         for char in text:

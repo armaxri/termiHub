@@ -101,7 +101,8 @@ class TestGuidedLookAndFeel(
 
         The cell layout is asserted by ``test_terminal_glyph_shaping.py``; this
         judges the fonts the renderers chose, from a WebGL | DOM contact sheet
-        of the native window capture (#4937).
+        of the native window capture (#4937); on macOS the WebGL half is the
+        renderer's own readback of the terminal (#4970).
         """
         self.close_all_tabs()
         self.ensure_terminal()
@@ -110,8 +111,10 @@ class TestGuidedLookAndFeel(
             "👨\\342\\200\\215👩\\342\\200\\215👧|\\n'"
         )
         self.wait_for_output("שלום")
-        webgl = self.try_capture_app_window()
         tab = self.switch_to_terminal_tab()["id"]
+        # macOS window captures lack the WebGL canvas: show its own readback (#4970).
+        readback = self.capture_terminal_webgl(tab) if self.grades_webgl_readback(tab) else None
+        webgl = readback.frame if readback else self.try_capture_app_window()
         if self.driver.measure_terminal(tab).get("renderer") == "webgl":
             self.driver.lose_terminal_webgl_context(tab)
         self.wait(

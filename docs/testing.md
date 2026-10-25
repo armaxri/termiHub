@@ -1123,6 +1123,30 @@ from the OS keychain asks the OS to verify the user (Touch ID, Windows Hello,
 polkit), which no CI runner can answer. The switch to OS-keychain mode then
 migrates the password into the OS store.
 
+### Shell-integration artifacts in the harness (#4963)
+
+[`test_shell_integration_artifacts.py`](../tests/system/tests/test_shell_integration_artifacts.py)
+seeds four shell-integration entries, clicks **Settings → Shell Integration →
+Reinstall / Update**, and reads back what the OS file manager reads
+([`termihub_harness/shell_artifacts.py`](../tests/system/termihub_harness/shell_artifacts.py)).
+**Uninstall** must then remove every artifact and leave foreign entries
+byte-for-byte.
+
+| OS      | Asserted artifacts                                                                                                                       | Isolation                                                   | Replaces  |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------- |
+| Windows | HKCU `Directory`, `Directory\Background` and `*` shell keys: one `termiHub` submenu, names, icons, `command` lines, `Extended` flag      | real HKCU: CI or `TERMIHUB_ALLOW_REAL_SHELL_REGISTRATION=1` | MT-SHI-04 |
+| macOS   | `~/Library/Services/<name>.workflow`: `NSServices` menu item and file types, the Run Shell Script spawn command                          | `HOME` points at a scratch dir                              | MT-SHI-05 |
+| Linux   | XDG launcher, Nautilus scripts (0755), KDE service menu, Thunar actions in `uca.xml`; foreign script, launcher, menu and action are kept | `XDG_DATA_HOME` / `XDG_CONFIG_HOME` (`sandbox_profile`)     | MT-SHI-06 |
+
+On macOS only the app's Rust `dirs` lookups follow `HOME`; Foundation and
+WebKit keep the real home, so the app still starts normally. Windows has no
+per-user redirect for HKCU, and install/uninstall replace every `termihub*`
+Explorer key, so it never runs on a developer machine without the opt-in. The
+suites that write real registration (this one on Windows, the moved-binary
+suite on macOS and Windows) hold one inter-process lock, so xdist workers on a
+runner cannot clobber each other. The guided MT-SHI-04/05/06 prompts keep one
+glance each: the OS actually renders the menu from these artifacts.
+
 ### External-app hand-offs in the harness (#4932)
 
 [`test_external_app_handoffs.py`](../tests/system/tests/test_external_app_handoffs.py)
@@ -1176,19 +1200,27 @@ from the element's DOM rect, calibrated by one trusted `pointermove` the
 need no guessing. That verb also returns `isTrusted`, which proves the input
 came from the OS.
 
-| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-SHI-02 (spawn raises the window) |
-| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                        |
-| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                               |
+| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
+| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                                                        |
+| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                               |
 
 Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
 picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
-injection can judge. MT-NIN-22 (a click into an inactive window), MT-NIN-23
-(typing reaches only the focused one of two windows) and MT-LOCAL-08 (macOS key
-repeat) stay guided too: on the hosted runners an injected click did not move
-the window focus reliably, and autorepeat key events posted to the PID never
-reached the webview.
+injection can judge. MT-NIN-22 (a click into an inactive window) and MT-NIN-23
+(typing reaches only the focused one of two windows) stay guided too: on the
+hosted runners an injected click did not move the window focus reliably.
+
+MT-LOCAL-08 (macOS key repeat) posts its autorepeat key-downs at the HID tap,
+not to the PID (#4980). AppKit drops every autorepeat key-down posted with
+`CGEventPostToPid`, in a plain `NSTextView` as much as in WKWebView. At the HID
+tap they arrive as repeats, and press-and-hold left enabled swallows them just
+as it swallows a held physical key: a probe window on the runner image inserted
+one character out of 31 with press-and-hold on, all 31 with it off, and all 31
+when it set `ApplePressAndHoldEnabled=false` after its window and webview
+existed (termiHub's timing). The accent picker window itself never opens on a
+hosted runner, so the grade is the swallowed repeats, not the window.
 
 ### Live WSL distro lane (Windows, #4008)
 
@@ -2421,7 +2453,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-LOCAL-03     | WSL connection — no welcome banner flash                                                | Guided-manual pytest | test_guided_shells_and_tools.py::test_wsl_tab_opens_without_banner_flash                                                            |
 | MT-LOCAL-05     | SSH connection — no setup command flash                                                 | Automated (#4931)    | test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash                                                              |
 | MT-LOCAL-09     | Enter key submits commands (default CR line ending)                                     | Automated (already)  | tests/system/tests/test_enter_submits_command.py + src-tauri line_ending.rs::bare_enter_stays_cr_by_default                         |
-| MT-LOCAL-08     | macOS key repeat works                                                                  | Guided-manual pytest | test_guided_shells_and_tools.py::test_macos_key_repeat                                                                              |
+| MT-LOCAL-08     | macOS key repeat works                                                                  | Automated (#4980)    | test_os_input_keyboard.py::test_macos_key_repeat_has_no_accent_picker                                                               |
 | MT-NET-10       | Ping — live latency chart and stats                                                     | Automated (already)  | tests/system/tests/test_network_tools_live.py::test_ping_streams_stats_and_chart                                                    |
 | MT-NET-11       | Ping — TCP fallback notice                                                              | Automated (this PR)  | PingPanel.live-stats.test.tsx 'shows the TCP fallback notice…' + core ping.rs                                                       |
 | MT-NET-12       | Port Scanner — results stream in                                                        | Automated (already)  | test_network_tools_live.py::test_port_scan_finds_open_port                                                                          |
@@ -2628,7 +2660,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)** — Automated + Release gate. tests/system/tests/test_external_spawn.py::TestExternalLocalSpawn (live `termiHub spawn --location` dir/file/missing: title, Spawned badge, toast, `pwd`) / TestExternalSpawnColdStart (app launched as `spawn`, #4010); src-tauri/src/spawn/handler.rs::existing_directory_resolves_to_itself; src-tauri/src/spawn/handler.rs::existing_file_resolves_to_parent_directory; … · gate: MT-SHI-02
 - **External WSL/SSH spawn opens its real backend (#1511)** — Automated + Release gate. tests/system/tests/test_external_spawn.py::TestExternalSshSpawn (live `termiHub spawn --kind ssh --connection <id> --location /tmp` against the Docker SSH fixture: tab connects, post-connect `pwd`; unknown id → error toast + no tab, #4010); src-tauri/src/commands/spawn.rs::wsl_spawn_uses_default_distro_and_mount_path; src-tauri/src/commands/spawn.rs::wsl_spawn_prefers_saved_connection_distribution; … · gate: MT-SHI-03
 - **Spawned container grouping survives tab close (#1466)** — Automated. src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx 'lists the spawned container in its own section'; src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx 'does not double-list the spawned session under Local Sessions'; …
-- **Shell-integration registration — per-OS file-manager entries (SI-5/6/7)** — Automated + Tracked + Release gate. src-tauri/src/spawn/registry.rs::install_writes_three_key_families_with_correct_command_lines (windows); src-tauri/src/spawn/registry.rs::extended_entry_carries_extended_value (windows); src-tauri/src/commands/shell_integration.rs::registered_at_a_moved_exe_is_stale / moved_portable_exe_is_stale_but_flagged_portable (staleness + portable exemption); scripts/internal/shell-integration-cli-smoke.sh (Linux, build.yml) and scripts/internal/shell-integration-cli-smoke.ps1 (Windows, code-quality.yml Run Tests) — CLI install/uninstall exit 0 with no elevation; src-tauri/tests/shell_integration_moved_binary.rs (macOS + Linux, per PR: register, move the binary, reinstall repoints every surface); tests/system/tests/test_shell_integration_moved.py (nightly: stale badge + banner for a moved installed binary, Reinstall clears it); tests/system/tests/test_portable_mode.py::TestPortableMarker::test_moved_portable_binary_shows_no_stale_banner (portable exemption); … · gate: MT-SHI-04, MT-SHI-05, MT-SHI-06
+- **Shell-integration registration — per-OS file-manager entries (SI-5/6/7)** — Automated + Tracked + Release gate. src-tauri/src/spawn/registry.rs::install_writes_three_key_families_with_correct_command_lines (windows); src-tauri/src/spawn/registry.rs::extended_entry_carries_extended_value (windows); src-tauri/src/commands/shell_integration.rs::registered_at_a_moved_exe_is_stale / moved_portable_exe_is_stale_but_flagged_portable (staleness + portable exemption); scripts/internal/shell-integration-cli-smoke.sh (Linux, build.yml) and scripts/internal/shell-integration-cli-smoke.ps1 (Windows, code-quality.yml Run Tests) — CLI install/uninstall exit 0 with no elevation; src-tauri/tests/shell_integration_moved_binary.rs (macOS + Linux, per PR: register, move the binary, reinstall repoints every surface); tests/system/tests/test_shell_integration_moved.py (nightly: stale badge + banner for a moved installed binary, Reinstall clears it); tests/system/tests/test_shell_integration_artifacts.py (nightly: the per-OS artifacts Install writes and Uninstall removes, foreign entries kept, #4963); tests/system/tests/test_portable_mode.py::TestPortableMarker::test_moved_portable_binary_shows_no_stale_banner (portable exemption); … · gate: MT-SHI-04, MT-SHI-05, MT-SHI-06
 - **Native-dialog → Modal migration (#1348)** — Automated + Tracked + Release gate. src/components/Sidebar/FileBrowser.rename.test.tsx 'starts an inline edit on F2 with the base name pre-selected'; src/components/Sidebar/FileBrowser.rename.test.tsx 'commits the rename via the backend on Enter'; tests/system/tests/test_file_browser_local.py::TestFileBrowserLocal::test_multi_delete_continues_past_an_entry_that_cannot_be_deleted (live: Ctrl/Cmd+A → Delete (3 items) with one undeletable folder removes the other two, #4007); … · gate: MT-FB-30
 - **File browser rename / new-file / new-folder / copy feedback (#1399)** — Automated. src/components/Sidebar/FileBrowser.actionfeedback.test.tsx 'shows a success toast when a new folder is created'; src/components/Sidebar/FileBrowser.actionfeedback.test.tsx 'shows an error toast when new folder creation fails'; …
 - **File browser drag-to-move (#3454, PROD-006)** — Automated. src/components/Sidebar/FileBrowser.drag-move.test.tsx 'moves a file dropped on a folder with a single rename (no copy)'; src/components/Sidebar/FileBrowser.drag-move.test.tsx 'copies instead when Alt/Option is held'; src/components/Sidebar/FileBrowser.drag-gesture.test.tsx (the same four journeys through the real dnd-kit sensor + bridge `dragTo`, #4007); tests/system/tests/test_file_browser_local.py::TestFileBrowserLocal::test_dragging_a_file_onto_a_folder_moves_it (live pointer drag: hovered folder row highlighted valid + "Move" chip mid-drag, file moves on disk, #4007) / test_dropping_a_file_on_a_breadcrumb_moves_it_up / test_dropping_a_folder_on_itself_is_refused (row marked invalid, nothing moves) / test_alt_dragging_a_file_onto_a_folder_copies_it ("Copy" chip, source stays); tests/system/tests/test_file_browser_drag_sftp_live.py::TestFileBrowserDragSftpLive (live ssh-password: SFTP drag is a server-side rename — new path, old gone, same inode, #4007); …
@@ -2792,10 +2824,10 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_input_routing.py` — OS file drop (right-click, connection and editor-tab drags are graded by `test_os_input_pointer.py`, #4935). MT-KB-09 … 14 (shell-chord pass-through, Find routing) and MT-TAB-06/07 (tab drags) are automated (#4928)
 - [ ] `test_guided_native_input.py` — MT-NIN-01 … 06 (native file drag-and-drop), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-21 … 24 (Save-dialog focus, click into an inactive window, per-window typing, remote-desktop key release). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
 - [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
-- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-SHI-01 and 03 … 06 (external spawn and OS context menus; MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID, #4935), MT-FB-30/31 (large folder, drag out)
+- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-SHI-01 and 03 (external spawn), MT-SHI-04 … 06 (one glance at the OS context menu; the artifacts are automated in `test_shell_integration_artifacts.py`, #4963), MT-FB-30/31 (large folder, drag out). MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID (#4935)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
-- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/31 (WSL flash, key repeat, Git install), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
+- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
@@ -2840,7 +2872,7 @@ Guided-manual suites:
 | [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-SHI-01/03..06, MT-FB-30/31                                     | the Dock / app-menu quit, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                 |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                    | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                           |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                                                                     |
-| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-50..52, MT-NET-16/21                                  | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                                                                       |
+| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-50..52, MT-NET-16/21                                     | watch the WSL tab open, the X window, the traceroute / chart                                                                                                                                       |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                      |
 
 ### Output-stream flash and flood grades (#4931)
@@ -2901,12 +2933,14 @@ New irreducibly-manual checks are written as guided-manual pytest tests (epic [#
 The DOM `screenshot` verb never sees the xterm WebGL canvas, the inline-image
 layer or the native window before the web view's first paint. These grades
 capture the test app's own window through the OS instead and check its pixels
-(part of #4927):
+(part of #4927; on macOS the text grades read the WebGL canvas in-process, see
+below):
 
 | ID               | Test                                                                                         | What it asserts                                                                                                            |
 | ---------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | MT-SSH-02 (both) | `test_native_capture_grades.py::test_ansi_16_colours_paint_their_palette_colour`             | each of the 16 ANSI backgrounds and `█` foregrounds paints the colour `readTerminalCells` resolves from the theme          |
 |                  | `test_native_capture_grades.py::test_256_colour_swatches_paint_without_gaps`                 | five 256-colour swatches paint the xterm cube colours, with no background-coloured pixel between cells                     |
+| #4970            | `test_native_capture_grades.py::test_webgl_readback_paints_the_ansi_palette`                 | the WebGL readback the macOS grades use shows each ANSI background in its palette colour, on every OS                      |
 | MT-UI-31         | `test_native_capture_grades.py::test_box_drawing_strokes_are_continuous`                     | every border of a drawn box has an unbroken pixel row / column across the cell boundaries                                  |
 | MT-SER-01/02     | `test_native_capture_grades.py::test_nerd_font_glyphs_render_from_the_bundled_font`          | Powerline / Nerd Font glyphs have ink and a different shape from an unassigned codepoint (tofu); no runner has a Nerd Font |
 | MT-SSH-01        | `test_native_capture_grades.py::test_agnoster_prompt_has_no_black_rectangle`                 | the Agnoster `user@host` segment (ANSI black background) paints the terminal background, not a black rectangle             |
@@ -2934,13 +2968,26 @@ unoccluded, because macOS stops painting a WKWebView hidden behind another
 xdist worker's window. On macOS the harness also makes the test app frontmost
 (by its PID) before grading.
 
-**macOS grades the DOM renderer.** On the hosted macOS runners neither a window
-capture nor a screen capture contains the xterm WebGL canvas (the DOM, the
-inline-image canvas and the window chrome are all there), so on macOS the text
-grades first move the terminal to the DOM renderer through the production
-WebGL context-loss fallback. The WebGL renderer's paint is graded on Linux and
-Windows; the inline-image grade keeps WebGL on every OS. Grading the macOS
-WebGL paint is tracked in #4970.
+**macOS grades the WebGL readback (#4970).** On the hosted macOS runners no
+window server image contains the xterm WebGL canvas. Probe runs tried
+`screencapture -l <window>` and `-R <region>`, `CGWindowListCreateImage` with
+every image option, and ScreenCaptureKit (`SCScreenshotManager` with a
+desktop-independent window filter): all of them show the DOM, the inline-image
+canvas and the window chrome, but the terminal area is bare background. The
+canvas itself does hold the right pixels, read back inside the app. So on macOS
+the text grades read the WebGL renderer's own frames through the bridge
+(`readTerminalWebglFrame`, see [test-bridge.md](test-bridge.md)) and map the
+cell grid onto them; Linux and Windows grade the capture. The readback reads
+without forcing a repaint: it returns the last frame the renderer drew on its
+own, so the MT-UI-42 repaint grade still fails when the renderer stops drawing.
+`test_webgl_readback_paints_the_ansi_palette` grades the readback on every OS,
+so the path macOS relies on is cross-checked where the capture agrees, and the
+MT-UI-46 contact sheet uses the readback for its WebGL half on macOS.
+
+The residual on macOS: the readback is the canvas, not the composited window,
+so something drawn over the terminal (a stray overlay) or a compositing fault
+in the window server is not seen there. Linux and Windows grade the composited
+window; on macOS that last step is only seen on a real Mac.
 
 A developer machine without the capture tooling (`xdotool` / `x11-apps` on
 Linux, Screen Recording permission for the terminal on macOS) skips these

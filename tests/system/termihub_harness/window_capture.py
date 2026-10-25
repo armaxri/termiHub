@@ -29,6 +29,8 @@ The parsers and the PNG writer are pure and unit-tested in the normal lane
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import shutil
 import struct
@@ -182,6 +184,15 @@ def frame_from_bgra(width: int, height: int, raw: bytes, *, bottom_up: bool = Fa
     return _pack_rgb(
         raw, width, height, stride=width * 4, bpp=4, offsets=(2, 1, 0), bottom_up=bottom_up
     )
+
+
+def frame_from_rgb_base64(width: int, height: int, rgb: str) -> Frame:
+    """Decode a base64 row-major RGB payload (``readTerminalWebglFrame``, #4970)."""
+    try:
+        data = base64.b64decode(rgb, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError(f"WebGL frame payload is not base64: {exc}") from exc
+    return Frame(width, height, data)
 
 
 def parse_bmp(data: bytes) -> Frame:
