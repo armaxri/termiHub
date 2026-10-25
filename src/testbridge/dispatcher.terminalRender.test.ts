@@ -391,12 +391,39 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     expect(drawImage).toHaveBeenCalledWith(canvas, 0, 0);
   });
 
-  it("skips the forced repaint with repaint: false", async () => {
-    handles.element.querySelector(".xterm-screen")!.appendChild(document.createElement("canvas"));
-    const refresh = vi.spyOn(term, "refresh");
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
-    void readTerminalWebglFrame(handles, false).catch(() => {});
-    expect(refresh).not.toHaveBeenCalled();
+  it("returns the renderer's own frames with repaint: false, seeded once", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    handles.element.querySelector(".xterm-screen")!.appendChild(canvas);
+    const refresh = vi.spyOn(term, "refresh").mockImplementation(() => {});
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 1;
+    });
+    let onRender: (() => void) | undefined;
+    // `onRender` is an xterm event getter: hand back a fake subscribe.
+    const subscribe = (listener: () => void) => {
+      onRender = listener;
+      return { dispose: () => {} };
+    };
+    Object.defineProperty(term, "onRender", { configurable: true, get: () => subscribe });
+    let pixel = [255, 0, 0, 255];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: () => {},
+      getImageData: () => ({ data: new Uint8ClampedArray(pixel) }),
+    } as unknown as CanvasRenderingContext2D);
+
+    // First read: arms the per-render copy and seeds it with one forced repaint.
+    expect((await readTerminalWebglFrame(handles, false))?.rgb).toBe("/wAA");
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // Nothing drew since: the same (stale) frame, no repaint forced.
+    pixel = [0, 0, 255, 255];
+    expect((await readTerminalWebglFrame(handles, false))?.rgb).toBe("/wAA");
+    // The renderer draws on its own: the next read sees that frame.
+    onRender!();
+    expect((await readTerminalWebglFrame(handles, false))?.rgb).toBe("AAD/");
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("rejects readTerminalWebglFrame when no animation frame arrives", async () => {
