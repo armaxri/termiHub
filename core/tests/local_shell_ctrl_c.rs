@@ -90,7 +90,7 @@ fn ctrl_c_interrupts_a_conpty_child_when_the_app_ignores_ctrl_c() {
     let mut output = Vec::new();
     let started = Instant::now();
     while count(&output, b"127.0.0.1") < 2 {
-        let left = START_DEADLINE.saturating_duration_since(started.elapsed());
+        let left = START_DEADLINE.saturating_sub(started.elapsed());
         match out_rx.recv_timeout(left) {
             Ok(chunk) => output.extend_from_slice(&chunk),
             Err(_) => {

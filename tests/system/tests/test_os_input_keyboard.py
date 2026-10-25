@@ -44,7 +44,7 @@ from termihub_harness import (
     read_os_clipboard,
     unique_name,
 )
-from termihub_harness.os_input import HelperWindow, primary_modifier
+from termihub_harness.os_input import HelperWindow, OsInput, primary_modifier
 from termihub_harness.ui.os_input_ui import has_line, linux_window_manager, terminal_echo
 
 pytestmark = pytest.mark.integration
@@ -98,6 +98,24 @@ class TestOsKeyboardGrades(
             ),
             what=f"the {tag} echo",
         )[0]
+
+    def _echo_after_interrupt(self, osi: OsInput, tab_id: str, tag: str) -> str:
+        """Type ``echo <tag>_ok_`` once the shell is back at its prompt; the echo.
+
+        The Windows console host discards input typed ahead of a Ctrl+C, so the
+        echo is retyped until the shell answers. A missed interrupt still fails:
+        the foreground ``sleep 300`` keeps every retyped echo queued.
+        """
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            osi.type_text(f"echo {tag}_ok_\n")
+            settle = time.monotonic() + 3.0
+            while time.monotonic() < settle:
+                got = terminal_echo(self.driver.read_terminal(tab_id), tag)
+                if got is not None:
+                    return got
+                time.sleep(0.25)
+        raise AssertionError(f"the shell never answered the {tag} echo after Ctrl+C")
 
     def _scratch_editor(self, folder: Path) -> Path:
         """Open a new empty file in ``folder`` in the editor; return its path."""
@@ -278,8 +296,7 @@ class TestOsKeyboardGrades(
         self.wait(lambda: sleep in self.driver.read_terminal(tab_id), what="sleep")
         time.sleep(1.0)
         osi.key("ctrl+c")
-        osi.type_text("echo INT_ok_\n")
-        assert self._wait_echo(tab_id, "INT") == "ok"
+        assert self._echo_after_interrupt(osi, tab_id, "INT") == "ok"
 
         self.driver.context_menu(f"tab-{tab_id}")
         self.wait(lambda: self.driver.exists("tab-context-copy"), what="the tab context menu")
