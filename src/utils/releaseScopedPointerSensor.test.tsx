@@ -55,7 +55,7 @@ function Harness({
   );
 }
 
-function pointer(el: Element, type: string, x: number, buttons: number): void {
+function pointer(el: EventTarget, type: string, x: number, buttons: number): void {
   el.dispatchEvent(
     new PointerEvent(type, {
       bubbles: true,
