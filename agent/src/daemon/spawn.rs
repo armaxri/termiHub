@@ -152,17 +152,12 @@ pub fn spawn_detached(command: &mut std::process::Command) -> std::io::Result<st
 /// console and never receives a console Ctrl+C event. Call it once, early in the
 /// daemon, before the session's process is spawned. A no-op on unix, where the
 /// daemon's `setsid` does not affect how the shell's PTY delivers `SIGINT`.
+///
+/// The Win32 call lives in core
+/// (`termihub_core::util::console_ctrl::restore_ctrl_c_for_children`), which the
+/// local-shell PTY spawner also calls before every spawn (#4981).
 pub fn restore_ctrl_c_for_children() -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-        // Safety: a plain Win32 call; a `None` handler with `FALSE` only clears
-        // the process's inherited ignore-Ctrl+C attribute.
-        if unsafe { SetConsoleCtrlHandler(None, 0) } == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    Ok(())
+    termihub_core::util::console_ctrl::restore_ctrl_c_for_children()
 }
 
 #[must_use = "ignoring the handle is fine in production but tests should join it"]
