@@ -50,7 +50,10 @@ FB_OVERLAY = "file-browser-drag-overlay"
 QUIET_WINDOW = 1.5
 #: A POSIX line continuation: the dropped paths become printf's arguments, so
 #: the grade is what the shell parsed, not how the line editor drew a long line.
-PRINTF_ARGS = "printf 'ARG<%s>\\n' \\"
+#: The closing ``>END`` marks where an argument ends, so text a resize left on a
+#: row after the printed one cannot be mistaken for part of the path.
+PRINTF_ARGS = "printf 'ARG<%s>END\\n' \\"
+ARG_ROW = re.compile(r"^ARG<(.*?)>END")
 POSIX = sys.platform != "win32"
 
 
@@ -93,11 +96,12 @@ class TestSyntheticOsFileDrop(
         """On POSIX, start a printf continuation the drop completes."""
         if POSIX:
             self.driver.terminal_input(PRINTF_ARGS, tab_id)
-            self._wait_shown(tab_id, "ARG<%s>")
+            self._wait_shown(tab_id, "ARG<%s>END")
 
     def _args(self, tab_id: str) -> list[str]:
-        rows = [r.strip() for r in self.driver.read_terminal(tab_id).splitlines()]
-        return [r for r in rows if r.startswith("ARG<")]
+        """The arguments the armed printf printed, in order."""
+        rows = (ARG_ROW.match(r.strip()) for r in self.driver.read_terminal(tab_id).splitlines())
+        return [m.group(1) for m in rows if m]
 
     def _expect_dropped(self, tab_id: str, paths: list[Path]) -> None:
         """The drop reached ``tab_id``'s shell as exactly ``paths``, quoted.
@@ -113,7 +117,7 @@ class TestSyntheticOsFileDrop(
         self._wait_shown(tab_id, quote_path(paths[-1].name).strip("'"))
         assert not self._args(tab_id), "the drop ran a command before Enter"
         self.driver.press_key("Enter", f"terminal-input-{tab_id}")
-        expected = [f"ARG<{p}>" for p in paths]
+        expected = [str(p) for p in paths]
         args = self.wait(
             lambda: (got := self._args(tab_id)) and len(got) >= len(paths) and got,
             what="the shell to print the dropped paths",
