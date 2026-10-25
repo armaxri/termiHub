@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 from termihub_harness import SettingsUi, SystemTest
-from termihub_harness import moved_binary
+from termihub_harness import moved_binary, shell_artifacts
 
 pytestmark = pytest.mark.integration
 
@@ -62,7 +62,12 @@ class TestMovedInstalledBinary(SettingsUi, SystemTest):
         reason = moved_binary.real_registration_skip_reason()
         if reason:
             pytest.skip(reason)
+        # Real per-user registration on macOS/Windows: never overlap another
+        # suite that installs or uninstalls it on this runner (#4963).
+        with shell_artifacts.real_registration_lock():
+            self._register_move_reinstall_uninstall()
 
+    def _register_move_reinstall_uninstall(self) -> None:
         moved_dir = Path(tempfile.mkdtemp(prefix="termihub-moved-"))
         old_exe = moved_binary.stage_moved_copy(self.app.binary, moved_dir)
 
