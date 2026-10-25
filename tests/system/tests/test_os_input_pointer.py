@@ -129,7 +129,8 @@ class TestOsPointerGrades(
 
     # ── MT-CONN-01: drag a connection into a folder ──────────────────────────
     def test_drag_connection_into_folder(self):
-        """MT-CONN-01: dragging a root connection onto a folder nests it there."""
+        """MT-CONN-01: dragging a root connection onto a folder nests it there, and
+        the very next click still acts (#4978)."""
         osi = self.os_input()
         self.close_all_tabs()
         self.switch_to_connections_sidebar()
@@ -147,9 +148,10 @@ class TestOsPointerGrades(
             lambda: self.require_connection(conn_name).get("folderId") == folder["id"],
             what="the connection to move into the folder",
         )
-        # On Linux/Windows the first click after this drag is swallowed (#4978):
-        # spend it on a harmless target so later steps are not affected.
-        self.os_click("connection-filter-input", screen=screen)
+        # The first click right after the drop must act (#4978): dnd-kit used to
+        # swallow it on Linux/Windows, where this release fires no click.
+        self.driver.click(NEW_TERMINAL)
+        self.wait(lambda: self.tab_count() == 1, what="the click after the drop to open a tab")
 
     # ── MT-UI-26..28, MT-NIN-30: right-click in the terminal ─────────────────
     def _quick_copy_then_paste(self, tab_id: str) -> None:
