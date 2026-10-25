@@ -93,6 +93,38 @@
   pointer-events: auto;
 }
 
+/* Narrow rows whose overlay would cover the name down to less than a readable
+   stub (a tunnel or service row at the minimum sidebar width has five or six
+   actions) reveal the actions on a second line below the name instead (#4972),
+   so the name and its truncation tooltip stay reachable. SidebarListItem.tsx
+   sets the modifier from measurements that do not change on hover, so the
+   reveal never flips the layout under the pointer. The row grows downward
+   only: the hovered row's top and its first line stay where they were. */
+.sidebar-list-item--stacked-actions:hover .sidebar-list-item__header,
+.sidebar-list-item--stacked-actions:focus-within .sidebar-list-item__header {
+  flex-wrap: wrap;
+  /* Grow by no more than the buttons' own height: a smaller jump keeps the
+     pointer on the row below when it moves down onto it. */
+  row-gap: 0;
+}
+
+/* The first line keeps its resting height, so the name does not shift up when
+   the second line appears. A zero basis keeps a long name on the first line
+   (it still fills the remaining width and ellipsizes as before). */
+.sidebar-list-item--stacked-actions:hover .sidebar-list-item__name,
+.sidebar-list-item--stacked-actions:focus-within .sidebar-list-item__name {
+  flex-basis: 0;
+  flex-grow: 1;
+  line-height: var(--control-height-md);
+}
+
+.sidebar-list-item--stacked-actions:hover .sidebar-list-item__actions,
+.sidebar-list-item--stacked-actions:focus-within .sidebar-list-item__actions {
+  position: static;
+  flex: 1 0 100%;
+  background: none;
+}
+
 /* Errored rows keep their recovery actions visible without a hover so the user
    always has a way out (mirrors the tunnel row, issue 1240) — in the flow, so
    the name ellipsizes before them instead of hiding under them. */
