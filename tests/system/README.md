@@ -657,7 +657,10 @@ the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
   dir. `run_cli(args, binary=…)` runs another copy of the app against the same
   config dir. `termihub_harness.moved_binary` stages such a copy and only allows
   real registration on Linux or on CI; see `tests/test_shell_integration_moved.py`
-  (#3691, SI-5/6/7).
+  (#3691, SI-5/6/7). `termihub_harness.shell_artifacts` reads back the
+  registration itself (HKCU keys, Quick Action bundles, Linux file-manager
+  surfaces), guards real-HKCU writes and serialises real registration across
+  xdist workers; see `tests/test_shell_integration_artifacts.py` (#4963).
 - `AgentInstance(host?, port?)` — `start()`, `stop()`, `restart()` for a
   `termihub-agent --listen` process, with process-tree teardown via `psutil`.
 

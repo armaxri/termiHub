@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
-import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { DndContext, DragEndEvent, useSensor, useSensors } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "@/store/appStore";
@@ -36,7 +37,9 @@ export function TabGroupChips() {
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const newTabGroupLabel = withActionAccelerator("New Tab Group", "new-tab-group");
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(
+    useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 5 } })
+  );
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {

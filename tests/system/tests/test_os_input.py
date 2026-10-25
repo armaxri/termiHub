@@ -29,7 +29,7 @@ from termihub_harness.os_input import (
 from termihub_harness.os_input.helper import helper_command
 from termihub_harness.os_input.keymap import mac_keycode, us_key_for_char, win_vk
 from termihub_harness.os_input.linux import LinuxOsInput, combo_keysyms, keysym
-from termihub_harness.os_input.macos import combo_flags, fourcc
+from termihub_harness.os_input.macos import MacOsInput, combo_flags, fourcc
 
 CI = {"GITHUB_ACTIONS": "true"}
 
@@ -239,6 +239,78 @@ def test_mac_keycodes_and_flags():
     assert fourcc("quit") == 0x71756974
     with pytest.raises(ValueError):
         mac_keycode("not-a-key")
+
+
+class FakeQuartz:
+    """The few Quartz calls :meth:`MacOsInput.key_repeat` makes, recorded."""
+
+    kCGHIDEventTap = 0
+    kCGKeyboardEventAutorepeat = 8
+
+    def __init__(self) -> None:
+        self.posted: list[tuple] = []
+
+    def CGEventCreateKeyboardEvent(self, _source, code, down):  # noqa: N802
+        return {"code": code, "down": down, "repeat": 0}
+
+    def CGEventSetFlags(self, event, flags):  # noqa: N802
+        event["flags"] = flags
+
+    def CGEventSetIntegerValueField(self, event, field, value):  # noqa: N802
+        assert field == self.kCGKeyboardEventAutorepeat
+        event["repeat"] = value
+
+    def CGEventPost(self, tap, event):  # noqa: N802
+        self.posted.append(("tap", tap, event["code"], event["down"], event["repeat"]))
+
+    def CGEventPostToPid(self, pid, event):  # noqa: N802
+        self.posted.append(("pid", pid, event["code"], event["down"], event["repeat"]))
+
+
+def mac_input(monkeypatch, *, front: int, env) -> tuple[MacOsInput, FakeQuartz]:
+    quartz = FakeQuartz()
+    monkeypatch.setitem(sys.modules, "Quartz", quartz)
+    osi = MacOsInput(100, env=env)
+    monkeypatch.setattr(osi, "_frontmost_pid", lambda: front)
+    monkeypatch.setattr(MacOsInput, "KEY_DELAY", 0)
+    return osi, quartz
+
+
+def test_mac_key_repeat_posts_autorepeats_at_the_hid_tap(monkeypatch):
+    # #4980: AppKit drops autorepeat key-downs posted to a PID, so a held key is
+    # one key-down, the flagged repeats and a key-up, all at the HID tap.
+    osi, quartz = mac_input(monkeypatch, front=100, env=CI)
+    osi.key_repeat("e", 3, interval=0, delay=0)  # type: ignore[attr-defined]
+    e = mac_keycode("e")
+    assert quartz.posted == [
+        ("tap", 0, e, True, 0),
+        ("tap", 0, e, True, 1),
+        ("tap", 0, e, True, 1),
+        ("tap", 0, e, True, 1),
+        ("tap", 0, e, False, 0),
+    ]
+
+
+def test_mac_key_repeat_is_global_and_refused_off_ci(monkeypatch):
+    osi, quartz = mac_input(monkeypatch, front=100, env={})
+    with pytest.raises(GlobalInjectionRefused):
+        osi.key_repeat("e", 3, interval=0, delay=0)  # type: ignore[attr-defined]
+    # Only the release of a key that was never pressed may go out.
+    assert all(not down for *_, down, _repeat in quartz.posted)
+
+
+def test_mac_key_repeat_stops_and_releases_when_focus_moves(monkeypatch):
+    osi, quartz = mac_input(monkeypatch, front=100, env=CI)
+    fronts = iter([100, 100, 999])
+    monkeypatch.setattr(osi, "_frontmost_pid", lambda: next(fronts, 999))
+    with pytest.raises(GlobalInjectionRefused):
+        osi.key_repeat("e", 5, interval=0, delay=0)  # type: ignore[attr-defined]
+    e = mac_keycode("e")
+    assert quartz.posted == [
+        ("tap", 0, e, True, 0),
+        ("tap", 0, e, True, 1),
+        ("tap", 0, e, False, 0),
+    ]
 
 
 def test_windows_virtual_keys():

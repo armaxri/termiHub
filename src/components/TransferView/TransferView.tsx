@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  DndContext,
-  PointerSensor,
-  pointerWithin,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
+import { DndContext, pointerWithin, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button, ConfirmDialog, Select, Tooltip } from "@/components/ui";
 import { TransferEntryRow } from "@/components/TransferQueue";
@@ -142,7 +136,9 @@ export function TransferView({ meta, isVisible }: TransferViewProps) {
     return listing.entries.filter((e) => selected.has(e.path));
   };
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const sensors = useSensors(
+    useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 4 } })
+  );
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const drag = event.active.data.current as PaneDragData | undefined;
