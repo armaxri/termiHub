@@ -558,6 +558,28 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
   The spec drives the app through the store that `boot.ts` exposes, not through
   click paths.
 
+- **Real input** (`interactions.spec.ts`, #4949). Three sub-steps need input the
+  in-app test bridge cannot fake: a synthetic `pointerover` never sets CSS
+  `:hover`, and a synthetic Tab `keydown` never moves focus. Playwright drives
+  Chromium's real pointer and keyboard, at 1280x800:
+  - MT-UI-41: in every built-in theme the terminal's scrollbar thumb is
+    brighter (higher contrast against the pane) while the pointer is over it,
+    returns to its rest colour when the pointer leaves, and the thumb, gutter
+    and text rects do not move. The `terminal` scenario answers
+    `create_connection` with a session the spec feeds 300 lines of output to
+    through the exposed `emit`.
+  - MT-UI-47: with that terminal zoomed, Tab and Shift+Tab never move focus
+    out of the zoom overlay (a focused terminal keeps Tab, so each press starts
+    from the overlay header).
+  - MT-UI-48: with the `monitoring` scenario's live SSH host monitor, the
+    refresh-interval menu opens inside the window above the Open Connections
+    dialog (every option is the topmost element at its own centre, read with
+    `elementFromPoint`), and picking 5s sends `session_monitoring_set_interval`
+    for that host's monitor session.
+
+  The rest of each item is graded on the built app by the integration lane
+  (see "Theme, layout and scrollbar grades").
+
 - **Assertions** (`layoutAudit.ts`, run inside the page):
 
   | Kind              | Fails when                                                                                                                |
@@ -2957,6 +2979,11 @@ resolved and judge it with WCAG maths, so no screenshot comparison is involved:
 | [`test_theme_grades.py`](../tests/system/tests/test_theme_grades.py)                     | MT-UI-02..09 (Light reaches every chrome surface, AA text), MT-UI-05 (System follows an OS light/dark flip live), MT-UI-13 (one visible edge between sidebar and panel), MT-UI-41 (thumbs visible at rest in every theme), MT-UI-49/52 (editor follows the theme, live), MT-UI-50 (latency chart and Save Theme re-colour live)                   |
 | [`test_layout_grades.py`](../tests/system/tests/test_layout_grades.py)                   | MT-UI-16 (no strip under the last row), MT-UI-35/36 (thumb only with scrollback, same gutter in both modes), MT-UI-45 (sidebar laid out at first contact, three cold launches), MT-UI-47/48 (zoom overlay leaves Escape to the program; its menu is live above the scrim), MT-UI-51 (thumb right of the text, horizontal bar clears the last row) |
 | [`test_terminal_command_marks.py`](../tests/system/tests/test_terminal_command_marks.py) | MT-UI-43 (green/red OSC 133 gutter bars, no overlap, jump highlight)                                                                                                                                                                                                                                                                              |
+
+Three sub-steps need a real pointer or keyboard, which the bridge cannot
+synthesise, so the rendered visual checks grade them (#4949, see "Real input"
+above): MT-UI-41's hover brightening, MT-UI-47's Tab containment and MT-UI-48's
+refresh-interval menu above Open Connections.
 
 MT-NET-21 stays guided, but the harness first checks that the chart drew its
 trace and the legend reads ms; the operator only judges readability.
