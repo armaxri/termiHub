@@ -1,5 +1,6 @@
 /**
- * The `measureTerminal` / `loseTerminalWebglContext` bridge verbs (#2988): the
+ * The `measureTerminal` / `loseTerminalWebglContext` bridge verbs (#2988) and
+ * `readTerminalWebglFrame` (#4970): the
  * dispatcher routing, and the helpers in `terminalRender.ts` driven against a
  * real xterm under jsdom. jsdom cannot lay out or paint, so these pin the
  * shape and the jsdom-reachable values; the real measurements are asserted by
@@ -9,8 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
-import { loseTerminalWebglContext, measureTerminal } from "./terminalRender";
-import type { TerminalMeasurement } from "./protocol";
+import {
+  loseTerminalWebglContext,
+  measureTerminal,
+  readTerminalWebglFrame,
+  WEBGL_READBACK_TIMEOUT_MS,
+} from "./terminalRender";
+import type { TerminalMeasurement, TerminalWebglFrame } from "./protocol";
 import type { TerminalHandles } from "@/components/Terminal/TerminalRegistry";
 
 /** Inert deps; the verbs under test and the active tab come from the caller. */
@@ -138,6 +144,52 @@ describe("dispatchCommand loseTerminalWebglContext", () => {
   });
 });
 
+const FRAME: TerminalWebglFrame = { width: 2, height: 1, devicePixelRatio: 1, rgb: "/wAAAAD/" };
+
+describe("dispatchCommand readTerminalWebglFrame", () => {
+  it("reads the active terminal's frame", async () => {
+    const read = vi.fn(async () => FRAME);
+    const deps = depsWith({ getActiveTabId: () => "tab-1", readTerminalWebglFrame: read });
+    const res = await dispatchCommand({ action: "readTerminalWebglFrame" }, deps);
+    expect(res).toEqual({ ok: true, action: "readTerminalWebglFrame", value: FRAME });
+    expect(read).toHaveBeenCalledWith("tab-1", true);
+    await dispatchCommand({ action: "readTerminalWebglFrame", repaint: false }, deps);
+    expect(read).toHaveBeenLastCalledWith("tab-1", false);
+  });
+
+  it("answers null on the DOM renderer", async () => {
+    const deps = depsWith({ readTerminalWebglFrame: async () => null });
+    const res = await dispatchCommand({ action: "readTerminalWebglFrame", tabId: "t" }, deps);
+    expect(res).toEqual({ ok: true, action: "readTerminalWebglFrame", value: null });
+  });
+
+  it("fails on no active terminal, an unknown tab, a rejected read or no dependency", async () => {
+    const none = await dispatchCommand(
+      { action: "readTerminalWebglFrame" },
+      depsWith({ readTerminalWebglFrame: async () => FRAME })
+    );
+    expect(none.error).toMatch(/no active terminal/);
+    const ghost = await dispatchCommand(
+      { action: "readTerminalWebglFrame", tabId: "ghost" },
+      depsWith({ readTerminalWebglFrame: () => undefined })
+    );
+    expect(ghost.error).toMatch(/no terminal registered for tab "ghost"/);
+    const rejected = await dispatchCommand(
+      { action: "readTerminalWebglFrame", tabId: "t" },
+      depsWith({ readTerminalWebglFrame: () => Promise.reject(new Error("no animation frame")) })
+    );
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/no animation frame/),
+    });
+    const absent = await dispatchCommand(
+      { action: "readTerminalWebglFrame", tabId: "t" },
+      depsWith({})
+    );
+    expect(absent.error).toMatch(/not available/);
+  });
+});
+
 describe("terminalRender helpers against a real xterm (jsdom)", () => {
   let term: XTerm;
   let fitAddon: FitAddon;
@@ -172,6 +224,8 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
   });
 
   afterEach(() => {
+    // The readback tests spy on prototypes and window, not just this terminal.
+    vi.restoreAllMocks();
     term.dispose();
     handles.element.remove();
   });
@@ -297,5 +351,91 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
       getExtension: () => null,
     } as unknown as WebGL2RenderingContext);
     expect(loseTerminalWebglContext(handles)).toBe(false);
+  });
+
+  it("answers null from readTerminalWebglFrame on the DOM renderer", async () => {
+    await expect(readTerminalWebglFrame(handles)).resolves.toBeNull();
+  });
+
+  it("copies the WebGL canvas as RGB in the frame after a forced repaint", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 2;
+    canvas.height = 1;
+    handles.element.querySelector(".xterm-screen")!.appendChild(canvas);
+    const order: string[] = [];
+    vi.spyOn(term, "refresh").mockImplementation(() => order.push("refresh"));
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      order.push("raf");
+      frames.push(cb);
+      return frames.length;
+    });
+    const drawImage = vi.fn(() => order.push("draw"));
+    // Red then blue, fully opaque: alpha is dropped from the payload.
+    const data = new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 255]);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage,
+      getImageData: () => ({ data }),
+    } as unknown as CanvasRenderingContext2D);
+
+    const pending = readTerminalWebglFrame(handles);
+    expect(order).toEqual(["refresh", "raf"]);
+    expect(drawImage).not.toHaveBeenCalled();
+    frames[0](0);
+    await expect(pending).resolves.toEqual({
+      width: 2,
+      height: 1,
+      devicePixelRatio: window.devicePixelRatio,
+      rgb: "/wAAAAD/",
+    });
+    expect(drawImage).toHaveBeenCalledWith(canvas, 0, 0);
+  });
+
+  it("returns the renderer's own frames with repaint: false, seeded once", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    handles.element.querySelector(".xterm-screen")!.appendChild(canvas);
+    const refresh = vi.spyOn(term, "refresh").mockImplementation(() => {});
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 1;
+    });
+    let onRender: (() => void) | undefined;
+    // `onRender` is an xterm event getter: hand back a fake subscribe.
+    const subscribe = (listener: () => void) => {
+      onRender = listener;
+      return { dispose: () => {} };
+    };
+    Object.defineProperty(term, "onRender", { configurable: true, get: () => subscribe });
+    let pixel = [255, 0, 0, 255];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: () => {},
+      getImageData: () => ({ data: new Uint8ClampedArray(pixel) }),
+    } as unknown as CanvasRenderingContext2D);
+
+    // First read: arms the per-render copy and seeds it with one forced repaint.
+    expect((await readTerminalWebglFrame(handles, false))?.rgb).toBe("/wAA");
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // Nothing drew since: the same (stale) frame, no repaint forced.
+    pixel = [0, 0, 255, 255];
+    expect((await readTerminalWebglFrame(handles, false))?.rgb).toBe("/wAA");
+    // The renderer draws on its own: the next read sees that frame.
+    onRender!();
+    expect((await readTerminalWebglFrame(handles, false))?.rgb).toBe("AAD/");
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects readTerminalWebglFrame when no animation frame arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      handles.element.querySelector(".xterm-screen")!.appendChild(document.createElement("canvas"));
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+      const pending = readTerminalWebglFrame(handles);
+      vi.advanceTimersByTime(WEBGL_READBACK_TIMEOUT_MS);
+      await expect(pending).rejects.toThrow(/no animation frame/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -66,6 +66,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "readFrontendLog",
         "readTerminalCells",
         "readTerminalOutput",
+        "readTerminalWebglFrame",
         "resizeWindow",
         "sampleCanvas",
         "screenshot",
