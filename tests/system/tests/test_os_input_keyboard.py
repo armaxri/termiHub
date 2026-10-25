@@ -246,8 +246,8 @@ class TestOsKeyboardGrades(
         """MT-KB-01, MT-KB-03: the platform copy shortcut (Cmd+C on macOS,
         Ctrl+Shift+C on Windows/Linux) puts the terminal selection on the OS
         clipboard. MT-KB-02, MT-KB-04: the paste shortcut (Cmd+V / Ctrl+Shift+V)
-        types it once. Plain Ctrl+C still interrupts the running command (macOS,
-        Linux), and the tab menu's Copy puts the whole buffer on the OS clipboard."""
+        types it once. Plain Ctrl+C still interrupts the running command, and the
+        tab menu's Copy puts the whole buffer on the OS clipboard."""
         osi = self.os_input()
         tab_id = self._shell()
         marker = f"KBMARK{uuid.uuid4().hex[:10]}"
@@ -268,19 +268,18 @@ class TestOsKeyboardGrades(
         osi.type_text("_\n")
         assert self._wait_echo(tab_id, "PASTE") == marker
 
-        if sys.platform != "win32":
-            # A click clears the selection: Ctrl+C with a selection copies.
-            self._focus_terminal(tab_id, screen)
-            osi.type_text("sleep 60\n")
-            self.wait(lambda: "sleep 60" in self.driver.read_terminal(tab_id), what="sleep")
-            time.sleep(1.0)
-            osi.key("ctrl+c")
-            osi.type_text("echo INT_ok_\n")
-            assert self._wait_echo(tab_id, "INT") == "ok"
-        else:
-            # Injected Ctrl+C does not interrupt the Windows shell yet (#4981).
-            osi.type_text("echo INT_ok_\n")  # the buffer the tab-menu Copy reads
-            assert self._wait_echo(tab_id, "INT") == "ok"
+        # A click clears the selection: Ctrl+C with a selection copies. Plain
+        # Ctrl+C then interrupts the foreground command — on Windows too, where
+        # the ConPTY child must not inherit an ignore-Ctrl+C attribute (#4981).
+        # Long enough that a missed Ctrl+C can never time out into a pass.
+        sleep = "Start-Sleep 300" if sys.platform == "win32" else "sleep 300"
+        self._focus_terminal(tab_id, screen)
+        osi.type_text(f"{sleep}\n")
+        self.wait(lambda: sleep in self.driver.read_terminal(tab_id), what="sleep")
+        time.sleep(1.0)
+        osi.key("ctrl+c")
+        osi.type_text("echo INT_ok_\n")
+        assert self._wait_echo(tab_id, "INT") == "ok"
 
         self.driver.context_menu(f"tab-{tab_id}")
         self.wait(lambda: self.driver.exists("tab-context-copy"), what="the tab context menu")
