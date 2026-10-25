@@ -1176,19 +1176,27 @@ from the element's DOM rect, calibrated by one trusted `pointermove` the
 need no guessing. That verb also returns `isTrusted`, which proves the input
 came from the OS.
 
-| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-SHI-02 (spawn raises the window) |
-| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                        |
-| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                               |
+| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
+| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                                                        |
+| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                               |
 
 Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
 picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
-injection can judge. MT-NIN-22 (a click into an inactive window), MT-NIN-23
-(typing reaches only the focused one of two windows) and MT-LOCAL-08 (macOS key
-repeat) stay guided too: on the hosted runners an injected click did not move
-the window focus reliably, and autorepeat key events posted to the PID never
-reached the webview.
+injection can judge. MT-NIN-22 (a click into an inactive window) and MT-NIN-23
+(typing reaches only the focused one of two windows) stay guided too: on the
+hosted runners an injected click did not move the window focus reliably.
+
+MT-LOCAL-08 (macOS key repeat) posts its autorepeat key-downs at the HID tap,
+not to the PID (#4980). AppKit drops every autorepeat key-down posted with
+`CGEventPostToPid`, in a plain `NSTextView` as much as in WKWebView. At the HID
+tap they arrive as repeats, and press-and-hold left enabled swallows them just
+as it swallows a held physical key: a probe window on the runner image inserted
+one character out of 31 with press-and-hold on, all 31 with it off, and all 31
+when it set `ApplePressAndHoldEnabled=false` after its window and webview
+existed (termiHub's timing). The accent picker window itself never opens on a
+hosted runner, so the grade is the swallowed repeats, not the window.
 
 ### Live WSL distro lane (Windows, #4008)
 
@@ -2421,7 +2429,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-LOCAL-03     | WSL connection — no welcome banner flash                                                | Guided-manual pytest | test_guided_shells_and_tools.py::test_wsl_tab_opens_without_banner_flash                                                            |
 | MT-LOCAL-05     | SSH connection — no setup command flash                                                 | Automated (#4931)    | test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash                                                              |
 | MT-LOCAL-09     | Enter key submits commands (default CR line ending)                                     | Automated (already)  | tests/system/tests/test_enter_submits_command.py + src-tauri line_ending.rs::bare_enter_stays_cr_by_default                         |
-| MT-LOCAL-08     | macOS key repeat works                                                                  | Guided-manual pytest | test_guided_shells_and_tools.py::test_macos_key_repeat                                                                              |
+| MT-LOCAL-08     | macOS key repeat works                                                                  | Automated (#4980)    | test_os_input_keyboard.py::test_macos_key_repeat_has_no_accent_picker                                                               |
 | MT-NET-10       | Ping — live latency chart and stats                                                     | Automated (already)  | tests/system/tests/test_network_tools_live.py::test_ping_streams_stats_and_chart                                                    |
 | MT-NET-11       | Ping — TCP fallback notice                                                              | Automated (this PR)  | PingPanel.live-stats.test.tsx 'shows the TCP fallback notice…' + core ping.rs                                                       |
 | MT-NET-12       | Port Scanner — results stream in                                                        | Automated (already)  | test_network_tools_live.py::test_port_scan_finds_open_port                                                                          |
@@ -2795,7 +2803,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-SHI-01 and 03 … 06 (external spawn and OS context menus; MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID, #4935), MT-FB-30/31 (large folder, drag out)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
-- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/08/31 (WSL flash, key repeat, Git install), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
+- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
@@ -2840,7 +2848,7 @@ Guided-manual suites:
 | [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-SHI-01/03..06, MT-FB-30/31                                     | the Dock / app-menu quit, an OS context menu, an OS drag (harness runs `termiHub spawn` through the instance's private rendezvous)                                                                 |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..13                                                                    | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                                                           |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                                                                     |
-| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/08/31, MT-SSH-50..52, MT-NET-16/21                                  | watch the WSL tab open, the key repeat, the X window, the traceroute / chart                                                                                                                       |
+| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-50..52, MT-NET-16/21                                     | watch the WSL tab open, the X window, the traceroute / chart                                                                                                                                       |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                                                                      |
 
 ### Output-stream flash and flood grades (#4931)

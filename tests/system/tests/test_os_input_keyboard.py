@@ -9,10 +9,10 @@ what reached the shell, the editor file on disk and the OS clipboard.
 
 Retires the guided checks MT-NIN-15 (dead keys), MT-NIN-20 (focus after an app
 switch), MT-NIN-31 (real Caps Lock), MT-SHI-02 (external spawn raises the
-window) and MT-KB-01..04 (copy and paste shortcuts). MT-NIN-23 (per-window
-typing) and MT-LOCAL-08 (macOS key repeat) stay guided: injected focus switches
-between two windows of one app, and posted autorepeat key events, did not
-behave like the real thing on the CI runners.
+window), MT-KB-01..04 (copy and paste shortcuts) and MT-LOCAL-08 (macOS key
+repeat, autorepeat key-downs at the HID tap, #4980). MT-NIN-23 (per-window
+typing) stays guided: injected focus switches between two windows of one app
+did not behave like the real thing on the CI runners.
 
 Integration lane (nightly); on a developer machine the suite skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.
@@ -339,3 +339,27 @@ class TestOsKeyboardGrades(
             self.wait(self.has_focus, what="termiHub to take focus")
             tab = self.wait(lambda: self.find_tab("Spawned"), what="the '(Spawned)' tab")
             assert (self.active_tab() or {}).get("id") == tab["id"]
+
+    # ── MT-LOCAL-08: macOS key repeat ────────────────────────────────────────
+    @pytest.mark.skipif(sys.platform != "darwin", reason="press-and-hold is a macOS feature")
+    def test_macos_key_repeat_has_no_accent_picker(self):
+        """MT-LOCAL-08: holding a key in the terminal repeats it continuously; the
+        press-and-hold accent picker never swallows the repeats.
+
+        ``e`` is a key the accent picker offers variants for. The autorepeat
+        key-downs go through the HID tap (#4980): there, press-and-hold left
+        enabled swallows every repeat (a probe window on the same runner image
+        inserted one ``e`` out of 31), so this grades the app's
+        ``ApplePressAndHoldEnabled=false``, not just the event delivery.
+        """
+        osi = self.os_input()
+        tab_id = self._shell()
+        self._focus_terminal(tab_id, self.os_activate())
+        osi.type_text("echo KR_")
+        osi.key_repeat("e", 30)  # type: ignore[attr-defined]
+        osi.type_text("_\n")
+        got = self._wait_echo(tab_id, "KR")
+        assert len(got) >= 25 and set(got) == {"e"}, (
+            f"holding 'e' (1 key-down + 30 autorepeats) delivered {got!r}: the "
+            "press-and-hold accent picker swallowed the repeats"
+        )
