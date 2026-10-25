@@ -5,10 +5,10 @@ import {
   DragEndEvent,
   DragStartEvent,
   DragOverlay,
-  PointerSensor,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import {
   Settings as SettingsIcon,
   FileEdit,
@@ -288,7 +288,9 @@ export function SplitView() {
 
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(
+    useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 5 } })
+  );
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
