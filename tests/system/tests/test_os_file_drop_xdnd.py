@@ -123,6 +123,7 @@ class TestXdndFileDrop(_XdndSuite, TerminalUi, TabsUi, LayoutUi, SidebarUi, File
         self.open_file_browser()
         self.wait_for_path_contains(folder.name)
         self.wait(lambda: self.driver.exists(FB_LIST), what="the listing")
+        self.clear_entry_filter()
 
     # ── Drag in: XDND source → terminal / file browser ───────────────────────
     def test_real_drop_onto_terminal_and_file_browser(self):

@@ -48,6 +48,10 @@ FB_LIST = "file-browser-list"
 FB_OVERLAY = "file-browser-drag-overlay"
 #: How long a drop that must change nothing is watched before it counts as ignored.
 QUIET_WINDOW = 1.5
+#: A POSIX line continuation: the dropped paths become printf's arguments, so
+#: the grade is what the shell parsed, not how the line editor drew a long line.
+PRINTF_ARGS = "printf 'ARG<%s>\\n' \\"
+POSIX = sys.platform != "win32"
 
 
 def quote_path(path: str) -> str:
@@ -78,14 +82,43 @@ class TestSyntheticOsFileDrop(
     def _wait_prompt(self, tab_id: str) -> None:
         self.wait(lambda: self.driver.read_terminal(tab_id).strip(), what="the shell prompt")
 
-    def _wait_inserted(self, tab_id: str, paths: list[Path]) -> str:
-        expected = squash(" ".join(quote_path(str(p)) for p in paths))
-
-        def inserted() -> Optional[str]:
+    def _wait_shown(self, tab_id: str, needle: str) -> str:
+        def shown() -> Optional[str]:
             text = self.driver.read_terminal(tab_id)
-            return text if expected in squash(text) else None
+            return text if squash(needle) in squash(text) else None
 
-        return self.wait(inserted, what=f"the dropped paths {expected!r} on the prompt line")
+        return self.wait(shown, what=f"{needle!r} on the prompt line")
+
+    def _arm(self, tab_id: str) -> None:
+        """On POSIX, start a printf continuation the drop completes."""
+        if POSIX:
+            self.driver.terminal_input(PRINTF_ARGS, tab_id)
+            self._wait_shown(tab_id, "ARG<%s>")
+
+    def _args(self, tab_id: str) -> list[str]:
+        rows = [r.strip() for r in self.driver.read_terminal(tab_id).splitlines()]
+        return [r for r in rows if r.startswith("ARG<")]
+
+    def _expect_dropped(self, tab_id: str, paths: list[Path]) -> None:
+        """The drop reached ``tab_id``'s shell as exactly ``paths``, quoted.
+
+        Windows: the double-quoted paths are on the prompt line (then discarded).
+        POSIX: nothing ran yet; Enter then runs the armed printf, which prints
+        each argument the shell parsed from the single-quoted paths.
+        """
+        if not POSIX:
+            self._wait_shown(tab_id, " ".join(quote_path(str(p)) for p in paths))
+            self.driver.press_key("c", f"terminal-input-{tab_id}", ctrl=True)
+            return
+        self._wait_shown(tab_id, quote_path(paths[-1].name).strip("'"))
+        assert not self._args(tab_id), "the drop ran a command before Enter"
+        self.driver.press_key("Enter", f"terminal-input-{tab_id}")
+        expected = [f"ARG<{p}>" for p in paths]
+        args = self.wait(
+            lambda: (got := self._args(tab_id)) and len(got) >= len(paths) and got,
+            what="the shell to print the dropped paths",
+        )
+        assert args[-len(paths) :] == expected, args
 
     def _assert_unchanged(self, tab_id: str, before: str, what: str) -> None:
         time.sleep(QUIET_WINDOW)
@@ -109,33 +142,12 @@ class TestSyntheticOsFileDrop(
         panel = self.panel_of_tab(tab_id)
         assert panel is not None
         renderer = f"terminal-renderer-{tab_id}"
-        posix = sys.platform != "win32"
-        if posix:
-            # A line continuation, so the dropped paths become printf's arguments
-            # (printf, not ls: GNU ls re-quotes names with spaces on a TTY).
-            self.run_command("printf 'ARG<%s>\\n' \\")
-
+        self._arm(tab_id)
         self.os_drag_enter(renderer, paths)
         self.wait(lambda: self.driver.exists(pane_overlay(panel)), what="the drop highlight")
         self.os_drop(renderer, paths)
         self.wait(lambda: not self.driver.exists(pane_overlay(panel)), what="the highlight to go")
-        inserted = self._wait_inserted(tab_id, paths)
-        assert "No such file" not in inserted and "not found" not in inserted.lower()
-
-        if not posix:
-            # The Windows grade is the inserted text; discard the line.
-            self.driver.press_key("c", f"terminal-input-{tab_id}", ctrl=True)
-            return
-        self.driver.press_key("Enter", f"terminal-input-{tab_id}")
-        expected = [f"ARG<{p}>" for p in paths]
-
-        def printed() -> Optional[list[str]]:
-            rows = [r.strip() for r in self.driver.read_terminal(tab_id).splitlines()]
-            args = [r for r in rows if r.startswith("ARG<")]
-            return args if all(line in args for line in expected) else None
-
-        args = self.wait(printed, what="the shell to receive exactly the three dropped paths")
-        assert args[-3:] == expected, args
+        self._expect_dropped(tab_id, paths)
 
     # ── MT-UI-34: the drop lands in the pane under the cursor ────────────────
     def test_drop_targets_only_the_pane_under_the_cursor(self):
@@ -180,9 +192,10 @@ class TestSyntheticOsFileDrop(
         self.wait(lambda: overlays() == (False, False), what="no highlight over the tab bar")
         self.os_drag_leave()
 
+        self._arm(second["id"])
         before_first = self.driver.read_terminal(first["id"])
         self.os_drop(second_r, [dropped])
-        self._wait_inserted(second["id"], [dropped])
+        self._expect_dropped(second["id"], [dropped])
         self._assert_unchanged(first["id"], before_first, "the other pane received the drop")
         assert overlays() == (False, False)
 
@@ -202,6 +215,8 @@ class TestSyntheticOsFileDrop(
         self.open_file_browser()
         self.wait_for_path_contains(folder.name, timeout=timeout)
         self.wait(lambda: self.driver.exists(FB_LIST), timeout=timeout, what="the listing")
+        # A filter left by an earlier wait_for_file_row survives navigation.
+        self.clear_entry_filter()
 
     def test_os_drop_onto_file_browser_copies_into_folder(self):
         """MT-NIN-05: dragging a file over the file-browser listing highlights it;
