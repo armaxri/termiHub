@@ -58,8 +58,6 @@ export function PasswordInput({
     onKeyDown?.(e);
   };
 
-  const capsTestId = dataTestId ? `${dataTestId}-caps-lock` : undefined;
-
   return (
     <div className="password-input">
       <Input
@@ -94,7 +92,7 @@ export function PasswordInput({
           className="password-input__caps-warning"
           role="alert"
           aria-live="assertive"
-          data-testid={capsTestId}
+          data-testid={dataTestId ? `${dataTestId}-caps-lock` : undefined}
         >
           <AlertTriangle size={12} aria-hidden="true" />
           <span>Caps Lock is on</span>

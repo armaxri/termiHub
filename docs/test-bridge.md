@@ -249,6 +249,7 @@ unmount.
 | `severAgentTransport`      | Test-only: sever a connected agent's transport (see below)     |
 | `closeWindow`              | Close this window through the OS close path (see below)        |
 | `listWindows`              | Read the backend window registry (`[{ label, tabCount? }]`)    |
+| `osInputProbe`             | Read the OS key/pointer events the webview got (`isTrusted`)   |
 | `readCoverage`             | Read a chunk of `window.__coverage__` (coverage builds only)   |
 | `exitApp`                  | Test-only: quit the app normally (coverage profiles, below)    |
 | `stubNativeDialog`         | Test-only: answer the next native open/save dialog (below)     |

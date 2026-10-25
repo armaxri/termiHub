@@ -63,6 +63,11 @@ _CAPTURE = "test_native_capture_grades.py"
 _PAINT = "test_native_paint_grades.py"
 _HANDOFF = "test_external_app_handoffs.py"
 _X11_WINDOW = "test_forwarded_x11_client_opens_a_window_on_the_local_display"
+_OS_KEYS = "test_os_input_keyboard.py"
+_OS_POINTER = "test_os_input_pointer.py"
+_OS_MAC = "test_os_input_macos_app.py"
+_RIGHT_CLICK = "test_right_click_platform_default_and_quick_copy_paste"
+_COPY_PASTE = "test_copy_paste_shortcuts_and_plain_ctrl_c"
 
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
 #: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
@@ -149,6 +154,29 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-SSH-09": f"{_HANDOFF}::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab",
     "MT-XPLAT-03": f"test_ssh.py::{_X11_WINDOW}",
     "MT-SSH-15": f"test_ssh.py::{_X11_WINDOW}",
+    # #4935: real OS key / pointer events aimed at the test instance's PID.
+    "MT-NIN-07": f"{_OS_POINTER}::test_tab_drag_released_outside_window_tears_off",
+    "MT-NIN-15": f"{_OS_KEYS}::test_dead_keys_compose_once_in_terminal_and_editor",
+    "MT-NIN-20": f"{_OS_KEYS}::test_focus_survives_app_switch",
+    "MT-NIN-30": f"{_OS_POINTER}::{_RIGHT_CLICK}",
+    "MT-NIN-31": f"{_OS_KEYS}::test_real_caps_lock_toggles_password_warning",
+    "MT-SHI-02": f"{_OS_KEYS}::test_external_spawn_brings_window_to_front",
+    "MT-KB-01": f"{_OS_KEYS}::{_COPY_PASTE}",
+    "MT-KB-02": f"{_OS_KEYS}::{_COPY_PASTE}",
+    "MT-KB-03": f"{_OS_KEYS}::{_COPY_PASTE}",
+    "MT-KB-04": f"{_OS_KEYS}::{_COPY_PASTE}",
+    "MT-UI-26": f"{_OS_POINTER}::{_RIGHT_CLICK}",
+    "MT-UI-27": f"{_OS_POINTER}::{_RIGHT_CLICK}",
+    "MT-UI-28": f"{_OS_POINTER}::{_RIGHT_CLICK}",
+    "MT-UI-30": f"{_OS_POINTER}::{_RIGHT_CLICK}",
+    "MT-CONN-01": f"{_OS_POINTER}::test_drag_connection_into_folder",
+    "MT-FB-20": f"{_OS_POINTER}::test_drag_editor_tab_between_panels",
+    "MT-WIN-01": (
+        f"{_OS_MAC}::test_last_window_close_keeps_app_and_dock_reopen_recreates_window"
+    ),
+    "MT-WIN-02": f"{_OS_MAC}::test_cmd_q_quits_with_several_windows",
+    "MT-WIN-03": f"{_OS_MAC}::test_cmd_q_with_live_shell_asks_first",
+    "MT-WIN-04": f"{_OS_MAC}::test_dock_quit_applescript_quit_and_logout",
     # #4953: agent auth against a private ssh-agent the suite starts itself.
     "MT-SSH-07": "test_ssh_agent_auth.py::test_ssh_agent_auth_connects",
 }
@@ -184,6 +212,16 @@ LATER_GUIDED_IDS = frozenset(
         "MT-SSH-09",
         "MT-SSH-15",
         "MT-XPLAT-03",
+        "MT-KB-01",
+        "MT-KB-02",
+        "MT-KB-03",
+        "MT-KB-04",
+        "MT-UI-26",
+        "MT-UI-27",
+        "MT-UI-28",
+        "MT-UI-30",
+        "MT-CONN-01",
+        "MT-FB-20",
         "MT-SSH-07",
     }
 )

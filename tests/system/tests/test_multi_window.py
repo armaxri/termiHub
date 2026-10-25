@@ -15,9 +15,9 @@ journeys that used to be verified only by hand:
 * on Linux/Windows, closing the **last** window quits the app (#1903 per-OS
   quit policy).
 
-What stays manual is only the OS-native macOS behaviour — the app staying alive
-in the Dock after its last window closes, and Cmd+Q — see ``MT-WIN-01``/``02``
-in ``test_guided_app_os.py`` (guided-manual).
+The OS-native macOS behaviour — the app staying alive in the Dock after its
+last window closes, and Cmd+Q (``MT-WIN-01``/``02``) — is graded with real OS
+events aimed at the test instance's PID in ``test_os_input_macos_app.py``.
 
 Runs in the nightly integration lane (Linux and Windows; macOS too, minus the
 last-window quit check). The suite drives POSIX-agnostic ``echo`` only, so the
@@ -242,7 +242,7 @@ class TestMultiWindow(WindowsUi, TerminalUi, SystemTest):
 
 @pytest.mark.skipif(
     sys.platform == "darwin",
-    reason="macOS keeps the app alive in the Dock after the last window (manual MT-WIN-01)",
+    reason="macOS keeps the app alive in the Dock after the last window (MT-WIN-01, test_os_input_macos_app.py)",
 )
 class TestLastWindowQuitPolicy(TerminalUi, SystemTest):
     """Linux/Windows: closing the last window quits the app (#1903).

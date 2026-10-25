@@ -904,6 +904,60 @@ export interface FrontendLogRecord {
   message: string;
 }
 
+/**
+ * Read what OS-level input reached the webview, plus the geometry needed to aim
+ * it (#4935).
+ *
+ * The harness injects real OS key and pointer events at the test instance's PID
+ * (`termihub_harness.os_input`). This verb arms a capture-phase recorder of the
+ * document's key/pointer events (lazily, on first use) and returns the recorded
+ * events, each with `isTrusted` so a grade can prove the input came from the OS
+ * rather than from the bridge's synthetic dispatch. With `testId` it also returns
+ * that element's client rect, which the harness maps to screen coordinates using
+ * a calibration move. `reset` clears the recording first.
+ */
+export interface OsInputProbeCommand {
+  action: "osInputProbe";
+  /** Element whose client rect (CSS pixels) to include as `rect`. */
+  testId?: string;
+  /** Clear the events recorded so far (after returning nothing older). */
+  reset?: boolean;
+}
+
+/** One key/pointer event the {@link OsInputProbeCommand} recorder saw. */
+export interface OsInputProbeEvent {
+  type: string;
+  /** `true` only for events the browser received from the OS. */
+  isTrusted: boolean;
+  timeStamp: number;
+  /** `data-testid` of the nearest tagged ancestor of the event target. */
+  testId?: string;
+  key?: string;
+  code?: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  alt?: boolean;
+  shift?: boolean;
+  repeat?: boolean;
+  capsLock?: boolean;
+  clientX?: number;
+  clientY?: number;
+  screenX?: number;
+  screenY?: number;
+  button?: number;
+}
+
+/** The value of an {@link OsInputProbeCommand}. */
+export interface OsInputProbeResult {
+  events: OsInputProbeEvent[];
+  devicePixelRatio: number;
+  innerWidth: number;
+  innerHeight: number;
+  /** Whether the document currently has OS focus (`document.hasFocus()`). */
+  hasFocus: boolean;
+  rect?: { left: number; top: number; width: number; height: number };
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
@@ -939,6 +993,7 @@ export type BridgeCommand =
   | SeverAgentTransportCommand
   | CloseWindowCommand
   | ListWindowsCommand
+  | OsInputProbeCommand
   | ReadCoverageCommand
   | ExitAppCommand
   | StubNativeDialogCommand
