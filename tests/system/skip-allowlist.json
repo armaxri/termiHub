@@ -13,11 +13,11 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5)",
-    "bulk-linux": 59,
-    "bulk-linux-arm64": 20,
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5); #4994 +1 on Linux/arm64/Windows for the MT-LOCAL-08 press-and-hold skip (#4980)",
+    "bulk-linux": 60,
+    "bulk-linux-arm64": 21,
     "bulk-macos": 211,
-    "bulk-windows": 226,
+    "bulk-windows": 227,
     "display-linux": 0,
     "display-linux-arm64": 0,
     "display-macos": 0,
@@ -207,6 +207,16 @@
         "bulk-windows"
       ],
       "why": "MT-WIN-01..04 are macOS Dock/quit paths (#4935)"
+    },
+    {
+      "reason": "^press-and-hold is a macOS feature$",
+      "nodeid": "test_os_input_keyboard\\.py",
+      "lanes": [
+        "bulk-linux",
+        "bulk-linux-arm64",
+        "bulk-windows"
+      ],
+      "why": "MT-LOCAL-08 grades the macOS press-and-hold accent picker, which exists only on macOS (#4980)"
     },
     {
       "reason": "^SSH agent auth on Windows uses the system OpenSSH agent pipe, which a test must not load keys into$",
