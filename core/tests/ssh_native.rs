@@ -336,6 +336,12 @@ async fn native_05c_first_command_runs_with_shell_integration_on() {
             !seen.contains("PROMPT_COMMAND"),
             "{shell:?} must not be sent the POSIX setup; output: {seen:?}"
         );
+    } else {
+        // #5009: the POSIX setup is typed at the first prompt and its echo
+        // never reaches the terminal.
+        for leak in ["__termihub", "PROMPT_COMMAND", "precmd_functions", "6973;"] {
+            assert!(!seen.contains(leak), "setup text {leak:?} shown: {seen:?}");
+        }
     }
     if shell == RemoteShell::Cmd {
         assert!(
@@ -394,6 +400,13 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
         assert!(
             !seen.contains("export "),
             "{shell:?} got the POSIX export: {seen:?}"
+        );
+    } else {
+        // #5009: the env fallback is typed with the hidden setup line, so
+        // its value is never echoed.
+        assert!(
+            !seen.contains("TH_4147_VAR=") && !seen.contains("__termihub"),
+            "the typed env setup was shown: {seen:?}"
         );
     }
 
