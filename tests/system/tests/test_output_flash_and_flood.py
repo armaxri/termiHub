@@ -8,10 +8,10 @@ Retires two "watch the screen" release checks into plain asserts:
   that is painted and then wiped (screen clear, reset, alternate screen) before
   the user gets the prompt; the tap shows it even though the wiped text is gone
   from the buffer ``readTerminal`` reads. The grade also asserts that none of
-  termiHub's shell-integration setup bytes show up after the first
-  integration-marked (OSC 133;A) prompt, i.e. setup never leaks into the
-  session the user types in. The same no-flash grade runs on a local shell on
-  every OS, which also proves the tap works on all three WebView engines.
+  termiHub's shell-integration setup text reaches the terminal at all — not
+  even before the first prompt (#5009: the typed setup is hidden). The same
+  grades run on a local shell on every OS, which also proves the tap works on
+  all three WebView engines.
 * **MT-LOCAL-32 — an output flood stays bounded and Ctrl+C stops it.** ``yes``
   floods a POSIX terminal (Git Bash on Windows) for 30 s while the harness
   samples the resident memory of the test app **and its WebView processes** by
@@ -67,7 +67,7 @@ pytestmark = pytest.mark.integration
 NEW_TERMINAL = "terminal-view-new-terminal"
 
 #: Visible text termiHub's shell-integration setup line contains; none of it may
-#: appear once the first integration-marked prompt is up.
+#: reach the terminal (#5009).
 SETUP_MARKERS = ("__termihub_osc7", "__termihub_si", "PROMPT_COMMAND", "precmd_functions")
 
 #: How long the stream must stay quiet before the start of a session counts as
@@ -155,14 +155,17 @@ class TestLocalShellFlash(_OutputTap, TerminalUi, TabsUi, SystemTest):
         self.wait(lambda: self.driver.read_terminal(tab_id).strip(), what="a shell prompt")
         raw = self.settled_output(tab_id, what="the local shell start to settle")
         flashes = find_flashes(raw)
+        leaked = markers_in(raw, SETUP_MARKERS)
         measure(
             "local-shell-start",
             chars=len(raw),
             prompt_marks=len(prompt_offsets(raw)),
             flashes=len(flashes),
+            leaked=leaked,
             raw=describe(raw, 1500),
         )
         assert not flashes, f"local shell start wiped painted text: {flashes}\n{describe(raw)}"
+        assert not leaked, f"setup text {leaked} reached the terminal (#5009):\n{describe(raw)}"
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
@@ -184,7 +187,7 @@ class TestSshConnectFlash(
         raw = self.settled_output(tab_id, what="the SSH session start to settle")
         first_prompt = prompt_offsets(raw)[0]
         flashes = find_flashes(raw)
-        leaked = markers_in(raw[first_prompt:], SETUP_MARKERS)
+        leaked = markers_in(raw, SETUP_MARKERS)
         measure(
             "ssh-connect",
             chars=len(raw),
@@ -195,7 +198,7 @@ class TestSshConnectFlash(
         )
         assert not flashes, f"SSH connect wiped painted text: {flashes}\n{describe(raw)}"
         assert not leaked, (
-            f"setup bytes {leaked} appeared after the first prompt (OSC 133;A at "
+            f"setup text {leaked} reached the terminal (#5009; first OSC 133;A at "
             f"{first_prompt}):\n{describe(raw)}"
         )
 
