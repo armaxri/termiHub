@@ -105,10 +105,14 @@ export const createStartupSlice: StateCreator<AppState, [], [], StartupSlice> = 
           frontendLog("app_store", `Failed to load external file ${err.filePath}: ${err.error}`);
         }
       }
+      // #5010: the app always starts on an open Connections sidebar view. The
+      // persisted `sidebarView` / `sidebarCollapsed` (still written on every view
+      // switch for settings-file compatibility) are deliberately ignored here.
+      // Hiding the sidebar entirely stays a layout preference (`sidebarVisible`),
+      // which is restored as before.
       const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
-      const persistedView = (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
-      const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
-      const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
+      const sidebarView: SidebarView = "connections";
+      const sidebarCollapsed = false;
       set({
         layoutConfig,
         sidebarView,
