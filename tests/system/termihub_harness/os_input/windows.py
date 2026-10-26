@@ -97,6 +97,8 @@ MIN_WINDOW_SIZE = 64
 #: Keyboard layout ids (KLID) for :meth:`WindowsOsInput.set_layout`.
 KLID_US_INTERNATIONAL = "00020409"
 WM_INPUTLANGCHANGEREQUEST = 0x0050
+#: Longest wait (s) for the focused thread to adopt a requested layout.
+LAYOUT_SWITCH_TIMEOUT = 2.0
 
 
 def modifier_vks(mods: Sequence[str]) -> list[int]:
@@ -325,9 +327,17 @@ class WindowsOsInput(OsInput):
         target = self._focused_hwnd()
         if target is None:
             raise OsInputUnavailable("no focused window to switch the layout of")
-        previous = user32.GetKeyboardLayout(user32.GetWindowThreadProcessId(target, None))
+        thread = user32.GetWindowThreadProcessId(target, None)
+        previous = user32.GetKeyboardLayout(thread)
         user32.PostMessageW(wintypes.HWND(target), WM_INPUTLANGCHANGEREQUEST, 0, ctypes.c_void_p(hkl))
-        time.sleep(0.5)
+        # Wait for the focused thread to report the new layout (bounded: a
+        # thread that never echoes it still gets the old fixed settle time).
+        deadline = time.monotonic() + LAYOUT_SWITCH_TIMEOUT
+        while (user32.GetKeyboardLayout(thread) or 0) != (hkl or 0):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        time.sleep(0.2)
         return int(previous or 0)
 
     # ── Pointer ──────────────────────────────────────────────────────────────

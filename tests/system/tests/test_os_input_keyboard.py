@@ -143,6 +143,30 @@ class TestOsKeyboardGrades(
         finally:
             osi.set_layout(*layout)  # type: ignore[attr-defined]
 
+    def _settle_layout(self, tab_id: str) -> None:
+        """Type a throwaway command after a layout switch; wait until the shell ran it.
+
+        On the Windows runner the first key typed after the switch to
+        US-International sometimes arrived after the next ones, so ``echo DK_``
+        reached the shell as ``ceho DK_`` (#4993). The keys typed here absorb
+        that: a fresh prompt after the warm-up line proves the shell has
+        received and handled them, whatever order they came in.
+        """
+        self.os_input().type_text("echo DKW_ok_\n")
+
+        def settled() -> bool:
+            lines = [line.rstrip() for line in self.driver.read_terminal(tab_id).splitlines()]
+            lines = [line for line in lines if line.strip()]
+            hits = [i for i, line in enumerate(lines) if "DKW" in line]
+            return (
+                bool(hits)
+                and hits[0] < len(lines) - 1
+                and "DKW" not in lines[-1]
+                and lines[-1].endswith((">", "$", "#", "%"))
+            )
+
+        self.wait(settled, what="the shell to run the layout warm-up line")
+
     def _press(self, sequences: list[list[str]]) -> None:
         osi = self.os_input()
         for sequence in sequences:
@@ -159,6 +183,7 @@ class TestOsKeyboardGrades(
         screen = self.os_activate()
         self._focus_terminal(tab_id, screen)
         with self._dead_key_layout() as (sequences, expected):
+            self._settle_layout(tab_id)
             osi.type_text("echo DK_")
             self._press(sequences)
             osi.type_text("_\n")
