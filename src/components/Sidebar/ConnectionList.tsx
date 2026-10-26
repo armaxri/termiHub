@@ -486,7 +486,13 @@ function ConnectionItem({
               onKeyDown={(e) => onTreeKeyDown(e, connection.id)}
               onFocus={() => onRowFocus(rowIndex)}
             >
-              <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
+              <ConnectionIcon
+                config={connection.config}
+                customIcon={connection.icon}
+                iconColor={connection.iconColor}
+                iconEmoji={connection.iconEmoji}
+                size={16}
+              />
               <span className="connection-tree__label">{connection.name}</span>
               {pluginIssue && (
                 <Tooltip content={pluginIssue.message} side="top">
@@ -1671,6 +1677,8 @@ export function ConnectionList() {
               <ConnectionIcon
                 config={draggingConnection.config}
                 customIcon={draggingConnection.icon}
+                iconColor={draggingConnection.iconColor}
+                iconEmoji={draggingConnection.iconEmoji}
                 size={16}
               />
               <span>{draggingConnection.name}</span>

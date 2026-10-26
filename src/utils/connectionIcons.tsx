@@ -18,6 +18,9 @@ import { compareNames } from "@/utils/locale";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { isLocalConnectionConfig } from "@/utils/typedConnectionConfig";
 import { getBasename } from "@/utils/paths";
+import { getCurrentTheme } from "@/themes";
+import { useThemeRevision } from "@/hooks/useThemeRevision";
+import { iconSurfaces, isSingleEmoji, resolveIconColor } from "@/utils/connectionIconStyle";
 
 /** Default icon by connection type (non-local or local without special shell) */
 const TYPE_ICONS: Record<string, LucideIcon> = {
@@ -95,25 +98,68 @@ function resolveIconByName(name: string): {
 interface ConnectionIconProps {
   config: ConnectionConfig;
   customIcon?: string;
+  /** Optional per-connection icon colour: palette name or `#rrggbb` (#5008). */
+  iconColor?: string | null;
+  /** Optional single-emoji icon that replaces the glyph (#5008). */
+  iconEmoji?: string | null;
   size?: number;
   className?: string;
 }
 
 /**
  * Renders the appropriate icon for a connection.
- * Uses customIcon if provided, otherwise falls back to shell-aware defaults.
+ *
+ * A valid `iconEmoji` wins; otherwise `customIcon` (a lucide name) or the
+ * shell-aware type default is drawn, tinted with `iconColor` resolved against
+ * the active theme's sidebar/tab surfaces so it stays legible (#5008).
  */
-export function ConnectionIcon({ config, customIcon, size = 16, className }: ConnectionIconProps) {
+export function ConnectionIcon({
+  config,
+  customIcon,
+  iconColor,
+  iconEmoji,
+  size = 16,
+  className,
+}: ConnectionIconProps) {
+  // Re-render on theme switches so a palette colour picks the right shade.
+  useThemeRevision();
+
+  if (iconEmoji && isSingleEmoji(iconEmoji)) {
+    return (
+      <span
+        className={["connection-icon__emoji", className].filter(Boolean).join(" ")}
+        aria-hidden="true"
+        data-testid="connection-icon-emoji"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+          width: size,
+          height: size,
+          fontSize: Math.round(size * 0.875),
+          lineHeight: 1,
+        }}
+      >
+        {iconEmoji}
+      </span>
+    );
+  }
+
+  const color = resolveIconColor(iconColor, iconSurfaces(getCurrentTheme().colors));
+  const colorProps = color ? { color, "data-icon-color": iconColor ?? undefined } : {};
   const custom = customIcon ? resolveIconByName(customIcon) : null;
   const { component: Comp, iconNode } = custom ?? getDefaultIconInfo(config);
 
   if (iconNode) {
-    return <LucideIconRenderer iconNode={iconNode} size={size} className={className} />;
+    return (
+      <LucideIconRenderer iconNode={iconNode} size={size} className={className} {...colorProps} />
+    );
   }
   if (Comp) {
-    return <Comp size={size} className={className} />;
+    return <Comp size={size} className={className} {...colorProps} />;
   }
-  return <Terminal size={size} className={className} />;
+  return <Terminal size={size} className={className} {...colorProps} />;
 }
 
 /** Render an icon by its stored name string */

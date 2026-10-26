@@ -34,7 +34,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
-import { ConnectionIcon } from "@/utils/connectionIcons";
+import { TabConnectionIcon } from "./TabConnectionIcon";
 import {
   Tooltip,
   ContextMenuContent,
@@ -319,7 +319,7 @@ export function Tab({
       {NonTerminalIcon ? (
         <NonTerminalIcon size={14} className="tab__icon" data-testid={`tab-icon-${tab.id}`} />
       ) : (
-        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
+        <TabConnectionIcon tab={tab} size={14} className="tab__icon" />
       )}
       {status &&
         (() => {
