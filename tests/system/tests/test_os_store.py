@@ -171,3 +171,34 @@ def test_secret_tool_usernames_survive_split_streams():
         "conn-a:password",
         "conn-b:password",
     }
+
+
+def test_store_teardown_survives_a_dying_keyring_socket(tmp_path, monkeypatch):
+    """A socket error while removing the store's directory is retried (#4995)."""
+    target = tmp_path / "store"
+    target.mkdir()
+    real_rmtree = shutil.rmtree
+    calls = []
+
+    def flaky_rmtree(path, ignore_errors=False):
+        calls.append(path)
+        if len(calls) == 1:
+            raise ConnectionAbortedError(103, "Software caused connection abort")
+        real_rmtree(path, ignore_errors=ignore_errors)
+
+    monkeypatch.setattr(os_store.shutil, "rmtree", flaky_rmtree)
+    monkeypatch.setattr(os_store.time, "sleep", lambda _s: None)
+    os_store._remove_tree(target)
+    assert len(calls) == 2
+    assert not target.exists()
+
+
+def test_store_teardown_gives_up_quietly(tmp_path, monkeypatch):
+    """A directory that cannot be removed is left behind, not raised (#4995)."""
+
+    def failing_rmtree(path, ignore_errors=False):
+        raise ConnectionAbortedError(103, "Software caused connection abort")
+
+    monkeypatch.setattr(os_store.shutil, "rmtree", failing_rmtree)
+    monkeypatch.setattr(os_store.time, "sleep", lambda _s: None)
+    os_store._remove_tree(tmp_path)
