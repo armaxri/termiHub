@@ -614,11 +614,10 @@ fn a_hang_verdict_on_a_runner_that_already_crashed_only_reaps_it() {
         Some(self_crashed_child()),
         Arc::new(PluginLogLimiter::default()),
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !shared.has_exited() {
-        assert!(Instant::now() < deadline, "the child exits");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(
+        shared.exits_within(Duration::from_secs(10)),
+        "the child exits"
+    );
     shared.end_for_hang(RunnerExitCause::NotResponding);
     assert_eq!(
         shared.exit_cause(),
@@ -627,7 +626,7 @@ fn a_hang_verdict_on_a_runner_that_already_crashed_only_reaps_it() {
             exit_code: None
         })
     );
-    assert!(!shared.has_exited(), "reaped");
+    assert!(shared.child.lock().unwrap().is_none(), "reaped");
 }
 
 #[cfg(unix)]
@@ -642,7 +641,7 @@ fn a_hang_verdict_on_a_live_runner_kills_it_as_not_responding() {
         Some(child),
         Arc::new(PluginLogLimiter::default()),
     );
-    assert!(!shared.has_exited());
+    assert!(!shared.exits_within(Duration::ZERO));
     shared.end_for_hang(RunnerExitCause::NotResponding);
     assert_eq!(shared.exit_cause(), Some(RunnerExitCause::NotResponding));
 }

@@ -40,6 +40,10 @@ const READ_BUFFER: usize = 64 * 1024;
 /// Longest runner stderr line forwarded in one piece.
 const MAX_STDERR_LINE: u64 = 16 * 1024;
 
+/// How long a hang verdict waits for a runner that is already dying (a
+/// crash still being reported) to end on its own before killing it (#5004).
+pub(super) const HANG_EXIT_GRACE: Duration = Duration::from_secs(1);
+
 /// How long classifying an exit waits for the stderr forwarder to drain.
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -637,28 +641,40 @@ impl Shared {
         }
     }
 
-    /// Whether the runner process has already exited (not yet reaped). `false`
-    /// once it is reaped, or when its status cannot be read.
-    pub(super) fn has_exited(&self) -> bool {
-        self.child
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_mut()
-            .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))))
+    /// Whether the runner process exits (or is already gone) within `wait`.
+    /// It is left in place for the regular reap; one already reaped counts as
+    /// gone. `false` when its status cannot be read.
+    pub(super) fn exits_within(&self, wait: Duration) -> bool {
+        let deadline = Instant::now() + wait;
+        loop {
+            {
+                let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(child) = guard.as_mut() else {
+                    return true;
+                };
+                match child.try_wait() {
+                    Ok(Some(_)) => return true,
+                    Ok(None) if Instant::now() < deadline => {}
+                    _ => return false,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
-    /// Act on the watchdog's hang verdict (`cause`, not responding or out of
-    /// memory under pressure): kill the runner for it and reap it here, so
-    /// the cause is final even if the reader thread is blocked delivering
-    /// output.
+    /// Act on the watchdog's hang verdict (`cause`: not responding, or out of
+    /// memory under pressure): kill the runner for it and reap it here, so the
+    /// cause is final even if the reader thread is blocked delivering output.
     ///
-    /// A runner that already exited on its own is only reaped (#5004): its
-    /// status, not the verdict, says why it ended. A plugin that crashes
-    /// stops answering pings before its process is gone (a Windows fail-fast
-    /// is reported before the process ends), so a hang verdict can land
-    /// between the crash and the reader's reap of it.
+    /// A runner that exits on its own within [`HANG_EXIT_GRACE`] is only
+    /// reaped (#5004): its status, not the verdict, says why it ended. A
+    /// plugin that crashes stops answering pings before its process is gone:
+    /// on Windows a fail-fast (`std::process::abort`, a `panic = "abort"`
+    /// plugin) keeps the process alive for a quarter second idle and over a
+    /// second under load while the system reports the crash, long enough for
+    /// a hang verdict to land in between.
     pub(super) fn end_for_hang(&self, cause: RunnerExitCause) {
-        if !self.has_exited() {
+        if !self.exits_within(HANG_EXIT_GRACE) {
             self.kill_for(cause);
         }
         self.reap(EXIT_TIMEOUT);
