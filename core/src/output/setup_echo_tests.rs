@@ -139,6 +139,91 @@ fn a_tty_echo_before_the_rc_output_is_never_hidden_with_it() {
 }
 
 #[test]
+fn a_tty_echo_followed_only_by_the_first_prompt_is_hidden_with_it() {
+    // Seen over SSH to a zsh with oh-my-zsh: the setup was typed after the
+    // login banner while zsh still loaded its rc, so the tty echoed it; then
+    // zsh drew its first prompt and ZLE echoed the typeahead again. The
+    // first prompt is the same text as the next one, so the tty echo and
+    // the first prompt go too, and nothing needs clearing.
+    let sp = "\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m                                                                               \r \r";
+    let prompt = "\x1b]2;me@host:~\x07\r\x1b[0m\x1b[J\x1b[40m me@host \x1b[44m\u{e0b0} ~ \x1b[49m\u{e0b0} \x1b[K";
+    let before = "Last login: Sun Oct 25 16:20:20 2026\r\r\n";
+    let after = format!(
+        "{typed}\r\n{sp}{prompt}\x1b[?1h\x1b=\x1b[?2004h \x08 {typed}\x1b[?2004l\r\r\n{done}{sp}\x1b]133;D;0\x07\x1b]7;file:///Users/me\x07\x1b]133;A\x07{prompt}\x1b[?1h\x1b=\x1b[?2004hecho hi\r\n",
+        typed = TYPED.trim_end(),
+        done = done()
+    );
+    let (out, f) = run(before, &after, 4096);
+    assert_eq!(f.outcome(), Some(HideOutcome::Hidden));
+    let text = String::from_utf8_lossy(&out);
+    assert!(!text.contains("__termihub"), "{text:?}");
+    assert!(!text.contains("\x1b[1A"), "nothing to clear: {text:?}");
+    let lines = screen(&out);
+    assert_eq!(lines[0], "Last login: Sun Oct 25 16:20:20 2026");
+    assert_eq!(
+        lines.iter().filter(|l| l.contains("me@host")).count(),
+        1,
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn input_echoed_right_after_the_prompt_is_not_counted_as_prompt_rows() {
+    // The user's held first command is released at the prompt mark; its echo
+    // must not make the filter clear extra rows.
+    let mut f = SetupEchoFilter::new();
+    let mut out = f.feed(b"top\r\n$ ", at(0));
+    f.arm(TYPED.as_bytes(), at(1));
+    let after = format!(
+        "{}\r\n{}\x1b]133;A\x07$ \x1b[?2004hls\r\nfile\r\n",
+        TYPED.trim_end(),
+        done()
+    );
+    out.extend(f.feed(after.as_bytes(), at(2)));
+    assert!(!f.is_active());
+    assert_eq!(screen(&out), vec!["top", "$ ls", "file"]);
+}
+
+#[test]
+fn a_tty_echo_is_hidden_even_when_input_lands_in_the_next_prompt() {
+    // The early-typed case again, but the user's held command was released
+    // at the next prompt's `A` and echoed inside it: the first prompt still
+    // matches the next prompt's last row.
+    let prompt = "\r\x1b[0m\x1b[J\x1b[40m me@host \x1b[44m~ \x1b[K";
+    let before = "Last login: Sun Oct 25\r\r\n";
+    let after = format!(
+        "{typed}\r\n{prompt}\x1b[?2004h \x08 {typed}\x1b[?2004l\r\r\n{done}\x1b]133;D;0\x07\x1b]133;A\x07echo hi\r\n{prompt}\x1b]133;B\x07\x1b[?2004h",
+        typed = TYPED.trim_end(),
+        done = done()
+    );
+    let (out, f) = run(before, &after, 4096);
+    assert_eq!(f.outcome(), Some(HideOutcome::Hidden));
+    assert!(!String::from_utf8_lossy(&out).contains("__termihub"));
+    assert_eq!(
+        screen(&out),
+        vec!["Last login: Sun Oct 25", "echo hi", " me@host ~"]
+    );
+}
+
+#[test]
+fn a_login_banner_above_the_prompt_is_never_cleared() {
+    // Seen over SSH: the user's held command, released at the prompt mark,
+    // was echoed by the tty between the next prompt's `A` and `B`. That line
+    // break is not a prompt row, so the banner above stays.
+    let before = "Last login: Sun Oct 25\r\r\n\x1b[40m me@host ~ \x1b[K\x1b[?2004h";
+    let after = format!(
+        " \x08 {}\x1b[?2004l\r\r\n{}\x1b]133;D;0\x07\x1b]133;A\x07echo hi\r\n\r\x1b[40m me@host ~ \x1b]133;B\x07\x1b[K\x1b[?2004h",
+        TYPED.trim_end(),
+        done()
+    );
+    let (out, f) = run(before, &after, 4096);
+    assert_eq!(f.outcome(), Some(HideOutcome::Hidden));
+    let lines = screen(&out);
+    assert_eq!(lines[0], "Last login: Sun Oct 25", "{lines:?}");
+    assert!(!String::from_utf8_lossy(&out).contains("\x1b[1A"));
+}
+
+#[test]
 fn other_output_in_the_echo_region_shows_everything() {
     // An error from the setup (or anything else) after the echo: nothing is
     // hidden, the user sees it all.
@@ -250,6 +335,21 @@ fn a_prompt_between_two_typed_lines_is_not_hidden() {
     let after = format!("export FOO='bar'\r\n$ {}\r\n{}", TYPED.trim_end(), done());
     f.feed(after.as_bytes(), at(2));
     assert_eq!(f.outcome(), Some(HideOutcome::NotRecognised));
+}
+
+#[test]
+fn a_retyped_setup_echoed_once_or_twice_is_removed() {
+    for echoes in [1, 2] {
+        let mut f = SetupEchoFilter::new();
+        let mut out = f.feed(b"$ ", at(0));
+        f.arm(TYPED.as_bytes(), at(1));
+        f.arm(TYPED.as_bytes(), at(3000));
+        let echo = format!("{}\r\n", TYPED.trim_end()).repeat(echoes);
+        let after = format!("{echo}{}\x1b]133;A\x07$ \x1b]133;B\x07", done());
+        out.extend(f.feed(after.as_bytes(), at(3001)));
+        assert_eq!(f.outcome(), Some(HideOutcome::Hidden), "{echoes} echo(es)");
+        assert_eq!(screen(&out), vec!["$"]);
+    }
 }
 
 #[test]

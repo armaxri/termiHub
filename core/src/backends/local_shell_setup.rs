@@ -50,8 +50,10 @@ pub(crate) struct TypedSetup {
     state: Mutex<State>,
     /// Whether to hide the echo (only where the line editor is observable).
     hide: bool,
-    /// Mirrors `filter.is_active()` so the reader skips the lock afterwards.
-    active: AtomicBool,
+    /// Set once the filter has nothing more to do (or never will), so the
+    /// reader skips the lock from then on. Until then every chunk goes
+    /// through the filter, which also remembers the first prompt.
+    bypass: AtomicBool,
     writer: Writer,
     output_tx: SenderSlot,
 }
@@ -65,7 +67,7 @@ impl TypedSetup {
                 filter: SetupEchoFilter::new(),
             }),
             hide,
-            active: AtomicBool::new(false),
+            bypass: AtomicBool::new(!hide),
             writer,
             output_tx,
         })
@@ -83,7 +85,6 @@ impl TypedSetup {
             };
             if self.hide {
                 state.filter.arm(&line, Instant::now());
-                self.active.store(true, Ordering::SeqCst);
                 let this = self.clone();
                 std::thread::spawn(move || this.run_timer());
             }
@@ -133,11 +134,11 @@ impl TypedSetup {
         self.state.lock().is_ok_and(|s| s.pending.is_some())
     }
 
-    /// Hand a chunk of shell output on to `sender`, filtered while the hide
-    /// is in progress. The send happens under the state lock while active,
-    /// so the timer thread's releases keep their order.
+    /// Hand a chunk of shell output on to `sender`, through the filter until
+    /// the hide is over. The send happens under the state lock then, so the
+    /// timer thread's releases keep their order.
     pub(crate) fn forward(&self, data: Vec<u8>, sender: &OutputSender) {
-        if !self.active.load(Ordering::SeqCst) {
+        if self.bypass.load(Ordering::SeqCst) {
             let _ = sender.blocking_send(data);
             return;
         }
@@ -153,8 +154,8 @@ impl TypedSetup {
     }
 
     fn after_step(&self, state: &mut State) {
-        if !state.filter.is_active() {
-            self.active.store(false, Ordering::SeqCst);
+        if state.filter.outcome().is_some() && !state.filter.is_active() {
+            self.bypass.store(true, Ordering::SeqCst);
         }
         if state.filter.take_finished() {
             match state.filter.outcome() {

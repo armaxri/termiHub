@@ -69,6 +69,10 @@ pub const REPROMPT_CAP: Duration = Duration::from_millis(1000);
 /// OSC 133 prompt start (`A`) and input start (`B`).
 const PROMPT_START: &[u8] = b"\x1b]133;A";
 const INPUT_START: &[u8] = b"\x1b]133;B";
+/// How much passed-through output is kept to measure the first prompt.
+const RECENT_BYTES: usize = 4096;
+/// Bracketed paste on: what readline and ZLE send once a prompt is drawn.
+const BRACKETED_PASTE_ON: &[u8] = b"\x1b[?2004h";
 
 /// Clear the cursor's row and return to its first column.
 const ERASE_ROW: &[u8] = b"\r\x1b[2K";
@@ -98,8 +102,14 @@ enum Phase {
         buf: Vec<u8>,
         deadline: Instant,
     },
-    /// The echo was removed; the next prompt is held until it is measured.
+    /// The echo was found; the next prompt is held until it is measured.
     Reprompt {
+        /// Everything before the end mark.
+        pre: Vec<u8>,
+        /// Where the line editor's echo starts in `pre`.
+        echo: usize,
+        typed: Vec<u8>,
+        /// Everything after the end mark: the next prompt.
         buf: Vec<u8>,
         deadline: Instant,
         last_output: Instant,
@@ -111,6 +121,9 @@ enum Phase {
 #[derive(Debug)]
 pub struct SetupEchoFilter {
     phase: Phase,
+    /// The tail of the output passed through before arming: the first
+    /// prompt's rows, to compare with the next prompt's.
+    recent: Vec<u8>,
     outcome: Option<HideOutcome>,
     finished: bool,
 }
@@ -127,14 +140,16 @@ impl SetupEchoFilter {
     pub fn new() -> Self {
         Self {
             phase: Phase::Pass,
+            recent: Vec::new(),
             outcome: None,
             finished: false,
         }
     }
 
     /// Start hiding: `typed` is about to be written to the shell. Arming again
-    /// while holding (a second setup line, or the same setup typed again)
-    /// extends the text the echo may consist of; the deadline stays.
+    /// while holding with a different line extends the text the echo may
+    /// consist of; the same line again (a retype) changes nothing. The
+    /// deadline stays.
     pub fn arm(&mut self, typed: &[u8], now: Instant) {
         match &mut self.phase {
             Phase::Pass if self.outcome.is_none() => {
@@ -144,7 +159,14 @@ impl SetupEchoFilter {
                     deadline: now + SETUP_HIDE_CAP,
                 };
             }
-            Phase::Hold { typed: t, .. } => t.extend(significant(typed)),
+            Phase::Hold { typed: t, .. } => {
+                // The same setup typed again (a retype) may echo once or
+                // twice, which the match already allows.
+                let more = significant(typed);
+                if !t.ends_with(&more) {
+                    t.extend(more);
+                }
+            }
             // One hide per session: a later setup is shown as typed.
             _ => {}
         }
@@ -182,7 +204,14 @@ impl SetupEchoFilter {
     /// Feed a chunk of shell output; returns the bytes to show now.
     pub fn feed(&mut self, data: &[u8], now: Instant) -> Vec<u8> {
         match &mut self.phase {
-            Phase::Pass => data.to_vec(),
+            Phase::Pass => {
+                if self.outcome.is_none() {
+                    self.recent.extend_from_slice(data);
+                    let excess = self.recent.len().saturating_sub(RECENT_BYTES);
+                    self.recent.drain(..excess);
+                }
+                data.to_vec()
+            }
             Phase::Hold { buf, .. } => {
                 buf.extend_from_slice(data);
                 if find(buf, SETUP_DONE_MARK).is_some() {
@@ -228,7 +257,8 @@ impl SetupEchoFilter {
         buf
     }
 
-    /// The end mark is in the held output: cut the echo or show it all.
+    /// The end mark is in the held output: find the echo (then measure the
+    /// next prompt) or show it all.
     fn on_done(&mut self, now: Instant) -> Vec<u8> {
         let Phase::Hold { typed, buf, .. } = std::mem::replace(&mut self.phase, Phase::Pass) else {
             return Vec::new();
@@ -241,17 +271,17 @@ impl SetupEchoFilter {
         };
         let (pre, post) = (&buf[..idx], &buf[idx + SETUP_DONE_MARK.len()..]);
         match echo_start(pre, &typed) {
-            Some(start) => {
+            Some(echo) => {
                 self.outcome = Some(HideOutcome::Hidden);
-                let shown = pre[..start].to_vec();
                 self.phase = Phase::Reprompt {
+                    pre: pre.to_vec(),
+                    echo,
+                    typed,
                     buf: post.to_vec(),
                     deadline: now + REPROMPT_CAP,
                     last_output: now,
                 };
-                let mut out = shown;
-                out.extend(self.resolve_reprompt(now, false));
-                out
+                self.resolve_reprompt(now, false)
             }
             None => {
                 self.outcome = Some(HideOutcome::NotRecognised);
@@ -262,44 +292,195 @@ impl SetupEchoFilter {
         }
     }
 
-    /// Once the next prompt is measurable, clear the first prompt's rows and
-    /// release the held prompt. `timer` says a deadline (not output) woke us.
+    /// Once the next prompt is measurable, release everything: the output
+    /// before the echo, then the next prompt in place of the first one.
+    /// `timer` says a deadline (not output) woke us.
     fn resolve_reprompt(&mut self, now: Instant, timer: bool) -> Vec<u8> {
         let Phase::Reprompt {
             buf,
             deadline,
             last_output,
+            ..
         } = &self.phase
         else {
             return Vec::new();
         };
-        let prompt = find(buf, PROMPT_START).map(|a| a + PROMPT_START.len());
-        let rows = match prompt {
-            Some(a) => match find(&buf[a..], INPUT_START) {
-                // The prompt is complete: count its line breaks.
-                Some(b) => Some(count_newlines(&buf[a..a + b])),
-                None if timer && now >= *last_output + REPROMPT_QUIET => {
-                    Some(count_newlines(&buf[a..]))
-                }
-                None => None,
-            },
-            None => None,
-        };
-        let rows = match rows {
-            Some(rows) => rows,
-            None if timer && now >= *deadline => prompt.map_or(0, |a| count_newlines(&buf[a..])),
-            None => return Vec::new(),
-        };
-        let Phase::Reprompt { buf, .. } = std::mem::replace(&mut self.phase, Phase::Pass) else {
+        let Some(prompt_end) = prompt_end(buf, timer && now >= *last_output + REPROMPT_QUIET)
+            .or_else(|| (timer && now >= *deadline).then_some(buf.len()))
+        else {
             return Vec::new();
         };
-        let mut out = ERASE_ROW.to_vec();
-        for _ in 0..rows {
-            out.extend_from_slice(ERASE_ROW_ABOVE);
+        let Phase::Reprompt {
+            pre,
+            echo,
+            typed,
+            buf,
+            ..
+        } = std::mem::replace(&mut self.phase, Phase::Pass)
+        else {
+            return Vec::new();
+        };
+        let prompt = &buf[..prompt_end];
+        let next = find(prompt, PROMPT_START).map_or(prompt, |a| &prompt[a..]);
+        let mut out;
+        if let Some(mut early) = earlier_echo(&pre[..echo], &typed, next) {
+            // The typed line's leading space is part of that echo.
+            if early > 0 && pre[early - 1] == b' ' {
+                early -= 1;
+            }
+            // Typed before the shell was reading: the tty echoed the line
+            // ahead of the first prompt. That echo and the first prompt (the
+            // same text as the next one) go too, so nothing needs clearing.
+            out = pre[..early].to_vec();
+        } else {
+            // Clear the first prompt's rows; the next prompt takes its place.
+            let mut before = std::mem::take(&mut self.recent);
+            before.extend_from_slice(&pre[..echo]);
+            let rows = prompt_rows_above(&before, next);
+            out = pre[..echo].to_vec();
+            out.extend_from_slice(ERASE_ROW);
+            for _ in 0..rows {
+                out.extend_from_slice(ERASE_ROW_ABOVE);
+            }
         }
         out.extend(buf);
         out
     }
+}
+
+/// How many rows above the cursor belong to the first prompt: the rows the
+/// next prompt (`next`) has above its last one, as long as the text before
+/// the echo (`before`) ends with those same rows. Anything else on those
+/// rows — a login banner, the echo of input typed early — is never cleared,
+/// so a mismatch clears only the cursor's own row (the first prompt's last).
+fn prompt_rows_above(before: &[u8], next: &[u8]) -> usize {
+    let first = row_texts(before);
+    let next = row_texts(next);
+    let mut rows = 0;
+    for k in 1..next.len() {
+        let (Some(a), Some(b)) = (
+            first.len().checked_sub(k + 1).map(|i| &first[i]),
+            next.len().checked_sub(k + 1).map(|i| &next[i]),
+        ) else {
+            break;
+        };
+        if a != b {
+            break;
+        }
+        rows = k;
+    }
+    rows
+}
+
+/// The visible text of each row `data` paints, approximately: printable
+/// bytes overwrite cells, CR returns to the row start, LF starts a new row,
+/// BS steps back, `CSI K` clears to the row end; other escapes are skipped.
+/// Rows are compared without blanks.
+fn row_texts(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut rows: Vec<Vec<u8>> = vec![Vec::new()];
+    let mut col = 0;
+    let mut i = 0;
+    while i < data.len() {
+        let Some(row) = rows.last_mut() else {
+            break;
+        };
+        match data[i] {
+            0x1b => {
+                let end = skip_escape(data, i);
+                if data.get(i + 1) == Some(&b'[') && data.get(end - 1) == Some(&b'K') {
+                    row.truncate(col);
+                }
+                i = end;
+                continue;
+            }
+            b'\r' => col = 0,
+            b'\n' => {
+                rows.push(Vec::new());
+                col = 0;
+            }
+            0x08 => col = col.saturating_sub(1),
+            b if b.is_ascii_control() => {}
+            b => {
+                if col < row.len() {
+                    row[col] = b;
+                } else {
+                    row.resize(col, b' ');
+                    row.push(b);
+                }
+                col += 1;
+            }
+        }
+        i += 1;
+    }
+    for row in &mut rows {
+        row.retain(|b| !b.is_ascii_whitespace());
+    }
+    rows
+}
+
+/// Where the next prompt in `buf` (the output after the end mark) is fully
+/// drawn: at its input-start mark `B`, or where the line editor turns on
+/// bracketed paste after drawing its text. With `quiet`, a prompt that started but
+/// shows neither counts as drawn at the end of `buf`.
+fn prompt_end(buf: &[u8], quiet: bool) -> Option<usize> {
+    let a = find(buf, PROMPT_START)? + PROMPT_START.len();
+    // readline turns bracketed paste on before it draws the prompt, ZLE
+    // after: it only ends a prompt that has shown text.
+    let paste =
+        find(&buf[a..], BRACKETED_PASTE_ON).filter(|&p| !visible(&buf[a..a + p]).is_empty());
+    let ends = find(&buf[a..], INPUT_START).into_iter().chain(paste).min();
+    match ends {
+        Some(e) => Some(a + e),
+        None if quiet => Some(buf.len()),
+        None => None,
+    }
+}
+
+/// An earlier echo of `typed` in `before` (the output before the line
+/// editor's echo) followed by nothing but the first prompt: the tty's echo
+/// of a line typed while the shell was still starting. The rows after that
+/// echo must be exactly the last rows of the next prompt (`next`) — the same
+/// prompt drawn again — so no other output is ever taken for it. Returns
+/// where that echo starts.
+fn earlier_echo(before: &[u8], typed: &[u8], next: &[u8]) -> Option<usize> {
+    let first = *typed.first()?;
+    let next_rows: Vec<Vec<u8>> = row_texts(next)
+        .into_iter()
+        .filter(|r| !r.is_empty())
+        .collect();
+    let vis = visible(before);
+    (0..vis.len())
+        .filter(|&i| vis[i].1 == first)
+        .find(|&i| {
+            let Some(end) = echo_end(&vis[i..], typed) else {
+                return false;
+            };
+            let rows: Vec<Vec<u8>> = row_texts(&before[end..])
+                .into_iter()
+                .filter(|r| !r.is_empty())
+                .collect();
+            !rows.is_empty()
+                && rows.len() <= next_rows.len()
+                && rows[..] == next_rows[next_rows.len() - rows.len()..]
+        })
+        .map(|i| vis[i].0)
+}
+
+/// The byte offset just past one echo of `typed` (with wrap redraws) at the
+/// start of `vis`, if `vis` starts with one.
+fn echo_end(vis: &[(usize, u8)], typed: &[u8]) -> Option<usize> {
+    let mut j = 0;
+    for &(offset, c) in vis {
+        if c == typed[j] {
+            j += 1;
+            if j == typed.len() {
+                return Some(offset + 1);
+            }
+        } else if !(j > 0 && c == typed[j - 1]) {
+            return None;
+        }
+    }
+    None
 }
 
 /// The bytes of `typed` an echo must show: everything but whitespace and
@@ -310,10 +491,6 @@ fn significant(typed: &[u8]) -> Vec<u8> {
         .copied()
         .filter(|b| !b.is_ascii_whitespace() && !b.is_ascii_control())
         .collect()
-}
-
-fn count_newlines(data: &[u8]) -> usize {
-    data.iter().filter(|&&b| b == b'\n').count()
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
