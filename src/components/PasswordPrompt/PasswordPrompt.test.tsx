@@ -247,6 +247,33 @@ describe("PasswordPrompt", () => {
     await expect(resolved).resolves.toEqual({ password: "", shouldSave: false });
   });
 
+  it("keeps the typed password when the store turns active while the prompt is open (#4995)", async () => {
+    let answer: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
+    await act(async () => {
+      answer = useAppStore.getState().requestPassword("example.com", "alice");
+    });
+    render();
+    const input = query("password-prompt-input") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(input, "typed-before-status");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    act(() => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      });
+    });
+
+    expect((query("password-prompt-input") as HTMLInputElement).value).toBe("typed-before-status");
+    expect(query("password-prompt-save-checkbox")?.getAttribute("aria-checked")).toBe("true");
+    act(() => {
+      query("password-prompt-connect")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await expect(answer).resolves.toEqual({ password: "typed-before-status", shouldSave: true });
+  });
+
   describe("concurrent prompts (#4312)", () => {
     function typePassword(value: string) {
       const input = query("password-prompt-input") as HTMLInputElement;

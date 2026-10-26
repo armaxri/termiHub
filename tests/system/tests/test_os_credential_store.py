@@ -77,6 +77,10 @@ class TestOsCredentialStore(
 
     #: The sealed backup the restore tests share: (file, connection, account).
     _backup: Optional[tuple[Path, str, str]] = None
+    #: Connections a failed :meth:`_prepare_backup` attempt left behind. A rerun
+    #: deletes them first, or their saved passwords would ride along in the new
+    #: backup ('2 in backup', #4995).
+    _abandoned: list[str] = []
 
     def reset_before_rerun(self) -> None:
         self.dismiss_modals(
@@ -122,14 +126,37 @@ class TestOsCredentialStore(
         self.switch_to_connections_sidebar()
         self.connect_connection(name)
         self.wait(lambda: self.driver.exists("password-prompt-input"), what="the password prompt")
-        self.driver.type("password-prompt-input", _SECRET)
+        self._type_secret_into_prompt()
         checkbox = "password-prompt-save-checkbox"
         self.wait(lambda: self.driver.exists(checkbox), what="the Save password box")
         if self.driver.get_attribute(checkbox, "aria-checked") != "true":
             self.driver.click(checkbox)
+        # Re-check right before Connect: an empty prompt is answered, and saved,
+        # as an empty password (#4995).
+        self._type_secret_into_prompt()
         self.driver.click("password-prompt-connect")
         self.close_all_tabs()
         return name, account
+
+    def _type_secret_into_prompt(self) -> None:
+        """Type ``_SECRET`` into the password prompt and wait until the input holds it.
+
+        The field is controlled by React; if a re-render resets it after the
+        harness typed, it is typed again (and logged) rather than submitted
+        empty (#4995).
+        """
+        field = "password-prompt-input"
+
+        def holds_secret() -> bool:
+            if self.driver.get_value(field) == _SECRET:
+                return True
+            print(f"[os-store] {field} does not hold the password; typing it (again)")
+            self.driver.type(field, _SECRET)
+            return False
+
+        if self.driver.get_value(field) != _SECRET:
+            self.driver.type(field, _SECRET)
+        self.wait(holds_secret, what=f"{field} to hold the typed password")
 
     def _delete_connection(self, name: str) -> None:
         self.switch_to_connections_sidebar()
@@ -230,11 +257,17 @@ class TestOsCredentialStore(
             return type(self)._backup
         self.close_all_tabs()
         self.setup_master_password_store(_MASTER_PASSWORD)
+        for stale in type(self)._abandoned:
+            if self.find_connection(stale) is not None:
+                self._delete_connection(stale)
+        type(self)._abandoned = []
         name, account = self._save_password("os-store-restore")
+        type(self)._abandoned = [name]
         target = Path(tempfile.mkdtemp(prefix="thub-os-store-backup-")) / "backup.json"
         self._back_up_with_credentials(target)
         self._use_os_keychain()
         self._assert_in_os_store(account)
+        type(self)._abandoned = []
         type(self)._backup = (target, name, account)
         return type(self)._backup
 
