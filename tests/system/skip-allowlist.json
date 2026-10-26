@@ -13,11 +13,11 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5); #4994 +1 on Linux/arm64/Windows for the MT-LOCAL-08 press-and-hold skip (#4980)",
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5); #4936 adds the Linux-only XDND drags and the VNC drop grade (macOS +4, Windows +4); #4994 +1 on Linux/arm64/Windows for the MT-LOCAL-08 press-and-hold skip (#4980)",
     "bulk-linux": 60,
     "bulk-linux-arm64": 21,
-    "bulk-macos": 211,
-    "bulk-windows": 227,
+    "bulk-macos": 215,
+    "bulk-windows": 231,
     "display-linux": 0,
     "display-linux-arm64": 0,
     "display-macos": 0,
@@ -207,6 +207,15 @@
         "bulk-windows"
       ],
       "why": "MT-WIN-01..04 are macOS Dock/quit paths (#4935)"
+    },
+    {
+      "reason": "^X11 XDND is Linux-only$",
+      "nodeid": "test_os_file_drop_xdnd\\.py",
+      "lanes": [
+        "bulk-macos",
+        "bulk-windows"
+      ],
+      "why": "the native drag partners are X11 GTK windows driven by XTEST; the app half of a drop is graded on every OS by test_os_file_drop.py (#4936)"
     },
     {
       "reason": "^press-and-hold is a macOS feature$",

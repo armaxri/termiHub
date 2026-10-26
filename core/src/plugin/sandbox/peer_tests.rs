@@ -523,6 +523,129 @@ fn out_of_memory_evidence_beats_a_racing_hang_verdict() {
     ));
 }
 
+/// How a null-pointer write ends a process: `SIGSEGV`, or an access violation
+/// on Windows.
+fn segfaulted() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    let signal = libc::SIGSEGV;
+    #[cfg(not(unix))]
+    let signal = 11;
+    status(signal, 0xC000_0005)
+}
+
+#[test]
+fn crash_evidence_beats_a_racing_hang_verdict() {
+    // #5004: the watchdog declared a hang, but the runner had crashed on its
+    // own (a Windows fail-fast is slow to end the process): the overlay must
+    // say it crashed, with the crash's own status.
+    for ended in [aborted(), segfaulted()] {
+        let shared = shared();
+        shared.set_pending_cause(RunnerExitCause::NotResponding);
+        shared.finish(Some(ended));
+        assert_eq!(
+            shared.exit_cause(),
+            Some(RunnerExitCause::from_status(Some(ended), false)),
+            "{ended:?}"
+        );
+        assert!(matches!(
+            shared.exit_cause(),
+            Some(RunnerExitCause::Crashed { .. })
+        ));
+    }
+
+    // The host's own kill is no crash evidence: the hang stands.
+    for ended in [Some(killed()), Some(status(0, 0)), None] {
+        let hung = shared();
+        hung.set_pending_cause(RunnerExitCause::NotResponding);
+        hung.finish(ended);
+        assert_eq!(
+            hung.exit_cause(),
+            Some(RunnerExitCause::NotResponding),
+            "{ended:?}"
+        );
+    }
+
+    // Only a hang gives way: a violation or a host stop keeps its cause.
+    assert_eq!(
+        prefer_crash_evidence(RunnerExitCause::Stopped, Some(aborted())),
+        RunnerExitCause::Stopped
+    );
+    assert!(matches!(
+        prefer_crash_evidence(
+            RunnerExitCause::InvalidData { detail: "x".into() },
+            Some(segfaulted())
+        ),
+        RunnerExitCause::InvalidData { .. }
+    ));
+    // Out-of-memory evidence is applied first and stands: Rust's allocation
+    // failure handler aborts, which is no reason to call it a plain crash.
+    assert_eq!(
+        prefer_crash_evidence(RunnerExitCause::OutOfMemory, Some(aborted())),
+        RunnerExitCause::OutOfMemory
+    );
+}
+
+#[test]
+fn ended_by_own_crash_tells_a_crash_from_the_hosts_kill() {
+    assert!(ended_by_own_crash(aborted()));
+    assert!(ended_by_own_crash(segfaulted()));
+    assert!(!ended_by_own_crash(killed()));
+    assert!(!ended_by_own_crash(status(0, 0)));
+    // A plain non-zero exit is no crash (Windows: not an `NTSTATUS` error).
+    #[cfg(windows)]
+    assert!(!ended_by_own_crash(status(0, 3)));
+}
+
+/// A real process that kills itself with `SIGSEGV`, already exited.
+#[cfg(unix)]
+fn self_crashed_child() -> std::process::Child {
+    std::process::Command::new("sh")
+        .args(["-c", "kill -SEGV $$"])
+        .spawn()
+        .expect("sh starts")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hang_verdict_on_a_runner_that_already_crashed_only_reaps_it() {
+    // #5004: the verdict lands after the crash but before the reader's reap.
+    let shared = Shared::new(
+        "probe".to_owned(),
+        Some(self_crashed_child()),
+        Arc::new(PluginLogLimiter::default()),
+    );
+    assert!(
+        shared.exits_within(Duration::from_secs(10)),
+        "the child exits"
+    );
+    shared.end_for_hang(RunnerExitCause::NotResponding);
+    assert_eq!(
+        shared.exit_cause(),
+        Some(RunnerExitCause::Crashed {
+            signal: Some(libc::SIGSEGV),
+            exit_code: None
+        })
+    );
+    assert!(shared.child.lock().unwrap().is_none(), "reaped");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hang_verdict_on_a_live_runner_kills_it_as_not_responding() {
+    let child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("sleep starts");
+    let shared = Shared::new(
+        "probe".to_owned(),
+        Some(child),
+        Arc::new(PluginLogLimiter::default()),
+    );
+    assert!(!shared.exits_within(Duration::ZERO));
+    shared.end_for_hang(RunnerExitCause::NotResponding);
+    assert_eq!(shared.exit_cause(), Some(RunnerExitCause::NotResponding));
+}
+
 #[test]
 fn output_beyond_the_rate_cap_across_sessions_is_a_violation() {
     let shared = shared();

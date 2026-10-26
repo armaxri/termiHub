@@ -10,7 +10,9 @@
 //!   thread on purpose, #4183.) A request with its own deadline
 //!   (`CreateSession`, 30 s: a plugin may connect to a device first; a bridge
 //!   request, the policy's connect timeout) suspends the verdict until it
-//!   completes.
+//!   completes. A runner that ends on its own within the short grace after
+//!   the verdict (a crash still being reported) is classified by its exit
+//!   status instead (#5004).
 //! * **Memory:** with [`WatchdogConfig::rss_limit`] set, the runner's resident
 //!   size is polled every [`WatchdogConfig::rss_poll_interval`] and the runner
 //!   is killed past it (out of memory).
@@ -172,10 +174,11 @@ fn run(plugin: &Weak<SandboxedPlugin>, config: WatchdogConfig, address_space_lim
                 let _ = plugin.send(&Message::Ping(Heartbeat { nonce }));
             }
             Beat::Hang => {
-                end(
-                    &plugin,
-                    hang_cause(plugin.pid(), &config, address_space_limit),
-                );
+                plugin.shared().end_for_hang(hang_cause(
+                    plugin.pid(),
+                    &config,
+                    address_space_limit,
+                ));
                 return;
             }
             Beat::Wait => {}

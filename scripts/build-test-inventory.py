@@ -139,7 +139,7 @@ FEATURE_AREAS: "dict[str, tuple[str, ...]]" = {
     "terminal": ("terminal",),
     "sidebar": ("sidebar",),
     "shells (windows/wsl/git bash)": ("windows_shells", "wsl", "git_bash"),
-    "input routing": ("input_routing",),
+    "input routing": ("input_routing", "os_input_pointer", "os_file_drop"),
     "native dialogs": ("native_dialogs",),
     "external app": ("external_app",),
 }

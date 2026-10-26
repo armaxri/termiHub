@@ -13,7 +13,8 @@ sets the per-item options, answers the password prompt and judges the result.
 MT-RD-13 needs no real host: it opens a VNC and an RDP tab against the Docker
 fixtures and the operator only judges the repaint.
 
-Covered: MT-RD-01..13.
+Covered: MT-RD-01..09 and 11..13 (MT-RD-10, an OS drop onto a tunnelled VNC
+session, is graded by ``test_vnc_file_transfer.py`` since #4936).
 
 Run with ``./pytest.sh --manual -k guided_remote_desktop -s``.
 """
@@ -183,19 +184,6 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
     def test_remote_files_paste_into_linux_file_managers(self):
         """MT-RD-09 (run on X11 and on a pure Wayland session)."""
         self._delayed_render_paste("Nautilus with Ctrl+V (then repeat on Wayland)")
-
-    def test_drop_files_on_tunnelled_vnc_session(self):
-        """MT-RD-10 (a real TigerVNC host reachable over SSH)."""
-        self.enable_experimental_features()
-        self.close_all_tabs()
-        self.manual_step(
-            "Create a VNC connection to a TigerVNC host with SSH Tunnel and File Transfer "
-            "on and connect. Drag two files and a folder over the screen, drop, open the "
-            "toolbar Files popover, then drop one file again.",
-            "The overlay names ~/Desktop and the SSH host; uploads show in Transfers and a "
-            "toast reports them; the tree lands in ~/Desktop; the second drop keeps both "
-            "(name (1).ext).",
-        )
 
     def test_upload_over_linked_ssh_on_direct_vnc(self):
         """MT-RD-11."""
