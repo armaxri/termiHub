@@ -40,6 +40,10 @@ const READ_BUFFER: usize = 64 * 1024;
 /// Longest runner stderr line forwarded in one piece.
 const MAX_STDERR_LINE: u64 = 16 * 1024;
 
+/// How long a hang verdict waits for a runner that is already dying (a
+/// crash still being reported) to end on its own before killing it (#5004).
+pub(super) const HANG_EXIT_GRACE: Duration = Duration::from_secs(1);
+
 /// How long classifying an exit waits for the stderr forwarder to drain.
 const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -560,15 +564,20 @@ impl Shared {
             self.stderr_drain.wait(STDERR_DRAIN_TIMEOUT);
         }
         let out_of_memory = self.reported_out_of_memory(status);
-        let cause = match pending {
+        let cause = match pending.clone() {
             None => RunnerExitCause::from_status(status, out_of_memory),
-            Some(pending) => prefer_memory_evidence(pending, out_of_memory),
+            Some(pending) => {
+                prefer_crash_evidence(prefer_memory_evidence(pending, out_of_memory), status)
+            }
         };
         let mut exit = self.exit.lock().unwrap_or_else(|e| e.into_inner());
         if exit.cause.is_some() {
             return;
         }
-        if natural && cause.is_failure() {
+        // A recorded cause that gave way to evidence is logged as what it
+        // became, so the log agrees with the overlay.
+        let revised = pending.is_some_and(|pending| pending != cause);
+        if (natural || revised) && cause.is_failure() {
             tracing::warn!(
                 target: crate::plugin::PLUGIN_LOG_TARGET,
                 "[{}] {}",
@@ -632,6 +641,45 @@ impl Shared {
         }
     }
 
+    /// Whether the runner process exits (or is already gone) within `wait`.
+    /// It is left in place for the regular reap; one already reaped counts as
+    /// gone. `false` when its status cannot be read.
+    pub(super) fn exits_within(&self, wait: Duration) -> bool {
+        let deadline = Instant::now() + wait;
+        loop {
+            {
+                let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(child) = guard.as_mut() else {
+                    return true;
+                };
+                match child.try_wait() {
+                    Ok(Some(_)) => return true,
+                    Ok(None) if Instant::now() < deadline => {}
+                    _ => return false,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Act on the watchdog's hang verdict (`cause`: not responding, or out of
+    /// memory under pressure): kill the runner for it and reap it here, so the
+    /// cause is final even if the reader thread is blocked delivering output.
+    ///
+    /// A runner that exits on its own within [`HANG_EXIT_GRACE`] is only
+    /// reaped (#5004): its status, not the verdict, says why it ended. A
+    /// plugin that crashes stops answering pings before its process is gone:
+    /// on Windows a fail-fast (`std::process::abort`, a `panic = "abort"`
+    /// plugin) keeps the process alive for a quarter second idle and over a
+    /// second under load while the system reports the crash, long enough for
+    /// a hang verdict to land in between.
+    pub(super) fn end_for_hang(&self, cause: RunnerExitCause) {
+        if !self.exits_within(HANG_EXIT_GRACE) {
+            self.kill_for(cause);
+        }
+        self.reap(EXIT_TIMEOUT);
+    }
+
     /// Wait up to `timeout` for the runner to exit, then kill it; always reap.
     pub(super) fn reap(&self, timeout: Duration) {
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
@@ -685,6 +733,44 @@ fn prefer_memory_evidence(pending: RunnerExitCause, out_of_memory: bool) -> Runn
     match pending {
         RunnerExitCause::NotResponding if out_of_memory => RunnerExitCause::OutOfMemory,
         other => other,
+    }
+}
+
+/// A hang verdict gives way to crash evidence (#5004): when the reaped status
+/// shows the runner ended by its own crash rather than by the host's kill, it
+/// crashed while (or just before) the watchdog gave up on it, and the overlay
+/// and the log must say it crashed. The host's kill ends a runner with
+/// `SIGKILL` (Unix) or `KILLED_EXIT_CODE` (Windows), never with a crash
+/// status, so a genuine hang keeps its verdict. Every other recorded cause
+/// stands.
+fn prefer_crash_evidence(
+    pending: RunnerExitCause,
+    status: Option<std::process::ExitStatus>,
+) -> RunnerExitCause {
+    match pending {
+        RunnerExitCause::NotResponding if status.is_some_and(ended_by_own_crash) => {
+            RunnerExitCause::from_status(status, false)
+        }
+        other => other,
+    }
+}
+
+/// Whether the runner ended by a crash of its own: a terminating signal other
+/// than the host's `SIGKILL` (Unix), or an exception status (an `NTSTATUS`
+/// error such as `0xC0000005` or a fail-fast's `0xC0000409`) on Windows,
+/// where the host's kill reports `KILLED_EXIT_CODE`.
+pub(super) fn ended_by_own_crash(status: std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::signal(&status)
+            .is_some_and(|signal| signal != libc::SIGKILL)
+    }
+    #[cfg(windows)]
+    {
+        const NTSTATUS_ERROR: u32 = 0xC000_0000;
+        status.code().is_some_and(|code| {
+            u32::from_ne_bytes(code.to_ne_bytes()) & NTSTATUS_ERROR == NTSTATUS_ERROR
+        })
     }
 }
 
