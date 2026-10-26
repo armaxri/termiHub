@@ -88,18 +88,41 @@ async fn ssh_banner_03_failed_auth_rejected() {
     );
 }
 
-// ── SSH-BANNER-04: MOTD shown, typed setup hidden (#5009) ────────────
+// ── SSH-BANNER-04: startup output shown, typed setup hidden (#5009) ──
 
-/// An interactive session with shell integration on: the server's MOTD
-/// reaches the terminal, the typed shell-integration setup never does, and
-/// the first command runs in the integrated shell.
+/// The login's own startup output, printed by the user's rc file while the
+/// test runs (the container's `PrintMotd` is overridden by Ubuntu's default
+/// `PrintMotd no`, so it prints no MOTD).
+const STARTUP_LINE: &str = "Welcome to the termiHub test environment (5009)";
+
+/// An interactive session with shell integration on: what the login prints
+/// before the prompt reaches the terminal, the typed shell-integration setup
+/// never does, and the first command runs in the integrated shell.
 #[tokio::test]
-async fn ssh_banner_04_motd_shown_but_setup_hidden() {
+async fn ssh_banner_04_startup_output_shown_but_setup_hidden() {
     use std::time::Duration;
     use termihub_core::backends::ssh::Ssh;
     use termihub_core::connection::ConnectionType;
 
     require_docker!(port_ssh_banner());
+
+    // Make the login print a line, like a MOTD or an rc greeting. Only this
+    // test opens an interactive shell on this container; the marker file
+    // gates the rc line so it is inert once removed.
+    let config = ssh_password_config(port_ssh_banner());
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("SSH-BANNER-04: authenticate for the rc setup");
+    let rc_line = r#"[ -f ~/.th5009 ] && cat ~/.th5009"#;
+    ssh_exec(
+        &session,
+        &format!(
+            "printf '%s\\n' '{STARTUP_LINE}' > ~/.th5009; \
+             grep -qF '{rc_line}' ~/.bashrc || echo '{rc_line}' >> ~/.bashrc"
+        ),
+    )
+    .await
+    .expect("SSH-BANNER-04: install the rc greeting");
 
     let mut settings = common::ssh_password_settings(port_ssh_banner());
     settings["shellIntegration"] = serde_json::Value::Bool(true);
@@ -123,10 +146,13 @@ async fn ssh_banner_04_motd_shown_but_setup_hidden() {
     })
     .await
     .unwrap_or(false);
+    ssh.disconnect().await.ok();
+    let _ = ssh_exec(&session, "rm -f ~/.th5009").await;
+
     assert!(ok, "SSH-BANNER-04: the first command did not run: {seen:?}");
     assert!(
-        seen.contains("Welcome to the termiHub test environment!"),
-        "SSH-BANNER-04: the MOTD must stay visible: {seen:?}"
+        seen.contains(STARTUP_LINE),
+        "SSH-BANNER-04: the login's startup output must stay visible: {seen:?}"
     );
     for leak in ["__termihub", "PROMPT_COMMAND", "precmd_functions", "6973;"] {
         assert!(
@@ -134,5 +160,4 @@ async fn ssh_banner_04_motd_shown_but_setup_hidden() {
             "SSH-BANNER-04: setup text {leak:?} shown: {seen:?}"
         );
     }
-    ssh.disconnect().await.ok();
 }
