@@ -23,6 +23,7 @@ Typical use from a test::
 
 from __future__ import annotations
 
+import itertools
 import sys
 import time
 from dataclasses import dataclass
@@ -94,6 +95,13 @@ def primary_modifier() -> str:
     return "cmd" if sys.platform == "darwin" else "ctrl"
 
 
+#: Offsets from a window's center for successive calibration rounds.
+CALIBRATION_NUDGES = ((0, 0), (23, 17), (-19, 29))
+
+#: How long (s) one calibration move waits for the webview to report it.
+CALIBRATION_MOVE_WAIT = 2.0
+
+
 @dataclass
 class ScreenMapper:
     """Maps one app window's CSS client coordinates to OS screen coordinates.
@@ -114,33 +122,56 @@ class ScreenMapper:
     def calibrate(
         cls, os_input: OsInput, driver: Any, *, pid: Optional[int] = None, timeout: float = 10.0
     ) -> "ScreenMapper":
+        """Find the window whose webview sees a real pointer move, and its offset.
+
+        Retries until ``timeout``: each round re-reads the PID's windows (one
+        may still be moving into place), brings each to the front, and moves
+        the pointer to a point inside it (nudged per round, since a freshly
+        shown webview can miss a move). A move counts only once the bridge
+        reports it as a *trusted* ``pointermove``. On failure the error says
+        what was under the pointer each time and lists every window on the
+        desktop, so a covering or input-grabbing window is named (#4993).
+        """
         try:
             windows = os_input._wait(  # noqa: SLF001 — same package
                 lambda: os_input.windows(pid), timeout, "a visible window"
             )
         except OsInputUnavailable:
             raise OsInputUnavailable(f"PID {pid or os_input.pid} has no visible window") from None
-        for window in windows:
-            try:
-                os_input.activate(window=window, timeout=min(timeout, 5.0))
-            except OsInputUnavailable:
-                continue  # e.g. a hidden helper window that cannot take focus
-            cx, cy = window.center
-            # A freshly shown webview can miss the first move; nudge a few times.
-            for dx, dy in ((0, 0), (23, 17), (-19, 29)):
-                probe = driver.os_input_probe(reset=True)
+        deadline = time.monotonic() + timeout
+        misses: list[str] = []
+        for round_index in itertools.count():
+            dx, dy = CALIBRATION_NUDGES[round_index % len(CALIBRATION_NUDGES)]
+            for window in windows:
+                try:
+                    os_input.activate(window=window, timeout=min(timeout, 5.0))
+                except OsInputUnavailable as exc:
+                    misses.append(f"{window}: not activated ({exc})")
+                    continue  # e.g. a hidden helper window that cannot take focus
+                cx, cy = window.center
                 x, y = cx + dx, cy + dy
+                probe = driver.os_input_probe(reset=True)
                 os_input.pointer_move(x - 7, y - 7)
                 os_input.pointer_move(x, y)
-                event = _wait_trusted_move(driver, timeout=min(timeout, 2.0))
-                if event is None:
-                    continue
-                scale = probe["devicePixelRatio"] if os_input.scale_is_device_pixel_ratio else 1.0
-                offset = (x - event["clientX"] * scale, y - event["clientY"] * scale)
-                return cls(os_input, driver, window, offset, scale)
+                event = _wait_trusted_move(driver, timeout=min(timeout, CALIBRATION_MOVE_WAIT))
+                if event is not None:
+                    scale = (
+                        probe["devicePixelRatio"] if os_input.scale_is_device_pixel_ratio else 1.0
+                    )
+                    offset = (x - event["clientX"] * scale, y - event["clientY"] * scale)
+                    return cls(os_input, driver, window, offset, scale)
+                under = os_input.describe_point(x, y) or "?"
+                misses.append(f"({x}, {y}) in {window}: under the pointer {under}")
+            out_of_time = time.monotonic() >= deadline
+            if out_of_time and round_index + 1 >= len(CALIBRATION_NUDGES):
+                break
+            windows = os_input.windows(pid) or windows
+        desktop = os_input.describe_desktop()
         raise OsInputUnavailable(
             f"no window of PID {pid or os_input.pid} received the calibration pointer move "
-            f"(windows: {windows})"
+            f"(windows: {windows})\n"
+            + "\n".join(f"  miss: {m}" for m in misses[-6:])
+            + (f"\n{desktop}" if desktop else "")
         )
 
     def for_window(self, driver: Any, window: OsWindow) -> "ScreenMapper":

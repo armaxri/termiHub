@@ -86,6 +86,11 @@ class _GUITHREADINFO(ctypes.Structure):
     ]
 
 
+GWL_EXSTYLE = -20
+WS_EX_TOPMOST = 0x00000008
+GA_ROOT = 2
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
 #: Smaller visible top-level windows are helper stubs, not app windows.
 MIN_WINDOW_SIZE = 64
 
@@ -156,6 +161,75 @@ class WindowsOsInput(OsInput):
 
     def _screen_size(self) -> tuple[int, int]:
         return self._user32.GetSystemMetrics(0), self._user32.GetSystemMetrics(1)
+
+    # ── Diagnostics (read-only) ──────────────────────────────────────────────
+    def _process_name(self, pid: int) -> str:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return "?"
+        try:
+            size = wintypes.DWORD(260)
+            buf = ctypes.create_unicode_buffer(size.value)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return buf.value.rsplit("\\", 1)[-1]
+            return "?"
+        finally:
+            kernel32.CloseHandle(handle)
+
+    def _window_label(self, hwnd: int) -> str:
+        user32 = self._user32
+        handle = wintypes.HWND(hwnd)
+        title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(handle, title, 256)
+        cls = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(handle, cls, 256)
+        rect = wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(rect))
+        exstyle = user32.GetWindowLongW(handle, GWL_EXSTYLE)
+        pid = self._window_pid(hwnd)
+        return (
+            f"hwnd={hwnd} pid={pid} exe={self._process_name(pid)} class={cls.value!r} "
+            f"title={title.value[:60]!r} rect=({rect.left},{rect.top},{rect.right},{rect.bottom})"
+            f"{' topmost' if exstyle & WS_EX_TOPMOST else ''}"
+        )
+
+    def _describe_point(self, x: int, y: int) -> str:
+        user32 = self._user32
+        user32.WindowFromPoint.restype = wintypes.HWND
+        user32.GetAncestor.restype = wintypes.HWND
+        child = user32.WindowFromPoint(wintypes.POINT(x, y))
+        if not child:
+            return "nothing"
+        root = user32.GetAncestor(wintypes.HWND(child), GA_ROOT)
+        return self._window_label(int(root or child))
+
+    def _describe_desktop(self) -> str:
+        user32 = self._user32
+        lines: list[str] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def visit(hwnd, _lparam):
+            if user32.IsWindowVisible(hwnd):
+                lines.append("  " + self._window_label(int(hwnd)))  # top of z-order first
+            return True
+
+        user32.EnumWindows(visit, 0)
+        cursor = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(cursor))
+        foreground = user32.GetForegroundWindow()
+        buttons = [
+            name for name, vk in (("left", 0x01), ("right", 0x02)) if user32.GetAsyncKeyState(vk) & 0x8000
+        ]
+        return "\n".join(
+            [
+                f"foreground: {self._window_label(int(foreground)) if foreground else None}",
+                f"cursor: ({cursor.x},{cursor.y}) buttons held: {buttons or 'none'}",
+                "visible top-level windows (z-order, top first):",
+                *lines,
+            ]
+        )
 
     def _activate(self, window: OsWindow) -> None:
         user32 = self._user32

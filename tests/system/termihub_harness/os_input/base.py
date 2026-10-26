@@ -178,6 +178,21 @@ class OsInput:
         """Width and height of the primary screen, in OS screen units."""
         return self._screen_size()
 
+    def describe_point(self, x: float, y: float) -> str:
+        """What the OS would deliver a pointer event at ``(x, y)`` to (diagnostics).
+
+        Read-only. Empty when the backend cannot tell.
+        """
+        return self._describe_point(int(round(x)), int(round(y)))
+
+    def describe_desktop(self) -> str:
+        """Every visible top-level window and the input state (diagnostics).
+
+        Read-only: lists windows of *any* process, so a failure can show what
+        covered or took the test instance's input. Empty when unsupported.
+        """
+        return self._describe_desktop()
+
     def activate(
         self, pid: Optional[int] = None, *, window: Optional[OsWindow] = None, timeout: float = 10.0
     ) -> None:
@@ -309,6 +324,12 @@ class OsInput:
     def _frontmost_window(self) -> Optional[int]:
         """Handle of the focused top-level window, or ``None`` if unknowable."""
         return None
+
+    def _describe_point(self, x: int, y: int) -> str:
+        return ""
+
+    def _describe_desktop(self) -> str:
+        return ""
 
     def _activate(self, window: OsWindow) -> None:
         raise NotImplementedError

@@ -451,6 +451,48 @@ def test_calibration_fails_when_no_window_sees_the_pointer():
         ScreenMapper.calibrate(fake, ProbeDriver(sees=False), timeout=0.3)
 
 
+class LateProbeDriver(ProbeDriver):
+    """Fake bridge whose webview misses the first ``misses`` calibration moves."""
+
+    def __init__(self, misses: int, **kw):
+        super().__init__(**kw)
+        self.misses = misses
+        self.resets = 0
+
+    def os_input_probe(self, test_id=None, *, reset=False):
+        if reset:
+            self.resets += 1
+        self.sees = self.resets > self.misses
+        return super().os_input_probe(test_id, reset=reset)
+
+
+def test_calibration_keeps_retrying_past_the_first_nudges_until_a_move_lands(monkeypatch):
+    # Four missed rounds: more than the three nudges the old calibration tried.
+    monkeypatch.setattr(os_input, "CALIBRATION_MOVE_WAIT", 0.05)
+    fake = FakeInput(100, env=CI)
+    driver = LateProbeDriver(4, client=(400.0, 300.0))
+    screen = ScreenMapper.calibrate(fake, driver, timeout=10.0)
+    assert driver.resets == 5
+    assert fake.calls.count(("activate", 100)) >= 5  # re-activated every round
+    assert screen.offset == (500 - 400 + 23, 350 - 300 + 17)  # round 5 = nudge (23, 17)
+
+
+def test_calibration_failure_names_what_was_under_the_pointer():
+    class Diagnosing(FakeInput):
+        def _describe_point(self, x, y):
+            return f"devtools-window@{x},{y}"
+
+        def _describe_desktop(self):
+            return "visible top-level windows: devtools"
+
+    fake = Diagnosing(100, env=CI)
+    with pytest.raises(OsInputUnavailable) as raised:
+        ScreenMapper.calibrate(fake, ProbeDriver(sees=False), timeout=0.3)
+    message = str(raised.value)
+    assert "under the pointer devtools-window@500,350" in message
+    assert "visible top-level windows: devtools" in message
+
+
 def test_screen_point_rejects_an_unlaid_element():
     fake = FakeInput(100, env=CI)
     driver = ProbeDriver(rect={"left": 0, "top": 0, "width": 0, "height": 0})
