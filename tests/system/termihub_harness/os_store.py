@@ -291,6 +291,26 @@ def parse_secret_tool_usernames(text: str) -> set[str]:
     }
 
 
+def _remove_tree(path: Path) -> None:
+    """Remove the throwaway store's directory, tolerating its dying sockets.
+
+    ``rmtree(ignore_errors=True)`` still raises when scanning a socket the
+    just-killed gnome-keyring is tearing down (``ConnectionAbortedError``,
+    seen on the Linux lane in #4995). A leftover temp directory must not fail
+    the suite, so retry briefly and then give up quietly.
+    """
+    for _ in range(5):
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            time.sleep(0.2)
+            continue
+        if not path.exists():
+            return
+        time.sleep(0.2)
+    print(f"[os_store] could not remove {path}; leaving it behind")
+
+
 class SecretServiceStore(OsCredentialStore):
     """A private session bus with its own gnome-keyring, for the app and secret-tool."""
 
@@ -453,7 +473,7 @@ class SecretServiceStore(OsCredentialStore):
                     pass
         finally:
             self._bus_pid = None
-            shutil.rmtree(self._dir, ignore_errors=True)
+            _remove_tree(self._dir)
 
 
 # ── Windows ────────────────────────────────────────────────────────────────
