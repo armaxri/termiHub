@@ -560,15 +560,20 @@ impl Shared {
             self.stderr_drain.wait(STDERR_DRAIN_TIMEOUT);
         }
         let out_of_memory = self.reported_out_of_memory(status);
-        let cause = match pending {
+        let cause = match pending.clone() {
             None => RunnerExitCause::from_status(status, out_of_memory),
-            Some(pending) => prefer_memory_evidence(pending, out_of_memory),
+            Some(pending) => {
+                prefer_crash_evidence(prefer_memory_evidence(pending, out_of_memory), status)
+            }
         };
         let mut exit = self.exit.lock().unwrap_or_else(|e| e.into_inner());
         if exit.cause.is_some() {
             return;
         }
-        if natural && cause.is_failure() {
+        // A recorded cause that gave way to evidence is logged as what it
+        // became, so the log agrees with the overlay.
+        let revised = pending.is_some_and(|pending| pending != cause);
+        if (natural || revised) && cause.is_failure() {
             tracing::warn!(
                 target: crate::plugin::PLUGIN_LOG_TARGET,
                 "[{}] {}",
@@ -632,6 +637,33 @@ impl Shared {
         }
     }
 
+    /// Whether the runner process has already exited (not yet reaped). `false`
+    /// once it is reaped, or when its status cannot be read.
+    pub(super) fn has_exited(&self) -> bool {
+        self.child
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))))
+    }
+
+    /// Act on the watchdog's hang verdict (`cause`, not responding or out of
+    /// memory under pressure): kill the runner for it and reap it here, so
+    /// the cause is final even if the reader thread is blocked delivering
+    /// output.
+    ///
+    /// A runner that already exited on its own is only reaped (#5004): its
+    /// status, not the verdict, says why it ended. A plugin that crashes
+    /// stops answering pings before its process is gone (a Windows fail-fast
+    /// is reported before the process ends), so a hang verdict can land
+    /// between the crash and the reader's reap of it.
+    pub(super) fn end_for_hang(&self, cause: RunnerExitCause) {
+        if !self.has_exited() {
+            self.kill_for(cause);
+        }
+        self.reap(EXIT_TIMEOUT);
+    }
+
     /// Wait up to `timeout` for the runner to exit, then kill it; always reap.
     pub(super) fn reap(&self, timeout: Duration) {
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
@@ -685,6 +717,44 @@ fn prefer_memory_evidence(pending: RunnerExitCause, out_of_memory: bool) -> Runn
     match pending {
         RunnerExitCause::NotResponding if out_of_memory => RunnerExitCause::OutOfMemory,
         other => other,
+    }
+}
+
+/// A hang verdict gives way to crash evidence (#5004): when the reaped status
+/// shows the runner ended by its own crash rather than by the host's kill, it
+/// crashed while (or just before) the watchdog gave up on it, and the overlay
+/// and the log must say it crashed. The host's kill ends a runner with
+/// `SIGKILL` (Unix) or `KILLED_EXIT_CODE` (Windows), never with a crash
+/// status, so a genuine hang keeps its verdict. Every other recorded cause
+/// stands.
+fn prefer_crash_evidence(
+    pending: RunnerExitCause,
+    status: Option<std::process::ExitStatus>,
+) -> RunnerExitCause {
+    match pending {
+        RunnerExitCause::NotResponding if status.is_some_and(ended_by_own_crash) => {
+            RunnerExitCause::from_status(status, false)
+        }
+        other => other,
+    }
+}
+
+/// Whether the runner ended by a crash of its own: a terminating signal other
+/// than the host's `SIGKILL` (Unix), or an exception status (an `NTSTATUS`
+/// error such as `0xC0000005` or a fail-fast's `0xC0000409`) on Windows,
+/// where the host's kill reports `KILLED_EXIT_CODE`.
+pub(super) fn ended_by_own_crash(status: std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::signal(&status)
+            .is_some_and(|signal| signal != libc::SIGKILL)
+    }
+    #[cfg(windows)]
+    {
+        const NTSTATUS_ERROR: u32 = 0xC000_0000;
+        status.code().is_some_and(|code| {
+            u32::from_ne_bytes(code.to_ne_bytes()) & NTSTATUS_ERROR == NTSTATUS_ERROR
+        })
     }
 }
 

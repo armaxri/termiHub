@@ -172,10 +172,11 @@ fn run(plugin: &Weak<SandboxedPlugin>, config: WatchdogConfig, address_space_lim
                 let _ = plugin.send(&Message::Ping(Heartbeat { nonce }));
             }
             Beat::Hang => {
-                end(
-                    &plugin,
-                    hang_cause(plugin.pid(), &config, address_space_limit),
-                );
+                plugin.shared().end_for_hang(hang_cause(
+                    plugin.pid(),
+                    &config,
+                    address_space_limit,
+                ));
                 return;
             }
             Beat::Wait => {}
