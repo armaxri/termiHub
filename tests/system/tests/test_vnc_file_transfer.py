@@ -11,7 +11,9 @@ route line names the SSH host the bytes land on, and uploads a file with
 **Upload files…** (the native picker is stubbed through the bridge — an OS
 drag-and-drop cannot be synthesised). The bytes are then read back inside the
 SSH container, and a second upload of the same name proves the "keep both"
-rule (``name (1).ext``, never an overwrite).
+rule (``name (1).ext``, never an overwrite). An OS drop of two files and a
+folder onto the screen (synthetic Tauri drag-drop events, #4936) uploads the
+same way and retires the guided MT-RD-10.
 
 Phase 3 (#4193): **Browse remote files** opens the ordinary File Browser on the
 same side channel — its route line names the SSH host and carrier — and the
@@ -41,6 +43,7 @@ from termihub_harness import (
     ConnectionsUi,
     ContainerControl,
     FilesUi,
+    OsDropUi,
     PasswordPromptUi,
     RemoteDesktopUi,
     SettingsUi,
@@ -66,6 +69,8 @@ FILES_BTN = "remote-desktop-files-btn"
 FILES_ROUTE = "remote-desktop-files-route"
 FILES_UPLOAD = "remote-desktop-files-upload"
 UPLOAD_TOAST = "remote-desktop-upload-toast"
+SURFACE = "remote-desktop-tab"
+DROP_OVERLAY = "remote-desktop-drop-overlay"
 FILES_BROWSE = "remote-desktop-files-browse"
 BROWSE_ROUTE = "remote-desktop-browse-route"
 #: Budget for a small download to land on the local disk.
@@ -74,6 +79,7 @@ DOWNLOAD_TIMEOUT = 60.0
 
 @pytest.mark.usefixtures("vnc_fixtures", "ssh_password_fixtures")
 class TestVncFileTransferOverSshTunnel(
+    OsDropUi,
     RemoteDesktopUi,
     PasswordPromptUi,
     SettingsUi,
@@ -207,3 +213,65 @@ class TestVncFileTransferOverSshTunnel(
             assert text == "from the desktop host\n", text
         finally:
             ssh.exec("rm", "-f", f"{DEST_DIR}/{name}")
+
+    def test_os_drop_uploads_files_and_a_folder_and_keeps_both(self, tmp_path: Path):
+        """MT-RD-10: dragging two files and a folder over the tunnelled VNC screen
+        shows the overlay naming the upload folder and the SSH host; dropping
+        uploads them (the folder with its tree) and toasts; dropping one file
+        again keeps both (``name (1).ext``)."""
+        self._open_session()
+        self.wait(lambda: self.driver.exists(FILES_BTN), what="the toolbar Files button")
+        self.wait(
+            lambda: f"on {SSH_HOST}" in self._route_text(),
+            timeout=CONNECT_TIMEOUT,
+            what="the file-transfer route to be ready",
+        )
+        self.driver.click("remote-desktop-files-close")
+        stem = f"vnc-drop-{uuid.uuid4().hex[:8]}"
+        first, second = tmp_path / f"{stem}-a.txt", tmp_path / f"{stem}-b.txt"
+        first.write_text("first\n", encoding="utf-8")
+        second.write_text("second\n", encoding="utf-8")
+        tree = tmp_path / f"{stem}-dir"
+        tree.mkdir()
+        (tree / "inner.txt").write_text("inner\n", encoding="utf-8")
+        dropped = [first, second, tree]
+        ssh = ContainerControl(SSH_PASSWORD_SERVICE)
+        try:
+            self.os_drag_enter(SURFACE, dropped, fy=0.6)
+            text = self.wait(
+                lambda: self.driver.exists(DROP_OVERLAY) and self.driver.get_text(DROP_OVERLAY),
+                what="the drop overlay",
+            )
+            assert DEST_DIR in text and SSH_HOST in text, text
+            self.os_drop(SURFACE, dropped, fy=0.6)
+            self.wait(lambda: not self.driver.exists(DROP_OVERLAY), what="the overlay to go")
+            self.wait(
+                lambda: self.driver.exists(UPLOAD_TOAST)
+                and "Uploaded" in self.driver.get_text(UPLOAD_TOAST),
+                timeout=UPLOAD_TIMEOUT,
+                what="the upload summary toast",
+            )
+            remote = {
+                f"{DEST_DIR}/{first.name}": "first\n",
+                f"{DEST_DIR}/{second.name}": "second\n",
+                f"{DEST_DIR}/{tree.name}/inner.txt": "inner\n",
+            }
+            for path, body in remote.items():
+                self.wait(
+                    lambda p=path, b=body: ssh.exec("sh", "-c", f"cat '{p}' 2>/dev/null || true")
+                    == b,
+                    timeout=UPLOAD_TIMEOUT,
+                    what=f"{path} on the SSH host",
+                )
+
+            first.write_text("again\n", encoding="utf-8")
+            self.os_drop(SURFACE, [first], fy=0.6)
+            copy = f"{DEST_DIR}/{stem}-a (1).txt"
+            self.wait(
+                lambda: ssh.exec("sh", "-c", f"cat '{copy}' 2>/dev/null || true") == "again\n",
+                timeout=UPLOAD_TIMEOUT,
+                what="the second drop kept as name (1).ext",
+            )
+            assert ssh.exec("cat", f"{DEST_DIR}/{first.name}") == "first\n"
+        finally:
+            ssh.exec("sh", "-c", f"rm -rf {DEST_DIR}/{stem}*")

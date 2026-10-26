@@ -805,7 +805,10 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
       <TabBar panelId={panel.id} tabs={panel.tabs} />
       <div className="split-view__terminal-area" ref={terminalAreaRef}>
         {isFileDragOver && panelSessionId && (
-          <div className="split-view__file-drag-overlay">
+          <div
+            className="split-view__file-drag-overlay"
+            data-testid={`panel-file-drag-overlay-${panel.id}`}
+          >
             <FileInput size={24} />
             <span>Drop to insert path</span>
           </div>

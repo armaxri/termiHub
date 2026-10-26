@@ -387,6 +387,8 @@ jobs:
         # manager for click-to-focus / activation, started by the suite),
         # x11-xkb-utils (setxkbmap: US-International / German layouts),
         # xclip (read the OS clipboard) and python3-tk (the "other app" window).
+        # The native file-drop grades (test_os_file_drop_xdnd.py, #4936) run
+        # GTK drag source / drop target windows: python3-gi + gir1.2-gtk-3.0.
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -412,6 +414,8 @@ jobs:
             x11-xkb-utils \
             xclip \
             python3-tk \
+            python3-gi \
+            gir1.2-gtk-3.0 \
             socat \
             libasound2-dev
 
