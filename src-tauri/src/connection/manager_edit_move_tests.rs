@@ -32,6 +32,8 @@ fn ssh(id: &str, name: &str, host: &str) -> SavedConnection {
     SavedConnection {
         extra: Default::default(),
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         id: id.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {

@@ -27,6 +27,8 @@ fn ssh(id: &str, host: &str, hops: &[&str]) -> SavedConnection {
     SavedConnection {
         extra: Default::default(),
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         id: id.to_string(),
         name: id.to_string(),
         config: ConnectionConfig {

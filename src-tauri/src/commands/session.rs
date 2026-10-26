@@ -1961,6 +1961,8 @@ mod tests {
             .save_connection(SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "Target".to_string(),
                 name: "Target".to_string(),
                 config: ConnectionConfig {

@@ -160,6 +160,8 @@ mod tests {
             folder_id: folder_id.map(String::from),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         }
     }
