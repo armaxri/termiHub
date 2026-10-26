@@ -234,7 +234,11 @@ impl SetupEchoFilter {
             return Vec::new();
         };
         self.finished = true;
-        let idx = find(&buf, SETUP_DONE_MARK).expect("end mark present");
+        let Some(idx) = find(&buf, SETUP_DONE_MARK) else {
+            // Only called once the mark is in `buf`; show everything if not.
+            self.outcome = Some(HideOutcome::NotRecognised);
+            return buf;
+        };
         let (pre, post) = (&buf[..idx], &buf[idx + SETUP_DONE_MARK.len()..]);
         match echo_start(pre, &typed) {
             Some(start) => {
