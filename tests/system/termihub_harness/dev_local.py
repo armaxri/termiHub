@@ -241,6 +241,30 @@ def service_port(env_var: str, base: int, repo_root: Path = REPO_ROOT) -> int:
     return base + port_offset(repo_root)
 
 
+#: The traceroute fixture's three /24 networks (#4964) live in ``10.231.0.0/16``;
+#: each checkout takes three consecutive third octets, so parallel checkouts
+#: never share a subnet (Docker refuses overlapping networks).
+TRACEROUTE_NET_BASE = "10.231"
+
+
+def traceroute_networks(repo_root: Path = REPO_ROOT) -> tuple[str, str, str]:
+    """This checkout's traceroute networks A/B/C as three-octet prefixes.
+
+    An explicit ``TERMIHUB_TEST_TRACE_NET_{A,B,C}`` wins, like the port vars
+    (``scripts/internal/dev-local-env.sh`` computes the same defaults).
+
+    ``("10.231.0", "10.231.1", "10.231.2")`` for offset 0, then ``+3`` per
+    :data:`OFFSET_PER_SLOT` step of the port offset (dev7 → ``10.231.21`` …).
+    The compose file interpolates them as ``TERMIHUB_TEST_TRACE_NET_{A,B,C}``.
+    """
+    slot = max(port_offset(repo_root), 0) // OFFSET_PER_SLOT
+    a, b, c = (
+        os.environ.get(f"TERMIHUB_TEST_TRACE_NET_{name}") or f"{TRACEROUTE_NET_BASE}.{slot * 3 + i}"
+        for i, name in enumerate("ABC")
+    )
+    return a, b, c
+
+
 def compose_env(repo_root: Path = REPO_ROOT) -> dict[str, str]:
     """Env overlay for invoking ``compose``: project name + every service port.
 
@@ -261,4 +285,6 @@ def compose_env(repo_root: Path = REPO_ROOT) -> dict[str, str]:
     }
     for var, base in BASE_PORTS.items():
         env[var] = str(service_port(var, base, repo_root))
+    for suffix, prefix in zip("ABC", traceroute_networks(repo_root)):
+        env[f"TERMIHUB_TEST_TRACE_NET_{suffix}"] = prefix
     return env

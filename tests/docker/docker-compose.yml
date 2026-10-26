@@ -14,12 +14,14 @@
 #   fault      - Network fault injection proxy
 #   stress     - SFTP stress test container
 #   network    - Network tools live test target (HTTP server on :8080)
+#   traceroute - Two routers + a target for deterministic traceroute hops
 #   ftp        - FTP/FTPS server (plain :2401, implicit FTPS :2402) + seeded tree
 #   all        - Everything
 #
 # Networks:
 #   test-net      - Main test network (all containers)
 #   jumphost-net  - Isolated network for jump host testing
+#   traceroute-a/b/c - The traceroute fixture's chain (fixed per-checkout subnets)
 
 services:
   # ============================================================
@@ -505,6 +507,79 @@ services:
       retries: 5
 
   # ============================================================
+  # Multi-hop Traceroute Fixture (profile: traceroute, #4964)
+  # ============================================================
+
+  # Two routers between the Docker host and a target, so a traceroute from the
+  # host has three deterministic hops (MT-NET-16). The host reaches the target
+  # through router1's proxy ARP on network A — no host route, no privilege.
+  # Topology and expected hops: traceroute-hop/entrypoint.sh. ICMP rate
+  # limiting is off so back-to-back runs (and reruns) always get every reply.
+  traceroute-router1:
+    build: ./traceroute-hop
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-traceroute-router1
+    environment:
+      ROLE: router1
+      NET_A: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}
+      NET_B: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}
+      NET_C: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv4.conf.all.proxy_arp: 1
+      net.ipv4.icmp_ratelimit: 0
+    networks:
+      traceroute-a:
+        ipv4_address: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}.2
+      traceroute-b:
+        ipv4_address: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}.2
+    profiles:
+      - traceroute
+      - all
+
+  traceroute-router2:
+    build: ./traceroute-hop
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-traceroute-router2
+    environment:
+      ROLE: router2
+      NET_A: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}
+      NET_B: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}
+      NET_C: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv4.icmp_ratelimit: 0
+    networks:
+      traceroute-b:
+        ipv4_address: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}.3
+      traceroute-c:
+        ipv4_address: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}.2
+    profiles:
+      - traceroute
+      - all
+
+  traceroute-target:
+    build: ./traceroute-hop
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-traceroute-target
+    environment:
+      ROLE: target
+      NET_A: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}
+      NET_B: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}
+      NET_C: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.icmp_ratelimit: 0
+    networks:
+      traceroute-c:
+        ipv4_address: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}.3
+    profiles:
+      - traceroute
+      - all
+
+  # ============================================================
   # Network Fault Injection (profile: fault)
   # ============================================================
 
@@ -598,3 +673,27 @@ networks:
     name: ${TERMIHUB_TEST_PROJECT:-termihub}-jumphost-net
     driver: bridge
     internal: true # No external access — only bastion bridges to test-net
+  traceroute-a:
+    name: ${TERMIHUB_TEST_PROJECT:-termihub}-traceroute-a
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}.0/24
+          gateway: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}.1
+          # Docker assigns only .0/25, so the proxied target ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}.200 is
+          # never handed to a container.
+          ip_range: ${TERMIHUB_TEST_TRACE_NET_A:-10.231.0}.0/25
+  traceroute-b:
+    name: ${TERMIHUB_TEST_PROJECT:-termihub}-traceroute-b
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}.0/24
+          gateway: ${TERMIHUB_TEST_TRACE_NET_B:-10.231.1}.1
+  traceroute-c:
+    name: ${TERMIHUB_TEST_PROJECT:-termihub}-traceroute-c
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}.0/24
+          gateway: ${TERMIHUB_TEST_TRACE_NET_C:-10.231.2}.1
