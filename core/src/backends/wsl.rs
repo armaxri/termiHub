@@ -1147,6 +1147,12 @@ impl ConnectionType for Wsl {
             command.env("WSLENV", wslenv);
         }
 
+        // Ctrl+C reaches the Linux side through `wsl.exe`, which must not
+        // inherit an "ignore Ctrl+C" attribute from termiHub (#4981).
+        if let Err(e) = crate::util::console_ctrl::restore_ctrl_c_for_children() {
+            warn!("could not re-enable Ctrl+C for the WSL shell: {e}");
+        }
+
         let child = pty_pair
             .slave
             .spawn_command(command)
