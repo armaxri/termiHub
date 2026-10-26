@@ -7,6 +7,8 @@
 #[cfg(feature = "local-shell")]
 pub mod local_shell;
 
+#[cfg(feature = "local-shell")]
+mod local_shell_setup;
 #[cfg(all(feature = "local-shell", unix))]
 mod pty_unix_io;
 

@@ -124,6 +124,12 @@ pub struct SpawnedShell {
     /// ended the session by dropping the output sender, because closing the
     /// master does not reliably EOF the reader on Windows ConPTY.
     pub close_pty: Box<dyn Fn() + Send + Sync>,
+    /// Whether the shell's line editor is now reading input at a prompt
+    /// (#5009), or `None` where that cannot be observed (Windows ConPTY,
+    /// test doubles). The local backend types its shell-integration setup
+    /// only once this reports `true`, so the setup is never echoed by the
+    /// kernel ahead of the shell's own startup output.
+    pub line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 }
 
 /// PTY / process spawn abstraction for the local shell backend.

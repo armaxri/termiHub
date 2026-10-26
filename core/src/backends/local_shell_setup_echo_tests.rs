@@ -51,7 +51,10 @@ impl Session {
     async fn start(shell_name: &str, top: Option<&str>) -> Session {
         let home = tempfile::tempdir().expect("temp HOME");
         std::fs::write(home.path().join(".zshrc"), rc("PROMPT", top)).expect("zshrc");
+        // A login bash reads `.bash_profile`; a path-valued one (`/bin/bash`,
+        // started without `--login`) reads `.bashrc`.
         std::fs::write(home.path().join(".bash_profile"), rc("PS1", top)).expect("profile");
+        std::fs::write(home.path().join(".bashrc"), rc("PS1", top)).expect("bashrc");
         let home_str = home.path().to_string_lossy().to_string();
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({
@@ -136,10 +139,23 @@ async fn assert_quiet_start(shell_name: &str) {
     s.wait_for_integrated_prompt().await;
     assert_no_setup_text(&s.text());
     let screen = s.screen();
+    // Every rc line, then exactly one prompt, last. (macOS's system bash adds
+    // a "default shell is now zsh" notice — startup text that must stay too.)
+    let rc_at = |line: &str| screen.iter().position(|l| l == line);
+    assert!(
+        rc_at("RC-LINE-ONE") < rc_at("RC-LINE-TWO") && rc_at("RC-LINE-ONE").is_some(),
+        "rc output missing: {screen:?}\nraw: {:?}",
+        s.text()
+    );
     assert_eq!(
-        screen,
-        vec!["RC-LINE-ONE", "RC-LINE-TWO", PROMPT],
-        "raw: {:?}",
+        screen.last().map(String::as_str),
+        Some(PROMPT),
+        "{screen:?}"
+    );
+    assert_eq!(
+        screen.iter().filter(|l| l.contains(PROMPT)).count(),
+        1,
+        "exactly one prompt: {screen:?}\nraw: {:?}",
         s.text()
     );
 

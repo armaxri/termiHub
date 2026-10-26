@@ -26,6 +26,8 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
+use super::local_shell_setup::TypedSetup;
+
 use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
 
@@ -176,6 +178,10 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         #[cfg(unix)]
         let interrupt = super::pty_unix_io::PtyInterrupt::default();
         #[cfg(unix)]
+        let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>;
+        #[cfg(not(unix))]
+        let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
+        #[cfg(unix)]
         let (writer, reader) = {
             use super::pty_unix_io::{nonblocking_poll_fd, InterruptibleWriter, PollingReader};
             let master_fd = pty_pair.master.as_raw_fd().ok_or_else(|| {
@@ -183,6 +189,10 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             })?;
             let poll_fd = nonblocking_poll_fd(master_fd)
                 .map_err(|e| SessionError::SpawnFailed(format!("PTY non-blocking setup: {e}")))?;
+            let probe_fd = poll_fd.clone();
+            line_editor_reading = Some(Box::new(move || {
+                super::pty_unix_io::line_editor_reading(&probe_fd)
+            }));
             (
                 InterruptibleWriter {
                     inner: writer,
@@ -250,6 +260,7 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                     let _ = guard.take();
                 }
             }),
+            line_editor_reading,
         })
     }
 }
@@ -266,6 +277,8 @@ struct ConnectedState {
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
     /// The graceful path and the guard must never both kill the child.
     disconnected: bool,
+    /// The typed shell-integration setup, for bash / zsh (#5009).
+    setup: Option<Arc<TypedSetup>>,
 }
 
 impl Drop for ConnectedState {
@@ -614,8 +627,21 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // before anyone subscribes waits there instead of being dropped (#4719).
         self.early_output.open(&self.output_tx);
 
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(spawned.writer));
+        // The shell-integration line typed into bash / zsh, hidden where the
+        // line editor is observable (#5009).
+        let setup = osc7_for_stdin.map(|line| {
+            TypedSetup::new(
+                line,
+                spawned.line_editor_reading.is_some(),
+                writer.clone(),
+                self.output_tx.clone(),
+            )
+        });
+
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
+        let reader_setup = setup.clone();
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
@@ -642,7 +668,12 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         };
                         // Lock released above; the blocking send below can no
                         // longer stall other holders of `output_tx`.
-                        let _ = sender.blocking_send(data);
+                        match &reader_setup {
+                            Some(setup) => setup.forward(data, &sender),
+                            None => {
+                                let _ = sender.blocking_send(data);
+                            }
+                        }
                     }
                     Err(_) => break,
                 }
@@ -684,23 +715,26 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             close_pty();
         });
 
+        // Type the shell-integration setup (bash / zsh; PowerShell, cmd and
+        // fish already got theirs as startup arguments). Where the line
+        // editor is observable it waits for the prompt so its echo can be
+        // hidden (#5009); elsewhere it is typed now, as before. Failures are
+        // non-fatal — the shell works without CWD tracking.
+        if let Some(setup) = &setup {
+            match spawned.line_editor_reading {
+                Some(reading) => setup.clone().type_when_ready(reading, alive.clone()),
+                None => setup.type_now(),
+            }
+        }
+
         self.state = Some(ConnectedState {
-            writer: Arc::new(Mutex::new(spawned.writer)),
+            writer,
             resize: spawned.resize,
             kill: spawned.kill,
             alive,
             disconnected: false,
+            setup,
         });
-
-        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
-        // PowerShell and cmd already received it via startup args above.
-        // Errors are non-fatal — the shell works without CWD tracking.
-        if let Some(setup) = osc7_for_stdin {
-            let cmd = format!("{setup}\n");
-            if let Err(e) = self.write(cmd.as_bytes()) {
-                debug!("Failed to inject OSC 7 hook: {e}");
-            }
-        }
 
         Ok(())
     }
@@ -778,6 +812,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
+        // Input before the first prompt: the setup goes first, so it never
+        // splits or swallows the user's command (#5009).
+        if let Some(setup) = &state.setup {
+            setup.type_now();
+        }
         let mut writer = state.writer.lock().map_err(|e| {
             SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
         })?;
@@ -829,9 +868,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 /// The injection is chosen by the shell's *kind* ([`shell_kind`]), so
 /// path-valued shells (the agent's `/bin/bash`, `C:\...\pwsh.exe`) get the
 /// same integration as their bare names (#3728). PowerShell (`powershell` /
-/// `pwsh`) and `cmd` take the setup as startup flags so it runs before the
-/// first prompt without echoing; every other shell gets it back as the
-/// snippet to inject via stdin after spawn. Returns `(command, stdin_setup)`.
+/// `pwsh`), `cmd` and `fish` take the setup as startup flags so it runs
+/// before the first prompt without echoing; every other shell gets it back as
+/// the snippet to type via stdin (see [`TypedSetup`]). Returns `(command, stdin_setup)`.
 fn apply_shell_integration(
     mut cmd: ShellCommand,
     shell: &str,
@@ -854,6 +893,15 @@ fn apply_shell_integration(
         "cmd" => {
             if let Some(setup) = setup {
                 cmd.args.push("/K".to_string());
+                cmd.args.push(setup.to_string());
+            }
+            (cmd, None)
+        }
+        // fish runs `--init-command` after its config files and before the
+        // first prompt, so nothing is typed or echoed (#5009).
+        "fish" => {
+            if let Some(setup) = setup {
+                cmd.args.push("--init-command".to_string());
                 cmd.args.push(setup.to_string());
             }
             (cmd, None)
@@ -1136,6 +1184,7 @@ mod tests {
                     // the mock reader, so the reader NEVER EOFs and the session
                     // can only end via the watcher's direct signal.
                 }),
+                line_editor_reading: None,
             })
         }
     }
@@ -2131,9 +2180,9 @@ mod tests {
             .expect("disconnect should not fail");
     }
 
-    /// Regression test for #408: verify the OSC 7 PROMPT_COMMAND hook is
-    /// injected into local bash sessions by checking for the `__termihub_osc7`
-    /// function definition in the echoed output.
+    /// Regression test for #408: the OSC 7 hook is installed in local bash
+    /// sessions — its prompt emits OSC 7 — while its typed setup stays off
+    /// the screen (#5009).
     #[cfg(unix)]
     #[tokio::test]
     #[serial(local_pty)]
@@ -2157,7 +2206,7 @@ mod tests {
             while let Some(chunk) = rx.recv().await {
                 output.extend_from_slice(&chunk);
                 let text = String::from_utf8_lossy(&output);
-                if text.contains("__termihub_osc7") && text.contains("PROMPT_COMMAND") {
+                if text.contains("\x1b]7;file://") && text.contains("\x1b]133;A") {
                     return true;
                 }
             }
@@ -2165,10 +2214,14 @@ mod tests {
         })
         .await;
 
+        let text = String::from_utf8_lossy(&output);
         assert!(
             found.unwrap_or(false),
-            "expected OSC 7 setup (__termihub_osc7 + PROMPT_COMMAND) in bash output, got: {:?}",
-            String::from_utf8_lossy(&output)
+            "expected the hook's OSC 7 / OSC 133;A prompt in bash output, got: {text:?}"
+        );
+        assert!(
+            !text.contains("__termihub_osc7"),
+            "the typed setup must not be shown: {text:?}"
         );
 
         shell.disconnect().await.ok();
@@ -2418,6 +2471,22 @@ mod tests {
         assert!(cmd.args.is_empty());
         assert_eq!(stdin, osc7_setup_command("bash"));
         assert!(stdin.is_some());
+    }
+
+    /// fish gets its setup as `--init-command`: run before the first prompt,
+    /// never typed, so never echoed (#5009).
+    #[test]
+    fn shell_integration_fish_uses_init_command() {
+        let (cmd, stdin) =
+            apply_shell_integration(bare_command("/opt/homebrew/bin/fish"), "fish", true);
+        assert!(stdin.is_none(), "fish setup must not be typed");
+        assert_eq!(cmd.args[0], "--init-command");
+        assert_eq!(Some(cmd.args[1].as_str()), osc7_setup_command("fish"));
+        assert!(
+            !cmd.args[1].contains("echo "),
+            "prints nothing: {}",
+            cmd.args[1]
+        );
     }
 
     #[test]
