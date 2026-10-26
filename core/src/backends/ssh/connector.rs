@@ -25,6 +25,7 @@ use crate::config::SshConfig;
 use crate::errors::SessionError;
 
 use super::remote_shell::{self, RemoteShell, SetupGate};
+use crate::output::setup_echo::SetupEchoFilter;
 
 // ── Type aliases for complex closure types ─────────────────────────
 
@@ -472,9 +473,20 @@ impl SshConnector for RusshSshConnector {
         if let Some(line) = integration_line {
             setup.push(("shell integration", line));
         }
+        // A POSIX host with integration types its setup as one line at the
+        // first prompt and hides that line's echo (#5009).
+        let hide_echo = remote_shell::hides_setup_echo(remote_shell, integration_typed);
+        if hide_echo {
+            let lines: Vec<String> = setup.drain(..).map(|(_, line)| line).collect();
+            setup.push(("session setup", remote_shell::join_posix_setup(&lines)));
+        }
+        let hidden_setup: Option<Vec<u8>> = hide_echo
+            .then(|| setup.first().map(|(_, line)| line.clone().into_bytes()))
+            .flatten();
+        let mut echo_filter = SetupEchoFilter::new();
         // A cmd.exe host is held only when it has something to set up (#4610).
         let mut gate = SetupGate::new(
-            remote_shell::defers_setup_until_prompt(remote_shell, !setup.is_empty()),
+            remote_shell::defers_setup_until_prompt(remote_shell, !setup.is_empty()) || hide_echo,
             setup_done,
             shell_requested_at,
         );
@@ -528,6 +540,10 @@ impl SshConnector for RusshSshConnector {
                     tracing::debug!(writes = burst.len(), "releasing held session writes");
                     let mut ok = true;
                     for data in burst {
+                        // The setup line (or its retype): hide its echo (#5009).
+                        if hidden_setup.as_deref() == Some(&data[..]) {
+                            echo_filter.arm(&data, std::time::Instant::now());
+                        }
                         remote_shell::setup_trace(shell_requested_at, "send (gate burst)", &data);
                         ok = should_continue_after_send(channel.data(&data[..]).await, "write");
                         if !ok {
@@ -538,10 +554,18 @@ impl SshConnector for RusshSshConnector {
                         break;
                     }
                 }
-                // Far in the future when the gate is open (the branch is off then).
-                let gate_check = gate.next_check().unwrap_or_else(|| {
-                    std::time::Instant::now() + std::time::Duration::from_secs(3600)
-                });
+                // Output the echo filter releases at a deadline (#5009).
+                let released = echo_filter.poll(std::time::Instant::now());
+                if !released.is_empty() && data_tx.send(released).is_err() {
+                    break;
+                }
+                // Far in the future when neither the gate nor the filter is
+                // waiting (the branch is off then).
+                let far = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+                let gate_check = gate
+                    .next_check()
+                    .unwrap_or(far)
+                    .min(echo_filter.next_deadline().unwrap_or(far));
                 tokio::select! {
                     biased;
                     // Outgoing commands (write / resize / close).
@@ -584,9 +608,11 @@ impl SshConnector for RusshSshConnector {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
                                 remote_shell::setup_trace(shell_requested_at, "recv", data);
-                                gate.on_output(std::time::Instant::now(), data);
+                                let now = std::time::Instant::now();
+                                gate.on_output(now, data);
                                 capture_early_output(&mut early_output, data);
-                                if data_tx.send(data.to_vec()).is_err() {
+                                let shown = echo_filter.feed(data, now);
+                                if !shown.is_empty() && data_tx.send(shown).is_err() {
                                     break;
                                 }
                             }
@@ -606,7 +632,7 @@ impl SshConnector for RusshSshConnector {
                     }
                     // The gate's settle / retype / cap deadline (#4148, #4604).
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(gate_check)),
-                        if gate.is_holding() => {}
+                        if gate.is_holding() || echo_filter.is_active() => {}
                 }
             }
             // Flag a refusal *before* signalling EOF or clearing `alive`, so the
