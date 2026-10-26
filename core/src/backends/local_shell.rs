@@ -2442,5 +2442,9 @@ mod tests {
 mod osc133_tests;
 
 #[cfg(all(test, unix))]
+#[path = "local_shell_setup_echo_tests.rs"]
+mod setup_echo_tests;
+
+#[cfg(all(test, unix))]
 #[path = "local_shell_interrupt_tests.rs"]
 mod interrupt_tests;

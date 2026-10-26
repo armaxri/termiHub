@@ -3,6 +3,8 @@ pub mod early;
 pub mod prompt_mark;
 pub mod session_log;
 pub mod setup_echo;
+#[cfg(test)]
+pub(crate) mod test_screen;
 
 /// Bounded channel capacity for output data flowing from a backend's reader
 /// task/thread to its consumer.
