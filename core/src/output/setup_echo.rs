@@ -17,9 +17,14 @@
 //!   untouched. The echo, the setup's own output and the end mark are dropped.
 //!   The row of the first prompt is then cleared, so the shell's next prompt
 //!   (drawn by the now-integrated shell, with its OSC 133 marks) takes its
-//!   place instead of appearing twice. The number of rows cleared is taken
-//!   from that next prompt (its newlines between OSC 133 `A` and `B`), so a
-//!   two-line prompt is replaced as a whole.
+//!   place instead of appearing twice. Rows above it are cleared only where
+//!   they hold the same text as the next prompt's upper rows (a two-line
+//!   prompt), never a banner or other output.
+//! - **Typed too early.** When the line reached a tty still in cooked mode,
+//!   the tty echoed it ahead of the first prompt and the line editor echoed
+//!   it again. If only the first prompt (the same rows as the next prompt)
+//!   lies between the two echoes, both echoes and that prompt are dropped;
+//!   otherwise only the line editor's echo is, and the tty's stays visible.
 //! - **Not recognised.** Anything else in the region the echo would be in —
 //!   user output, an error from the setup, a second unrelated line — and the
 //!   filter emits *everything* it held, unchanged. The worst case is the old
