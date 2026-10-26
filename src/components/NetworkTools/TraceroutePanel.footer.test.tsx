@@ -121,4 +121,21 @@ describe("TraceroutePanel — footer", () => {
     expect(footerText().toLowerCase()).toContain("canceled");
     expect(networkTraceroute).toHaveBeenCalledTimes(1);
   });
+
+  it("tags each hop row and cell so the live suite can read them (#4964)", async () => {
+    await act(async () => {
+      root.render(<TraceroutePanel prefillHost="example.com" />);
+    });
+    await start();
+    await emitHop({ hop: 1, ip: "10.0.0.1", rttMs: [1.25, null, 3] });
+
+    const cell = (key: string) =>
+      container.querySelector(`[data-testid="traceroute-hop-0-${key}"]`)?.textContent;
+    expect(container.querySelector('[data-testid="traceroute-hop-0"]')).not.toBeNull();
+    expect(cell("hop")).toBe("1");
+    expect(cell("ip")).toBe("10.0.0.1");
+    expect(cell("rtt1")).toBe("1.3ms");
+    expect(cell("rtt2")).toBe("—");
+    expect(cell("rtt3")).toBe("3.0ms");
+  });
 });
