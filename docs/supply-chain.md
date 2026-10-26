@@ -188,7 +188,7 @@ Removal is enforced, so this list cannot outlive the risk it describes:
 ## Vendored forks
 
 Six third-party crates are carried as in-tree forks (SUP-005). A fork is consumed by **path** or
-by **`[patch.crates-io]`**, so `cargo update`, Dependabot, `cargo audit` and `cargo deny` never
+by **`[patch.crates-io]`**, so `cargo update`, the Dependency Report, `cargo audit` and `cargo deny` never
 see the upstream crate again: an upstream security fix is not pulled in and a RustSec advisory
 against the upstream crate is not reported. All forks sit on paths that handle bytes from outside
 the app (remote servers, clients of the embedded servers, or attached devices), so the upstream crate is watched explicitly instead.
@@ -268,7 +268,7 @@ current. Treat an advisory against any of them as higher priority than a general
 
 "Line" is the semver-compatible line in use (`0.y` before 1.0, `x` from 1.0). The consistency
 check fails when the named lockfile has no locked version on that line, so a manifest bump cannot
-leave this table stale. `cargo update` stays on the line, so the weekly lockfile chore never trips
+leave this table stale. `cargo update` stays on the line, so a routine lockfile update never trips
 it. The last three columns are prose.
 
 | Crate              | Line  | Lockfile                               | Parses (untrusted source)                                                                     | 1.0? | Our hardening / caps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Tests / fuzzing                                                                                                                                                                                                                                                                                                                                                                  |
