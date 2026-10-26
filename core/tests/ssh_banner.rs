@@ -87,3 +87,52 @@ async fn ssh_banner_03_failed_auth_rejected() {
         "SSH-BANNER-03: Authentication with wrong password should fail"
     );
 }
+
+// ── SSH-BANNER-04: MOTD shown, typed setup hidden (#5009) ────────────
+
+/// An interactive session with shell integration on: the server's MOTD
+/// reaches the terminal, the typed shell-integration setup never does, and
+/// the first command runs in the integrated shell.
+#[tokio::test]
+async fn ssh_banner_04_motd_shown_but_setup_hidden() {
+    use std::time::Duration;
+    use termihub_core::backends::ssh::Ssh;
+    use termihub_core::connection::ConnectionType;
+
+    require_docker!(port_ssh_banner());
+
+    let mut settings = common::ssh_password_settings(port_ssh_banner());
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    let mut ssh = Ssh::new();
+    ssh.connect(settings)
+        .await
+        .expect("SSH-BANNER-04: shell session connects");
+    let mut rx = ssh.subscribe_output();
+    ssh.write(b"echo TH_$((40+2))_DONE\n")
+        .expect("SSH-BANNER-04: write the first command");
+
+    let mut seen = String::new();
+    let ok = tokio::time::timeout(Duration::from_secs(60), async {
+        while let Some(chunk) = rx.recv().await {
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+            if seen.contains("TH_42_DONE") && seen.contains("\x1b]133;D;0") {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(ok, "SSH-BANNER-04: the first command did not run: {seen:?}");
+    assert!(
+        seen.contains("Welcome to the termiHub test environment!"),
+        "SSH-BANNER-04: the MOTD must stay visible: {seen:?}"
+    );
+    for leak in ["__termihub", "PROMPT_COMMAND", "precmd_functions", "6973;"] {
+        assert!(
+            !seen.contains(leak),
+            "SSH-BANNER-04: setup text {leak:?} shown: {seen:?}"
+        );
+    }
+    ssh.disconnect().await.ok();
+}
