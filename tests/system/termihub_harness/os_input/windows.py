@@ -97,6 +97,9 @@ MIN_WINDOW_SIZE = 64
 #: Keyboard layout ids (KLID) for :meth:`WindowsOsInput.set_layout`.
 KLID_US_INTERNATIONAL = "00020409"
 WM_INPUTLANGCHANGEREQUEST = 0x0050
+#: Characters typed as Unicode packets, not keys: dead keys on US-International.
+UNICODE_TYPED = frozenset("'\"`~^")
+
 #: Longest wait (s) for the focused thread to adopt a requested layout.
 LAYOUT_SWITCH_TIMEOUT = 2.0
 
@@ -283,10 +286,18 @@ class WindowsOsInput(OsInput):
         self._send([self._key_input(win_vk(key), not down)])
 
     def _type(self, pid: int, text: str) -> None:
+        # Plain characters are typed as the physical keys a US-based layout
+        # needs (US and US-International agree on them), like a real keyboard.
+        # ``KEYEVENTF_UNICODE`` packets (VK_PACKET) took another path through
+        # WebView2/xterm and could reach the terminal after a later key, e.g.
+        # ``ceho`` for ``echo`` or the ``_`` of ``_\n`` after the Enter
+        # (#4993). Characters without such a key, and the US-International
+        # dead keys, still go as Unicode packets.
         for char in text:
             mapped = us_key_for_char(char)
-            if mapped is not None and mapped[0] in ("enter", "tab"):
-                self._key(pid, [], mapped[0])
+            if mapped is not None and char not in UNICODE_TYPED:
+                key, shift = mapped
+                self._key(pid, ["shift"] if shift else [], key)
                 continue
             self._send([self._key_input(0, False, unicode=char), self._key_input(0, True, unicode=char)])
 
