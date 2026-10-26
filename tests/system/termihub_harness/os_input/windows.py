@@ -97,9 +97,6 @@ MIN_WINDOW_SIZE = 64
 #: Keyboard layout ids (KLID) for :meth:`WindowsOsInput.set_layout`.
 KLID_US_INTERNATIONAL = "00020409"
 WM_INPUTLANGCHANGEREQUEST = 0x0050
-#: Characters typed as Unicode packets, not keys: dead keys on US-International.
-UNICODE_TYPED = frozenset("'\"`~^")
-
 #: Longest wait (s) for the focused thread to adopt a requested layout.
 LAYOUT_SWITCH_TIMEOUT = 2.0
 
@@ -286,18 +283,10 @@ class WindowsOsInput(OsInput):
         self._send([self._key_input(win_vk(key), not down)])
 
     def _type(self, pid: int, text: str) -> None:
-        # Plain characters are typed as the physical keys a US-based layout
-        # needs (US and US-International agree on them), like a real keyboard.
-        # ``KEYEVENTF_UNICODE`` packets (VK_PACKET) took another path through
-        # WebView2/xterm and could reach the terminal after a later key, e.g.
-        # ``ceho`` for ``echo`` or the ``_`` of ``_\n`` after the Enter
-        # (#4993). Characters without such a key, and the US-International
-        # dead keys, still go as Unicode packets.
         for char in text:
             mapped = us_key_for_char(char)
-            if mapped is not None and char not in UNICODE_TYPED:
-                key, shift = mapped
-                self._key(pid, ["shift"] if shift else [], key)
+            if mapped is not None and mapped[0] in ("enter", "tab"):
+                self._key(pid, [], mapped[0])
                 continue
             self._send([self._key_input(0, False, unicode=char), self._key_input(0, True, unicode=char)])
 
@@ -341,8 +330,8 @@ class WindowsOsInput(OsInput):
         thread = user32.GetWindowThreadProcessId(target, None)
         previous = user32.GetKeyboardLayout(thread)
         user32.PostMessageW(wintypes.HWND(target), WM_INPUTLANGCHANGEREQUEST, 0, ctypes.c_void_p(hkl))
-        # Wait for the focused thread to report the new layout (bounded: a
-        # thread that never echoes it still gets the old fixed settle time).
+        # Wait for the focused thread to report the new layout, bounded: past
+        # the timeout the grade goes on and shows what the keys produced.
         deadline = time.monotonic() + LAYOUT_SWITCH_TIMEOUT
         while (user32.GetKeyboardLayout(thread) or 0) != (hkl or 0):
             if time.monotonic() >= deadline:

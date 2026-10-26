@@ -34,6 +34,14 @@ const gates = new Map<string, Gate>();
 /** When input was last handed to each session's send (ms epoch). */
 const lastSentAt = new Map<string, number>();
 
+/**
+ * Each session's latest send, settled or not. A send starts only once the one
+ * before it has settled (#4993): every send is its own async IPC call, and the
+ * backend runs those concurrently, so two keystrokes in flight at once could
+ * reach the PTY in either order (`ceho` for `echo` on a loaded Windows host).
+ */
+const sendTails = new Map<string, Promise<unknown>>();
+
 /** When input was last sent to `sessionId` (ms epoch), if ever. */
 export function lastSessionInputAt(sessionId: string): number | undefined {
   return lastSentAt.get(sessionId);
@@ -88,12 +96,25 @@ export function isSessionInputHeld(sessionId: string): boolean {
 
 /**
  * Run `send` for `sessionId` now, or — while the session is held — once every
- * hold is released, after all input queued before it.
+ * hold is released, after all input queued before it. Either way it starts
+ * only after the session's previous send has settled, so input reaches the
+ * backend strictly in order.
  */
 export function whenSessionInputOpen<T>(sessionId: string, send: () => Promise<T>): Promise<T> {
   const sendNow = (): Promise<T> => {
-    lastSentAt.set(sessionId, Date.now());
-    return send();
+    const run = (): Promise<T> => {
+      lastSentAt.set(sessionId, Date.now());
+      return send();
+    };
+    const previous = sendTails.get(sessionId);
+    const sent = previous ? previous.then(run) : run();
+    // The tail only marks "settled"; a failure still reaches this send's caller.
+    const tail = Promise.allSettled([sent]);
+    sendTails.set(sessionId, tail);
+    void tail.then(() => {
+      if (sendTails.get(sessionId) === tail) sendTails.delete(sessionId);
+    });
+    return sent;
   };
   const gate = gates.get(sessionId);
   if (!gate) return sendNow();
@@ -108,4 +129,5 @@ export function whenSessionInputOpen<T>(sessionId: string, send: () => Promise<T
 export function resetSessionInputGatesForTests(): void {
   gates.clear();
   lastSentAt.clear();
+  sendTails.clear();
 }

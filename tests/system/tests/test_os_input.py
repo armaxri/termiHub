@@ -321,26 +321,6 @@ def test_windows_virtual_keys():
     assert win_vk("caps_lock") == 0x14
 
 
-def test_windows_types_plain_text_as_keys_and_dead_keys_as_unicode():
-    # Unicode packets could overtake each other or a later key in WebView2
-    # (``ceho`` for ``echo``, #4993): plain text goes as physical keys.
-    from termihub_harness.os_input.windows import WindowsOsInput
-
-    backend = WindowsOsInput.__new__(WindowsOsInput)
-    sent: list[tuple] = []
-    backend._key = lambda pid, mods, key: sent.append(("key", tuple(mods), key))  # type: ignore[method-assign]
-    backend._send = lambda inputs: sent.append(("unicode", len(inputs)))  # type: ignore[method-assign]
-    backend._type(1, "eC_\n'é")
-    assert sent == [
-        ("key", (), "e"),
-        ("key", ("shift",), "c"),
-        ("key", ("shift",), "-"),
-        ("key", (), "enter"),
-        ("unicode", 2),  # ' is a dead key on US-International
-        ("unicode", 2),  # no US key types é
-    ]
-
-
 # ── Linux backend command lines ──────────────────────────────────────────────
 class XdoRecorder:
     def __init__(self, replies: Optional[dict] = None, fail: Sequence[str] = ()):

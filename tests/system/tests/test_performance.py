@@ -190,9 +190,15 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
         for attempt in range(3):
             self.driver.terminal_input(f"echo {marker}\n", tab_id=tab_id)
             started = time.monotonic()
+            # A resend joins the output the first send left behind, so only the
+            # first send can be judged garbled; a resend counts once rendered.
+            def verdict(first: bool = attempt == 0) -> str | None:
+                state = self._marker_state(self.driver.read_terminal(tab_id), marker)
+                return state if first or state == "rendered" else None
+
             try:
                 state = self.wait(
-                    lambda: self._marker_state(self.driver.read_terminal(tab_id), marker),
+                    verdict,
                     timeout=MARKER_RENDER_BUDGET,
                     what=f"{label} to render its marker",
                 )
