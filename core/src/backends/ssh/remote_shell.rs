@@ -1287,7 +1287,7 @@ mod tests {
             joined.starts_with(" export FOO='b a'\\''r'; export DISPLAY=localhost:10.0; xauth add")
         );
         // A lone integration line is unchanged.
-        lines.truncate(0);
+        lines.clear();
         lines.push(integration.clone());
         assert_eq!(join_posix_setup(&lines), integration);
     }
