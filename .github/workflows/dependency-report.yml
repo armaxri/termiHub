@@ -1,0 +1,193 @@
+name: Dependency Report
+
+# Weekly, REPORT-ONLY dependency check (#5011).
+#
+# Maintainer decision (2026-10-24, restated 2026-10-26): no automated job may
+# create dependency-update branches or PRs, push anything, or merge. Checks only
+# REPORT; the maintainer decides what to update and does it by hand (see
+# docs/ci-yanked-crate-runbook.md). This workflow replaces the former
+# `Cargo Update Lockfile` chore (#2645, #4357, #4465, #4912), which opened a
+# lockfile PR every day, and .github/dependabot.yml, which opened a weekly
+# github-actions PR. Both are gone.
+#
+# What it reports, all in the job summary:
+#   * pending compatible Cargo updates — `cargo update --dry-run --verbose` for
+#     the workspace Cargo.lock and rdp-sidecar/Cargo.lock (the sidecar is
+#     workspace-excluded with its own lockfile, #4357). `--dry-run` never writes
+#     the lockfile; nothing is committed or pushed;
+#   * `cargo deny check` (advisories incl. yanked, bans, licenses, sources) for
+#     both lockfiles, each with its own deny.toml;
+#   * outdated npm packages (`pnpm outdated`). npm advisories are not repeated
+#     here: Security Audit's `pnpm audit` gates owns them.
+#
+# The job FAILS only when something actionable exists: a cargo-deny finding (a
+# yanked crate, an advisory not in the accepted ignore list, a banned crate, a
+# license or source violation). Pending updates and outdated packages are
+# information, never a failure. A red run is the report; it changes nothing.
+#
+# Security: read-only GITHUB_TOKEN, no persisted checkout credentials, no
+# secret. Nothing here compiles a crate or runs an install script.
+
+on:
+  # No schedule of its own (#4847): scheduled-dispatch.yml dispatches it on
+  # develop weekly (Mondays 06:17 UTC). A cron here would fire from main and run
+  # MAIN's copy of this YAML. Registry: scripts/internal/scheduled-lanes.mjs.
+  workflow_dispatch:
+  # A change to this check runs it once on develop. That first run also
+  # registers the workflow with GitHub, which a dispatch needs (#4277): a
+  # dispatch-only file that is not on main is unknown to the API.
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/dependency-report.yml'
+
+concurrency:
+  group: dependency-report-${{ github.ref }}
+  cancel-in-progress: true
+
+# Report only: read the repository, write nothing (#5011).
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Dependency Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      # Prebuilt binary download (~seconds), same pin as Security Audit.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-deny@0.20.2
+
+      # Compatible (SemVer-respecting) updates `cargo update` WOULD make, plus
+      # the newer incompatible versions it lists as "Unchanged (available: ...)".
+      # Dry run: the lockfiles are not modified.
+      - name: Pending Cargo updates (dry run)
+        run: |
+          set -uo pipefail
+          report() {
+            local label="$1"
+            shift
+            local out="$RUNNER_TEMP/cargo-update-$label.log"
+            echo "::group::cargo update --dry-run ($label)"
+            # `|| rc=$?`: the runner's shell is `bash -e`, which would abort here.
+            local rc=0
+            cargo update --dry-run --verbose "$@" > "$out" 2>&1 || rc=$?
+            cat "$out"
+            echo "::endgroup::"
+            local pending unchanged
+            pending=$(grep -E '^ *(Updating|Adding|Removing|Downgrading) [^ ]+ v' "$out" || true)
+            unchanged=$(grep -cE '^ *Unchanged ' "$out" || true)
+            {
+              echo "### Pending Cargo updates: $label"
+              echo ''
+              if [ "$rc" -ne 0 ]; then
+                echo ":warning: \`cargo update --dry-run\` exited $rc; see the step log."
+              elif [ -z "$pending" ]; then
+                echo 'No compatible updates pending.'
+              else
+                echo "$(printf '%s\n' "$pending" | wc -l | tr -d ' ') compatible update(s) available:"
+                echo ''
+                echo '```'
+                printf '%s\n' "$pending" | sed -E 's/^ +//'
+                echo '```'
+              fi
+              echo ''
+              echo "${unchanged:-0} crate(s) have a newer, SemVer-incompatible version" \
+                "(listed as \`Unchanged\` in the step log)."
+              echo ''
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          report workspace
+          report rdp-sidecar --manifest-path rdp-sidecar/Cargo.toml
+
+      # The same four checks Security Audit gates on, run for both lockfiles
+      # even when the first fails. The verdict is recorded; the last step fails
+      # the job on it.
+      - name: cargo deny (workspace + rdp-sidecar)
+        id: deny
+        run: |
+          set -uo pipefail
+          failed=()
+          deny() {
+            local label="$1"
+            local dir="$2"
+            local out="$RUNNER_TEMP/cargo-deny-$label.log"
+            echo "::group::cargo deny ($label)"
+            # `|| rc=$?`: the runner's shell is `bash -e`, which would abort here
+            # and skip the sidecar check and the summary.
+            local rc=0
+            (cd "$dir" && cargo deny --color never check advisories bans licenses sources) \
+              > "$out" 2>&1 || rc=$?
+            cat "$out"
+            echo "::endgroup::"
+            {
+              echo "### cargo deny: $label"
+              echo ''
+              if [ "$rc" -eq 0 ]; then
+                echo 'No findings (advisories incl. yanked, bans, licenses, sources).'
+              else
+                failed+=("$label")
+                echo "::error::cargo deny ($label) reported findings (exit $rc)." >&2
+                echo ":x: **Findings** (exit $rc). Fix path: docs/ci-yanked-crate-runbook.md"
+                echo ''
+                echo '<details><summary>cargo deny errors</summary>'
+                echo ''
+                echo '```'
+                grep -E '^(error|warning)\[' -A 12 "$out" | head -n 200 || true
+                echo '```'
+                echo ''
+                echo '</details>'
+              fi
+              echo ''
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          deny workspace .
+          # Run from rdp-sidecar/ so its own deny.toml applies (#4357).
+          deny rdp-sidecar rdp-sidecar
+          echo "failed=${failed[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      # `pnpm outdated` compares the installed tree with the registry; install
+      # the locked tree without running any lifecycle script.
+      - name: Install npm dependencies (no scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Information only: `pnpm outdated` exits 1 whenever anything is
+      # outdated, so its exit code is ignored.
+      - name: Outdated npm packages
+        run: |
+          set -uo pipefail
+          json="$RUNNER_TEMP/pnpm-outdated.json"
+          pnpm outdated --format json > "$json" 2> "$RUNNER_TEMP/pnpm-outdated.err" || true
+          node scripts/internal/pnpm-outdated-summary.mjs "$json" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/pnpm-outdated.err" >&2
+
+      # Actionable findings turn the run red, so the report is noticed. Nothing
+      # is changed: the maintainer decides what to update.
+      - name: Fail on actionable findings
+        if: steps.deny.outputs.failed != ''
+        env:
+          FAILED: ${{ steps.deny.outputs.failed }}
+        run: |
+          echo "::error::cargo deny reported findings for: $FAILED." \
+            "See the job summary; fix path: docs/ci-yanked-crate-runbook.md"
+          exit 1
