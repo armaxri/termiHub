@@ -2,6 +2,7 @@ pub mod coalescer;
 pub mod early;
 pub mod prompt_mark;
 pub mod session_log;
+pub mod setup_echo;
 
 /// Bounded channel capacity for output data flowing from a backend's reader
 /// task/thread to its consumer.
