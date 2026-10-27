@@ -102,6 +102,8 @@ export interface TreeFolderRowProps extends Omit<
   dropOver?: boolean;
   /** Optional `data-testid` for the button. */
   testId?: string;
+  /** Icon drawn before the label; defaults to the plain folder glyph. */
+  icon?: React.ReactNode;
 }
 
 /**
@@ -120,6 +122,7 @@ export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowPr
       tabIndex,
       dropOver = false,
       testId,
+      icon,
       ...rest
     },
     ref
@@ -139,7 +142,7 @@ export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowPr
         aria-level={ariaLevel}
         tabIndex={tabIndex}
       >
-        <Folder size={16} />
+        {icon ?? <Folder size={16} />}
         <span className="connection-tree__label">{label}</span>
         <Chevron size={16} className="connection-tree__chevron" />
       </button>

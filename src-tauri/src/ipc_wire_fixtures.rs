@@ -133,6 +133,8 @@ fn connections_fixture() -> Value {
         connections: vec![full, bare],
         folders: vec![
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work".into(),
                 name: "Work".into(),
@@ -140,6 +142,8 @@ fn connections_fixture() -> Value {
                 is_expanded: true,
             },
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work/Dev".into(),
                 name: "Dev".into(),
