@@ -31,7 +31,10 @@ fn at(s: &str) -> Option<DateTime<Utc>> {
 
 #[test]
 fn ci_develop_build_uses_develop_channel() {
-    assert_eq!(select_channel(false, true, "develop"), UpdateChannel::Develop);
+    assert_eq!(
+        select_channel(false, true, "develop"),
+        UpdateChannel::Develop
+    );
 }
 
 #[test]
@@ -42,7 +45,10 @@ fn ci_main_build_keeps_stable_channel() {
 #[test]
 fn release_build_keeps_stable_channel() {
     // release.yml builds from a tag: build.rs reports the branch as "unknown".
-    assert_eq!(select_channel(false, false, "unknown"), UpdateChannel::Stable);
+    assert_eq!(
+        select_channel(false, false, "unknown"),
+        UpdateChannel::Stable
+    );
     assert_eq!(select_channel(false, false, "main"), UpdateChannel::Stable);
 }
 
