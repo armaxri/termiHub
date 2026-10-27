@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from typing import Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import unquote, urlparse
 
 from .base import OsInput, OsInputUnavailable, OsWindow, drag_path
@@ -160,6 +160,23 @@ def partner_command(
     return [python, "-c", _GTK_SCRIPT, mode, *(str(int(v)) for v in geometry), *args]
 
 
+#: GTK scaling knobs a scaled-display lane (#4997) sets for the test instance.
+SCALE_ENV = ("GDK_SCALE", "GDK_DPI_SCALE")
+
+
+def partner_env(env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+    """The partner's environment: the harness's, minus GTK scaling (#4997).
+
+    The partner stands in for another app at scale 1, so its ``geometry`` stays
+    in X screen pixels even when the test instance runs under ``GDK_SCALE=2``
+    (GTK would otherwise place and size it in logical pixels, off-screen).
+    """
+    base = dict(os.environ if env is None else env)
+    for name in SCALE_ENV:
+        base.pop(name, None)
+    return base
+
+
 def uri_paths(uris: Iterable[str]) -> list[str]:
     """Local paths of ``file://`` URIs (percent-encoded or raw, as the ``drag`` crate sends)."""
     return [unquote(urlparse(uri.strip()).path) for uri in uris if uri.strip()]
@@ -198,7 +215,12 @@ class _Partner:
     def start(self, timeout: float = 30.0) -> "_Partner":
         argv = self.command()
         self._proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=partner_env(),
         )
         threading.Thread(target=self._pump, daemon=True).start()
         if not self._ready.wait(timeout):

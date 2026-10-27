@@ -82,6 +82,12 @@ def combo_keysyms(mods: Sequence[str], key: str) -> str:
     return "+".join([*(MODIFIER_KEYSYMS[m] for m in mods), keysym(key)])
 
 
+def on_screen(x: int, y: int, width: int, height: int) -> bool:
+    """Whether any part of a window at ``(x, y)`` sized ``width``×``height`` is on
+    the screen's positive quadrant (an off-screen GTK helper window is not)."""
+    return x + width > 0 and y + height > 0
+
+
 def _default_runner(argv: Sequence[str]) -> str:
     try:
         result = subprocess.run(list(argv), capture_output=True, text=True, timeout=15)
@@ -126,7 +132,10 @@ class LinuxOsInput(OsInput):
         windows = []
         for wid in ids:
             geo = self._geometry(wid)
-            if geo is not None and geo[2] > 1 and geo[3] > 1:
+            # A window entirely left of / above the screen is a GTK helper
+            # parked off-screen (at -200,-200 under GDK_SCALE=2, #4997): never a
+            # target, and xdotool cannot even move to its negative center.
+            if geo is not None and geo[2] > 1 and geo[3] > 1 and on_screen(*geo):
                 windows.append(OsWindow(int(wid), pid, *geo))
         return windows
 
