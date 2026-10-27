@@ -18,7 +18,9 @@
           "fontFamily": "Hack",
           "fontSize": 14
         },
-        "icon": "server"
+        "icon": "server",
+        "icon_color": null,
+        "icon_emoji": null
       }
     },
     {
@@ -31,7 +33,9 @@
         "persistent": false,
         "folder_id": null,
         "terminal_options": null,
-        "icon": null
+        "icon": null,
+        "icon_color": null,
+        "icon_emoji": null
       }
     },
     {
@@ -52,7 +56,9 @@
           "fontFamily": "Hack",
           "fontSize": 14
         },
-        "icon": "server"
+        "icon": "server",
+        "icon_color": null,
+        "icon_emoji": null
       }
     },
     {
@@ -65,7 +71,39 @@
         "config": {},
         "persistent": false,
         "terminal_options": null,
-        "icon": null
+        "icon": null,
+        "icon_color": null,
+        "icon_emoji": null
+      }
+    },
+    {
+      "name": "create: icon colour and emoji (#5021)",
+      "method": "connections.create",
+      "params": {
+        "name": "Styled",
+        "type": "local",
+        "config": {},
+        "persistent": false,
+        "folder_id": null,
+        "terminal_options": null,
+        "icon": null,
+        "icon_color": "#336699",
+        "icon_emoji": "🚀"
+      }
+    },
+    {
+      "name": "update: editor save with icon colour and emoji (#5021)",
+      "method": "connections.update",
+      "params": {
+        "id": "conn-4",
+        "name": "Styled",
+        "type": "local",
+        "config": {},
+        "persistent": false,
+        "terminal_options": null,
+        "icon": null,
+        "icon_color": "#336699",
+        "icon_emoji": "🚀"
       }
     },
     {

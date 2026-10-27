@@ -120,6 +120,13 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub file_create_new: bool,
+    /// Whether the agent stores an icon colour and emoji on its saved
+    /// connection definitions (protocol 0.33.0, #5021). `false` for older
+    /// agents: they would ignore the keys, so the connection editor hides the
+    /// controls for their definitions.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub definition_icon_style: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]
@@ -198,6 +205,14 @@ pub struct AgentDefinitionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub icon: Option<String>,
+    /// Icon colour: a palette name or `#rrggbb` (#5021).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub icon_color: Option<String>,
+    /// Single-emoji icon shown instead of the glyph (#5021).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub icon_emoji: Option<String>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -243,6 +258,8 @@ impl From<ConnectionDefinition> for AgentDefinitionInfo {
             folder_id: d.folder_id,
             terminal_options: d.terminal_options,
             icon: d.icon,
+            icon_color: d.icon_color,
+            icon_emoji: d.icon_emoji,
             source_file: d.source_file,
         }
     }

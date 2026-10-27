@@ -1726,6 +1726,8 @@ export function ConnectionList() {
                   config: { sessionType: draggingAgentDef.sessionType },
                 }}
                 customIcon={draggingAgentDef.icon}
+                iconColor={draggingAgentDef.iconColor}
+                iconEmoji={draggingAgentDef.iconEmoji}
                 size={16}
               />
               <span>{draggingAgentDef.name}</span>

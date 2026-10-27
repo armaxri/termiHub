@@ -17,7 +17,7 @@ import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
 // Per-connection icon colour + emoji (#5008): both live on the editor's
 // react-hook-form top-level form, validated by zod (null = unset, #2467),
 // flow into the save payload, gate Save on an invalid emoji, and are hidden
-// for agent definitions (which do not persist them).
+// for definitions on an agent too old to persist them (#5021).
 // ---------------------------------------------------------------------------
 
 vi.mock("@/themes", () => ({
@@ -304,7 +304,7 @@ describe("ConnectionEditor icon colour + emoji", () => {
     expect(saved.iconEmoji).toBeUndefined();
   });
 
-  it("hides the controls for an agent definition", async () => {
+  it("hides the controls for an agent that cannot store them (#5021)", async () => {
     const agent = makeAgent({ id: "agent-x" });
     seedAgentsRegion({ remoteAgents: [agent], agentDefinitions: { [agent.id]: [] } });
     renderEditor(agent.id, { agentDefinitionId: "new" }, "tab-agentdef-icon");
@@ -314,5 +314,76 @@ describe("ConnectionEditor icon colour + emoji", () => {
     expect(q("connection-editor-icon-picker")).not.toBeNull();
     expect(q("connection-editor-icon-color")).toBeNull();
     expect(q("connection-editor-icon-emoji")).toBeNull();
+  });
+});
+
+/** An agent that advertises `definitionIconStyle` (protocol 0.33.0, #5021). */
+function makeStylingAgent(): RemoteAgentDefinition {
+  const agent = makeAgent({ id: "agent-s" });
+  return { ...agent, capabilities: { ...agent.capabilities!, definitionIconStyle: true } };
+}
+
+describe("ConnectionEditor icon colour + emoji for agent definitions (#5021)", () => {
+  it("creates a definition with a colour and emoji", async () => {
+    const saveAgentDef = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ saveAgentDef });
+    const agent = makeStylingAgent();
+    seedAgentsRegion({ remoteAgents: [agent], agentDefinitions: { [agent.id]: [] } });
+    renderEditor(agent.id, { agentDefinitionId: "new" }, "tab-agentdef-new");
+    await flush();
+    setInput(nameInput(), "Styled");
+    await flush();
+
+    openCategory("appearance");
+    act(() => (q("icon-color-swatch-red") as HTMLButtonElement).click());
+    setInput(q("connection-editor-icon-emoji") as HTMLInputElement, "🚀");
+    await flush();
+    clickSave();
+    await flush();
+
+    expect(saveAgentDef).toHaveBeenCalledTimes(1);
+    const [agentId, params] = saveAgentDef.mock.calls[0] as unknown as [string, unknown];
+    expect(agentId).toBe(agent.id);
+    expect(params).toMatchObject({ name: "Styled", icon_color: "red", icon_emoji: "🚀" });
+  });
+
+  it("loads an existing definition's style clean and clears it on save", async () => {
+    const updateAgentDef = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ updateAgentDef });
+    const agent = makeStylingAgent();
+    seedAgentsRegion({
+      remoteAgents: [agent],
+      agentDefinitions: {
+        [agent.id]: [
+          {
+            id: "def-1",
+            name: "Prod",
+            sessionType: "shell",
+            config: {},
+            persistent: false,
+            folderId: null,
+            iconColor: "teal",
+            iconEmoji: "🐳",
+          },
+        ],
+      },
+    });
+    renderEditor(agent.id, { agentDefinitionId: "def-1" }, "tab-agentdef-edit");
+    await flush();
+
+    openCategory("appearance");
+    expect(q("icon-color-swatch-teal")?.getAttribute("aria-checked")).toBe("true");
+    expect((q("connection-editor-icon-emoji") as HTMLInputElement).value).toBe("🐳");
+    expect(isDirty("tab-agentdef-edit")).toBe(false);
+
+    act(() => (q("icon-color-swatch-default") as HTMLButtonElement).click());
+    act(() => (q("connection-editor-clear-icon-emoji") as HTMLButtonElement).click());
+    await flush();
+    clickSave();
+    await flush();
+
+    expect(updateAgentDef).toHaveBeenCalledTimes(1);
+    const [, params] = updateAgentDef.mock.calls[0] as unknown as [string, unknown];
+    expect(params).toMatchObject({ id: "def-1", icon_color: null, icon_emoji: null });
   });
 });
