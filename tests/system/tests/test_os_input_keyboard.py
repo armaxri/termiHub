@@ -80,7 +80,12 @@ class TestOsKeyboardGrades(
         """A fresh local shell (optionally ``cd``-ed into ``folder``); its tab id."""
         self.close_all_tabs()
         self.wait(lambda: self.tab_count() == 0, what="every tab to close")
-        self.ensure_terminal()
+        if folder is None:
+            self.ensure_terminal()
+        else:
+            # The browser follows this `cd` (on Windows only with Command
+            # Marks on, #5017).
+            self.open_cwd_following_terminal()
         tab = self.active_tab()
         assert tab is not None
         if folder is not None:
@@ -168,6 +173,10 @@ class TestOsKeyboardGrades(
                 osi.key(combo)
 
     # ── MT-NIN-15: dead keys ─────────────────────────────────────────────────
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="quarantined on Windows: the Enter after composed dead keys is lost (#5024)",
+    )
     def test_dead_keys_compose_once_in_terminal_and_editor(self):
         """MT-NIN-15: a dead key and its letter arrive as one composed character,
         with no bare accent before it, in the terminal and in the editor."""

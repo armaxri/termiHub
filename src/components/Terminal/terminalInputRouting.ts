@@ -70,6 +70,12 @@ export function routeTerminalKeyEvent(e: KeyboardEvent, ctx: TerminalKeyRoutingC
     return false;
   }
   if (action === "copy") {
+    // The terminal copies the selection itself, so the key is consumed here.
+    // Left to the webview, Ctrl+Shift+C is WebView2's "inspect element"
+    // accelerator: in a build with DevTools (debug, the system-test app) it
+    // opened DevTools in inspect mode, which swallows every pointer event the
+    // page should get until the next click (#4993).
+    e.preventDefault();
     ctx.copySelection();
     return false;
   }

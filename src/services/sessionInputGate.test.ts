@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INPUT_HOLD_MAX_MS,
+  RESIZE_INPUT_HOLD_MAX_MS,
   holdSessionInput,
   isSessionInputHeld,
   lastSessionInputAt,
@@ -20,6 +21,11 @@ function recorder() {
     return Promise.resolve(label);
   };
   return { sent, send };
+}
+
+/** Let pending promise callbacks (a send chained behind the previous one) run. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
 beforeEach(() => {
@@ -49,6 +55,8 @@ describe("session input gate (#4942)", () => {
     expect(isSessionInputHeld("s1")).toBe(true);
 
     release();
+    expect(sent).toEqual(["a"]); // "b" waits for "a" to settle (#4993)
+    await settle();
     expect(sent).toEqual(["a", "b"]);
     await expect(done).resolves.toEqual(["a", "b"]);
     expect(isSessionInputHeld("s1")).toBe(false);
@@ -86,7 +94,7 @@ describe("session input gate (#4942)", () => {
     expect(sent).toEqual(["a"]);
   });
 
-  it("queues input sent after a hold taken while draining behind that hold", () => {
+  it("queues input sent after a hold taken while draining behind that hold", async () => {
     const { sent, send } = recorder();
     const release = holdSessionInput("s1", "show");
     let next: (() => void) | null = null;
@@ -100,10 +108,11 @@ describe("session input gate (#4942)", () => {
     expect(sent).toEqual(["a"]);
 
     (next as unknown as () => void)();
+    await settle();
     expect(sent).toEqual(["a", "b"]);
   });
 
-  it("lifts a hold that is never released after its time bound, never dropping input", () => {
+  it("lifts a hold that is never released after its time bound, never dropping input", async () => {
     vi.useFakeTimers();
     const { sent, send } = recorder();
     const release = holdSessionInput("s1", "resize");
@@ -124,7 +133,48 @@ describe("session input gate (#4942)", () => {
     void whenSessionInputOpen("s1", send("b"));
     expect(sent).toEqual(["a"]);
     later();
+    await settle();
     expect(sent).toEqual(["a", "b"]);
+  });
+
+  it("starts a send only after the session's previous send settled (#4993)", async () => {
+    // Each send is its own async IPC call that the backend may run
+    // concurrently: two in flight at once could reach the PTY swapped.
+    const started: string[] = [];
+    const finish: Array<() => void> = [];
+    const send = (label: string) => () => {
+      started.push(label);
+      return new Promise<string>((resolve) => finish.push(() => resolve(label)));
+    };
+    const done = Promise.all([
+      whenSessionInputOpen("s1", send("e")),
+      whenSessionInputOpen("s1", send("c")),
+      whenSessionInputOpen("s1", send("h")),
+    ]);
+    const other = whenSessionInputOpen("s2", send("x"));
+    expect(started).toEqual(["e", "x"]); // other sessions are not serialized behind s1
+
+    await settle();
+    expect(started).toEqual(["e", "x"]);
+    finish[0]();
+    await settle();
+    expect(started).toEqual(["e", "x", "c"]);
+    finish[2]();
+    await settle();
+    expect(started).toEqual(["e", "x", "c", "h"]);
+    finish[3]();
+    finish[1]();
+    await expect(done).resolves.toEqual(["e", "c", "h"]);
+    await expect(other).resolves.toBe("x");
+  });
+
+  it("keeps sending after a failed send", async () => {
+    const { sent, send } = recorder();
+    const failing = whenSessionInputOpen("s1", () => Promise.reject(new Error("closed")));
+    const next = whenSessionInputOpen("s1", send("b"));
+    await expect(failing).rejects.toThrow("closed");
+    await expect(next).resolves.toBe("b");
+    expect(sent).toEqual(["b"]);
   });
 
   it("passes a failed send's error to its caller", async () => {
@@ -264,5 +314,47 @@ describe("session input slots (#5026)", () => {
     s2.cancel();
     await flush();
     expect(sent).toEqual(["s2-key", "s2-other"]);
+  });
+});
+
+describe("paste slots during a resize hold (#5025, #5026)", () => {
+  it("keeps a paste slot reserved during a slow resize in order, and both release", async () => {
+    vi.useFakeTimers();
+    const { sent, send } = recorder();
+    const releaseResize = holdSessionInput("s1", "resize", RESIZE_INPUT_HOLD_MAX_MS);
+    void whenSessionInputOpen("s1", send("a"));
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("b"));
+    void slot.fill(() => whenSessionInputOpen("s1", send("paste")));
+
+    // Past the 1 s bound of an ordinary hold: the resize is still in flight,
+    // so nothing (not even the filled paste) overtakes it.
+    vi.advanceTimersByTime(INPUT_HOLD_MAX_MS + 100);
+    await flush();
+    expect(sent).toEqual([]);
+
+    releaseResize();
+    await flush();
+    expect(sent).toEqual(["a", "paste", "b"]);
+    expect(isSessionInputHeld("s1")).toBe(false);
+  });
+
+  it("lifts an unfilled paste slot on its own bound while the resize still holds", async () => {
+    vi.useFakeTimers();
+    const { sent, send } = recorder();
+    holdSessionInput("s1", "resize", RESIZE_INPUT_HOLD_MAX_MS);
+    reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("key"));
+
+    vi.advanceTimersByTime(INPUT_HOLD_MAX_MS);
+    await flush();
+    // The slot gave up its place, but the resize hold still orders the key.
+    expect(sent).toEqual([]);
+    expect(isSessionInputHeld("s1")).toBe(true);
+
+    vi.advanceTimersByTime(RESIZE_INPUT_HOLD_MAX_MS - INPUT_HOLD_MAX_MS);
+    await flush();
+    expect(sent).toEqual(["key"]);
+    expect(isSessionInputHeld("s1")).toBe(false);
   });
 });

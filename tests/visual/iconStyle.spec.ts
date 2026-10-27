@@ -1,6 +1,6 @@
 /**
- * Per-connection (#5008) and per-folder (#5020) icon colour and emoji,
- * rendered in the real frontend.
+ * Per-connection (#5008), per-folder (#5020) and per-agent-definition (#5021)
+ * icon colour and emoji, rendered in the real frontend.
  *
  * Seeds root connections with emoji icons, palette colours and a near-black
  * custom hex (harness/mockBackend.ts `ICON_STYLE_ROWS`), then, in the Dark and
@@ -33,6 +33,7 @@ const COLOURED_ROWS = ["icon-red", "icon-yellow", "icon-custom-dark"];
 const connectionRow = (id: string) => `[data-testid="connection-item-${id}"]`;
 const folderRow = (id: string) => `[data-testid="folder-toggle-${id}"]`;
 const COLOURED_FOLDERS = ["Customers", "Lab"];
+const agentDefRow = (id: string) => `[data-testid="agent-definition-${id}"]`;
 
 async function settle(page: Page): Promise<void> {
   await page.evaluate(
@@ -113,6 +114,20 @@ test("connection rows show icon colours and emoji legibly in Dark and Light", as
         `${theme}: folder ${id} keeps >= 3:1 against the sidebar`
       ).toBeGreaterThanOrEqual(3);
     }
+
+    await expect(
+      page.locator(`${agentDefRow("agent-def-emoji")} [data-testid=connection-icon-emoji]`),
+      `${theme}: the agent definition draws its emoji`
+    ).toHaveText("\u{1F9EA}");
+    const agentSvg = page.locator(`${agentDefRow("agent-def-green")} svg`).first();
+    await expect(agentSvg, `${theme}: the agent definition is tinted`).toHaveAttribute(
+      "data-icon-color",
+      "green"
+    );
+    expect(
+      await iconContrast(page, agentDefRow("agent-def-green")),
+      `${theme}: the agent definition keeps >= 3:1 against the sidebar`
+    ).toBeGreaterThanOrEqual(3);
 
     const file = join(SCREENS, "icon-style", `sidebar-${theme}.png`);
     await page.locator("[data-testid=sidebar]").screenshot({ path: file });

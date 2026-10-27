@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.32.0
+**Version**: 0.33.0
 **Status**: Draft
 **Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416, #4433, #4519
 
@@ -223,7 +223,7 @@ Both restrict the endpoint to the current user, and neither exposes a TCP port. 
 
 - **Default shell**: when a local-shell session omits the `shell` field, a Windows agent defaults to `powershell` (unix agents read `$SHELL`). Shell name resolution maps `cmd` → `cmd.exe`, `powershell` → the resolved PowerShell executable, and `gitbash` → the Git Bash `bash.exe`; a value containing `/` or `\` is treated as a literal path.
 - **PTY**: local shells spawn through `portable-pty`, which uses **ConPTY** on Windows 10 1809+ (falling back to WinPTY if unavailable). The reader sees the same VT byte stream as a Unix PTY, and `resize`/teardown map to `ResizePseudoConsole`/`ClosePseudoConsole`. No protocol-level difference results.
-- **CWD reporting**: PowerShell and cmd.exe emit OSC 9;9 (Windows Terminal's working-directory sequence) rather than OSC 7, injected via shell startup args.
+- **CWD reporting**: cmd.exe is followed from its process directory. PowerShell (whose location is not its process directory) and cmd.exe report it themselves (OSC 7 / OSC 9;9) only with the opt-in command-mark hook, injected via their startup args; without it a PowerShell `cd` is not followed.
 
 ---
 
@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.33.0        | Yes (the desktop requests 0.24.0; `definitionIconStyle` shows the icon colour / emoji controls for agent connections)                 |
 | 0.24.0          | 0.32.0        | Yes (the desktop requests 0.24.0; `agent.logs.*` lets Export Diagnostics include the agent's log files)                               |
 | 0.24.0          | 0.31.0        | Yes (the desktop requests 0.24.0; `clientCapabilities.fractionalLatency` gets it sub-millisecond `latencyMs` in network tool results) |
 | 0.24.0          | 0.30.0        | Yes (the desktop requests 0.24.0; `fileCreateNew` lets a remote-desktop upload claim its name without truncating a file)              |
@@ -414,6 +415,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.33.0 (additive, minor)** — saved connection definitions carry an optional **icon colour** and **emoji** (#5021): [`connections.create`](#connectionscreate) takes `icon_color` / `icon_emoji`, [`connections.update`](#connectionsupdate) takes them as tri-state patches (explicit `null` clears, omitted leaves unchanged), and [`connections.list`](#connectionslist) and the create / update results report them when set. The agent stores both opaquely (a palette name or `#rrggbb`, and a single emoji, validated by the desktop) and leaves them out of `connections.json` when unset, so the keys need no store schema step of their own (the store version is unchanged by this release); an agent that loads a file carrying them without knowing them keeps them as unknown fields. The `initialize` result gains `capabilities.definitionIconStyle: true`. Negotiation is by **capability**: an older agent ignores the unknown keys and would silently drop the choice, so the desktop shows the icon colour / emoji controls only for an agent that advertises the flag. An older desktop never sends the keys. The desktop still requests `0.24.0`.
 
 **0.32.0 (additive, minor)** — adds [`agent.logs.list`](#agentlogslist) and [`agent.logs.read`](#agentlogsread) (#4519): a connected desktop pulls the agent's own per-process log files (`<config-dir>/logs/termihub-agent-<role>-<pid>.log`, their rotated archives, and the capped `termihub-agent-stderr-….log` captures of detached daemons, #4319) into its **Export Diagnostics** bundle, so a support case no longer needs shell access to the agent host. Read-only, confined to the agent's fixed log directory, redacted on the agent and again on the desktop, and size-capped per file and per export. No capability flag: an older agent answers `-32601` Method not found, which the desktop reports as "this agent version cannot share its log files" and skips. The desktop still requests `0.24.0`.
 
@@ -569,6 +572,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.outputFlow`                 | `boolean`              | [`connection.output_flow`](#connectionoutput_flow) pauses / resumes a session's output, backpressuring the program (0.27.0+; absent = `false`)                                                         |
 | `capabilities.forwardFlow`                | `boolean`              | [`agent.forward.connect`](#agentforwardconnect) grants a requested `window` and [`agent.forward.ack`](#agentforwardack) is honored (0.28.0+; absent = `false`)                                         |
 | `capabilities.hostFileAttributeOps`       | `object`               | `{ permissions, owner, symlink }` booleans: the chmod / chown / symlink the agent host's own file system performs, for local sessions and host-level file requests (0.29.0+; absent = by session type) |
+| `capabilities.definitionIconStyle`        | `boolean`              | Saved connection definitions store `icon_color` / `icon_emoji` (0.33.0+; absent = `false`, the desktop hides the icon colour / emoji controls)                                                         |
 | `capabilities.fileCreateNew`              | `boolean`              | [`write_range`](#connectionfileswrite_range) honors `create_new` as an exclusive create on the agent host's own file system (0.30.0+; absent = `false`, never send the flag)                           |
 
 > **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
@@ -2024,20 +2028,22 @@ List all saved connections and folders.
 }
 ```
 
-| Result Field                 | Type           | Description                                   |
-| ---------------------------- | -------------- | --------------------------------------------- |
-| `connections`                | `Connection[]` | All saved connections                         |
-| `connections[].id`           | `string`       | Connection identifier                         |
-| `connections[].name`         | `string`       | Display name                                  |
-| `connections[].session_type` | `string`       | `"shell"`, `"serial"`, `"docker"`, or `"ssh"` |
-| `connections[].config`       | `object`       | Type-specific configuration                   |
-| `connections[].persistent`   | `boolean`      | Whether sessions are persistent               |
-| `connections[].folder_id`    | `string?`      | Parent folder ID, or `null` for root          |
-| `folders`                    | `Folder[]`     | All folders                                   |
-| `folders[].id`               | `string`       | Folder identifier                             |
-| `folders[].name`             | `string`       | Display name                                  |
-| `folders[].parent_id`        | `string?`      | Parent folder ID, or `null` for root          |
-| `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                        |
+| Result Field                 | Type           | Description                                     |
+| ---------------------------- | -------------- | ----------------------------------------------- |
+| `connections`                | `Connection[]` | All saved connections                           |
+| `connections[].id`           | `string`       | Connection identifier                           |
+| `connections[].name`         | `string`       | Display name                                    |
+| `connections[].session_type` | `string`       | `"shell"`, `"serial"`, `"docker"`, or `"ssh"`   |
+| `connections[].config`       | `object`       | Type-specific configuration                     |
+| `connections[].persistent`   | `boolean`      | Whether sessions are persistent                 |
+| `connections[].folder_id`    | `string?`      | Parent folder ID, or `null` for root            |
+| `connections[].icon_color`   | `string?`      | Icon colour; omitted when unset (0.33.0+)       |
+| `connections[].icon_emoji`   | `string?`      | Single-emoji icon; omitted when unset (0.33.0+) |
+| `folders`                    | `Folder[]`     | All folders                                     |
+| `folders[].id`               | `string`       | Folder identifier                               |
+| `folders[].name`             | `string`       | Display name                                    |
+| `folders[].parent_id`        | `string?`      | Parent folder ID, or `null` for root            |
+| `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                          |
 
 > **Persistence and downgrade safety (#3920):** the agent saves these definitions
 > in its `connections.json` with a schema `version` (`"1"`; a file without one is
@@ -2097,15 +2103,17 @@ Create a new saved connection.
 }
 ```
 
-| Param              | Type      | Default      | Description                     |
-| ------------------ | --------- | ------------ | ------------------------------- |
-| `name`             | `string`  | _(required)_ | Display name                    |
-| `type`             | `string`  | _(required)_ | Session type                    |
-| `config`           | `object`  | `{}`         | Type-specific configuration     |
-| `persistent`       | `boolean` | `false`      | Whether sessions are persistent |
-| `folder_id`        | `string?` | `null`       | Parent folder ID                |
-| `terminal_options` | `object?` | `null`       | Per-connection terminal options |
-| `icon`             | `string?` | `null`       | Icon name                       |
+| Param              | Type      | Default      | Description                                      |
+| ------------------ | --------- | ------------ | ------------------------------------------------ |
+| `name`             | `string`  | _(required)_ | Display name                                     |
+| `type`             | `string`  | _(required)_ | Session type                                     |
+| `config`           | `object`  | `{}`         | Type-specific configuration                      |
+| `persistent`       | `boolean` | `false`      | Whether sessions are persistent                  |
+| `folder_id`        | `string?` | `null`       | Parent folder ID                                 |
+| `terminal_options` | `object?` | `null`       | Per-connection terminal options                  |
+| `icon`             | `string?` | `null`       | Icon name                                        |
+| `icon_color`       | `string?` | `null`       | Icon colour: palette name or `#rrggbb` (0.33.0+) |
+| `icon_emoji`       | `string?` | `null`       | Single emoji shown instead of the icon (0.33.0+) |
 
 > **Note:** the request key is `type`, but the stored definition in the response
 > (and in `connections.list`) reports it as `session_type`. The params for
@@ -2141,16 +2149,18 @@ Update an existing connection's properties. Only provided fields are changed.
 
 **Response:** Same shape as `connections.create` response, with updated values.
 
-| Param              | Type       | Description                                                           |
-| ------------------ | ---------- | --------------------------------------------------------------------- |
-| `id`               | `string`   | _(required)_ Connection ID to update                                  |
-| `name`             | `string?`  | New display name                                                      |
-| `type`             | `string?`  | New session type                                                      |
-| `config`           | `object?`  | New configuration                                                     |
-| `persistent`       | `boolean?` | New persistent flag                                                   |
-| `folder_id`        | `value?`   | New folder ID. Explicit `null` moves to root; omit to leave unchanged |
-| `terminal_options` | `object?`  | New terminal options. Explicit `null` clears; omit to leave unchanged |
-| `icon`             | `value?`   | New icon name. Explicit `null` clears; omit to leave unchanged        |
+| Param              | Type       | Description                                                                      |
+| ------------------ | ---------- | -------------------------------------------------------------------------------- |
+| `id`               | `string`   | _(required)_ Connection ID to update                                             |
+| `name`             | `string?`  | New display name                                                                 |
+| `type`             | `string?`  | New session type                                                                 |
+| `config`           | `object?`  | New configuration                                                                |
+| `persistent`       | `boolean?` | New persistent flag                                                              |
+| `folder_id`        | `value?`   | New folder ID. Explicit `null` moves to root; omit to leave unchanged            |
+| `terminal_options` | `object?`  | New terminal options. Explicit `null` clears; omit to leave unchanged            |
+| `icon`             | `value?`   | New icon name. Explicit `null` clears; omit to leave unchanged                   |
+| `icon_color`       | `value?`   | New icon colour (0.33.0+). Explicit `null` clears; omit to leave unchanged       |
+| `icon_emoji`       | `value?`   | New single-emoji icon (0.33.0+). Explicit `null` clears; omit to leave unchanged |
 
 **Errors:**
 

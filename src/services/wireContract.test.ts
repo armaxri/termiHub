@@ -195,6 +195,7 @@ describe("wire contract: agent connect / definitions", () => {
       symlink: false,
     });
     expect(result.capabilities.fileCreateNew).toBe(true);
+    expect(result.capabilities.definitionIconStyle).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
       displayName: "Local Shell",
@@ -213,6 +214,7 @@ describe("wire contract: agent connect / definitions", () => {
       "availableSerialPorts",
       "availableShells",
       "connectionTypes",
+      "definitionIconStyle",
       "dockerAvailable",
       "embeddedServerActivity",
       "fileCreateNew",
@@ -231,6 +233,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.agentVersion).toBe("");
     // #4433: an older agent never gets an exclusive create.
     expect(result.capabilities.fileCreateNew).toBe(false);
+    // #5021: an older agent cannot store definition icon styles.
+    expect(result.capabilities.definitionIconStyle).toBe(false);
   });
 
   it("decodes saved definitions with null vs absent optionals", async () => {
@@ -244,6 +248,8 @@ describe("wire contract: agent connect / definitions", () => {
       "config",
       "folderId",
       "icon",
+      "iconColor",
+      "iconEmoji",
       "id",
       "name",
       "persistent",
@@ -254,6 +260,9 @@ describe("wire contract: agent connect / definitions", () => {
     expect(serial.sessionType).toBe("serial");
     expect(serial.config).toEqual({ port: "/dev/ttyUSB0", baudRate: 115200, dataBits: 8 });
     expect(serial.terminalOptions).toEqual({ fontSize: 12, cursorBlink: false });
+    // #5021: the definition's icon colour / emoji.
+    expect(serial.iconColor).toBe("teal");
+    expect(serial.iconEmoji).toBe("🚀");
 
     expect(keys(shell)).toEqual(["config", "folderId", "id", "name", "persistent", "sessionType"]);
     expect(shell.folderId).toBeNull();

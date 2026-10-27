@@ -13,6 +13,8 @@ sidebar/editor re-renders instead of sleeping.
 
 from __future__ import annotations
 
+import sys
+import uuid
 from typing import Any, Callable, Optional
 
 from ..bridge import BridgeError
@@ -293,6 +295,33 @@ class ConnectionsUi(HarnessMixin):
         self._click_editor_save(connect)
         self.require_connection(name)
         return name
+
+    def open_cwd_following_terminal(self) -> Optional[str]:
+        """Make sure a local terminal is open whose ``cd`` the file browser follows.
+
+        Off Windows every local shell is followed from its process directory
+        (#5009), so any terminal will do (``ensure_terminal``) and this returns
+        ``None``. On Windows the default shell is PowerShell, whose location is
+        not its process directory: the browser follows its ``cd`` only with
+        Command Marks on (#5017). So this opens and connects a local connection
+        with them on, switches to its tab once its prompt is up, and returns the
+        tab's id. Needs ``TerminalUi`` and ``TabsUi`` in the suite.
+        """
+        if not sys.platform.startswith("win"):
+            self.ensure_terminal()  # type: ignore[attr-defined]  # TerminalUi
+            return None
+        name = f"sys-cwd-follow-{uuid.uuid4().hex[:8]}"
+        self.create_local_connection(name, command_marks=True, connect=True)
+        tab = self.wait(
+            lambda: self.find_tab(name),  # type: ignore[attr-defined]  # TabsUi
+            what=f"the {name!r} terminal tab",
+        )
+        self.switch_to_tab(tab["id"])  # type: ignore[attr-defined]  # TabsUi
+        self.wait(
+            lambda: self.driver.read_terminal(tab["id"]).strip() != "",
+            what="the Command Marks PowerShell's prompt",
+        )
+        return tab["id"]
 
     def create_ssh_connection(
         self,

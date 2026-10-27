@@ -259,6 +259,8 @@ where
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
             };
             match update(params) {
                 Ok(mut rewritten) => {

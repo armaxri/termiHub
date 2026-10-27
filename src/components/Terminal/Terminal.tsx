@@ -60,10 +60,14 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
-import { isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
+import { fitIfSafe, isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
-import { holdSessionInput, lastSessionInputAt } from "@/services/sessionInputGate";
+import {
+  holdSessionInput,
+  lastSessionInputAt,
+  RESIZE_INPUT_HOLD_MAX_MS,
+} from "@/services/sessionInputGate";
 import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
@@ -222,7 +226,8 @@ function removeHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon) {
       screen.style.width = "";
     }
   }
-  fitAddon.fit();
+  // Never fit to the 2x1 floor of an unsized container (#2700, #5025).
+  if (isProposedFitSafe(fitAddon)) fitAddon.fit();
 }
 
 /**
@@ -473,8 +478,10 @@ export function Terminal({
         // terminal width.  This width is injected into the connection config
         // so the backend uses it for PTY sizing and the OSC 7 erase
         // calculation, which must know how many lines the echo occupies.
+        // Still parked, the fit would propose 2x1 and spawn the PTY at it
+        // (#5025): keep xterm's grid then; the first real fit resizes the PTY.
         try {
-          fitAddon.fit();
+          fitIfSafe(terminalElRef.current, fitAddon);
         } catch (err) {
           // Once per connect: fall back to the current xterm dimensions.
           frontendLog(
@@ -891,7 +898,10 @@ export function Terminal({
           // redrawn for it (#4958): its SIGWINCH / ConPTY repaint would
           // otherwise clobber input that arrived first.
           (sid) => {
-            const release = holdSessionInput(sid, "resize");
+            // Bounded by the resize itself, not the 1 s show bound: input
+            // that overtook a stalled resize invoke was echoed at the old
+            // width (#5025).
+            const release = holdSessionInput(sid, "resize", RESIZE_INPUT_HOLD_MAX_MS);
             return () => redrawWait.releaseAfterRedraw(release);
           }
         );
@@ -1227,9 +1237,10 @@ export function Terminal({
         // was still null, so the resize was never sent to the backend PTY.
         // The PTY's size is unknown at this point (backends spawn at their
         // own default), so lastSent starts at 0x0 and this sync fires once
-        // unless an onResize above already pushed the current dims.
+        // unless an onResize above already pushed the current dims. A parked
+        // container is not fitted (it would send 2x1, #5025).
         try {
-          fitAddon.fit();
+          fitIfSafe(terminalElRef.current, fitAddon);
         } catch (err) {
           // Once per connect; the ResizeObserver re-fits once the container is sized.
           frontendLog("terminal", `post-connect fit failed tab=${tabId}: ${errorMessage(err)}`);
@@ -1717,7 +1728,7 @@ export function Terminal({
 
     // Initial fit (may fail since element starts in parking)
     try {
-      fitAddon.fit();
+      fitIfSafe(el, fitAddon);
     } catch {
       // Expected: the element is still parked (zero-size) here, so this fails
       // on most mounts. The pre-connect fit and the ResizeObserver re-fit, and
@@ -1749,8 +1760,14 @@ export function Terminal({
         .then(() => document.fonts.ready)
         .then(() => {
           if (connectAbort.signal.aborted) return;
+          // Off screen the re-fit is owed to the next show, like a container
+          // change (#4863); a parked container is not fitted at all (#5025).
+          if (!isOnScreenRef.current) {
+            hiddenFitPendingRef.current = true;
+            return;
+          }
           try {
-            fitAddon.fit();
+            fitIfSafe(el, fitAddon);
           } catch (err) {
             // Once per terminal; the next ResizeObserver fit will catch it.
             frontendLog(
@@ -2207,7 +2224,7 @@ export function Terminal({
     } else if (fitAddon) {
       try {
         if (!horizontalScrollingRef.current) {
-          fitAddon.fit();
+          fitIfSafe(terminalElRef.current, fitAddon);
         }
       } catch (err) {
         // Once per settings change; a parked terminal re-fits when shown.
