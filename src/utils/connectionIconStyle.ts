@@ -9,6 +9,7 @@
  */
 import { adjustForContrast, relativeLuminance } from "@/themes/contrast";
 import type { ThemeColors } from "@/themes";
+import { z } from "zod";
 
 /** A named icon colour with one shade per background brightness. */
 export interface IconPaletteEntry {
@@ -106,3 +107,20 @@ export function isSingleEmoji(value: string): boolean {
   if (!value || value !== value.trim()) return false;
   return EMOJI_RE.test(value) && graphemeCount(value) === 1;
 }
+
+/**
+ * Zod schema for a stored icon colour. Optional fields must accept `null`
+ * (= unset) as well as `undefined` — the #2467 pitfall.
+ */
+export const iconColorSchema = z
+  .string()
+  .refine(isValidIconColor, { message: "Choose a palette color or a #rrggbb hex color." })
+  .nullable()
+  .optional();
+
+/** Zod schema for a stored icon emoji (exactly one emoji grapheme, or unset). */
+export const iconEmojiSchema = z
+  .string()
+  .refine(isSingleEmoji, { message: "Enter a single emoji." })
+  .nullable()
+  .optional();

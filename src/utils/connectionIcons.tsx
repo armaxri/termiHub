@@ -18,9 +18,8 @@ import { compareNames } from "@/utils/locale";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { isLocalConnectionConfig } from "@/utils/typedConnectionConfig";
 import { getBasename } from "@/utils/paths";
-import { getCurrentTheme } from "@/themes";
-import { useThemeRevision } from "@/hooks/useThemeRevision";
-import { iconSurfaces, isSingleEmoji, resolveIconColor } from "@/utils/connectionIconStyle";
+import { useIconSurfaces } from "@/hooks/useIconSurfaces";
+import { isSingleEmoji, resolveIconColor } from "@/utils/connectionIconStyle";
 
 /** Default icon by connection type (non-local or local without special shell) */
 const TYPE_ICONS: Record<string, LucideIcon> = {
@@ -121,8 +120,8 @@ export function ConnectionIcon({
   size = 16,
   className,
 }: ConnectionIconProps) {
-  // Re-render on theme switches so a palette colour picks the right shade.
-  useThemeRevision();
+  // Re-renders on theme switches so a palette colour picks the right shade.
+  const surfaces = useIconSurfaces();
 
   if (iconEmoji && isSingleEmoji(iconEmoji)) {
     return (
@@ -146,7 +145,7 @@ export function ConnectionIcon({
     );
   }
 
-  const color = resolveIconColor(iconColor, iconSurfaces(getCurrentTheme().colors));
+  const color = resolveIconColor(iconColor, surfaces);
   const colorProps = color ? { color, "data-icon-color": iconColor ?? undefined } : {};
   const custom = customIcon ? resolveIconByName(customIcon) : null;
   const { component: Comp, iconNode } = custom ?? getDefaultIconInfo(config);

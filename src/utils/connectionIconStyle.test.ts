@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   ICON_COLOR_PALETTE,
+  iconColorSchema,
+  iconEmojiSchema,
   iconSurfaces,
   isSingleEmoji,
   isValidIconColor,
@@ -73,5 +75,24 @@ describe("resolveIconColor", () => {
 
   it("keeps a custom hex that already contrasts", () => {
     expect(resolveIconColor("#ff8800", darkSurfaces)).toBe("#ff8800");
+  });
+});
+
+describe("zod schemas (#2467: optional fields accept null)", () => {
+  it("accept null and undefined as unset", () => {
+    for (const schema of [iconColorSchema, iconEmojiSchema]) {
+      expect(schema.safeParse(null).success).toBe(true);
+      expect(schema.safeParse(undefined).success).toBe(true);
+    }
+  });
+
+  it("validate set values", () => {
+    expect(iconColorSchema.safeParse("purple").success).toBe(true);
+    expect(iconColorSchema.safeParse("#12abEF").success).toBe(true);
+    expect(iconColorSchema.safeParse("notacolor").success).toBe(false);
+    expect(iconEmojiSchema.safeParse("🐧").success).toBe(true);
+    const bad = iconEmojiSchema.safeParse("hi");
+    expect(bad.success).toBe(false);
+    expect(bad.error?.issues[0].message).toBe("Enter a single emoji.");
   });
 });
