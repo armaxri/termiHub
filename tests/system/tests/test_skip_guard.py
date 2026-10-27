@@ -421,9 +421,10 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
     totals are unchanged."""
     allowlist = sg.load_allowlist()
     assert {lane: allowlist.budget(lane) for lane in sorted(allowlist.lanes)} == {
-        "bulk-linux": 60,
-        "bulk-linux-arm64": 21,
-        "bulk-macos": 215,
+        # +1 each for the Windows-only #5055 PSReadLine isolation grade.
+        "bulk-linux": 61,
+        "bulk-linux-arm64": 22,
+        "bulk-macos": 216,
         "bulk-windows": 226,
         "display-linux": 0,
         "display-linux-arm64": 0,
