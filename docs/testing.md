@@ -1241,9 +1241,7 @@ MT-NIN-23 raises each of two termiHub windows in turn **by its OS window
 handle** (`windowactivate` on X11, `SetForegroundWindow` on Windows, the
 Accessibility raise action on the window matched by frame on macOS) and proves
 with `osInputProbe`'s `hasFocus` that only that window's webview holds the
-focus before typing. It runs last in its suite: on Linux, a later
-`termihub spawn` no longer took the X focus once a second window had been
-opened and closed (#5043).
+focus before typing.
 
 MT-LOCAL-08 (macOS key repeat) posts its autorepeat key-downs at the HID tap,
 not to the PID (#4980). AppKit drops every autorepeat key-down posted with

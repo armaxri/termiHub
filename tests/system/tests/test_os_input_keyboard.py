@@ -340,48 +340,6 @@ class TestOsKeyboardGrades(
             self._wait_file(path, "xyz")
         assert "abc" not in helper.typed() and "xyz" not in helper.typed()
 
-    # ── MT-SHI-02: external spawn brings the window to the front ─────────────
-    def test_external_spawn_brings_window_to_front(self):
-        """MT-SHI-02: ``termiHub spawn`` while another app is in front raises the
-        termiHub window with a focused '(Spawned)' local shell."""
-        osi = self.os_input()
-        self.close_all_tabs()
-        with HelperWindow() as helper:
-            osi.allow_pid(helper.pid)
-            self.os_activate()
-            osi.activate(helper.pid)
-            self.wait(lambda: not self.has_focus(), what="termiHub to lose focus")
-            location = tempfile.mkdtemp(prefix="thub-spawn-")
-            self.app.run_cli(["spawn", "--location", location])
-            self.wait(lambda: osi.frontmost_pid() == self.app.pid, what="termiHub frontmost")
-            self.wait(self.has_focus, what="termiHub to take focus")
-            tab = self.wait(lambda: self.find_tab("Spawned"), what="the '(Spawned)' tab")
-            assert (self.active_tab() or {}).get("id") == tab["id"]
-
-    # ── MT-LOCAL-08: macOS key repeat ────────────────────────────────────────
-    @pytest.mark.skipif(sys.platform != "darwin", reason="press-and-hold is a macOS feature")
-    def test_macos_key_repeat_has_no_accent_picker(self):
-        """MT-LOCAL-08: holding a key in the terminal repeats it continuously; the
-        press-and-hold accent picker never swallows the repeats.
-
-        ``e`` is a key the accent picker offers variants for. The autorepeat
-        key-downs go through the HID tap (#4980): there, press-and-hold left
-        enabled swallows every repeat (a probe window on the same runner image
-        inserted one ``e`` out of 31), so this grades the app's
-        ``ApplePressAndHoldEnabled=false``, not just the event delivery.
-        """
-        osi = self.os_input()
-        tab_id = self._shell()
-        self._focus_terminal(tab_id, self.os_activate())
-        osi.type_text("echo KR_")
-        osi.key_repeat("e", 30)  # type: ignore[attr-defined]
-        osi.type_text("_\n")
-        got = self._wait_echo(tab_id, "KR")
-        assert len(got) >= 25 and set(got) == {"e"}, (
-            f"holding 'e' (1 key-down + 30 autorepeats) delivered {got!r}: the "
-            "press-and-hold accent picker swallowed the repeats"
-        )
-
     # ── MT-NIN-23: keys reach only the focused one of two windows ────────────
     def _second_window_shell(self) -> tuple[Driver, str]:
         """A second app window with a shell of its own; its driver and tab id."""
@@ -411,8 +369,6 @@ class TestOsKeyboardGrades(
             f"{osi._frontmost_window()}, PID {osi.frontmost_pid()})",  # noqa: SLF001
         )
 
-    # Last in the suite: on Linux, MT-SHI-02's spawn no longer takes the X focus
-    # once a second window has been opened and closed (#5043).
     def test_typing_goes_only_to_focused_window(self):
         """MT-NIN-23: with two windows open, each raised by its OS window handle in
         turn, typed keys reach only the shell of the focused window, and the
@@ -464,3 +420,45 @@ class TestOsKeyboardGrades(
             self.driver.resize_window(1280, 800)
             # Give the main window the OS focus back, as a user's click would.
             self.os_activate()
+
+    # ── MT-SHI-02: external spawn brings the window to the front ─────────────
+    def test_external_spawn_brings_window_to_front(self):
+        """MT-SHI-02: ``termiHub spawn`` while another app is in front raises the
+        termiHub window with a focused '(Spawned)' local shell."""
+        osi = self.os_input()
+        self.close_all_tabs()
+        with HelperWindow() as helper:
+            osi.allow_pid(helper.pid)
+            self.os_activate()
+            osi.activate(helper.pid)
+            self.wait(lambda: not self.has_focus(), what="termiHub to lose focus")
+            location = tempfile.mkdtemp(prefix="thub-spawn-")
+            self.app.run_cli(["spawn", "--location", location])
+            self.wait(lambda: osi.frontmost_pid() == self.app.pid, what="termiHub frontmost")
+            self.wait(self.has_focus, what="termiHub to take focus")
+            tab = self.wait(lambda: self.find_tab("Spawned"), what="the '(Spawned)' tab")
+            assert (self.active_tab() or {}).get("id") == tab["id"]
+
+    # ── MT-LOCAL-08: macOS key repeat ────────────────────────────────────────
+    @pytest.mark.skipif(sys.platform != "darwin", reason="press-and-hold is a macOS feature")
+    def test_macos_key_repeat_has_no_accent_picker(self):
+        """MT-LOCAL-08: holding a key in the terminal repeats it continuously; the
+        press-and-hold accent picker never swallows the repeats.
+
+        ``e`` is a key the accent picker offers variants for. The autorepeat
+        key-downs go through the HID tap (#4980): there, press-and-hold left
+        enabled swallows every repeat (a probe window on the same runner image
+        inserted one ``e`` out of 31), so this grades the app's
+        ``ApplePressAndHoldEnabled=false``, not just the event delivery.
+        """
+        osi = self.os_input()
+        tab_id = self._shell()
+        self._focus_terminal(tab_id, self.os_activate())
+        osi.type_text("echo KR_")
+        osi.key_repeat("e", 30)  # type: ignore[attr-defined]
+        osi.type_text("_\n")
+        got = self._wait_echo(tab_id, "KR")
+        assert len(got) >= 25 and set(got) == {"e"}, (
+            f"holding 'e' (1 key-down + 30 autorepeats) delivered {got!r}: the "
+            "press-and-hold accent picker swallowed the repeats"
+        )
