@@ -669,8 +669,32 @@ jobs:
         # via `-k "not (...)"` and run only in the `display-grades` job at
         # --reruns 0 (see the Linux step's comment). `-r aR` surfaces RERUN lines in
         # the summary, with each retried attempt's traceback (#4829). Not applied
-        # to per-PR CI.
-        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+        # to per-PR CI. The OS-input suites are excluded too and run in the next
+        # step on their own (#5031).
+        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades or test_os_input_keyboard or test_os_input_pointer or test_os_input_macos_app)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+
+      - name: Run the OS-input grades (macOS/Windows, desktop to themselves)
+        # The OS-input suites (test_os_input_*.py, #4935) inject GLOBAL input:
+        # SendInput / SetForegroundWindow on Windows, HID-tap pointer events on
+        # macOS. Every test app is pinned always-on-top at the same spot (#957),
+        # so under the bulk step's two xdist workers the other worker's app sat
+        # on the release point and took the foreground: the tab tear-off grade
+        # failed on every full-lane Windows run, naming another termiHub PID as
+        # frontmost, and the right-click and keyboard grades failed the same way
+        # (#5031). The bulk step above excludes them; here they run in their own
+        # session at `-n 1`, after the bulk session has exited, so no other test
+        # app is on the desktop. `-n 1` keeps the hang guard armed and, with one
+        # worker, the harness uses the uncontended deadlines.
+        #
+        # !cancelled(): runs even when the bulk step failed, so a bulk red never
+        # hides these grades. Same --reruns policy as the bulk step. Own skip
+        # guard lanes (`os-input-macos` / `os-input-windows`): the platform-only
+        # OS-input skips are counted here, not in the bulk baselines.
+        if: runner.os != 'Linux' && !cancelled()
+        shell: bash
+        env:
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'os-input-macos' || 'os-input-windows' }}
+        run: ./tests/system/pytest.sh -m integration tests/test_os_input_keyboard.py tests/test_os_input_pointer.py tests/test_os_input_macos_app.py -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
 
       - name: macOS Quit delivery probe (debug bundle)
         # The macOS release smoke quits the installed app by clicking its own

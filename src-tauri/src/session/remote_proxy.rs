@@ -1937,6 +1937,7 @@ mod tests {
                     output_flow: false,
                     host_file_attribute_ops: None,
                     file_create_new: false,
+                    definition_icon_style: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -2091,6 +2092,8 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 source_file: None,
             })
         }
@@ -2109,6 +2112,8 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 source_file: None,
             })
         }

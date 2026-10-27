@@ -1216,7 +1216,18 @@ Input that goes to whatever has focus (XTEST, `SendInput`, any pointer event)
 is **global**: it runs only on a GitHub runner or with
 `TERMIHUB_OS_INPUT_GLOBAL=1`, and every event is preceded by a check that the
 frontmost window belongs to the test instance or a harness-owned helper window.
-Without either the suites skip on a developer machine. A screen point comes
+Without either the suites skip on a developer machine.
+
+On the macOS and Windows legs of the nightly lane the three suites run in a
+step of their own at `-n 1`, after the bulk step's two-worker session has
+exited (#5031). Global input goes to whatever window is in front, and every test
+app is pinned always-on-top at the same spot (#957), so under two workers the
+other worker's app took the foreground: the tab tear-off released its tab onto
+that app and never tore off. The step has its own skip-guard lanes,
+`os-input-macos` and `os-input-windows`, and runs even when the bulk step
+failed. Linux needs no split: its bulk lane already runs one worker.
+
+A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
 need no guessing. That verb also returns `isTrusted`, which proves the input
@@ -1227,6 +1238,14 @@ came from the OS.
 | [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
 | [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                                                        |
 | [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                               |
+
+The dead-key grade (MT-NIN-15) is quarantined on Windows: on the hosted runner
+the Enter after the composed characters is sometimes lost (#5024). It still runs
+on Linux and macOS.
+
+On a missed calibration move, the Windows backend names the window under the
+pointer and lists every window on the desktop. That is how a DevTools window,
+opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
 picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
@@ -2890,7 +2909,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 
 - [ ] `test_guided_native_input.py` — MT-NIN-02 … 04 (file drops on a scaled display, across displays, under Wayland; MT-NIN-01/05/06 are automated, #4936), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-21 … 24 (Save-dialog focus, click into an inactive window, per-window typing, remote-desktop key release). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
 - [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
-- [ ] `test_guided_app_os.py` — MT-APP-05 (MobaXterm import), MT-SHI-01 and 03 (external spawn), MT-SHI-04 … 06 (one glance at the OS context menu; the artifacts are automated in `test_shell_integration_artifacts.py`, #4963). MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID (#4935); MT-FB-30/31 (large folder, drag out) are automated (#4936)
+- [ ] `test_guided_app_os.py` — MT-SHI-01 and 03 (external spawn), MT-SHI-04 … 06 (one glance at the OS context menu; the artifacts are automated in `test_shell_integration_artifacts.py`, #4963). MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID (#4935); MT-FB-30/31 (large folder, drag out) are automated (#4936); MT-APP-05 (MobaXterm import) is graded against a committed fixture in `test_mobaxterm_import.py` (#4960)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-21 (latency charts)
@@ -2934,7 +2953,7 @@ Guided-manual suites:
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-02..04/10..14/16/21..24                                                  | the native OS drag on a scaled display or under Wayland, IME composition, emoji picker or the focus step (harness asserts the saved name and the focus) |
 | [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..16                                                                  | answer the Touch ID / Windows Hello / polkit sheet                                                                                                      |
-| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-05, MT-SHI-01/03..06                                                     | the Dock / app-menu quit, an OS context menu (harness runs `termiHub spawn` through the instance's private rendezvous)                                  |
+| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-SHI-01/03..06                                                                | the Dock / app-menu quit, an OS context menu (harness runs `termiHub spawn` through the instance's private rendezvous)                                  |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..09/11..13                                                             | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                          |
 | [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-50..52, MT-NET-21                                        | watch the WSL tab open, the X window, the chart                                                                                                         |
@@ -3177,6 +3196,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-FB-05, 11, 18                                                                                       | `tests/system/tests/test_file_browser_local.py`                                                                                                                                          |
 | MT-FB-04, 14, 15, 21, 22, 32                                                                           | `tests/system/tests/test_external_app_handoffs.py` (`code` / `xdg-open` PATH shims, OS file-manager queries, #4932)                                                                      |
 | MT-APP-03                                                                                              | `tests/system/tests/test_plugin_discovery_https.py` (real HTTPS to GitHub, nightly; outages skip, a 404 fails, #4961)                                                                    |
+| MT-APP-05                                                                                              | `tests/system/tests/test_mobaxterm_import.py` (synthetic `tests/fixtures/mobaxterm/` ini + .mxtsessions; `APPDATA` redirected on Windows, #4960)                                         |
 | MT-NIN-07, 15, 20, 30, 31; MT-KB-01–04; MT-UI-26–28, 30; MT-CONN-01; MT-FB-20; MT-SHI-02; MT-WIN-01–04 | `tests/system/tests/test_os_input_*.py` (real OS input by PID, #4935)                                                                                                                    |
 | MT-FB-16, 23                                                                                           | `tests/system/tests/test_file_browser_local.py` (the VS Code actions track `vscodeAvailable`, #4928)                                                                                     |
 | MT-NIN-01, 05, 06; MT-UI-34; MT-FB-30, 31; MT-RD-10                                                    | `test_os_file_drop.py`, `test_os_file_drop_xdnd.py`, `test_vnc_file_transfer.py` (synthetic Tauri drop events; real X11 XDND, #4936)                                                     |

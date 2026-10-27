@@ -126,6 +126,7 @@ impl AgentRpcClient for FakeAgent {
             output_flow: false,
             host_file_attribute_ops: None,
             file_create_new: false,
+            definition_icon_style: false,
             agent_version: "0.8.1".to_string(),
         })
     }

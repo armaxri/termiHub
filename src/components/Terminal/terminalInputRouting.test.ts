@@ -101,6 +101,7 @@ const ROUTING_CASES: RoutingCase[] = [
     keys: { shellReserved: true, action: "copy" },
     expected: false,
     calls: ["copySelection"],
+    preventDefault: true,
   },
   {
     name: "a pending chord blocks the key",
@@ -113,10 +114,11 @@ const ROUTING_CASES: RoutingCase[] = [
     expected: false,
   },
   {
-    name: "copy copies the selection",
+    name: "copy copies the selection and consumes the key (no WebView2 inspect accelerator, #4993)",
     keys: { action: "copy" },
     expected: false,
     calls: ["copySelection"],
+    preventDefault: true,
   },
   {
     name: "paste pastes and prevents the native paste",
