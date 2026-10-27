@@ -914,7 +914,12 @@ fn apply_shell_integration(
     shell: &str,
     shell_integration: bool,
 ) -> (ShellCommand, Option<&'static str>) {
-    let setup = if shell_integration {
+    // PowerShell and cmd report their directory only through their startup
+    // arguments (PowerShell's location is not its process directory), and
+    // those are never typed or shown, so they always get them. The setting
+    // governs the typed bash/zsh hook (and fish's) for command marks (#5009).
+    let windows_shell = matches!(shell_kind(shell), "powershell" | "pwsh" | "cmd");
+    let setup = if shell_integration || windows_shell {
         osc7_setup_command(shell)
     } else {
         None
@@ -2529,11 +2534,24 @@ mod tests {
     }
 
     #[test]
-    fn shell_integration_disabled_leaves_command_untouched() {
+    fn shell_integration_off_types_nothing_into_posix_shells() {
+        for shell in ["/bin/bash", "zsh", "fish"] {
+            let (cmd, stdin) = apply_shell_integration(bare_command(shell), shell, false);
+            assert!(stdin.is_none(), "{shell}");
+            assert!(cmd.args.is_empty(), "{shell}");
+        }
+    }
+
+    /// PowerShell and cmd keep their startup-argument setup with the setting
+    /// off: it is how their directory is followed, and nothing is typed.
+    #[test]
+    fn windows_shells_keep_their_startup_argument_setup() {
         let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
         let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, false);
         assert!(stdin.is_none());
-        assert!(cmd.args.is_empty());
+        assert_eq!(cmd.args[1], "-Command");
+        let (cmd, _) = apply_shell_integration(bare_command("cmd"), "cmd", false);
+        assert_eq!(cmd.args[0], "/K");
     }
 
     #[test]
