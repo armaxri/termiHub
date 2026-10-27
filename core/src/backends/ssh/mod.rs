@@ -25,6 +25,7 @@ mod prompt_clock;
 // The outbound proxy dialer (#4867) lives in the feature-free
 // `backends::proxy_dial` (#4897); kept reachable here for the SSH backend.
 pub use crate::backends::proxy_dial as proxy;
+pub mod remote_cwd;
 pub mod remote_shell;
 pub mod session_pool;
 pub mod sftp;
@@ -619,29 +620,27 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "shellIntegration".to_string(),
-                            label: "Shell Integration".to_string(),
+                            label: "Command Marks (Shell Hook)".to_string(),
                             description: Some(
-                                "Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)"
+                                "Type a small hook into the remote shell for command marks (OSC 133)"
                                     .to_string(),
                             ),
                             help_text: Some(concat!(
-                                "When enabled, termiHub injects a small shell function at startup ",
-                                "that emits OSC 7 (current working directory) and OSC 133 (command ",
-                            "boundary) sequences on every prompt.\n\n",
-                                "This lets the file browser automatically follow the current directory ",
-                                "as you navigate in the shell, and enables jumping between prompts, ",
-                            "selecting or copying a command's output, and the success/failure ",
-                            "marker next to each finished command.\n\n",
-                                "termiHub first asks the host which login shell it runs: bash, ",
-                                "zsh and other POSIX shells get the POSIX setup, PowerShell gets ",
-                                "its own, and cmd.exe or an undetected shell gets nothing.\n\n",
-                                "On a POSIX host the setup is typed once the prompt is up and kept off ",
-                                "the screen; the MOTD and your startup output stay as they are. ",
-                                "Disable this if you manage your own shell integration.",
+                                "The file browser follows the remote shell's current directory ",
+                                "without this: termiHub reads it over a separate channel of the ",
+                                "same SSH connection, and nothing is typed into your shell. That ",
+                                "needs a Unix host with /proc (Linux) or lsof (macOS, BSD).\n\n",
+                                "Turn this on for command marks — jumping between prompts, ",
+                                "selecting or copying a command's output, and the success/failure ",
+                                "marker next to each finished command. termiHub first asks the ",
+                                "host which login shell it runs, then types a small hook into it ",
+                                "once the prompt is up and keeps it off the screen, but the hook ",
+                                "stays in the shell: it is in the shell's history, its functions ",
+                                "show up in `set`, and PROMPT_COMMAND / precmd and PS1 are extended.",
                             ).to_string()),
                             field_type: FieldType::Boolean,
                             required: false,
-                            default: Some(serde_json::json!(true)),
+                            default: Some(serde_json::json!(false)),
                             placeholder: None,
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
@@ -737,10 +736,11 @@ impl ConnectionType for Ssh {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
 
+        // Off unless asked for: the directory is followed without it (#5009).
         let shell_integration = settings
             .get("shellIntegration")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let config = parse_ssh_settings(&settings);
         let config = config.expand();

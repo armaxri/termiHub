@@ -24,8 +24,17 @@ use tokio_util::sync::CancellationToken;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
+use super::remote_cwd;
 use super::remote_shell::{self, RemoteShell, SetupGate};
 use crate::output::setup_echo::SetupEchoFilter;
+use crate::session::cwd_follow::CwdFollower;
+
+/// Remote reads open a channel and start a process on the host, so at most
+/// one per second (and only after a command ran).
+const REMOTE_CWD_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Consecutive unanswered reads after which a session stops trying.
+const REMOTE_CWD_MAX_FAILURES: u32 = 3;
 
 // ── Type aliases for complex closure types ─────────────────────────
 
@@ -523,6 +532,15 @@ impl SshConnector for RusshSshConnector {
         // cmd_tx:  write/resize/close closures → channel task
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<ChannelCmd>();
 
+        // Follow the interactive shell's directory over side exec channels on
+        // this connection, reported as OSC 7 — nothing is typed into the shell
+        // (#5009). Off for good once the shell reports it itself, or after a
+        // few reads the host cannot answer (Windows, no exec, no /proc+lsof).
+        let session = Arc::new(session);
+        let mut cwd_follow = CwdFollower::new(REMOTE_CWD_MIN_INTERVAL);
+        let mut cwd_failures = 0u32;
+        let (cwd_tx, mut cwd_rx) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
+
         let alive_task = alive.clone();
         let refused_task = shell_refused.clone();
         tokio::spawn(async move {
@@ -559,13 +577,29 @@ impl SshConnector for RusshSshConnector {
                 if !released.is_empty() && data_tx.send(released).is_err() {
                     break;
                 }
-                // Far in the future when neither the gate nor the filter is
-                // waiting (the branch is off then).
+                // A cwd read that has come due (#5009).
+                if cwd_failures < REMOTE_CWD_MAX_FAILURES
+                    && cwd_follow.start_read(std::time::Instant::now())
+                {
+                    let session = session.clone();
+                    let cwd_tx = cwd_tx.clone();
+                    tokio::spawn(async move {
+                        let _ = cwd_tx.send(remote_cwd::read_remote_cwd(&session).await);
+                    });
+                }
+                // Far in the future when neither the gate, the filter nor the
+                // cwd follower is waiting (the branch is off then).
                 let far = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+                let cwd_due = if cwd_failures < REMOTE_CWD_MAX_FAILURES {
+                    cwd_follow.next_read()
+                } else {
+                    None
+                };
                 let gate_check = gate
                     .next_check()
                     .unwrap_or(far)
-                    .min(echo_filter.next_deadline().unwrap_or(far));
+                    .min(echo_filter.next_deadline().unwrap_or(far))
+                    .min(cwd_due.unwrap_or(far));
                 tokio::select! {
                     biased;
                     // Outgoing commands (write / resize / close).
@@ -612,8 +646,14 @@ impl SshConnector for RusshSshConnector {
                                 gate.on_output(now, data);
                                 capture_early_output(&mut early_output, data);
                                 let shown = echo_filter.feed(data, now);
+                                cwd_follow.observe(&shown, now);
                                 if !shown.is_empty() && data_tx.send(shown).is_err() {
                                     break;
+                                }
+                                if let Some(report) = cwd_follow.take_pending() {
+                                    if data_tx.send(report).is_err() {
+                                        break;
+                                    }
                                 }
                             }
                             Some(ChannelMsg::ExtendedData { ref data, .. }) => {
@@ -631,8 +671,17 @@ impl SshConnector for RusshSshConnector {
                         }
                     }
                     // The gate's settle / retype / cap deadline (#4148, #4604).
+                    // A cwd read finished (#5009).
+                    Some(cwd) = cwd_rx.recv() => {
+                        cwd_failures = if cwd.is_some() { 0 } else { cwd_failures + 1 };
+                        if let Some(report) = cwd_follow.finish_read(cwd.as_deref()) {
+                            if data_tx.send(report).is_err() {
+                                break;
+                            }
+                        }
+                    }
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(gate_check)),
-                        if gate.is_holding() || echo_filter.is_active() => {}
+                        if gate.is_holding() || echo_filter.is_active() || cwd_due.is_some() => {}
                 }
             }
             // Flag a refusal *before* signalling EOF or clearing `alive`, so the
