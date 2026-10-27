@@ -188,9 +188,11 @@ pub fn build_shell_spawn(req: &SpawnRequest, home: &Path, shell: Option<&str>) -
     // (`shell`, `startingDirectory`, `shellIntegration`). A blank `shell` is
     // dropped rather than sent as an empty string, which the backend would treat
     // as a real (and unlaunchable) shell name instead of "use the default".
+    // The command-mark hook stays off: it is typed into the shell, so it is
+    // opt-in on a saved connection and never turned on by a spawn (#5042).
     let mut settings = json!({
         "startingDirectory": starting_directory,
-        "shellIntegration": true,
+        "shellIntegration": false,
     });
     if let Some(shell) = shell.map(str::trim).filter(|s| !s.is_empty()) {
         settings["shell"] = json!(shell);

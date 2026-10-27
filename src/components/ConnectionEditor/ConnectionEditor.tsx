@@ -110,6 +110,7 @@ import { validateProxyJump } from "@/utils/validateProxyJump";
 import { sshJumpHostOptions } from "@/utils/jumpHost";
 import { remoteAgentConfigToRecord, toRemoteAgentConfig } from "@/utils/remoteAgentConfig";
 import { AgentSettingsForm } from "./AgentSettingsForm";
+import { buildTypeDefaults } from "./connectionTypeDefaults";
 import { NamedCredentialPicker } from "./NamedCredentialPicker";
 import { findLeafByTab } from "@/utils/panelTree";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
@@ -178,55 +179,6 @@ function hasTerminalOptions(opts: TerminalOptions): boolean {
 /** Find schema for a type ID in the connection types registry. */
 function findSchema(connectionTypes: ConnectionTypeInfo[], typeId: string) {
   return connectionTypes.find((ct) => ct.typeId === typeId);
-}
-
-/** Build default settings for a type, applying app settings defaults. */
-function buildTypeDefaults(
-  typeInfo: ConnectionTypeInfo | undefined,
-  appSettings: {
-    defaultUser?: string;
-    defaultSshKeyPath?: string;
-    defaultShellIntegration?: boolean;
-    defaultX11Forwarding?: boolean;
-  }
-): Record<string, unknown> {
-  if (!typeInfo) return {};
-  const defaults = buildDefaults(typeInfo.schema);
-
-  // Apply app-level SSH defaults for types that have these fields
-  if (appSettings.defaultUser && defaults.username === undefined) {
-    // Check if schema has a username field
-    for (const group of typeInfo.schema.groups) {
-      if (group.fields.some((f) => f.key === "username")) {
-        defaults.username = appSettings.defaultUser;
-        break;
-      }
-    }
-  }
-  if (appSettings.defaultSshKeyPath) {
-    for (const group of typeInfo.schema.groups) {
-      if (group.fields.some((f) => f.key === "keyPath")) {
-        defaults.keyPath = appSettings.defaultSshKeyPath;
-        if (defaults.authMethod === "password") {
-          defaults.authMethod = "key";
-        }
-        break;
-      }
-    }
-  }
-  for (const group of typeInfo.schema.groups) {
-    if (group.fields.some((f) => f.key === "shellIntegration")) {
-      defaults.shellIntegration = appSettings.defaultShellIntegration ?? true;
-      break;
-    }
-  }
-  for (const group of typeInfo.schema.groups) {
-    if (group.fields.some((f) => f.key === "enableX11Forwarding")) {
-      defaults.enableX11Forwarding = appSettings.defaultX11Forwarding ?? true;
-      break;
-    }
-  }
-  return defaults;
 }
 
 /**

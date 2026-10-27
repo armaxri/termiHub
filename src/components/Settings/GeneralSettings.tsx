@@ -234,15 +234,15 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
       {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">SSH Defaults</h3>
+          <h3 className="settings-panel__category-title">New Connection Defaults</h3>
 
           {show("defaultShellIntegration") && (
             <SettingsField
-              label="Shell Integration by Default"
-              hint="Pre-enable Shell Integration (OSC 7 CWD tracking and OSC 133 command marks) for new SSH connections."
+              label="Command Marks (Shell Hook) by Default"
+              hint="Pre-enable command marks for new local, SSH and WSL connections. Off by default: the hook is typed into the shell, so nothing is typed unless you turn this on."
             >
               <Toggle
-                checked={settings.defaultShellIntegration ?? true}
+                checked={settings.defaultShellIntegration ?? false}
                 onCheckedChange={(checked) =>
                   onChange((prev) => ({ ...prev, defaultShellIntegration: checked }))
                 }
