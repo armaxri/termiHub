@@ -156,6 +156,12 @@ pub struct AgentDefinition {
     pub terminal_options: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Icon colour: a palette name or `#rrggbb` (#5021).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    /// Single-emoji icon (#5021).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_emoji: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
 }
