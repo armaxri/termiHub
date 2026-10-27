@@ -280,7 +280,16 @@ class ConnectionsUi(HarnessMixin):
                 lambda: self.driver.exists("field-shellIntegration"),
                 what="the Command Marks toggle",
             )
-            self.driver.click("field-shellIntegration")
+
+            def marks_on() -> bool:
+                # Re-click until the switch reports on: a click that lands while
+                # the form is still initialising is lost.
+                if self.driver.get_attribute("field-shellIntegration", "aria-checked") == "true":
+                    return True
+                self.driver.click("field-shellIntegration")
+                return False
+
+            self.wait(marks_on, what="the Command Marks toggle to switch on")
         self._click_editor_save(connect)
         self.require_connection(name)
         return name
