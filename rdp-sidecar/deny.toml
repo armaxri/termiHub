@@ -14,8 +14,9 @@
 # (with `cargo audit`, config rdp-sidecar/.cargo/audit.toml) on every push to
 # develop/main, DAILY over both branches and on dependency PRs (#4357), and in
 # code-quality.yml -> "RDP Sidecar Quality" on PRs touching the sidecar or what
-# it compiles from (core/, win-security/, the root Cargo.toml). The daily
-# `cargo update` chore (cargo-update-lockfile.yml) refreshes this lockfile too.
+# it compiles from (core/, win-security/, the root Cargo.toml). The weekly,
+# report-only Dependency Report (dependency-report.yml, #5011) lists its pending
+# updates; nothing refreshes this lockfile automatically.
 #
 # Four gates:
 #   - advisories: YANKED-crate gate + RUSTSEC vulnerabilities. A silently
