@@ -70,6 +70,9 @@ NEW_TERMINAL = "terminal-view-new-terminal"
 #: reach the terminal (#5009).
 SETUP_MARKERS = ("__termihub_osc7", "__termihub_si", "PROMPT_COMMAND", "precmd_functions")
 
+#: The OSC 7 cwd report that follows a prompt (#5009).
+OSC7 = "\x1b]7;file://"
+
 #: How long the stream must stay quiet before the start of a session counts as
 #: settled (no more setup or prompt bytes in flight).
 SETTLE_QUIET_MS = 1500.0
@@ -179,13 +182,15 @@ class TestSshConnectFlash(
         self.close_all_tabs()
         self.connect_ssh_password(unique_name("ssh-flash"))
         tab_id = self.active_tab_id()
+        # The cwd report (OSC 7) follows the first prompt: termiHub reads the
+        # remote directory over a side channel, nothing is typed (#5009).
         self.wait(
-            lambda: prompt_offsets(self.driver.read_terminal_output(tab_id)["output"]),
+            lambda: OSC7 in self.driver.read_terminal_output(tab_id)["output"],
             timeout=60.0,
-            what="the integration-marked (OSC 133;A) remote prompt",
+            what="the remote prompt's cwd report (OSC 7)",
         )
         raw = self.settled_output(tab_id, what="the SSH session start to settle")
-        first_prompt = prompt_offsets(raw)[0]
+        first_prompt = raw.index(OSC7)
         flashes = find_flashes(raw)
         leaked = markers_in(raw, SETUP_MARKERS)
         measure(
@@ -198,7 +203,7 @@ class TestSshConnectFlash(
         )
         assert not flashes, f"SSH connect wiped painted text: {flashes}\n{describe(raw)}"
         assert not leaked, (
-            f"setup text {leaked} reached the terminal (#5009; first OSC 133;A at "
+            f"setup text {leaked} reached the terminal (#5009; first OSC 7 at "
             f"{first_prompt}):\n{describe(raw)}"
         )
 
