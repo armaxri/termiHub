@@ -702,6 +702,35 @@ fn bash_osc7_command() -> &'static str {
     )
 }
 
+/// The `PROMPT_COMMAND` a bash gets from its environment to run the
+/// shell-integration setup in [`BASH_SETUP_ENV`] at its first prompt, so the
+/// setup is never typed (Git Bash on Windows, #5014): ConPTY gives no way to
+/// hide a typed line's echo.
+pub const BASH_SETUP_BOOTSTRAP: &str = r#"eval "$TERMIHUB_SI""#;
+
+/// The environment variable that carries [`bash_env_setup_script`].
+pub const BASH_SETUP_ENV: &str = "TERMIHUB_SI";
+
+/// The setup run by [`BASH_SETUP_BOOTSTRAP`]. It first removes every trace of
+/// the bootstrap — the variable, the bootstrap text in `PROMPT_COMMAND`
+/// (wherever the user's rc put theirs around it) and its export, so neither
+/// reaches child processes — then installs the hook of
+/// [`bash_osc7_command`] and runs it once for the prompt being drawn. It
+/// prints nothing of its own.
+///
+/// An rc that replaces `PROMPT_COMMAND` drops the bootstrap; the caller then
+/// falls back to typing [`bash_osc7_command`].
+#[must_use]
+pub fn bash_env_setup_script() -> &'static str {
+    concat!(
+        r#"unset TERMIHUB_SI; export -n PROMPT_COMMAND; "#,
+        r#"__th_b='eval "$TERMIHUB_SI"'; PROMPT_COMMAND=${PROMPT_COMMAND/"$__th_b"/}; "#,
+        r#"unset __th_b; PROMPT_COMMAND=${PROMPT_COMMAND#"${PROMPT_COMMAND%%[!; ]*}"}; "#,
+        osc7_bash_prompt_hook!(),
+        "; __termihub_osc7",
+    )
+}
+
 /// Shell-integration setup command for PowerShell (both `powershell.exe` and
 /// `pwsh`).
 ///
