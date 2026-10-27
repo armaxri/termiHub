@@ -37,10 +37,17 @@ CI = {"GITHUB_ACTIONS": "true"}
 
 
 # ── Synthetic Tauri drag-drop events ─────────────────────────────────────────
-def test_physical_point_scales_the_css_point_by_device_pixel_ratio():
+def test_physical_point_scales_the_css_point_by_device_pixel_ratio_on_windows():
     probe = {"rect": {"left": 10, "top": 20, "width": 100, "height": 50}, "devicePixelRatio": 2}
-    assert physical_point(probe) == {"x": 120.0, "y": 90.0}
-    assert physical_point(probe, 0.0, 1.0) == {"x": 20.0, "y": 140.0}
+    assert physical_point(probe, platform="win32") == {"x": 120.0, "y": 90.0}
+    assert physical_point(probe, 0.0, 1.0, platform="win32") == {"x": 20.0, "y": 140.0}
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_physical_point_stays_in_css_pixels_on_linux_and_macos(platform):
+    """#4997: GTK and AppKit report logical drop coordinates at any scale."""
+    probe = {"rect": {"left": 10, "top": 20, "width": 100, "height": 50}, "devicePixelRatio": 2}
+    assert physical_point(probe, platform=platform) == {"x": 60.0, "y": 45.0}
 
 
 def test_physical_point_defaults_to_scale_one():
