@@ -334,6 +334,7 @@ fn capabilities_round_trip_serialization() {
         output_flow: false,
         host_file_attribute_ops: None,
         file_create_new: false,
+        definition_icon_style: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -400,6 +401,31 @@ fn parse_definition_minimal() {
     assert_eq!(def.config, Value::Null);
 }
 
+/// #5021: a definition's snake_case icon colour / emoji reach the frontend as
+/// camelCase `iconColor` / `iconEmoji`; an older agent's reply without them
+/// leaves both keys off.
+#[test]
+fn parse_definition_icon_style_to_camel_case() {
+    let def = definition_from_wire(json!({
+        "id": "conn-1",
+        "name": "Prod",
+        "session_type": "shell",
+        "icon_color": "red",
+        "icon_emoji": "\u{1F680}"
+    }))
+    .unwrap();
+    assert_eq!(def.icon_color.as_deref(), Some("red"));
+    let v = serde_json::to_value(&def).unwrap();
+    assert_eq!(v["iconColor"], "red");
+    assert_eq!(v["iconEmoji"], "\u{1F680}");
+    assert!(v.get("icon_color").is_none());
+
+    let older =
+        definition_from_wire(json!({"id": "c", "name": "O", "session_type": "shell"})).unwrap();
+    let v = serde_json::to_value(&older).unwrap();
+    assert!(v.get("iconColor").is_none() && v.get("iconEmoji").is_none());
+}
+
 /// A reply missing a required field is dropped (the typed equivalent of the old
 /// parser returning `None`).
 #[test]
@@ -444,6 +470,8 @@ fn definition_info_source_file_omitted_when_none() {
         folder_id: None,
         terminal_options: None,
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         source_file: None,
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -462,6 +490,8 @@ fn definition_info_source_file_camel_case() {
         folder_id: None,
         terminal_options: None,
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         source_file: Some("/home/pi/team.json".to_string()),
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -507,6 +537,8 @@ fn definition_info_serializes_camel_case() {
         folder_id: Some("folder-1".to_string()),
         terminal_options: None,
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         source_file: None,
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -547,6 +579,8 @@ fn connections_data_serialization() {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         }],
         folders: vec![AgentFolderInfo {
@@ -914,6 +948,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             output_flow: false,
             host_file_attribute_ops: None,
             file_create_new: false,
+            definition_icon_style: false,
             agent_version: String::new(),
         }
         .into(),
@@ -1119,6 +1154,7 @@ pub(super) fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::J
             output_flow: false,
             host_file_attribute_ops: None,
             file_create_new: false,
+            definition_icon_style: false,
             agent_version: String::new(),
         }
         .into(),
@@ -1805,6 +1841,29 @@ fn capabilities_without_tool_streaming_default_to_false() {
     }))
     .unwrap();
     assert!(caps.tool_streaming);
+}
+
+/// #5021: an older agent's `initialize` has no `definitionIconStyle`, so the
+/// editor hides the icon colour / emoji controls for its definitions.
+#[test]
+fn capabilities_without_definition_icon_style_default_to_false() {
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+    }))
+    .unwrap();
+    assert!(!caps.definition_icon_style);
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "definitionIconStyle": true,
+    }))
+    .unwrap();
+    assert!(caps.definition_icon_style);
+    assert_eq!(
+        serde_json::to_value(&caps).unwrap()["definitionIconStyle"],
+        true
+    );
 }
 
 #[test]

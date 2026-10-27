@@ -113,6 +113,8 @@ fn to_store_definition(info: &AgentDefinitionInfo) -> StoreAgentDefinition {
         folder_id: info.folder_id.clone(),
         terminal_options: info.terminal_options.clone(),
         icon: info.icon.clone(),
+        icon_color: info.icon_color.clone(),
+        icon_emoji: info.icon_emoji.clone(),
         source_file: info.source_file.clone(),
     }
 }
