@@ -9,6 +9,11 @@ import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
 import { Button, RadioGroup, Spinner, StatusDot } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
+import {
+  capitalize,
+  describeDevelopBuild,
+  isDevelopUpdate,
+} from "@/components/UpdateNotification/developUpdate";
 import "./UpdateSettings.css";
 
 interface UpdateSettingsProps {
@@ -41,6 +46,8 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const skippedVersion = settings.updates?.skippedVersion;
 
   const isChecking = updateCheckState === "checking";
+  const isDevelop = isDevelopUpdate(updateInfo);
+  const notChecked = updateInfo?.channel === "none";
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -104,9 +111,16 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
             </div>
 
             <div className="update-settings__row">
-              <span className="update-settings__label">Latest version</span>
+              <span className="update-settings__label">
+                {isDevelop ? "Latest develop build" : "Latest version"}
+              </span>
               <span>
-                {updateCheckState === "available" && updateInfo?.available ? (
+                {updateCheckState === "available" && updateInfo?.available && isDevelop ? (
+                  <span className="update-settings__available" data-testid="update-latest-version">
+                    <StatusDot tone="notice" size="sm" className="update-indicator__dot" />
+                    {capitalize(describeDevelopBuild(updateInfo))}
+                  </span>
+                ) : updateCheckState === "available" && updateInfo?.available ? (
                   <span className="update-settings__available" data-testid="update-latest-version">
                     <StatusDot
                       tone={updateInfo.isSecurity ? "error" : "notice"}
@@ -118,6 +132,8 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                       <span className="update-settings__security-badge">Security</span>
                     )}
                   </span>
+                ) : updateCheckState === "up-to-date" && notChecked ? (
+                  <span data-testid="update-latest-version">Not checked for this build</span>
                 ) : updateCheckState === "up-to-date" ? (
                   <span className="update-settings__up-to-date" data-testid="update-latest-version">
                     Up to date
@@ -156,7 +172,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                 onClick={handleOpenDownloads}
                 data-testid="update-open-downloads"
               >
-                Open Downloads Page
+                {isDevelop ? "Open Download Page" : "Open Downloads Page"}
               </Button>
             )}
           </div>

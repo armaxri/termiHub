@@ -43,11 +43,11 @@ name: Scheduled Lanes (dispatch + heartbeat)
 on:
   schedule:
     - cron: "41 3 * * *" # wsl-live, integration-fixtures (instrumented)
-    - cron: "0 4 * * *" # cargo-update-lockfile, windows-ssh-host, security-audit
+    - cron: "0 4 * * *" # windows-ssh-host, security-audit
     - cron: "5 5 * * *" # system-integration (develop's YAML, #4449)
     - cron: "35 5 * * *" # plugin-sandbox-nightly (after system-integration's 05:05)
     - cron: "23 7 * * *" # coverage (after the fixtures + system-integration lcov)
-    - cron: "17 6 * * 1" # vendored-forks drift, branch-protection drift (Mondays)
+    - cron: "17 6 * * 1" # vendored-forks drift, branch-protection drift, dependency report (Mondays)
   push:
     branches: [develop]
   workflow_dispatch:

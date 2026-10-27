@@ -327,7 +327,7 @@ so **a new scheduled lane does not run on its cron until its file reaches
 `main`**. A schedule-only file that has never run is not even registered with
 GitHub, so `gh workflow run <file> --ref develop` answers 404 until its first run.
 After #4119 removed develop push triggers, the coverage ratchet, the cargo
-lockfile chore and most nightlies sat dark this way for days (#4277).
+lockfile chore (since removed, #5011) and most nightlies sat dark this way for days (#4277).
 
 How the lanes that grade `develop` fire anyway:
 
@@ -345,7 +345,7 @@ How the lanes that grade `develop` fire anyway:
   Wednesday for the test lanes (`system-integration.yml`,
   `integration-fixtures.yml`, `wsl-live.yml`, `windows-ssh-host.yml`,
   `plugin-sandbox-nightly.yml`) and daily for `security-audit.yml` (advisories
-  are time-based). The lanes that only act on `develop` (`cargo-update-lockfile.yml`,
+  are time-based). The lanes that only act on `develop` (`dependency-report.yml`,
   `vendored-forks.yml`, `branch-protection.yml`) and `coverage.yml` have no
   schedule of their own. Never check out `develop` on `schedule`
   (`ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}`): that pairs
@@ -570,8 +570,8 @@ by the Workflow Lint job and `./scripts/check.sh`) fails on an install-action st
 literal `tool:`, on a tool without an exact `@X.Y.Z`, on a version that differs from the pin file,
 on a tool missing from the pin file, and on a pin no workflow installs.
 
-**Bumping a cargo tool** is a manual chore PR (`ci: bump cargo-deny to X.Y.Z`); Dependabot has no
-ecosystem for these tools and does not open PRs for them. Do it alongside the periodic toolchain
+**Bumping a cargo tool** is a manual chore PR (`ci: bump cargo-deny to X.Y.Z`); no bot opens
+dependency-update PRs (maintainer decision, #5011). Do it alongside the periodic toolchain
 chore, or sooner when an advisory or a fix needs a newer tool:
 
 1. Check the release on crates.io (`cargo search <tool>` or the crate page) and its changelog for
@@ -586,10 +586,10 @@ chore, or sooner when an advisory or a fix needs a newer tool:
 
 ### GitHub Actions pins
 
-Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z` comment. Dependabot
-([`.github/dependabot.yml`](../.github/dependabot.yml)) opens a weekly grouped PR that bumps the
-SHAs and their comments together, in the workflows and in the composite actions under
-`.github/actions/`. Keep one SHA per action across the repo; `check-action-pins.mjs` (run by the
+Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z` comment. Pins are bumped
+by hand, SHA and comment together, in the workflows and in the composite actions under
+`.github/actions/`: no bot opens dependency-update PRs (maintainer decision, #5011; the Dependabot
+config that did was removed). Keep one SHA per action across the repo; `check-action-pins.mjs` (run by the
 Workflow Lint job and `./scripts/check.sh`) fails when the same action is pinned to two different
 SHAs or to a tag/branch instead of a SHA.
 

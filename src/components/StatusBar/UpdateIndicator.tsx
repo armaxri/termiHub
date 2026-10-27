@@ -1,6 +1,10 @@
 import { useAppStore } from "@/store/appStore";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { StatusDot } from "@/components/ui";
+import {
+  developUpdateSummary,
+  isDevelopUpdate,
+} from "@/components/UpdateNotification/developUpdate";
 
 /**
  * Version chip in the status bar.  Shows an amber or red dot when an update
@@ -28,9 +32,11 @@ export function UpdateIndicator() {
       className={`status-bar__item${hasUpdate ? " status-bar__item--interactive" : ""}`}
       onClick={hasUpdate ? handleClick : undefined}
       title={
-        hasUpdate
-          ? `termiHub v${updateInfo?.latestVersion} is available — click to view`
-          : `termiHub v${appInfo?.version ?? ""}`
+        hasUpdate && updateInfo && isDevelopUpdate(updateInfo)
+          ? `${developUpdateSummary(updateInfo)} — click to view`
+          : hasUpdate
+            ? `termiHub v${updateInfo?.latestVersion} is available — click to view`
+            : `termiHub v${appInfo?.version ?? ""}`
       }
       data-testid="update-indicator"
       style={{ cursor: hasUpdate ? "pointer" : "default" }}

@@ -69,6 +69,8 @@ impl Machine {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 source_file: None,
             })
             .unwrap();
@@ -224,6 +226,8 @@ fn round_trip_through_a_folder() {
             folder_id: Some("Work".to_string()),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         })
         .unwrap();

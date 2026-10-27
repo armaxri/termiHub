@@ -103,6 +103,8 @@ fn shared_ssh(
         folder_id: None,
         terminal_options: None,
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         source_file: None,
     };
     prepare_for_storage(connection, None, store).unwrap()

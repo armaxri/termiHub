@@ -192,6 +192,8 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
       <DiagnosticResultsTable
         columns={columns}
         rows={formattedRows}
+        rowTestIdPrefix="traceroute-hop"
+        cellTestIds
         footerTestId="traceroute-footer"
         footer={
           status === "completed"

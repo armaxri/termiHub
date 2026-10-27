@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react"
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
 import { z } from "zod";
+import { iconColorSchema, iconEmojiSchema } from "@/utils/connectionIconStyle";
 import {
   PlugZap,
   TerminalSquare,
@@ -262,6 +263,10 @@ interface TopLevelFormValues {
   persistent: boolean;
   /** Connection icon; `null` = no icon (mapped to `undefined` in payloads). */
   icon: string | null;
+  /** Icon colour: palette name or `#rrggbb`; `null` = default (#5008). */
+  iconColor: string | null;
+  /** Single-emoji icon; `null` = none. Validated by the zod schema (#5008). */
+  iconEmoji: string | null;
   terminalOptions: TerminalOptions;
   agentSettings: AgentSettings;
 }
@@ -412,6 +417,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       sourceFile: existingConnection?.sourceFile ?? null,
       persistent: existingAgentDef?.persistent ?? false,
       icon: existingAgentDef?.icon ?? existingConnection?.icon ?? null,
+      iconColor: existingConnection?.iconColor ?? null,
+      iconEmoji: existingConnection?.iconEmoji ?? null,
       terminalOptions:
         existingAgentDef?.terminalOptions ?? existingConnection?.terminalOptions ?? {},
       agentSettings: existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS,
@@ -445,6 +452,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // through `onChange`, and the values survive those tabs unmounting on a
   // category switch (RHF keeps unregistered-on-unmount values by default).
   const { field: iconField } = useController({ name: "icon", control: topLevelControl });
+  const { field: iconColorField } = useController({ name: "iconColor", control: topLevelControl });
+  const { field: iconEmojiField } = useController({ name: "iconEmoji", control: topLevelControl });
   const { field: terminalOptionsField } = useController({
     name: "terminalOptions",
     control: topLevelControl,
@@ -454,6 +463,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     control: topLevelControl,
   });
   const icon: string | undefined = iconField.value ?? undefined;
+  const iconColor: string | undefined = iconColorField.value ?? undefined;
+  const iconEmoji: string | undefined = iconEmojiField.value ?? undefined;
   const terminalOptions: TerminalOptions = terminalOptionsField.value;
   const agentSettings: AgentSettings = agentSettingsField.value;
 
@@ -618,6 +629,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   });
   const initialTerminalOptions = useRef<TerminalOptions>(initialTopLevel.terminalOptions);
   const initialIcon = useRef<string | undefined>(initialTopLevel.icon ?? undefined);
+  const initialIconColor = useRef<string | undefined>(initialTopLevel.iconColor ?? undefined);
+  const initialIconEmoji = useRef<string | undefined>(initialTopLevel.iconEmoji ?? undefined);
   const initialPersistent = useRef(initialTopLevel.persistent);
   const initialAgentSettings = useRef<AgentSettings>(initialTopLevel.agentSettings);
   const initialSourceFile = useRef(initialTopLevel.sourceFile);
@@ -710,6 +723,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       JSON.stringify(normalizedConnSettings) !== JSON.stringify(initialConnSettings.current) ||
       JSON.stringify(terminalOptions) !== JSON.stringify(initialTerminalOptions.current) ||
       icon !== initialIcon.current ||
+      iconColor !== initialIconColor.current ||
+      iconEmoji !== initialIconEmoji.current ||
       persistent !== initialPersistent.current ||
       JSON.stringify(agentSettings) !== JSON.stringify(initialAgentSettings.current) ||
       sourceFile !== initialSourceFile.current ||
@@ -722,6 +737,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     connSettings,
     terminalOptions,
     icon,
+    iconColor,
+    iconEmoji,
     persistent,
     agentSettings,
     sourceFile,
@@ -752,6 +769,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           sourceFile: z.string().nullable(),
           persistent: z.boolean(),
           icon: z.string().nullable(),
+          // Optional fields accept `null` (= unset) — see #2467.
+          iconColor: iconColorSchema,
+          iconEmoji: iconEmojiSchema,
           terminalOptions: z.custom<TerminalOptions>(),
           agentSettings: z.custom<AgentSettings>(),
         })
@@ -826,9 +846,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     sourceFile,
     persistent,
     icon: icon ?? null,
+    iconColor: iconColor ?? null,
+    iconEmoji: iconEmoji ?? null,
     terminalOptions,
     agentSettings,
   });
+  const iconEmojiError = topLevelValidity.errors["iconEmoji"] ?? null;
 
   // The blank-name issue disables Save (validity is false) without surfacing
   // inline text: its sentinel message is filtered out here.
@@ -1111,6 +1134,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         folderId,
         terminalOptions: opts,
         icon,
+        iconColor,
+        iconEmoji,
         sourceFile,
       };
       // A changed storage file is saved and moved by one backend command, so the
@@ -1130,6 +1155,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         folderId,
         terminalOptions: opts,
         icon,
+        iconColor,
+        iconEmoji,
         sourceFile,
       };
       addConnection(saved);
@@ -1146,6 +1173,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     agentSettings,
     terminalOptions,
     icon,
+    iconColor,
+    iconEmoji,
     sourceFile,
     existingConnection,
     existingAgent,
@@ -1615,6 +1644,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       sourceFile,
       persistent,
       icon: icon ?? null,
+      iconColor: iconColor ?? null,
+      iconEmoji: iconEmoji ?? null,
       terminalOptions,
       agentSettings,
     });
@@ -1985,6 +2016,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             onColorChange={(color) => terminalOptionsField.onChange({ ...terminalOptions, color })}
             icon={icon}
             onIconChange={(next) => iconField.onChange(next ?? null)}
+            iconStyle={
+              isAgentDefinitionMode
+                ? undefined
+                : {
+                    iconColor,
+                    onIconColorChange: (next) => iconColorField.onChange(next ?? null),
+                    iconEmoji,
+                    onIconEmojiChange: (next) => iconEmojiField.onChange(next ?? null),
+                    iconEmojiError,
+                  }
+            }
           />
         );
       case "agent":

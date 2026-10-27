@@ -4,9 +4,9 @@
 // Every `uses: owner/repo[/path]@ref` in a workflow or composite action must
 // pin a full 40-hex commit SHA (CI-004 / WA-CI-034: a tag or branch can be
 // moved under us), carry a `# <version>` comment saying what that SHA is, and
-// use the same SHA as every other use of that action. Dependabot
-// (.github/dependabot.yml) bumps the SHAs and their comments together; this
-// check catches the drift it cannot — a hand-edited or copy-pasted older pin,
+// use the same SHA as every other use of that action. Pins are bumped by hand
+// (no update bot: maintainer decision, #5011), SHA and comment together; this
+// check catches the drift that leaves behind — a hand-edited or copy-pasted older pin,
 // like the 7 upload-artifact v4.6.2 uses that sat next to 21 v7.0.1 uses
 // before #4360. Local (`./…`) and `docker://` uses are not pins and are skipped.
 //

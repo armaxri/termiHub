@@ -1935,6 +1935,8 @@ mod tests {
         SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: id.to_string(),
             name: "SSH".to_string(),
             config: ConnectionConfig {
@@ -1991,6 +1993,8 @@ mod tests {
         SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: id.to_string(),
             name: "Serial".to_string(),
             config: ConnectionConfig {
@@ -2007,6 +2011,8 @@ mod tests {
         SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: id.to_string(),
             name: "Local".to_string(),
             config: ConnectionConfig {
@@ -2448,6 +2454,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: format!("conn-{}", name),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -2504,6 +2512,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -2555,6 +2565,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -2601,6 +2613,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -2658,6 +2672,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -2705,6 +2721,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -2762,6 +2780,8 @@ mod tests {
         let make_conn = |name: &str| SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -3069,6 +3089,8 @@ mod tests {
         SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: match folder {
                 Some(f) => format!("{f}/{name}"),
                 None => name.to_string(),

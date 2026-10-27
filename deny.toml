@@ -22,10 +22,9 @@
 # database changes, not the tree), and on a PR only when that PR changes a
 # dependency manifest/lockfile or this gate's config (#3326). So a newly yanked
 # TRANSITIVE crate surfaces on the post-merge/daily lane, not on every open PR.
-# It is auto-mitigated by the daily `cargo update` chore
-# (.github/workflows/cargo-update-lockfile.yml, daily since #3291, which also
-# refreshes rdp-sidecar/Cargo.lock) and, when one slips through, fixed via the
-# runbook: docs/ci-yanked-crate-runbook.md.
+# The weekly report-only Dependency Report (.github/workflows/dependency-report.yml,
+# #5011) also lists pending lockfile updates for both lockfiles; no job updates
+# them automatically. Fix path: docs/ci-yanked-crate-runbook.md.
 
 [advisories]
 # A yanked crate in the lockfile fails CI. This is the headline gate: it is how

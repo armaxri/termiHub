@@ -4,7 +4,9 @@
 //! "Time Exceeded" replies. ICMP response bytes are validated with
 //! [`pnet_packet`] to filter out unrelated ICMP packets before recording a hop.
 //! On platforms where raw sockets require elevated privileges the function
-//! returns [`NetworkError::InsufficientPrivileges`].
+//! returns [`NetworkError::InsufficientPrivileges`] — except on Linux, where an
+//! unprivileged process falls back to `IP_RECVERR` on the UDP probe socket
+//! (the `recverr` submodule, #4964), so no root or capability is needed.
 
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, SocketAddr};
@@ -19,6 +21,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::error::NetworkError;
 use super::types::TracerouteHop;
+
+#[cfg(target_os = "linux")]
+mod recverr;
 
 const PROBE_TIMEOUT_MS: u64 = 3000;
 /// Base UDP destination port. Each probe uses `UDP_DEST_PORT + probe_index` so
@@ -147,12 +152,19 @@ fn run_trace(
     } else {
         Protocol::ICMPV4
     };
-    let recv_sock = Socket::new(domain, Type::RAW, Some(recv_proto)).map_err(|e| {
-        NetworkError::InsufficientPrivileges {
-            operation: "traceroute".into(),
-            reason: e.to_string(),
+    let recv_sock = match Socket::new(domain, Type::RAW, Some(recv_proto)) {
+        Ok(sock) => sock,
+        // Linux: no CAP_NET_RAW — trace unprivileged via IP_RECVERR (#4964).
+        #[cfg(target_os = "linux")]
+        Err(_) => return recverr::run_trace(dest_ip, max_hops, on_hop, cancel),
+        #[cfg(not(target_os = "linux"))]
+        Err(e) => {
+            return Err(NetworkError::InsufficientPrivileges {
+                operation: "traceroute".into(),
+                reason: e.to_string(),
+            })
         }
-    })?;
+    };
     // Send socket for UDP probes.
     let send_sock =
         Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).map_err(NetworkError::Io)?;

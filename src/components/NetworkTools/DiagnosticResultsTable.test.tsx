@@ -48,6 +48,20 @@ describe("DiagnosticResultsTable — test-id plumbing", () => {
     expect(container.querySelector('[data-testid="port-scanner-result-2"]')).toBeNull();
   });
 
+  it("tags each cell with `${rowTestIdPrefix}-${index}-${column}` when opted in (#4964)", () => {
+    render(
+      <DiagnosticResultsTable columns={COLUMNS} rows={ROWS} rowTestIdPrefix="hop" cellTestIds />
+    );
+    const cell = (id: string) => container.querySelector(`[data-testid="${id}"]`)?.textContent;
+    expect(cell("hop-0-port")).toBe("22");
+    expect(cell("hop-1-state")).toBe("closed");
+  });
+
+  it("leaves cells untagged without `cellTestIds`, so row-prefix counts stay exact", () => {
+    render(<DiagnosticResultsTable columns={COLUMNS} rows={ROWS} rowTestIdPrefix="dns-result" />);
+    expect(container.querySelectorAll('[data-testid^="dns-result-"]').length).toBe(2);
+  });
+
   it("tags the footer with `footerTestId` when given", () => {
     render(
       <DiagnosticResultsTable

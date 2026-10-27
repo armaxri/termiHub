@@ -1174,6 +1174,28 @@ front-window check with `TERMIHUB_ALLOW_FINDER_QUERY=1` (it triggers the
 Automation permission prompt). The Windows Setup SSH Agent case raises a UAC
 prompt, so outside CI it runs only with `TERMIHUB_ALLOW_ELEVATION_PROMPT=1`.
 
+### Network-dependent grades (#4961)
+
+[`test_plugin_discovery_https.py`](../tests/system/tests/test_plugin_discovery_https.py)
+(MT-APP-03) is the one integration suite that needs the internet: the app
+fetches the real plugin index from GitHub and installs a pinned package,
+`tests/fixtures/plugins/clock-widget-1.0.0.termihub-plugin` at the commit that
+added it, by its raw URL and SHA-256, into the instance's isolated config dir.
+It runs in the nightly lane on every OS (the `integration` marker; per-PR CI
+never reaches the network).
+
+Before the app fetches anything, the test probes the same URL from the harness
+([`termihub_harness/https_probe.py`](../tests/system/termihub_harness/https_probe.py)).
+No answer (DNS, TLS, connect or timeout failure) or an HTTP 5xx/429 is a GitHub
+outage: the test skips with a `network unavailable: cannot reach …` reason,
+the one skip `skip-allowlist.json` admits for this module. Any other answer is
+graded, so a 404 (a deleted index, a wrong default URL) fails the lane.
+
+The default index URL points at `main`. Until `main` ships plugin discovery
+(the test asks `main` for its `plugin_index.rs`), a develop or release-candidate
+grade loads the same index path from `develop` through the custom index URL
+setting; once `main` ships it, the default index must load from `main`.
+
 ### Real OS input grades (#4935)
 
 The bridge drives the app with synthetic DOM events, which never pass through
@@ -1851,9 +1873,23 @@ cargo test -p termihub-core --features rdp-sidecar --test rdp -- --test-threads=
 docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
 bash tests/docker/ftp-server/smoke-test.sh   # lists /pub over plain/explicit/implicit FTPS
 
+# Multi-hop traceroute chain (requires traceroute profile, Linux host, #4964).
+# router1 proxies ARP for <net A>.200, so `traceroute -n <net A>.200` from the
+# host shows router1, router2, then the target, with no host route or root.
+# The harness exports this checkout's subnets (TERMIHUB_TEST_TRACE_NET_A/B/C).
+docker compose -f tests/docker/docker-compose.yml --profile traceroute up -d --build
+
 # Stop all containers
 docker compose -f tests/docker/docker-compose.yml --profile all down
 ```
+
+The Traceroute tool needs no privilege on Linux: without `CAP_NET_RAW` the core
+falls back to `IP_RECVERR` on its UDP probe socket (the `tracepath` method), so
+the integration lane grades MT-NET-16 as a normal user. The chain's three /24
+networks live in `10.231.0.0/16`, three per checkout (`dev_local.traceroute_networks()`
+and `scripts/internal/dev-local-env.sh`), so parallel checkouts never overlap. Off
+Linux the suite skips: Docker Desktop and Podman machines keep the bridge inside
+a VM, so the host cannot route to it.
 
 > **Podman users:** The test system scripts auto-detect Podman when Docker is not available.
 > You can also force a specific runtime: `CONTAINER_CMD=podman ./scripts/test-system-linux.sh`
@@ -2493,7 +2529,7 @@ Follow-up issues of the #3681 triage: #3682 (serial socat echo fixture — #859 
 | MT-NET-13       | Port Scanner — large-range warning                                                      | Automated (already)  | src/components/NetworkTools/PortScannerPanel.large-scan.test.tsx (now a confirm modal)                                              |
 | MT-NET-14       | DNS Lookup — A record resolution                                                        | Automated (already)  | test_network_tools_live.py::test_dns_resolves_localhost                                                                             |
 | MT-NET-15       | DNS Lookup — multiple record types                                                      | Automated (this PR)  | `test_network_tools_live.py::test_dns_record_types_against_stub` + core `dns.rs` stub tests (#3692)                                 |
-| MT-NET-16       | Traceroute — hops stream in                                                             | Guided-manual pytest | test_guided_shells_and_tools.py::test_traceroute_hops_stream_in                                                                     |
+| MT-NET-16       | Traceroute — hops stream in                                                             | Automated (#4964)    | test_network_tools_traceroute.py::test_traceroute_hops_stream_in_and_complete (two-router Docker chain, Linux)                      |
 | MT-NET-17       | HTTP Monitor — periodic checks and chart                                                | Automated (already)  | test_network_tools_live.py::test_http_monitor_check_and_chart                                                                       |
 | MT-NET-18       | HTTP Monitor — sidebar monitor row                                                      | Automated (already)  | test_network_tools_live.py::test_http_monitor_shows_in_sidebar                                                                      |
 | MT-NET-19       | Remote agent — network.open_ports via JSON-RPC                                          | Automated (this PR)  | `test_network_tools_agent_live.py` + agent `live_agent_tcp_tool_run_open_ports_*` (#3692)                                           |
@@ -2682,7 +2718,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Terminal output stays in order under scrolling output (#1849)** — Automated + Release gate. src/components/Terminal/Terminal.output-repaint.test.tsx 'forces a full-viewport refresh after appended output'; src/components/Terminal/Terminal.output-repaint.test.tsx 'still refreshes when the user has scrolled up (stale rows stay correct)'; tests/system/tests/test_windows_shells.py::test_cmd_output_paints_in_order (MT-LOCAL-30, live on Windows, #4931)
 - **Terminal inline images render (SIXEL / iTerm2, PROD-057, PR #3442)** — Automated + Release gate. tests/system/tests/test_terminal_inline_images.py::TestTerminalInlineImages::test_sixel_and_iterm2_images_are_stored_without_escape_noise / test_setting_off_stores_nothing_and_prints_no_noise / test_reconnect_keeps_the_text_around_images; src/components/Terminal/inlineImages.real-addon.test.ts (real addon: SIXEL + iTerm2 stored, no escape noise, setting off stores none, reconnect snapshot keeps text only); src/components/Terminal/Terminal.inline-images.test.tsx 'loads the image addon by default with the conservative memory limits' / 'toggles the addon live when the setting changes'; … · gate: MT-UI-44
 - **Shipped CSP: no violations in the editor, terminal and plugin UI (WA-CI-035, #3627)** — Automated + Tracked. src/security/cspConfig.test.ts 'carries only allow-listed directives and sources'; src/security/cspConfig.test.ts 'allows exactly this platform's plugin origin in script-src (#2266/#3627)'; …; tests/system/tests/test_csp.py (integration lane on Linux, macOS and Windows: Shiki-highlighted editor, SIXEL image, clock-widget JS plugin, each with zero violations; all 7 tests, both SIXEL paths included, green on all three OSes in the develop nightly 38881548571 (Linux job 116909259411, Windows 116909259340) and develop run 38865336234, #4076. The SIXEL image is printed twice: from a local shell and over a loopback Telnet session (#4076). On Windows the local shell runs on the sideloaded ConPTY host, because the inbox ConPTY drops a SIXEL DCS, #4121/#4129); scripts/internal/release-smoke-app-lifecycle.sh / .ps1 in the release install smokes (the shipped app's log holds no `[csp] violation:` line, which the CSP reporter logs at WARN, #4933; was MT-APP-02)
-- **Browse Plugins and Install from URL (PROD-048, #3715)** — Automated + Release gate. src-tauri/src/commands/plugin_fetch_tests.rs::strict_fetch_refuses_plain_http_before_any_request; src-tauri/src/commands/plugin_fetch_tests.rs::download_verified_stores_only_a_matching_file; … · gate: MT-APP-03
+- **Browse Plugins and Install from URL (PROD-048, #3715)** — Automated. src-tauri/src/commands/plugin_fetch_tests.rs::strict_fetch_refuses_plain_http_before_any_request; src-tauri/src/commands/plugin_fetch_tests.rs::download_verified_stores_only_a_matching_file; …; tests/system/tests/test_plugin_discovery_https.py (nightly integration lane on every OS, real HTTPS to GitHub: the default index loads and lists its entries, and Install from URL with a pinned package + SHA-256 shows the untrusted banner and installs only after confirming; was MT-APP-03, #4961)
 - **Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)** — Automated + Release gate. src/components/Terminal/Terminal.native-paste.test.tsx 'does NOT let a native textarea paste reach onData/sendInput'; src/components/Terminal/Terminal.native-paste.test.tsx 'still forwards ordinary typed input via onData'; … · gate: MT-NIN-30
 - **Connections sidebar renders fully on first paint (#1828)** — Automated + Release gate. src/hooks/useSectionResize.test.tsx 'never yields a hole or short array on the render where the count grows'; src/hooks/useSectionResize.test.tsx 'returns one flex value per expanded section on the initial render'; … · gate: MT-UI-45
 - **Agent binary SHA-256 checksums (release dry-run, #1350)** — Automated. scripts/internal/check-script-headless.sh 'checksum sidecar' section (Shell Script Quality job: runs build-agents.sh's own write_checksum / verify_checksum_sidecars on a dummy binary, checks the format and sha256sum -c, #4011); .github/workflows/code-quality.yml cmd-scripts-windows (the same for build-agents.cmd's PowerShell line, #4032); .github/workflows/release.yml 'Verify expected asset set and release notes' (every agent asset + .sha256 + .sig must exist); .github/workflows/release.yml agent-binaries-\* jobs (sha256sum -c on each sidecar before signing); …
@@ -2854,10 +2890,10 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 
 - [ ] `test_guided_native_input.py` — MT-NIN-02 … 04 (file drops on a scaled display, across displays, under Wayland; MT-NIN-01/05/06 are automated, #4936), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-21 … 24 (Save-dialog focus, click into an inactive window, per-window typing, remote-desktop key release). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
 - [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
-- [ ] `test_guided_app_os.py` — MT-APP-03/05 (plugin install over HTTPS, MobaXterm import), MT-SHI-01 and 03 (external spawn), MT-SHI-04 … 06 (one glance at the OS context menu; the artifacts are automated in `test_shell_integration_artifacts.py`, #4963). MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID (#4935); MT-FB-30/31 (large folder, drag out) are automated (#4936)
+- [ ] `test_guided_app_os.py` — MT-APP-05 (MobaXterm import), MT-SHI-01 and 03 (external spawn), MT-SHI-04 … 06 (one glance at the OS context menu; the artifacts are automated in `test_shell_integration_artifacts.py`, #4963). MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID (#4935); MT-FB-30/31 (large folder, drag out) are automated (#4936)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
-- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-16/21 (traceroute, latency charts)
+- [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-50/51/52 (X11 on the real desktop per OS), MT-NET-21 (latency charts)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
@@ -2898,10 +2934,10 @@ Guided-manual suites:
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py)         | MT-NIN-02..04/10..14/16/21..24                                                  | the native OS drag on a scaled display or under Wayland, IME composition, emoji picker or the focus step (harness asserts the saved name and the focus) |
 | [`test_guided_credentials.py`](../tests/system/tests/test_guided_credentials.py)           | MT-CRED-11..16                                                                  | answer the Touch ID / Windows Hello / polkit sheet                                                                                                      |
-| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-03/05, MT-SHI-01/03..06                                                  | the Dock / app-menu quit, an OS context menu (harness runs `termiHub spawn` through the instance's private rendezvous)                                  |
+| [`test_guided_app_os.py`](../tests/system/tests/test_guided_app_os.py)                     | MT-APP-05, MT-SHI-01/03..06                                                     | the Dock / app-menu quit, an OS context menu (harness runs `termiHub spawn` through the instance's private rendezvous)                                  |
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..09/11..13                                                             | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                                |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                          |
-| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-50..52, MT-NET-16/21                                     | watch the WSL tab open, the X window, the traceroute / chart                                                                                            |
+| [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-50..52, MT-NET-21                                        | watch the WSL tab open, the X window, the chart                                                                                                         |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                           |
 
 ### Output-stream flash and flood grades (#4931)
@@ -3140,6 +3176,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-FB-06, 17                                                                                           | _manual_ (serial not bridge-selectable; SFTP fault injection)                                                                                                                            |
 | MT-FB-05, 11, 18                                                                                       | `tests/system/tests/test_file_browser_local.py`                                                                                                                                          |
 | MT-FB-04, 14, 15, 21, 22, 32                                                                           | `tests/system/tests/test_external_app_handoffs.py` (`code` / `xdg-open` PATH shims, OS file-manager queries, #4932)                                                                      |
+| MT-APP-03                                                                                              | `tests/system/tests/test_plugin_discovery_https.py` (real HTTPS to GitHub, nightly; outages skip, a 404 fails, #4961)                                                                    |
 | MT-NIN-07, 15, 20, 30, 31; MT-KB-01–04; MT-UI-26–28, 30; MT-CONN-01; MT-FB-20; MT-SHI-02; MT-WIN-01–04 | `tests/system/tests/test_os_input_*.py` (real OS input by PID, #4935)                                                                                                                    |
 | MT-FB-16, 23                                                                                           | `tests/system/tests/test_file_browser_local.py` (the VS Code actions track `vscodeAvailable`, #4928)                                                                                     |
 | MT-NIN-01, 05, 06; MT-UI-34; MT-FB-30, 31; MT-RD-10                                                    | `test_os_file_drop.py`, `test_os_file_drop_xdnd.py`, `test_vnc_file_transfer.py` (synthetic Tauri drop events; real X11 XDND, #4936)                                                     |
@@ -3163,3 +3200,4 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | Workspace / session restore (TIN-013)                                                                  | `tests/system/tests/test_workspace_restore_ui.py` (split + tabs + groups → last-session restore, `--workspace` CLI launch, sidebar launch, multi-window workspace — #3778)               |
 | MT-NET-10, 12, 14, 17, 18                                                                              | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)                                                                           |
 | MT-NET-13                                                                                              | `src/components/NetworkTools/PortScannerPanel.large-scan.test.tsx` (the warning is now a confirm modal, #1348)                                                                           |
+| MT-NET-16                                                                                              | `tests/system/tests/test_network_tools_traceroute.py` (compose profile `traceroute`: two routers + a target give three fixed hops; Linux only, unprivileged — see below)                 |
