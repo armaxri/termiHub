@@ -14,7 +14,9 @@ the frontmost window is the test instance or one of those partners — drags:
 Retires MT-NIN-06 (a row dragged out lands in the OS folder; dragged back it is
 not re-imported) and MT-FB-31 (drag out a file, a file+folder selection, and a
 remote SFTP folder), and with ``test_os_file_drop.py`` MT-NIN-01 and MT-NIN-05.
-It is the X11 half of MT-NIN-04; the Wayland session stays guided.
+It is the X11 half of MT-NIN-04; the Wayland session stays guided. It retires
+MT-NIN-02 (a drop hits the pane under the cursor on a scaled display): the
+display-grades job runs the split-pane drop at ``GDK_SCALE=2`` (#4997).
 
 Linux integration lane only (X11). On a developer machine it skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.

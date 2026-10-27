@@ -12,8 +12,10 @@ between windows, including dragging rows *out* — is graded in
 Retires MT-NIN-01 (multi-file drop quoting, together with the XDND grade),
 MT-NIN-05 (drop onto the file browser copies), MT-UI-34 (the drop lands in the
 pane under the cursor) and MT-FB-30 (a 5000-entry folder stays virtualised and
-accepts a drop). The hit-testing grade also covers the 1x half of MT-NIN-02;
-a real scaled display stays guided.
+accepts a drop). The hit-testing grade also runs at devicePixelRatio 2 in the
+scaled-display lane, beside the real XDND MT-NIN-02 grade (#4997). The
+synthetic positions are what each platform's native layer reports: device
+pixels on Windows, CSS pixels on Linux and macOS.
 
 Integration lane (nightly).
 """
