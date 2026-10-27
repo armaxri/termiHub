@@ -412,11 +412,13 @@ fn probe_distro(distro: &str) -> String {
         "echo ok; id; echo \"shell=$(getent passwd \"$(id -un)\" | cut -d: -f7)\"",
         &[],
     );
+    let cwd = wsl_sh(distro, super::super::wsl_cwd::WSL_CWD_SCRIPT, &[]);
     format!(
-        "{} stdout={:?} stderr={:?}",
+        "{} stdout={:?} stderr={:?}; cwd probe: {:?}",
         out.status,
         String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&cwd.stdout)
     )
 }
 

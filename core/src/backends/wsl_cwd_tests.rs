@@ -150,6 +150,25 @@ fn gives_up_after_repeated_failures_to_identify_the_shell() {
 }
 
 #[test]
+fn no_shell_yet_right_after_the_spawn_is_not_a_failure() {
+    let mut t = WslShellTracker::new();
+    // ConPTY paints before the distribution's shell runs.
+    let empty = probe("100.00", &[(10, 5000, "/other")]);
+    for _ in 0..MAX_IDENTIFY_FAILURES + 2 {
+        assert_eq!(t.read(Some(&empty), SECS(1)), None);
+    }
+    assert!(!t.gave_up());
+    let ready = probe("103.00", &[(10, 5000, "/other"), (20, 10_100, "/home/me")]);
+    assert_eq!(t.read(Some(&ready), SECS(4)), Some("/home/me".to_string()));
+    // Past the grace period, finding none counts.
+    let mut late = WslShellTracker::new();
+    for _ in 0..MAX_IDENTIFY_FAILURES {
+        late.read(Some(&empty), STARTUP_GRACE);
+    }
+    assert!(late.gave_up());
+}
+
+#[test]
 fn a_success_resets_the_failure_count() {
     let mut t = WslShellTracker::new();
     for _ in 0..MAX_IDENTIFY_FAILURES - 1 {
@@ -174,6 +193,8 @@ fn script_prints_the_markers_it_is_parsed_by() {
     for marker in ["TH_SH:", "TH_UP:", "TH_HZ:"] {
         assert!(WSL_CWD_SCRIPT.contains(marker), "{marker}");
     }
+    // The probe's own terminal is never a candidate.
+    assert!(WSL_CWD_SCRIPT.contains("x != me"));
     // Uptime is read last, right before the probe exits (see the module docs).
     let up = WSL_CWD_SCRIPT.find("/proc/uptime").expect("uptime");
     let sh = WSL_CWD_SCRIPT.find("TH_SH:").expect("shells");

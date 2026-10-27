@@ -22,7 +22,8 @@
 //! lists them with their start time and the directory of the terminal's
 //! foreground process (a nested shell or a running program; the top process
 //! itself when that is unreadable), then prints the distribution's uptime
-//! last.
+//! last. The probe's own terminal is left out: `wsl.exe` gives even a piped
+//! `--exec` a terminal when it has a console.
 //!
 //! The Windows side knows when it spawned `wsl.exe`, so the session's shell
 //! is the oldest one that started after that ([`WslShellTracker`]): a shell
@@ -34,7 +35,7 @@
 //!
 //! The session stops probing for good when its shell could not be found
 //! [`MAX_IDENTIFY_FAILURES`] times in a row (no `sh`, no `/proc`, two shells
-//! started together), or when the shell it found is gone (a distribution's
+//! started together, no shell [`STARTUP_GRACE`] after the spawn), or when the shell it found is gone (a distribution's
 //! first-launch user setup that hands over to a new shell).
 
 use std::time::Duration;
@@ -45,6 +46,10 @@ pub(crate) const MAX_IDENTIFY_FAILURES: u32 = 3;
 /// Clock tolerance between the Windows side and the distribution.
 const CLOCK_SLACK: f64 = 0.3;
 
+/// How long after the spawn a probe that finds no shell yet is not counted
+/// as a failure.
+pub(crate) const STARTUP_GRACE: Duration = Duration::from_secs(30);
+
 /// Two shells that started closer together than this cannot be told apart.
 pub(crate) const AMBIGUOUS_GAP: Duration = Duration::from_secs(1);
 
@@ -54,14 +59,16 @@ pub(crate) const AMBIGUOUS_GAP: Duration = Duration::from_secs(1);
 /// the `/proc` loop, so it costs one `awk` plus one `readlink` per session.
 pub(crate) const WSL_CWD_SCRIPT: &str = r#"
 hz=$(getconf CLK_TCK 2>/dev/null) || hz=100
+me=0
+if { read -r s < "/proc/$$/stat"; } 2>/dev/null; then r=${s##*) }; set -- $r; me=$5; fi
 for d in /proc/[0-9]*; do
   { read -r s < "$d/stat"; } 2>/dev/null || continue
   r=${s##*) }
   set -- $r
   echo "${d#/proc/} $2 $5 $6 ${20}"
-done | awk '{ p[NR]=$1; pp[NR]=$2; t[$1]=$3; fg[NR]=$4; st[NR]=$5 }
-  END { for (i = 1; i <= NR; i++)
-    if (t[p[i]] != 0 && t[pp[i]] != t[p[i]]) print p[i], fg[i], st[i] }' |
+done | awk -v me="$me" '{ p[NR]=$1; pp[NR]=$2; t[$1]=$3; fg[NR]=$4; st[NR]=$5 }
+  END { for (i = 1; i <= NR; i++) { x = t[p[i]]
+    if (x != 0 && x != me && t[pp[i]] != x) print p[i], fg[i], st[i] } }' |
 while read -r pid fg st; do
   c=
   for x in $fg $pid; do
@@ -184,12 +191,15 @@ impl WslShellTracker {
             return None;
         }
         match identify(&probe, since_spawn) {
-            Some(shell) => {
+            Identified::Shell(shell) => {
                 self.failures = 0;
                 self.shell = Some((shell.pid, shell.start_ticks));
                 shell.cwd.clone()
             }
-            None => {
+            // `wsl.exe` paints (ConPTY's first screen) before the shell runs,
+            // and a cold distribution takes a while to boot.
+            Identified::NotYet if since_spawn < STARTUP_GRACE => None,
+            Identified::NotYet | Identified::Ambiguous => {
                 self.failures += 1;
                 None
             }
@@ -197,9 +207,18 @@ impl WslShellTracker {
     }
 }
 
+/// What [`identify`] found.
+enum Identified<'a> {
+    Shell(&'a ProbedShell),
+    /// No shell started after the spawn (yet).
+    NotYet,
+    /// Two started too close together to tell apart.
+    Ambiguous,
+}
+
 /// The oldest shell that started after the spawn, unless another started
 /// too close to it to tell them apart.
-fn identify(probe: &Probe, since_spawn: Duration) -> Option<&ProbedShell> {
+fn identify(probe: &Probe, since_spawn: Duration) -> Identified<'_> {
     let max_age = since_spawn.as_secs_f64() + CLOCK_SLACK;
     let mut newer: Vec<&ProbedShell> = probe
         .shells
@@ -207,14 +226,16 @@ fn identify(probe: &Probe, since_spawn: Duration) -> Option<&ProbedShell> {
         .filter(|s| probe.age(s) <= max_age)
         .collect();
     newer.sort_by_key(|s| s.start_ticks);
-    let first = *newer.first()?;
+    let Some(&first) = newer.first() else {
+        return Identified::NotYet;
+    };
     if let Some(second) = newer.get(1) {
         let gap = (second.start_ticks - first.start_ticks) as f64 / probe.hz as f64;
         if gap < AMBIGUOUS_GAP.as_secs_f64() {
-            return None;
+            return Identified::Ambiguous;
         }
     }
-    Some(first)
+    Identified::Shell(first)
 }
 
 #[cfg(test)]
