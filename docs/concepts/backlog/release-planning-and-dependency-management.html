@@ -28,6 +28,11 @@
       </nav>
 
 <h2 id="overview">Overview</h2>
+<p class="callout"><strong>Superseded in part (#5011):</strong> the maintainer decided (2026-10-24,
+restated 2026-10-26) that no automated job or bot may open dependency-update branches or PRs, push,
+or merge. The Dependabot <em>version updates</em> proposed below are therefore out; dependency
+checks only report (the weekly <code>dependency-report.yml</code> workflow and the Security Audit
+lanes), and the maintainer lands updates by hand.</p>
 <p>termiHub is a cross-platform desktop application built on a Rust + npm ecosystem — both of which
 have active security vulnerability databases (RUSTSEC, npm advisories) and frequent dependency
 releases. As the application matures beyond its initial v0.1.0 beta, ad-hoc release timing and

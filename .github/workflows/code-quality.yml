@@ -12,9 +12,8 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
-  # The daily lockfile chore dispatches this on its PR branch (#4912): its
-  # GITHUB_TOKEN-pushed PR gets no pull_request run. Like a push, a dispatch
-  # runs every area on every platform (detect-changes reports all on).
+  # Manual full run on any ref. Like a push, a dispatch runs every area on
+  # every platform (detect-changes reports all on).
   workflow_dispatch:
 
 # Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
@@ -889,8 +888,8 @@ jobs:
 
       # Fails if a third-party action is pinned to a tag/branch instead of a
       # full commit SHA, lacks its "# vX.Y.Z" comment, or is pinned to two
-      # different SHAs across workflows/composite actions (#4360). Dependabot
-      # bumps the pins; this catches hand-edited drift.
+      # different SHAs across workflows/composite actions (#4360). Pins are bumped
+      # by hand (no update bot, #5011); this catches drift between them.
       - name: Check GitHub Actions pin consistency
         run: node scripts/internal/check-action-pins.mjs
 
