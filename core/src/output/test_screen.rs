@@ -1,7 +1,7 @@
 //! A minimal VT screen model for tests that check what the user would see.
 
-/// A minimal VT screen: printable text, CR, LF, BS, `CSI K`, `CSI A`, `CSI J`,
-/// autowrap. Everything else is ignored.
+/// A minimal VT screen: printable text, CR, LF, BS, `CSI K`, `CSI A`, `CSI B`,
+/// `CSI C`, `CSI D`, `CSI J`, autowrap. Everything else is ignored.
 pub(crate) struct Screen {
     cols: usize,
     rows: Vec<Vec<char>>,
@@ -53,6 +53,9 @@ impl Screen {
                                 self.row().truncate(c);
                             }
                             'A' => self.r = self.r.saturating_sub(n.max(1)),
+                            'B' => self.r += n.max(1),
+                            'C' => self.c = (self.c + n.max(1)).min(self.cols - 1),
+                            'D' => self.c = self.c.min(self.cols - 1).saturating_sub(n.max(1)),
                             'J' => {
                                 let (r, c) = (self.r, self.c);
                                 self.row().truncate(c);

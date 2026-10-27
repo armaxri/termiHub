@@ -2906,6 +2906,10 @@ mod osc133_tests;
 mod setup_echo_tests;
 
 #[cfg(all(test, unix))]
+#[path = "local_shell_banner_rows_tests.rs"]
+mod banner_rows_tests;
+
+#[cfg(all(test, unix))]
 #[path = "local_shell_side_effect_tests.rs"]
 mod side_effect_tests;
 
