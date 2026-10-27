@@ -168,6 +168,11 @@ pub struct Capabilities {
     pub tunneling: bool,
 }
 
+/// Reports whether a session's shell is waiting at its prompt, without
+/// anything typed into the shell (#5029). See
+/// [`ConnectionType::prompt_probe`].
+pub type PromptProbe = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// Unified trait for all connection backends.
 ///
 /// Each connection type (local shell, SSH, serial, telnet, Docker, WSL)
@@ -378,6 +383,16 @@ pub trait ConnectionType: Send + Sync {
     /// "the session ended on its own" without waiting.
     #[cfg(feature = "plugin")]
     fn plugin_runner_alive(&self) -> Option<bool> {
+        None
+    }
+
+    /// A check that the shell is waiting at its prompt, for timing a
+    /// connection's initial command when the shell prints no OSC 133 prompt
+    /// mark (#5029). It observes the session only and never types into the
+    /// shell. The local shell reads the PTY (the line editor left canonical
+    /// mode), SSH watches its output settle at a prompt-like end. Polled by
+    /// the session owner; `None`, the default, means the backend cannot tell.
+    fn prompt_probe(&self) -> Option<PromptProbe> {
         None
     }
 }

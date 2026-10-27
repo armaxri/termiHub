@@ -1,6 +1,7 @@
 pub mod cwd_follow;
 pub mod docker;
 pub mod forward_window;
+pub mod prompt_ready;
 pub mod pump;
 pub mod registry;
 #[cfg(feature = "serial")]

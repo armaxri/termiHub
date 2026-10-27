@@ -60,7 +60,9 @@ use crate::session::ssh::validate_ssh_config;
 use self::connector::{RusshSshConnector, SshConnector};
 use self::monitoring::SshMonitoringProvider;
 
+use crate::connection::PromptProbe;
 use crate::output::early::EarlyOutput;
+use crate::output::prompt_settle::OutputSettle;
 
 /// SSH backend using `russh`, implementing [`ConnectionType`].
 ///
@@ -130,6 +132,9 @@ struct ConnectedState {
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
     /// The graceful path and the guard must never both close the channel.
     disconnected: bool,
+    /// Watches the shell's output for a settled prompt, the initial
+    /// command's cue without the prompt mark (#5029).
+    prompt_settle: Arc<OutputSettle>,
 }
 
 impl Drop for ConnectedState {
@@ -800,12 +805,15 @@ impl ConnectionType for Ssh {
         let files_only = self.files_only.clone();
         let probe_browser = file_browser.clone();
         let runtime = tokio::runtime::Handle::try_current().ok();
+        let prompt_settle = Arc::new(OutputSettle::new());
+        let reader_settle = prompt_settle.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        reader_settle.observe(&buf[..n], std::time::Instant::now());
                         // Clone the sender out of the guard and DROP the lock
                         // BEFORE the blocking send. `blocking_send` parks this
                         // thread under backpressure (full channel), so holding
@@ -858,6 +866,7 @@ impl ConnectionType for Ssh {
             alive,
             _extensions: std::sync::Mutex::new(handle.extensions),
             disconnected: false,
+            prompt_settle,
         });
 
         Ok(())
@@ -956,6 +965,13 @@ impl ConnectionType for Ssh {
             .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
 
+    fn prompt_probe(&self) -> Option<PromptProbe> {
+        let settle = self.state.as_ref()?.prompt_settle.clone();
+        Some(Arc::new(move || {
+            settle.is_settled(std::time::Instant::now())
+        }))
+    }
+
     fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         Some(self.files_only.subscribe())
     }
@@ -1036,6 +1052,8 @@ mod tests {
         detect_requested: Arc<Mutex<Option<bool>>>,
         /// Reported as [`SshShellHandle::integration_typed`] (#4604).
         integration_typed: bool,
+        /// When set, the shell prints each chunk after its delay (#5029).
+        script: Option<Vec<(Duration, &'static [u8])>>,
     }
 
     impl MockSshConnector {
@@ -1050,6 +1068,7 @@ mod tests {
                 remote_shell: remote_shell::RemoteShell::Posix,
                 detect_requested: Arc::new(Mutex::new(None)),
                 integration_typed: false,
+                script: None,
             }
         }
 
@@ -1064,6 +1083,7 @@ mod tests {
                 remote_shell: remote_shell::RemoteShell::Posix,
                 detect_requested: Arc::new(Mutex::new(None)),
                 integration_typed: false,
+                script: None,
             }
         }
 
@@ -1079,6 +1099,7 @@ mod tests {
                 remote_shell: remote_shell::RemoteShell::Posix,
                 detect_requested: Arc::new(Mutex::new(None)),
                 integration_typed: false,
+                script: None,
             }
         }
 
@@ -1148,6 +1169,11 @@ mod tests {
                 Box::new(FloodingReader {
                     alive: alive_for_reader,
                 })
+            } else if let Some(script) = &self.script {
+                Box::new(ScriptedReader {
+                    chunks: script.iter().copied().collect(),
+                    alive: alive_for_reader,
+                })
             } else {
                 Box::new(MockReader {
                     alive: alive_for_reader,
@@ -1174,6 +1200,26 @@ mod tests {
                 remote_shell: self.remote_shell,
                 integration_typed: self.integration_typed,
             })
+        }
+    }
+
+    /// Prints each chunk after its delay, then behaves as [`MockReader`].
+    struct ScriptedReader {
+        chunks: std::collections::VecDeque<(Duration, &'static [u8])>,
+        alive: Arc<AtomicBool>,
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if let Some((delay, data)) = self.chunks.pop_front() {
+                std::thread::sleep(delay);
+                buf[..data.len()].copy_from_slice(data);
+                return Ok(data.len());
+            }
+            MockReader {
+                alive: self.alive.clone(),
+            }
+            .read(buf)
         }
     }
 
@@ -2395,6 +2441,36 @@ mod tests {
         assert!(!ssh.is_connected());
     }
 
+    // --- Prompt probe (#5029) ----------------------------------------------
+
+    /// The probe reports the prompt only once the shell's output ends at a
+    /// prompt and goes quiet — not during a MOTD or a slow rc file.
+    #[tokio::test]
+    async fn prompt_probe_reports_a_settled_prompt_not_a_slow_rc() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector {
+            script: Some(vec![
+                (Duration::ZERO, b"Last login: today\r\nRC-START\r\n"),
+                (Duration::from_millis(1500), b"RC-DONE\r\nuser@host:~$ "),
+            ]),
+            ..MockSshConnector::new()
+        }));
+        assert!(ssh.prompt_probe().is_none(), "no probe before connect");
+        ssh.connect(mock_settings()).await.unwrap();
+        let _rx = ssh.subscribe_output();
+        let probe = ssh
+            .prompt_probe()
+            .expect("a connected SSH session has a probe");
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!probe(), "the rc file is still running");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !probe() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(probe(), "the prompt never counted as settled");
+        ssh.disconnect().await.unwrap();
+    }
+
     // --- Drop guard (CORE-020) --------------------------------------------
 
     /// Build a `ConnectedState` with inert closures except `close`, which bumps
@@ -2415,6 +2491,7 @@ mod tests {
             alive,
             _extensions: std::sync::Mutex::new(Vec::new()),
             disconnected,
+            prompt_settle: Arc::new(OutputSettle::new()),
         }
     }
 
