@@ -2599,3 +2599,7 @@ mod side_effect_tests;
 #[cfg(all(test, unix))]
 #[path = "local_shell_interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[cfg(all(test, windows))]
+#[path = "local_shell_git_bash_tests.rs"]
+mod git_bash_tests;
