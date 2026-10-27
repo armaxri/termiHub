@@ -35,49 +35,49 @@ const OSC9_9: &[u8] = b"\x1b]9;9;";
 
 /// Where a byte stream stands relative to escape sequences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Esc {
+enum EscState {
     #[default]
     Ground,
-    Esc,
+    Escape,
     Csi,
     /// OSC / DCS / APC / PM / SOS string, until BEL or ST.
     Str,
     /// ESC inside a string (maybe the start of ST).
-    StrEsc,
+    StrEscape,
 }
 
-impl Esc {
-    fn step(self, b: u8) -> Esc {
+impl EscState {
+    fn step(self, b: u8) -> EscState {
         match self {
-            Esc::Ground => {
+            EscState::Ground => {
                 if b == 0x1b {
-                    Esc::Esc
+                    EscState::Escape
                 } else {
-                    Esc::Ground
+                    EscState::Ground
                 }
             }
-            Esc::Esc => match b {
-                b'[' => Esc::Csi,
-                b']' | b'P' | b'_' | b'^' | b'X' => Esc::Str,
-                0x20..=0x2f => Esc::Esc,
-                _ => Esc::Ground,
+            EscState::Escape => match b {
+                b'[' => EscState::Csi,
+                b']' | b'P' | b'_' | b'^' | b'X' => EscState::Str,
+                0x20..=0x2f => EscState::Escape,
+                _ => EscState::Ground,
             },
-            Esc::Csi => {
+            EscState::Csi => {
                 if (0x40..=0x7e).contains(&b) {
-                    Esc::Ground
+                    EscState::Ground
                 } else {
-                    Esc::Csi
+                    EscState::Csi
                 }
             }
-            Esc::Str => match b {
-                0x07 => Esc::Ground,
-                0x1b => Esc::StrEsc,
-                _ => Esc::Str,
+            EscState::Str => match b {
+                0x07 => EscState::Ground,
+                0x1b => EscState::StrEscape,
+                _ => EscState::Str,
             },
-            Esc::StrEsc => match b {
-                b'\\' => Esc::Ground,
-                0x1b => Esc::StrEsc,
-                _ => Esc::Str,
+            EscState::StrEscape => match b {
+                b'\\' => EscState::Ground,
+                0x1b => EscState::StrEscape,
+                _ => EscState::Str,
             },
         }
     }
@@ -90,7 +90,7 @@ pub struct CwdFollower {
     min_interval: Duration,
     /// The shell reports its own directory: never add ours.
     shell_reports: bool,
-    esc: Esc,
+    esc: EscState,
     /// The last few bytes, to find a cwd report split across chunks.
     tail: Vec<u8>,
     /// Output since the last read contained a line break.
@@ -112,7 +112,7 @@ impl CwdFollower {
         Self {
             min_interval,
             shell_reports: false,
-            esc: Esc::Ground,
+            esc: EscState::Ground,
             tail: Vec::new(),
             ran_command: true,
             last_output: None,
@@ -134,7 +134,7 @@ impl CwdFollower {
             return;
         }
         self.last_output = Some(now);
-        if data.iter().any(|&b| b == b'\n') {
+        if data.contains(&b'\n') {
             self.ran_command = true;
         }
         let mut window = std::mem::take(&mut self.tail);
@@ -194,7 +194,7 @@ impl CwdFollower {
 
     /// The waiting OSC 7, once the stream is outside an escape sequence.
     pub fn take_pending(&mut self) -> Option<Vec<u8>> {
-        if self.esc != Esc::Ground || self.shell_reports {
+        if self.esc != EscState::Ground || self.shell_reports {
             return None;
         }
         self.pending.take()
