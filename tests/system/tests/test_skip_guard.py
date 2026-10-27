@@ -417,10 +417,17 @@ def test_every_workflow_lane_is_known_and_no_fragment_names_an_unknown_lane():
 
 
 def test_the_committed_budgets_match_the_pre_fragment_max_skips():
-    """#5033 migrated the hand-kept per-lane max_skips into fragments; the
-    totals are unchanged."""
+    """#5033 migrated the hand-kept per-lane max_skips into ``baseline.json``
+    unchanged. Only that fragment is pinned: a later fragment adds its own
+    budget on top (#4998) without editing this test."""
     allowlist = sg.load_allowlist()
-    assert {lane: allowlist.budget(lane) for lane in sorted(allowlist.lanes)} == {
+    baseline = {
+        lane: count
+        for lane, fragments in allowlist.budgets.items()
+        for name, count in fragments
+        if name == "baseline.json"
+    }
+    assert baseline == {
         "bulk-linux": 60,
         "bulk-linux-arm64": 21,
         "bulk-macos": 215,
@@ -430,7 +437,6 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
         "display-macos": 0,
         "display-windows": 0,
         "os-input-macos": 1,
-        # 6 from the old file; the #5024 quarantine fragment's +1 went with the skip.
         "os-input-windows": 6,
     }
 
