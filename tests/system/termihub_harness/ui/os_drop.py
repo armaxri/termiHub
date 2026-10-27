@@ -43,7 +43,9 @@ def expected_device_pixel_ratio(env: Optional[Mapping[str, str]] = None) -> Opti
     return float(raw) if raw else None
 
 
-def check_device_pixel_ratio(probe: Mapping[str, Any], env: Optional[Mapping[str, str]] = None) -> float:
+def check_device_pixel_ratio(
+    probe: Mapping[str, Any], env: Optional[Mapping[str, str]] = None
+) -> float:
     """The probed ``devicePixelRatio``; raises when it is not the lane's expected one."""
     dpr = float(probe.get("devicePixelRatio") or 1.0)
     expected = expected_device_pixel_ratio(env)
