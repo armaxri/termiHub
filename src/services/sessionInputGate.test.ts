@@ -4,6 +4,7 @@ import {
   holdSessionInput,
   isSessionInputHeld,
   lastSessionInputAt,
+  reserveSessionInputSlot,
   resetSessionInputGatesForTests,
   whenSessionInputOpen,
 } from "./sessionInputGate";
@@ -143,5 +144,125 @@ describe("session input gate (#4942)", () => {
     vi.setSystemTime(1200);
     release();
     expect(lastSessionInputAt("s1")).toBe(1200);
+  });
+});
+
+/** Let queued promise callbacks run (send chaining is promise-based). */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
+describe("session input slots (#5026)", () => {
+  it("keeps input sent after a reservation behind the slot until it is filled", async () => {
+    const { sent, send } = recorder();
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("after"));
+    await flush();
+    expect(sent).toEqual([]);
+    expect(isSessionInputHeld("s1")).toBe(true);
+
+    await slot.fill(() => whenSessionInputOpen("s1", send("paste")));
+    await flush();
+    expect(sent).toEqual(["paste", "after"]);
+    expect(isSessionInputHeld("s1")).toBe(false);
+  });
+
+  it("does not delay input sent before the reservation", async () => {
+    const { sent, send } = recorder();
+    void whenSessionInputOpen("s1", send("before"));
+    const slot = reserveSessionInputSlot("s1", "paste");
+    await flush();
+    expect(sent).toEqual(["before"]);
+    slot.cancel();
+  });
+
+  it("fills the slot in its place among input held by a resize", async () => {
+    const { sent, send } = recorder();
+    const release = holdSessionInput("s1", "resize");
+    void whenSessionInputOpen("s1", send("a"));
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("b"));
+
+    void slot.fill(() => whenSessionInputOpen("s1", send("paste")));
+    await flush();
+    expect(sent).toEqual([]);
+
+    release();
+    await flush();
+    expect(sent).toEqual(["a", "paste", "b"]);
+  });
+
+  it("releases the slot on cancel and sends the input queued behind it", async () => {
+    const { sent, send } = recorder();
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("x"));
+    void whenSessionInputOpen("s1", send("y"));
+    slot.cancel();
+    slot.cancel();
+    await flush();
+    expect(sent).toEqual(["x", "y"]);
+    expect(isSessionInputHeld("s1")).toBe(false);
+  });
+
+  it("lifts a slot that is never filled after its bound, and a late fill still sends", async () => {
+    vi.useFakeTimers();
+    const { sent, send } = recorder();
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("key"));
+
+    vi.advanceTimersByTime(INPUT_HOLD_MAX_MS - 1);
+    await flush();
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(1);
+    await flush();
+    expect(sent).toEqual(["key"]);
+    expect(frontendLog).toHaveBeenCalledWith(
+      "terminal",
+      expect.stringContaining("input slot (paste) lifted")
+    );
+
+    await slot.fill(() => whenSessionInputOpen("s1", send("late")));
+    await flush();
+    expect(sent).toEqual(["key", "late"]);
+  });
+
+  it("extend restarts the bound (a paste waiting on its confirmation)", async () => {
+    vi.useFakeTimers();
+    const { sent, send } = recorder();
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("key"));
+    slot.extend(10 * INPUT_HOLD_MAX_MS);
+
+    vi.advanceTimersByTime(5 * INPUT_HOLD_MAX_MS);
+    await flush();
+    expect(sent).toEqual([]);
+
+    void slot.fill(() => whenSessionInputOpen("s1", send("paste")));
+    await flush();
+    expect(sent).toEqual(["paste", "key"]);
+  });
+
+  it("keeps several sends of one fill together, in order, in the slot", async () => {
+    const { sent, send } = recorder();
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("key"));
+    void slot.fill(() =>
+      Promise.all([whenSessionInputOpen("s1", send("p1")), whenSessionInputOpen("s1", send("p2"))])
+    );
+    await flush();
+    expect(sent).toEqual(["p1", "p2", "key"]);
+  });
+
+  it("does not let a fill for one session take another session's slot", async () => {
+    const { sent, send } = recorder();
+    const s1 = reserveSessionInputSlot("s1", "paste");
+    const s2 = reserveSessionInputSlot("s2", "paste");
+    void whenSessionInputOpen("s2", send("s2-key"));
+    void s1.fill(() => whenSessionInputOpen("s2", send("s2-other")));
+    await flush();
+    expect(sent).toEqual([]);
+    s2.cancel();
+    await flush();
+    expect(sent).toEqual(["s2-key", "s2-other"]);
   });
 });
