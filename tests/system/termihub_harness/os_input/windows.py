@@ -207,6 +207,10 @@ class WindowsOsInput(OsInput):
         root = user32.GetAncestor(wintypes.HWND(child), GA_ROOT)
         return self._window_label(int(root or child))
 
+    def _describe_frontmost(self) -> str:
+        foreground = self._user32.GetForegroundWindow()
+        return self._window_label(int(foreground)) if foreground else ""
+
     def _describe_desktop(self) -> str:
         user32 = self._user32
         lines: list[str] = []

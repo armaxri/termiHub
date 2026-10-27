@@ -160,9 +160,10 @@ class OsInput:
         front = self.frontmost_pid()
         ok = front in self._allowed if any_allowed else front == target
         if not ok:
+            frontmost = self._describe_frontmost()
             raise GlobalInjectionRefused(
                 f"frontmost window belongs to PID {front}, not the intended PID "
-                f"{target}; refusing to inject"
+                f"{target}; refusing to inject" + (f" (frontmost: {frontmost})" if frontmost else "")
             )
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -326,6 +327,10 @@ class OsInput:
         return None
 
     def _describe_point(self, x: int, y: int) -> str:
+        return ""
+
+    def _describe_frontmost(self) -> str:
+        """The frontmost window, for a refusal message (empty when unknown)."""
         return ""
 
     def _describe_desktop(self) -> str:

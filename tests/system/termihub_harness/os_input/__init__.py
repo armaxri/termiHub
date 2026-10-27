@@ -159,6 +159,8 @@ class ScreenMapper:
                         probe["devicePixelRatio"] if os_input.scale_is_device_pixel_ratio else 1.0
                     )
                     offset = (x - event["clientX"] * scale, y - event["clientY"] * scale)
+                    if misses:
+                        print(f"[os-input] calibrated after {len(misses)} miss(es): {misses}")
                     return cls(os_input, driver, window, offset, scale)
                 under = os_input.describe_point(x, y) or "?"
                 misses.append(f"({x}, {y}) in {window}: under the pointer {under}")
