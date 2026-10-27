@@ -1334,7 +1334,9 @@ mod tests {
             "persistent": true,
             "folder_id": null,
             "terminal_options": null,
-            "icon": null
+            "icon": null,
+            "icon_color": null,
+            "icon_emoji": null
         });
         let params: ConnectionCreateParams =
             decode_agent_params(CONNECTIONS_CREATE, payload.clone()).expect("decodes");
