@@ -45,6 +45,8 @@ struct PromptConnection {
     writes: Writes,
     // Keeps the output channel open so the reader does not see EOF.
     keep_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>,
+    /// The backend's hook-free prompt check (#5029), if it has one.
+    probe: Option<termihub_core::connection::PromptProbe>,
 }
 
 #[async_trait::async_trait]
@@ -97,9 +99,19 @@ impl ConnectionType for PromptConnection {
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
         None
     }
+    fn prompt_probe(&self) -> Option<termihub_core::connection::PromptProbe> {
+        self.probe.clone()
+    }
 }
 
 fn prompt_manager(banner: &'static [u8]) -> (SessionManager, Writes) {
+    probing_manager(banner, None)
+}
+
+fn probing_manager(
+    banner: &'static [u8],
+    probe: Option<termihub_core::connection::PromptProbe>,
+) -> (SessionManager, Writes) {
     let writes = Writes::default();
     let factory_writes = writes.clone();
     let mut registry = ConnectionTypeRegistry::new();
@@ -112,6 +124,7 @@ fn prompt_manager(banner: &'static [u8]) -> (SessionManager, Writes) {
                 banner: banner.to_vec(),
                 writes: factory_writes.clone(),
                 keep_tx: std::sync::Mutex::new(None),
+                probe: probe.clone(),
             })
         }),
     );
@@ -188,6 +201,34 @@ async fn initial_command_falls_back_to_the_timeout_without_a_prompt_mark() {
     );
 }
 
+/// A backend that can tell when its shell waits at the prompt (#5029) gets
+/// the command then — not at the short timeout while its rc file still runs
+/// — and exactly the command, typed once.
+#[tokio::test]
+async fn initial_command_waits_for_the_backends_prompt_probe() {
+    let at_prompt = Arc::new(AtomicBool::new(false));
+    let probe_flag = at_prompt.clone();
+    let probe: termihub_core::connection::PromptProbe =
+        Arc::new(move || probe_flag.load(Ordering::SeqCst));
+    let (manager, writes) = probing_manager(b"RC-START\r\n", Some(probe));
+    let emitter = MockEventEmitter::new();
+    open(&manager, &emitter).await;
+
+    tokio::time::sleep(INITIAL_COMMAND_READY_TIMEOUT + Duration::from_millis(500)).await;
+    assert!(
+        writes.lock().unwrap().is_empty(),
+        "the command was typed before the shell reached its prompt"
+    );
+
+    at_prompt.store(true, Ordering::SeqCst);
+    assert!(
+        within(Duration::from_secs(2), || sent(&writes)).await,
+        "the command was not typed once the shell reached its prompt"
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(&writes.lock().unwrap()[..], b"echo hi\r");
+}
+
 // ── Real shells without the command-mark hook (#5029) ────────────────
 
 /// A real backend whose every write is recorded, so a test can prove the
@@ -229,6 +270,9 @@ impl ConnectionType for Recording {
     }
     fn subscribe_output(&self) -> OutputReceiver {
         self.inner.subscribe_output()
+    }
+    fn prompt_probe(&self) -> Option<termihub_core::connection::PromptProbe> {
+        self.inner.prompt_probe()
     }
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         None
