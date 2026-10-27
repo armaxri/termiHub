@@ -75,6 +75,8 @@ class MacOsInput(OsInput):
 
         self._q = Quartz
         self._buttons_down: set[str] = set()
+        #: Modifiers held with :meth:`key_down`, stamped on pointer events too.
+        self._held_mods: set[str] = set()
         #: Report Caps Lock as engaged on every key event (see :meth:`caps_lock`).
         self.caps_lock_engaged = False
 
@@ -200,7 +202,12 @@ class MacOsInput(OsInput):
         time.sleep(self.KEY_DELAY)
 
     def _key_state(self, pid: int, key: str, down: bool) -> None:
-        self._post_key(pid, mac_keycode(key), down, 0)
+        # A key posted to the PID does not change the HID modifier state, so a
+        # held modifier is stamped on the HID pointer events by hand: Cmd held
+        # over a click is a Cmd-click, as with a real held key.
+        if key in FLAGS:
+            (self._held_mods.add if down else self._held_mods.discard)(key)
+        self._post_key(pid, mac_keycode(key), down, combo_flags(sorted(self._held_mods)))
 
     def key_repeat(
         self, key: str, count: int, *, interval: float = 0.035, delay: float = 0.5
@@ -270,6 +277,8 @@ class MacOsInput(OsInput):
         q = self._q
         event = q.CGEventCreateMouseEvent(None, kind, (x, y), button)
         q.CGEventSetIntegerValueField(event, q.kCGMouseEventClickState, self.click_state)
+        if self._held_mods:
+            q.CGEventSetFlags(event, combo_flags(sorted(self._held_mods)))
         q.CGEventPost(q.kCGHIDEventTap, event)
         time.sleep(0.01)
 

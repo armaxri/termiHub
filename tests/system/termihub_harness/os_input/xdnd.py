@@ -166,9 +166,15 @@ def uri_paths(uris: Iterable[str]) -> list[str]:
 
 
 class _Partner:
-    """A harness-owned GTK window process reporting JSON lines."""
+    """A harness-owned partner window process reporting JSON lines.
+
+    GTK here; :mod:`.native_dnd` reuses it for the AppKit and Win32 partners by
+    overriding :meth:`command`.
+    """
 
     mode = ""
+    #: What the partner is, for messages.
+    kind = "XDND"
 
     def __init__(self, geometry: Sequence[int], args: Sequence[str]) -> None:
         self.geometry = tuple(int(v) for v in geometry)
@@ -182,11 +188,15 @@ class _Partner:
     @property
     def pid(self) -> int:
         if self._pid is None:
-            raise RuntimeError(f"XDND {self.mode} window not started")
+            raise RuntimeError(f"{self.kind} {self.mode} window not started")
         return self._pid
 
+    def command(self) -> list[str]:
+        """The argv that starts this partner's window process."""
+        return partner_command(gtk_python(), self.mode, self.geometry, self._args)
+
     def start(self, timeout: float = 30.0) -> "_Partner":
-        argv = partner_command(gtk_python(), self.mode, self.geometry, self._args)
+        argv = self.command()
         self._proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
@@ -194,7 +204,7 @@ class _Partner:
         if not self._ready.wait(timeout):
             output = self.output()
             self.close()
-            raise OsInputUnavailable(f"XDND {self.mode} window did not start: {output}")
+            raise OsInputUnavailable(f"{self.kind} {self.mode} window did not start: {output}")
         return self
 
     def _pump(self) -> None:
@@ -227,7 +237,7 @@ class _Partner:
                 return found[-1]
             if time.monotonic() >= deadline:
                 raise AssertionError(
-                    f"XDND {self.mode} window never reported {name!r}; saw {self.output()}"
+                    f"{self.kind} {self.mode} window never reported {name!r}; saw {self.output()}"
                 )
             time.sleep(0.1)
 
