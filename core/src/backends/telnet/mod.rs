@@ -653,7 +653,7 @@ impl ConnectionType for Telnet {
 
     /// Shut the socket down so a `write` parked on a peer that stopped reading
     /// returns (#4394). The parked write holds the write lock, so this shuts
-    /// the socket down without taking it (see [`SharedWriter`]).
+    /// the socket down without taking it (see `SharedWriter`).
     ///
     /// On Unix a `shutdown` wakes a thread blocked in `send` on that socket,
     /// which then fails (`EPIPE`). Windows does not promise to abort a
