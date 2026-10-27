@@ -13,10 +13,10 @@
  * The gate fixes the order instead of the timing: while a session is held (a
  * resize is in flight, or a just-shown terminal has not run its show-time fit
  * yet), input for it is queued, and released in arrival order once every hold
- * is lifted. Nothing is ever dropped. Every hold is bounded by
- * {@link INPUT_HOLD_MAX_MS}, so a resize that never settles, or a frame that
- * never comes (an occluded window), delays input briefly instead of swallowing
- * it.
+ * is lifted. Nothing is ever dropped. Every hold is bounded
+ * ({@link INPUT_HOLD_MAX_MS} by default, {@link RESIZE_INPUT_HOLD_MAX_MS} behind
+ * a resize in flight), so a resize that never settles, or a frame that never
+ * comes (an occluded window), delays input instead of swallowing it.
  *
  * A paste reserves a slot in the same order (#5026): its clipboard read is
  * async, so keys typed right after the paste shortcut would otherwise reach the
@@ -29,6 +29,17 @@ import { frontendLog } from "@/utils/frontendLog";
 
 /** Upper bound (ms) on any single hold; after it the hold lifts on its own. */
 export const INPUT_HOLD_MAX_MS = 1000;
+
+/**
+ * Upper bound (ms) on a hold behind a PTY resize that is still on its way to the
+ * backend (#5025). Tauri runs invokes concurrently, so input released while
+ * `resize_terminal` is in flight can be applied before the resize, and the
+ * shell echoes it at the old width. On a loaded macOS runner the IPC stalled
+ * for 1.3 s, past {@link INPUT_HOLD_MAX_MS}, and the typed line overtook the
+ * resize. So this hold waits for the resize itself; the bound only keeps input
+ * from waiting forever on a resize that never settles.
+ */
+export const RESIZE_INPUT_HOLD_MAX_MS = 10_000;
 
 /**
  * One place in a session's input order. A ready entry carries its send; a slot

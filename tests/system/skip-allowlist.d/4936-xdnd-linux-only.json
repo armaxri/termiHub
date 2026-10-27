@@ -1,0 +1,6 @@
+{
+  "reason": "^X11 XDND is Linux-only$",
+  "nodeid": "test_os_file_drop_xdnd\\.py",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "the native drag partners are X11 GTK windows driven by XTEST; the app half of a drop is graded on every OS by test_os_file_drop.py (#4936)"
+}

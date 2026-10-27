@@ -1,0 +1,5 @@
+{
+  "reason": "^X11 forwarding is a macOS/Linux feature$",
+  "lanes": ["bulk-windows"],
+  "why": "X11 forwarding is not offered on Windows"
+}

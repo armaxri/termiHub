@@ -641,7 +641,10 @@ impl ConnectionType for Ssh {
                                 "host which login shell it runs, then types a small hook into it ",
                                 "once the prompt is up and keeps it off the screen, but the hook ",
                                 "stays in the shell: it is in the shell's history, its functions ",
-                                "show up in `set`, and PROMPT_COMMAND / precmd and PS1 are extended.\n\n",
+                                "show up in `set`, and PROMPT_COMMAND / precmd and PS1 are extended. ",
+                                "On a Windows PowerShell host the hook's echo cannot be filtered ",
+                                "out, so the screen is cleared once after it, which also clears ",
+                                "the login banner.\n\n",
                                 "Connections saved while this was on by default were switched off ",
                                 "once when you updated; turn it back on here if you want it.",
                             ).to_string()),
@@ -2603,8 +2606,9 @@ mod tests {
         assert_eq!(
             line,
             format!(
-                "{}\r",
-                crate::session::shell::osc7_setup_command("powershell").unwrap()
+                "{}{}\r",
+                crate::session::shell::osc7_setup_command("powershell").unwrap(),
+                remote_shell::TYPED_POWERSHELL_CLEAR
             )
         );
         assert!(!line.contains('\n'), "no LF may reach PSReadLine");

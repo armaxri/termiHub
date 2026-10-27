@@ -9,6 +9,9 @@ pub mod local_shell;
 
 #[cfg(feature = "local-shell")]
 mod local_shell_cwd;
+// Runs the hook-free cwd following of a PTY session (#5009, #5013).
+#[cfg(any(feature = "local-shell", all(feature = "wsl", windows)))]
+mod cwd_follow_thread;
 #[cfg(feature = "local-shell")]
 mod local_shell_setup;
 #[cfg(all(feature = "local-shell", unix))]
@@ -50,6 +53,12 @@ pub(crate) mod wsl_exec;
 // user-setup prompt (#4057). Compiled on every platform under `test`.
 #[cfg(any(all(feature = "wsl", windows), test))]
 pub(crate) mod wsl_shell_ready;
+
+// Finds the WSL session's shell inside the distribution and reads its
+// directory, so the file browser follows it with nothing typed (#5013).
+// Compiled on every platform under `test`.
+#[cfg(any(all(feature = "wsl", windows), test))]
+pub(crate) mod wsl_cwd;
 
 // Answers ConPTY's opening cursor-position query (portable-pty 0.9 sets
 // PSUEDOCONSOLE_INHERIT_CURSOR; #3974). Wired into the Windows PTY readers;

@@ -1,0 +1,6 @@
+{
+  "reason": "^Windows runners only run Windows containers; no alpine image$",
+  "nodeid": "test_external_spawn\\.py",
+  "lanes": ["bulk-windows"],
+  "why": "the Windows runner's daemon cannot run the alpine image"
+}
