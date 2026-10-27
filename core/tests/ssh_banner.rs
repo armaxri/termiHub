@@ -161,3 +161,81 @@ async fn ssh_banner_04_startup_output_shown_but_setup_hidden() {
         );
     }
 }
+
+// ── SSH-BANNER-05: default session — follows cwd, types nothing (#5009) ──
+
+/// With default settings nothing is typed into the remote shell: the
+/// login's startup output is shown, none of termiHub's setup is, and the file
+/// browser still follows the shell — the backend reads the directory from
+/// `/proc` over a side exec channel and reports it as OSC 7.
+#[tokio::test]
+async fn ssh_banner_05_default_session_follows_cwd_without_typing() {
+    use std::time::Duration;
+    use termihub_core::backends::ssh::Ssh;
+    use termihub_core::connection::ConnectionType;
+
+    require_docker!(port_ssh_banner());
+
+    let config = ssh_password_config(port_ssh_banner());
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("SSH-BANNER-05: authenticate for the rc setup");
+    let rc_line = r#"[ -f ~/.th5009b ] && cat ~/.th5009b"#;
+    ssh_exec(
+        &session,
+        &format!(
+            "printf '%s\\n' '{STARTUP_LINE}' > ~/.th5009b; \
+             grep -qF '{rc_line}' ~/.bashrc || echo '{rc_line}' >> ~/.bashrc"
+        ),
+    )
+    .await
+    .expect("SSH-BANNER-05: install the rc greeting");
+
+    let mut ssh = Ssh::new();
+    ssh.connect(common::ssh_password_settings(port_ssh_banner()))
+        .await
+        .expect("SSH-BANNER-05: shell session connects");
+    let mut rx = ssh.subscribe_output();
+    let mut seen = String::new();
+    let mut wait = async |seen: &mut String, what: &str, needle: &str| {
+        let ok = tokio::time::timeout(Duration::from_secs(60), async {
+            while !seen.contains(needle) {
+                match rx.recv().await {
+                    Some(chunk) => seen.push_str(&String::from_utf8_lossy(&chunk)),
+                    None => return false,
+                }
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "SSH-BANNER-05: timed out waiting for {what}: {seen:?}");
+    };
+    wait(
+        &mut seen,
+        "the start directory",
+        "\x1b]7;file:///home/testuser\x07",
+    )
+    .await;
+    ssh.write(b"cd /tmp\n").expect("SSH-BANNER-05: write");
+    wait(&mut seen, "the new directory", "\x1b]7;file:///tmp\x07").await;
+    ssh.disconnect().await.ok();
+    let _ = ssh_exec(&session, "rm -f ~/.th5009b").await;
+
+    assert!(
+        seen.contains(STARTUP_LINE),
+        "SSH-BANNER-05: the login's startup output must stay visible: {seen:?}"
+    );
+    for leak in [
+        "__termihub",
+        "PROMPT_COMMAND",
+        "precmd_functions",
+        "6973;",
+        "\x1b]133;",
+    ] {
+        assert!(
+            !seen.contains(leak),
+            "SSH-BANNER-05: {leak:?} reached the terminal: {seen:?}"
+        );
+    }
+}
