@@ -183,7 +183,8 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         #[cfg(not(unix))]
         let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
         // The shell's directory, read from the OS (#5009): the PTY's
-        // foreground process on Unix, else the shell process itself.
+        // foreground process on Unix, else the shell process itself (on
+        // Windows its innermost same-program descendant, #5014).
         let shell_pid = child.process_id();
         #[cfg(unix)]
         let foreground: Option<Arc<std::os::fd::OwnedFd>>;
@@ -278,6 +279,11 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                         return Some(cwd);
                     }
                 }
+                // No foreground process under ConPTY: the innermost shell
+                // (past Git Bash's launcher) stands for it (#5014).
+                #[cfg(windows)]
+                return shell_pid.and_then(super::local_shell_cwd::innermost_shell_cwd);
+                #[cfg(not(windows))]
                 shell_pid.and_then(super::local_shell_cwd::process_cwd)
             })),
         })
