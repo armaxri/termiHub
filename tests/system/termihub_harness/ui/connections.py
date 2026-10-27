@@ -254,7 +254,7 @@ class ConnectionsUi(HarnessMixin):
         *,
         shell: Optional[str] = None,
         starting_directory: Optional[str] = None,
-        command_marks: bool = False,
+        command_marks: Optional[bool] = None,
         connect: bool = False,
     ) -> str:
         """Create a local-shell connection (the default editor type).
@@ -265,9 +265,10 @@ class ConnectionsUi(HarnessMixin):
         ``field-startingDirectory`` so the shell opens there (supports ``/tmp``,
         ``~/...`` and ``${env:VAR}``, which the backend expands). ``connect=True``
         clicks **Save & Connect**, which saves then immediately opens the terminal
-        — so the caller never needs a sidebar double-click. ``command_marks=True``
-        turns on the opt-in "Command Marks (Shell Hook)" toggle (off by default
-        since #5009: the directory is followed without a hook).
+        — so the caller never needs a sidebar double-click. ``command_marks``
+        sets the opt-in "Command Marks (Shell Hook)" toggle on (``True``) or off
+        (``False``); ``None`` keeps the editor's default, which the app-level
+        "Shell Integration by Default" setting still turns on (#5042).
         """
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
@@ -275,21 +276,22 @@ class ConnectionsUi(HarnessMixin):
             self.select_shell(shell)
         if starting_directory is not None:
             self._fill_starting_directory(starting_directory)
-        if command_marks:
+        if command_marks is not None:
             self.wait(
                 lambda: self.driver.exists("field-shellIntegration"),
                 what="the Command Marks toggle",
             )
+            want = "true" if command_marks else "false"
 
-            def marks_on() -> bool:
-                # Re-click until the switch reports on: a click that lands while
-                # the form is still initialising is lost.
-                if self.driver.get_attribute("field-shellIntegration", "aria-checked") == "true":
+            def marks_set() -> bool:
+                # Re-click until the switch reports the wanted state: a click
+                # that lands while the form is still initialising is lost.
+                if self.driver.get_attribute("field-shellIntegration", "aria-checked") == want:
                     return True
                 self.driver.click("field-shellIntegration")
                 return False
 
-            self.wait(marks_on, what="the Command Marks toggle to switch on")
+            self.wait(marks_set, what=f"the Command Marks toggle to read {want}")
         self._click_editor_save(connect)
         self.require_connection(name)
         return name

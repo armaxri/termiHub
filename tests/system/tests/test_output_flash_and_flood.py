@@ -226,6 +226,8 @@ class _GitBashStartFlash(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarU
         return raw
 
     def test_default_git_bash_types_nothing_and_follows_cd(self):
+        # The hook's default (off since #5009): switched off explicitly, as the
+        # editor still pre-enables it from the app-level setting (#5042).
         raw = self._start(command_marks=False)
         assert "\x1b]133;" not in raw, f"no hook by default:\n{describe(raw)}"
 
