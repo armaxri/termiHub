@@ -404,7 +404,55 @@ def test_skip_allowlist_json_is_valid_json():
         "display-linux-arm64",
         "display-macos",
         "display-windows",
+        "os-input-macos",
+        "os-input-windows",
     }
+
+
+#: The OS-input suites' platform skips on the Windows runner (#5031).
+_WINDOWS_OS_INPUT_SKIPS = [
+    sg.Skip(
+        "tests/test_os_input_keyboard.py::TestOsKeyboardGrades::"
+        "test_german_layout_altgr_and_dead_circumflex",
+        "X keyboard maps (Linux)",
+    ),
+    sg.Skip(
+        "tests/test_os_input_keyboard.py::TestOsKeyboardGrades::"
+        "test_macos_key_repeat_has_no_accent_picker",
+        "press-and-hold is a macOS feature",
+    ),
+    *(
+        sg.Skip(
+            f"tests/test_os_input_macos_app.py::TestOsMacAppLifecycle::{name}",
+            "the Dock, Cmd+Q and quit Apple events are macOS features",
+        )
+        for name in (
+            "test_last_window_close_keeps_app_and_dock_reopen_recreates_window",
+            "test_cmd_q_quits_with_several_windows",
+            "test_cmd_q_with_live_shell_asks_first",
+            "test_dock_quit_applescript_quit_and_logout",
+        )
+    ),
+]
+
+
+def test_the_os_input_lanes_own_the_os_input_platform_skips():
+    """#5031: the OS-input suites run in their own ``-n 1`` step on macOS and
+    Windows, so their platform skips are expected there — within that lane's
+    baseline — and no longer in the bulk lanes they left."""
+    allowlist = sg.load_allowlist()
+    windows = sg.evaluate(
+        "os-input-windows", collected=17, skips=_WINDOWS_OS_INPUT_SKIPS, allowlist=allowlist
+    )
+    assert windows.ok, windows.problems
+    macos = sg.evaluate(
+        "os-input-macos", collected=17, skips=_WINDOWS_OS_INPUT_SKIPS[:1], allowlist=allowlist
+    )
+    assert macos.ok, macos.problems
+    bulk = sg.evaluate(
+        "bulk-windows", collected=500, skips=_WINDOWS_OS_INPUT_SKIPS[:1], allowlist=allowlist
+    )
+    assert not bulk.ok
 
 
 @pytest.mark.parametrize(

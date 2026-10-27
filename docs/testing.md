@@ -1216,7 +1216,18 @@ Input that goes to whatever has focus (XTEST, `SendInput`, any pointer event)
 is **global**: it runs only on a GitHub runner or with
 `TERMIHUB_OS_INPUT_GLOBAL=1`, and every event is preceded by a check that the
 frontmost window belongs to the test instance or a harness-owned helper window.
-Without either the suites skip on a developer machine. A screen point comes
+Without either the suites skip on a developer machine.
+
+On the macOS and Windows legs of the nightly lane the three suites run in a
+step of their own at `-n 1`, after the bulk step's two-worker session has
+exited (#5031). Global input goes to whatever window is in front, and every test
+app is pinned always-on-top at the same spot (#957), so under two workers the
+other worker's app took the foreground: the tab tear-off released its tab onto
+that app and never tore off. The step has its own skip-guard lanes,
+`os-input-macos` and `os-input-windows`, and runs even when the bulk step
+failed. Linux needs no split: its bulk lane already runs one worker.
+
+A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
 need no guessing. That verb also returns `isTrusted`, which proves the input
