@@ -1389,7 +1389,25 @@ export function ConnectionList() {
   );
 
   const [localCollapsed, setLocalCollapsed] = useState(false);
-  const [remoteAgentsCollapsed, setRemoteAgentsCollapsed] = useState(false);
+  // Remote Agents collapse (#5010): an empty section starts collapsed and a
+  // populated one expanded. An explicit header toggle wins, but only while the
+  // section's emptiness is unchanged — adding the first agent (or removing the
+  // last) re-applies the default, so a new agent is never hidden behind a
+  // collapse the user made on the empty section.
+  const remoteAgentsEmpty = remoteAgents.length === 0;
+  const [remoteAgentsOverride, setRemoteAgentsOverride] = useState<{
+    collapsed: boolean;
+    whenEmpty: boolean;
+  } | null>(null);
+  const remoteAgentsCollapsed =
+    remoteAgentsOverride && remoteAgentsOverride.whenEmpty === remoteAgentsEmpty
+      ? remoteAgentsOverride.collapsed
+      : remoteAgentsEmpty;
+  const toggleRemoteAgentsCollapsed = useCallback(
+    () =>
+      setRemoteAgentsOverride({ collapsed: !remoteAgentsCollapsed, whenEmpty: remoteAgentsEmpty }),
+    [remoteAgentsCollapsed, remoteAgentsEmpty]
+  );
 
   // The Remote Agents section only occupies a flex slot when it is both
   // rendered (experimental) and expanded. Keying it on `experimental` alone
@@ -1589,7 +1607,7 @@ export function ConnectionList() {
               <SidebarGroupHeader
                 title="Remote Agents"
                 expanded={!remoteAgentsCollapsed}
-                onToggle={() => setRemoteAgentsCollapsed((v) => !v)}
+                onToggle={toggleRemoteAgentsCollapsed}
                 headerTestId="sidebar-group-header-remote-agents"
                 toggleTestId="connection-list-remote-agents-toggle"
                 actions={
