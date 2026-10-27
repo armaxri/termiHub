@@ -383,7 +383,8 @@ class TestOsKeyboardGrades(
             lambda: any(w.width < before.width for w in osi.windows()),
             what=f"the resize to reach the OS window (was {before})",
         )
-        main = self.os_activate().window
+        screen = self.os_activate()
+        main = screen.window
         second, b_tab = self._second_window_shell()
         try:
             b_window = self.wait(
@@ -395,6 +396,9 @@ class TestOsKeyboardGrades(
                 what=f"window B's OS window (main is {main})",
             )
             self._raise(osi, main, self.driver, second)
+            # The New Window shortcut left A's focus on the activity bar: put it
+            # back into A's shell. B's new shell took B's focus when it opened.
+            self._focus_terminal(a_tab, screen)
             osi.type_text("echo WA_aaa_\n")
             assert self._wait_echo(a_tab, "WA") == "aaa"
 
