@@ -32,6 +32,11 @@ pub fn reset_old_shell_hook_default(type_id: &str, settings: &mut serde_json::Va
     }
 }
 
+/// Stub (#5013): implemented in the next commit.
+pub fn reset_old_wsl_shell_hook_default(_type_id: &str, _settings: &mut serde_json::Value) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,11 +49,32 @@ mod tests {
             assert!(reset_old_shell_hook_default(type_id, &mut s));
             assert_eq!(s, json!({ "shellIntegration": false, "host": "h" }));
         }
+        // WSL has its own, later step (#5013).
         let mut wsl = json!({ "shellIntegration": true });
         assert!(!reset_old_shell_hook_default("wsl", &mut wsl));
         assert_eq!(wsl, json!({ "shellIntegration": true }));
         let mut absent = json!({ "host": "h" });
         assert!(!reset_old_shell_hook_default("ssh", &mut absent));
         assert_eq!(absent, json!({ "host": "h" }));
+    }
+
+    #[test]
+    fn only_a_saved_true_on_wsl_is_switched_off_by_the_wsl_step() {
+        let mut wsl = json!({ "shellIntegration": true, "distribution": "D" });
+        assert!(reset_old_wsl_shell_hook_default("wsl", &mut wsl));
+        assert_eq!(
+            wsl,
+            json!({ "shellIntegration": false, "distribution": "D" })
+        );
+        for type_id in ["local", "shell", "ssh"] {
+            let mut s = json!({ "shellIntegration": true });
+            assert!(
+                !reset_old_wsl_shell_hook_default(type_id, &mut s),
+                "{type_id}"
+            );
+            assert_eq!(s, json!({ "shellIntegration": true }));
+        }
+        let mut off = json!({ "shellIntegration": false });
+        assert!(!reset_old_wsl_shell_hook_default("wsl", &mut off));
     }
 }

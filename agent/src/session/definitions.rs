@@ -2871,9 +2871,10 @@ mod tests {
         for id in ["shell", "local", "ssh"] {
             assert_eq!(hook(store.get(id).await), json!(false), "{id}");
         }
-        assert_eq!(hook(store.get("wsl").await), json!(true));
+        // WSL is switched off by the later v3 step (#5013).
+        assert_eq!(hook(store.get("wsl").await), json!(false));
 
-        // Opting back in is saved at v2 and survives a reload.
+        // Opting back in is saved at the current version and survives a reload.
         store
             .update(
                 "ssh",
@@ -2896,6 +2897,58 @@ mod tests {
         let reloaded = ConnectionStore::new(path);
         assert_eq!(hook(reloaded.get("ssh").await), json!(true));
         assert_eq!(hook(reloaded.get("local").await), json!(false));
+    }
+
+    /// #5013: the v2 → v3 step switches a WSL connection's saved hook off
+    /// once; an SSH opt-in made at v2 and an explicit WSL `false` are kept,
+    /// and a WSL opt-in made afterwards survives a reload.
+    #[tokio::test]
+    async fn v2_wsl_shell_hook_is_switched_off_once() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let conn = |id: &str, session_type: &str, hook: bool| {
+            json!({
+                "id": id,
+                "name": id,
+                "session_type": session_type,
+                "config": { "shellIntegration": hook },
+                "persistent": false
+            })
+        };
+        fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "version": "2",
+                "connections": [
+                    conn("wsl", "wsl", true),
+                    conn("wsl-off", "wsl", false),
+                    conn("ssh", "ssh", true),
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = ConnectionStore::new(path.clone());
+        let hook = |c: Option<ConnectionSnapshot>| c.unwrap().config["shellIntegration"].clone();
+        assert_eq!(hook(store.get("wsl").await), json!(false));
+        assert_eq!(hook(store.get("wsl-off").await), json!(false));
+        assert_eq!(hook(store.get("ssh").await), json!(true), "a v2 opt-in");
+
+        store
+            .update(
+                "wsl",
+                None,
+                None,
+                Some(json!({ "shellIntegration": true })),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let reloaded = ConnectionStore::new(path);
+        assert_eq!(hook(reloaded.get("wsl").await), json!(true));
     }
 
     /// An older-version file runs through the numbered migrate chain.

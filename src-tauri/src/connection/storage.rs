@@ -1103,7 +1103,8 @@ mod tests {
                 "{name}"
             );
         }
-        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(true)));
+        // WSL is switched off by the later v7 step (#5013).
+        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(false)));
 
         // The user opts back in; the saved v6 file keeps that.
         let mut data = loaded.data;
@@ -1125,6 +1126,65 @@ mod tests {
             hook(&reloaded.data, "local"),
             Some(serde_json::json!(false))
         );
+    }
+
+    /// #5013: the v6 → v7 step switches a WSL connection's saved hook off
+    /// once (nested ones too); a local opt-in made at v6 is kept, and a WSL
+    /// opt-in made afterwards survives a reload.
+    #[test]
+    fn v6_wsl_shell_hook_is_switched_off_once() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let conn = |name: &str, type_id: &str, hook: bool| {
+            serde_json::json!({
+                "type": "connection",
+                "name": name,
+                "config": { "type": type_id, "config": { "shellIntegration": hook } }
+            })
+        };
+        let v6 = serde_json::json!({
+            "version": "6",
+            "children": [
+                conn("wsl", "wsl", true),
+                conn("local", "local", true),
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "children": [conn("nested", "wsl", true)]
+                }
+            ]
+        });
+        fs::write(&storage.file_path, v6.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        let hook = |data: &FlatConnectionStore, name: &str| {
+            data.connections
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .config
+                .settings
+                .get("shellIntegration")
+                .cloned()
+        };
+        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(false)));
+        assert_eq!(hook(&loaded.data, "nested"), Some(serde_json::json!(false)));
+        assert_eq!(
+            hook(&loaded.data, "local"),
+            Some(serde_json::json!(true)),
+            "a v6 opt-in"
+        );
+
+        let mut data = loaded.data;
+        for c in &mut data.connections {
+            if c.name == "wsl" {
+                c.config.settings["shellIntegration"] = serde_json::json!(true);
+            }
+        }
+        storage.save_flat(&data).unwrap();
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert_eq!(hook(&reloaded.data, "wsl"), Some(serde_json::json!(true)));
     }
 
     /// The raw v3 → v4 step itself (before the typed parse) renames the key.
