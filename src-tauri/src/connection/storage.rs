@@ -661,10 +661,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v5)
+        // Verify on-disk format is the nested tree, at the current schema (v6)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "5");
+        assert_eq!(on_disk.version, "6");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -976,7 +976,7 @@ mod tests {
         storage.save_flat(&loaded.data).unwrap();
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("5"));
+        assert_eq!(on_disk["version"], serde_json::json!("6"));
         let on_disk_settings = |name: &str| {
             on_disk["children"]
                 .as_array()
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn v4_build_refuses_to_overwrite_v5_file() {
         use crate::utils::migrate::{guard_not_newer, VersionedStore};
-        assert_eq!(ConnectionStore::CURRENT_VERSION, 5);
+        const { assert!(ConnectionStore::CURRENT_VERSION >= 5) };
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
         storage
@@ -1048,6 +1048,83 @@ mod tests {
         let err = guard_not_newer(&storage.file_path, ConnectionStore::STORE_NAME, 4)
             .expect_err("a v4 build must not overwrite a v5 file");
         assert!(err.to_string().contains("newer version"), "{err}");
+    }
+
+    /// #5009: v6 turns the command-mark shell hook off once. Local and SSH
+    /// connections saved with the old default `shellIntegration: true` load
+    /// with `false` (nested ones included); an explicit `false` and other
+    /// types (WSL keeps its hook) are untouched. The next save writes v6, so
+    /// the reset never runs again.
+    #[test]
+    fn v5_shell_hook_is_switched_off_once() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let conn = |name: &str, type_id: &str, settings: serde_json::Value| {
+            serde_json::json!({
+                "type": "connection",
+                "name": name,
+                "config": { "type": type_id, "config": settings }
+            })
+        };
+        let v5 = serde_json::json!({
+            "version": "5",
+            "children": [
+                conn("local", "local", serde_json::json!({ "shell": "zsh", "shellIntegration": true })),
+                conn("ssh", "ssh", serde_json::json!({ "host": "pi", "shellIntegration": true })),
+                conn("off", "ssh", serde_json::json!({ "host": "o", "shellIntegration": false })),
+                conn("wsl", "wsl", serde_json::json!({ "distribution": "U", "shellIntegration": true })),
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "children": [
+                        conn("nested", "local", serde_json::json!({ "shellIntegration": true }))
+                    ]
+                }
+            ]
+        });
+        fs::write(&storage.file_path, v5.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        let hook = |data: &FlatConnectionStore, name: &str| {
+            data.connections
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .config
+                .settings
+                .get("shellIntegration")
+                .cloned()
+        };
+        for name in ["local", "ssh", "off", "nested"] {
+            assert_eq!(
+                hook(&loaded.data, name),
+                Some(serde_json::json!(false)),
+                "{name}"
+            );
+        }
+        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(true)));
+
+        // The user opts back in; the saved v6 file keeps that.
+        let mut data = loaded.data;
+        for c in &mut data.connections {
+            if c.name == "ssh" {
+                c.config.settings["shellIntegration"] = serde_json::json!(true);
+            }
+        }
+        storage.save_flat(&data).unwrap();
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            on_disk.version,
+            ConnectionStore::CURRENT_VERSION.to_string()
+        );
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert_eq!(hook(&reloaded.data, "ssh"), Some(serde_json::json!(true)));
+        assert_eq!(
+            hook(&reloaded.data, "local"),
+            Some(serde_json::json!(false))
+        );
     }
 
     /// The raw v3 → v4 step itself (before the typed parse) renames the key.
@@ -1192,7 +1269,7 @@ mod tests {
 
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("5"));
+        assert_eq!(on_disk["version"], serde_json::json!("6"));
         assert_eq!(
             on_disk["children"][0]["children"][0]["config"]["config"],
             serde_json::json!({ "connectTimeoutSecs": 45 })
