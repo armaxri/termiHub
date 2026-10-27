@@ -30,6 +30,7 @@ from typing import Optional
 import pytest
 
 from termihub_harness import (
+    ConnectionsUi,
     FilesUi,
     LayoutUi,
     OsDropUi,
@@ -74,7 +75,7 @@ def pane_overlay(panel_id: str) -> str:
 
 
 class TestSyntheticOsFileDrop(
-    OsDropUi, TerminalUi, TabsUi, LayoutUi, SidebarUi, FilesUi, SystemTest
+    OsDropUi, TerminalUi, TabsUi, LayoutUi, SidebarUi, FilesUi, ConnectionsUi, SystemTest
 ):
     """The app half of an OS file drop, graded from the terminal, the disk and the DOM."""
 
@@ -214,7 +215,7 @@ class TestSyntheticOsFileDrop(
     # ── MT-NIN-05: a drop onto the file browser copies into its folder ───────
     def _browse(self, folder: Path, timeout: float = 30.0) -> None:
         self.close_all_tabs()
-        self.ensure_terminal()
+        self.open_cwd_following_terminal()
         self.run_command(f'cd "{folder}"')
         self.open_file_browser()
         self.wait_for_path_contains(folder.name, timeout=timeout)

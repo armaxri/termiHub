@@ -459,7 +459,8 @@ fn build_shell_command_with(
 ///   injected visibly via stdin.
 /// - `"powershell"` / `"pwsh"` — OSC 7: overrides the `prompt` function to
 ///   emit a `file://` URI (both `powershell.exe` and `pwsh`); injected via
-///   `-NoExit -Command` startup args (not stdin) to avoid echo.
+///   `-NoExit -Command` startup args (not stdin) to avoid echo. Only for the
+///   opt-in hook: without it PowerShell's `cd` is not followed (#5017).
 /// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
 ///   (not stdin) to avoid echo; only for the opt-in hook, since cmd's
 ///   directory is followed from its process without it (#5017).
@@ -733,7 +734,9 @@ fn bash_osc7_command() -> &'static str {
 /// preserved; a default `PS <path}> ` prompt is used only when none exists.
 /// The whole setup is guarded by `$global:__th_si`, so running it twice cannot
 /// capture termiHub's own `prompt` as the "original" and recurse.
-/// Injected locally via `-NoExit -Command` startup args, so it is never
+/// Only used with the opt-in command-mark hook (#5017): PowerShell's location
+/// is not its process directory, so without it the file browser does not
+/// follow PowerShell. Injected locally via `-NoExit -Command` startup args, so it is never
 /// echoed, and it prints nothing and clears nothing: whatever the user's
 /// profile printed at startup stays on screen (#5017). Only the copy typed
 /// over SSH (the opt-in hook) clears the screen afterwards, to take its own

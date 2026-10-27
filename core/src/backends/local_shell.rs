@@ -499,7 +499,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             key: "shellIntegration".to_string(),
                             label: "Command Marks (Shell Hook)".to_string(),
                             description: Some(
-                                "Type a small hook into bash/zsh for command marks (OSC 133)"
+                                "Add a shell hook for command marks (OSC 133) and PowerShell's directory"
                                     .to_string(),
                             ),
                             help_text: Some(
@@ -513,11 +513,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             "bash or zsh once the prompt is up and keeps it off the screen, but ",
                             "the hook stays in the shell: it is in the shell's history, its ",
                             "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
-                            "extended. fish and cmd get it as a startup option.\n\n",
-                            "PowerShell is the exception: its location is not the directory the ",
-                            "operating system sees, so it always gets a prompt hook as a startup ",
-                            "argument. Nothing is typed or shown, and your profile's output stays ",
-                            "on screen.\n\n",
+                            "extended. fish, cmd and PowerShell get it as a startup option ",
+                            "instead, so nothing is typed.\n\n",
+                            "PowerShell: the file browser follows PowerShell's current directory ",
+                            "only with this on. Its location is not the directory the operating ",
+                            "system sees, so without the hook a `cd` in PowerShell is not ",
+                            "followed. With it on, PowerShell's `prompt` and ",
+                            "PSConsoleHostReadLine functions are wrapped and a few `$__th_` ",
+                            "variables are set in the session.\n\n",
                             "Connections saved while this was on by default were switched off ",
                             "once when you updated; turn it back on here if you want it.",
                         )
@@ -919,13 +922,12 @@ fn apply_shell_integration(
     shell: &str,
     shell_integration: bool,
 ) -> (ShellCommand, Option<&'static str>) {
-    // PowerShell reports its directory only through its startup arguments
-    // (its location is not its process directory, so the passive follower
-    // cannot see it), and those are never typed or shown, so it always gets
-    // them. cmd's directory *is* its process directory, so like bash/zsh it
-    // starts untouched unless command marks are asked for (#5009, #5017).
-    let powershell = matches!(shell_kind(shell), "powershell" | "pwsh");
-    let setup = if shell_integration || powershell {
+    // Every shell starts untouched unless command marks are asked for
+    // (#5009, #5017): bash/zsh/cmd are then followed from their process
+    // directory. PowerShell's location is not its process directory, so
+    // without the hook its `cd` is not followed — the maintainer's choice
+    // over putting a hook into every PowerShell session.
+    let setup = if shell_integration {
         osc7_setup_command(shell)
     } else {
         None
