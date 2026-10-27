@@ -2803,6 +2803,69 @@ mod tests {
         }
     }
 
+    /// #5009: v2 turns the command-mark shell hook off once. Local/shell and
+    /// SSH connections stored with the old default `shellIntegration: true`
+    /// load with `false`; other types are untouched. A save writes v2, so an
+    /// explicit opt-in after that is never reset again.
+    #[tokio::test]
+    async fn v1_shell_hook_is_switched_off_once() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let conn = |id: &str, session_type: &str| {
+            json!({
+                "id": id,
+                "name": id,
+                "session_type": session_type,
+                "config": { "shellIntegration": true },
+                "persistent": false
+            })
+        };
+        fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "version": "1",
+                "connections": [
+                    conn("shell", "shell"),
+                    conn("local", "local"),
+                    conn("ssh", "ssh"),
+                    conn("wsl", "wsl"),
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = ConnectionStore::new(path.clone());
+        let hook = |c: Option<ConnectionSnapshot>| c.unwrap().config["shellIntegration"].clone();
+        for id in ["shell", "local", "ssh"] {
+            assert_eq!(hook(store.get(id).await), json!(false), "{id}");
+        }
+        assert_eq!(hook(store.get("wsl").await), json!(true));
+
+        // Opting back in is saved at v2 and survives a reload.
+        store
+            .update(
+                "ssh",
+                None,
+                None,
+                Some(json!({ "shellIntegration": true })),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            on_disk["version"],
+            json!(DEFINITIONS_STORE_VERSION.to_string())
+        );
+        let reloaded = ConnectionStore::new(path);
+        assert_eq!(hook(reloaded.get("ssh").await), json!(true));
+        assert_eq!(hook(reloaded.get("local").await), json!(false));
+    }
+
     /// An older-version file runs through the numbered migrate chain.
     #[test]
     fn migrate_from_older_version_reaches_current_shape() {

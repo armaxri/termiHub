@@ -2517,6 +2517,25 @@ mod tests {
         assert!(stdin.is_some());
     }
 
+    /// #5009: new local and SSH connections start with the command-mark
+    /// hook off — the form's default and the backend's fallback agree.
+    #[test]
+    fn new_connections_default_to_no_shell_hook() {
+        #[allow(unused_mut)]
+        let mut schemas = vec![LocalShell::new().settings_schema()];
+        #[cfg(feature = "ssh")]
+        schemas.push(crate::backends::ssh::Ssh::new().settings_schema());
+        for schema in schemas {
+            let field = schema
+                .groups
+                .iter()
+                .flat_map(|g| g.fields.iter())
+                .find(|f| f.key == "shellIntegration")
+                .expect("shellIntegration field");
+            assert_eq!(field.default, Some(serde_json::json!(false)));
+        }
+    }
+
     /// fish gets its setup as `--init-command`: run before the first prompt,
     /// never typed, so never echoed (#5009).
     #[test]
