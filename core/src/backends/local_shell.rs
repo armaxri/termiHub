@@ -514,7 +514,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             "the hook stays in the shell: it is in the shell's history, its ",
                             "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
                             "extended. fish gets it as a startup option, PowerShell and cmd as ",
-                            "startup arguments.",
+                            "startup arguments.\n\n",
+                            "Connections saved while this was on by default were switched off ",
+                            "once when you updated; turn it back on here if you want it.",
                         )
                                 .to_string(),
                             ),
