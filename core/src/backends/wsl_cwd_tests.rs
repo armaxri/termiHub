@@ -121,6 +121,7 @@ fn a_reused_pid_is_not_our_shell() {
     // pid 20 now belongs to a process started much later: not ours.
     let later = probe("400.00", &[(20, 39_000, "/elsewhere")]);
     assert_eq!(t.read(Some(&later), SECS(302)), None);
+    assert!(t.gave_up(), "a later terminal must never pass for ours");
 }
 
 #[test]
