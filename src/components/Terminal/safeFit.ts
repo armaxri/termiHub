@@ -108,3 +108,25 @@ export function isGridSettled(
   const dims = fitAddon.proposeDimensions();
   return !!dims && dims.cols === xterm.cols && dims.rows === xterm.rows;
 }
+
+/**
+ * Fit `fitAddon` to `el` only when that cannot produce a degenerate grid: the
+ * container is laid out ({@link isFitReady}) and the proposal clears
+ * {@link MIN_SAFE_FIT_COLS} ({@link isProposedFitSafe}). Returns whether it fitted.
+ *
+ * For the fits that run around session creation and font loading (#5025): a
+ * terminal still parked there would otherwise spawn or resize its PTY at 2x1,
+ * and a shell that redraws for that grid (macOS bash 3.2) garbles its line on
+ * the real one. A skipped fit is owed to the next fit with real dimensions.
+ */
+export function fitIfSafe(
+  el: HTMLElement | null | undefined,
+  fitAddon: {
+    fit: () => void;
+    proposeDimensions: () => { cols: number; rows: number } | undefined;
+  }
+): boolean {
+  if (!isFitReady(el) || !isProposedFitSafe(fitAddon)) return false;
+  fitAddon.fit();
+  return true;
+}

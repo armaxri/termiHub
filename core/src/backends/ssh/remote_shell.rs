@@ -201,13 +201,20 @@ where
     }
 }
 
+/// Appended to the PowerShell hook when it is *typed* over SSH (the opt-in
+/// command-mark hook only): a Windows host renders through ConPTY, so the
+/// line's echo cannot be filtered out of the stream the way a POSIX host's
+/// is, and clearing the screen is what keeps the ~1 KB line off it. The
+/// local startup-argument setup is never typed and never clears (#5017).
+pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
+
 /// The shell-integration line to type into a session whose login shell is
 /// `shell`, including its line terminator, or `None` to inject nothing.
 ///
 /// - POSIX: the bash/zsh OSC 7 hook, ended with LF — unchanged from before
 ///   detection existed.
 /// - PowerShell (Windows or Unix): the PowerShell OSC 7 / OSC 133 prompt
-///   override, ended with CR, which is Enter for PSReadLine (an LF would leave
+///   override plus [`TYPED_POWERSHELL_CLEAR`], ended with CR, which is Enter for PSReadLine (an LF would leave
 ///   the line unsubmitted and merge it with the user's first command). The
 ///   connector holds it back until the first prompt ([`SetupGate`]), so a
 ///   Unix tty no longer maps that CR to LF and a starting Windows shell
@@ -217,7 +224,7 @@ pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
         RemoteShell::Posix => osc7_setup_command("bash").map(|s| format!("{s}\n")),
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
-            osc7_setup_command("powershell").map(|s| format!("{s}\r"))
+            osc7_setup_command("powershell").map(|s| format!("{s}{TYPED_POWERSHELL_CLEAR}\r"))
         }
         RemoteShell::Cmd | RemoteShell::Unknown => None,
     }
@@ -265,8 +272,8 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// line editor rather than the cooked tty, whose own echo would come first.
 ///
 /// Not PowerShell or cmd.exe: a Windows host renders through ConPTY, whose
-/// screen model must see every byte (its PowerShell setup ends with
-/// `Clear-Host` instead).
+/// screen model must see every byte (its typed PowerShell setup ends with
+/// [`TYPED_POWERSHELL_CLEAR`] instead).
 pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
     shell == RemoteShell::Posix && has_integration
 }
@@ -909,7 +916,10 @@ mod tests {
         let line = integration_setup_line(RemoteShell::PowerShell).expect("powershell setup");
         assert_eq!(
             line,
-            format!("{}\r", osc7_setup_command("powershell").unwrap())
+            format!(
+                "{}{TYPED_POWERSHELL_CLEAR}\r",
+                osc7_setup_command("powershell").unwrap()
+            )
         );
         assert!(line.ends_with('\r'));
         // One line: an embedded LF would be a PSReadLine continuation.

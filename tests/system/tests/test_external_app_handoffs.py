@@ -109,7 +109,7 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
     # ── helpers ──────────────────────────────────────────────────────────────
     def _browse_workspace(self) -> None:
         """A local terminal ``cd``'d into the workspace, with Files showing it."""
-        self.ensure_terminal()
+        self.open_cwd_following_terminal()
         self.switch_to_connections_sidebar()
         # Forward slashes: valid in PowerShell, Git Bash and POSIX shells (#2683).
         self.run_command(f'cd "{str(self.workspace).replace(chr(92), "/")}"')
