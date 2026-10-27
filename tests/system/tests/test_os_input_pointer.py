@@ -249,6 +249,10 @@ class TestOsPointerGrades(
             self.wait(lambda t=tab_id: self.driver.read_terminal(t).strip(), what="its prompt")
         return left, right
 
+    @staticmethod
+    def _pane(tab_id: object, left: str, right: str) -> str:
+        return {left: "left", right: "right"}.get(tab_id, f"neither ({tab_id})")  # type: ignore[arg-type]
+
     def test_click_into_inactive_window_focuses_clicked_pane(self):
         """MT-NIN-22: with another app in front, ONE real click into the right
         shell of an inactive termiHub window activates the window and the keys
@@ -281,15 +285,27 @@ class TestOsPointerGrades(
                     what=f"the right pane active (pointer events: "
                     f"{[e['type'] for e in self.trusted_events()]})",
                 )
-            osi.type_text("echo N22_abc_\n")
+            time.sleep(0.5)  # let a pane activation from the click settle
             focused = (self.active_tab() or {}).get("id")
-            target = expected or focused
-            assert target in (left, right), f"no shell pane is focused ({focused})"
-            assert self._wait_echo(target, "N22") == "abc"
-            other = left if target == right else right
-            assert terminal_echo(self.driver.read_terminal(other), "N22") is None, (
-                "the keys also reached the unfocused pane"
+            osi.type_text("echo N22_abc_\n")
+
+            def echoes() -> dict[str, str]:
+                found = {}
+                for name, tab_id in (("left", left), ("right", right)):
+                    echo = terminal_echo(self.driver.read_terminal(tab_id), "N22")
+                    if echo is not None:
+                        found[name] = echo
+                return found
+
+            self.wait(
+                echoes,
+                what=f"the N22 echo in either pane (active: {self._pane(focused, left, right)}, "
+                f"pointer events: {[e['type'] for e in self.trusted_events()]})",
             )
+            time.sleep(0.5)  # a second pane would echo by now too
+            want = self._pane(expected or focused, left, right)
+            got = echoes()
+            assert got == {want: "abc"}, f"the keys landed in {got}, not only the {want} pane"
         assert "abc" not in helper.typed(), "the keys went to the other app"
 
     # Last in the suite: it leaves a resized window behind.

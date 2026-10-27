@@ -401,7 +401,10 @@ class TestOsKeyboardGrades(
         # A frame of its own, so neither OS nor Accessibility can mix the two
         # windows up; calibrated while it is the only window.
         before = self.os_activate().window
-        self.driver.resize_window(1000, 700)
+        # The hosted runners' screens are ~1024x768 and B opens at A's origin,
+        # clamped to the screen: the minimum size leaves B's shell a strip A
+        # does not cover.
+        self.driver.resize_window(800, 600)
         self.wait(
             lambda: any(w.width < before.width for w in osi.windows()),
             what=f"the resize to reach the OS window (was {before})",
