@@ -7,6 +7,12 @@ import { useDesktopVersion } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { errorMessage } from "@/utils/errorMessage";
+import {
+  DEVELOP_UPDATE_TITLE,
+  capitalize,
+  describeDevelopBuild,
+  isDevelopUpdate,
+} from "./developUpdate";
 import "./UpdateNotification.css";
 
 /**
@@ -16,6 +22,10 @@ import "./UpdateNotification.css";
  * "Skip This Version" action.  The status-bar dot remains visible after
  * dismiss so the user can always revisit the popup by clicking the version
  * chip.
+ *
+ * Develop-branch builds get develop wording (#5023): the newer build's date and
+ * commit, and a button that opens its download page. Notify only — nothing is
+ * downloaded or installed.
  */
 export function UpdateNotification() {
   const updateInfo = useAppStore((s) => s.updateInfo);
@@ -37,6 +47,7 @@ export function UpdateNotification() {
   if (!visible || !updateInfo) return null;
 
   const isSecurity = updateInfo.isSecurity;
+  const isDevelop = isDevelopUpdate(updateInfo);
   const skippedVersion = settings.updates?.skippedVersion;
   // For non-security updates: don't show the popup if the user already
   // skipped this exact version (the dot still appears).
@@ -78,9 +89,11 @@ export function UpdateNotification() {
             <StatusDot tone="notice" />
           )}
           <span id="update-notification-title" className="update-notification__title">
-            {isSecurity
-              ? `Security update: termiHub v${updateInfo.latestVersion}`
-              : `termiHub v${updateInfo.latestVersion} is available`}
+            {isDevelop
+              ? DEVELOP_UPDATE_TITLE
+              : isSecurity
+                ? `Security update: termiHub v${updateInfo.latestVersion}`
+                : `termiHub v${updateInfo.latestVersion} is available`}
           </span>
         </div>
         <button
@@ -94,7 +107,11 @@ export function UpdateNotification() {
       </div>
 
       <div className="update-notification__body">
-        {isSecurity ? (
+        {isDevelop ? (
+          <p className="update-notification__message" data-testid="update-notification-develop">
+            {capitalize(describeDevelopBuild(updateInfo))}
+          </p>
+        ) : isSecurity ? (
           <p className="update-notification__message">
             This release addresses a security vulnerability. Updating is strongly recommended.
           </p>
@@ -129,7 +146,7 @@ export function UpdateNotification() {
           onClick={handleOpenDownloads}
           data-testid="update-notification-open-downloads"
         >
-          Open Downloads Page
+          {isDevelop ? "Open Download Page" : "Open Downloads Page"}
         </Button>
         {!isSecurity && (
           <Button
@@ -138,7 +155,7 @@ export function UpdateNotification() {
             onClick={handleSkip}
             data-testid="update-notification-skip"
           >
-            Skip This Version
+            {isDevelop ? "Skip This Build" : "Skip This Version"}
           </Button>
         )}
       </div>

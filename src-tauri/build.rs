@@ -8,6 +8,11 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
 
     println!("cargo:rustc-env=GIT_HASH={hash}");
+    // Commit time of HEAD (strict ISO 8601), so a develop build can tell whether
+    // the published develop pre-release is newer than itself (#5023). Empty when
+    // git is unavailable; the update check then never prompts.
+    let commit_time = git_output(&["show", "-s", "--format=%cI", "HEAD"]).unwrap_or_default();
+    println!("cargo:rustc-env=TERMIHUB_BUILD_COMMIT_TIME={commit_time}");
     // Only watch paths that exist: a missing one is always stale (#3909).
     // HEAD moves on a branch switch; the branch's ref file moves on a commit,
     // which is what changes GIT_HASH.
