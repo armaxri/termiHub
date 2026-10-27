@@ -336,6 +336,12 @@ async fn native_05c_first_command_runs_with_shell_integration_on() {
             !seen.contains("PROMPT_COMMAND"),
             "{shell:?} must not be sent the POSIX setup; output: {seen:?}"
         );
+    } else {
+        // #5009: the POSIX setup is typed at the first prompt and its echo
+        // never reaches the terminal.
+        for leak in ["__termihub", "PROMPT_COMMAND", "precmd_functions", "6973;"] {
+            assert!(!seen.contains(leak), "setup text {leak:?} shown: {seen:?}");
+        }
     }
     if shell == RemoteShell::Cmd {
         assert!(
@@ -395,8 +401,92 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
             !seen.contains("export "),
             "{shell:?} got the POSIX export: {seen:?}"
         );
+    } else {
+        // #5009: the env fallback is typed with the hidden setup line, so
+        // its value is never echoed.
+        assert!(
+            !seen.contains("TH_4147_VAR=") && !seen.contains("__termihub"),
+            "the typed env setup was shown: {seen:?}"
+        );
     }
 
+    ssh.disconnect().await.expect("disconnect cleanly");
+}
+
+/// #5009: with default settings nothing is typed into the remote shell — no
+/// setup text, no function, `PROMPT_COMMAND` / `precmd` / `PS1` untouched —
+/// and the file browser still follows the shell: OSC 7 for the start
+/// directory and after a `cd`, read over a side channel. (History is checked
+/// by the hermetic local test; the fixture logs in as the real CI/dev user,
+/// whose history other sessions write to.)
+#[tokio::test]
+async fn native_05e_default_session_follows_cwd_without_touching_the_shell() {
+    let sshd = require_native_sshd!();
+    if fixture_shell() != RemoteShell::Posix {
+        eprintln!("cwd following over SSH needs a Unix host; skipping");
+        return;
+    }
+    let target = tempfile::tempdir().expect("target dir");
+    let target = std::fs::canonicalize(target.path()).expect("canonical");
+
+    let mut ssh = Ssh::new();
+    ssh.connect(sshd.key_settings()).await.expect("connect");
+    let mut rx = ssh.subscribe_output();
+    let mut seen = String::new();
+    let mut read_until = async |seen: &mut String, what: &str, done: &dyn Fn(&str) -> bool| {
+        let ok = tokio::time::timeout(Duration::from_secs(30), async {
+            while !done(seen) {
+                match rx.recv().await {
+                    Some(chunk) => seen.push_str(&String::from_utf8_lossy(&chunk)),
+                    None => return false,
+                }
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "timed out waiting for {what}: {seen:?}");
+    };
+    read_until(&mut seen, "the start directory", &|s| {
+        s.contains("\x1b]7;file://")
+    })
+    .await;
+
+    ssh.write(format!("cd '{}'\n", target.display()).as_bytes())
+        .expect("write");
+    let name = target.file_name().unwrap().to_string_lossy().to_string();
+    let report = format!("{name}\x07");
+    read_until(&mut seen, "the new directory", &|s| s.contains(&report)).await;
+
+    let probe = concat!(
+        r#"echo "TH$((1)):$(typeset -f 2>/dev/null | grep -c termihub):"#,
+        r#"${PROMPT_COMMAND}:${precmd_functions}:"#,
+        r#"$(printf %s "$PS1" | grep -c 133):END""#,
+        "\n"
+    );
+    ssh.write(probe.as_bytes()).expect("write");
+    read_until(&mut seen, "the probe", &|s| s.contains("TH1:")).await;
+    read_until(&mut seen, "the probe end", &|s| s.contains(":END")).await;
+    let line = seen
+        .lines()
+        .rev()
+        .find(|l| l.contains("TH1:"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        line.contains("TH1:0:"),
+        "a termiHub function exists: {line:?}"
+    );
+    assert!(
+        !line.contains("termihub") && line.ends_with(":0:END"),
+        "the prompt hooks or PS1 were changed: {line:?}"
+    );
+    for leak in ["__termihub", "[termiHub]", "6973;", "\x1b]133;"] {
+        assert!(
+            !seen.contains(leak),
+            "{leak:?} reached the terminal: {seen:?}"
+        );
+    }
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
