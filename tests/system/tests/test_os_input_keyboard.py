@@ -285,10 +285,17 @@ class TestOsKeyboardGrades(
         # Reading the clipboard can raise a console window (Windows PowerShell).
         screen = self.os_activate()
         self._focus_terminal(tab_id, screen)
+        # The keys right after the shortcut must land after the pasted text, as
+        # in a real terminal: the paste reads the clipboard asynchronously, and
+        # an overtaken paste prints `PASTE__` and then the marker (#5026).
         osi.type_text("echo PASTE_")
         osi.key(PASTE)
         osi.type_text("_\n")
-        assert self._wait_echo(tab_id, "PASTE") == marker
+        echoed = self._wait_echo(tab_id, "PASTE")
+        assert echoed == marker, (
+            f"keys typed after the paste shortcut overtook the paste (#5026): "
+            f"echoed {echoed!r}, expected {marker!r}"
+        )
 
         # A click clears the selection: Ctrl+C with a selection copies. Plain
         # Ctrl+C then interrupts the foreground command — on Windows too, where

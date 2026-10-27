@@ -415,7 +415,10 @@ function App() {
               largePasteDialog.onConfirm?.();
               closeLargePasteDialog();
             }}
-            onCancel={closeLargePasteDialog}
+            onCancel={() => {
+              largePasteDialog.onCancel?.();
+              closeLargePasteDialog();
+            }}
           />
           <OpenSavedFileDialog
             open={openSavedFileDialog.open}

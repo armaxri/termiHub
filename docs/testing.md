@@ -1216,7 +1216,18 @@ Input that goes to whatever has focus (XTEST, `SendInput`, any pointer event)
 is **global**: it runs only on a GitHub runner or with
 `TERMIHUB_OS_INPUT_GLOBAL=1`, and every event is preceded by a check that the
 frontmost window belongs to the test instance or a harness-owned helper window.
-Without either the suites skip on a developer machine. A screen point comes
+Without either the suites skip on a developer machine.
+
+On the macOS and Windows legs of the nightly lane the three suites run in a
+step of their own at `-n 1`, after the bulk step's two-worker session has
+exited (#5031). Global input goes to whatever window is in front, and every test
+app is pinned always-on-top at the same spot (#957), so under two workers the
+other worker's app took the foreground: the tab tear-off released its tab onto
+that app and never tore off. The step has its own skip-guard lanes,
+`os-input-macos` and `os-input-windows`, and runs even when the bulk step
+failed. Linux needs no split: its bulk lane already runs one worker.
+
+A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
 need no guessing. That verb also returns `isTrusted`, which proves the input
@@ -2954,8 +2965,8 @@ Four former guided checks run as plain integration tests (part of #4927):
 
 | ID          | Test                                                                                  | Runs on                    | What it asserts                                                                                                                                                                     |
 | ----------- | ------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MT-LOCAL-05 | `test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash`              | Linux (Docker SSH fixture) | the raw output tap shows no painted text wiped before the prompt, and no shell-integration setup bytes after the first OSC 133;A prompt                                             |
-| (companion) | `test_output_flash_and_flood.py::test_local_shell_start_paints_no_flash`              | all                        | the same no-flash grade on the default local shell (also proves the tap on every WebView engine)                                                                                    |
+| MT-LOCAL-05 | `test_output_flash_and_flood.py::test_ssh_connect_paints_no_setup_flash`              | Linux (Docker SSH fixture) | the raw output tap shows no painted text wiped before the prompt, and no shell-integration setup text anywhere in the stream (#5009)                                                |
+| (companion) | `test_output_flash_and_flood.py::test_local_shell_start_paints_no_flash`              | all                        | the same no-flash and no-setup-text grades on the default local shell (also proves the tap on every WebView engine)                                                                 |
 | MT-LOCAL-32 | `test_output_flash_and_flood.py::test_output_flood_stays_bounded_and_ctrl_c_stops_it` | all (Git Bash on Windows)  | `yes` for 30 s: RSS growth of the app plus its WebView processes, p95 bridge round trip, time from Ctrl+C until output stops and until a command answers, no `write data discarded` |
 | MT-LOCAL-33 | `test_performance.py::test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl`  | all                        | each of 40 tabs paints its text when shown, hidden tabs hold no WebGL context, and the Log Viewer never logged `webgl context lost`                                                 |
 | MT-LOCAL-30 | `test_windows_shells.py::test_cmd_output_paints_in_order`                             | Windows                    | three 400-file `git status` listings in cmd.exe are unbroken blocks with the prompt after them; `dir /s` over `System32\drivers` finishes within its bound                          |

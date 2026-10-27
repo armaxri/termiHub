@@ -52,6 +52,8 @@ portable-pty = { version = "0.9", optional = true }
 # monitoring collector + provider (PROD-0022). Same crate/version the agent
 # used before the collector moved into core.
 sysinfo = { version = "0.38", optional = true }
+# Encodes the path in the OSC 7 `file://` URI the cwd follower reports (#5009).
+percent-encoding = "2.3"
 tracing = { version = "0.1", optional = true }
 # The shared rotating log-file writer (`diagnostics::file_log`, #4319) is a
 # `tracing_subscriber::fmt::MakeWriter` and builds the file sink's `EnvFilter`.

@@ -13,15 +13,17 @@
     "max_skips (#4921)."
   ],
   "max_skips": {
-    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5); #4936 adds the Linux-only XDND drags and the VNC drop grade (macOS +4, Windows +4); #4964 +1 macOS/Windows for the Linux-only traceroute chain; bulk-windows +1 for the Windows quarantine of the MT-NIN-15 dead-key grade (#5024)",
-    "bulk-linux": 59,
-    "bulk-linux-arm64": 20,
-    "bulk-macos": 216,
-    "bulk-windows": 232,
+    "_comment": "2026-10-08 green develop run (dispatch 37848372848) plus headroom; bump with a reason; guided-manual gate skips are not counted (#4921); bulk-linux-arm64: 14 counted skips measured on dispatch 40086377040 (#4934) plus headroom; bulk-windows +1 for the MT-SSH-07 agent-auth skip that replaced a guided gate skip (#4953); #4935 adds the platform-only OS-input grades (Linux/arm64 +4, macOS +1, Windows +5); #4936 adds the Linux-only XDND drags and the VNC drop grade (macOS +4, Windows +4); #4964 +1 macOS/Windows for the Linux-only traceroute chain; #4994 +1 on Linux/arm64 for the MT-LOCAL-08 press-and-hold skip (#4980); #5031 moves the macOS/Windows OS-input suites to their own -n 1 step and lanes os-input-macos (German layout) / os-input-windows (German layout, MT-LOCAL-08 press-and-hold, 4 MT-WIN): bulk-macos -1, bulk-windows -5; os-input-windows +1 for the Windows quarantine of the MT-NIN-15 dead-key grade (#5024)",
+    "bulk-linux": 60,
+    "bulk-linux-arm64": 21,
+    "bulk-macos": 215,
+    "bulk-windows": 226,
     "display-linux": 0,
     "display-linux-arm64": 0,
     "display-macos": 0,
-    "display-windows": 0
+    "display-windows": 0,
+    "os-input-macos": 1,
+    "os-input-windows": 7
   },
   "allowed": [
     {
@@ -202,8 +204,8 @@
       "reason": "^X keyboard maps \\(Linux\\)$",
       "nodeid": "test_os_input_keyboard\\.py",
       "lanes": [
-        "bulk-macos",
-        "bulk-windows"
+        "os-input-macos",
+        "os-input-windows"
       ],
       "why": "the German layout grade switches the X keyboard map with setxkbmap (#4935)"
     },
@@ -213,7 +215,7 @@
       "lanes": [
         "bulk-linux",
         "bulk-linux-arm64",
-        "bulk-windows"
+        "os-input-windows"
       ],
       "why": "MT-WIN-01..04 are macOS Dock/quit paths (#4935)"
     },
@@ -225,6 +227,16 @@
         "bulk-windows"
       ],
       "why": "the native drag partners are X11 GTK windows driven by XTEST; the app half of a drop is graded on every OS by test_os_file_drop.py (#4936)"
+    },
+    {
+      "reason": "^press-and-hold is a macOS feature$",
+      "nodeid": "test_os_input_keyboard\\.py",
+      "lanes": [
+        "bulk-linux",
+        "bulk-linux-arm64",
+        "os-input-windows"
+      ],
+      "why": "MT-LOCAL-08 grades the macOS press-and-hold accent picker, which exists only on macOS (#4980)"
     },
     {
       "reason": "^SSH agent auth on Windows uses the system OpenSSH agent pipe, which a test must not load keys into$",
@@ -249,7 +261,7 @@
       "reason": "^quarantined on Windows: the Enter after composed dead keys is lost \\(#5024\\)$",
       "nodeid": "test_os_input_keyboard\\.py",
       "lanes": [
-        "bulk-windows"
+        "os-input-windows"
       ],
       "why": "flake quarantine (#4993): fails ~1 in 3 runs on the Windows runner; deep-fix tracker #5024. Remove with the skip."
     }
