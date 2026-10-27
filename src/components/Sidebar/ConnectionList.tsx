@@ -33,6 +33,7 @@ import {
   ArrowDown,
   FolderInput,
   Folder,
+  Palette,
 } from "lucide-react";
 import { open as openFileDialog } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
@@ -54,7 +55,8 @@ import {
   MenuSubTrigger,
 } from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
-import { ConnectionIcon } from "@/utils/connectionIcons";
+import { ConnectionIcon, FolderIcon } from "@/utils/connectionIcons";
+import { FolderAppearanceDialog } from "./FolderAppearanceDialog";
 import { Button, Tooltip, SearchInput, ConfirmDialog, EmptyState } from "@/components/ui";
 import { ConnectionsEmptyState } from "./ConnectionsEmptyState";
 import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
@@ -153,6 +155,8 @@ interface TreeNodeProps extends TreeNavProps {
   onDeleteFolder: (folderId: string) => void;
   onCreateSubfolder: (parentId: string, name: string) => void;
   onNewConnectionInFolder: (folderId: string) => void;
+  /** Open the folder Appearance dialog (#5020). */
+  onFolderAppearance: (folderId: string) => void;
   selectedConnectionIds: Set<string>;
   onConnectionClick: (connectionId: string, event: React.MouseEvent) => void;
   depth: number;
@@ -173,6 +177,7 @@ function TreeNode({
   onDeleteFolder,
   onCreateSubfolder,
   onNewConnectionInFolder,
+  onFolderAppearance,
   selectedConnectionIds,
   onConnectionClick,
   depth,
@@ -223,6 +228,7 @@ function TreeNode({
           <TreeFolderRow
             buttonRef={setRowNode}
             label={folder.name}
+            icon={<FolderIcon iconColor={folder.iconColor} iconEmoji={folder.iconEmoji} />}
             expanded={expanded}
             indentPx={treeRowPaddingLeft(depth)}
             ariaLevel={depth + 1}
@@ -246,6 +252,12 @@ function TreeNode({
             data-testid="context-folder-new-subfolder"
           >
             <FolderPlus size={14} /> New Subfolder
+          </MenuItem>
+          <MenuItem
+            onSelect={() => onFolderAppearance(folder.id)}
+            data-testid="context-folder-appearance"
+          >
+            <Palette size={14} /> Appearance…
           </MenuItem>
           <MenuSeparator />
           <MenuItem
@@ -286,6 +298,7 @@ function TreeNode({
               onDeleteFolder={onDeleteFolder}
               onCreateSubfolder={onCreateSubfolder}
               onNewConnectionInFolder={onNewConnectionInFolder}
+              onFolderAppearance={onFolderAppearance}
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={onConnectionClick}
               depth={depth + 1}
@@ -769,6 +782,8 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
 
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
+  // The folder whose Appearance dialog is open (#5020).
+  const [appearanceFolderId, setAppearanceFolderId] = useState<string | null>(null);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [fleetRows, setFleetRows] = useState<InventoryHost[] | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
@@ -808,6 +823,7 @@ export function ConnectionList() {
   const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
+  const updateFolder = useAppStore((s) => s.updateFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
   const bulkMoveConnectionsToFolder = useAppStore((s) => s.bulkMoveConnectionsToFolder);
@@ -1577,6 +1593,7 @@ export function ConnectionList() {
               onDeleteFolder={handleDeleteFolder}
               onCreateSubfolder={handleCreateFolder}
               onNewConnectionInFolder={handleNewConnectionInFolder}
+              onFolderAppearance={setAppearanceFolderId}
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={handleConnectionClick}
               onTreeAreaClick={handleTreeAreaClick}
@@ -1751,6 +1768,13 @@ export function ConnectionList() {
         onCancel={handleInsecureFtpCancel}
         data-testid="insecure-ftp-warning"
       />
+      <FolderAppearanceDialog
+        folder={folders.find((f) => f.id === appearanceFolderId) ?? null}
+        onOpenChange={(open) => {
+          if (!open) setAppearanceFolderId(null);
+        }}
+        onSave={updateFolder}
+      />
       <BulkSshImportDialog
         open={bulkImportOpen}
         onOpenChange={setBulkImportOpen}
@@ -1789,6 +1813,7 @@ interface RootDropZoneProps extends TreeNavProps {
   onDeleteFolder: (folderId: string) => void;
   onCreateSubfolder: (parentId: string, name: string) => void;
   onNewConnectionInFolder: (folderId: string) => void;
+  onFolderAppearance: (folderId: string) => void;
   selectedConnectionIds: Set<string>;
   onConnectionClick: (connectionId: string, event: React.MouseEvent) => void;
   onTreeAreaClick: (event: React.MouseEvent) => void;
@@ -1813,6 +1838,7 @@ function RootDropZone({
   onDeleteFolder,
   onCreateSubfolder,
   onNewConnectionInFolder,
+  onFolderAppearance,
   selectedConnectionIds,
   onConnectionClick,
   onTreeAreaClick,
@@ -1881,6 +1907,7 @@ function RootDropZone({
               onDeleteFolder={onDeleteFolder}
               onCreateSubfolder={onCreateSubfolder}
               onNewConnectionInFolder={onNewConnectionInFolder}
+              onFolderAppearance={onFolderAppearance}
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={onConnectionClick}
               depth={0}

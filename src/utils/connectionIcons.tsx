@@ -7,6 +7,7 @@ import {
   Container,
   BicepsFlexed,
   GitBranch,
+  Folder,
   Icon as LucideIconRenderer,
   icons as lucideIconMap,
 } from "lucide-react";
@@ -94,6 +95,65 @@ function resolveIconByName(name: string): {
   return null;
 }
 
+/** A single emoji drawn in an icon-sized box, in place of a lucide glyph. */
+function EmojiGlyph({
+  emoji,
+  size,
+  className,
+  testId,
+}: {
+  emoji: string;
+  size: number;
+  className?: string;
+  testId: string;
+}) {
+  return (
+    <span
+      className={["connection-icon__emoji", className].filter(Boolean).join(" ")}
+      aria-hidden="true"
+      data-testid={testId}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.875),
+        lineHeight: 1,
+      }}
+    >
+      {emoji}
+    </span>
+  );
+}
+
+interface FolderIconProps {
+  /** Optional folder icon colour: palette name or `#rrggbb` (#5020). */
+  iconColor?: string | null;
+  /** Optional single-emoji icon that replaces the folder glyph (#5020). */
+  iconEmoji?: string | null;
+  size?: number;
+  className?: string;
+}
+
+/**
+ * Renders a connection folder's icon: a valid `iconEmoji` wins, otherwise the
+ * folder glyph tinted with `iconColor`, resolved against the active theme's
+ * surfaces exactly like {@link ConnectionIcon} (#5020).
+ */
+export function FolderIcon({ iconColor, iconEmoji, size = 16, className }: FolderIconProps) {
+  const surfaces = useIconSurfaces();
+  if (iconEmoji && isSingleEmoji(iconEmoji)) {
+    return (
+      <EmojiGlyph emoji={iconEmoji} size={size} className={className} testId="folder-icon-emoji" />
+    );
+  }
+  const color = resolveIconColor(iconColor, surfaces);
+  const colorProps = color ? { color, "data-icon-color": iconColor ?? undefined } : {};
+  return <Folder size={size} className={className} data-testid="folder-icon" {...colorProps} />;
+}
+
 interface ConnectionIconProps {
   config: ConnectionConfig;
   customIcon?: string;
@@ -125,23 +185,12 @@ export function ConnectionIcon({
 
   if (iconEmoji && isSingleEmoji(iconEmoji)) {
     return (
-      <span
-        className={["connection-icon__emoji", className].filter(Boolean).join(" ")}
-        aria-hidden="true"
-        data-testid="connection-icon-emoji"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-          width: size,
-          height: size,
-          fontSize: Math.round(size * 0.875),
-          lineHeight: 1,
-        }}
-      >
-        {iconEmoji}
-      </span>
+      <EmojiGlyph
+        emoji={iconEmoji}
+        size={size}
+        className={className}
+        testId="connection-icon-emoji"
+      />
     );
   }
 
