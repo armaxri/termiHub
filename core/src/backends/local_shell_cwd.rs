@@ -102,9 +102,14 @@ pub(crate) fn innermost_shell_cwd(root: u32) -> Option<String> {
 
 /// `cwd` when it is a directory a file browser can show. MSYS reports a
 /// virtual directory (`cd /proc`) as the pipe namespace `\\?\PIPE\`
-/// (#5014); that is left unreported, so the last real directory stays.
+/// (#5014), which Windows also calls a directory; that is left unreported,
+/// so the last real directory stays.
 fn usable_cwd(cwd: Option<String>) -> Option<String> {
-    cwd.filter(|c| std::path::Path::new(c).is_dir())
+    cwd.filter(|c| {
+        let upper = c.to_ascii_uppercase();
+        !upper.starts_with(r"\\?\PIPE") && !upper.starts_with(r"\\.\PIPE")
+    })
+    .filter(|c| std::path::Path::new(c).is_dir())
 }
 
 struct Shared {
