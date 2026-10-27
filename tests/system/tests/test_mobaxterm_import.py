@@ -57,6 +57,9 @@ _PASSWORD_TRAP = "SYNTHETIC-NOT-A-PASSWORD-4960"
 
 _TARGET_FOLDER = "MobaXterm Import 4960"
 
+#: The Windows WebView2 profile the harness keeps inside the config dir.
+_WEBVIEW_PROFILE = "webview2-user-data"
+
 #: Preview rows by session key (file order), as ``(name, type, target, folder)``.
 _IMPORTABLE = {
     "moba-0": ("Example Telnet", "Telnet", "192.0.2.10:2323", ""),
@@ -161,6 +164,15 @@ class TestMobaxtermImport(SidebarUi, TabsUi, ConnectionsUi, SettingsUi, SystemTe
             folder_id = folder.get("parentId")
         return names
 
+    def _config_files(self) -> list[Path]:
+        """termiHub's own files in the config dir. The WebView's profile is
+        skipped: Chromium holds locks on it on Windows and it is not ours."""
+        return [
+            p
+            for p in Path(self.config_dir).rglob("*")
+            if p.is_file() and _WEBVIEW_PROFILE not in p.relative_to(self.config_dir).parts
+        ]
+
     def _imported(self, name: str, folder: list[str]) -> Optional[dict[str, Any]]:
         conn = self.find_connection(name)
         if conn is None or self._folder_path(conn.get("folderId")) != folder:
@@ -248,11 +260,7 @@ class TestMobaxtermImport(SidebarUi, TabsUi, ConnectionsUi, SettingsUi, SystemTe
         for conn in (telnet, ssh, serial):
             assert not conn["config"]["config"].get("password"), conn
             assert _PASSWORD_TRAP not in json.dumps(conn)
-        on_disk = [
-            p
-            for p in Path(self.config_dir).rglob("*")
-            if p.is_file() and _PASSWORD_TRAP.encode() in p.read_bytes()
-        ]
+        on_disk = [p for p in self._config_files() if _PASSWORD_TRAP.encode() in p.read_bytes()]
         assert not on_disk, f"the MobaXterm password reached {on_disk}"
 
         # The .mxtsessions export of the same bookmarks previews the same rows.
