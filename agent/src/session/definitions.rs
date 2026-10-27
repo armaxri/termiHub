@@ -229,7 +229,7 @@ const DEFINITIONS_STORE_NAME: &str = "connections.json";
 /// persisted shape changes — a settings-key rename, say — bump this and add the
 /// numbered step to [`migrate_definitions`], so an older agent can no longer
 /// overwrite a file that uses the new shape.
-pub const DEFINITIONS_STORE_VERSION: u32 = 1;
+pub const DEFINITIONS_STORE_VERSION: u32 = 2;
 
 /// Migrate a parsed store from `from_version` up to [`DEFINITIONS_STORE_VERSION`],
 /// one numbered step at a time.
@@ -240,12 +240,38 @@ pub const DEFINITIONS_STORE_VERSION: u32 = 1;
 /// `connectTimeoutSecs`, #2901) stay in `Connection`'s rename-on-read, because
 /// they also apply to external files and RPC requests. Add the next rename as
 /// `if version < 2 { …; version = 2; }` and bump the constant.
+///
+/// v2 (#5009) switches the command-mark shell hook off once: local / shell and
+/// SSH connections stored with the old default `shellIntegration: true` load
+/// with `false`. Saving at v2 records that the reset ran, so an opt-in made
+/// afterwards is kept.
 fn migrate_definitions(
-    value: serde_json::Value,
+    mut value: serde_json::Value,
     from_version: u32,
 ) -> Result<serde_json::Value, String> {
-    let version = from_version;
+    let mut version = from_version;
     debug_assert!(version <= DEFINITIONS_STORE_VERSION);
+    if version < 2 {
+        if let Some(connections) = value
+            .get_mut("connections")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for conn in connections {
+                let session_type = conn
+                    .get("session_type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                if let (Some(session_type), Some(config)) = (session_type, conn.get_mut("config")) {
+                    termihub_core::connection::shell_hook::reset_old_shell_hook_default(
+                        &session_type,
+                        config,
+                    );
+                }
+            }
+        }
+        version = 2;
+    }
+    debug_assert_eq!(version, DEFINITIONS_STORE_VERSION);
     Ok(value)
 }
 
@@ -2079,7 +2105,10 @@ mod tests {
 
         let file = read_json(&path);
         assert_eq!(file["futureTopLevel"], json!({"keep": true}));
-        assert_eq!(file["version"], json!("1"));
+        assert_eq!(
+            file["version"],
+            json!(DEFINITIONS_STORE_VERSION.to_string())
+        );
         let conn = raw_entry(&file, "connections", "conn-1");
         assert_eq!(conn["name"], json!("Prod renamed"));
         assert_eq!(conn["futureConnField"], json!([1, 2, 3]));
@@ -2109,7 +2138,10 @@ mod tests {
             raw_entry(&file, "connections", "conn-1")["futureConnField"],
             json!([1, 2, 3])
         );
-        assert_eq!(file["version"], json!("1"));
+        assert_eq!(
+            file["version"],
+            json!(DEFINITIONS_STORE_VERSION.to_string())
+        );
     }
 
     // ── Migration from legacy sessions.json ─────────────────────────

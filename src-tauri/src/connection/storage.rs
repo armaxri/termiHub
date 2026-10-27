@@ -618,10 +618,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v5)
+        // Verify on-disk format is the nested tree, at the current schema (v6)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "5");
+        assert_eq!(on_disk.version, "6");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -933,7 +933,7 @@ mod tests {
         storage.save_flat(&loaded.data).unwrap();
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("5"));
+        assert_eq!(on_disk["version"], serde_json::json!("6"));
         let on_disk_settings = |name: &str| {
             on_disk["children"]
                 .as_array()
@@ -1226,7 +1226,7 @@ mod tests {
 
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("5"));
+        assert_eq!(on_disk["version"], serde_json::json!("6"));
         assert_eq!(
             on_disk["children"][0]["children"][0]["config"]["config"],
             serde_json::json!({ "connectTimeoutSecs": 45 })
