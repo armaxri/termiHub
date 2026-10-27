@@ -82,7 +82,8 @@ class TestTerminalCommandMarks(
         self.close_all_tabs()
         name = unique_name(f"marks-{shell}")
         self.switch_to_connections_sidebar()
-        self.create_local_connection(name, shell=shell, connect=True)
+        # Command marks come from the opt-in shell hook (#5009).
+        self.create_local_connection(name, shell=shell, command_marks=True, connect=True)
         tab = self.wait(lambda: self.find_tab(name), what=f"the {name!r} tab")
         self.wait(lambda: self.driver.read_terminal(tab["id"]).strip(), what="the shell prompt")
         return tab["id"]

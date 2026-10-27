@@ -284,6 +284,8 @@ function AgentConnectionItem({
               },
             }}
             customIcon={definition.icon}
+            iconColor={definition.iconColor}
+            iconEmoji={definition.iconEmoji}
             size={14}
           />
           {definition.persistent && (

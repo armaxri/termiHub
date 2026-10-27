@@ -2,12 +2,14 @@
 
 Ported from the retired ``tests/manual/{app,multi-window,shell-integration,
 file-browser}.yaml``. Each item ends in something only the OS owns: the macOS
-Dock and app menu, an Explorer / Finder / file-manager context menu, a
-MobaXterm install. The harness builds the in-app state (shells, the
-spawn request through the instance's private rendezvous) and the operator does
-and judges the OS-side step.
+Dock and app menu, an Explorer / Finder / file-manager context menu. The
+harness builds the in-app state (shells, the spawn request through the
+instance's private rendezvous) and the operator does and judges the OS-side
+step.
 
-Covered: MT-APP-05, MT-SHI-01, MT-SHI-03..06.
+Covered: MT-SHI-01, MT-SHI-03..06.
+(MT-APP-05, the MobaXterm import, is graded against a committed fixture by
+``test_mobaxterm_import.py`` since #4960.)
 (MT-WIN-01..04, the macOS Dock and quit paths, and MT-SHI-02, external spawn
 raising the window, are graded with real OS events aimed at the test
 instance's PID by ``test_os_input_macos_app.py`` / ``test_os_input_keyboard.py``
@@ -64,26 +66,6 @@ class TestGuidedAppOs(
     """Harness builds the state; operator drives and judges the OS side."""
 
     # ── Helpers ──────────────────────────────────────────────────────────────
-    # ── MT-APP-05: MobaXterm import (Windows) ────────────────────────────────
-    @pytest.mark.manual(platforms=["windows"])
-    def test_mobaxterm_import_finds_installed_configuration(self):
-        """MT-APP-05."""
-        self.manual_step(
-            "Install MobaXterm (installed edition) and save: an SSH session with a "
-            "private key, a Telnet and a Serial session (one in a sub-folder) and a "
-            "Browser session. Close MobaXterm.",
-            "Sessions saved.",
-        )
-        self.open_settings_category("import")
-        self.manual_step(
-            "Click Import from MobaXterm…, select all, pick a target folder and Import. "
-            "Then Choose another file… and pick a .mxtsessions export of the same sessions.",
-            "The page names %APPDATA%\\MobaXterm\\MobaXterm.ini and the dialog previews it "
-            "without picking; each session shows type/target/folder and the Browser one is "
-            "under Not imported; the tree lands under the target with real key paths (no "
-            "_ProfileDir_) and no passwords; the .mxtsessions file previews the same.",
-        )
-
     # ── MT-SHI-01..03: external spawn ────────────────────────────────────────
     @pytest.mark.manual(platforms=["windows"])
     def test_spawn_picker_wsl_section_and_distro_pick(self):

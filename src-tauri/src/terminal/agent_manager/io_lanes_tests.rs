@@ -640,6 +640,7 @@ fn connection(
             output_flow: false,
             host_file_attribute_ops: None,
             file_create_new: false,
+            definition_icon_style: false,
             agent_version: String::new(),
         }
         .into(),

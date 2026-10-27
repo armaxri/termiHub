@@ -344,7 +344,13 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
     /// bump makes it downgrade-safe: a v4 build, whose FTP form is keyed by
     /// `timeoutSecs`, refuses to overwrite a v5 file instead of re-saving the
     /// FTP timeout under its default.
-    const CURRENT_VERSION: u32 = 5;
+    ///
+    /// v6 (#5009) switches the command-mark shell hook off once: local and SSH
+    /// connections saved with the old default `shellIntegration: true` load
+    /// with `false`, because the file browser now follows a shell without a
+    /// hook and the hook is opt-in. Saving at v6 records that the reset ran,
+    /// so an opt-in made afterwards is kept.
+    const CURRENT_VERSION: u32 = 6;
 
     /// Granular per-node recovery (PER-004) of the migrated document — see
     /// [`super::storage::salvage_connection_store`].
@@ -363,8 +369,35 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
             if from_version < 5 {
                 migrate_type_scoped_settings_nodes(children);
             }
+            if from_version < 6 {
+                migrate_shell_hook_nodes(children);
+            }
         }
         Ok(value)
+    }
+}
+
+/// v5 → v6 step (#5009): switch the old default `shellIntegration: true` off
+/// for every saved local / SSH connection, recursing through folders.
+fn migrate_shell_hook_nodes(nodes: &mut serde_json::Value) {
+    let Some(nodes) = nodes.as_array_mut() else {
+        return;
+    };
+    for node in nodes {
+        if let Some(config) = node.get_mut("config") {
+            let type_id = config
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if let (Some(type_id), Some(settings)) = (type_id, config.get_mut("config")) {
+                termihub_core::connection::shell_hook::reset_old_shell_hook_default(
+                    &type_id, settings,
+                );
+            }
+        }
+        if let Some(children) = node.get_mut("children") {
+            migrate_shell_hook_nodes(children);
+        }
     }
 }
 
@@ -820,8 +853,8 @@ mod tests {
     #[test]
     fn connection_store_default_is_current_version() {
         let store = ConnectionStore::default();
-        // v5: the FTP connect timeout is unified under `connectTimeoutSecs` (#2901).
-        assert_eq!(store.version, "5");
+        // v6: the old shell-hook default is reset once (#5009).
+        assert_eq!(store.version, "6");
         assert!(store.children.is_empty());
         assert!(store.agents.is_empty());
     }

@@ -598,6 +598,8 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
           persistent: original.persistent,
           terminalOptions: original.terminalOptions,
           icon: original.icon,
+          iconColor: original.iconColor,
+          iconEmoji: original.iconEmoji,
         },
         original.folderId
       )
