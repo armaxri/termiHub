@@ -224,6 +224,13 @@ pub enum ConnectionTreeNode {
         is_expanded: bool,
         #[serde(default)]
         children: Vec<ConnectionTreeNode>,
+        /// Optional folder icon colour: a named palette entry or a `#rrggbb`
+        /// hex string (#5020). Opaque to the backend.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon_color: Option<String>,
+        /// Optional single-emoji folder icon (#5020). Opaque to the backend.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon_emoji: Option<String>,
         /// Unknown per-node fields, kept verbatim (#3947).
         #[serde(flatten)]
         extra: NodeExtra,
@@ -571,6 +578,17 @@ pub struct ConnectionFolder {
     pub name: String,
     pub parent_id: Option<String>,
     pub is_expanded: bool,
+    /// Optional folder icon colour: a named palette entry (e.g. `"blue"`) or a
+    /// `#rrggbb` hex string (#5020). Stored opaquely, like
+    /// [`SavedConnection::icon_color`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub icon_color: Option<String>,
+    /// Optional single-emoji folder icon shown instead of the folder glyph
+    /// (#5020). Stored opaquely; the frontend validates it is one grapheme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub icon_emoji: Option<String>,
     /// Runtime-only: the on-disk node's unknown fields (#3947), carried from
     /// load to save. Never on the IPC wire — see [`SavedConnection::extra`].
     #[serde(skip)]
@@ -616,6 +634,8 @@ mod tests {
     #[test]
     fn connection_tree_node_folder_serde_round_trip() {
         let node = ConnectionTreeNode::Folder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             name: "Work".to_string(),
             is_expanded: true,
@@ -636,9 +656,12 @@ mod tests {
                 name,
                 is_expanded,
                 children,
+                icon_color,
+                icon_emoji,
                 extra,
             } => {
                 assert!(extra.is_empty(), "{extra:?}");
+                assert!(icon_color.is_none() && icon_emoji.is_none());
                 assert_eq!(name, "Work");
                 assert!(is_expanded);
                 assert_eq!(children.len(), 1);
@@ -691,6 +714,8 @@ mod tests {
             version: "2".to_string(),
             children: vec![
                 ConnectionTreeNode::Folder {
+                    icon_color: None,
+                    icon_emoji: None,
                     extra: Default::default(),
                     name: "Work".to_string(),
                     is_expanded: true,
@@ -977,6 +1002,8 @@ mod tests {
     #[test]
     fn folder_json_shape_has_type_tag() {
         let node = ConnectionTreeNode::Folder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             name: "Work".to_string(),
             is_expanded: false,
@@ -1095,6 +1122,48 @@ mod tests {
     }
 
     #[test]
+    fn connection_folder_icon_color_and_emoji_round_trip() {
+        // #5020: a folder's icon colour and emoji cross IPC under their
+        // camelCase wire names.
+        let json = serde_json::json!({
+            "id": "Work",
+            "name": "Work",
+            "parentId": null,
+            "isExpanded": true,
+            "iconColor": "purple",
+            "iconEmoji": "\u{1F4C1}"
+        });
+        let folder: ConnectionFolder = serde_json::from_value(json).unwrap();
+        assert_eq!(folder.icon_color.as_deref(), Some("purple"));
+        assert_eq!(folder.icon_emoji.as_deref(), Some("\u{1F4C1}"));
+        let out = serde_json::to_value(&folder).unwrap();
+        assert_eq!(out.get("iconColor").unwrap(), "purple");
+        assert_eq!(out.get("iconEmoji").unwrap(), "\u{1F4C1}");
+    }
+
+    #[test]
+    fn connection_folder_without_icon_style_loads_and_stays_clean() {
+        // Migration safety (#5020): a pre-#5020 folder has neither key.
+        let json = serde_json::json!({
+            "id": "Old",
+            "name": "Old",
+            "parentId": null,
+            "isExpanded": false
+        });
+        let folder: ConnectionFolder = serde_json::from_value(json).unwrap();
+        assert!(folder.icon_color.is_none() && folder.icon_emoji.is_none());
+        let out = serde_json::to_value(&folder).unwrap();
+        assert!(out.get("iconColor").is_none() && out.get("iconEmoji").is_none());
+
+        let node: ConnectionTreeNode = serde_json::from_value(serde_json::json!({
+            "type": "folder", "name": "Old", "isExpanded": false, "children": []
+        }))
+        .unwrap();
+        let out = serde_json::to_value(&node).unwrap();
+        assert!(out.get("iconColor").is_none() && out.get("iconEmoji").is_none());
+    }
+
+    #[test]
     fn saved_connection_without_icon_stays_clean() {
         // A connection with no icon must not emit a stray `icon` key.
         let conn = SavedConnection {
@@ -1163,6 +1232,8 @@ mod tests {
             extra: extra.clone(),
         };
         let folder = ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             id: "f".to_string(),
             name: "f".to_string(),
             parent_id: None,

@@ -60,7 +60,7 @@ export interface VisualScenario {
   terminal?: boolean;
   /** Seed one live SSH host monitor ({@link MONITOR_KEY}) for Open Connections (#4949). */
   monitoring?: boolean;
-  /** Seed root connections with icon colours and emoji icons (#5008). */
+  /** Seed root connections (#5008) and folders (#5020) with icon colours and emoji. */
   iconStyles?: boolean;
 }
 
@@ -456,6 +456,22 @@ export const ICON_STYLE_ROWS = [
   },
 ];
 
+/**
+ * Root folders carrying an icon colour and/or emoji (#5020): an emoji folder,
+ * a palette colour, and a near-black custom hex the renderer must lighten.
+ */
+export const ICON_STYLE_FOLDERS = [
+  {
+    id: "Containers",
+    name: "Containers",
+    parentId: null,
+    isExpanded: false,
+    iconEmoji: "\u{1F4E6}",
+  },
+  { id: "Customers", name: "Customers", parentId: null, isExpanded: false, iconColor: "purple" },
+  { id: "Lab", name: "Lab", parentId: null, isExpanded: false, iconColor: "#1a1a1a" },
+];
+
 const STORED_SECRET_ROWS = [
   {
     id: STORED_SECRET_CONNECTIONS.plugin,
@@ -533,7 +549,7 @@ function regionView(region: string, populated: boolean): unknown {
       ...(scenario.iconStyles ? ICON_STYLE_ROWS : []),
     ];
     return {
-      folders: wire.folders,
+      folders: [...wire.folders, ...(scenario.iconStyles ? ICON_STYLE_FOLDERS : [])],
       connections: [...wire.connections, LONG_CONNECTION, ...extra],
     };
   }

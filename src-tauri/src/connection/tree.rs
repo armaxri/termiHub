@@ -42,6 +42,8 @@ pub fn flatten_tree(
                 name,
                 is_expanded,
                 children: child_nodes,
+                icon_color,
+                icon_emoji,
                 extra,
             } => {
                 let folder_id = compute_folder_id(parent_path, name);
@@ -50,6 +52,8 @@ pub fn flatten_tree(
                     name: name.clone(),
                     parent_id: parent_folder_id.clone(),
                     is_expanded: *is_expanded,
+                    icon_color: icon_color.clone(),
+                    icon_emoji: icon_emoji.clone(),
                     extra: extra.clone(),
                 });
                 let (child_conns, child_folders) = flatten_tree(child_nodes, Some(&folder_id));
@@ -113,6 +117,8 @@ fn build_tree_for_parent(
                 name: folder.name.clone(),
                 is_expanded: folder.is_expanded,
                 children,
+                icon_color: folder.icon_color.clone(),
+                icon_emoji: folder.icon_emoji.clone(),
                 extra: folder.extra.clone(),
             });
         }
@@ -374,6 +380,8 @@ mod tests {
     #[test]
     fn flatten_folder_with_connections() {
         let tree = vec![ConnectionTreeNode::Folder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             name: "Work".to_string(),
             is_expanded: true,
@@ -415,10 +423,14 @@ mod tests {
     #[test]
     fn flatten_nested_folders() {
         let tree = vec![ConnectionTreeNode::Folder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             name: "Root Folder".to_string(),
             is_expanded: true,
             children: vec![ConnectionTreeNode::Folder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 name: "Sub Folder".to_string(),
                 is_expanded: false,
@@ -506,6 +518,32 @@ mod tests {
     }
 
     #[test]
+    fn folder_icon_color_and_emoji_survive_save_load_round_trip() {
+        // #5020: folder icon colour + emoji travel flat -> tree -> JSON on
+        // disk -> tree -> flat without loss, and never land in `extra`.
+        let folders = vec![ConnectionFolder {
+            id: "Work".to_string(),
+            name: "Work".to_string(),
+            parent_id: None,
+            is_expanded: true,
+            icon_color: Some("orange".to_string()),
+            icon_emoji: Some("\u{1F3E2}".to_string()),
+            extra: Default::default(),
+        }];
+        let tree = build_tree(&[], &folders);
+        let json = serde_json::to_string(&tree).expect("serialize tree");
+        assert!(json.contains("\"iconColor\":\"orange\""), "{json}");
+        assert!(json.contains("\"iconEmoji\""), "{json}");
+
+        let parsed: Vec<ConnectionTreeNode> =
+            serde_json::from_str(&json).expect("deserialize tree");
+        let (_, loaded) = flatten_tree(&parsed, None);
+        assert_eq!(loaded[0].icon_color.as_deref(), Some("orange"));
+        assert_eq!(loaded[0].icon_emoji.as_deref(), Some("\u{1F3E2}"));
+        assert!(loaded[0].extra.is_empty(), "known keys leaked into extra");
+    }
+
+    #[test]
     fn connection_icon_survives_save_load_round_trip() {
         // Regression for #2316: a connection's `icon` must survive the full
         // persistence path — flat store -> build_tree -> JSON (on disk) ->
@@ -523,6 +561,8 @@ mod tests {
             source_file: None,
         }];
         let folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
@@ -592,6 +632,8 @@ mod tests {
     #[test]
     fn build_tree_with_folders() {
         let folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
@@ -651,11 +693,15 @@ mod tests {
     fn round_trip_flat_tree_flat() {
         let original_tree = vec![
             ConnectionTreeNode::Folder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 name: "Work".to_string(),
                 is_expanded: true,
                 children: vec![
                     ConnectionTreeNode::Folder {
+                        icon_color: None,
+                        icon_emoji: None,
                         extra: Default::default(),
                         name: "Dev".to_string(),
                         is_expanded: false,
@@ -892,6 +938,8 @@ mod tests {
     fn dedup_different_folders_no_conflict() {
         let mut folders = vec![
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "F1".to_string(),
                 name: "F1".to_string(),
@@ -899,6 +947,8 @@ mod tests {
                 is_expanded: true,
             },
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "F2".to_string(),
                 name: "F2".to_string(),
@@ -942,6 +992,8 @@ mod tests {
     #[test]
     fn dedup_folder_and_connection_same_name() {
         let mut folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
@@ -971,6 +1023,8 @@ mod tests {
     fn dedup_duplicate_folder_names() {
         let mut folders = vec![
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
@@ -978,6 +1032,8 @@ mod tests {
                 is_expanded: true,
             },
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work2".to_string(),
                 name: "Work".to_string(),
@@ -1004,6 +1060,8 @@ mod tests {
         // ID has been recomputed to "TestDir/Zsh", colliding with the
         // existing connection's ID.
         let mut folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "TestDir".to_string(),
             name: "TestDir".to_string(),
@@ -1104,6 +1162,8 @@ mod tests {
         // After reparenting, both are at root → dedup should rename the second.
         let mut folders = vec![
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
@@ -1112,6 +1172,8 @@ mod tests {
             },
             // Subfolder reparented from deleted folder to root
             ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
@@ -1142,6 +1204,8 @@ mod tests {
     fn count_tree_items_mixed() {
         let tree = vec![
             ConnectionTreeNode::Folder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 name: "F".to_string(),
                 is_expanded: true,

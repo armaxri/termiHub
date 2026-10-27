@@ -5,6 +5,14 @@ import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { useIconSurfaces } from "@/hooks/useIconSurfaces";
 import { EmojiPickerDialog } from "./EmojiPickerDialog";
 import { ICON_COLOR_PALETTE, isHexIconColor, resolveIconColor } from "@/utils/connectionIconStyle";
+// The swatch styles live with the editor; imported here so the folder
+// Appearance dialog (#5020) gets them without the editor mounted.
+import "./ConnectionEditor.css";
+
+const DEFAULT_COLOR_HINT =
+  "Tints the connection icon in the sidebar and on tabs. Colors are adjusted to stay readable in light and dark themes.";
+const DEFAULT_EMOJI_HINT =
+  "One emoji shown instead of the icon. Choose one from the picker, or type or paste it.";
 
 export interface ConnectionIconStyleSettingsProps {
   /** Palette name, `#rrggbb`, or unset. */
@@ -15,11 +23,15 @@ export interface ConnectionIconStyleSettingsProps {
   onIconEmojiChange: (emoji: string | undefined) => void;
   /** Inline validation message for the emoji field. */
   iconEmojiError?: string | null;
+  /** Hint under the colour swatches; defaults to the connection wording. */
+  colorHint?: string;
+  /** Hint under the emoji field; defaults to the connection wording. */
+  emojiHint?: string;
 }
 
 /**
  * Icon colour swatches and emoji input for the connection editor's Appearance
- * tab (#5008). Swatches preview the shade the active theme will actually draw.
+ * tab (#5008) and the folder Appearance dialog (#5020). Swatches preview the shade the active theme will actually draw.
  */
 export function ConnectionIconStyleSettings({
   iconColor,
@@ -27,6 +39,8 @@ export function ConnectionIconStyleSettings({
   iconEmoji,
   onIconEmojiChange,
   iconEmojiError,
+  colorHint = DEFAULT_COLOR_HINT,
+  emojiHint = DEFAULT_EMOJI_HINT,
 }: ConnectionIconStyleSettingsProps) {
   const [customOpen, setCustomOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
@@ -38,11 +52,7 @@ export function ConnectionIconStyleSettings({
 
   return (
     <>
-      <Field
-        variant="settings"
-        label="Icon Color"
-        hint="Tints the connection icon in the sidebar and on tabs. Colors are adjusted to stay readable in light and dark themes."
-      >
+      <Field variant="settings" label="Icon Color" hint={colorHint}>
         <>
           <div
             className="connection-editor__swatches"
@@ -108,7 +118,7 @@ export function ConnectionIconStyleSettings({
         label="Emoji Icon"
         htmlFor="connection-editor-icon-emoji"
         error={iconEmojiError ?? undefined}
-        hint="One emoji shown instead of the icon. Choose one from the picker, or type or paste it."
+        hint={emojiHint}
       >
         <>
           <div className="connection-editor__color-row">

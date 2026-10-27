@@ -24,7 +24,7 @@ use super::restore::{self, PENDING_DIR};
 use super::tests::{choice, mp_manager, options, PASSPHRASE};
 use super::tests_plugins::{install, plugins_root, theme_manifest};
 use super::*;
-use crate::connection::config::SavedConnection;
+use crate::connection::config::{ConnectionFolder, SavedConnection};
 use crate::connection::credential_scope::owner_id;
 use crate::connection::jump_host_resolver::resolve_credential;
 use crate::connection::manager::ConnectionManager;
@@ -88,6 +88,18 @@ fn populate_source(dir: &Path) -> (Arc<CredentialManager>, String) {
     let connections = ConnectionManager::new_for_test(dir, store.clone()).unwrap();
     let id = connections
         .save_connection(ssh_with_saved_password("Prod"))
+        .unwrap();
+    // A styled folder (#5020) must come back with its icon colour + emoji.
+    connections
+        .save_folder(ConnectionFolder {
+            id: "Ops".into(),
+            name: "Ops".into(),
+            parent_id: None,
+            is_expanded: false,
+            icon_color: Some("orange".into()),
+            icon_emoji: Some("\u{1F6E0}".into()),
+            extra: Default::default(),
+        })
         .unwrap();
     let mut settings = connections.get_settings();
     settings.theme = Some(THEME.to_string());
@@ -175,6 +187,11 @@ fn restore_after_restart_brings_back_connections_macro_theme_and_saved_password(
     )
     .unwrap();
     assert_eq!(password.as_deref(), Some(SAVED_PASSWORD));
+
+    let ops = connections.get_all().unwrap().folders;
+    let ops = ops.iter().find(|f| f.id == "Ops").expect("styled folder");
+    assert_eq!(ops.icon_color.as_deref(), Some("orange"));
+    assert_eq!(ops.icon_emoji.as_deref(), Some("\u{1F6E0}"));
 
     assert_eq!(connections.get_settings().theme.as_deref(), Some(THEME));
     let macros = MacroStorage::new_test(dst.path())

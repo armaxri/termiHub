@@ -1,5 +1,6 @@
 /**
- * Per-connection icon colour and emoji (#5008), rendered in the real frontend.
+ * Per-connection (#5008) and per-folder (#5020) icon colour and emoji,
+ * rendered in the real frontend.
  *
  * Seeds root connections with emoji icons, palette colours and a near-black
  * custom hex (harness/mockBackend.ts `ICON_STYLE_ROWS`), then, in the Dark and
@@ -29,6 +30,9 @@ const EMOJI_ROWS: Record<string, string> = {
   "icon-teal-emoji": "\u{1F433}",
 };
 const COLOURED_ROWS = ["icon-red", "icon-yellow", "icon-custom-dark"];
+const connectionRow = (id: string) => `[data-testid="connection-item-${id}"]`;
+const folderRow = (id: string) => `[data-testid="folder-toggle-${id}"]`;
+const COLOURED_FOLDERS = ["Customers", "Lab"];
 
 async function settle(page: Page): Promise<void> {
   await page.evaluate(
@@ -50,8 +54,8 @@ async function boot(page: Page, scenario: VisualScenario): Promise<void> {
 }
 
 /** WCAG contrast of a row icon's stroke against the sidebar background. */
-async function iconContrast(page: Page, rowId: string): Promise<number> {
-  return page.evaluate((id) => {
+async function iconContrast(page: Page, rowSelector: string): Promise<number> {
+  return page.evaluate((row) => {
     const parse = (c: string): number[] => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
     const lum = ([r, g, b]: number[]): number => {
       const ch = (v: number) => {
@@ -60,13 +64,13 @@ async function iconContrast(page: Page, rowId: string): Promise<number> {
       };
       return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
     };
-    const svg = document.querySelector(`[data-testid="connection-item-${id}"] svg`);
+    const svg = document.querySelector(`${row} svg`);
     const sidebar = document.querySelector("[data-testid=sidebar]");
     if (!svg || !sidebar) return 0;
     const fg = lum(parse(getComputedStyle(svg).stroke));
     const bg = lum(parse(getComputedStyle(sidebar).backgroundColor));
     return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
-  }, rowId);
+  }, rowSelector);
 }
 
 test.use({ viewport: { width: 1280, height: 800 } });
@@ -89,8 +93,24 @@ test("connection rows show icon colours and emoji legibly in Dark and Light", as
       const svg = page.locator(`[data-testid="connection-item-${id}"] svg`).first();
       await expect(svg, `${theme}: ${id} is tinted`).toHaveAttribute("data-icon-color", /.+/);
       expect(
-        await iconContrast(page, id),
+        await iconContrast(page, connectionRow(id)),
         `${theme}: ${id} keeps >= 3:1 against the sidebar`
+      ).toBeGreaterThanOrEqual(3);
+    }
+
+    await expect(
+      page.locator(`${folderRow("Containers")} [data-testid=folder-icon-emoji]`),
+      `${theme}: the Containers folder draws its emoji`
+    ).toHaveText("\u{1F4E6}");
+    for (const id of COLOURED_FOLDERS) {
+      const svg = page.locator(`${folderRow(id)} [data-testid=folder-icon]`);
+      await expect(svg, `${theme}: folder ${id} is tinted`).toHaveAttribute(
+        "data-icon-color",
+        /.+/
+      );
+      expect(
+        await iconContrast(page, folderRow(id)),
+        `${theme}: folder ${id} keeps >= 3:1 against the sidebar`
       ).toBeGreaterThanOrEqual(3);
     }
 
@@ -149,4 +169,35 @@ test("connection rows show icon colours and emoji legibly in Dark and Light", as
     "\u{1F427}"
   );
   expect(external, "the emoji picker made no network requests").toEqual([]);
+});
+
+test("a folder's Appearance dialog edits its icon colour and emoji in Dark and Light", async ({
+  page,
+}, testInfo) => {
+  await boot(page, { iconStyles: true });
+  await page.locator(folderRow("Customers")).click({ button: "right" });
+  await page.locator("[data-testid=context-folder-appearance]").click();
+  const dialog = page.locator("[data-testid=folder-appearance-dialog]");
+  await expect(dialog.locator("[data-testid=icon-color-swatch-purple]")).toHaveAttribute(
+    "aria-checked",
+    "true"
+  );
+  await dialog.locator("[data-testid=connection-editor-icon-emoji]").fill("\u{1F465}");
+  await expect(dialog.locator("[data-testid=folder-appearance-preview]")).toContainText(
+    "\u{1F465}"
+  );
+
+  for (const theme of THEMES) {
+    await page.evaluate((t) => window.__visual.applyTheme(t), theme);
+    await settle(page);
+    const file = join(SCREENS, "icon-style", `folder-appearance-${theme}.png`);
+    await dialog.screenshot({ path: file });
+    await testInfo.attach(`icon-style folder appearance (${theme})`, {
+      path: file,
+      contentType: "image/png",
+    });
+  }
+
+  await dialog.locator("[data-testid=folder-appearance-cancel]").click();
+  await expect(dialog).toHaveCount(0);
 });

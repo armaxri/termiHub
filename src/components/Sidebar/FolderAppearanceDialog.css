@@ -1,0 +1,23 @@
+/* Folder Appearance dialog (#5020). */
+.folder-appearance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.folder-appearance__preview {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--sidebar-bg);
+  color: var(--text-primary);
+}
+
+.folder-appearance__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
