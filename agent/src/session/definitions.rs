@@ -229,7 +229,7 @@ const DEFINITIONS_STORE_NAME: &str = "connections.json";
 /// persisted shape changes — a settings-key rename, say — bump this and add the
 /// numbered step to [`migrate_definitions`], so an older agent can no longer
 /// overwrite a file that uses the new shape.
-pub const DEFINITIONS_STORE_VERSION: u32 = 2;
+pub const DEFINITIONS_STORE_VERSION: u32 = 3;
 
 /// Migrate a parsed store from `from_version` up to [`DEFINITIONS_STORE_VERSION`],
 /// one numbered step at a time.
@@ -245,34 +245,49 @@ pub const DEFINITIONS_STORE_VERSION: u32 = 2;
 /// SSH connections stored with the old default `shellIntegration: true` load
 /// with `false`. Saving at v2 records that the reset ran, so an opt-in made
 /// afterwards is kept.
+///
+/// v3 (#5013) does the same for WSL connections.
 fn migrate_definitions(
     mut value: serde_json::Value,
     from_version: u32,
 ) -> Result<serde_json::Value, String> {
     let mut version = from_version;
     debug_assert!(version <= DEFINITIONS_STORE_VERSION);
+    use termihub_core::connection::shell_hook::{
+        reset_old_shell_hook_default, reset_old_wsl_shell_hook_default,
+    };
     if version < 2 {
-        if let Some(connections) = value
-            .get_mut("connections")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for conn in connections {
-                let session_type = conn
-                    .get("session_type")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned);
-                if let (Some(session_type), Some(config)) = (session_type, conn.get_mut("config")) {
-                    termihub_core::connection::shell_hook::reset_old_shell_hook_default(
-                        &session_type,
-                        config,
-                    );
-                }
-            }
-        }
+        reset_shell_hooks(&mut value, reset_old_shell_hook_default);
         version = 2;
+    }
+    if version < 3 {
+        reset_shell_hooks(&mut value, reset_old_wsl_shell_hook_default);
+        version = 3;
     }
     debug_assert_eq!(version, DEFINITIONS_STORE_VERSION);
     Ok(value)
+}
+
+/// Apply a one-time shell-hook reset (`reset`) to every stored connection.
+fn reset_shell_hooks(
+    value: &mut serde_json::Value,
+    reset: fn(&str, &mut serde_json::Value) -> bool,
+) {
+    let Some(connections) = value
+        .get_mut("connections")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for conn in connections {
+        let session_type = conn
+            .get("session_type")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if let (Some(session_type), Some(config)) = (session_type, conn.get_mut("config")) {
+            reset(&session_type, config);
+        }
+    }
 }
 
 /// Persistent storage format for connections.json.

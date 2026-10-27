@@ -661,10 +661,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v6)
+        // Verify on-disk format is the nested tree, at the current schema (v7)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "6");
+        assert_eq!(on_disk.version, "7");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -976,7 +976,10 @@ mod tests {
         storage.save_flat(&loaded.data).unwrap();
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("6"));
+        assert_eq!(
+            on_disk["version"],
+            serde_json::json!(ConnectionStore::CURRENT_VERSION.to_string())
+        );
         let on_disk_settings = |name: &str| {
             on_disk["children"]
                 .as_array()
@@ -1053,8 +1056,8 @@ mod tests {
     /// #5009: v6 turns the command-mark shell hook off once. Local and SSH
     /// connections saved with the old default `shellIntegration: true` load
     /// with `false` (nested ones included); an explicit `false` and other
-    /// types (WSL keeps its hook) are untouched. The next save writes v6, so
-    /// the reset never runs again.
+    /// types are untouched (WSL has its own v7 step, #5013). The next save
+    /// writes the current version, so the reset never runs again.
     #[test]
     fn v5_shell_hook_is_switched_off_once() {
         let dir = TempDir::new().unwrap();
@@ -1329,7 +1332,10 @@ mod tests {
 
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("6"));
+        assert_eq!(
+            on_disk["version"],
+            serde_json::json!(ConnectionStore::CURRENT_VERSION.to_string())
+        );
         assert_eq!(
             on_disk["children"][0]["children"][0]["config"]["config"],
             serde_json::json!({ "connectTimeoutSecs": 45 })

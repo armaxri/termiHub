@@ -7,22 +7,33 @@
 //! The connection stores therefore switch a saved `true` off **once**, as a
 //! numbered schema step: the store is then saved at the new version, so an
 //! opt-in the user makes afterwards is never reset again.
+//!
+//! WSL followed in #5013 with its own, later step
+//! ([`reset_old_wsl_shell_hook_default`]), so stores that already ran the
+//! #5009 step still get it once.
 
 /// The settings key of the opt-in shell hook.
 pub const SHELL_HOOK_KEY: &str = "shellIntegration";
 
-/// Connection types whose hook became opt-in: local shells (`local`, the
-/// agent's `shell`) and SSH. WSL keeps its hook (#5013).
+/// Connection types whose hook became opt-in in #5009: local shells
+/// (`local`, the agent's `shell`) and SSH.
 fn hook_became_opt_in(type_id: &str) -> bool {
     matches!(type_id, "local" | "shell" | "ssh")
 }
 
-/// Switch a saved `shellIntegration: true` off for a connection of
-/// `type_id`. Returns whether it changed anything.
+/// Switch a saved `shellIntegration: true` off for a local or SSH
+/// connection of `type_id` (#5009). Returns whether it changed anything.
 pub fn reset_old_shell_hook_default(type_id: &str, settings: &mut serde_json::Value) -> bool {
-    if !hook_became_opt_in(type_id) {
-        return false;
-    }
+    hook_became_opt_in(type_id) && switch_off(settings)
+}
+
+/// Switch a saved `shellIntegration: true` off for a WSL connection (#5013).
+/// Returns whether it changed anything.
+pub fn reset_old_wsl_shell_hook_default(type_id: &str, settings: &mut serde_json::Value) -> bool {
+    type_id == "wsl" && switch_off(settings)
+}
+
+fn switch_off(settings: &mut serde_json::Value) -> bool {
     match settings.get_mut(SHELL_HOOK_KEY) {
         Some(value) if value.as_bool() == Some(true) => {
             *value = serde_json::Value::Bool(false);
@@ -30,11 +41,6 @@ pub fn reset_old_shell_hook_default(type_id: &str, settings: &mut serde_json::Va
         }
         _ => false,
     }
-}
-
-/// Stub (#5013): implemented in the next commit.
-pub fn reset_old_wsl_shell_hook_default(_type_id: &str, _settings: &mut serde_json::Value) -> bool {
-    false
 }
 
 #[cfg(test)]
