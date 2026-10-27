@@ -13,6 +13,8 @@ mod local_shell_cwd;
 #[cfg(any(feature = "local-shell", all(feature = "wsl", windows)))]
 mod cwd_follow_thread;
 #[cfg(feature = "local-shell")]
+mod local_shell_env;
+#[cfg(feature = "local-shell")]
 mod local_shell_setup;
 #[cfg(all(feature = "local-shell", unix))]
 mod pty_unix_io;
