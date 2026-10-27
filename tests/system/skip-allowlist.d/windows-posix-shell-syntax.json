@@ -1,0 +1,5 @@
+{
+  "reason": "^POSIX shell command syntax; the Windows default shell is PowerShell$",
+  "lanes": ["bulk-windows"],
+  "why": "the test drives POSIX shell syntax"
+}

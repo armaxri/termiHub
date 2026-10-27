@@ -1,0 +1,6 @@
+{
+  "reason": "^SSH agent auth on Windows uses the system OpenSSH agent pipe, which a test must not load keys into$",
+  "nodeid": "test_ssh_agent_auth\\.py",
+  "lanes": ["bulk-windows"],
+  "why": "the app's Windows agent client only dials the system agent pipe (the developer's own agent); MT-SSH-07 is graded on Linux and macOS (#4953)"
+}
