@@ -53,6 +53,7 @@ const MOCK_REGULAR_UPDATE: UpdateInfo = {
   releaseUrl: "https://github.com/armaxri/termiHub/releases/tag/v0.2.0",
   releaseNotes: "New features and bug fixes",
   isSecurity: false,
+  channel: "stable",
 };
 
 const MOCK_SECURITY_UPDATE: UpdateInfo = {
@@ -61,6 +62,7 @@ const MOCK_SECURITY_UPDATE: UpdateInfo = {
   releaseUrl: "https://github.com/armaxri/termiHub/releases/tag/v0.1.1",
   releaseNotes: "<!-- security -->\nFixes CVE-2026-0001",
   isSecurity: true,
+  channel: "stable",
 };
 
 const MOCK_NO_UPDATE: UpdateInfo = {
@@ -69,6 +71,7 @@ const MOCK_NO_UPDATE: UpdateInfo = {
   releaseUrl: "",
   releaseNotes: "",
   isSecurity: false,
+  channel: "stable",
 };
 
 describe("appStore — update checker", () => {

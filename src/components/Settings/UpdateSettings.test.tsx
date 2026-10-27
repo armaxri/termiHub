@@ -82,6 +82,7 @@ describe("UpdateSettings", () => {
         releaseUrl: "https://example.com/release",
         releaseNotes: "",
         isSecurity: false,
+        channel: "stable",
       },
     });
     await render();
@@ -99,6 +100,7 @@ describe("UpdateSettings", () => {
         releaseUrl: "https://example.com/release",
         releaseNotes: "",
         isSecurity: false,
+        channel: "stable",
       },
     });
     await render();
@@ -106,6 +108,49 @@ describe("UpdateSettings", () => {
       (query("update-open-downloads") as HTMLElement).click();
     });
     expect(mockedOpenUrl).toHaveBeenCalledWith("https://example.com/release");
+  });
+
+  it("shows the newer develop build and an 'Open Download Page' button (#5023)", async () => {
+    useAppStore.setState({
+      updateCheckState: "available",
+      updateInfo: {
+        available: true,
+        latestVersion: "0e3504c",
+        releaseUrl: "https://github.com/armaxri/termiHub/releases/tag/dev-develop-latest",
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "develop",
+        buildCommit: "0e3504c",
+        buildPublishedAt: "2026-10-26T23:31:19+00:00",
+      },
+    });
+    await render();
+    expect(container.textContent).toContain("Latest develop build");
+    expect(query("update-latest-version")?.textContent).toMatch(/^Built .+ from 0e3504c$/);
+    const btn = query("update-open-downloads") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Open Download Page");
+    await act(async () => {
+      btn.click();
+    });
+    expect(mockedOpenUrl).toHaveBeenCalledWith(
+      "https://github.com/armaxri/termiHub/releases/tag/dev-develop-latest"
+    );
+  });
+
+  it("says 'Not checked for this build' when the build does not check", async () => {
+    useAppStore.setState({
+      updateCheckState: "up-to-date",
+      updateInfo: {
+        available: false,
+        latestVersion: "0.1.0-dev",
+        releaseUrl: "",
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "none",
+      },
+    });
+    await render();
+    expect(query("update-latest-version")?.textContent).toBe("Not checked for this build");
   });
 
   it("does not hand a disallowed-scheme release URL to the OS opener (SEC-012)", async () => {
@@ -117,6 +162,7 @@ describe("UpdateSettings", () => {
         releaseUrl: "file:///etc/passwd",
         releaseNotes: "",
         isSecurity: false,
+        channel: "stable",
       },
     });
     await render();
