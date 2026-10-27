@@ -1,0 +1,7 @@
+{
+  "why": "#4997: the scale-2 drop-grade lanes (display-grades job, GDK_SCALE=2) are opted in and must run every grade, so they allow no skip",
+  "max_skips": {
+    "scaled-display-linux": 0,
+    "scaled-display-linux-arm64": 0
+  }
+}
