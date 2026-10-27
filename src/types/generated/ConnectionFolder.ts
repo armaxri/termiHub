@@ -6,4 +6,15 @@
  * The `id` is not stored on disk — it is derived from the folder's
  * position in the tree (e.g., `"Work/Dev"`).
  */
-export type ConnectionFolder = { id: string, name: string, parentId: string | null, isExpanded: boolean, };
+export type ConnectionFolder = { id: string, name: string, parentId: string | null, isExpanded: boolean, 
+/**
+ * Optional folder icon colour: a named palette entry (e.g. `"blue"`) or a
+ * `#rrggbb` hex string (#5020). Stored opaquely, like
+ * [`SavedConnection::icon_color`].
+ */
+iconColor?: string, 
+/**
+ * Optional single-emoji folder icon shown instead of the folder glyph
+ * (#5020). Stored opaquely; the frontend validates it is one grapheme.
+ */
+iconEmoji?: string, };
