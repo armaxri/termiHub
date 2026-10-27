@@ -245,6 +245,8 @@ describe("appStore — agent CRUD error/guard branches (#2983)", () => {
       folder_id: null,
       terminal_options: null,
       icon: null,
+      icon_color: null,
+      icon_emoji: null,
     };
 
     it("surfaces an error toast when the save API rejects", async () => {

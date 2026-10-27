@@ -205,6 +205,8 @@ fn agent_fixture() -> Value {
             "hostFileAttributeOps": { "permissions": false, "owner": false, "symlink": false },
             // The host-level exclusive create for upload claims (#4433).
             "fileCreateNew": true,
+            // Icon colour / emoji on saved definitions (#5021).
+            "definitionIconStyle": true,
             "agentVersion": "1.4.2"
         }),
     );
@@ -228,6 +230,9 @@ fn agent_fixture() -> Value {
             folder_id: Some("folder-lab".into()),
             terminal_options: Some(json!({ "fontSize": 12, "cursorBlink": false })),
             icon: Some("cpu".into()),
+            // Icon colour + emoji on an agent definition (#5021).
+            icon_color: Some("teal".into()),
+            icon_emoji: Some("\u{1F680}".into()),
             source_file: Some("/etc/termihub/shared.json".into()),
         },
         AgentDefinitionInfo {
@@ -239,6 +244,8 @@ fn agent_fixture() -> Value {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         },
     ];

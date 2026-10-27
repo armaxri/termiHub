@@ -37,6 +37,8 @@ mod trusted_hosts;
 #[cfg(test)]
 mod appearance_tests;
 #[cfg(test)]
+mod fixture_tests;
+#[cfg(test)]
 mod global_appearance_tests;
 #[cfg(test)]
 mod hostkeys_tests;

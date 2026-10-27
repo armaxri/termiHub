@@ -30,6 +30,8 @@ fn definition(id: &str, folder: Option<&str>) -> AgentDefinition {
         folder_id: folder.map(str::to_string),
         terminal_options: None,
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         source_file: None,
     }
 }
@@ -809,4 +811,23 @@ fn connection_state_serialises_byte_identically_for_the_four_agent_states() {
             "state {state:?} must serialise to {wire:?} (unchanged wire contract)"
         );
     }
+}
+
+/// #5021: a definition's icon colour / emoji round-trip the region under their
+/// camelCase names; a definition from an intent without them parses unset and
+/// serialises without stray keys.
+#[test]
+fn definition_icon_style_round_trips_camel_case() {
+    let mut def = definition("d1", None);
+    def.icon_color = Some("red".into());
+    def.icon_emoji = Some("\u{1F680}".into());
+    let v = serde_json::to_value(&def).unwrap();
+    assert_eq!(v["iconColor"], json!("red"));
+    assert_eq!(v["iconEmoji"], json!("\u{1F680}"));
+    assert_eq!(serde_json::from_value::<AgentDefinition>(v).unwrap(), def);
+
+    let bare = serde_json::to_value(definition("d2", None)).unwrap();
+    assert!(bare.get("iconColor").is_none() && bare.get("iconEmoji").is_none());
+    let parsed: AgentDefinition = serde_json::from_value(bare).unwrap();
+    assert!(parsed.icon_color.is_none() && parsed.icon_emoji.is_none());
 }
