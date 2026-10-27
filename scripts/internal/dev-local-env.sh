@@ -97,6 +97,14 @@ _thdl_port TERMIHUB_TEST_E2E_TELNET_PORT     2323
 export TERMIHUB_SERIAL_A="${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a-$TERMIHUB_TEST_PROJECT}"
 export TERMIHUB_SERIAL_B="${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b-$TERMIHUB_TEST_PROJECT}"
 
+# Traceroute fixture networks (#4964): three /24s per checkout in 10.231.0.0/16,
+# in lockstep with dev_local.traceroute_networks() (Docker refuses overlaps).
+_thdl_slot=$((TERMIHUB_TEST_PORT_OFFSET / 1000))
+export TERMIHUB_TEST_TRACE_NET_A="${TERMIHUB_TEST_TRACE_NET_A:-10.231.$((_thdl_slot * 3))}"
+export TERMIHUB_TEST_TRACE_NET_B="${TERMIHUB_TEST_TRACE_NET_B:-10.231.$((_thdl_slot * 3 + 1))}"
+export TERMIHUB_TEST_TRACE_NET_C="${TERMIHUB_TEST_TRACE_NET_C:-10.231.$((_thdl_slot * 3 + 2))}"
+unset _thdl_slot
+
 # E2E WebDriver (tauri-driver) port.
 export TERMIHUB_TAURI_DRIVER_PORT="${TERMIHUB_TAURI_DRIVER_PORT:-$((4444 + TERMIHUB_TEST_PORT_OFFSET))}"
 

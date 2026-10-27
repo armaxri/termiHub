@@ -425,3 +425,34 @@ def test_committed_configs_are_self_consistent(tmp_path, committed):
     # Must not raise.
     dev_local.port_offset(tmp_path)
     dev_local.compose_project(tmp_path)
+
+
+def test_traceroute_networks_are_distinct_per_slot(tmp_path, monkeypatch):
+    """#4964: each checkout's traceroute fixture gets its own three /24s, and
+    ``compose_env`` hands them to the compose file (Docker refuses overlaps)."""
+    for name in "ABC":
+        monkeypatch.delenv(f"TERMIHUB_TEST_TRACE_NET_{name}", raising=False)
+    seen: set[str] = set()
+    for slot in _SLOTS:
+        _write(tmp_path, {"compose_project": f"termihub-test-{slot}", "test_port_offset": slot * 1000})
+        nets = dev_local.traceroute_networks(tmp_path)
+        assert not seen & set(nets), f"dev{slot} reuses a traceroute subnet: {nets}"
+        seen.update(nets)
+        env = dev_local.compose_env(tmp_path)
+        assert (
+            env["TERMIHUB_TEST_TRACE_NET_A"],
+            env["TERMIHUB_TEST_TRACE_NET_B"],
+            env["TERMIHUB_TEST_TRACE_NET_C"],
+        ) == nets
+    _write(tmp_path, {"test_port_offset": 7000})
+    assert dev_local.traceroute_networks(tmp_path) == ("10.231.21", "10.231.22", "10.231.23")
+
+
+def test_shell_resolver_computes_the_same_traceroute_networks():
+    """``dev-local-env.sh`` derives the same per-slot traceroute subnets."""
+    script = (dev_local.REPO_ROOT / "scripts" / "internal" / "dev-local-env.sh").read_text(
+        encoding="utf-8"
+    )
+    for i, name in enumerate("ABC"):
+        expr = "$((_thdl_slot * 3))" if i == 0 else f"$((_thdl_slot * 3 + {i}))"
+        assert f'TERMIHUB_TEST_TRACE_NET_{name}:-10.231.{expr}' in script
