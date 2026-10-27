@@ -1,7 +1,0 @@
-{
-  "reason": "^quarantined on Windows: the Enter after composed dead keys is lost \\(#5024\\)$",
-  "nodeid": "test_os_input_keyboard\\.py",
-  "lanes": ["os-input-windows"],
-  "why": "flake quarantine (#4993): fails ~1 in 3 runs on the Windows runner; deep-fix tracker #5024. Remove with the skip.",
-  "max_skips": { "os-input-windows": 1 }
-}
