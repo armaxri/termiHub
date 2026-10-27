@@ -257,6 +257,34 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
     }
 }
 
+/// Whether the typed setup's echo is hidden for `shell` (#5009): only on a
+/// POSIX login shell, and only when the shell-integration line is typed —
+/// its setup-done mark is what ends the hidden region (see
+/// [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)). Such a
+/// host is then also held until its first prompt, so the setup reaches the
+/// line editor rather than the cooked tty, whose own echo would come first.
+///
+/// Not PowerShell or cmd.exe: a Windows host renders through ConPTY, whose
+/// screen model must see every byte (its PowerShell setup ends with
+/// `Clear-Host` instead).
+pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
+    shell == RemoteShell::Posix && has_integration
+}
+
+/// Join POSIX setup lines (each LF-ended) into one typed line, so their echo
+/// is one contiguous region the filter can remove — separate lines would put
+/// a prompt between the echoes (#5009).
+pub fn join_posix_setup(lines: &[String]) -> String {
+    let statements: Vec<&str> = lines
+        .iter()
+        .map(|l| l.trim_end_matches('\n').trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    // A leading space keeps the line (env values included) out of history
+    // under `HISTCONTROL=ignorespace` / `HIST_IGNORE_SPACE`.
+    format!(" {}\n", statements.join("; "))
+}
+
 /// Whether `name` is safe to type as an environment variable name in every
 /// supported shell: `[A-Za-z_][A-Za-z0-9_]*`. Anything else (`;`, spaces, `$`,
 /// `=`...) could end the assignment and start a command.
@@ -1228,6 +1256,40 @@ mod tests {
             assert!(!defers_setup_until_prompt(RemoteShell::Posix, has_setup));
             assert!(!defers_setup_until_prompt(RemoteShell::Unknown, has_setup));
         }
+    }
+
+    /// #5009: a POSIX host with shell integration is held until its first
+    /// prompt, so the setup is typed at the line editor and its echo can be
+    /// hidden; without integration it stays ungated.
+    #[test]
+    fn only_posix_with_integration_hides_its_setup_echo() {
+        for shell in ALL_SHELLS {
+            for has_integration in [false, true] {
+                assert_eq!(
+                    hides_setup_echo(shell, has_integration),
+                    shell == RemoteShell::Posix && has_integration,
+                    "{shell:?} has_integration={has_integration}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn posix_setup_lines_join_into_one_line_ending_in_the_integration() {
+        let env = env_setup_line(RemoteShell::Posix, &env(&[("FOO", "b a'r")])).unwrap();
+        let x11 = x11_setup_lines(RemoteShell::Posix, 10, Some("abcd"));
+        let integration = integration_setup_line(RemoteShell::Posix).unwrap();
+        let mut lines = vec![env, x11[0].clone(), x11[1].clone(), integration.clone()];
+        let joined = join_posix_setup(&lines);
+        assert_eq!(joined.matches('\n').count(), 1, "one line: {joined:?}");
+        assert!(joined.ends_with(integration.trim_start()), "{joined:?}");
+        assert!(
+            joined.starts_with(" export FOO='b a'\\''r'; export DISPLAY=localhost:10.0; xauth add")
+        );
+        // A lone integration line is unchanged.
+        lines.clear();
+        lines.push(integration.clone());
+        assert_eq!(join_posix_setup(&lines), integration);
     }
 
     #[test]

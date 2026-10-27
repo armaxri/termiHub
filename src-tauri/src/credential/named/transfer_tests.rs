@@ -207,6 +207,8 @@ fn round_trip_through_a_folder() {
     let cred = a.create("Bastion", "bastion-secret");
     a.connections
         .save_folder(crate::connection::config::ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
