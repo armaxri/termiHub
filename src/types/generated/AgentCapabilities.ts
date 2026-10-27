@@ -87,6 +87,13 @@ hostFileAttributeOps?: import("./FileAttributeOps").FileAttributeOps,
  */
 fileCreateNew?: boolean, 
 /**
+ * Whether the agent stores an icon colour and emoji on its saved
+ * connection definitions (protocol 0.33.0, #5021). `false` for older
+ * agents: they would ignore the keys, so the connection editor hides the
+ * controls for their definitions.
+ */
+definitionIconStyle?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

@@ -6,6 +6,14 @@ import type { TerminalOptions } from "./TerminalOptions";
  */
 export type AgentDefinitionInfo = { id: string, name: string, sessionType: string, config: Record<string, unknown>, persistent: boolean, folderId: string | null, terminalOptions?: TerminalOptions, icon?: string, 
 /**
+ * Icon colour: a palette name or `#rrggbb` (#5021).
+ */
+iconColor?: string, 
+/**
+ * Single-emoji icon shown instead of the glyph (#5021).
+ */
+iconEmoji?: string, 
+/**
  * Source file path on the remote host, or `None` for the primary store.
  */
 sourceFile?: string, };

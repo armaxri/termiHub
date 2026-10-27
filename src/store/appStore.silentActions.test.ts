@@ -318,6 +318,8 @@ describe("#1472 — agent mutating actions surface errors", () => {
       folder_id: null,
       terminal_options: null,
       icon: null,
+      icon_color: null,
+      icon_emoji: null,
     });
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("denied"));

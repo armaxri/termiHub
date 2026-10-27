@@ -11,4 +11,14 @@ export type ConnectionCreateParams = { name: string, type: string,
  * Settings bag. The legacy `resilientReconnect` key is accepted on read and
  * rewritten to `autoReconnect` (PARITY-008) so an older desktop interoperates.
  */
-config: Record<string, unknown>, persistent: boolean, folder_id: string | null, terminal_options: unknown, icon: string | null, };
+config: Record<string, unknown>, persistent: boolean, folder_id: string | null, terminal_options: unknown, icon: string | null, 
+/**
+ * Icon colour: a palette name or `#rrggbb` (#5021). Stored opaquely. An
+ * agent older than protocol 0.33.0 ignores the key and does not store it.
+ */
+icon_color: string | null, 
+/**
+ * Single-emoji icon shown instead of the glyph (#5021). Stored opaquely;
+ * ignored by an agent older than protocol 0.33.0.
+ */
+icon_emoji: string | null, };

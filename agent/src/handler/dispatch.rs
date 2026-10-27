@@ -201,7 +201,12 @@ use termihub_core::monitoring::{
 /// files, redacted and size-capped, into its Export Diagnostics bundle. An
 /// older agent answers "method not found", which the desktop reports as
 /// "this agent cannot share its logs".
-const AGENT_PROTOCOL_VERSION: &str = "0.32.0";
+/// Bumped to 0.33.0 for the additive `icon_color` / `icon_emoji` on
+/// `connections.create` / `connections.update` and the definitions the agent
+/// reports, with the matching `capabilities.definitionIconStyle` flag (#5021).
+/// An older agent ignores the unknown keys, so the desktop shows the controls
+/// only to an agent that advertises the flag; an older desktop never sends them.
+const AGENT_PROTOCOL_VERSION: &str = "0.33.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -1078,6 +1083,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 forward_flow: true,
                 host_file_attribute_ops: host_file_attribute_ops(),
                 file_create_new: true,
+                definition_icon_style: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -1594,6 +1600,8 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             folder_id: p.folder_id,
             terminal_options: p.terminal_options,
             icon: p.icon,
+            icon_color: p.icon_color,
+            icon_emoji: p.icon_emoji,
             extra: serde_json::Map::new(),
         };
 
@@ -1604,6 +1612,12 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
         to_result_value(&snapshot)
     })?;
     Ok(())
+}
+
+/// A tri-state string patch value: JSON `null` (or a non-string) clears the
+/// field, a string sets it.
+fn nullable_string(v: serde_json::Value) -> Option<String> {
+    v.as_str().map(str::to_string)
 }
 
 fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -1624,13 +1638,9 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
         let terminal_options = p
             .terminal_options
             .map(|v| if v.is_null() { None } else { Some(v) });
-        let icon = p.icon.map(|v| {
-            if v.is_null() {
-                None
-            } else {
-                v.as_str().map(|s| s.to_string())
-            }
-        });
+        let icon = p.icon.map(nullable_string);
+        let icon_color = p.icon_color.map(nullable_string);
+        let icon_emoji = p.icon_emoji.map(nullable_string);
 
         match connection_store
             .update(
@@ -1642,6 +1652,8 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
                 folder_id,
                 terminal_options,
                 icon,
+                icon_color,
+                icon_emoji,
             )
             .await
             .map_err(|e| definitions_store_newer_err(&e))?
@@ -3946,10 +3958,12 @@ mod tests {
     /// 0.29.0 the `hostFileAttributeOps` capability (#4601), and 0.30.0 the
     /// `write_range` exclusive create with its `fileCreateNew` capability
     /// (#4433), and 0.31.0 the `fractionalLatency` client capability (#4542),
-    /// and 0.32.0 the `agent.logs.*` methods (#4519).
+    /// and 0.32.0 the `agent.logs.*` methods (#4519), and 0.33.0 the
+    /// definition icon colour / emoji with its `definitionIconStyle`
+    /// capability (#5021).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.32.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.33.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -4163,6 +4177,17 @@ mod tests {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", init_params(), 1).await;
         assert_eq!(result["result"]["capabilities"]["fileCreateNew"], true);
+    }
+
+    /// #5021: the agent advertises that it stores definition icon styles.
+    #[tokio::test]
+    async fn initialize_advertises_definition_icon_style() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        assert_eq!(
+            result["result"]["capabilities"]["definitionIconStyle"],
+            true
+        );
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -4772,6 +4797,68 @@ mod tests {
         .await;
         assert_eq!(result["result"]["name"], "New");
         assert!(result["result"]["persistent"].as_bool().unwrap());
+    }
+
+    /// #5021: a definition's icon colour / emoji are stored on create,
+    /// reported by `connections.list`, left alone by an update that omits
+    /// them, and cleared by an explicit `null`.
+    #[tokio::test]
+    async fn connections_icon_style_create_update_and_clear() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "connections.create",
+            json!({"name": "Prod", "type": "shell", "folder_id": null,
+                   "terminal_options": null, "icon": null,
+                   "icon_color": "red", "icon_emoji": "\u{1F680}"}),
+            2,
+        )
+        .await;
+        assert_eq!(result["result"]["icon_color"], "red");
+        assert_eq!(result["result"]["icon_emoji"], "\u{1F680}");
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        let result = dispatch(&handler, "connections.list", json!({}), 3).await;
+        assert_eq!(result["result"]["connections"][0]["icon_color"], "red");
+
+        let result = dispatch(
+            &handler,
+            "connections.update",
+            json!({"id": conn_id, "name": "Prod 2"}),
+            4,
+        )
+        .await;
+        assert_eq!(result["result"]["icon_color"], "red");
+        assert_eq!(result["result"]["icon_emoji"], "\u{1F680}");
+
+        let result = dispatch(
+            &handler,
+            "connections.update",
+            json!({"id": conn_id, "icon_color": "#336699", "icon_emoji": null}),
+            5,
+        )
+        .await;
+        assert_eq!(result["result"]["icon_color"], "#336699");
+        assert!(result["result"].get("icon_emoji").is_none(), "{result}");
+    }
+
+    /// #5021: an older desktop's create (no icon style keys) still works and
+    /// the reported definition carries no icon style keys.
+    #[tokio::test]
+    async fn connections_create_without_icon_style_reports_none() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        let result = dispatch(
+            &handler,
+            "connections.create",
+            json!({"name": "Old", "type": "shell"}),
+            2,
+        )
+        .await;
+        assert!(result["result"].get("icon_color").is_none(), "{result}");
+        assert!(result["result"].get("icon_emoji").is_none(), "{result}");
     }
 
     #[tokio::test]
@@ -6543,6 +6630,8 @@ mod tests {
                 folder_id: conn.folder_id,
                 terminal_options: conn.terminal_options,
                 icon: conn.icon,
+                icon_color: conn.icon_color,
+                icon_emoji: conn.icon_emoji,
                 source_file: None,
             };
             self.connections.lock().await.push(snap.clone());
@@ -6559,6 +6648,8 @@ mod tests {
             _folder_id: Option<Option<String>>,
             _terminal_options: Option<Option<serde_json::Value>>,
             _icon: Option<Option<String>>,
+            _icon_color: Option<Option<String>>,
+            _icon_emoji: Option<Option<String>>,
         ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
             let mut conns = self.connections.lock().await;
             let Some(conn) = conns.iter_mut().find(|c| c.id == id) else {

@@ -1276,6 +1276,14 @@ came from the OS.
 | [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                                                        |
 | [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                               |
 
+The dead-key grade (MT-NIN-15) is quarantined on Windows: on the hosted runner
+the Enter after the composed characters is sometimes lost (#5024). It still runs
+on Linux and macOS.
+
+On a missed calibration move, the Windows backend names the window under the
+pointer and lists every window on the desktop. That is how a DevTools window,
+opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
+
 Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
 picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
 injection can judge. MT-NIN-22 (a click into an inactive window) and MT-NIN-23

@@ -1,17 +1,21 @@
 /**
  * TabConnectionIcon (#5008): a tab opened from a saved connection shows that
  * connection's emoji / colour, live-updates when the connection is edited,
- * and falls back to the type icon for tabs without a saved connection.
+ * and falls back to the type icon for tabs without a saved connection. A tab
+ * opened from an agent definition shows that definition's style (#5021).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TabConnectionIcon } from "./TabConnectionIcon";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
+import { seedAgentsRegion, setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import type { AgentDefinitionInfo } from "@/services/api";
 import type { SavedConnection } from "@/types/connection";
 import type { ConnectionConfig } from "@/types/terminal";
 
 setupConnectionsRegion();
+setupAgentsRegion();
 
 const config: ConnectionConfig = { type: "ssh", config: { host: "prod" } };
 const prod = (patch: Partial<SavedConnection>): SavedConnection => ({
@@ -56,5 +60,31 @@ describe("TabConnectionIcon", () => {
     act(() => root.render(<TabConnectionIcon tab={{ config }} />));
     expect(emoji()).toBeNull();
     expect(container.querySelector("svg")).not.toBeNull();
+  });
+
+  it("renders an agent definition's emoji / colour and follows edits live (#5021)", () => {
+    const agentConfig: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell", definitionId: "def-1" },
+    };
+    const def = (patch: Partial<AgentDefinitionInfo>): AgentDefinitionInfo => ({
+      id: "def-1",
+      name: "Build",
+      sessionType: "shell",
+      config: {},
+      persistent: false,
+      folderId: null,
+      ...patch,
+    });
+    act(() => seedAgentsRegion({ agentDefinitions: { "agent-1": [def({ iconEmoji: "🐳" })] } }));
+    act(() => root.render(<TabConnectionIcon tab={{ config: agentConfig }} />));
+    expect(emoji()?.textContent).toBe("🐳");
+
+    act(() => seedAgentsRegion({ agentDefinitions: { "agent-1": [def({ iconColor: "teal" })] } }));
+    expect(emoji()).toBeNull();
+    expect(container.querySelector("svg")?.getAttribute("data-icon-color")).toBe("teal");
+
+    act(() => seedAgentsRegion({ agentDefinitions: { "agent-1": [] } }));
+    expect(container.querySelector("svg")?.getAttribute("data-icon-color")).toBeNull();
   });
 });
