@@ -92,14 +92,20 @@ class TestOsKeyboardGrades(
     def _focus_terminal(self, tab_id: str, screen=None) -> None:
         self.os_click(f"terminal-renderer-{tab_id}", screen=screen)
 
-    def _wait_echo(self, tab_id: str, tag: str, *, driver=None) -> str:
+    def _wait_echo(self, tab_id: str, tag: str, *, driver=None, why=None) -> str:
         driver = driver or self.driver
-        return self.wait(
-            lambda: (lambda got: None if got is None else [got])(
-                terminal_echo(driver.read_terminal(tab_id), tag)
-            ),
-            what=f"the {tag} echo",
-        )[0]
+        try:
+            return self.wait(
+                lambda: (lambda got: None if got is None else [got])(
+                    terminal_echo(driver.read_terminal(tab_id), tag)
+                ),
+                what=f"the {tag} echo",
+            )[0]
+        except AssertionError as exc:
+            if why is None:
+                raise
+            tail = driver.read_terminal(tab_id).rstrip().splitlines()[-3:]
+            raise AssertionError(f"{exc}; {why()}; terminal ends {tail!r}") from None
 
     def _echo_after_interrupt(self, osi: OsInput, tab_id: str, tag: str) -> str:
         """Type ``echo <tag>_ok_`` once the shell is back at its prompt; the echo.
@@ -434,8 +440,11 @@ class TestOsKeyboardGrades(
                 lambda: self.has_focus(second) and not self.has_focus(self.driver),
                 what="window B to keep the focus after the click into its shell",
             )
+            self.reset_input_probe(second)
             osi.type_text("echo WB_bbb_\n")
-            assert self._wait_echo(b_tab, "WB", driver=second) == "bbb"
+            assert self._wait_echo(
+                b_tab, "WB", driver=second, why=lambda: f"keys landed on {self.key_targets(second)}"
+            ) == "bbb"
             main_tabs = len(window_tabs(self.driver))
             second_tabs = len(window_tabs(second))
             osi.key(f"{MOD}+shift+`")

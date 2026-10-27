@@ -300,7 +300,8 @@ class TestOsPointerGrades(
             self.wait(
                 echoes,
                 what=f"the N22 echo in either pane (active: {self._pane(focused, left, right)}, "
-                f"pointer events: {[e['type'] for e in self.trusted_events()]})",
+                f"pointer events: {[e['type'] for e in self.trusted_events(kind='pointerdown')]}, "
+                f"keys landed on: {self.key_targets()})",
             )
             time.sleep(0.5)  # a second pane would echo by now too
             want = self._pane(expected or focused, left, right)
