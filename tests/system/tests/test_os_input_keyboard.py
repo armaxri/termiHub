@@ -367,6 +367,22 @@ class TestOsKeyboardGrades(
             second.click(CLOSE_DIALOG_END)
         self.wait(lambda: len(self.driver.windows()) == 1, what="window B to close")
 
+    def _click_uncovered(self, osi: OsInput, screen, tab_id: str, cover: OsWindow) -> None:
+        """A real click into ``tab_id``'s shell where window ``cover`` does not lie.
+
+        Window A is pinned always-on-top (#957), so only the part of B's shell
+        outside A's frame takes a click; B's new shell may not hold B's
+        keyboard focus on its own.
+        """
+        renderer = f"terminal-renderer-{tab_id}"
+        for fy in (0.9, 0.5, 0.1):
+            for fx in (0.95, 0.75, 0.5, 0.25, 0.05):
+                point = screen.point(renderer, fx, fy)
+                if not cover.contains(*point):
+                    osi.click(*point)
+                    return
+        raise AssertionError(f"window A {cover} covers all of window B's shell {screen.window}")
+
     def _raise(self, osi: OsInput, window: OsWindow, focused: Driver, other: Driver) -> None:
         """Raise ``window`` by its OS handle and prove its webview has the focus."""
         osi.activate(window=window)
@@ -410,6 +426,11 @@ class TestOsKeyboardGrades(
             assert self._wait_echo(a_tab, "WA") == "aaa"
 
             self._raise(osi, b_window, second, self.driver)
+            self._click_uncovered(osi, screen.for_window(second, b_window), b_tab, main)
+            self.wait(
+                lambda: self.has_focus(second) and not self.has_focus(self.driver),
+                what="window B to keep the focus after the click into its shell",
+            )
             osi.type_text("echo WB_bbb_\n")
             assert self._wait_echo(b_tab, "WB", driver=second) == "bbb"
             main_tabs = len(window_tabs(self.driver))
