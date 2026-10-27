@@ -1,10 +1,13 @@
 ### Changed
 
-- Shell integration no longer prints its setup at the start of a terminal session
-  (#5009). In local bash and zsh sessions, and in SSH sessions to POSIX hosts, the
-  setup is typed once the shell's prompt is up and its echo is kept off the screen;
-  the first prompt appears once, and the MOTD, login banner and your own startup
-  output stay exactly as before. fish gets the setup as a startup option instead. If
-  anything other than the setup's own echo shows up where it ran (an error, other
-  output), nothing is hidden. WSL and Windows Git Bash sessions still show the setup
-  for now.
+- Nothing is typed into your shell any more to make the file browser follow it (#5009).
+  For local shells termiHub reads the shell's current directory from the operating
+  system. For SSH sessions it reads it over a separate channel of the same connection
+  (`/proc` on Linux, `lsof` on macOS/BSD). There is no setup text at session start, no
+  history entry, and no change to your functions, `PROMPT_COMMAND`, `precmd` or `PS1`.
+  The MOTD, the login banner and your own startup output show exactly as before.
+- Command marks (jumping between prompts, copying a command's output, the
+  success/failure marker) now need the opt-in **Command Marks (Shell Hook)** connection
+  setting, which is off by default. It still types a small hook into bash/zsh, kept off
+  the screen, and its help text lists what the hook leaves behind in the shell.
+  PowerShell and cmd keep their startup-argument setup, which is never typed.
