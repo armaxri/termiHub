@@ -201,6 +201,10 @@ AUTOMATED_IDS: dict[str, str] = {
     ),
     # #4964: traced through a two-router Docker chain, unprivileged (IP_RECVERR).
     "MT-NET-16": "test_network_tools_traceroute.py::test_traceroute_hops_stream_in_and_complete",
+    # #4960: a synthetic MobaXterm.ini / .mxtsessions fixture; APPDATA redirected on Windows.
+    "MT-APP-05": (
+        "test_mobaxterm_import.py::test_mobaxterm_import_previews_and_imports_the_fixture"
+    ),
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
