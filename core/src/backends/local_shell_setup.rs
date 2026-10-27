@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 use super::local_shell_setup_watch::{PromptWatch, Verdict};
-use crate::connection::OutputSender;
+use crate::connection::{OutputSender, PromptProbe};
 use crate::output::setup_echo::{HideOutcome, SetupEchoFilter};
 
 /// Upper bound on waiting for the line editor before typing the setup anyway.
@@ -124,11 +124,7 @@ impl TypedSetup {
 
     /// Type the setup once the line editor reads (`reading`), or at
     /// [`READY_CAP`]; gives up when the session ends (`alive` cleared).
-    pub(crate) fn type_when_ready(
-        self: Arc<Self>,
-        reading: Box<dyn Fn() -> bool + Send + Sync>,
-        alive: Arc<AtomicBool>,
-    ) {
+    pub(crate) fn type_when_ready(self: Arc<Self>, reading: PromptProbe, alive: Arc<AtomicBool>) {
         std::thread::spawn(move || {
             let start = Instant::now();
             loop {

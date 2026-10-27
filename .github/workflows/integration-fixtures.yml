@@ -397,9 +397,10 @@ jobs:
         # The elevated SFTP save, read-only detection and SFTP-only fallback tests
         # (src-tauri/src/files/sftp.rs, against the default-profile `ssh-sudo`
         # :2212, `ssh-nosudo` :2213 and `ssh-sftp-only` :2215), the sudo-password
-        # log-secrecy test (session/manager/tests/log_secrecy.rs, `ssh-sudo`) and
-        # the agent deploy test (src-tauri/src/utils/remote_exec.rs, against
-        # `ssh-password` :2201). They drive private desktop-crate code, so they
+        # log-secrecy test (session/manager/tests/log_secrecy.rs, `ssh-sudo`), the
+        # slow-rc initial-command test (session/manager/tests/initial_command.rs,
+        # `ssh-password`, #5029) and the agent deploy test
+        # (src-tauri/src/utils/remote_exec.rs, against `ssh-password` :2201). They drive private desktop-crate code, so they
         # live in the lib test binary rather than src-tauri/tests.
         # TERMIHUB_REQUIRE_DOCKER=1 turns an absent fixture into a hard failure
         # via utils::docker_fixture_gate (#3978), the same gate as the suites above.
@@ -415,6 +416,7 @@ jobs:
           -- --test-threads=1
           files::sftp::tests::
           session::manager::tests::log_secrecy::sudo_password
+          session::manager::tests::initial_command::ssh_
           utils::remote_exec::tests::agent_deploy
 
       - name: Run the agent ssh-agent relay suite against the fixtures
