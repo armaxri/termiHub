@@ -2526,8 +2526,9 @@ mod tests {
         assert_eq!(
             line,
             format!(
-                "{}\r",
-                crate::session::shell::osc7_setup_command("powershell").unwrap()
+                "{}{}\r",
+                crate::session::shell::osc7_setup_command("powershell").unwrap(),
+                remote_shell::TYPED_POWERSHELL_CLEAR
             )
         );
         assert!(!line.contains('\n'), "no LF may reach PSReadLine");

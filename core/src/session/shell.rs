@@ -1905,11 +1905,41 @@ mod tests {
             setup.contains("COMPUTERNAME"),
             "expected hostname via $env:COMPUTERNAME, got: {setup}"
         );
-        // Must clear screen at end
-        assert!(
-            setup.contains("Clear-Host"),
-            "expected Clear-Host at end, got: {setup}"
-        );
+        // Must not clear the screen: that wipes what the user's profile
+        // printed at startup (#5017).
+        assert_no_screen_clear(setup);
+    }
+
+    /// A startup setup must leave the screen alone: no `Clear-Host` / `cls` /
+    /// `clear` and no erase-display or reset sequence, so the user's profile
+    /// output, cmd's banner and an SSH banner stay visible (#5017).
+    fn assert_no_screen_clear(setup: &str) {
+        let lower = setup.to_ascii_lowercase();
+        for clear in ["clear-host", "cls", "clear", "[2j", "[3j"] {
+            assert!(
+                !lower.contains(clear),
+                "setup must not clear the screen ({clear}): {setup}"
+            );
+        }
+    }
+
+    /// The startup setups of the Windows shells print nothing and clear
+    /// nothing: they run before the first prompt, after the user's profile
+    /// (PowerShell) or instead of cmd's banner, and must not hide either
+    /// (#5017).
+    #[test]
+    fn windows_shell_setups_do_not_clear_the_screen() {
+        for shell in ["powershell", "pwsh", "cmd"] {
+            let setup = osc7_setup_command(shell).expect("a setup");
+            assert_no_screen_clear(setup);
+            let lower = setup.to_ascii_lowercase();
+            for print in ["write-host", "write-output", "echo "] {
+                assert!(
+                    !lower.contains(print),
+                    "{shell} setup prints ({print}): {setup}"
+                );
+            }
+        }
     }
 
     /// The dispatch in [`osc7_setup_command`] must be shell-aware: PowerShell
@@ -2087,8 +2117,8 @@ mod tests {
             "setup must be guarded: {setup}"
         );
         assert!(
-            setup.ends_with("};Clear-Host"),
-            "guard must close before Clear-Host: {setup}"
+            setup.ends_with("}}"),
+            "the guard must close the setup, with nothing after it: {setup}"
         );
     }
 

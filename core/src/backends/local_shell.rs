@@ -2454,6 +2454,201 @@ mod tests {
         shell.disconnect().await.ok();
     }
 
+    /// Visible text of a raw terminal stream: CSI, OSC and two-character
+    /// escapes dropped, as the test's stand-in for what the screen shows.
+    #[cfg(windows)]
+    fn visible_text(raw: &str) -> String {
+        let mut out = String::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\x1b' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// The first sequence after `from` in `raw` that wipes the screen (erase
+    /// display, erase scrollback, reset, alternate screen), if any.
+    #[cfg(windows)]
+    fn wipe_after(raw: &str, from: usize) -> Option<&'static str> {
+        ["\x1b[2J", "\x1b[3J", "\x1bc", "\x1b[?1049h", "\x1b[?1047h"]
+            .into_iter()
+            .find(|wipe| raw[from..].contains(wipe))
+    }
+
+    /// The payloads of every OSC 7 / OSC 9;9 cwd report in `raw`.
+    #[cfg(windows)]
+    fn cwd_reports(raw: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        for osc in ["\x1b]7;", "\x1b]9;9;"] {
+            for (at, _) in raw.match_indices(osc) {
+                let body = &raw[at + osc.len()..];
+                if let Some(end) = body.find(['\x07', '\x1b']) {
+                    found.push(&body[..end]);
+                }
+            }
+        }
+        found
+    }
+
+    /// Read `rx` until no output arrived for `quiet`.
+    #[cfg(windows)]
+    async fn drain_until_quiet(
+        rx: &mut crate::connection::OutputReceiver,
+        output: &mut Vec<u8>,
+        quiet: tokio::time::Duration,
+    ) {
+        while let Ok(Some(chunk)) = tokio::time::timeout(quiet, rx.recv()).await {
+            output.extend_from_slice(&chunk);
+        }
+    }
+
+    /// #5017: a local PowerShell / cmd session keeps what the user's profile
+    /// printed at startup (and cmd its banner) — termiHub's startup setup
+    /// neither clears the screen nor shows any of its own text — and the file
+    /// browser still follows `cd`, with the command-mark hook off and on.
+    ///
+    /// Needs a profile that prints `TERMIHUB_TEST_PROFILE_MARKER`: a
+    /// PowerShell `profile.ps1` (Windows PowerShell and pwsh) and cmd's
+    /// `AutoRun`. The dispatched Windows lane writes them on its throwaway
+    /// runner; it is ignored elsewhere so a developer's own profile is never
+    /// touched.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[serial(local_pty)]
+    #[ignore = "needs a profile printing TERMIHUB_TEST_PROFILE_MARKER (dispatched Windows lane)"]
+    async fn windows_shell_start_keeps_profile_output_and_follows_cd() {
+        let marker = std::env::var("TERMIHUB_TEST_PROFILE_MARKER")
+            .expect("TERMIHUB_TEST_PROFILE_MARKER names the line the test profile prints");
+        let target = std::env::temp_dir().join(format!("th5017-{}", std::process::id()));
+        std::fs::create_dir_all(&target).expect("scratch dir");
+        let target_name = target.file_name().unwrap().to_string_lossy().to_lowercase();
+
+        let mut shells = vec!["powershell", "cmd"];
+        if detect_available_shells().iter().any(|s| s == "pwsh") {
+            shells.insert(1, "pwsh");
+        }
+        let mut failures = Vec::new();
+        for shell_name in shells {
+            for hook in [false, true] {
+                let tag = format!(
+                    "{shell_name} (command marks {})",
+                    if hook { "on" } else { "off" }
+                );
+                let mut shell = LocalShell::new();
+                let settings = serde_json::json!({
+                    "shell": shell_name,
+                    "shellIntegration": hook,
+                });
+                shell.connect(settings).await.expect("connect failed");
+                let mut rx = shell.subscribe_output();
+                let is_cmd = shell_name == "cmd";
+
+                // Up to the first prompt after the profile's line, then until
+                // the start has settled.
+                let mut output = Vec::new();
+                let marker_ref = marker.as_str();
+                let started =
+                    read_output_until(&mut rx, &mut output, shell_startup_timeout(), |t| {
+                        t.find(marker_ref).is_some_and(|at| {
+                            let rest = &t[at + marker_ref.len()..];
+                            if is_cmd {
+                                rest.contains('>')
+                            } else {
+                                powershell_prompt_shown(rest)
+                            }
+                        })
+                    })
+                    .await;
+                drain_until_quiet(&mut rx, &mut output, tokio::time::Duration::from_secs(3)).await;
+                let raw = String::from_utf8_lossy(&output).into_owned();
+                eprintln!("[5017] {tag} start, raw: {raw:?}");
+                if !started {
+                    failures.push(format!("{tag}: no profile line + prompt: {raw:?}"));
+                    shell.disconnect().await.ok();
+                    continue;
+                }
+                let at = raw.find(marker_ref).unwrap();
+                if let Some(wipe) = wipe_after(&raw, at) {
+                    failures.push(format!("{tag}: {wipe:?} wiped the profile's line: {raw:?}"));
+                }
+                let shown = visible_text(&raw);
+                for setup in [
+                    "__th_",
+                    "function prompt",
+                    "PROMPT=",
+                    "Clear-Host",
+                    "cls",
+                    "$E]",
+                ] {
+                    if shown.contains(setup) {
+                        failures.push(format!("{tag}: setup text {setup:?} on screen: {shown:?}"));
+                    }
+                }
+                if is_cmd && !hook && !shown.contains("Microsoft") {
+                    failures.push(format!("{tag}: cmd's banner missing: {shown:?}"));
+                }
+
+                // The file browser follows `cd` (OSC 7 from the hook or the
+                // passive follower; OSC 9;9 from cmd's hook).
+                output.clear();
+                let cd = format!("cd \"{}\"\r", target.display());
+                shell.write(cd.as_bytes()).expect("write cd");
+                let followed = read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
+                    cwd_reports(t)
+                        .iter()
+                        .any(|cwd| cwd.to_lowercase().contains(&target_name))
+                })
+                .await;
+                if !followed {
+                    failures.push(format!(
+                        "{tag}: no cwd report for {} after cd: {:?}",
+                        target.display(),
+                        String::from_utf8_lossy(&output)
+                    ));
+                }
+
+                // Evidence for #5017: whether PowerShell's location is its
+                // process directory (what a passive OS read would see).
+                if !is_cmd {
+                    output.clear();
+                    shell
+                        .write(b"Write-Output ('PC' + 'WD=' + [Environment]::CurrentDirectory + '|LOC=' + $PWD.Path)\r")
+                        .expect("write probe");
+                    read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
+                        t.contains("PCWD=") && t[t.find("PCWD=").unwrap()..].contains("|LOC=")
+                    })
+                    .await;
+                    let text = visible_text(&String::from_utf8_lossy(&output));
+                    let line = text.lines().find(|l| l.contains("PCWD=")).unwrap_or("");
+                    eprintln!("[5017] {tag} process cwd vs location: {line}");
+                }
+                shell.disconnect().await.ok();
+            }
+        }
+        let _ = std::fs::remove_dir_all(&target);
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
     /// Old saved connections use `"shellType"` instead of `"shell"`.
     #[tokio::test]
     #[serial(local_pty)]
@@ -2563,16 +2758,27 @@ mod tests {
         }
     }
 
-    /// PowerShell and cmd keep their startup-argument setup with the setting
-    /// off: it is how their directory is followed, and nothing is typed.
+    /// PowerShell keeps its startup-argument setup with the setting off: its
+    /// location is not its process directory, so the prompt hook is the only
+    /// way to follow it, and nothing is typed.
     #[test]
-    fn windows_shells_keep_their_startup_argument_setup() {
+    fn powershell_keeps_its_startup_argument_setup() {
         let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
         let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, false);
         assert!(stdin.is_none());
         assert_eq!(cmd.args[1], "-Command");
-        let (cmd, _) = apply_shell_integration(bare_command("cmd"), "cmd", false);
-        assert_eq!(cmd.args[0], "/K");
+    }
+
+    /// cmd's directory is its process directory, which the passive follower
+    /// reads from the OS, so with the setting off cmd starts untouched: no
+    /// `/K`, its own banner, its own `PROMPT` (#5017, as #5009 for bash/zsh).
+    #[test]
+    fn cmd_starts_untouched_with_the_setting_off() {
+        for cmd_path in ["cmd", r"C:\Windows\system32\cmd.exe"] {
+            let (cmd, stdin) = apply_shell_integration(bare_command(cmd_path), cmd_path, false);
+            assert!(stdin.is_none(), "{cmd_path}");
+            assert!(cmd.args.is_empty(), "{cmd_path}: {:?}", cmd.args);
+        }
     }
 
     #[test]
