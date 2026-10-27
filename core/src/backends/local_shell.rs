@@ -513,8 +513,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             "bash or zsh once the prompt is up and keeps it off the screen, but ",
                             "the hook stays in the shell: it is in the shell's history, its ",
                             "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
-                            "extended. fish gets it as a startup option, PowerShell and cmd as ",
-                            "startup arguments.\n\n",
+                            "extended. fish and cmd get it as a startup option.\n\n",
+                            "PowerShell is the exception: its location is not the directory the ",
+                            "operating system sees, so it always gets a prompt hook as a startup ",
+                            "argument. Nothing is typed or shown, and your profile's output stays ",
+                            "on screen.\n\n",
                             "Connections saved while this was on by default were switched off ",
                             "once when you updated; turn it back on here if you want it.",
                         )
@@ -916,12 +919,13 @@ fn apply_shell_integration(
     shell: &str,
     shell_integration: bool,
 ) -> (ShellCommand, Option<&'static str>) {
-    // PowerShell and cmd report their directory only through their startup
-    // arguments (PowerShell's location is not its process directory), and
-    // those are never typed or shown, so they always get them. The setting
-    // governs the typed bash/zsh hook (and fish's) for command marks (#5009).
-    let windows_shell = matches!(shell_kind(shell), "powershell" | "pwsh" | "cmd");
-    let setup = if shell_integration || windows_shell {
+    // PowerShell reports its directory only through its startup arguments
+    // (its location is not its process directory, so the passive follower
+    // cannot see it), and those are never typed or shown, so it always gets
+    // them. cmd's directory *is* its process directory, so like bash/zsh it
+    // starts untouched unless command marks are asked for (#5009, #5017).
+    let powershell = matches!(shell_kind(shell), "powershell" | "pwsh");
+    let setup = if shell_integration || powershell {
         osc7_setup_command(shell)
     } else {
         None

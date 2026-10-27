@@ -223,7 +223,7 @@ Both restrict the endpoint to the current user, and neither exposes a TCP port. 
 
 - **Default shell**: when a local-shell session omits the `shell` field, a Windows agent defaults to `powershell` (unix agents read `$SHELL`). Shell name resolution maps `cmd` → `cmd.exe`, `powershell` → the resolved PowerShell executable, and `gitbash` → the Git Bash `bash.exe`; a value containing `/` or `\` is treated as a literal path.
 - **PTY**: local shells spawn through `portable-pty`, which uses **ConPTY** on Windows 10 1809+ (falling back to WinPTY if unavailable). The reader sees the same VT byte stream as a Unix PTY, and `resize`/teardown map to `ResizePseudoConsole`/`ClosePseudoConsole`. No protocol-level difference results.
-- **CWD reporting**: PowerShell and cmd.exe emit OSC 9;9 (Windows Terminal's working-directory sequence) rather than OSC 7, injected via shell startup args.
+- **CWD reporting**: PowerShell emits OSC 7 from a prompt hook injected via its startup args (its location is not its process directory); cmd.exe is followed from its process directory, and emits OSC 9;9 from `PROMPT` only with the opt-in command-mark hook.
 
 ---
 
