@@ -1086,7 +1086,10 @@ mod tests {
         let settings = AppSettings::default();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
-        assert!(settings.default_shell_integration);
+        assert!(
+            !settings.default_shell_integration,
+            "the shell hook is opt-in (#5042)"
+        );
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
@@ -1098,7 +1101,8 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
-        assert!(settings.default_shell_integration);
+        // The one default that is not on: the shell hook is opt-in (#5042).
+        assert!(!settings.default_shell_integration);
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
@@ -1212,6 +1216,76 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.provide_x_server_automatically.is_none());
         assert!(settings.stop_x_server_when_idle);
+    }
+
+    /// Write `raw` as the settings file and load it back through the store.
+    fn load_raw(raw: &str) -> (SettingsStorage, AppSettings, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(&storage.file_path, raw).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        (storage, loaded.data, dir)
+    }
+
+    /// #5042: a v1 file carries `defaultShellIntegration: true` only because the
+    /// old default wrote it. Loading switches it off once.
+    #[test]
+    fn v1_shell_hook_default_is_switched_off_on_load() {
+        let (_, settings, _dir) = load_raw(
+            r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
+        );
+        assert!(!settings.default_shell_integration);
+        assert_eq!(settings.version, "2");
+    }
+
+    /// The reset only touches the shell-hook default, not its sibling toggles.
+    #[test]
+    fn v1_reset_leaves_other_defaults_alone() {
+        let (_, settings, _dir) = load_raw(
+            r#"{"version":"1","externalConnectionFiles":[],
+                "defaultShellIntegration":true,"defaultX11Forwarding":false,
+                "theme":"dark"}"#,
+        );
+        assert!(!settings.default_shell_integration);
+        assert!(!settings.default_x11_forwarding);
+        assert_eq!(settings.theme.as_deref(), Some("dark"));
+    }
+
+    /// An opt-in made after the reset is saved at v2 and is never reset again.
+    #[test]
+    fn shell_hook_opt_in_after_the_reset_survives_reload() {
+        let (storage, mut settings, _dir) = load_raw(
+            r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
+        );
+        settings.default_shell_integration = true;
+        storage.save(&settings).unwrap();
+
+        let raw = std::fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk["version"], serde_json::json!("2"));
+
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert!(reloaded.default_shell_integration);
+    }
+
+    /// The save stamps the current version even when the caller hands back a
+    /// document still labelled v1 (the frontend's pre-hydration seed is "1"),
+    /// so an opt-in is never mistaken for the old default on the next load.
+    #[test]
+    fn save_stamps_the_current_version() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let settings = AppSettings {
+            version: "1".to_string(),
+            default_shell_integration: true,
+            ..Default::default()
+        };
+        storage.save(&settings).unwrap();
+
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert_eq!(reloaded.version, "2");
+        assert!(reloaded.default_shell_integration);
     }
 
     #[test]

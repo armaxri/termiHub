@@ -444,6 +444,18 @@ mod tests {
         );
     }
 
+    /// #5042: a spawned local shell types nothing into the shell — the
+    /// command-mark hook is opt-in, so the spawn must not turn it on.
+    #[test]
+    fn build_shell_spawn_leaves_the_shell_hook_off() {
+        let req = SpawnRequest {
+            kind: SpawnKind::Local,
+            ..SpawnRequest::default()
+        };
+        let spawn = build_shell_spawn(&req, &PathBuf::from("/home/user"), None);
+        assert_eq!(spawn.settings["shellIntegration"], json!(false));
+    }
+
     #[test]
     fn build_shell_spawn_missing_target_uses_home_and_flags_missing() {
         let home = PathBuf::from("/home/user");
