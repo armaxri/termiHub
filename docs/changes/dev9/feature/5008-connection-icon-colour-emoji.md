@@ -5,9 +5,9 @@
   scan. Pick one of nine theme-aware colours or a custom colour (adjusted
   automatically to stay readable in light and dark themes), and choose a single
   emoji from a searchable picker (categories, skin tones, keyboard navigation,
-  works offline) or type or paste it. The emoji replaces the connection icon; both show
-  in the sidebar, on tabs and in the command palette, and are kept across
-  restarts, export/import and backups (#5008).
+  works offline) or type or paste it. The emoji replaces the connection icon;
+  both show in the sidebar, on tabs and in the command palette, and are kept
+  across restarts, export/import and backups (#5008).
 
 ### Changed
 
