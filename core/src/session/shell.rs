@@ -715,11 +715,11 @@ pub const BASH_SETUP_ENV: &str = "TERMIHUB_SI";
 /// the bootstrap — the variable, the bootstrap text in `PROMPT_COMMAND`
 /// (wherever the user's rc put theirs around it) and its export, so neither
 /// reaches child processes — then installs the hook of
-/// [`bash_osc7_command`] and runs it once for the prompt being drawn. It
+/// `bash_osc7_command` and runs it once for the prompt being drawn. It
 /// prints nothing of its own.
 ///
 /// An rc that replaces `PROMPT_COMMAND` drops the bootstrap; the caller then
-/// falls back to typing [`bash_osc7_command`].
+/// falls back to typing `bash_osc7_command`.
 #[must_use]
 pub fn bash_env_setup_script() -> &'static str {
     concat!(
