@@ -143,7 +143,7 @@ Identical texts are printed once and cross-referenced by number. The output is a
 function of the lockfiles and the pinned cargo-about version (about 1.1 MB).
 
 **Why it is generated, not committed.** The file changes with every dependency bump, so
-a committed copy would either drift or need a regeneration on every Renovate/Dependabot
+a committed copy would either drift or need a regeneration on every dependency-update
 PR. The app does not need it to compile: it is bundled only by the
 `src-tauri/tauri.notices.conf.json` config fragment, which just the bundling builds merge
 in (`release.yml`, and `scripts/build.sh` / `build.cmd` when cargo-about is installed).

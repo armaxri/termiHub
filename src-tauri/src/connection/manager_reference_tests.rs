@@ -25,6 +25,8 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>, hops: &[&str]) -> SavedCon
     SavedConnection {
         extra: Default::default(),
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         id: id.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {
@@ -39,6 +41,8 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>, hops: &[&str]) -> SavedCon
 
 fn folder(id: &str, name: &str) -> ConnectionFolder {
     ConnectionFolder {
+        icon_color: None,
+        icon_emoji: None,
         extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),

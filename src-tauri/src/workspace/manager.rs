@@ -1656,6 +1656,8 @@ mod tests {
                 folder_id: folder.map(str::to_string),
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 source_file: None,
             }
         }
@@ -1678,6 +1680,8 @@ mod tests {
             let folders = folder_ids
                 .into_iter()
                 .map(|id| ConnectionFolder {
+                    icon_color: None,
+                    icon_emoji: None,
                     extra: Default::default(),
                     name: id.clone(),
                     id,

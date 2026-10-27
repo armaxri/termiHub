@@ -58,6 +58,8 @@ fn connection(name: &str, folder_id: Option<&str>) -> SavedConnection {
     SavedConnection {
         extra: Default::default(),
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         id: format!("conn-{name}"),
         name: name.to_string(),
         config: ConnectionConfig {
@@ -72,6 +74,8 @@ fn connection(name: &str, folder_id: Option<&str>) -> SavedConnection {
 
 fn folder(id: &str) -> ConnectionFolder {
     ConnectionFolder {
+        icon_color: None,
+        icon_emoji: None,
         extra: Default::default(),
         id: id.to_string(),
         name: id.to_string(),

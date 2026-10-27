@@ -60,6 +60,8 @@ export interface VisualScenario {
   terminal?: boolean;
   /** Seed one live SSH host monitor ({@link MONITOR_KEY}) for Open Connections (#4949). */
   monitoring?: boolean;
+  /** Seed root connections (#5008) and folders (#5020) with icon colours and emoji. */
+  iconStyles?: boolean;
 }
 
 declare global {
@@ -410,6 +412,66 @@ const STORED_SECRET_TYPES = [
   },
 ];
 
+/**
+ * Root connections carrying a per-connection icon colour and/or emoji (#5008):
+ * an emoji-only row, palette colours, an emoji that overrides a colour, and a
+ * near-black custom hex the renderer must lighten to stay legible in Dark.
+ */
+export const ICON_STYLE_ROWS = [
+  {
+    id: "icon-emoji",
+    name: "Prod web",
+    folderId: null,
+    config: { type: "ssh", config: { host: "web.prod.example.com" } },
+    iconEmoji: "\u{1F680}",
+  },
+  {
+    id: "icon-red",
+    name: "Prod database",
+    folderId: null,
+    config: { type: "ssh", config: { host: "db.prod.example.com" } },
+    iconColor: "red",
+  },
+  {
+    id: "icon-teal-emoji",
+    name: "Docker host",
+    folderId: null,
+    config: { type: "ssh", config: { host: "docker.example.com" } },
+    iconColor: "teal",
+    iconEmoji: "\u{1F433}",
+  },
+  {
+    id: "icon-yellow",
+    name: "Staging",
+    folderId: null,
+    config: { type: "local", config: { shell: "zsh" } },
+    iconColor: "yellow",
+  },
+  {
+    id: "icon-custom-dark",
+    name: "Custom near-black",
+    folderId: null,
+    config: { type: "ssh", config: { host: "lab.example.com" } },
+    iconColor: "#202020",
+  },
+];
+
+/**
+ * Root folders carrying an icon colour and/or emoji (#5020): an emoji folder,
+ * a palette colour, and a near-black custom hex the renderer must lighten.
+ */
+export const ICON_STYLE_FOLDERS = [
+  {
+    id: "Containers",
+    name: "Containers",
+    parentId: null,
+    isExpanded: false,
+    iconEmoji: "\u{1F4E6}",
+  },
+  { id: "Customers", name: "Customers", parentId: null, isExpanded: false, iconColor: "purple" },
+  { id: "Lab", name: "Lab", parentId: null, isExpanded: false, iconColor: "#1a1a1a" },
+];
+
 const STORED_SECRET_ROWS = [
   {
     id: STORED_SECRET_CONNECTIONS.plugin,
@@ -481,9 +543,13 @@ function regionView(region: string, populated: boolean): unknown {
   if (region === "settings") return settingsFor(window.__VISUAL_SCENARIO__ ?? {});
   if (region === "connections") {
     if (!populated) return {};
-    const extra = window.__VISUAL_SCENARIO__?.storedSecrets ? STORED_SECRET_ROWS : [];
+    const scenario = window.__VISUAL_SCENARIO__ ?? {};
+    const extra = [
+      ...(scenario.storedSecrets ? STORED_SECRET_ROWS : []),
+      ...(scenario.iconStyles ? ICON_STYLE_ROWS : []),
+    ];
     return {
-      folders: wire.folders,
+      folders: [...wire.folders, ...(scenario.iconStyles ? ICON_STYLE_FOLDERS : [])],
       connections: [...wire.connections, LONG_CONNECTION, ...extra],
     };
   }

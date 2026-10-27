@@ -89,4 +89,42 @@ describe("ConnectionAppearanceSettings", () => {
     act(() => query("connection-editor-color-picker")!.click());
     expect(h.onColorChange).not.toHaveBeenCalled();
   });
+
+  it("hides the icon colour / emoji controls unless iconStyle is passed (#5008)", () => {
+    render({});
+    expect(query("connection-editor-icon-color")).toBeNull();
+    expect(query("connection-editor-icon-emoji")).toBeNull();
+  });
+
+  it("renders the icon colour swatches and emoji input when iconStyle is passed", () => {
+    const onIconColorChange = vi.fn();
+    const onIconEmojiChange = vi.fn();
+    act(() => {
+      root.render(
+        <ConnectionAppearanceSettings
+          color={undefined}
+          onColorChange={vi.fn()}
+          icon={undefined}
+          onIconChange={vi.fn()}
+          iconStyle={{
+            iconColor: "blue",
+            onIconColorChange,
+            iconEmoji: "x",
+            onIconEmojiChange,
+            iconEmojiError: "Enter a single emoji.",
+          }}
+        />
+      );
+    });
+    expect(query("icon-color-swatch-blue")?.getAttribute("aria-checked")).toBe("true");
+    expect(query("icon-color-swatch-default")?.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("Enter a single emoji.");
+
+    act(() => (query("icon-color-swatch-green") as HTMLButtonElement).click());
+    expect(onIconColorChange).toHaveBeenCalledWith("green");
+    act(() => (query("icon-color-swatch-default") as HTMLButtonElement).click());
+    expect(onIconColorChange).toHaveBeenLastCalledWith(undefined);
+    act(() => (query("connection-editor-clear-icon-emoji") as HTMLButtonElement).click());
+    expect(onIconEmojiChange).toHaveBeenCalledWith(undefined);
+  });
 });

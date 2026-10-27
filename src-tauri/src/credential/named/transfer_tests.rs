@@ -69,6 +69,8 @@ impl Machine {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 source_file: None,
             })
             .unwrap();
@@ -205,6 +207,8 @@ fn round_trip_through_a_folder() {
     let cred = a.create("Bastion", "bastion-secret");
     a.connections
         .save_folder(crate::connection::config::ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
@@ -224,6 +228,8 @@ fn round_trip_through_a_folder() {
             folder_id: Some("Work".to_string()),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         })
         .unwrap();

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox } from "@/components/ui";
@@ -50,17 +50,28 @@ export function PasswordPrompt() {
   const saveLabel = isPassphrase ? "Save passphrase" : "Save password";
 
   const [password, setPassword] = useState("");
-  const [savePassword, setSavePassword] = useState(false);
+  const [savePassword, setSavePassword] = useState(showSave);
+  const [shownRequestId, setShownRequestId] = useState<number | null>(null);
+  const [shownShowSave, setShownShowSave] = useState(showSave);
 
-  // Reset fields whenever a new request is shown (the dialog opening, or the
-  // queue advancing to the next request, #4312); default "save" to on when a
-  // store is active.
-  useEffect(() => {
+  // Reset the fields whenever a new request is shown (the dialog opening, or
+  // the queue advancing to the next request, #4312), and default "save" to on
+  // when a store is active. This runs while rendering, not in an effect: an
+  // effect runs after the input is already on screen, so a password typed in
+  // that gap was wiped and an empty one submitted and saved (#4995). A store
+  // that turns active or inactive while the prompt is open only updates the
+  // "save" default; it never clears what was typed.
+  if (requestId !== shownRequestId) {
+    setShownRequestId(requestId);
+    setShownShowSave(showSave);
     if (requestId !== null) {
       setPassword("");
       setSavePassword(showSave);
     }
-  }, [requestId, showSave]);
+  } else if (showSave !== shownShowSave) {
+    setShownShowSave(showSave);
+    setSavePassword(showSave);
+  }
 
   const handleSubmit = useCallback(() => {
     submitPassword(password, showSave && savePassword);

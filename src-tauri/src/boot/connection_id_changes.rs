@@ -187,6 +187,8 @@ mod tests {
         SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: id.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -201,6 +203,8 @@ mod tests {
 
     fn folder(id: &str, name: &str) -> ConnectionFolder {
         ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: id.to_string(),
             name: name.to_string(),

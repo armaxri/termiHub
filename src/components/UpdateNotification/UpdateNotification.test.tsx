@@ -60,6 +60,7 @@ beforeEach(() => {
       releaseUrl: "https://example.com/release",
       releaseNotes: "Fixed things.",
       isSecurity: false,
+      channel: "stable",
     },
     updateNotificationDismissed: false,
     dismissUpdateNotification: vi.fn(),
@@ -131,6 +132,7 @@ describe("UpdateNotification (Button migration)", () => {
         releaseUrl: "javascript:alert(1)",
         releaseNotes: "Fixed things.",
         isSecurity: false,
+        channel: "stable",
       },
     });
     const dismiss = vi.fn();
@@ -170,5 +172,72 @@ describe("UpdateNotification (Button migration)", () => {
     await flush();
 
     expect(byTestId("update-notification-notes")).not.toBeNull();
+  });
+});
+
+const DEVELOP_URL = "https://github.com/armaxri/termiHub/releases/tag/dev-develop-latest";
+
+describe("UpdateNotification (develop build, #5023)", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      updateInfo: {
+        available: true,
+        latestVersion: "0e3504c",
+        releaseUrl: DEVELOP_URL,
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "develop",
+        buildCommit: "0e3504c",
+        buildPublishedAt: "2026-10-26T23:31:19+00:00",
+      },
+    });
+  });
+
+  it("shows develop wording with the build date and short commit", async () => {
+    await render();
+    expect(container.textContent).toContain("A newer develop build is available");
+    const detail = byTestId("update-notification-develop")!.textContent ?? "";
+    expect(detail).toMatch(/^Built .+ from 0e3504c$/);
+    expect(detail).toContain("2026");
+    // No semver headline and no release-notes toggle for develop builds.
+    expect(container.textContent).not.toContain("termiHub v");
+    expect(byTestId("update-notification-whats-new")).toBeNull();
+  });
+
+  it("labels the button 'Open Download Page' and opens the pre-release page", async () => {
+    const dismiss = vi.fn();
+    useAppStore.setState({ dismissUpdateNotification: dismiss });
+    await render();
+    const btn = byTestId("update-notification-open-downloads")!;
+    expect(btn.textContent).toBe("Open Download Page");
+
+    await act(async () => {
+      btn.click();
+    });
+    await flush();
+
+    expect(mockedOpenUrl).toHaveBeenCalledWith(DEVELOP_URL);
+    expect(dismiss).toHaveBeenCalled();
+  });
+
+  it("offers 'Skip This Build' instead of 'Skip This Version'", async () => {
+    await render();
+    expect(byTestId("update-notification-skip")!.textContent).toBe("Skip This Build");
+  });
+
+  it("stays hidden when the develop build is already current", async () => {
+    useAppStore.setState({
+      updateInfo: {
+        available: false,
+        latestVersion: "0e3504c",
+        releaseUrl: DEVELOP_URL,
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "develop",
+      },
+    });
+    await render();
+    expect(byTestId("update-notification-develop")).toBeNull();
+    expect(container.textContent).toBe("");
   });
 });

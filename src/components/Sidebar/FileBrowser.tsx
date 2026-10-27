@@ -1825,7 +1825,7 @@ export function FileBrowser() {
     >
       <FileBrowserDndProvider onDrop={requestTransfer} onDragOut={handleDragOut}>
         {isDragOver && (
-          <div className="file-browser__drag-overlay">
+          <div className="file-browser__drag-overlay" data-testid="file-browser-drag-overlay">
             <Upload size={24} />
             <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
           </div>

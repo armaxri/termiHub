@@ -33,6 +33,8 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
     SavedConnection {
         extra: Default::default(),
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         id: id.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {
@@ -63,6 +65,8 @@ fn local(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
 
 fn folder(id: &str, name: &str, parent_id: Option<&str>) -> ConnectionFolder {
     ConnectionFolder {
+        icon_color: None,
+        icon_emoji: None,
         extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),
@@ -600,4 +604,97 @@ fn an_import_counts_the_agents_it_added_and_skipped() {
         .collect();
     agent_ids.sort();
     assert_eq!(agent_ids, vec!["a1", "a2", "a3"]);
+}
+
+/// The per-connection icon colour and emoji (#5008) survive a restart (a
+/// fresh manager on the same directory) and an export → import round trip.
+#[test]
+fn icon_color_and_emoji_survive_restart_and_export_import() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    let mut conn = ssh("prod", "prod", None);
+    conn.icon_color = Some("red".to_string());
+    conn.icon_emoji = Some("\u{1F680}".to_string());
+    src.save_connection(conn).unwrap();
+
+    let find = |m: &ConnectionManager| {
+        m.get_all()
+            .unwrap()
+            .connections
+            .into_iter()
+            .find(|c| c.id == "prod")
+            .expect("prod connection")
+    };
+
+    let (restarted, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    let reloaded = find(&restarted);
+    assert_eq!(reloaded.icon_color.as_deref(), Some("red"));
+    assert_eq!(reloaded.icon_emoji.as_deref(), Some("\u{1F680}"));
+
+    let json = src.export_encrypted_json(None, None).unwrap();
+    let dst_dir = tempfile::tempdir().unwrap();
+    let (dst, _r) = manager(dst_dir.path(), Arc::new(RecordingStore::default()));
+    dst.import_encrypted_json(&json, None).unwrap();
+    let imported = find(&dst);
+    assert_eq!(imported.icon_color.as_deref(), Some("red"));
+    assert_eq!(imported.icon_emoji.as_deref(), Some("\u{1F680}"));
+}
+
+/// #5020: a folder's icon colour + emoji survive a save, a restart (a fresh
+/// manager reading the same directory), a rename, and export/import.
+#[test]
+fn folder_icon_colour_and_emoji_survive_restart_rename_and_export_import() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    let mut work = folder("Work", "Work", None);
+    work.icon_color = Some("teal".to_string());
+    work.icon_emoji = Some("\u{1F4BC}".to_string());
+    src.save_folder(work.clone()).unwrap();
+    src.save_connection(local("Work/a", "a", Some("Work")))
+        .unwrap();
+
+    let styled = |mgr: &ConnectionManager, id: &str| {
+        let f = mgr
+            .get_all()
+            .unwrap()
+            .folders
+            .into_iter()
+            .find(|f| f.id == id)
+            .unwrap_or_else(|| panic!("folder {id} missing"));
+        (f.icon_color, f.icon_emoji)
+    };
+    let expected = (Some("teal".to_string()), Some("\u{1F4BC}".to_string()));
+
+    let (restarted, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    assert_eq!(styled(&restarted, "Work"), expected, "after restart");
+
+    let json = src.export_encrypted_json(None, None).unwrap();
+    assert!(json.contains("\"iconColor\": \"teal\""), "{json}");
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let (dst, _r) = manager(dst_dir.path(), Arc::new(RecordingStore::default()));
+    dst.import_encrypted_json(&json, None).unwrap();
+    assert_eq!(styled(&dst, "Work"), expected, "after export/import");
+
+    let mut renamed = work;
+    renamed.name = "Office".to_string();
+    src.save_folder(renamed).unwrap();
+    assert_eq!(styled(&src, "Office"), expected, "after rename");
+}
+
+/// #5020: clearing the style (sending the folder without the fields) removes
+/// it — the IPC copy is authoritative for the known fields.
+#[test]
+fn folder_icon_style_can_be_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mgr, _r) = manager(dir.path(), Arc::new(RecordingStore::default()));
+    let mut work = folder("Work", "Work", None);
+    work.icon_color = Some("#123456".to_string());
+    mgr.save_folder(work).unwrap();
+    mgr.save_folder(folder("Work", "Work", None)).unwrap();
+
+    let (restarted, _r) = manager(dir.path(), Arc::new(RecordingStore::default()));
+    let f = restarted.get_all().unwrap().folders.remove(0);
+    assert!(f.icon_color.is_none() && f.icon_emoji.is_none(), "{f:?}");
+    assert!(f.extra.is_empty(), "{:?}", f.extra);
 }

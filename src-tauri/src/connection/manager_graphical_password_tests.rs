@@ -19,6 +19,8 @@ fn graphical(type_id: &str, name: &str, settings: serde_json::Value) -> SavedCon
     SavedConnection {
         extra: Default::default(),
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         id: format!("conn-{name}"),
         name: name.to_string(),
         config: ConnectionConfig {

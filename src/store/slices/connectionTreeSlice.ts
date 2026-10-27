@@ -79,6 +79,11 @@ export interface ConnectionTreeSlice {
   deleteConnection: (connectionId: string) => void;
   bulkDeleteConnections: (connectionIds: string[]) => void;
   addFolder: (folder: ConnectionFolder) => void;
+  /**
+   * Replace a folder's persisted fields (e.g. its icon colour / emoji, #5020).
+   * Optimistic overlay, then persist; a rejected persist drops the overlay.
+   */
+  updateFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
   moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
@@ -448,6 +453,14 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       persistWithOverlay(upsertFolder(folder), () => persistFolder(folder)).catch((err) => {
         frontendLog("app_store", `Failed to persist new folder: ${errorMessage(err)}`);
         toast.error(`Failed to create folder ${folder.name}: ${errorMessage(err)}`);
+      });
+    },
+
+    updateFolder: (folder) => {
+      frontendLog("connection_sync", `updateFolder: persisting ${folder.id}`);
+      persistWithOverlay(upsertFolder(folder), () => persistFolder(folder)).catch((err) => {
+        frontendLog("app_store", `Failed to persist folder update: ${errorMessage(err)}`);
+        toast.error(`Failed to save folder ${folder.name}: ${errorMessage(err)}`);
       });
     },
 

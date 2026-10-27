@@ -160,12 +160,16 @@ mod tests {
             folder_id: folder_id.map(String::from),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         }
     }
 
     fn folder(id: &str, name: &str, parent_id: Option<&str>) -> ConnectionFolder {
         ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: id.to_string(),
             name: name.to_string(),

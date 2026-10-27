@@ -132,6 +132,13 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             cmd.cwd(cwd);
         }
 
+        // Windows: a child inherits its parent's "ignore Ctrl+C" attribute, so
+        // clear it first or `\x03` never interrupts the shell's foreground
+        // program when termiHub itself was started with Ctrl+C disabled (#4981).
+        if let Err(e) = crate::util::console_ctrl::restore_ctrl_c_for_children() {
+            tracing::warn!("could not re-enable Ctrl+C for the shell's processes: {e}");
+        }
+
         let child = pty_pair
             .slave
             .spawn_command(cmd)

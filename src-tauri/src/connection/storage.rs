@@ -280,7 +280,14 @@ pub(crate) fn salvage_connection_store(
 /// the typed [`ConnectionTreeNode::Folder`] owns, so a folder rebuilt by the
 /// granular recovery keeps them like a cleanly parsed one does.
 fn folder_extra(entry: &serde_json::Value) -> super::config::NodeExtra {
-    const OWNED: [&str; 4] = ["type", "name", "isExpanded", "children"];
+    const OWNED: [&str; 6] = [
+        "type",
+        "name",
+        "isExpanded",
+        "children",
+        "iconColor",
+        "iconEmoji",
+    ];
     entry
         .as_object()
         .map(|fields| {
@@ -327,10 +334,13 @@ fn recover_nodes_recursive(
                     recover_nodes_recursive(child_arr, &mut child_nodes, warnings, &node_path);
                 }
 
+                let opt_str = |key: &str| entry.get(key).and_then(|v| v.as_str()).map(String::from);
                 recovered.push(ConnectionTreeNode::Folder {
                     name: name.to_string(),
                     is_expanded,
                     children: child_nodes,
+                    icon_color: opt_str("iconColor"),
+                    icon_emoji: opt_str("iconEmoji"),
                     extra: folder_extra(entry),
                 });
             }
@@ -455,6 +465,8 @@ mod tests {
             children: vec![ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
                     type_id: "local".to_string(),
@@ -483,12 +495,16 @@ mod tests {
             extra: Default::default(),
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Folder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 name: "Work".to_string(),
                 is_expanded: true,
                 children: vec![ConnectionTreeNode::Connection {
                     extra: Default::default(),
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     name: "SSH".to_string(),
                     config: crate::terminal::backend::ConnectionConfig {
                         type_id: "ssh".to_string(),
@@ -568,6 +584,35 @@ mod tests {
     }
 
     #[test]
+    fn load_with_recovery_keeps_folder_icon_style() {
+        // #5020: the recovery path rebuilds folders by hand; it must keep the
+        // icon colour + emoji as typed fields, not as unknown extras.
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let json = r#"{
+            "version": "2",
+            "children": [
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "iconColor": "green",
+                    "iconEmoji": "\u2b50",
+                    "children": [ { "type": "connection", "broken": true } ]
+                }
+            ],
+            "agents": []
+        }"#;
+        fs::write(&storage.file_path, json).unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.warnings.len(), 1);
+        let folder = &result.data.folders[0];
+        assert_eq!(folder.icon_color.as_deref(), Some("green"));
+        assert_eq!(folder.icon_emoji.as_deref(), Some("\u{2b50}"));
+        assert!(folder.extra.is_empty(), "{:?}", folder.extra);
+    }
+
+    #[test]
     fn load_with_recovery_invalid_structure_but_valid_json() {
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
@@ -590,6 +635,8 @@ mod tests {
             connections: vec![SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "Work/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
@@ -601,6 +648,8 @@ mod tests {
                 source_file: None,
             }],
             folders: vec![ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
