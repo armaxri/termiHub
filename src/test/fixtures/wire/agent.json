@@ -29,6 +29,7 @@
           "typeId": "local"
         }
       ],
+      "definitionIconStyle": true,
       "dockerAvailable": true,
       "embeddedServerActivity": false,
       "fileCreateNew": true,
@@ -57,6 +58,7 @@
       "availableSerialPorts": [],
       "availableShells": [],
       "connectionTypes": [],
+      "definitionIconStyle": false,
       "dockerAvailable": false,
       "embeddedServerActivity": false,
       "fileCreateNew": false,
@@ -82,6 +84,8 @@
         },
         "folderId": "folder-lab",
         "icon": "cpu",
+        "iconColor": "teal",
+        "iconEmoji": "🚀",
         "id": "def-1",
         "name": "Serial console",
         "persistent": true,

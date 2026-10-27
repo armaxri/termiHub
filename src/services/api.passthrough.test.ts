@@ -1036,6 +1036,8 @@ describe("api pass-through wrappers (#2975)", () => {
         folder_id: null,
         terminal_options: null,
         icon: null,
+        icon_color: null,
+        icon_emoji: null,
       };
 
       const result = await saveAgentDefinition("agent-1", definition);

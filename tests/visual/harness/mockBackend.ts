@@ -183,6 +183,34 @@ const AGENTS_VIEW = {
   folders: {},
 };
 
+/** An agent definition row for the icon-style scenario (#5021). */
+function agentDefinition(id: string, name: string, style: Record<string, string>) {
+  return {
+    id,
+    name,
+    sessionType: "shell",
+    config: {},
+    persistent: false,
+    folderId: null,
+    ...style,
+  };
+}
+
+/**
+ * The `agents` region for the icon-style scenario (#5021): the connected lab
+ * agent expanded, with an emoji definition and a palette-coloured one.
+ */
+const ICON_STYLE_AGENTS_VIEW = {
+  ...AGENTS_VIEW,
+  agents: AGENTS_VIEW.agents.map((a) => (a.id === "agent-lab" ? { ...a, isExpanded: true } : a)),
+  definitions: {
+    "agent-lab": [
+      agentDefinition("agent-def-emoji", "Lab shell", { iconEmoji: "\u{1F9EA}" }),
+      agentDefinition("agent-def-green", "Lab serial console", { iconColor: "green" }),
+    ],
+  },
+};
+
 const TUNNEL_STATS = {
   bytesSent: 2048,
   bytesReceived: 8192,
@@ -553,7 +581,10 @@ function regionView(region: string, populated: boolean): unknown {
       connections: [...wire.connections, LONG_CONNECTION, ...extra],
     };
   }
-  if (region === "agents") return populated ? AGENTS_VIEW : {};
+  if (region === "agents") {
+    if (!populated) return {};
+    return window.__VISUAL_SCENARIO__?.iconStyles ? ICON_STYLE_AGENTS_VIEW : AGENTS_VIEW;
+  }
   if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
   if (region === "system-monitors") {
     return window.__VISUAL_SCENARIO__?.monitoring ? MONITORS_VIEW : {};
