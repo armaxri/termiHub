@@ -233,7 +233,7 @@ def pytest_runtest_teardown(item, nextitem):
 # run lists its skips and reasons in the terminal summary (and the GitHub step
 # summary when the guard is on); a nightly lane that names itself in
 # TERMIHUB_SKIP_GUARD_LANE fails on a skip its committed allowlist
-# (skip-allowlist.json) does not expect, on more skips than its baseline, and
+# (skip-allowlist.d/) does not expect, on more skips than its summed budget, and
 # when it ran nothing. Under xdist the controller sees every worker's reports,
 # so this runs there only. See termihub_harness/skip_guard.py.
 #: The running session's config, for the report hooks (which receive none).

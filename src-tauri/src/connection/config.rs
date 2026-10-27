@@ -350,7 +350,10 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
     /// with `false`, because the file browser now follows a shell without a
     /// hook and the hook is opt-in. Saving at v6 records that the reset ran,
     /// so an opt-in made afterwards is kept.
-    const CURRENT_VERSION: u32 = 6;
+    ///
+    /// v7 (#5013) does the same for WSL connections, whose file browser now
+    /// also follows the shell without a hook.
+    const CURRENT_VERSION: u32 = 7;
 
     /// Granular per-node recovery (PER-004) of the migrated document — see
     /// [`super::storage::salvage_connection_store`].
@@ -370,16 +373,27 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
                 migrate_type_scoped_settings_nodes(children);
             }
             if from_version < 6 {
-                migrate_shell_hook_nodes(children);
+                migrate_shell_hook_nodes(children, reset_old_shell_hook_default);
+            }
+            if from_version < 7 {
+                migrate_shell_hook_nodes(children, reset_old_wsl_shell_hook_default);
             }
         }
         Ok(value)
     }
 }
 
-/// v5 → v6 step (#5009): switch the old default `shellIntegration: true` off
-/// for every saved local / SSH connection, recursing through folders.
-fn migrate_shell_hook_nodes(nodes: &mut serde_json::Value) {
+use termihub_core::connection::shell_hook::{
+    reset_old_shell_hook_default, reset_old_wsl_shell_hook_default,
+};
+
+/// v5 → v6 (#5009) and v6 → v7 (#5013) steps: switch the old default
+/// `shellIntegration: true` off with `reset` (local / SSH, then WSL) for
+/// every saved connection, recursing through folders.
+fn migrate_shell_hook_nodes(
+    nodes: &mut serde_json::Value,
+    reset: fn(&str, &mut serde_json::Value) -> bool,
+) {
     let Some(nodes) = nodes.as_array_mut() else {
         return;
     };
@@ -390,13 +404,11 @@ fn migrate_shell_hook_nodes(nodes: &mut serde_json::Value) {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned);
             if let (Some(type_id), Some(settings)) = (type_id, config.get_mut("config")) {
-                termihub_core::connection::shell_hook::reset_old_shell_hook_default(
-                    &type_id, settings,
-                );
+                reset(&type_id, settings);
             }
         }
         if let Some(children) = node.get_mut("children") {
-            migrate_shell_hook_nodes(children);
+            migrate_shell_hook_nodes(children, reset);
         }
     }
 }
@@ -853,8 +865,8 @@ mod tests {
     #[test]
     fn connection_store_default_is_current_version() {
         let store = ConnectionStore::default();
-        // v6: the old shell-hook default is reset once (#5009).
-        assert_eq!(store.version, "6");
+        // v7: the old WSL shell-hook default is reset once (#5013).
+        assert_eq!(store.version, "7");
         assert!(store.children.is_empty());
         assert!(store.agents.is_empty());
     }

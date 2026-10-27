@@ -1,0 +1,5 @@
+{
+  "reason": "fixtures? unavailable: no container runtime available",
+  "lanes": ["bulk-macos"],
+  "why": "macOS runners ship no Docker: the Linux container fixtures cannot run there"
+}

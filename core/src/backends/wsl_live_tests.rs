@@ -9,9 +9,12 @@
 //!   share flags a file link, a directory link and a dangling link, and reads
 //!   the link target.
 //! - **Init script (#2837)** — the distro-side create makes the file `0600` with
-//!   the exact content and refuses to clobber it; a real session shows only the
-//!   `source` line, the script removes itself, and the sourced hook tracks the
-//!   CWD via OSC 7.
+//!   the exact content and refuses to clobber it; a session with the opt-in
+//!   hook shows only the `source` line, the script removes itself, and the
+//!   sourced hook tracks the CWD via OSC 7.
+//! - **No hook by default (#5013)** — a default session shows the shell's own
+//!   startup output, no setup text, leaves history / environment / functions /
+//!   `PROMPT_COMMAND` / `PS1` untouched, and still follows `cd`.
 //! - **Queued folder copy (#3567, PARITY-004)** — a folder with a file above the
 //!   direct-copy threshold round-trips Windows → WSL → Windows through the
 //!   local transfer queue, using the `//wsl$/<distro>/…` paths the frontend
@@ -409,11 +412,13 @@ fn probe_distro(distro: &str) -> String {
         "echo ok; id; echo \"shell=$(getent passwd \"$(id -un)\" | cut -d: -f7)\"",
         &[],
     );
+    let cwd = wsl_sh(distro, super::super::wsl_cwd::WSL_CWD_SCRIPT, &[]);
     format!(
-        "{} stdout={:?} stderr={:?}",
+        "{} stdout={:?} stderr={:?}; cwd probe: {:?}",
         out.status,
         String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&cwd.stdout)
     )
 }
 
@@ -431,7 +436,7 @@ fn strip_csi_removes_csi_but_keeps_text_and_osc() {
 }
 
 #[tokio::test]
-async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cwd() {
+async fn live_wsl_opt_in_hook_sources_init_script_self_cleans_and_tracks_cwd() {
     let Some(distro) = live_distro() else {
         return;
     };
@@ -440,7 +445,8 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
     let mut wsl = Wsl::new();
     // Subscribe before connecting so no early output is lost.
     let mut rx = wsl.subscribe_output();
-    wsl.connect(serde_json::json!({ "distribution": distro }))
+    // The typed setup is the opt-in command-marks path (#5013).
+    wsl.connect(serde_json::json!({ "distribution": distro, "shellIntegration": true }))
         .await
         .expect("connect");
     // Wide enough that the echoed `source` line never wraps mid-path.
@@ -489,6 +495,132 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
         "setup body was visible in the terminal (direct-injection fallback?):\n{text:?}"
     );
 
+    wsl.disconnect().await.expect("disconnect");
+}
+
+/// A line appended to the distro user's `~/.bashrc` for one test (a stand-in
+/// for a login banner / MOTD); removed again on drop.
+struct BashrcLine {
+    distro: String,
+    line: String,
+}
+
+/// The distro user's `~/.bashrc`, without relying on `$HOME` under `--exec`.
+const BASHRC: &str = "\"$(getent passwd \"$(id -un)\" | cut -d: -f6)/.bashrc\"";
+
+impl BashrcLine {
+    fn add(distro: &str, line: &str) -> Self {
+        wsl_ok(
+            distro,
+            &format!("printf '\\n%s\\n' \"$1\" >> {BASHRC}"),
+            &[line],
+        );
+        Self {
+            distro: distro.to_string(),
+            line: line.to_string(),
+        }
+    }
+}
+
+impl Drop for BashrcLine {
+    fn drop(&mut self) {
+        let _ = wsl_sh(
+            &self.distro,
+            &format!("f={BASHRC}; grep -vxF -- \"$1\" \"$f\" > \"$f.th\"; mv \"$f.th\" \"$f\""),
+            &[&self.line],
+        );
+    }
+}
+
+/// Print what one cwd probe costs and returns (for the PR's measurements),
+/// and whether `\\wsl.localhost` can read `/proc/<pid>/cwd` at all.
+fn report_probe_cost(distro: &str) {
+    use super::super::wsl_cwd::probe_args;
+    for i in 0..3 {
+        let started = std::time::Instant::now();
+        let out = Command::new("wsl.exe")
+            .args(probe_args(distro))
+            .stdin(Stdio::null())
+            .output()
+            .expect("spawn probe");
+        eprintln!(
+            "cwd probe #{i}: {} ms, {}, stdout={:?} stderr={:?}",
+            started.elapsed().as_millis(),
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let unc = format!("\\\\wsl.localhost\\{distro}\\proc\\1\\cwd");
+    let started = std::time::Instant::now();
+    eprintln!(
+        "UNC read_link {unc}: {:?} in {} ms",
+        std::fs::read_link(&unc),
+        started.elapsed().as_millis()
+    );
+}
+
+/// #5013: a default WSL session types nothing and changes nothing in the
+/// distro shell, shows the shell's own startup output, and the file browser
+/// still follows `cd` (OSC 7 added by termiHub from the shell's `/proc` cwd).
+#[tokio::test]
+async fn live_wsl_default_session_follows_cwd_with_nothing_typed() {
+    let Some(distro) = live_distro() else {
+        return;
+    };
+    let _alive = KeepAlive::start(&distro);
+    let banner = format!("echo TH_BANNER_{}", std::process::id());
+    let _rc = BashrcLine::add(&distro, &banner);
+    report_probe_cost(&distro);
+
+    let mut wsl = Wsl::new();
+    let mut rx = wsl.subscribe_output();
+    wsl.connect(serde_json::json!({ "distribution": distro }))
+        .await
+        .expect("connect");
+    wsl.resize(400, 50).expect("resize");
+    let mut out = Transcript::new(&mut rx, &distro);
+
+    // 1. The shell's own startup output is shown.
+    let shown = &banner["echo ".len()..];
+    let (which, at) = out.wait_any(&[shown.as_bytes(), OOBE_PROMPT], 0).await;
+    assert_eq!(which, 0, "never reached a shell:\n{:?}", out.text());
+
+    // 2. The start directory (wsl.exe's, translated from the Windows cwd) and
+    //    a `cd` are followed without a hook.
+    out.wait_for(b"\x1b]7;file:///", at).await;
+    wsl.write(b"cd /usr/share\n").expect("write");
+    let after_cd = out.wait_for(b"\x1b]7;file:///usr/share\x07", at).await;
+
+    // 3. Nothing of termiHub's is in the shell: history, environment,
+    //    functions, PROMPT_COMMAND, PS1. (Patterns are bracketed so the typed
+    //    line itself never matches.)
+    wsl.write(
+        concat!(
+            "echo \"CHK$((40+2))",
+            "_h$(history | grep -c -e '__termih[u]b' -e '[.]termihub[_]init')",
+            "_e$(env | grep -c -e '^TERMIH[U]B' -e '^PROMPT_COMMAN[D]=')",
+            "_f$(compgen -A function | grep -c -i 'termih[u]b')",
+            "_p$(printf %s \"$PROMPT_COMMAND\" | grep -c -e 'termih[u]b' -e '7[;]file')",
+            "_s$(printf %s \"$PS1\" | grep -c '13[3];')",
+            "_E\"\"ND\"\n"
+        )
+        .as_bytes(),
+    )
+    .expect("write");
+    let (which, _) = out
+        .wait_any(&[b"CHK42_h0_e0_f0_p0_s0_END", b"_END"], after_cd)
+        .await;
+    assert_eq!(which, 0, "the shell was changed:\n{:?}", out.text());
+
+    // 4. No setup text ever reached the terminal.
+    let text = out.text();
+    for needle in ["termihub_init", "[termiHub]", "__termihub", "source /tmp"] {
+        assert!(
+            !text.contains(needle),
+            "setup text {needle:?} reached the terminal:\n{text:?}"
+        );
+    }
     wsl.disconnect().await.expect("disconnect");
 }
 

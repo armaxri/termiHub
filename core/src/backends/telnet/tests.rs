@@ -447,8 +447,7 @@ async fn connect_enables_tcp_keepalive() {
     let _peer = accept.join().expect("accept thread").expect("accept");
 
     let state = telnet.state.as_ref().expect("connected state");
-    let writer = state.writer.lock().expect("lock writer");
-    let keepalive = socket2::SockRef::from(&*writer)
+    let keepalive = socket2::SockRef::from(state.writer.stream())
         .keepalive()
         .expect("read keepalive flag");
     assert!(
@@ -507,8 +506,7 @@ async fn drop_without_disconnect_marks_dead_and_closes_socket() {
     let (client, mut peer) = connected_pair();
     let alive = Arc::new(AtomicBool::new(true));
     let state = ConnectedState {
-        interrupter: client.try_clone().expect("clone"),
-        writer: Arc::new(Mutex::new(client)),
+        writer: Arc::new(SharedWriter::new(client)),
         negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
         editor: Mutex::new(LineEditor::new()),
         alive: alive.clone(),
@@ -538,8 +536,7 @@ async fn drop_after_disconnect_flag_is_noop() {
     let (client, _peer) = connected_pair();
     let alive = Arc::new(AtomicBool::new(true));
     let state = ConnectedState {
-        interrupter: client.try_clone().expect("clone"),
-        writer: Arc::new(Mutex::new(client)),
+        writer: Arc::new(SharedWriter::new(client)),
         negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
         editor: Mutex::new(LineEditor::new()),
         alive: alive.clone(),

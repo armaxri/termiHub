@@ -133,7 +133,7 @@ class NativeCaptureUi(HarnessMixin):
         """Capture the launched app's window; skip the test if the OS cannot.
 
         An unexpected skip still fails the nightly lane through the skip guard
-        (``skip-allowlist.json`` has no entry for it), so a CI runner losing
+        (``skip-allowlist.d/`` has no entry for it), so a CI runner losing
         the capture tooling is loud; a developer box without ``xdotool`` /
         Screen Recording permission just skips.
         """

@@ -10,16 +10,27 @@ and every deployed-agent suite for weeks (#4092) without turning anything red.
 This module decides, from the skips one run produced, whether the lane is
 honest. A lane opts in by name (``TERMIHUB_SKIP_GUARD_LANE``, set per step in
 ``.github/workflows/system-integration.yml``) and the committed allowlist
-``tests/system/skip-allowlist.json`` says, for that lane:
+``tests/system/skip-allowlist.d/`` says, for that lane:
 
 * which skip reasons are **expected**, each with a ``why`` — any other skip
   reason fails the lane;
-* a ``max_skips`` baseline — more skips than that fails the lane even when each
+* a **skip budget** — more skips than that fails the lane even when each
   reason is allowlisted (a new environment gap is a decision, not an accident).
   Guided-manual tests skipped by their own gate (the ``manual`` marker *and* a
   "guided-manual test" reason) do not count against it (#4921): no unattended
   run can ever execute them, so their number tracks how many manual checks
   exist, not how healthy the lane is. They still need their allowlist entry.
+
+The allowlist is a directory of **fragments**, one small JSON object per file
+(#5033). A fragment is an entry (``reason`` regex, optional ``nodeid`` regex,
+``lanes``, ``why``), a budget (``why`` plus ``max_skips``: ``{lane: count}``),
+or both. A lane's budget is the **sum** of every fragment's ``max_skips`` for
+it; a lane no fragment budgets allows no counted skip. A PR that adds skips
+therefore adds its own fragment (``<issue>-<slug>.json``) and never edits a
+shared number: two such PRs cannot conflict, and git cannot silently collapse
+two identical "+1" edits into one (a single shared ``max_skips`` file did both,
+#5033). An entry may only budget lanes it lists, so a lane's total cannot grow
+without a fragment that names it.
 
 Independently of the allowlist, a lane that collected nothing, or whose every
 collected test skipped, fails: a suite that ran zero tests proves nothing.
@@ -48,8 +59,11 @@ LANE_ENV = "TERMIHUB_SKIP_GUARD_LANE"
 #: Env switch: ``1`` fails the run on any "fixture(s) unavailable" skip.
 REQUIRE_FIXTURES_ENV = "TERMIHUB_REQUIRE_FIXTURES"
 
-#: The committed allowlist (next to ``pyproject.toml``).
-ALLOWLIST_PATH = Path(__file__).resolve().parents[1] / "skip-allowlist.json"
+#: The committed allowlist fragments (next to ``pyproject.toml``), #5033.
+ALLOWLIST_DIR = Path(__file__).resolve().parents[1] / "skip-allowlist.d"
+
+#: The keys a fragment may carry (plus any ``_``-prefixed comment key).
+_FRAGMENT_KEYS = frozenset({"reason", "nodeid", "lanes", "why", "max_skips"})
 
 #: Matches the skip reason every container fixture helper uses when it skips.
 FIXTURE_UNAVAILABLE = re.compile(r"fixtures? unavailable", re.IGNORECASE)
@@ -76,7 +90,7 @@ class Skip:
     @property
     def is_manual_gate(self) -> bool:
         """A guided-manual test skipped by its own gate, not by a fixture or
-        an environment gap inside it. Exempt from ``max_skips`` (#4921)."""
+        an environment gap inside it. Exempt from the lane budget (#4921)."""
         return self.manual and MANUAL_GATE_REASON.search(self.reason) is not None
 
 
@@ -103,10 +117,21 @@ class AllowEntry:
 @dataclass(frozen=True)
 class Allowlist:
     entries: tuple[AllowEntry, ...]
-    max_skips: Mapping[str, int] = field(default_factory=dict)
+    #: Per lane, the fragments that budget it and how many skips each adds.
+    budgets: Mapping[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
 
     def for_lane(self, lane: str) -> list[AllowEntry]:
         return [entry for entry in self.entries if entry.applies_to(lane)]
+
+    def budget(self, lane: str) -> int:
+        """The lane's skip budget: the sum over its fragments; 0 when none."""
+        return sum(count for _, count in self.budgets.get(lane, ()))
+
+    @property
+    def lanes(self) -> set[str]:
+        """Every lane a fragment names, in ``lanes`` or in ``max_skips``."""
+        named = {lane for entry in self.entries for lane in entry.lanes if lane != "*"}
+        return named | set(self.budgets)
 
 
 @dataclass
@@ -134,35 +159,79 @@ def require_fixtures(env: Mapping[str, str] = os.environ) -> bool:
     return env.get(REQUIRE_FIXTURES_ENV, "").strip().lower() in _TRUTHY
 
 
-def parse_allowlist(data: Mapping[str, Any]) -> Allowlist:
-    """Build an :class:`Allowlist` from the JSON document, validating it.
-
-    Every entry needs a ``reason`` regex that compiles and a non-empty ``why`` —
-    an expected skip without a recorded justification is exactly what this
-    guard exists to stop.
-    """
-    entries = []
-    for index, raw in enumerate(data.get("allowed", [])):
-        reason = raw.get("reason")
-        why = (raw.get("why") or "").strip()
-        if not reason or not why:
-            raise ValueError(f"allowlist entry {index} needs both 'reason' and 'why': {raw}")
+def _parse_fragment(name: str, raw: Any) -> tuple[Optional[AllowEntry], dict[str, int]]:
+    """Validate one fragment; return its entry (if any) and its budget."""
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"allowlist fragment {name} must be a JSON object")
+    unknown = sorted(k for k in raw if k not in _FRAGMENT_KEYS and not str(k).startswith("_"))
+    if unknown:
+        raise ValueError(f"allowlist fragment {name} has unknown key(s) {unknown}")
+    why = (raw.get("why") or "").strip() if isinstance(raw.get("why"), str) else ""
+    reason = raw.get("reason")
+    if not why:
+        raise ValueError(f"allowlist fragment {name} needs a 'why': {dict(raw)}")
+    if "max_skips" not in raw and not reason:
+        raise ValueError(f"allowlist fragment {name} needs a 'reason' or a 'max_skips'")
+    entry = None
+    if reason:
         re.compile(reason)
         nodeid = raw.get("nodeid")
         if nodeid is not None:
             re.compile(nodeid)
-        lanes = raw.get("lanes") or ["*"]
-        entries.append(AllowEntry(reason=reason, why=why, lanes=tuple(lanes), nodeid=nodeid))
-    max_skips = {
-        str(k): int(v)
-        for k, v in (data.get("max_skips") or {}).items()
-        if not str(k).startswith("_")  # "_comment" keys document the baseline
-    }
-    return Allowlist(entries=tuple(entries), max_skips=max_skips)
+        lanes = raw.get("lanes", ["*"])
+        if not isinstance(lanes, list) or not lanes or not all(isinstance(x, str) for x in lanes):
+            raise ValueError(f"allowlist fragment {name} needs a non-empty 'lanes' list")
+        entry = AllowEntry(reason=reason, why=why, lanes=tuple(lanes), nodeid=nodeid)
+    budget: dict[str, int] = {}
+    for lane, count in (raw.get("max_skips") or {}).items():
+        lane = str(lane)
+        if lane.startswith("_"):  # a "_comment" documents the numbers
+            continue
+        if lane == "*":
+            raise ValueError(f"allowlist fragment {name}: a budget names a lane, not '*'")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(
+                f"allowlist fragment {name}: max_skips[{lane!r}] must be a non-negative integer"
+            )
+        if entry is not None and not entry.applies_to(lane):
+            raise ValueError(
+                f"allowlist fragment {name} budgets lane '{lane}' its 'lanes' does not list"
+            )
+        budget[lane] = count
+    return entry, budget
 
 
-def load_allowlist(path: Path = ALLOWLIST_PATH) -> Allowlist:
-    return parse_allowlist(json.loads(path.read_text(encoding="utf-8")))
+def parse_fragments(fragments: Mapping[str, Any]) -> Allowlist:
+    """Build an :class:`Allowlist` from ``{file name: fragment}``, validating each.
+
+    Every fragment needs a non-empty ``why`` — an expected skip (or a budget)
+    without a recorded justification is exactly what this guard exists to stop
+    — and either a ``reason`` regex that compiles or a ``max_skips`` budget.
+    """
+    entries: list[AllowEntry] = []
+    budgets: dict[str, list[tuple[str, int]]] = {}
+    for name in sorted(fragments):
+        entry, budget = _parse_fragment(name, fragments[name])
+        if entry is not None:
+            entries.append(entry)
+        for lane, count in budget.items():
+            budgets.setdefault(lane, []).append((name, count))
+    return Allowlist(
+        entries=tuple(entries), budgets={lane: tuple(v) for lane, v in budgets.items()}
+    )
+
+
+def load_allowlist(directory: Path = ALLOWLIST_DIR) -> Allowlist:
+    """Load every ``*.json`` fragment in ``directory``; any other file is an error."""
+    paths = sorted(directory.iterdir())
+    stray = [path.name for path in paths if path.suffix != ".json" or not path.is_file()]
+    if stray:
+        raise ValueError(f"{directory.name}/ holds only *.json fragments, not {stray}")
+    if not paths:
+        raise ValueError(f"no allowlist fragments in {directory}")
+    return parse_fragments(
+        {path.name: json.loads(path.read_text(encoding="utf-8")) for path in paths}
+    )
 
 
 def skip_reason(longrepr: Any) -> str:
@@ -179,7 +248,7 @@ def skip_reason(longrepr: Any) -> str:
 
 
 def counted_skips(skips: Iterable[Skip]) -> list[Skip]:
-    """The skips that count against ``max_skips``: all but guided-manual gate skips."""
+    """The skips that count against the lane budget: all but guided-manual gate skips."""
     return [skip for skip in skips if not skip.is_manual_gate]
 
 
@@ -204,25 +273,26 @@ def evaluate(
     if unexpected:
         problems.append(
             f"{len(unexpected)} skip(s) with a reason not allowlisted for lane '{lane}' "
-            f"in {ALLOWLIST_PATH.name}"
+            f"in {ALLOWLIST_DIR.name}/"
         )
     if require_fixtures:
         missing = [skip for skip in skips if FIXTURE_UNAVAILABLE.search(skip.reason)]
         if missing:
             problems.append(
-                f"{len(missing)} skip(s) on an unavailable fixture while "
-                f"{REQUIRE_FIXTURES_ENV}=1"
+                f"{len(missing)} skip(s) on an unavailable fixture while {REQUIRE_FIXTURES_ENV}=1"
             )
             for skip in missing:
                 if skip not in unexpected:
                     unexpected.append(skip)
-    limit = allowlist.max_skips.get(lane)
+    limit = allowlist.budget(lane)
     counted = counted_skips(skips)
-    if limit is not None and len(counted) > limit:
+    if len(counted) > limit:
         exempt = len(skips) - len(counted)
+        sources = ", ".join(f"{name}: {n}" for name, n in allowlist.budgets.get(lane, ())) or "none"
         problems.append(
-            f"{len(counted)} skips exceed the committed baseline of {limit} for lane '{lane}' "
-            f"(max_skips in {ALLOWLIST_PATH.name}; {exempt} guided-manual skip(s) not counted)"
+            f"{len(counted)} skips exceed the skip budget of {limit} for lane '{lane}' "
+            f"(sum of max_skips in {ALLOWLIST_DIR.name}/ — {sources}; "
+            f"{exempt} guided-manual skip(s) not counted)"
         )
     return Verdict(
         lane=lane, collected=collected, skips=list(skips), unexpected=unexpected, problems=problems
@@ -247,7 +317,7 @@ def format_summary(
         by_reason.setdefault(skip.reason, []).append(skip.nodeid)
     unexpected = {skip.nodeid for skip in verdict.unexpected} if verdict else set()
     exempt = len(skips) - len(counted_skips(skips))
-    note = f" ({exempt} guided-manual, not counted against max_skips)" if exempt else ""
+    note = f" ({exempt} guided-manual, not counted against the budget)" if exempt else ""
     lines.append(f"{len(skips)} skipped test(s), {len(by_reason)} distinct reason(s){note}")
     for reason, nodeids in sorted(by_reason.items(), key=lambda item: (-len(item[1]), item[0])):
         flag = " [UNEXPECTED]" if any(nodeid in unexpected for nodeid in nodeids) else ""
@@ -264,7 +334,7 @@ def format_summary(
             for problem in verdict.problems:
                 lines.append(f"  - {problem}")
             lines.append(
-                "  Fix the fixture, or — only for a genuine environment gap — add an "
-                f"entry with a 'why' to tests/system/{ALLOWLIST_PATH.name} (#4315)."
+                "  Fix the fixture, or — only for a genuine environment gap — add a "
+                f"fragment with a 'why' to tests/system/{ALLOWLIST_DIR.name}/ (#4315, #5033)."
             )
     return lines

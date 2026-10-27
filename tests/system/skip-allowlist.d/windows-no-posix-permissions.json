@@ -1,0 +1,5 @@
+{
+  "reason": "^relies on POSIX directory permissions$",
+  "lanes": ["bulk-windows"],
+  "why": "Windows has no POSIX directory permissions"
+}

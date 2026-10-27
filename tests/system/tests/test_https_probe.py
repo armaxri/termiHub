@@ -29,14 +29,11 @@ def test_a_real_answer_is_graded_and_a_404_never_skips(status):
 
 
 def test_outage_reason_matches_the_allowlist_entry():
-    import json
-    from pathlib import Path
+    from termihub_harness import skip_guard
 
-    allowlist = json.loads(
-        (Path(__file__).resolve().parents[1] / "skip-allowlist.json").read_text(encoding="utf-8")
-    )
-    patterns = [e["reason"] for e in allowlist["allowed"] if "https_probe" in e.get("why", "")]
-    assert patterns, "skip-allowlist.json has no entry for the HTTPS outage skip"
+    entries = skip_guard.load_allowlist().entries
+    patterns = [entry.reason for entry in entries if "https_probe" in entry.why]
+    assert patterns, "skip-allowlist.d/ has no entry for the HTTPS outage skip"
 
     no_answer = outage_reason(ProbeResult(URL, None, error="URLError: timed out"))
     server = outage_reason(ProbeResult(URL, 503))

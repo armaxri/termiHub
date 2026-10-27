@@ -247,7 +247,7 @@ const DEFINITIONS_STORE_NAME: &str = "connections.json";
 /// persisted shape changes — a settings-key rename, say — bump this and add the
 /// numbered step to [`migrate_definitions`], so an older agent can no longer
 /// overwrite a file that uses the new shape.
-pub const DEFINITIONS_STORE_VERSION: u32 = 2;
+pub const DEFINITIONS_STORE_VERSION: u32 = 3;
 
 /// Migrate a parsed store from `from_version` up to [`DEFINITIONS_STORE_VERSION`],
 /// one numbered step at a time.
@@ -263,34 +263,49 @@ pub const DEFINITIONS_STORE_VERSION: u32 = 2;
 /// SSH connections stored with the old default `shellIntegration: true` load
 /// with `false`. Saving at v2 records that the reset ran, so an opt-in made
 /// afterwards is kept.
+///
+/// v3 (#5013) does the same for WSL connections.
 fn migrate_definitions(
     mut value: serde_json::Value,
     from_version: u32,
 ) -> Result<serde_json::Value, String> {
     let mut version = from_version;
     debug_assert!(version <= DEFINITIONS_STORE_VERSION);
+    use termihub_core::connection::shell_hook::{
+        reset_old_shell_hook_default, reset_old_wsl_shell_hook_default,
+    };
     if version < 2 {
-        if let Some(connections) = value
-            .get_mut("connections")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for conn in connections {
-                let session_type = conn
-                    .get("session_type")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned);
-                if let (Some(session_type), Some(config)) = (session_type, conn.get_mut("config")) {
-                    termihub_core::connection::shell_hook::reset_old_shell_hook_default(
-                        &session_type,
-                        config,
-                    );
-                }
-            }
-        }
+        reset_shell_hooks(&mut value, reset_old_shell_hook_default);
         version = 2;
+    }
+    if version < 3 {
+        reset_shell_hooks(&mut value, reset_old_wsl_shell_hook_default);
+        version = 3;
     }
     debug_assert_eq!(version, DEFINITIONS_STORE_VERSION);
     Ok(value)
+}
+
+/// Apply a one-time shell-hook reset (`reset`) to every stored connection.
+fn reset_shell_hooks(
+    value: &mut serde_json::Value,
+    reset: fn(&str, &mut serde_json::Value) -> bool,
+) {
+    let Some(connections) = value
+        .get_mut("connections")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for conn in connections {
+        let session_type = conn
+            .get("session_type")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if let (Some(session_type), Some(config)) = (session_type, conn.get_mut("config")) {
+            reset(&session_type, config);
+        }
+    }
 }
 
 /// Persistent storage format for connections.json.
@@ -3038,9 +3053,10 @@ mod tests {
         for id in ["shell", "local", "ssh"] {
             assert_eq!(hook(store.get(id).await), json!(false), "{id}");
         }
-        assert_eq!(hook(store.get("wsl").await), json!(true));
+        // WSL is switched off by the later v3 step (#5013).
+        assert_eq!(hook(store.get("wsl").await), json!(false));
 
-        // Opting back in is saved at v2 and survives a reload.
+        // Opting back in is saved at the current version and survives a reload.
         store
             .update(
                 "ssh",
@@ -3065,6 +3081,60 @@ mod tests {
         let reloaded = ConnectionStore::new(path);
         assert_eq!(hook(reloaded.get("ssh").await), json!(true));
         assert_eq!(hook(reloaded.get("local").await), json!(false));
+    }
+
+    /// #5013: the v2 → v3 step switches a WSL connection's saved hook off
+    /// once; an SSH opt-in made at v2 and an explicit WSL `false` are kept,
+    /// and a WSL opt-in made afterwards survives a reload.
+    #[tokio::test]
+    async fn v2_wsl_shell_hook_is_switched_off_once() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let conn = |id: &str, session_type: &str, hook: bool| {
+            json!({
+                "id": id,
+                "name": id,
+                "session_type": session_type,
+                "config": { "shellIntegration": hook },
+                "persistent": false
+            })
+        };
+        fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "version": "2",
+                "connections": [
+                    conn("wsl", "wsl", true),
+                    conn("wsl-off", "wsl", false),
+                    conn("ssh", "ssh", true),
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = ConnectionStore::new(path.clone());
+        let hook = |c: Option<ConnectionSnapshot>| c.unwrap().config["shellIntegration"].clone();
+        assert_eq!(hook(store.get("wsl").await), json!(false));
+        assert_eq!(hook(store.get("wsl-off").await), json!(false));
+        assert_eq!(hook(store.get("ssh").await), json!(true), "a v2 opt-in");
+
+        store
+            .update(
+                "wsl",
+                None,
+                None,
+                Some(json!({ "shellIntegration": true })),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let reloaded = ConnectionStore::new(path);
+        assert_eq!(hook(reloaded.get("wsl").await), json!(true));
     }
 
     /// #5021 + #5009: a v1 file with the old `shellIntegration: true` default
