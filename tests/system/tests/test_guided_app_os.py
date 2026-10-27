@@ -7,7 +7,7 @@ MobaXterm install. The harness builds the in-app state (shells, the
 spawn request through the instance's private rendezvous) and the operator does
 and judges the OS-side step.
 
-Covered: MT-APP-03, MT-APP-05, MT-SHI-01, MT-SHI-03..06.
+Covered: MT-APP-05, MT-SHI-01, MT-SHI-03..06.
 (MT-WIN-01..04, the macOS Dock and quit paths, and MT-SHI-02, external spawn
 raising the window, are graded with real OS events aimed at the test
 instance's PID by ``test_os_input_macos_app.py`` / ``test_os_input_keyboard.py``
@@ -18,6 +18,8 @@ since #4935 — never by app name.)
 since #4932; MT-FB-30, the 5000-file folder, by ``test_os_file_drop.py`` and
 MT-FB-31, dragging rows out to the OS, by ``test_os_file_drop_xdnd.py`` since
 #4936.)
+(MT-APP-03, plugin index and install from URL over real HTTPS, runs unattended
+in the nightly lane in ``test_plugin_discovery_https.py`` since #4961.)
 (MT-APP-02, the production CSP, and MT-APP-04, single instance, are graded on
 the shipped artifacts by the release install smokes since #4933.)
 
@@ -62,18 +64,6 @@ class TestGuidedAppOs(
     """Harness builds the state; operator drives and judges the OS side."""
 
     # ── Helpers ──────────────────────────────────────────────────────────────
-    # ── MT-APP-03: plugin install over real HTTPS (macOS) ────────────────────
-    @pytest.mark.manual(platforms=["macos"])
-    def test_plugin_index_and_url_install_over_real_https(self):
-        """MT-APP-03."""
-        self.open_settings_category("plugins")
-        self.manual_step(
-            "Settings > Plugins > Browse Plugins > Load plugin index. Under Install from "
-            "URL, paste a GitHub-hosted clock-widget URL with its SHA-256.",
-            "The default index loads from main (no HTTP 404); the install dialog opens "
-            "with the unsigned banner and nothing installs before you confirm.",
-        )
-
     # ── MT-APP-05: MobaXterm import (Windows) ────────────────────────────────
     @pytest.mark.manual(platforms=["windows"])
     def test_mobaxterm_import_finds_installed_configuration(self):

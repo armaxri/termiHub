@@ -67,6 +67,7 @@ docker-compose.yml text eol=lf
 *.gz binary
 *.bz2 binary
 *.7z binary
+*.termihub-plugin binary
 *.rar binary
 
 # ts-rs-generated TypeScript DTOs. `cargo test` rewrites these on every platform

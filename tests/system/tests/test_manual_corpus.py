@@ -182,6 +182,11 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-WIN-02": f"{_OS_MAC}::test_cmd_q_quits_with_several_windows",
     "MT-WIN-03": f"{_OS_MAC}::test_cmd_q_with_live_shell_asks_first",
     "MT-WIN-04": f"{_OS_MAC}::test_dock_quit_applescript_quit_and_logout",
+    # #4961: real HTTPS to GitHub in the nightly lane; outages skip (allowlisted).
+    "MT-APP-03": (
+        "test_plugin_discovery_https.py::"
+        "test_install_from_url_reviews_the_pinned_package_before_installing"
+    ),
     # #4953: agent auth against a private ssh-agent the suite starts itself.
     "MT-SSH-07": "test_ssh_agent_auth.py::test_ssh_agent_auth_connects",
     # #4936: synthetic Tauri drag-drop events (every OS) and real X11 XDND drags.

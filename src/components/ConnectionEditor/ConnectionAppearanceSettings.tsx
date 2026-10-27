@@ -1,5 +1,9 @@
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { IconPickerDialog } from "./IconPickerDialog";
+import {
+  ConnectionIconStyleSettings,
+  type ConnectionIconStyleSettingsProps,
+} from "./ConnectionIconStyleSettings";
 import { IconByName } from "@/utils/connectionIcons";
 import { Button, Field } from "@/components/ui";
 import { useState } from "react";
@@ -9,6 +13,11 @@ interface ConnectionAppearanceSettingsProps {
   onColorChange: (color: string | undefined) => void;
   icon: string | undefined;
   onIconChange: (icon: string | undefined) => void;
+  /**
+   * Per-connection icon colour + emoji controls (#5008). Omitted for entities
+   * that do not persist them (agent definitions), which hides the controls.
+   */
+  iconStyle?: ConnectionIconStyleSettingsProps;
 }
 
 export function ConnectionAppearanceSettings({
@@ -16,6 +25,7 @@ export function ConnectionAppearanceSettings({
   onColorChange,
   icon,
   onIconChange,
+  iconStyle,
 }: ConnectionAppearanceSettingsProps) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
@@ -89,6 +99,8 @@ export function ConnectionAppearanceSettings({
           </div>
         </>
       </Field>
+
+      {iconStyle && <ConnectionIconStyleSettings {...iconStyle} />}
 
       <ColorPickerDialog
         open={colorPickerOpen}

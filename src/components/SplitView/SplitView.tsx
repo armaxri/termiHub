@@ -47,7 +47,7 @@ import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/ut
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
-import { ConnectionIcon } from "@/utils/connectionIcons";
+import { TabConnectionIcon } from "@/components/Terminal/TabConnectionIcon";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
@@ -443,7 +443,7 @@ export function SplitView() {
               ) : zoomedTab.contentType === "agent-error" ? (
                 <WifiOff size={14} />
               ) : (
-                <ConnectionIcon config={zoomedTab.config} size={14} />
+                <TabConnectionIcon tab={zoomedTab} size={14} />
               )}
             </>
           }
@@ -1185,7 +1185,7 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
       {NonTerminalIcon ? (
         <NonTerminalIcon size={14} className="tab__icon" />
       ) : (
-        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
+        <TabConnectionIcon tab={tab} size={14} className="tab__icon" />
       )}
       <span className="tab__title">{tab.title}</span>
     </div>

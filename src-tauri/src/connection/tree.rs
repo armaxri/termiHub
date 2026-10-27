@@ -61,6 +61,8 @@ pub fn flatten_tree(
                 config,
                 terminal_options,
                 icon,
+                icon_color,
+                icon_emoji,
                 extra,
             } => {
                 let conn_id = compute_connection_id(parent_path, name);
@@ -71,6 +73,8 @@ pub fn flatten_tree(
                     folder_id: parent_folder_id.clone(),
                     terminal_options: terminal_options.clone(),
                     icon: icon.clone(),
+                    icon_color: icon_color.clone(),
+                    icon_emoji: icon_emoji.clone(),
                     source_file: None,
                     extra: extra.clone(),
                 });
@@ -123,6 +127,8 @@ fn build_tree_for_parent(
                 config: conn.config.clone(),
                 terminal_options: conn.terminal_options.clone(),
                 icon: conn.icon.clone(),
+                icon_color: conn.icon_color.clone(),
+                icon_emoji: conn.icon_emoji.clone(),
                 extra: conn.extra.clone(),
             });
         }
@@ -338,6 +344,8 @@ mod tests {
             ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "Local".to_string(),
                 config: make_local_config(),
                 terminal_options: None,
@@ -345,6 +353,8 @@ mod tests {
             ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
                 terminal_options: None,
@@ -371,6 +381,8 @@ mod tests {
                 ConnectionTreeNode::Connection {
                     extra: Default::default(),
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     name: "Prod".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
@@ -378,6 +390,8 @@ mod tests {
                 ConnectionTreeNode::Connection {
                     extra: Default::default(),
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     name: "Dev".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
@@ -411,6 +425,8 @@ mod tests {
                 children: vec![ConnectionTreeNode::Connection {
                     extra: Default::default(),
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     name: "Deep SSH".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
@@ -438,6 +454,8 @@ mod tests {
         let tree = vec![ConnectionTreeNode::Connection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             name: "A/B".to_string(),
             config: make_local_config(),
             terminal_options: None,
@@ -459,6 +477,35 @@ mod tests {
     }
 
     #[test]
+    fn connection_icon_color_and_emoji_survive_save_load_round_trip() {
+        // #5008: icon colour + emoji travel the full persistence path
+        // (flat -> tree -> JSON on disk -> tree -> flat) without loss.
+        let conns = vec![SavedConnection {
+            extra: Default::default(),
+            id: "Prod".to_string(),
+            name: "Prod".to_string(),
+            config: make_ssh_config(),
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            icon_color: Some("#ff8800".to_string()),
+            icon_emoji: Some("\u{1F525}".to_string()),
+            source_file: None,
+        }];
+        let tree = build_tree(&conns, &[]);
+        let json = serde_json::to_string(&tree).expect("serialize tree");
+        assert!(json.contains("\"iconColor\":\"#ff8800\""), "{json}");
+        assert!(json.contains("\"iconEmoji\""), "{json}");
+
+        let parsed: Vec<ConnectionTreeNode> =
+            serde_json::from_str(&json).expect("deserialize tree");
+        let (loaded, _) = flatten_tree(&parsed, None);
+        assert_eq!(loaded[0].icon_color.as_deref(), Some("#ff8800"));
+        assert_eq!(loaded[0].icon_emoji.as_deref(), Some("\u{1F525}"));
+        assert!(loaded[0].extra.is_empty(), "known keys leaked into extra");
+    }
+
+    #[test]
     fn connection_icon_survives_save_load_round_trip() {
         // Regression for #2316: a connection's `icon` must survive the full
         // persistence path — flat store -> build_tree -> JSON (on disk) ->
@@ -471,6 +518,8 @@ mod tests {
             folder_id: Some("Work".to_string()),
             terminal_options: None,
             icon: Some("server".to_string()),
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         }];
         let folders = vec![ConnectionFolder {
@@ -507,6 +556,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "Local".to_string(),
                 name: "Local".to_string(),
                 config: make_local_config(),
@@ -517,6 +568,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -549,6 +602,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "Work/Prod".to_string(),
                 name: "Prod".to_string(),
                 config: make_ssh_config(),
@@ -559,6 +614,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "Root Conn".to_string(),
                 name: "Root Conn".to_string(),
                 config: make_local_config(),
@@ -605,6 +662,8 @@ mod tests {
                         children: vec![ConnectionTreeNode::Connection {
                             extra: Default::default(),
                             icon: None,
+                            icon_color: None,
+                            icon_emoji: None,
                             name: "Dev SSH".to_string(),
                             config: make_ssh_config(),
                             terminal_options: None,
@@ -613,6 +672,8 @@ mod tests {
                     ConnectionTreeNode::Connection {
                         extra: Default::default(),
                         icon: None,
+                        icon_color: None,
+                        icon_emoji: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
                         terminal_options: None,
@@ -622,6 +683,8 @@ mod tests {
             ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "Local".to_string(),
                 config: make_local_config(),
                 terminal_options: None,
@@ -664,6 +727,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
                 config: make_local_config(),
@@ -674,6 +739,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "B".to_string(),
                 name: "B".to_string(),
                 config: make_local_config(),
@@ -695,6 +762,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -705,6 +774,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -726,6 +797,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
                 config: make_local_config(),
@@ -736,6 +809,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
                 config: make_local_config(),
@@ -746,6 +821,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
                 config: make_local_config(),
@@ -768,6 +845,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
                 config: make_local_config(),
@@ -778,6 +857,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "A (1)".to_string(),
                 name: "A (1)".to_string(),
                 config: make_local_config(),
@@ -788,6 +869,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
                 config: make_local_config(),
@@ -827,6 +910,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "F1/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -837,6 +922,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "F2/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -864,6 +951,8 @@ mod tests {
         let mut conns = vec![SavedConnection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             id: "Work".to_string(),
             name: "Work".to_string(),
             config: make_local_config(),
@@ -926,6 +1015,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "TestDir/Zsh".to_string(),
                 name: "Zsh".to_string(),
                 config: make_local_config(),
@@ -937,6 +1028,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "TestDir/Zsh".to_string(),
                 name: "Zsh".to_string(),
                 config: make_local_config(),
@@ -972,6 +1065,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -983,6 +1078,8 @@ mod tests {
             SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -1052,6 +1149,8 @@ mod tests {
                     ConnectionTreeNode::Connection {
                         extra: Default::default(),
                         icon: None,
+                        icon_color: None,
+                        icon_emoji: None,
                         name: "C1".to_string(),
                         config: make_local_config(),
                         terminal_options: None,
@@ -1059,6 +1158,8 @@ mod tests {
                     ConnectionTreeNode::Connection {
                         extra: Default::default(),
                         icon: None,
+                        icon_color: None,
+                        icon_emoji: None,
                         name: "C2".to_string(),
                         config: make_local_config(),
                         terminal_options: None,
@@ -1068,6 +1169,8 @@ mod tests {
             ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "C3".to_string(),
                 config: make_local_config(),
                 terminal_options: None,
