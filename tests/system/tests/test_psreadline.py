@@ -76,6 +76,16 @@ def test_app_env_keeps_the_inherited_module_path(tmp_path: Path):
     assert _entries(env["PSModulePath"])[-1] == WINPS_SYSTEM
 
 
+def test_app_env_reuses_the_inherited_key_spelling(tmp_path: Path):
+    # os.environ upper-cases names on Windows; a second spelling of the same
+    # variable would reach the app as a second, conflicting entry.
+    env = psreadline.app_env(
+        tmp_path, {"PSMODULEPATH": WINPS_SYSTEM}, system="Windows", documents=DOCS
+    )
+    assert "PSModulePath" not in env
+    assert _entries(env["PSMODULEPATH"])[-1] == WINPS_SYSTEM
+
+
 def _instance(monkeypatch, tmp_path: Path, system: str, **kwargs):
     monkeypatch.setattr(orchestrator, "app_binary_path", lambda: tmp_path / "app.exe")
     monkeypatch.setattr(orchestrator.platform, "system", lambda: system)
@@ -84,9 +94,13 @@ def _instance(monkeypatch, tmp_path: Path, system: str, **kwargs):
 
 
 def test_windows_app_launches_with_its_own_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("PSModulePath", WINPS_SYSTEM)
     env = _instance(monkeypatch, tmp_path, "Windows").launch_env()
     assert env[HISTORY_ENV] == str(tmp_path / "psreadline" / "ConsoleHost_history.txt")
-    assert _entries(env["PSModulePath"])[0] == str(SHIM_DIR)
+    keys = [k for k in env if k.upper() == "PSMODULEPATH"]
+    assert len(keys) == 1
+    assert _entries(env[keys[0]])[0] == str(SHIM_DIR)
+    assert _entries(env[keys[0]])[-1] == WINPS_SYSTEM
 
 
 def test_other_platforms_launch_without_the_shim(tmp_path, monkeypatch):

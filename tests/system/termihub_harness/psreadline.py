@@ -112,7 +112,10 @@ def app_env(
         )
     history = scratch_dir / "psreadline" / "ConsoleHost_history.txt"
     history.parent.mkdir(parents=True, exist_ok=True)
+    # Windows variable names are case-insensitive and ``os.environ`` upper-cases
+    # them, so reuse the inherited key: a second spelling would be a second entry.
+    key = next((k for k in base_env if k.upper() == "PSMODULEPATH"), "PSModulePath")
     return {
-        "PSModulePath": module_path(base_env.get("PSModulePath", ""), documents),
+        key: module_path(base_env.get(key, ""), documents),
         HISTORY_ENV: str(history),
     }
