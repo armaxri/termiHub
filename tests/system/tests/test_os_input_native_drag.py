@@ -36,6 +36,7 @@ from pathlib import Path
 import pytest
 
 from termihub_harness import (
+    ConnectionsUi,
     FilesUi,
     LayoutUi,
     OsInputUi,
@@ -60,9 +61,12 @@ pytestmark = [
 FB_LIST = "file-browser-list"
 FB_OVERLAY = "file-browser-drag-overlay"
 FB_FILTER = "file-browser-filter"
-PARTNER_SIZE = (260, 200)
-#: Window size that leaves screen room for a partner window beside it.
+PARTNER_SIZE = (240, 200)
+#: The largest app window the suite uses; on a small screen (the hosted macOS
+#: runner's is 1024x768) it shrinks so a partner window still fits beside it.
 APP_SIZE = (900, 620)
+#: Gap kept between the app window, a partner window and the screen edges.
+MARGIN = 20
 PAYLOAD = "native payload\n"
 
 
@@ -78,7 +82,9 @@ def squash(text: str) -> str:
     return "".join(text.split())
 
 
-class TestNativeFileDrag(OsInputUi, TerminalUi, TabsUi, LayoutUi, SidebarUi, FilesUi, SystemTest):
+class TestNativeFileDrag(
+    OsInputUi, TerminalUi, TabsUi, LayoutUi, SidebarUi, FilesUi, ConnectionsUi, SystemTest
+):
     """Real native drags between harness-owned windows and the test instance."""
 
     # ── Plumbing ─────────────────────────────────────────────────────────────
@@ -95,12 +101,18 @@ class TestNativeFileDrag(OsInputUi, TerminalUi, TabsUi, LayoutUi, SidebarUi, Fil
 
     def _stage(self) -> ScreenMapper:
         """Size the window so a partner fits beside it; return its mapper."""
-        self.driver.resize_window(*APP_SIZE)
+        width, height = self.os_input().screen_size()
+        self.driver.resize_window(
+            min(APP_SIZE[0], width - PARTNER_SIZE[0] - 3 * MARGIN),
+            min(APP_SIZE[1], height - 4 * MARGIN),
+        )
         time.sleep(0.5)
         return self.os_activate()
 
     def _partner_geometry(self, screen: ScreenMapper) -> tuple[int, int, int, int]:
-        x, y = free_region(self.os_input().screen_size(), screen.window, PARTNER_SIZE)
+        x, y = free_region(
+            self.os_input().screen_size(), screen.window, PARTNER_SIZE, margin=MARGIN
+        )
         return (x, y, *PARTNER_SIZE)
 
     def _partner_center(self, pid: int) -> tuple[int, int]:
@@ -111,7 +123,8 @@ class TestNativeFileDrag(OsInputUi, TerminalUi, TabsUi, LayoutUi, SidebarUi, Fil
 
     def _browse(self, folder: Path) -> None:
         self.close_all_tabs()
-        self.ensure_terminal()
+        # A terminal whose shell reports its cwd, so the file browser follows the cd.
+        self.open_cwd_following_terminal()
         self.run_command(f'cd "{folder}"')
         self.open_file_browser()
         self.wait_for_path_contains(folder.name)
