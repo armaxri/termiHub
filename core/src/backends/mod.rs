@@ -51,6 +51,12 @@ pub(crate) mod wsl_exec;
 #[cfg(any(all(feature = "wsl", windows), test))]
 pub(crate) mod wsl_shell_ready;
 
+// Finds the WSL session's shell inside the distribution and reads its
+// directory, so the file browser follows it with nothing typed (#5013).
+// Compiled on every platform under `test`.
+#[cfg(any(all(feature = "wsl", windows), test))]
+pub(crate) mod wsl_cwd;
+
 // Answers ConPTY's opening cursor-position query (portable-pty 0.9 sets
 // PSUEDOCONSOLE_INHERIT_CURSOR; #3974). Wired into the Windows PTY readers;
 // compiled on every platform under `test` so the logic is exercised everywhere.
