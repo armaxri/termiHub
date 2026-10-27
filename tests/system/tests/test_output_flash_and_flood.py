@@ -32,6 +32,8 @@ Every run records its measurements in the ``[termihub-test-timing]`` summary
 
 from __future__ import annotations
 
+import re
+import sys
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -48,6 +50,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness import timing
+from termihub_harness.git_bash import detect_git_bash
 from termihub_harness.output_stream import (
     describe,
     find_flashes,
@@ -69,6 +72,9 @@ NEW_TERMINAL = "terminal-view-new-terminal"
 #: Visible text termiHub's shell-integration setup line contains; none of it may
 #: reach the terminal (#5009).
 SETUP_MARKERS = ("__termihub_osc7", "__termihub_si", "PROMPT_COMMAND", "precmd_functions")
+
+#: The environment bootstrap Git Bash gets with Command Marks on (#5014).
+GIT_BASH_SETUP_MARKERS = ("TERMIHUB_SI", "6973;")
 
 #: The OSC 7 cwd report that follows a prompt (#5009).
 OSC7 = "\x1b]7;file://"
@@ -169,6 +175,75 @@ class TestLocalShellFlash(_OutputTap, TerminalUi, TabsUi, SystemTest):
         )
         assert not flashes, f"local shell start wiped painted text: {flashes}\n{describe(raw)}"
         assert not leaked, f"setup text {leaked} reached the terminal (#5009):\n{describe(raw)}"
+
+
+_IS_WINDOWS = sys.platform == "win32"
+
+
+class _GitBashStartFlash(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, SystemTest):
+    """#5014: a Git Bash tab shows no setup text, by default or with Command Marks on.
+
+    ConPTY gives no way to hide a typed line, so a default tab types nothing
+    (its directory is read from the real ``bash.exe`` behind Git's launcher)
+    and the opt-in hook comes through the environment instead of being typed.
+    """
+
+    def _start(self, command_marks: bool) -> str:
+        self.close_all_tabs()
+        self.create_local_connection(
+            unique_name("gitbash-flash"), shell="gitbash", command_marks=command_marks, connect=True
+        )
+        self.wait(self.has_terminal, what="the Git Bash tab")
+        tab_id = self.active_tab_id()
+        self.wait(
+            lambda: OSC7 in self.driver.read_terminal_output(tab_id)["output"],
+            timeout=60.0,
+            what="the first prompt's cwd report (OSC 7)",
+        )
+        raw = self.settled_output(tab_id, what="the Git Bash start to settle")
+        leaked = markers_in(raw, SETUP_MARKERS + GIT_BASH_SETUP_MARKERS)
+        measure(
+            f"gitbash-start-marks-{'on' if command_marks else 'off'}",
+            chars=len(raw),
+            prompt_marks=len(prompt_offsets(raw)),
+            leaked=leaked,
+            raw=describe(raw, 1500),
+        )
+        assert not leaked, f"setup text {leaked} reached the terminal (#5014):\n{describe(raw)}"
+        # The directory is followed after a cd either way.
+        self.run_command("cd /c/Windows")
+        self.wait(
+            # The OSC 7 itself: Git Bash's title (OSC 0 ``MINGW64:/c/Windows``)
+            # ends the same way.
+            lambda: re.search(
+                r"\x1b\]7;file://[^\x07]*/Windows\x07",
+                self.driver.read_terminal_output(tab_id)["output"],
+                re.IGNORECASE,
+            ),
+            timeout=30.0,
+            what="the cwd report for C:\\Windows",
+        )
+        return raw
+
+    def test_default_git_bash_types_nothing_and_follows_cd(self):
+        # The hook's default (off since #5009): switched off explicitly, as the
+        # editor still pre-enables it from the app-level setting (#5042).
+        raw = self._start(command_marks=False)
+        assert "\x1b]133;" not in raw, f"no hook by default:\n{describe(raw)}"
+
+    def test_git_bash_command_marks_set_up_without_typing(self):
+        raw = self._start(command_marks=True)
+        assert "\x1b]133;A" in raw, f"the hook marks the prompt:\n{describe(raw)}"
+
+
+if _IS_WINDOWS:
+    # Collected on Windows only, so the other OSes' lanes count no skip for a
+    # Windows-only grade (the skip guard budgets every skip per lane).
+    @pytest.mark.skipif(
+        not detect_git_bash(), reason="Git Bash (Git for Windows) is not installed on this host"
+    )
+    class TestGitBashStartFlash(_GitBashStartFlash):
+        """The Git Bash grades, on Windows."""
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")

@@ -21,8 +21,8 @@ use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::{LocalMonitoringProvider, MonitoringProvider};
 use crate::session::shell::{
-    build_shell_command, detect_available_shells, detect_default_shell, osc7_setup_command,
-    shell_kind, ShellCommand,
+    bash_env_setup_script, build_shell_command, detect_available_shells, detect_default_shell,
+    osc7_setup_command, shell_kind, ShellCommand, BASH_SETUP_BOOTSTRAP, BASH_SETUP_ENV,
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
@@ -183,7 +183,8 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         #[cfg(not(unix))]
         let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
         // The shell's directory, read from the OS (#5009): the PTY's
-        // foreground process on Unix, else the shell process itself.
+        // foreground process on Unix, else the shell process itself (on
+        // Windows its innermost same-program descendant, #5014).
         let shell_pid = child.process_id();
         #[cfg(unix)]
         let foreground: Option<Arc<std::os::fd::OwnedFd>>;
@@ -278,6 +279,11 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                         return Some(cwd);
                     }
                 }
+                // No foreground process under ConPTY: the innermost shell
+                // (past Git Bash's launcher) stands for it (#5014).
+                #[cfg(windows)]
+                return shell_pid.and_then(super::local_shell_cwd::innermost_shell_cwd);
+                #[cfg(not(windows))]
                 shell_pid.and_then(super::local_shell_cwd::process_cwd)
             })),
         })
@@ -516,7 +522,8 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             "the hook stays in the shell: it is in the shell's history, its ",
                             "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
                             "extended. fish, cmd and PowerShell get it as a startup option ",
-                            "instead, so nothing is typed.\n\n",
+                            "instead, and Git Bash on Windows through its environment (typed ",
+                            "only if your profile replaces PROMPT_COMMAND), so nothing is typed.\n\n",
                             "PowerShell: the file browser follows PowerShell's current directory ",
                             "only with this on. Its location is not the directory the operating ",
                             "system sees, so without the hook a `cd` in PowerShell is not ",
@@ -645,8 +652,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let shell_cmd = build_shell_command(&config);
 
         // Determine the shell-integration injection strategy (OSC 7 / 133).
-        let (final_cmd, osc7_for_stdin) =
+        let (mut final_cmd, osc7_for_stdin) =
             apply_shell_integration(shell_cmd, &effective_shell, shell_integration);
+        // Windows bash (Git Bash): hand the setup over through the
+        // environment; the typed line is only the fallback (#5014).
+        let bootstrapped = osc7_for_stdin.is_some() && uses_env_bootstrap(&effective_shell);
+        if bootstrapped {
+            bootstrap_bash_setup(&mut final_cmd);
+        }
 
         info!(program = %final_cmd.program, "Spawning local shell");
 
@@ -669,6 +682,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             TypedSetup::new(
                 line,
                 spawned.line_editor_reading.is_some(),
+                bootstrapped,
                 writer.clone(),
                 self.output_tx.clone(),
             )
@@ -776,6 +790,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let line_editor: Option<PromptProbe> = spawned.line_editor_reading.map(PromptProbe::from);
         if let Some(setup) = &setup {
             match &line_editor {
+                _ if bootstrapped => setup.clone().type_unless_bootstrapped(alive.clone()),
                 Some(reading) => setup
                     .clone()
                     .type_when_ready(reading.clone(), alive.clone()),
@@ -877,7 +892,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // Input before the first prompt: the setup goes first, so it never
         // splits or swallows the user's command (#5009).
         if let Some(setup) = &state.setup {
-            setup.type_now();
+            setup.before_input();
         }
         let mut writer = state.writer.lock().map_err(|e| {
             SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
@@ -987,6 +1002,35 @@ fn apply_shell_integration(
         }
         _ => (cmd, setup),
     }
+}
+
+/// Whether `shell` gets its shell-integration setup through the environment
+/// rather than typed: bash on Windows, where ConPTY gives no way to hide a
+/// typed line's echo (#5014). Unix hides the typed line instead.
+fn uses_env_bootstrap(shell: &str) -> bool {
+    cfg!(windows) && matches!(shell_kind(shell), "gitbash" | "bash")
+}
+
+/// Hand bash its shell-integration setup through the environment: the
+/// [`BASH_SETUP_BOOTSTRAP`] runs it from `PROMPT_COMMAND` at the first
+/// prompt, ahead of a `PROMPT_COMMAND` the user set themselves, and the
+/// setup removes the bootstrap again (#5014).
+fn bootstrap_bash_setup(cmd: &mut ShellCommand) {
+    let theirs = cmd
+        .env
+        .get("PROMPT_COMMAND")
+        .cloned()
+        .or_else(|| std::env::var("PROMPT_COMMAND").ok())
+        .filter(|pc| !pc.is_empty());
+    let prompt_command = match theirs {
+        Some(theirs) => format!("{BASH_SETUP_BOOTSTRAP};{theirs}"),
+        None => BASH_SETUP_BOOTSTRAP.to_string(),
+    };
+    cmd.env.insert("PROMPT_COMMAND".to_string(), prompt_command);
+    cmd.env.insert(
+        BASH_SETUP_ENV.to_string(),
+        bash_env_setup_script().to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -2868,3 +2912,11 @@ mod side_effect_tests;
 #[cfg(all(test, unix))]
 #[path = "local_shell_interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_env_bootstrap_tests.rs"]
+mod env_bootstrap_tests;
+
+#[cfg(all(test, windows))]
+#[path = "local_shell_git_bash_tests.rs"]
+mod git_bash_tests;
