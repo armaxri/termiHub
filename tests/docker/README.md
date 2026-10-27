@@ -145,6 +145,22 @@ The render check is a genuine in-container capability check; it is **not** a
 stand-in for the end-to-end forward into the operator's real display, which
 remains a manual step (no host X server can be faked in the harness).
 
+## Traceroute chain (profile: `traceroute`)
+
+Three containers from one image (`traceroute-hop/`) put two routers between
+the Docker host and a target, so a traceroute from the host has three fixed
+hops (#4964, MT-NET-16): router1 `<A>.2`, router2 `<B>.3`, then the target
+`<A>.200`. router1 answers the host's ARP for the target (proxy ARP), so the
+host needs no route and no privilege; the topology is documented in
+`traceroute-hop/entrypoint.sh`. The networks are `10.231.x.0/24`, offset per
+checkout (`TERMIHUB_TEST_TRACE_NET_A/B/C`). Linux hosts only — a Docker
+Desktop / Podman machine keeps the bridge inside its VM.
+
+```bash
+docker compose -f tests/docker/docker-compose.yml --profile traceroute up -d --build
+traceroute -n 10.231.0.200   # dev0 / CI: 10.231.0.2, 10.231.1.3, 10.231.0.200
+```
+
 ## FTP server (profile: `ftp`)
 
 The `ftp-server` container (`ftp-server/`) runs an **independent external FTP

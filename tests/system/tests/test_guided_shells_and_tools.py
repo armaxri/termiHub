@@ -2,14 +2,16 @@
 
 Ported from the retired ``tests/manual/{local-shell,ssh,network-tools}.yaml``.
 Each item needs something CI cannot judge: a real WSL distribution, a real
-Git-for-Windows install, a native X window on the operator's desktop, raw
-ICMP for traceroute, or the readability of a canvas chart.
+Git-for-Windows install, a native X window on the operator's desktop, or the
+readability of a canvas chart.
 
 The harness opens the shells, creates the X11 SSH connection against the
-``ssh-x11`` fixture, and starts the traceroute / ping / HTTP monitor. The
-operator watches and judges.
+``ssh-x11`` fixture, and starts the ping / HTTP monitor. The operator watches
+and judges.
 
-Covered: MT-LOCAL-03/31, MT-SSH-50/51/52, MT-NET-16/21. MT-LOCAL-30/32/33
+Covered: MT-LOCAL-03/31, MT-SSH-50/51/52, MT-NET-21. MT-NET-16 (traceroute)
+is automated since #4964 against a multi-hop Docker chain
+(``test_network_tools_traceroute.py``). MT-LOCAL-30/32/33
 are automated since #4931 (``test_windows_shells.py``,
 ``test_output_flash_and_flood.py``, ``test_performance.py``), MT-SSH-01 (the
 Agnoster segment) since #4937 on a native window capture
@@ -164,19 +166,7 @@ class TestGuidedShellsAndTools(
             "It does not prompt for the X server again.",
         )
 
-    # ── MT-NET-16/21: traceroute and latency charts ──────────────────────────
-    def test_traceroute_hops_stream_in(self):
-        """MT-NET-16 (raw ICMP: run as root/admin where the OS requires it)."""
-        self.close_all_tabs()
-        self.open_tool_panel("traceroute", "traceroute-panel")
-        self.driver.type("traceroute-host", "8.8.8.8")
-        self.driver.click("traceroute-run")
-        self.manual_observe(
-            "The harness started a traceroute to 8.8.8.8.",
-            "Hop rows stream in, each with hop number, address and three RTT columns; it "
-            "completes or ends with `* * *` rows.",
-        )
-
+    # ── MT-NET-21: latency charts ────────────────────────────────────────────
     def test_latency_charts_are_readable(self):
         """MT-NET-21.
 
