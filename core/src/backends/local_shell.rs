@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use crate::config::ShellConfig;
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
-    SelectOption, SettingsField, SettingsGroup, SettingsSchema,
+    PromptProbe, SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
@@ -298,6 +298,8 @@ struct ConnectedState {
     disconnected: bool,
     /// The typed shell-integration setup, for bash / zsh (#5009).
     setup: Option<Arc<TypedSetup>>,
+    /// The line-editor probe offered for the initial command (#5029).
+    prompt_probe: Option<PromptProbe>,
 }
 
 impl Drop for ConnectedState {
@@ -760,12 +762,20 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // editor is observable it waits for the prompt so its echo can be
         // hidden (#5009); elsewhere it is typed now, as before. Failures are
         // non-fatal — the shell works without CWD tracking.
+        let line_editor: Option<PromptProbe> = spawned.line_editor_reading.map(PromptProbe::from);
         if let Some(setup) = &setup {
-            match spawned.line_editor_reading {
-                Some(reading) => setup.clone().type_when_ready(reading, alive.clone()),
+            match &line_editor {
+                Some(reading) => setup
+                    .clone()
+                    .type_when_ready(reading.clone(), alive.clone()),
                 None => setup.type_now(),
             }
         }
+        // Without the typed setup, the line editor taking over the PTY is
+        // also the initial command's cue (#5029). With it, the prompt mark
+        // the setup brings is, so the command never lands between the two.
+        let prompt_probe =
+            line_editor.filter(|_| setup.is_none() && has_line_editor(&effective_shell));
 
         self.state = Some(ConnectedState {
             writer,
@@ -774,6 +784,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             alive,
             disconnected: false,
             setup,
+            prompt_probe,
         });
 
         Ok(())
@@ -898,6 +909,10 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             crate::monitoring::LocalProcessManager::new(),
         ))
     }
+
+    fn prompt_probe(&self) -> Option<PromptProbe> {
+        self.state.as_ref()?.prompt_probe.clone()
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -911,6 +926,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 /// `pwsh`), `cmd` and `fish` take the setup as startup flags so it runs
 /// before the first prompt without echoing; every other shell gets it back as
 /// the snippet to type via stdin (see [`TypedSetup`]). Returns `(command, stdin_setup)`.
+/// Whether `shell` reads its prompt through a line editor that takes the
+/// PTY out of canonical mode (readline, ZLE, fish's reader), so
+/// `line_editor_reading` tells when it waits at its prompt (#5029). A plain
+/// `sh` reads in canonical mode and would never report.
+fn has_line_editor(shell: &str) -> bool {
+    matches!(shell_kind(shell), "bash" | "zsh" | "fish")
+}
+
 fn apply_shell_integration(
     mut cmd: ShellCommand,
     shell: &str,

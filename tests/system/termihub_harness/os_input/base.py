@@ -160,9 +160,10 @@ class OsInput:
         front = self.frontmost_pid()
         ok = front in self._allowed if any_allowed else front == target
         if not ok:
+            frontmost = self._describe_frontmost()
             raise GlobalInjectionRefused(
                 f"frontmost window belongs to PID {front}, not the intended PID "
-                f"{target}; refusing to inject"
+                f"{target}; refusing to inject" + (f" (frontmost: {frontmost})" if frontmost else "")
             )
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -177,6 +178,21 @@ class OsInput:
     def screen_size(self) -> tuple[int, int]:
         """Width and height of the primary screen, in OS screen units."""
         return self._screen_size()
+
+    def describe_point(self, x: float, y: float) -> str:
+        """What the OS would deliver a pointer event at ``(x, y)`` to (diagnostics).
+
+        Read-only. Empty when the backend cannot tell.
+        """
+        return self._describe_point(int(round(x)), int(round(y)))
+
+    def describe_desktop(self) -> str:
+        """Every visible top-level window and the input state (diagnostics).
+
+        Read-only: lists windows of *any* process, so a failure can show what
+        covered or took the test instance's input. Empty when unsupported.
+        """
+        return self._describe_desktop()
 
     def activate(
         self, pid: Optional[int] = None, *, window: Optional[OsWindow] = None, timeout: float = 10.0
@@ -309,6 +325,16 @@ class OsInput:
     def _frontmost_window(self) -> Optional[int]:
         """Handle of the focused top-level window, or ``None`` if unknowable."""
         return None
+
+    def _describe_point(self, x: int, y: int) -> str:
+        return ""
+
+    def _describe_frontmost(self) -> str:
+        """The frontmost window, for a refusal message (empty when unknown)."""
+        return ""
+
+    def _describe_desktop(self) -> str:
+        return ""
 
     def _activate(self, window: OsWindow) -> None:
         raise NotImplementedError
