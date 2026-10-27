@@ -38,10 +38,34 @@ async fn read_until(rx: &mut crate::connection::OutputReceiver, out: &mut String
     assert!(ok, "timed out waiting for {needle:?}: {out:?}");
 }
 
-/// The last path component, as the OSC 7 ends it.
-fn osc7_tail(dir: &std::path::Path) -> String {
+/// Whether `out` holds an OSC 7 report of `dir`. Only the OSC 7 counts:
+/// Git Bash's prompt also sets the window title to `MINGW64:<dir>` (OSC 0),
+/// which ends in the same name.
+fn reported(out: &str, dir: &std::path::Path) -> bool {
     let name = dir.file_name().expect("name").to_string_lossy().to_string();
-    format!("{name}\x07")
+    out.split("\x1b]7;file://")
+        .skip(1)
+        .filter_map(|rest| rest.split('\x07').next())
+        .any(|uri| uri.ends_with(&format!("/{name}")))
+}
+
+async fn read_until_reported(
+    rx: &mut crate::connection::OutputReceiver,
+    out: &mut String,
+    dir: &std::path::Path,
+) {
+    let ok = tokio::time::timeout(Duration::from_secs(90), async {
+        while !reported(out, dir) {
+            match rx.recv().await {
+                Some(chunk) => out.push_str(&String::from_utf8_lossy(&chunk)),
+                None => return false,
+            }
+        }
+        true
+    })
+    .await
+    .unwrap_or(false);
+    assert!(ok, "no OSC 7 for {dir:?}: {out:?}");
 }
 
 /// Start Git Bash in a temporary `HOME` whose profile prints a banner, wait
@@ -67,14 +91,14 @@ async fn cd_in_git_bash(shell_integration: Option<bool>) -> String {
     let mut out = String::new();
     read_until(&mut rx, &mut out, "RC-BANNER-LINE").await;
     // The start directory is reported once the first prompt settles.
-    read_until(&mut rx, &mut out, &osc7_tail(home.path())).await;
+    read_until_reported(&mut rx, &mut out, home.path()).await;
 
     // Forward slashes: `cd` in Git Bash takes `C:/x` as is.
     let to = target.path().to_string_lossy().replace('\\', "/");
     shell
         .write(format!("cd '{to}'\r").as_bytes())
         .expect("write");
-    read_until(&mut rx, &mut out, &osc7_tail(target.path())).await;
+    read_until_reported(&mut rx, &mut out, target.path()).await;
     shell.write(b"exit\r").ok();
     shell.disconnect().await.ok();
     out

@@ -32,6 +32,7 @@ Every run records its measurements in the ``[termihub-test-timing]`` summary
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from typing import TYPE_CHECKING, Any, Optional
@@ -212,7 +213,13 @@ class _GitBashStartFlash(_OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarU
         # The directory is followed after a cd either way.
         self.run_command("cd /c/Windows")
         self.wait(
-            lambda: "/Windows\x07" in self.driver.read_terminal_output(tab_id)["output"],
+            # The OSC 7 itself: Git Bash's title (OSC 0 ``MINGW64:/c/Windows``)
+            # ends the same way.
+            lambda: re.search(
+                r"\x1b\]7;file://[^\x07]*/Windows\x07",
+                self.driver.read_terminal_output(tab_id)["output"],
+                re.IGNORECASE,
+            ),
             timeout=30.0,
             what="the cwd report for C:\\Windows",
         )
