@@ -1276,9 +1276,14 @@ came from the OS.
 | [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                                                        |
 | [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                               |
 
-The dead-key grade (MT-NIN-15) is quarantined on Windows: on the hosted runner
-the Enter after the composed characters is sometimes lost (#5024). It still runs
-on Linux and macOS.
+The dead-key grade (MT-NIN-15) once lost its Enter on the Windows runner about
+one run in three (#5024). It was not the app: the frontend sent every key, the
+Enter included, to the session in order. The grade then shared the step with
+TestPerformance on a second xdist worker, whose 40 PowerShell sessions write
+the runner's shared PSReadLine history. The grade's PowerShell did not run the
+line, and its prompt showed the other app's `echo PERF05-40` (a PSReadLine
+history prediction). Since #5031 the OS-input suites run in
+their own `-n 1` step, and the grade passes there on Windows.
 
 On a missed calibration move, the Windows backend names the window under the
 pointer and lists every window on the desktop. That is how a DevTools window,
