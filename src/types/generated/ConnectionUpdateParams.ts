@@ -23,4 +23,13 @@ terminal_options?: unknown,
 /**
  * Use JSON `null` to clear, omit to leave unchanged.
  */
-icon?: string | null, };
+icon?: string | null, 
+/**
+ * Icon colour (#5021). Use JSON `null` to clear, omit to leave unchanged.
+ */
+icon_color?: string | null, 
+/**
+ * Single-emoji icon (#5021). Use JSON `null` to clear, omit to leave
+ * unchanged.
+ */
+icon_emoji?: string | null, };

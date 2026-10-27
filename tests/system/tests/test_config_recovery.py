@@ -43,6 +43,7 @@ from termihub_harness import (
     SystemTest,
     unique_name,
 )
+from termihub_harness.store_versions import current_store_version
 
 pytestmark = pytest.mark.integration
 
@@ -73,9 +74,11 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
     # ── MT-RECOVERY-06: fresh start writes the v2 nested format ──────────────────
     def test_fresh_start_uses_v2_nested_format(self):
         # Runs first, against a clean config dir: a created connection must land on
-        # disk in the nested tree schema (v4 since PARITY-008 unified the
-        # reconnect setting; v3 was PLG-007's namespaced plugin type ids) the
-        # recovery loader expects.
+        # disk in the nested tree schema the recovery loader expects, stamped with
+        # the store's *current* version. That number is read from the Rust
+        # ``VersionedStore`` impl rather than hard-coded, so a migration bump does
+        # not break this grade (#5048: it still expected v5 after #5009 wrote v6).
+        expected_version = str(current_store_version(CONNECTIONS))
         name = unique_name("recovery-v2")
         self.switch_to_connections_sidebar()
         self.create_local_connection(name)
@@ -89,7 +92,7 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
                 doc = json.loads(self.read_config(CONNECTIONS))
             except (FileNotFoundError, json.JSONDecodeError):
                 return None
-            if doc.get("version") != "5" or not isinstance(doc.get("children"), list):
+            if doc.get("version") != expected_version or not isinstance(doc.get("children"), list):
                 return None
             return next((c for c in doc["children"] if c.get("name") == name), None)
 

@@ -31,6 +31,16 @@ const SSH_DRAFT: AgentConnectionDraft = {
   icon: "server",
 };
 
+/** A definition carrying an icon colour and emoji (#5021). */
+const STYLED_DRAFT: AgentConnectionDraft = {
+  name: "Styled",
+  type: "local",
+  config: {},
+  persistent: false,
+  iconColor: "#336699",
+  iconEmoji: "🚀",
+};
+
 const BARE_DRAFT: AgentConnectionDraft = {
   name: "Scratch",
   type: "local",
@@ -60,6 +70,16 @@ function buildCases(): Array<{ name: string; method: string; params: unknown }> 
       name: "update: editor save clearing terminal options and icon",
       method: "connections.update",
       params: buildAgentConnectionUpdate("conn-2", BARE_DRAFT),
+    },
+    {
+      name: "create: icon colour and emoji (#5021)",
+      method: "connections.create",
+      params: buildAgentConnectionCreate(STYLED_DRAFT, null),
+    },
+    {
+      name: "update: editor save with icon colour and emoji (#5021)",
+      method: "connections.update",
+      params: buildAgentConnectionUpdate("conn-4", STYLED_DRAFT),
     },
     {
       name: "update: move into a folder",

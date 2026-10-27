@@ -1,6 +1,7 @@
 pub mod coalescer;
 pub mod early;
 pub mod prompt_mark;
+pub mod prompt_settle;
 pub mod session_log;
 pub mod setup_echo;
 #[cfg(test)]

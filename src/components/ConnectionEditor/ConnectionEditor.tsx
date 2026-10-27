@@ -369,8 +369,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       sourceFile: existingConnection?.sourceFile ?? null,
       persistent: existingAgentDef?.persistent ?? false,
       icon: existingAgentDef?.icon ?? existingConnection?.icon ?? null,
-      iconColor: existingConnection?.iconColor ?? null,
-      iconEmoji: existingConnection?.iconEmoji ?? null,
+      iconColor: existingAgentDef?.iconColor ?? existingConnection?.iconColor ?? null,
+      iconEmoji: existingAgentDef?.iconEmoji ?? existingConnection?.iconEmoji ?? null,
       terminalOptions:
         existingAgentDef?.terminalOptions ?? existingConnection?.terminalOptions ?? {},
       agentSettings: existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS,
@@ -988,6 +988,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       persistent,
       terminalOptions: hasTerminalOptions(terminalOptions) ? terminalOptions : undefined,
       icon,
+      iconColor,
+      iconEmoji,
     };
     if (existingAgentDef) {
       await updateAgentDef(
@@ -1008,6 +1010,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     persistent,
     terminalOptions,
     icon,
+    iconColor,
+    iconEmoji,
     existingAgent,
     existingAgentDef,
     meta.agentFolderId,
@@ -1969,7 +1973,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             icon={icon}
             onIconChange={(next) => iconField.onChange(next ?? null)}
             iconStyle={
-              isAgentDefinitionMode
+              // An agent older than protocol 0.33.0 cannot store the icon
+              // colour / emoji, so the controls are hidden for it (#5021).
+              isAgentDefinitionMode && !existingAgent?.capabilities?.definitionIconStyle
                 ? undefined
                 : {
                     iconColor,

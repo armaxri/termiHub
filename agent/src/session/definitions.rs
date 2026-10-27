@@ -41,6 +41,14 @@ pub struct Connection {
     /// Custom icon name (lucide-react PascalCase or "lab:camelCase").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Icon colour: a palette name or `#rrggbb` (#5021). Opaque to the agent.
+    /// Omitted from disk when unset, so an unstyled file is unchanged; an
+    /// older agent keeps the key verbatim in its `extra` map (#3931).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    /// Single-emoji icon (#5021). Opaque to the agent; omitted when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_emoji: Option<String>,
     /// Fields this agent does not know (e.g. written by a newer agent at the
     /// same schema version). Kept on disk verbatim across load and save, never
     /// sent on the wire (#3931).
@@ -68,6 +76,10 @@ struct RawConnection {
     terminal_options: Option<serde_json::Value>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default)]
+    icon_color: Option<String>,
+    #[serde(default)]
+    icon_emoji: Option<String>,
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -83,6 +95,8 @@ impl From<RawConnection> for Connection {
             folder_id: raw.folder_id,
             terminal_options: raw.terminal_options,
             icon: raw.icon,
+            icon_color: raw.icon_color,
+            icon_emoji: raw.icon_emoji,
             extra: raw.extra,
         };
         conn.normalize_settings();
@@ -123,6 +137,8 @@ impl Connection {
             folder_id: self.folder_id.clone(),
             terminal_options: self.terminal_options.clone(),
             icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            icon_emoji: self.icon_emoji.clone(),
             source_file: None,
         }
     }
@@ -186,6 +202,8 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
         folder_id: Option<Option<String>>,
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
+        icon_color: Option<Option<String>>,
+        icon_emoji: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError>;
 
     /// List all connections and folders.
@@ -471,6 +489,8 @@ impl ConnectionStore {
         folder_id: Option<Option<String>>,
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
+        icon_color: Option<Option<String>>,
+        icon_emoji: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
         self.mutate(|defs| {
             let Some(conn) = defs.connections.get_mut(id) else {
@@ -497,6 +517,12 @@ impl ConnectionStore {
             }
             if let Some(icon) = icon {
                 conn.icon = icon;
+            }
+            if let Some(icon_color) = icon_color {
+                conn.icon_color = icon_color;
+            }
+            if let Some(icon_emoji) = icon_emoji {
+                conn.icon_emoji = icon_emoji;
             }
             conn.normalize_settings();
 
@@ -543,6 +569,8 @@ impl ConnectionStore {
                                 folder_id: conn.folder_id,
                                 terminal_options: conn.terminal_options,
                                 icon: conn.icon,
+                                icon_color: conn.icon_color,
+                                icon_emoji: conn.icon_emoji,
                                 source_file: Some(path.clone()),
                             });
                         }
@@ -649,6 +677,8 @@ impl ConnectionStore {
                     folder_id: None,
                     terminal_options: None,
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     extra: serde_json::Map::new(),
                 };
 
@@ -740,6 +770,8 @@ impl ConnectionStore {
                                 folder_id: None,
                                 terminal_options: None,
                                 icon: None,
+                                icon_color: None,
+                                icon_emoji: None,
                                 extra: serde_json::Map::new(),
                             };
                             conn.normalize_settings();
@@ -1177,6 +1209,8 @@ impl ConnectionStoreApi for ConnectionStore {
         folder_id: Option<Option<String>>,
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
+        icon_color: Option<Option<String>>,
+        icon_emoji: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
         ConnectionStore::update(
             self,
@@ -1188,6 +1222,8 @@ impl ConnectionStoreApi for ConnectionStore {
             folder_id,
             terminal_options,
             icon,
+            icon_color,
+            icon_emoji,
         )
         .await
     }
@@ -1369,6 +1405,8 @@ mod tests {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
         }
     }
@@ -1413,6 +1451,8 @@ mod tests {
             .update(
                 "c1",
                 Some("renamed".into()),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1478,6 +1518,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -1511,6 +1553,8 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
             })
             .await
@@ -1526,6 +1570,8 @@ mod tests {
                 None,
                 None,
                 Some(json!({ "host": "h", "timeoutSecs": 60 })),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1632,6 +1678,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -1651,6 +1699,8 @@ mod tests {
             .update(
                 "nonexistent",
                 Some("Name".to_string()),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1689,6 +1739,8 @@ mod tests {
                 Some(Some("folder-1".to_string())),
                 None,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -1697,7 +1749,18 @@ mod tests {
 
         // Move back to root
         let snap = store
-            .update("conn-1", None, None, None, None, Some(None), None, None)
+            .update(
+                "conn-1",
+                None,
+                None,
+                None,
+                None,
+                Some(None),
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -2055,6 +2118,102 @@ mod tests {
 
     /// Unknown top-level and per-entry fields survive a load + save, and are
     /// not leaked onto the wire snapshot.
+    /// #5021: a definition's icon colour / emoji persist to disk and reload;
+    /// an update can change or clear each one independently.
+    #[tokio::test]
+    async fn icon_style_persists_and_updates() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        {
+            let store = ConnectionStore::new_temp(path.clone());
+            let mut conn = make_connection("conn-1", "Prod", false);
+            conn.icon_color = Some("red".to_string());
+            conn.icon_emoji = Some("\u{1F680}".to_string());
+            store.create(conn).await.unwrap();
+        }
+        let raw = read_json(&path);
+        let entry = raw_entry(&raw, "connections", "conn-1");
+        assert_eq!(entry["icon_color"], json!("red"));
+        assert_eq!(entry["icon_emoji"], json!("\u{1F680}"));
+
+        let store = ConnectionStore::new(path.clone());
+        let snap = store.get("conn-1").await.unwrap();
+        assert_eq!(snap.icon_color.as_deref(), Some("red"));
+        assert_eq!(snap.icon_emoji.as_deref(), Some("\u{1F680}"));
+
+        let snap = store
+            .update(
+                "conn-1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some("#336699".to_string())),
+                Some(None),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(snap.icon_color.as_deref(), Some("#336699"));
+        assert_eq!(snap.icon_emoji, None);
+        let raw = read_json(&path);
+        let entry = raw_entry(&raw, "connections", "conn-1");
+        assert_eq!(entry["icon_color"], json!("#336699"));
+        assert!(entry.get("icon_emoji").is_none(), "{entry}");
+    }
+
+    /// #5021: a file written before icon styles (no keys) loads with both
+    /// unset and re-saves without stray keys; an entry carrying the keys keeps
+    /// them across a save (an older agent holds them in `extra`, #3931). The
+    /// keys are additive and need no schema step of their own.
+    #[tokio::test]
+    async fn icon_style_is_compatible_with_older_files() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "version": "1",
+                "connections": [
+                    {"id": "old", "name": "Old", "session_type": "shell"},
+                    {"id": "new", "name": "New", "session_type": "shell",
+                     "icon_color": "teal", "icon_emoji": "\u{1F525}"}
+                ],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let store = ConnectionStore::new(path.clone());
+        let old = store.get("old").await.unwrap();
+        assert!(old.icon_color.is_none() && old.icon_emoji.is_none());
+        store
+            .update(
+                "old",
+                Some("Old 2".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let raw = read_json(&path);
+        let old = raw_entry(&raw, "connections", "old");
+        assert!(old.get("icon_color").is_none() && old.get("icon_emoji").is_none());
+        let new = raw_entry(&raw, "connections", "new");
+        assert_eq!(new["icon_color"], json!("teal"));
+        assert_eq!(new["icon_emoji"], json!("\u{1F525}"));
+    }
+
     #[tokio::test]
     async fn unknown_fields_survive_a_round_trip() {
         let tmp = TempDir::new().unwrap();
@@ -2087,6 +2246,8 @@ mod tests {
             .update(
                 "conn-1",
                 Some("Prod renamed".to_string()),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -2361,6 +2522,8 @@ mod tests {
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
         };
         let json = serde_json::to_string(&conn).unwrap();
@@ -2424,6 +2587,8 @@ mod tests {
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
         };
         assert_eq!(
@@ -2717,7 +2882,9 @@ mod tests {
                 None,
                 None,
                 None,
-                None
+                None,
+                None,
+                None,
             )
             .await
             .is_err());
@@ -2884,6 +3051,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2896,6 +3065,79 @@ mod tests {
         let reloaded = ConnectionStore::new(path);
         assert_eq!(hook(reloaded.get("ssh").await), json!(true));
         assert_eq!(hook(reloaded.get("local").await), json!(false));
+    }
+
+    /// #5021 + #5009: a v1 file with the old `shellIntegration: true` default
+    /// and no icon style keys loads migrated (hook off) with both icon fields
+    /// unset; a v1 entry that already carries icon style keys keeps them
+    /// through the v1→v2 migration, a save at v2, and a reload.
+    #[tokio::test]
+    async fn v1_file_migrates_alongside_icon_style() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "version": "1",
+                "connections": [
+                    {"id": "plain", "name": "Plain", "session_type": "ssh",
+                     "config": {"shellIntegration": true}},
+                    {"id": "styled", "name": "Styled", "session_type": "local",
+                     "config": {"shellIntegration": true},
+                     "icon_color": "teal", "icon_emoji": "\u{1F433}"}
+                ],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        let plain = store.get("plain").await.unwrap();
+        assert_eq!(plain.config["shellIntegration"], json!(false));
+        assert!(plain.icon_color.is_none() && plain.icon_emoji.is_none());
+        let styled = store.get("styled").await.unwrap();
+        assert_eq!(styled.config["shellIntegration"], json!(false));
+        assert_eq!(styled.icon_color.as_deref(), Some("teal"));
+        assert_eq!(styled.icon_emoji.as_deref(), Some("\u{1F433}"));
+
+        // A save writes v2 with the icon keys only where set.
+        store
+            .update(
+                "plain",
+                Some("Plain 2".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some("red".into())),
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let raw = read_json(&path);
+        assert_eq!(raw["version"], json!(DEFINITIONS_STORE_VERSION.to_string()));
+        assert_eq!(
+            raw_entry(&raw, "connections", "plain")["icon_color"],
+            json!("red")
+        );
+        assert!(raw_entry(&raw, "connections", "plain")
+            .get("icon_emoji")
+            .is_none());
+        assert_eq!(
+            raw_entry(&raw, "connections", "styled")["icon_color"],
+            json!("teal")
+        );
+
+        let reloaded = ConnectionStore::new(path);
+        let plain = reloaded.get("plain").await.unwrap();
+        assert_eq!(plain.config["shellIntegration"], json!(false));
+        assert_eq!(plain.icon_color.as_deref(), Some("red"));
+        let styled = reloaded.get("styled").await.unwrap();
+        assert_eq!(styled.icon_emoji.as_deref(), Some("\u{1F433}"));
     }
 
     /// An older-version file runs through the numbered migrate chain.
@@ -2957,6 +3199,8 @@ mod tests {
             .update(
                 "conn-1",
                 Some("Renamed".into()),
+                None,
+                None,
                 None,
                 None,
                 None,
