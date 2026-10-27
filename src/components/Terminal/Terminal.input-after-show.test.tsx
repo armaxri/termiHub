@@ -19,7 +19,7 @@ import { createRoot, Root } from "react-dom/client";
 import { SHOW_FIT_STALL_MS, Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
-import { resetSessionInputGatesForTests } from "@/services/sessionInputGate";
+import { INPUT_HOLD_MAX_MS, resetSessionInputGatesForTests } from "@/services/sessionInputGate";
 import { RESIZE_REDRAW_QUIET_MS, RESIZE_REDRAW_WAIT_MS } from "./shellRedrawWait";
 
 // Shared state reachable from the hoisted vi.mock factories below.
@@ -565,5 +565,28 @@ describe("input typed right after a tab is shown (#4942)", () => {
 
     await applyPendingResizes();
     expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "echo PERF05-05\\n"']);
+  });
+
+  it("keeps input behind a resize whose invoke is slower than the hold bound (#5025)", async () => {
+    await mountConnected();
+    await hideAndResizeWhileHidden();
+
+    renderTerminal(true, true);
+    void sendInput("session-swap", "echo PERF05-33\n");
+    act(() => flushRaf());
+    await drainMicrotasks();
+    expect(ipc.log).toEqual(["resize 100x30"]);
+
+    // The IPC is stalled (a loaded macOS runner took 1.3 s): the resize has
+    // not reached the backend when a plain hold would lift. Tauri runs invokes
+    // concurrently, so input released now could be applied before the resize
+    // and bash would echo it at the old width.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, INPUT_HOLD_MAX_MS + 100));
+    });
+    expect(ipc.log).toEqual(["resize 100x30"]);
+
+    await applyPendingResizes();
+    expect(ipc.log).toEqual(["resize 100x30", "resized 100x30", 'input "echo PERF05-33\\n"']);
   });
 });
