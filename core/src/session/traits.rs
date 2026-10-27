@@ -130,6 +130,11 @@ pub struct SpawnedShell {
     /// only once this reports `true`, so the setup is never echoed by the
     /// kernel ahead of the shell's own startup output.
     pub line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>,
+    /// Reads the shell's current working directory from the operating
+    /// system (#5009), or `None` where that is not possible (test doubles).
+    /// The local backend reports it as OSC 7, so the file browser follows the
+    /// shell without anything being typed into it.
+    pub cwd_probe: Option<Box<dyn Fn() -> Option<String> + Send + Sync>>,
 }
 
 /// PTY / process spawn abstraction for the local shell backend.
