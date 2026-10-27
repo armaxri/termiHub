@@ -6,7 +6,7 @@
     "credentialAutoLockMinutes": 0,
     "cursorStyle": "underline",
     "defaultLineEnding": "crlf",
-    "defaultShellIntegration": true,
+    "defaultShellIntegration": false,
     "defaultX11Forwarding": true,
     "externalConnectionFiles": [
       {

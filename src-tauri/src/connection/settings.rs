@@ -442,8 +442,11 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub warn_large_ping_sweep: bool,
-    /// Default value for Shell Integration toggle in new SSH connections.
-    #[serde(default = "default_true")]
+    /// Default value for the Command Marks (Shell Hook) toggle in new local,
+    /// SSH and WSL connections. Off by default: the hook is typed into the
+    /// shell, so it is opt-in (#5042). A v1 file's `true` is switched off once
+    /// on load (the v1 → v2 schema step).
+    #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub default_shell_integration: bool,
     /// Default value for X11 Forwarding toggle in new SSH connections.
@@ -712,7 +715,7 @@ impl AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            version: "1".to_string(),
+            version: <Self as crate::utils::migrate::VersionedStore>::CURRENT_VERSION.to_string(),
             external_connection_files: Vec::new(),
             default_user: None,
             default_ssh_key_path: None,
@@ -735,7 +738,7 @@ impl Default for AppSettings {
             ask_open_saved_file_in_tab: true,
             warn_large_port_scan: true,
             warn_large_ping_sweep: true,
-            default_shell_integration: true,
+            default_shell_integration: false,
             default_x11_forwarding: true,
             provide_x_server_automatically: None,
             stop_x_server_when_idle: true,
@@ -781,7 +784,31 @@ impl Default for AppSettings {
 
 impl crate::utils::migrate::VersionedStore for AppSettings {
     const STORE_NAME: &'static str = "settings.json";
-    const CURRENT_VERSION: u32 = 1;
+    /// v2 (#5042) switches the app-level shell-hook default off once: a v1
+    /// file's `defaultShellIntegration: true` was written by the old default,
+    /// so it loads as `false`. Saving at v2 records that the reset ran, so an
+    /// opt-in made afterwards is kept. The bump is also downgrade-safe: a v1
+    /// build refuses to overwrite a v2 file (PER-004).
+    const CURRENT_VERSION: u32 = 2;
+
+    fn migrate(
+        mut value: serde_json::Value,
+        from_version: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        if let Some(obj) = value.as_object_mut() {
+            if from_version < 2 {
+                obj.insert(
+                    "defaultShellIntegration".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+            obj.insert(
+                "version".to_string(),
+                serde_json::Value::String(Self::CURRENT_VERSION.to_string()),
+            );
+        }
+        Ok(value)
+    }
 }
 
 /// Handles reading/writing the settings JSON file.
@@ -865,8 +892,15 @@ impl SettingsStorage {
             AppSettings::CURRENT_VERSION,
         )?;
 
+        // Stamp the current version: the frontend can hand back a document
+        // still labelled with an older one (its pre-hydration seed), and a file
+        // saved at v1 would have its shell-hook opt-in reset on the next load.
+        let stamped = AppSettings {
+            version: AppSettings::CURRENT_VERSION.to_string(),
+            ..settings.clone()
+        };
         let data =
-            serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
+            serde_json::to_string_pretty(&stamped).context("Failed to serialize settings")?;
 
         write_atomic(&self.file_path, &data).context("Failed to write settings file")?;
 
@@ -945,7 +979,7 @@ mod tests {
 
         let result = storage.load_with_recovery().unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.data.version, "1");
+        assert_eq!(result.data.version, "2");
         assert!(result.data.power_monitoring_enabled);
     }
 
@@ -976,7 +1010,7 @@ mod tests {
         assert!(result.warnings[0].message.contains("corrupt"));
         assert!(result.warnings[0].details.is_some());
         // Returns defaults
-        assert_eq!(result.data.version, "1");
+        assert_eq!(result.data.version, "2");
         assert!(result.data.power_monitoring_enabled);
 
         // Backup should exist
@@ -1086,7 +1120,10 @@ mod tests {
         let settings = AppSettings::default();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
-        assert!(settings.default_shell_integration);
+        assert!(
+            !settings.default_shell_integration,
+            "the shell hook is opt-in (#5042)"
+        );
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
@@ -1098,7 +1135,8 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
-        assert!(settings.default_shell_integration);
+        // The one default that is not on: the shell hook is opt-in (#5042).
+        assert!(!settings.default_shell_integration);
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
@@ -1212,6 +1250,76 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.provide_x_server_automatically.is_none());
         assert!(settings.stop_x_server_when_idle);
+    }
+
+    /// Write `raw` as the settings file and load it back through the store.
+    fn load_raw(raw: &str) -> (SettingsStorage, AppSettings, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(&storage.file_path, raw).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        (storage, loaded.data, dir)
+    }
+
+    /// #5042: a v1 file carries `defaultShellIntegration: true` only because the
+    /// old default wrote it. Loading switches it off once.
+    #[test]
+    fn v1_shell_hook_default_is_switched_off_on_load() {
+        let (_, settings, _dir) = load_raw(
+            r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
+        );
+        assert!(!settings.default_shell_integration);
+        assert_eq!(settings.version, "2");
+    }
+
+    /// The reset only touches the shell-hook default, not its sibling toggles.
+    #[test]
+    fn v1_reset_leaves_other_defaults_alone() {
+        let (_, settings, _dir) = load_raw(
+            r#"{"version":"1","externalConnectionFiles":[],
+                "defaultShellIntegration":true,"defaultX11Forwarding":false,
+                "theme":"dark"}"#,
+        );
+        assert!(!settings.default_shell_integration);
+        assert!(!settings.default_x11_forwarding);
+        assert_eq!(settings.theme.as_deref(), Some("dark"));
+    }
+
+    /// An opt-in made after the reset is saved at v2 and is never reset again.
+    #[test]
+    fn shell_hook_opt_in_after_the_reset_survives_reload() {
+        let (storage, mut settings, _dir) = load_raw(
+            r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
+        );
+        settings.default_shell_integration = true;
+        storage.save(&settings).unwrap();
+
+        let raw = std::fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk["version"], serde_json::json!("2"));
+
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert!(reloaded.default_shell_integration);
+    }
+
+    /// The save stamps the current version even when the caller hands back a
+    /// document still labelled v1 (the frontend's pre-hydration seed is "1"),
+    /// so an opt-in is never mistaken for the old default on the next load.
+    #[test]
+    fn save_stamps_the_current_version() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let settings = AppSettings {
+            version: "1".to_string(),
+            default_shell_integration: true,
+            ..Default::default()
+        };
+        storage.save(&settings).unwrap();
+
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert_eq!(reloaded.version, "2");
+        assert!(reloaded.default_shell_integration);
     }
 
     #[test]
@@ -1918,13 +2026,28 @@ mod tests {
     // The fixtures were written by the pre-#3802 backend (plain-`String`
     // unions, broadcast groups and the two terminal toggles in the flattened
     // `extra` map). Loading and re-saving them must reproduce the file byte for
-    // byte, so promoting fields / typing unions is invisible on disk.
+    // byte, so promoting fields / typing unions is invisible on disk — apart
+    // from the v1 → v2 step's own two changes (see `as_v2`, #5042).
     // (`fileLanguageMappings` is a `HashMap`, so the fixture keeps it to one
     // entry: its multi-key order was never deterministic.)
 
     const LEGACY_FULL: &str = include_str!("testdata/settings_legacy_full.json");
     const LEGACY_DEFAULTS: &str = include_str!("testdata/settings_legacy_defaults.json");
     const LEGACY_UNKNOWN_KEYS: &str = include_str!("testdata/settings_legacy_unknown_keys.json");
+
+    /// The bytes a legacy (v1) fixture re-saves as: the same file, stamped v2,
+    /// with the old shell-hook default switched off (#5042) — the only two
+    /// on-disk changes the v1 → v2 step makes.
+    fn as_v2(legacy: &str) -> String {
+        legacy
+            .trim_end()
+            .replacen(r#""version": "1""#, r#""version": "2""#, 1)
+            .replacen(
+                r#""defaultShellIntegration": true"#,
+                r#""defaultShellIntegration": false"#,
+                1,
+            )
+    }
 
     /// Load `raw` through the real storage path and return the re-saved file.
     fn load_and_resave(raw: &str) -> (AppSettings, String) {
@@ -1941,7 +2064,7 @@ mod tests {
     #[test]
     fn legacy_full_settings_round_trip_byte_identical() {
         let (settings, saved) = load_and_resave(LEGACY_FULL);
-        assert_eq!(saved, LEGACY_FULL.trim_end());
+        assert_eq!(saved, as_v2(LEGACY_FULL));
 
         // The formerly-untyped values now land in typed fields…
         assert_eq!(settings.cursor_style, Some(CursorStyle::Bar));
@@ -1976,18 +2099,18 @@ mod tests {
     #[test]
     fn legacy_default_settings_round_trip_byte_identical() {
         let (_, saved) = load_and_resave(LEGACY_DEFAULTS);
-        assert_eq!(saved, LEGACY_DEFAULTS.trim_end());
-        // A fresh default serializes to the same bytes the old backend wrote.
+        assert_eq!(saved, as_v2(LEGACY_DEFAULTS));
+        // A fresh default serializes to the same bytes, at v2 with the hook off.
         assert_eq!(
             serde_json::to_string_pretty(&AppSettings::default()).unwrap(),
-            LEGACY_DEFAULTS.trim_end()
+            as_v2(LEGACY_DEFAULTS)
         );
     }
 
     #[test]
     fn legacy_minimal_settings_save_as_old_backend_did() {
         let (_, saved) = load_and_resave(r#"{"version":"1","externalConnectionFiles":[]}"#);
-        assert_eq!(saved, LEGACY_DEFAULTS.trim_end());
+        assert_eq!(saved, as_v2(LEGACY_DEFAULTS));
     }
 
     #[test]
@@ -1996,7 +2119,7 @@ mod tests {
         // is key order: an unknown key sorting *before* a promoted key
         // (`aFutureKey` < `broadcastGroups`) is now written after it.
         let (settings, saved) = load_and_resave(LEGACY_UNKNOWN_KEYS);
-        let before: serde_json::Value = serde_json::from_str(LEGACY_UNKNOWN_KEYS).unwrap();
+        let before: serde_json::Value = serde_json::from_str(&as_v2(LEGACY_UNKNOWN_KEYS)).unwrap();
         let after: serde_json::Value = serde_json::from_str(&saved).unwrap();
         assert_eq!(before, after);
         assert_eq!(
