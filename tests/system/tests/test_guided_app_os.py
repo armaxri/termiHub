@@ -7,7 +7,10 @@ harness builds the in-app state (shells, the spawn request through the
 instance's private rendezvous) and the operator does and judges the OS-side
 step.
 
-Covered: MT-SHI-01, MT-SHI-03..06.
+Covered: MT-SHI-04..06.
+(MT-SHI-01 and MT-SHI-03, the WSL spawn picker and saved-distro spawn, are
+graded against two real distributions on the WSL lane by
+``test_external_spawn.py::TestWslSpawnGrades`` since #4962.)
 (MT-APP-05, the MobaXterm import, is graded against a committed fixture by
 ``test_mobaxterm_import.py`` since #4960.)
 (MT-WIN-01..04, the macOS Dock and quit paths, and MT-SHI-02, external spawn
@@ -29,9 +32,6 @@ Run with ``./pytest.sh --manual -k guided_app_os -s``.
 """
 
 from __future__ import annotations
-
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -64,38 +64,6 @@ class TestGuidedAppOs(
     SystemTest,
 ):
     """Harness builds the state; operator drives and judges the OS side."""
-
-    # ── Helpers ──────────────────────────────────────────────────────────────
-    # ── MT-SHI-01..03: external spawn ────────────────────────────────────────
-    @pytest.mark.manual(platforms=["windows"])
-    def test_spawn_picker_wsl_section_and_distro_pick(self):
-        """MT-SHI-01 (two or more WSL distributions installed)."""
-        location = tempfile.mkdtemp(prefix="thub-spawn-")
-        self.app.run_cli(["spawn", "--location", location, "--pick"])
-        self.manual_step(
-            "The harness ran `termiHub spawn --pick` for this instance. In the picker "
-            "pick a non-default WSL distribution and press Open; run `cat /etc/os-release` "
-            "and `pwd`.",
-            "The WSL section lists every distribution; the tab runs the picked one and "
-            f"`pwd` shows the /mnt/ form of {location}.",
-        )
-
-    @pytest.mark.manual(platforms=["windows"])
-    def test_external_wsl_spawn_opens_named_distro_at_mnt_path(self):
-        """MT-SHI-03 (a saved WSL connection for a non-default distro)."""
-        home = str(Path.home())
-        self.app.run_cli(["spawn", "--kind", "wsl", "--location", home])
-        self.manual_step(
-            f"The harness spawned a WSL tab at {home}. Run `pwd` in it. Then save a WSL "
-            "connection named 'shi03' for a non-default distro (e.g. Debian).",
-            "The tab is '(Spawned)' and pwd is /mnt/c/Users/<you>; 'shi03' is saved.",
-        )
-        conn = self.wait(lambda: self.find_connection("shi03"), what="the 'shi03' connection")
-        self.app.run_cli(["spawn", "--kind", "wsl", "--location", home, "--connection", conn["id"]])
-        self.manual_observe(
-            "The harness spawned again with --connection shi03.",
-            "The new '(Spawned)' tab runs the saved distro (`cat /etc/os-release`).",
-        )
 
     # ── MT-SHI-04..06: OS context-menu integration ───────────────────────────
     # The artifacts Install writes and Uninstall removes (HKCU keys, Quick Action
