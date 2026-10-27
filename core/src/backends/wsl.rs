@@ -13,6 +13,8 @@ use std::time::Duration;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tracing::{debug, info, warn};
 
+use super::cwd_follow_thread::{CwdFollowThread, CwdProbe};
+use super::wsl_cwd::{probe_args, WslShellTracker};
 use super::wsl_exec::{
     distro_sh_args, parse_readlink_targets, readlink_targets_args, CREATE_NO_WINDOW, READLINK_BATCH,
 };
@@ -825,6 +827,70 @@ async fn wsl_setup(
     // Dropping tap_rx signals the reader thread to stop tapping.
 }
 
+/// A WSL cwd probe spawns `wsl.exe`, so it runs at most this often.
+const CWD_MIN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Upper bound on one cwd probe; a slower distribution just reports later.
+const CWD_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The cwd probe of a session whose `wsl.exe` was spawned at `spawned_at`:
+/// runs [`WSL_CWD_SCRIPT`](super::wsl_cwd::WSL_CWD_SCRIPT) in the
+/// distribution and picks this session's shell ([`WslShellTracker`]). Once
+/// the tracker gives up it returns `None` without spawning anything.
+fn wsl_cwd_probe(distribution: String, spawned_at: std::time::Instant) -> CwdProbe {
+    let tracker = Mutex::new(WslShellTracker::new());
+    Box::new(move || {
+        let mut tracker = tracker.lock().ok()?;
+        if tracker.gave_up() {
+            return None;
+        }
+        let stdout = run_cwd_probe(&distribution);
+        let cwd = tracker.read(stdout.as_deref(), spawned_at.elapsed());
+        if tracker.gave_up() {
+            info!(%distribution, "WSL cwd following: shell not found; stopped");
+        }
+        cwd
+    })
+}
+
+/// Run the cwd probe script in `distribution`; its stdout, or `None` when it
+/// could not run or exceeded [`CWD_PROBE_TIMEOUT`].
+fn run_cwd_probe(distribution: &str) -> Option<Vec<u8>> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("wsl.exe")
+        .args(probe_args(distribution))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let deadline = std::time::Instant::now() + CWD_PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                debug!("WSL cwd probe timed out");
+                return None;
+            }
+        }
+    }
+    reader.join().ok()
+}
+
 // ---------------------------------------------------------------------------
 
 impl Wsl {
@@ -1009,26 +1075,28 @@ impl ConnectionType for Wsl {
                     },
                     SettingsField {
                         key: "shellIntegration".to_string(),
-                        label: "Shell Integration".to_string(),
+                        label: "Command Marks (Shell Hook)".to_string(),
                         description: Some(
-                            "Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)"
+                            "Type a small hook into the distribution's shell for command marks (OSC 133)"
                                 .to_string(),
                         ),
                         help_text: Some(concat!(
-                            "When enabled, termiHub injects a small shell function at startup ",
-                            "that emits OSC 7 (current working directory) and OSC 133 (command ",
-                            "boundary) sequences on every prompt.\n\n",
-                            "This lets the file browser automatically follow the current directory ",
-                            "as you navigate in the shell, and enables jumping between prompts, ",
+                            "The file browser follows the shell's current directory without ",
+                            "this: termiHub reads it from the shell's process inside the ",
+                            "distribution, and nothing is typed into your shell.\n\n",
+                            "Turn this on for command marks — jumping between prompts, ",
                             "selecting or copying a command's output, and the success/failure ",
-                            "marker next to each finished command.\n\n",
-                            "The setup runs visibly in the terminal — you can always see what ",
-                            "termiHub is doing. Disable this if you manage your own shell ",
-                            "integration or prefer a clean terminal start.",
+                            "marker next to each finished command. termiHub then types a ",
+                            "`source` line into bash or zsh once the prompt is up; that line and ",
+                            "a short notice stay visible, and the hook stays in the shell: it is ",
+                            "in the shell's history, its functions show up in `set`, and ",
+                            "PROMPT_COMMAND / precmd and PS1 are extended.\n\n",
+                            "WSL connections saved while this was on by default were switched ",
+                            "off once when you updated; turn it back on here if you want it.",
                         ).to_string()),
                         field_type: FieldType::Boolean,
                         required: false,
-                        default: Some(serde_json::json!(true)),
+                        default: Some(serde_json::json!(false)),
                         placeholder: None,
                         supports_env_expansion: false,
                         supports_tilde_expansion: false,
@@ -1083,10 +1151,12 @@ impl ConnectionType for Wsl {
         // Parse settings into WslConfig.
         let config = parse_wsl_config(&settings)?;
         let distribution = config.distribution.clone();
+        // The typed hook is opt-in, for command marks only (#5013); the file
+        // browser follows the shell without it (`wsl_cwd_probe`).
         let shell_integration = settings
             .get("shellIntegration")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         // Resolve the WSL command via the shared shell helper.
         let shell_key = format!("wsl:{}", config.distribution);
@@ -1153,6 +1223,7 @@ impl ConnectionType for Wsl {
             warn!("could not re-enable Ctrl+C for the WSL shell: {e}");
         }
 
+        let spawned_at = std::time::Instant::now();
         let child = pty_pair
             .slave
             .spawn_command(command)
@@ -1205,6 +1276,15 @@ impl ConnectionType for Wsl {
         // the main output channel.
         let (tap_tx, tap_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(128);
 
+        // Follow the shell's directory from `/proc` inside the distribution,
+        // reported as OSC 7 — nothing typed into the shell (#5013).
+        let cwd_follow = CwdFollowThread::start(
+            wsl_cwd_probe(distribution.clone(), spawned_at),
+            CWD_MIN_INTERVAL,
+            self.output_tx.clone(),
+            alive.clone(),
+        );
+
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
@@ -1241,7 +1321,9 @@ impl ConnectionType for Wsl {
                         };
                         // Lock released above; the blocking send below can no
                         // longer stall other holders of `output_tx`.
-                        let _ = sender.blocking_send(data);
+                        cwd_follow.send(data, &sender, |d| {
+                            let _ = sender.blocking_send(d);
+                        });
                     }
                     Err(_) => break,
                 }
@@ -1252,6 +1334,7 @@ impl ConnectionType for Wsl {
                 *guard = None;
             }
             alive_clone.store(false, Ordering::SeqCst);
+            cwd_follow.stop();
         });
 
         self.state = Some(ConnectedState {
@@ -1604,6 +1687,19 @@ mod tests {
                 f.key
             );
         }
+    }
+
+    #[test]
+    fn schema_shell_hook_is_opt_in() {
+        // #5013: nothing is typed into a WSL shell unless the user opts in.
+        let schema = Wsl::new().settings_schema();
+        let hook = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "shellIntegration")
+            .expect("shellIntegration field");
+        assert_eq!(hook.default, Some(serde_json::json!(false)));
+        assert_eq!(hook.label, "Command Marks (Shell Hook)");
     }
 
     #[test]
