@@ -870,7 +870,9 @@ jobs:
         # Linux only: Tauri webview build deps + xvfb to give the app a display.
         # No socat/Docker — these grades need neither. xdotool + x11-apps (xwd)
         # let the native capture grades find the app window by its pid and dump
-        # its pixels (#4937).
+        # its pixels (#4937). openbox + x11-utils (a window manager for
+        # activation) and python3-gi + gir1.2-gtk-3.0 (the XDND partner
+        # windows) back the scaled-display drop grades (#4997).
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -887,7 +889,11 @@ jobs:
             dbus-x11 \
             xvfb \
             xdotool \
-            x11-apps
+            x11-apps \
+            openbox \
+            x11-utils \
+            python3-gi \
+            gir1.2-gtk-3.0
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
         # Same WebKitGTK-2.44+/ubuntu-24.04 sandbox fix as the bulk lane above: the
@@ -954,6 +960,30 @@ jobs:
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades" -v
           -n 1 --dist loadscope --reruns 0 -r aR
+
+      - name: Run the scaled-display drop grades (Linux, GDK_SCALE=2)
+        # MT-NIN-02 (#4997): an OS file drop must land in the pane under the
+        # cursor on a scaled display. Tauri reports a drop position the page
+        # converts to CSS pixels, and at devicePixelRatio 1 (the bulk lane) a
+        # wrong conversion is invisible. GDK_SCALE=2 makes WebKitGTK report
+        # devicePixelRatio 2 (GDK_DPI_SCALE=1 keeps the font size); the
+        # screen is large enough for the 2x window plus an XDND partner
+        # window, which the harness keeps at scale 1. Graded twice: the
+        # synthetic Tauri events and a real XDND drag (GTK → wry → Tauri).
+        # TERMIHUB_EXPECT_DEVICE_PIXEL_RATIO fails the grades if the scale
+        # did not take. Runs even when the step above failed: independent.
+        if: (success() || failure()) && runner.os == 'Linux'
+        env:
+          GDK_SCALE: "2"
+          GDK_DPI_SCALE: "1"
+          TERMIHUB_EXPECT_DEVICE_PIXEL_RATIO: "2"
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'scaled-display-linux-arm64' || 'scaled-display-linux' }}
+        run: >-
+          xvfb-run -a -s "-screen 0 3840x2160x24" dbus-run-session -- ./tests/system/pytest.sh -m integration
+          "tests/test_os_file_drop.py::TestSyntheticOsFileDrop::test_drop_targets_only_the_pane_under_the_cursor"
+          "tests/test_os_file_drop_xdnd.py::TestXdndFileDrop::test_real_drop_lands_in_the_pane_under_the_cursor"
+          "tests/test_os_file_drop_xdnd.py::TestXdndFileDrop::test_real_drop_onto_terminal_and_file_browser"
+          -v -n 1 --dist loadscope --reruns 0 -r aR
 
       - name: Run the display-critical grades (macOS/Windows, native display)
         # No fixtures needed, so a single xdist worker — the two suites run serially.

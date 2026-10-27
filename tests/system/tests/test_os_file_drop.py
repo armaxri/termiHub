@@ -39,6 +39,7 @@ from termihub_harness import (
     TabsUi,
     TerminalUi,
 )
+from termihub_harness.ui.os_drop import check_device_pixel_ratio
 from termihub_harness.ui.terminal import NEW_TERMINAL
 from termihub_harness.ui.windows import window_tabs
 
@@ -159,7 +160,9 @@ class TestSyntheticOsFileDrop(
         """MT-UI-34: with two shell panes the highlight follows the cursor from
         one pane to the other and is gone over the tab bar; a drop inserts the
         path only into the pane it was released over, and a drop on the tab bar
-        inserts nothing. (MT-NIN-02's hit-testing at the runner's scale.)"""
+        inserts nothing. MT-NIN-02: the scaled-display lane runs it under
+        ``GDK_SCALE=2`` (devicePixelRatio 2, #4997), the bulk lane at 1x."""
+        check_device_pixel_ratio(self.driver.os_input_probe())
         self.close_all_tabs()
         self.ensure_terminal()
         self.driver.click(SPLIT_H)

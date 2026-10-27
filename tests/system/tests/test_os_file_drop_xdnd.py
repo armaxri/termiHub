@@ -51,6 +51,9 @@ from termihub_harness import (
 from termihub_harness.os_input import ScreenMapper, xdnd
 from termihub_harness.os_input.xdnd import XdndSource, XdndTarget, free_region, native_drag
 from termihub_harness.ui.files import file_row_testid
+from termihub_harness.ui.os_drop import check_device_pixel_ratio
+from termihub_harness.ui.terminal import NEW_TERMINAL
+from termihub_harness.ui.windows import window_tabs
 from termihub_harness.ui.os_input_ui import linux_window_manager
 
 pytestmark = [
@@ -61,6 +64,7 @@ pytestmark = [
 FB_LIST = "file-browser-list"
 FB_OVERLAY = "file-browser-drag-overlay"
 FB_FILTER = "file-browser-filter"
+SPLIT_H = "terminal-view-split-horizontal"
 PARTNER_SIZE = (260, 200)
 #: Window size that leaves screen room for a partner window beside it.
 APP_SIZE = (900, 620)
@@ -167,6 +171,64 @@ class TestXdndFileDrop(_XdndSuite, TerminalUi, TabsUi, LayoutUi, SidebarUi, File
                 self.wait(lambda c=copied: c.exists(), what=f"{copied} to be copied")
                 assert copied.read_text(encoding="utf-8") == "xdnd payload\n"
                 assert path.exists(), "the drop moved the source"
+        self.os_activate()
+
+    # ── MT-NIN-02: a native drop hits the pane under the cursor ─────────────
+    def test_real_drop_lands_in_the_pane_under_the_cursor(self):
+        """MT-NIN-02 natively: with two shell panes side by side, a file dragged
+        from another X11 app and released over the far half of the pane further
+        from the window origin is inserted there, and the other pane gets
+        nothing. The XDND position is real (GTK → wry → Tauri), so a wrong
+        physical/CSS conversion lands the drop in the other pane. The
+        scaled-display lane runs it under ``GDK_SCALE=2`` (#4997)."""
+        self._require_xdnd()
+        osi = self.os_input()
+        check_device_pixel_ratio(self.driver.os_input_probe())
+        folder = self._scratch("xdnd-nin02")
+        dropped = folder / "scaled drop.txt"
+        dropped.write_text("nin02\n", encoding="utf-8")
+        self.close_all_tabs()
+        self.ensure_terminal()
+        self.driver.click(SPLIT_H)
+        self.wait(lambda: self.leaf_count() == 2, what="two panes")
+        self.driver.click(NEW_TERMINAL)
+        first = self.wait(lambda: (window_tabs(self.driver) or [None])[0], what="the first tab")
+        first_panel = self.panel_of_tab(first["id"])
+        second = self.wait(
+            lambda: next(
+                (t for t in window_tabs(self.driver) if self.panel_of_tab(t["id"]) != first_panel),
+                None,
+            ),
+            what="a shell in the second pane",
+        )
+        for tab in (first, second):
+            self.wait(lambda t=tab: self.driver.read_terminal(t["id"]).strip(), what="a prompt")
+
+        def origin(tab: dict) -> float:
+            rect = self.driver.os_input_probe(f"terminal-renderer-{tab['id']}")["rect"]
+            return rect["left"] + rect["top"]
+
+        # The far pane: a position left in CSS pixels but divided by the scale
+        # (or one in device pixels read as CSS) moves toward the origin, into
+        # the near pane — so this is where a scale bug shows.
+        screen = self._stage()
+        near, far = sorted((first, second), key=origin)
+        before_near = self.driver.read_terminal(near["id"])
+        with XdndSource([dropped], self._partner_geometry(screen)) as source:
+            start = self._partner_center(source.pid)
+            target = screen.point(f"terminal-renderer-{far['id']}", fx=0.6, fy=0.6)
+            native_drag(osi, start, [target])
+            source.wait_event("data-get")
+            expected = "".join(quote_path(str(dropped)).split())
+            self.wait(
+                lambda: expected in "".join(self.driver.read_terminal(far["id"]).split()),
+                what="the natively dropped path in the pane under the cursor",
+            )
+            time.sleep(1.5)
+            assert self.driver.read_terminal(near["id"]) == before_near, (
+                "the native drop also reached the other pane"
+            )
+            self.driver.press_key("c", f"terminal-input-{far['id']}", ctrl=True)
         self.os_activate()
 
     # ── Drag out: file-browser rows → XDND target, and back ──────────────────

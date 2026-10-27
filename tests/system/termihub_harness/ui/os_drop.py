@@ -17,8 +17,9 @@ native half (X11 XDND between real windows) is driven separately by
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable, Mapping, Optional, Union
 
 from ..bridge import Driver
 from .base import HarnessMixin
@@ -29,6 +30,29 @@ DRAG_DROP = "tauri://drag-drop"
 DRAG_LEAVE = "tauri://drag-leave"
 
 PathLike = Union[str, Path]
+
+#: Set by a scaled-display lane (#4997, e.g. ``2`` under ``GDK_SCALE=2``): the
+#: ``devicePixelRatio`` the test instance must report, so a drop grade meant to
+#: run at a scale other than 1 fails instead of silently grading at 1x.
+EXPECT_DPR_ENV = "TERMIHUB_EXPECT_DEVICE_PIXEL_RATIO"
+
+
+def expected_device_pixel_ratio(env: Optional[Mapping[str, str]] = None) -> Optional[float]:
+    """The ``devicePixelRatio`` this lane demands, or None when it demands none."""
+    raw = (os.environ if env is None else env).get(EXPECT_DPR_ENV, "").strip()
+    return float(raw) if raw else None
+
+
+def check_device_pixel_ratio(probe: Mapping[str, Any], env: Optional[Mapping[str, str]] = None) -> float:
+    """The probed ``devicePixelRatio``; raises when it is not the lane's expected one."""
+    dpr = float(probe.get("devicePixelRatio") or 1.0)
+    expected = expected_device_pixel_ratio(env)
+    if expected is not None and abs(dpr - expected) > 0.01:
+        raise AssertionError(
+            f"the test instance reports devicePixelRatio {dpr}, but {EXPECT_DPR_ENV}="
+            f"{expected}: the scaled-display lane is grading at the wrong scale"
+        )
+    return dpr
 
 
 def physical_point(probe: dict[str, Any], fx: float = 0.5, fy: float = 0.5) -> dict[str, float]:
