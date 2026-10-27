@@ -28,7 +28,7 @@ from termihub_harness.os_input import (
 )
 from termihub_harness.os_input.helper import helper_command
 from termihub_harness.os_input.keymap import mac_keycode, us_key_for_char, win_vk
-from termihub_harness.os_input.linux import LinuxOsInput, combo_keysyms, keysym
+from termihub_harness.os_input.linux import LinuxOsInput, XWindowManager, combo_keysyms, keysym
 from termihub_harness.os_input.macos import MacOsInput, combo_flags, fourcc
 
 CI = {"GITHUB_ACTIONS": "true"}
@@ -219,6 +219,38 @@ def test_linux_keysyms():
     assert keysym("'") == "apostrophe"
     assert keysym("f5") == "F5"
     assert keysym("dead_acute") == "dead_acute"
+
+
+def _xprop_runner(windows: dict[str, str]):
+    """A fake runner: ``xprop`` answers from ``windows`` (id → output), else fails."""
+
+    def run(argv: Sequence[str]) -> str:
+        key = "root" if argv[1] == "-root" else argv[2]
+        if key not in windows:
+            raise OsInputUnavailable(f"xprop: BadWindow {key}")
+        return windows[key]
+
+    return run
+
+
+_WM_CHECK = "_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x400001"
+
+
+def test_window_manager_running_when_its_check_window_answers():
+    run = _xprop_runner({"root": _WM_CHECK, "0x400001": _WM_CHECK})
+    assert XWindowManager(run=run).running()
+
+
+def test_window_manager_not_running_when_the_root_property_is_stale():
+    """#4979: an openbox that exited leaves the root's _NET_SUPPORTING_WM_CHECK
+    behind. Trusting it made every later suite run without a window manager."""
+    run = _xprop_runner({"root": _WM_CHECK})
+    assert not XWindowManager(run=run).running()
+
+
+def test_window_manager_not_running_without_the_root_property():
+    run = _xprop_runner({"root": "_NET_SUPPORTING_WM_CHECK:  not found."})
+    assert not XWindowManager(run=run).running()
 
 
 def test_us_layout_char_map():
