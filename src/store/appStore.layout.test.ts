@@ -193,7 +193,7 @@ describe("appStore — layout state", () => {
     expect(useAppStore.getState().layoutConfig).toEqual(DEFAULT_LAYOUT);
   });
 
-  it("loadFromBackend restores sidebarView and sidebarCollapsed from saved layout", async () => {
+  it("loadFromBackend always starts on an open connections view, ignoring the saved view (#5010)", async () => {
     const { getSettings } = await import("@/services/storage");
     vi.mocked(getSettings).mockResolvedValueOnce({
       version: "1",
@@ -213,8 +213,8 @@ describe("appStore — layout state", () => {
 
     await useAppStore.getState().loadFromBackend();
 
-    expect(useAppStore.getState().sidebarView).toBe("tunnels");
-    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+    expect(useAppStore.getState().sidebarView).toBe("connections");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
   });
 
   it("loadFromBackend resets sidebarView to connections when saved view is files", async () => {
@@ -238,7 +238,7 @@ describe("appStore — layout state", () => {
     await useAppStore.getState().loadFromBackend();
 
     expect(useAppStore.getState().sidebarView).toBe("connections");
-    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
   });
 
   it("loadFromBackend defaults sidebarView to connections when not in saved layout", async () => {
