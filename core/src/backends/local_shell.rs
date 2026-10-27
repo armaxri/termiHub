@@ -2528,8 +2528,11 @@ mod tests {
 
     /// #5017: a local PowerShell / cmd session keeps what the user's profile
     /// printed at startup (and cmd its banner) — termiHub's startup setup
-    /// neither clears the screen nor shows any of its own text — and the file
-    /// browser still follows `cd`, with the command-mark hook off and on.
+    /// neither clears the screen nor shows any of its own text. With the
+    /// command-mark hook off, nothing of termiHub's exists in a PowerShell
+    /// session (stock `prompt` and `PSConsoleHostReadLine`, no `__th_`
+    /// variables) and cmd's `cd` is still followed from its process; with it
+    /// on, both follow `cd` through their hook.
     ///
     /// Needs a profile that prints `TERMIHUB_TEST_PROFILE_MARKER`: a
     /// PowerShell `profile.ps1` (Windows PowerShell and pwsh) and cmd's
@@ -2612,39 +2615,66 @@ mod tests {
                     failures.push(format!("{tag}: cmd's banner missing: {shown:?}"));
                 }
 
-                // The file browser follows `cd` (OSC 7 from the hook or the
-                // passive follower; OSC 9;9 from cmd's hook).
-                output.clear();
-                let cd = format!("cd \"{}\"\r", target.display());
-                shell.write(cd.as_bytes()).expect("write cd");
-                let followed = read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
-                    cwd_reports(t)
-                        .iter()
-                        .any(|cwd| cwd.to_lowercase().contains(&target_name))
-                })
-                .await;
-                if !followed {
-                    failures.push(format!(
-                        "{tag}: no cwd report for {} after cd: {:?}",
-                        target.display(),
-                        String::from_utf8_lossy(&output)
-                    ));
-                }
-
-                // Evidence for #5017: whether PowerShell's location is its
-                // process directory (what a passive OS read would see).
+                // PowerShell's footprint: termiHub's variables, and whether
+                // `prompt` / `PSConsoleHostReadLine` are termiHub's wrappers.
+                // The marker is assembled at run time so the echo of the typed
+                // line cannot satisfy the wait.
                 if !is_cmd {
                     output.clear();
                     shell
-                        .write(b"Write-Output ('PC' + 'WD=' + [Environment]::CurrentDirectory + '|LOC=' + $PWD.Path)\r")
-                        .expect("write probe");
+                        .write(
+                            b"$p=(Get-Command prompt).Definition;\
+                              $r=(Get-Command PSConsoleHostReadLine -ErrorAction SilentlyContinue).Definition;\
+                              Write-Output ('FP' + '=' + \
+                              @(Get-Variable -Scope Global -Name '__th_*' -ErrorAction SilentlyContinue).Count + \
+                              '|' + ($p -match '133|__th_') + '|' + ($r -match '133|__th_') + '|END')\r",
+                        )
+                        .expect("write footprint probe");
                     read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
-                        t.contains("PCWD=") && t[t.find("PCWD=").unwrap()..].contains("|LOC=")
+                        visible_text(t)
+                            .lines()
+                            .any(|l| l.contains("FP=") && l.contains("|END"))
                     })
                     .await;
                     let text = visible_text(&String::from_utf8_lossy(&output));
-                    let line = text.lines().find(|l| l.contains("PCWD=")).unwrap_or("");
-                    eprintln!("[5017] {tag} process cwd vs location: {line}");
+                    let line = text
+                        .lines()
+                        .find(|l| l.contains("FP=") && l.contains("|END"))
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    eprintln!("[5017] {tag} footprint (vars|prompt|readline): {line}");
+                    let untouched = line.ends_with("FP=0|False|False|END");
+                    if hook == untouched {
+                        failures.push(format!(
+                            "{tag}: termiHub's PowerShell footprint is {line:?}, expected {}",
+                            if hook { "the hook" } else { "none" }
+                        ));
+                    }
+                }
+
+                // The file browser follows `cd`: OSC 7 from PowerShell's hook
+                // or cmd's passive follower, OSC 9;9 from cmd's hook. Without
+                // the hook PowerShell's location is not followed (its process
+                // directory does not change), so it is not checked.
+                if hook || is_cmd {
+                    output.clear();
+                    let cd = format!("cd \"{}\"\r", target.display());
+                    shell.write(cd.as_bytes()).expect("write cd");
+                    let followed =
+                        read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
+                            cwd_reports(t)
+                                .iter()
+                                .any(|cwd| cwd.to_lowercase().contains(&target_name))
+                        })
+                        .await;
+                    if !followed {
+                        failures.push(format!(
+                            "{tag}: no cwd report for {} after cd: {:?}",
+                            target.display(),
+                            String::from_utf8_lossy(&output)
+                        ));
+                    }
                 }
                 shell.disconnect().await.ok();
             }
@@ -2762,26 +2792,25 @@ mod tests {
         }
     }
 
-    /// PowerShell keeps its startup-argument setup with the setting off: its
-    /// location is not its process directory, so the prompt hook is the only
-    /// way to follow it, and nothing is typed.
+    /// With the setting off, PowerShell and cmd start untouched: no
+    /// `-NoExit -Command` / `/K` setup, so no wrapped `prompt`, no
+    /// `$global:__th_si`, no `PROMPT` change (#5017, as #5009 for bash/zsh).
+    /// cmd's directory is still followed from its process; PowerShell's is
+    /// not (its location is not its process directory) until command marks
+    /// are turned on.
     #[test]
-    fn powershell_keeps_its_startup_argument_setup() {
-        let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
-        let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, false);
-        assert!(stdin.is_none());
-        assert_eq!(cmd.args[1], "-Command");
-    }
-
-    /// cmd's directory is its process directory, which the passive follower
-    /// reads from the OS, so with the setting off cmd starts untouched: no
-    /// `/K`, its own banner, its own `PROMPT` (#5017, as #5009 for bash/zsh).
-    #[test]
-    fn cmd_starts_untouched_with_the_setting_off() {
-        for cmd_path in ["cmd", r"C:\Windows\system32\cmd.exe"] {
-            let (cmd, stdin) = apply_shell_integration(bare_command(cmd_path), cmd_path, false);
-            assert!(stdin.is_none(), "{cmd_path}");
-            assert!(cmd.args.is_empty(), "{cmd_path}: {:?}", cmd.args);
+    fn windows_shells_start_untouched_with_the_setting_off() {
+        for shell in [
+            "powershell",
+            "pwsh",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "cmd",
+            r"C:\Windows\system32\cmd.exe",
+        ] {
+            let (cmd, stdin) = apply_shell_integration(bare_command(shell), shell, false);
+            assert!(stdin.is_none(), "{shell}");
+            assert!(cmd.args.is_empty(), "{shell}: {:?}", cmd.args);
         }
     }
 
