@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INPUT_HOLD_MAX_MS,
+  RESIZE_INPUT_HOLD_MAX_MS,
   holdSessionInput,
   isSessionInputHeld,
   lastSessionInputAt,
@@ -313,5 +314,47 @@ describe("session input slots (#5026)", () => {
     s2.cancel();
     await flush();
     expect(sent).toEqual(["s2-key", "s2-other"]);
+  });
+});
+
+describe("paste slots during a resize hold (#5025, #5026)", () => {
+  it("keeps a paste slot reserved during a slow resize in order, and both release", async () => {
+    vi.useFakeTimers();
+    const { sent, send } = recorder();
+    const releaseResize = holdSessionInput("s1", "resize", RESIZE_INPUT_HOLD_MAX_MS);
+    void whenSessionInputOpen("s1", send("a"));
+    const slot = reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("b"));
+    void slot.fill(() => whenSessionInputOpen("s1", send("paste")));
+
+    // Past the 1 s bound of an ordinary hold: the resize is still in flight,
+    // so nothing (not even the filled paste) overtakes it.
+    vi.advanceTimersByTime(INPUT_HOLD_MAX_MS + 100);
+    await flush();
+    expect(sent).toEqual([]);
+
+    releaseResize();
+    await flush();
+    expect(sent).toEqual(["a", "paste", "b"]);
+    expect(isSessionInputHeld("s1")).toBe(false);
+  });
+
+  it("lifts an unfilled paste slot on its own bound while the resize still holds", async () => {
+    vi.useFakeTimers();
+    const { sent, send } = recorder();
+    holdSessionInput("s1", "resize", RESIZE_INPUT_HOLD_MAX_MS);
+    reserveSessionInputSlot("s1", "paste");
+    void whenSessionInputOpen("s1", send("key"));
+
+    vi.advanceTimersByTime(INPUT_HOLD_MAX_MS);
+    await flush();
+    // The slot gave up its place, but the resize hold still orders the key.
+    expect(sent).toEqual([]);
+    expect(isSessionInputHeld("s1")).toBe(true);
+
+    vi.advanceTimersByTime(RESIZE_INPUT_HOLD_MAX_MS - INPUT_HOLD_MAX_MS);
+    await flush();
+    expect(sent).toEqual(["key"]);
+    expect(isSessionInputHeld("s1")).toBe(false);
   });
 });
