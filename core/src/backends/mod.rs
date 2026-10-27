@@ -9,6 +9,9 @@ pub mod local_shell;
 
 #[cfg(feature = "local-shell")]
 mod local_shell_cwd;
+// Runs the hook-free cwd following of a PTY session (#5009, #5013).
+#[cfg(any(feature = "local-shell", all(feature = "wsl", windows)))]
+mod cwd_follow_thread;
 #[cfg(feature = "local-shell")]
 mod local_shell_setup;
 #[cfg(all(feature = "local-shell", unix))]

@@ -26,7 +26,7 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
-use super::local_shell_cwd::LocalCwdFollow;
+use super::cwd_follow_thread::CwdFollowThread;
 use super::local_shell_setup::TypedSetup;
 
 use crate::output::early::EarlyOutput;
@@ -667,9 +667,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         });
 
         // Follow the shell's directory from the OS, reported as OSC 7 (#5009).
-        let cwd_follow = spawned
-            .cwd_probe
-            .map(|probe| LocalCwdFollow::start(probe, self.output_tx.clone(), alive.clone()));
+        let cwd_follow = spawned.cwd_probe.map(|probe| {
+            CwdFollowThread::start(
+                probe,
+                super::local_shell_cwd::MIN_INTERVAL,
+                self.output_tx.clone(),
+                alive.clone(),
+            )
+        });
 
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
