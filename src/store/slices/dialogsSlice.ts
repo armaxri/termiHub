@@ -32,15 +32,19 @@ export interface DialogsSlice {
      * target (#3443): the dialog then names the target count before sending.
      */
     broadcastTargetCount?: number;
+    /** Called when the paste is declined, so it can give up its input slot (#5026). */
+    onCancel?: () => void;
   };
   /**
    * Ask before pasting. `broadcastTargetCount` (> 1) marks a multi-line
    * broadcast paste so the confirmation states how many terminals receive it.
+   * `onCancel` runs when the user declines.
    */
   showLargePasteDialog: (
     charCount: number,
     onConfirm: () => void,
-    broadcastTargetCount?: number
+    broadcastTargetCount?: number,
+    onCancel?: () => void
   ) => void;
   closeLargePasteDialog: () => void;
 
@@ -68,12 +72,17 @@ export interface DialogsSlice {
 export const createDialogsSlice: StateCreator<AppState, [], [], DialogsSlice> = (set) => ({
   // Large paste confirmation
   largePasteDialog: { open: false, charCount: 0, onConfirm: null },
-  showLargePasteDialog: (charCount, onConfirm, broadcastTargetCount) =>
+  showLargePasteDialog: (charCount, onConfirm, broadcastTargetCount, onCancel) =>
     set({
-      largePasteDialog:
-        broadcastTargetCount !== undefined && broadcastTargetCount > 1
-          ? { open: true, charCount, onConfirm, broadcastTargetCount }
-          : { open: true, charCount, onConfirm },
+      largePasteDialog: {
+        open: true,
+        charCount,
+        onConfirm,
+        ...(broadcastTargetCount !== undefined && broadcastTargetCount > 1
+          ? { broadcastTargetCount }
+          : {}),
+        ...(onCancel ? { onCancel } : {}),
+      },
     }),
   closeLargePasteDialog: () =>
     set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
