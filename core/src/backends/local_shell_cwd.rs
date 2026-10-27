@@ -97,7 +97,14 @@ pub(crate) fn innermost_shell_cwd(root: u32) -> Option<String> {
             start: p.start_time(),
         })
         .collect();
-    process_cwd(innermost_same_program(root, &processes))
+    usable_cwd(process_cwd(innermost_same_program(root, &processes)))
+}
+
+/// `cwd` when it is a directory a file browser can show. MSYS reports a
+/// virtual directory (`cd /proc`) as the pipe namespace `\\?\PIPE\`
+/// (#5014); that is left unreported, so the last real directory stays.
+fn usable_cwd(cwd: Option<String>) -> Option<String> {
+    cwd.filter(|c| std::path::Path::new(c).is_dir())
 }
 
 struct Shared {
@@ -250,6 +257,14 @@ mod tests {
         let table = [p(10, 11, "bash.exe", 1), p(11, 10, "bash.exe", 1)];
         let found = innermost_same_program(10, &table);
         assert!(found == 10 || found == 11);
+    }
+
+    #[test]
+    fn a_virtual_msys_directory_is_not_reported() {
+        assert_eq!(usable_cwd(Some(r"\\?\PIPE\".to_string())), None);
+        assert_eq!(usable_cwd(None), None);
+        let here = std::env::temp_dir().to_string_lossy().into_owned();
+        assert_eq!(usable_cwd(Some(here.clone())), Some(here));
     }
 
     /// The real process table: this test process has no same-named child,
