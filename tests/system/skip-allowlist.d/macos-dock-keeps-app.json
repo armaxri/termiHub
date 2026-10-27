@@ -1,0 +1,6 @@
+{
+  "reason": "^macOS keeps the app alive in the Dock after the last window",
+  "nodeid": "test_multi_window\\.py",
+  "lanes": ["bulk-macos"],
+  "why": "platform behaviour; graded as MT-WIN-01 by test_os_input_macos_app.py (#4935)"
+}

@@ -7,7 +7,7 @@ real plugin index from GitHub and a pinned package from this repository.
 
 Network outages: each test first probes the URL the app is about to fetch
 (:mod:`termihub_harness.https_probe`). No answer or a 5xx/429 skips with the
-``network unavailable: …`` reason that ``skip-allowlist.json`` admits for this
+``network unavailable: …`` reason that ``skip-allowlist.d/`` admits for this
 module. A 404, or any other answer, is graded — a missing index or package
 fails the lane.
 

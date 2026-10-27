@@ -1,0 +1,6 @@
+{
+  "reason": "^X keyboard maps \\(Linux\\)$",
+  "nodeid": "test_os_input_keyboard\\.py",
+  "lanes": ["os-input-macos", "os-input-windows"],
+  "why": "the German layout grade switches the X keyboard map with setxkbmap (#4935)"
+}

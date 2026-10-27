@@ -548,8 +548,9 @@ jobs:
         # the app and driving the fixtures.
         #
         # Skip guard (#4315): a skip is green, so this lane fails on any skip
-        # whose reason tests/system/skip-allowlist.json does not expect for
-        # `bulk-linux`, on more skips than its baseline, and when it ran nothing;
+        # whose reason tests/system/skip-allowlist.d/ does not expect for
+        # `bulk-linux`, on more skips than its budget (the sum of the fragments'
+        # max_skips for the lane, #5033), and when it ran nothing;
         # TERMIHUB_REQUIRE_FIXTURES=1 also fails any "fixture unavailable" skip
         # and a missing RDP sidecar. The run summary lists every skip and reason.
         #
