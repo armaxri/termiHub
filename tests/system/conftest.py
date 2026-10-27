@@ -79,6 +79,10 @@ from termihub_harness import (
     wait_for_banner,
     wait_for_rdp,
 )
+from termihub_harness.traceroute_fixture import (
+    TracerouteFixtureUnavailable,
+    ensure_traceroute_fixture,
+)
 
 
 def pytest_addoption(parser):
@@ -656,6 +660,22 @@ def serial_echo_pair():
         yield pair
     finally:
         pair.stop()
+
+
+@pytest.fixture(scope="session")
+def traceroute_fixtures():
+    """Two routers + a target (compose profile ``traceroute``, #4964).
+
+    Returns the :class:`~termihub_harness.TracerouteHops` a trace from this host
+    must stream. Skips off Linux, or when the host is not on the Docker bridge,
+    or when no container runtime is reachable.
+    """
+    try:
+        return ensure_traceroute_fixture()
+    except TracerouteFixtureUnavailable as exc:
+        pytest.skip(str(exc))
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"traceroute container fixtures unavailable: {exc}")
 
 
 @pytest.fixture(scope="session")

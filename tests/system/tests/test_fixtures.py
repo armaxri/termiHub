@@ -534,7 +534,14 @@ def test_fixed_resource_names_covers_the_real_compose_file():
     containers, networks = fx.fixed_resource_names(fx.COMPOSE_FILE, "termihub")
     assert "termihub-ssh-password" in containers
     assert "termihub-remote-agent" in containers
-    assert networks == {"termihub-test-net", "termihub-jumphost-net"}
+    assert networks == {
+        "termihub-test-net",
+        "termihub-jumphost-net",
+        # The multi-hop traceroute chain (#4964).
+        "termihub-traceroute-a",
+        "termihub-traceroute-b",
+        "termihub-traceroute-c",
+    }
 
 
 def test_fixed_resource_names_of_a_missing_file_is_empty(tmp_path):

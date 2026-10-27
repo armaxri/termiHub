@@ -151,3 +151,63 @@ describe("ConnectionList – Remote Agents collapse (#1822)", () => {
     expect(collapsedWrapper?.style.flex).toBe("");
   });
 });
+
+describe("ConnectionList – empty Remote Agents section starts collapsed (#5010)", () => {
+  function toggleExpanded(): string | null | undefined {
+    return container
+      .querySelector('[data-testid="connection-list-remote-agents-toggle"]')
+      ?.getAttribute("aria-expanded");
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    seedSettings({ ...baseSettings });
+    seedAgentsRegion({ remoteAgents: [] });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("is collapsed when there are no agents, with the add action still reachable", async () => {
+    await render();
+
+    expect(toggleExpanded()).toBe("false");
+    expect(container.querySelector('[data-testid="agent-filter-input"]')).toBeNull();
+    expect(container.querySelector('[data-testid="connection-list-new-agent"]')).toBeTruthy();
+  });
+
+  it("expands once the first agent is added", async () => {
+    await render();
+    expect(toggleExpanded()).toBe("false");
+
+    await act(async () => seedAgentsRegion({ remoteAgents: [makeAgent()] }));
+    await flushAsync();
+
+    expect(toggleExpanded()).toBe("true");
+    expect(container.querySelector('[data-testid="agent-node-agent-1"]')).toBeTruthy();
+  });
+
+  it("honours an explicit expand of the empty section", async () => {
+    await render();
+    clickRemoteAgentsToggle();
+
+    expect(toggleExpanded()).toBe("true");
+    expect(container.querySelector('[data-testid="agent-filter-input"]')).toBeTruthy();
+  });
+
+  it("re-collapses when the last agent is removed", async () => {
+    seedAgentsRegion({ remoteAgents: [makeAgent()] });
+    await render();
+    expect(toggleExpanded()).toBe("true");
+
+    await act(async () => seedAgentsRegion({ remoteAgents: [] }));
+    await flushAsync();
+
+    expect(toggleExpanded()).toBe("false");
+  });
+});

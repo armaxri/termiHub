@@ -194,6 +194,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-RD-10": (
         "test_vnc_file_transfer.py::test_os_drop_uploads_files_and_a_folder_and_keeps_both"
     ),
+    # #4964: traced through a two-router Docker chain, unprivileged (IP_RECVERR).
+    "MT-NET-16": "test_network_tools_traceroute.py::test_traceroute_hops_stream_in_and_complete",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
