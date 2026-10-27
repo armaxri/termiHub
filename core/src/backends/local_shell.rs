@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use crate::config::ShellConfig;
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
-    SelectOption, SettingsField, SettingsGroup, SettingsSchema,
+    PromptProbe, SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
@@ -26,7 +26,7 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
-use super::local_shell_cwd::LocalCwdFollow;
+use super::cwd_follow_thread::CwdFollowThread;
 use super::local_shell_setup::TypedSetup;
 
 use crate::output::early::EarlyOutput;
@@ -298,6 +298,8 @@ struct ConnectedState {
     disconnected: bool,
     /// The typed shell-integration setup, for bash / zsh (#5009).
     setup: Option<Arc<TypedSetup>>,
+    /// The line-editor probe offered for the initial command (#5029).
+    prompt_probe: Option<PromptProbe>,
 }
 
 impl Drop for ConnectedState {
@@ -499,7 +501,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             key: "shellIntegration".to_string(),
                             label: "Command Marks (Shell Hook)".to_string(),
                             description: Some(
-                                "Type a small hook into bash/zsh for command marks (OSC 133)"
+                                "Add a shell hook for command marks (OSC 133) and PowerShell's directory"
                                     .to_string(),
                             ),
                             help_text: Some(
@@ -513,8 +515,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             "bash or zsh once the prompt is up and keeps it off the screen, but ",
                             "the hook stays in the shell: it is in the shell's history, its ",
                             "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
-                            "extended. fish gets it as a startup option, PowerShell and cmd as ",
-                            "startup arguments.\n\n",
+                            "extended. fish, cmd and PowerShell get it as a startup option ",
+                            "instead, so nothing is typed.\n\n",
+                            "PowerShell: the file browser follows PowerShell's current directory ",
+                            "only with this on. Its location is not the directory the operating ",
+                            "system sees, so without the hook a `cd` in PowerShell is not ",
+                            "followed. With it on, PowerShell's `prompt` and ",
+                            "PSConsoleHostReadLine functions are wrapped and a few `$__th_` ",
+                            "variables are set in the session.\n\n",
                             "Connections saved while this was on by default were switched off ",
                             "once when you updated; turn it back on here if you want it.",
                         )
@@ -667,9 +675,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         });
 
         // Follow the shell's directory from the OS, reported as OSC 7 (#5009).
-        let cwd_follow = spawned
-            .cwd_probe
-            .map(|probe| LocalCwdFollow::start(probe, self.output_tx.clone(), alive.clone()));
+        let cwd_follow = spawned.cwd_probe.map(|probe| {
+            CwdFollowThread::start(
+                probe,
+                super::local_shell_cwd::MIN_INTERVAL,
+                self.output_tx.clone(),
+                alive.clone(),
+            )
+        });
 
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
@@ -760,12 +773,20 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // editor is observable it waits for the prompt so its echo can be
         // hidden (#5009); elsewhere it is typed now, as before. Failures are
         // non-fatal — the shell works without CWD tracking.
+        let line_editor: Option<PromptProbe> = spawned.line_editor_reading.map(PromptProbe::from);
         if let Some(setup) = &setup {
-            match spawned.line_editor_reading {
-                Some(reading) => setup.clone().type_when_ready(reading, alive.clone()),
+            match &line_editor {
+                Some(reading) => setup
+                    .clone()
+                    .type_when_ready(reading.clone(), alive.clone()),
                 None => setup.type_now(),
             }
         }
+        // Without the typed setup, the line editor taking over the PTY is
+        // also the initial command's cue (#5029). With it, the prompt mark
+        // the setup brings is, so the command never lands between the two.
+        let prompt_probe =
+            line_editor.filter(|_| setup.is_none() && has_line_editor(&effective_shell));
 
         self.state = Some(ConnectedState {
             writer,
@@ -774,6 +795,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             alive,
             disconnected: false,
             setup,
+            prompt_probe,
         });
 
         Ok(())
@@ -898,6 +920,10 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             crate::monitoring::LocalProcessManager::new(),
         ))
     }
+
+    fn prompt_probe(&self) -> Option<PromptProbe> {
+        self.state.as_ref()?.prompt_probe.clone()
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -911,17 +937,25 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 /// `pwsh`), `cmd` and `fish` take the setup as startup flags so it runs
 /// before the first prompt without echoing; every other shell gets it back as
 /// the snippet to type via stdin (see [`TypedSetup`]). Returns `(command, stdin_setup)`.
+/// Whether `shell` reads its prompt through a line editor that takes the
+/// PTY out of canonical mode (readline, ZLE, fish's reader), so
+/// `line_editor_reading` tells when it waits at its prompt (#5029). A plain
+/// `sh` reads in canonical mode and would never report.
+fn has_line_editor(shell: &str) -> bool {
+    matches!(shell_kind(shell), "bash" | "zsh" | "fish")
+}
+
 fn apply_shell_integration(
     mut cmd: ShellCommand,
     shell: &str,
     shell_integration: bool,
 ) -> (ShellCommand, Option<&'static str>) {
-    // PowerShell and cmd report their directory only through their startup
-    // arguments (PowerShell's location is not its process directory), and
-    // those are never typed or shown, so they always get them. The setting
-    // governs the typed bash/zsh hook (and fish's) for command marks (#5009).
-    let windows_shell = matches!(shell_kind(shell), "powershell" | "pwsh" | "cmd");
-    let setup = if shell_integration || windows_shell {
+    // Every shell starts untouched unless command marks are asked for
+    // (#5009, #5017): bash/zsh/cmd are then followed from their process
+    // directory. PowerShell's location is not its process directory, so
+    // without the hook its `cd` is not followed — the maintainer's choice
+    // over putting a hook into every PowerShell session.
+    let setup = if shell_integration {
         osc7_setup_command(shell)
     } else {
         None
@@ -2454,6 +2488,231 @@ mod tests {
         shell.disconnect().await.ok();
     }
 
+    /// Visible text of a raw terminal stream: CSI, OSC and two-character
+    /// escapes dropped, as the test's stand-in for what the screen shows.
+    #[cfg(windows)]
+    fn visible_text(raw: &str) -> String {
+        let mut out = String::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\x1b' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// The first sequence after `from` in `raw` that wipes the screen (erase
+    /// display, erase scrollback, reset, alternate screen), if any.
+    #[cfg(windows)]
+    fn wipe_after(raw: &str, from: usize) -> Option<&'static str> {
+        ["\x1b[2J", "\x1b[3J", "\x1bc", "\x1b[?1049h", "\x1b[?1047h"]
+            .into_iter()
+            .find(|wipe| raw[from..].contains(wipe))
+    }
+
+    /// The payloads of every OSC 7 / OSC 9;9 cwd report in `raw`.
+    #[cfg(windows)]
+    fn cwd_reports(raw: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        for osc in ["\x1b]7;", "\x1b]9;9;"] {
+            for (at, _) in raw.match_indices(osc) {
+                let body = &raw[at + osc.len()..];
+                if let Some(end) = body.find(['\x07', '\x1b']) {
+                    found.push(&body[..end]);
+                }
+            }
+        }
+        found
+    }
+
+    /// Read `rx` until no output arrived for `quiet`.
+    #[cfg(windows)]
+    async fn drain_until_quiet(
+        rx: &mut crate::connection::OutputReceiver,
+        output: &mut Vec<u8>,
+        quiet: tokio::time::Duration,
+    ) {
+        while let Ok(Some(chunk)) = tokio::time::timeout(quiet, rx.recv()).await {
+            output.extend_from_slice(&chunk);
+        }
+    }
+
+    /// #5017: a local PowerShell / cmd session keeps what the user's profile
+    /// printed at startup (and cmd its banner) — termiHub's startup setup
+    /// neither clears the screen nor shows any of its own text. With the
+    /// command-mark hook off, nothing of termiHub's exists in a PowerShell
+    /// session (stock `prompt` and `PSConsoleHostReadLine`, no `__th_`
+    /// variables) and cmd's `cd` is still followed from its process; with it
+    /// on, both follow `cd` through their hook.
+    ///
+    /// Needs a profile that prints `TERMIHUB_TEST_PROFILE_MARKER`: a
+    /// PowerShell `profile.ps1` (Windows PowerShell and pwsh) and cmd's
+    /// `AutoRun`. The dispatched Windows lane writes them on its throwaway
+    /// runner; it is ignored elsewhere so a developer's own profile is never
+    /// touched.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[serial(local_pty)]
+    #[ignore = "needs a profile printing TERMIHUB_TEST_PROFILE_MARKER (dispatched Windows lane)"]
+    async fn windows_shell_start_keeps_profile_output_and_follows_cd() {
+        let marker = std::env::var("TERMIHUB_TEST_PROFILE_MARKER")
+            .expect("TERMIHUB_TEST_PROFILE_MARKER names the line the test profile prints");
+        let target = std::env::temp_dir().join(format!("th5017-{}", std::process::id()));
+        std::fs::create_dir_all(&target).expect("scratch dir");
+        let target_name = target.file_name().unwrap().to_string_lossy().to_lowercase();
+
+        let mut shells = vec!["powershell", "cmd"];
+        if detect_available_shells().iter().any(|s| s == "pwsh") {
+            shells.insert(1, "pwsh");
+        }
+        let mut failures = Vec::new();
+        for shell_name in shells {
+            for hook in [false, true] {
+                let tag = format!(
+                    "{shell_name} (command marks {})",
+                    if hook { "on" } else { "off" }
+                );
+                let mut shell = LocalShell::new();
+                let settings = serde_json::json!({
+                    "shell": shell_name,
+                    "shellIntegration": hook,
+                });
+                shell.connect(settings).await.expect("connect failed");
+                let mut rx = shell.subscribe_output();
+                let is_cmd = shell_name == "cmd";
+
+                // Up to the first prompt after the profile's line, then until
+                // the start has settled.
+                let mut output = Vec::new();
+                let marker_ref = marker.as_str();
+                let started =
+                    read_output_until(&mut rx, &mut output, shell_startup_timeout(), |t| {
+                        t.find(marker_ref).is_some_and(|at| {
+                            let rest = &t[at + marker_ref.len()..];
+                            if is_cmd {
+                                rest.contains('>')
+                            } else {
+                                powershell_prompt_shown(rest)
+                            }
+                        })
+                    })
+                    .await;
+                drain_until_quiet(&mut rx, &mut output, tokio::time::Duration::from_secs(3)).await;
+                let raw = String::from_utf8_lossy(&output).into_owned();
+                eprintln!("[5017] {tag} start, raw: {raw:?}");
+                if !started {
+                    failures.push(format!("{tag}: no profile line + prompt: {raw:?}"));
+                    shell.disconnect().await.ok();
+                    continue;
+                }
+                let at = raw.find(marker_ref).unwrap();
+                if let Some(wipe) = wipe_after(&raw, at) {
+                    failures.push(format!("{tag}: {wipe:?} wiped the profile's line: {raw:?}"));
+                }
+                let shown = visible_text(&raw);
+                for setup in [
+                    "__th_",
+                    "function prompt",
+                    "PROMPT=",
+                    "Clear-Host",
+                    "cls",
+                    "$E]",
+                ] {
+                    if shown.contains(setup) {
+                        failures.push(format!("{tag}: setup text {setup:?} on screen: {shown:?}"));
+                    }
+                }
+                if is_cmd && !hook && !shown.contains("Microsoft") {
+                    failures.push(format!("{tag}: cmd's banner missing: {shown:?}"));
+                }
+
+                // PowerShell's footprint: termiHub's variables, and whether
+                // `prompt` / `PSConsoleHostReadLine` are termiHub's wrappers.
+                // The marker is assembled at run time so the echo of the typed
+                // line cannot satisfy the wait.
+                if !is_cmd {
+                    output.clear();
+                    shell
+                        .write(
+                            b"$p=(Get-Command prompt).Definition;\
+                              $r=(Get-Command PSConsoleHostReadLine -ErrorAction SilentlyContinue).Definition;\
+                              Write-Output ('FP' + '=' + \
+                              @(Get-Variable -Scope Global -Name '__th_*' -ErrorAction SilentlyContinue).Count + \
+                              '|' + ($p -match '133|__th_') + '|' + ($r -match '133|__th_') + '|END')\r",
+                        )
+                        .expect("write footprint probe");
+                    read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
+                        visible_text(t)
+                            .lines()
+                            .any(|l| l.contains("FP=") && l.contains("|END"))
+                    })
+                    .await;
+                    let text = visible_text(&String::from_utf8_lossy(&output));
+                    let line = text
+                        .lines()
+                        .find(|l| l.contains("FP=") && l.contains("|END"))
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    eprintln!("[5017] {tag} footprint (vars|prompt|readline): {line}");
+                    let untouched = line.ends_with("FP=0|False|False|END");
+                    if hook == untouched {
+                        failures.push(format!(
+                            "{tag}: termiHub's PowerShell footprint is {line:?}, expected {}",
+                            if hook { "the hook" } else { "none" }
+                        ));
+                    }
+                }
+
+                // The file browser follows `cd`: OSC 7 from PowerShell's hook
+                // or cmd's passive follower, OSC 9;9 from cmd's hook. Without
+                // the hook PowerShell's location is not followed (its process
+                // directory does not change), so it is not checked.
+                if hook || is_cmd {
+                    output.clear();
+                    let cd = format!("cd \"{}\"\r", target.display());
+                    shell.write(cd.as_bytes()).expect("write cd");
+                    let followed =
+                        read_output_until(&mut rx, &mut output, pty_output_timeout(), |t| {
+                            cwd_reports(t)
+                                .iter()
+                                .any(|cwd| cwd.to_lowercase().contains(&target_name))
+                        })
+                        .await;
+                    if !followed {
+                        failures.push(format!(
+                            "{tag}: no cwd report for {} after cd: {:?}",
+                            target.display(),
+                            String::from_utf8_lossy(&output)
+                        ));
+                    }
+                }
+                shell.disconnect().await.ok();
+            }
+        }
+        let _ = std::fs::remove_dir_all(&target);
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
     /// Old saved connections use `"shellType"` instead of `"shell"`.
     #[tokio::test]
     #[serial(local_pty)]
@@ -2563,16 +2822,26 @@ mod tests {
         }
     }
 
-    /// PowerShell and cmd keep their startup-argument setup with the setting
-    /// off: it is how their directory is followed, and nothing is typed.
+    /// With the setting off, PowerShell and cmd start untouched: no
+    /// `-NoExit -Command` / `/K` setup, so no wrapped `prompt`, no
+    /// `$global:__th_si`, no `PROMPT` change (#5017, as #5009 for bash/zsh).
+    /// cmd's directory is still followed from its process; PowerShell's is
+    /// not (its location is not its process directory) until command marks
+    /// are turned on.
     #[test]
-    fn windows_shells_keep_their_startup_argument_setup() {
-        let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
-        let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, false);
-        assert!(stdin.is_none());
-        assert_eq!(cmd.args[1], "-Command");
-        let (cmd, _) = apply_shell_integration(bare_command("cmd"), "cmd", false);
-        assert_eq!(cmd.args[0], "/K");
+    fn windows_shells_start_untouched_with_the_setting_off() {
+        for shell in [
+            "powershell",
+            "pwsh",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "cmd",
+            r"C:\Windows\system32\cmd.exe",
+        ] {
+            let (cmd, stdin) = apply_shell_integration(bare_command(shell), shell, false);
+            assert!(stdin.is_none(), "{shell}");
+            assert!(cmd.args.is_empty(), "{shell}: {:?}", cmd.args);
+        }
     }
 
     #[test]

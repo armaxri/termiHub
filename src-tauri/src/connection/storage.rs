@@ -661,10 +661,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v6)
+        // Verify on-disk format is the nested tree, at the current schema (v7)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "6");
+        assert_eq!(on_disk.version, "7");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -976,7 +976,10 @@ mod tests {
         storage.save_flat(&loaded.data).unwrap();
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("6"));
+        assert_eq!(
+            on_disk["version"],
+            serde_json::json!(ConnectionStore::CURRENT_VERSION.to_string())
+        );
         let on_disk_settings = |name: &str| {
             on_disk["children"]
                 .as_array()
@@ -1053,8 +1056,8 @@ mod tests {
     /// #5009: v6 turns the command-mark shell hook off once. Local and SSH
     /// connections saved with the old default `shellIntegration: true` load
     /// with `false` (nested ones included); an explicit `false` and other
-    /// types (WSL keeps its hook) are untouched. The next save writes v6, so
-    /// the reset never runs again.
+    /// types are untouched (WSL has its own v7 step, #5013). The next save
+    /// writes the current version, so the reset never runs again.
     #[test]
     fn v5_shell_hook_is_switched_off_once() {
         let dir = TempDir::new().unwrap();
@@ -1103,7 +1106,8 @@ mod tests {
                 "{name}"
             );
         }
-        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(true)));
+        // WSL is switched off by the later v7 step (#5013).
+        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(false)));
 
         // The user opts back in; the saved v6 file keeps that.
         let mut data = loaded.data;
@@ -1125,6 +1129,65 @@ mod tests {
             hook(&reloaded.data, "local"),
             Some(serde_json::json!(false))
         );
+    }
+
+    /// #5013: the v6 → v7 step switches a WSL connection's saved hook off
+    /// once (nested ones too); a local opt-in made at v6 is kept, and a WSL
+    /// opt-in made afterwards survives a reload.
+    #[test]
+    fn v6_wsl_shell_hook_is_switched_off_once() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let conn = |name: &str, type_id: &str, hook: bool| {
+            serde_json::json!({
+                "type": "connection",
+                "name": name,
+                "config": { "type": type_id, "config": { "shellIntegration": hook } }
+            })
+        };
+        let v6 = serde_json::json!({
+            "version": "6",
+            "children": [
+                conn("wsl", "wsl", true),
+                conn("local", "local", true),
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "children": [conn("nested", "wsl", true)]
+                }
+            ]
+        });
+        fs::write(&storage.file_path, v6.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        let hook = |data: &FlatConnectionStore, name: &str| {
+            data.connections
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .config
+                .settings
+                .get("shellIntegration")
+                .cloned()
+        };
+        assert_eq!(hook(&loaded.data, "wsl"), Some(serde_json::json!(false)));
+        assert_eq!(hook(&loaded.data, "nested"), Some(serde_json::json!(false)));
+        assert_eq!(
+            hook(&loaded.data, "local"),
+            Some(serde_json::json!(true)),
+            "a v6 opt-in"
+        );
+
+        let mut data = loaded.data;
+        for c in &mut data.connections {
+            if c.name == "wsl" {
+                c.config.settings["shellIntegration"] = serde_json::json!(true);
+            }
+        }
+        storage.save_flat(&data).unwrap();
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert_eq!(hook(&reloaded.data, "wsl"), Some(serde_json::json!(true)));
     }
 
     /// The raw v3 → v4 step itself (before the typed parse) renames the key.
@@ -1269,7 +1332,10 @@ mod tests {
 
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("6"));
+        assert_eq!(
+            on_disk["version"],
+            serde_json::json!(ConnectionStore::CURRENT_VERSION.to_string())
+        );
         assert_eq!(
             on_disk["children"][0]["children"][0]["config"]["config"],
             serde_json::json!({ "connectTimeoutSecs": 45 })

@@ -38,6 +38,7 @@ use termihub_core::backends::ssh::{
     probe_exec_capability, ssh_exec_with_stdin, SftpAdvancedOps, SftpFileBrowser, Ssh,
 };
 use termihub_core::connection::ConnectionType;
+use termihub_core::session::prompt_ready::{wait_for_prompt, PromptSignal};
 use termihub_core::tunnel::config::LocalForwardConfig;
 use termihub_core::tunnel::local_forward::LocalForwarder;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -488,6 +489,65 @@ async fn native_05e_default_session_follows_cwd_without_touching_the_shell() {
         );
     }
     ssh.disconnect().await.expect("disconnect cleanly");
+}
+
+/// The initial command's hook-free cue on a real sshd (#5029): a default
+/// session's prompt probe recognises the fixture login shell's prompt (zsh or
+/// bash, cmd.exe on Windows) well before the cap, and a line typed then runs
+/// once.
+#[tokio::test]
+async fn native_05f_prompt_probe_recognises_the_login_shells_prompt() {
+    let sshd = require_native_sshd!();
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(false);
+    ssh.connect(settings).await.expect("shell session connects");
+    let mut rx = ssh.subscribe_output();
+    let probe = ssh.prompt_probe().expect("an SSH session offers a probe");
+
+    let seen = Arc::new(std::sync::Mutex::new(String::new()));
+    let reader_seen = seen.clone();
+    let reader = tokio::spawn(async move {
+        while let Some(chunk) = rx.recv().await {
+            reader_seen
+                .lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(&chunk));
+        }
+    });
+    let text = || seen.lock().unwrap().clone();
+
+    let signal = wait_for_prompt(None, Some(&probe)).await;
+    let at_prompt = text();
+    assert_eq!(
+        signal,
+        PromptSignal::Probe,
+        "the prompt was not recognised; output: {at_prompt:?}"
+    );
+    assert!(
+        !at_prompt.trim().is_empty(),
+        "ready before the shell printed anything"
+    );
+
+    let (line, expect) = first_command(fixture_shell());
+    ssh.write(line.as_bytes()).expect("write to the shell");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !text().contains(expect) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let out = text();
+    assert!(out.contains(expect), "the line never ran: {out:?}");
+    // ConPTY may repaint the screen, so only POSIX output is counted.
+    if !cfg!(windows) {
+        assert_eq!(
+            out.matches(expect).count(),
+            1,
+            "ran more than once: {out:?}"
+        );
+    }
+    ssh.disconnect().await.expect("disconnect cleanly");
+    reader.abort();
 }
 
 #[tokio::test]

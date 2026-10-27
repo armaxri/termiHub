@@ -8,6 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
+// Used by the `tests` submodule (via `use super::*`).
+#[cfg(test)]
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -20,6 +22,9 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
+use termihub_core::session::prompt_ready::wait_for_prompt;
+#[cfg(test)]
+use termihub_core::session::prompt_ready::MARK_ONLY_TIMEOUT;
 use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
@@ -49,10 +54,12 @@ const MAX_SESSIONS: usize = 50;
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
 
 /// Longest wait for the shell's OSC 133 prompt-start mark before a
-/// connection's initial command is sent anyway (#4345). Shells without
-/// termiHub's shell integration (plain `sh`, most remote shells, serial)
-/// never print the mark, so this is the delay they get.
-const INITIAL_COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(1);
+/// connection's initial command is sent anyway (#4345), for a backend that
+/// cannot tell when its shell waits at the prompt (serial, telnet, plain
+/// `sh`). Local bash / zsh / fish and SSH shells are watched instead (#5029);
+/// see [`wait_for_prompt`].
+#[cfg(test)]
+const INITIAL_COMMAND_READY_TIMEOUT: Duration = MARK_ONLY_TIMEOUT;
 
 /// Output event emitted via Tauri events.
 ///
@@ -1252,6 +1259,8 @@ impl SessionManager {
         // Subscribe to output, and to the backend's files-only verdict (#4078).
         let output_rx = connection.subscribe_output();
         let files_only_watch = connection.files_only_watch();
+        // The hook-free prompt check for the initial command (#5029).
+        let prompt_probe = connection.prompt_probe();
 
         let info = SessionInfo {
             id: session_id.clone(),
@@ -1430,20 +1439,20 @@ impl SessionManager {
             .await;
         });
 
-        // Send the initial command once the shell has drawn its prompt (the
-        // OSC 133 prompt-start mark), or after a fallback timeout for shells
-        // that never print one.
+        // Send the initial command once the shell waits at its prompt: the
+        // OSC 133 prompt-start mark, else the backend's hook-free probe, else
+        // a timeout (#4345, #5029).
         if let (Some(cmd), Some(ready)) = (initial_command, prompt_ready) {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
             // Not app-owned (#3105): one-shot initial-command injection, stopped
             // with the session's reader.
             tokio::spawn(async move {
-                tokio::select! {
+                let signal = tokio::select! {
                     _ = injection_cancel.cancelled() => return,
-                    _ = ready.notified() => {}
-                    _ = tokio::time::sleep(INITIAL_COMMAND_READY_TIMEOUT) => {}
-                }
+                    signal = wait_for_prompt(Some(&ready), prompt_probe.as_ref()) => signal,
+                };
+                info!(session_id = %sid, ?signal, "Sending the initial command");
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;
             });
         }

@@ -49,9 +49,12 @@ async fn connect_to_silent_peer() -> (Telnet, TcpStream) {
 async fn connect_sets_a_write_timeout() {
     let (telnet, _peer) = connect_to_silent_peer().await;
     let state = telnet.state.as_ref().expect("connected state");
-    let writer = state.writer.lock().expect("lock writer");
     assert_eq!(
-        writer.write_timeout().expect("read write timeout"),
+        state
+            .writer
+            .stream()
+            .write_timeout()
+            .expect("read write timeout"),
         Some(WRITE_TIMEOUT),
         "a write to a stalled peer must not park until TCP gives up"
     );
@@ -60,6 +63,48 @@ async fn connect_sets_a_write_timeout() {
 #[tokio::test]
 async fn interrupt_io_when_not_connected_is_noop() {
     Telnet::new().interrupt_io();
+}
+
+/// Sessions [`interrupt_idle_session_closes_the_socket`] opens. One Windows
+/// connection in about ten showed the bug, so twenty catch it nearly always.
+const IDLE_ROUNDS: usize = 20;
+
+/// `interrupt_io` on a session with no write pending closes the connection:
+/// the peer sees EOF and a later write fails (#4901). It once shut down a
+/// `try_clone()` of the socket, and on Windows that clone's `shutdown` failed
+/// with `WSAENOTCONN` in about one connection in ten, leaving the session open.
+#[tokio::test(flavor = "multi_thread")]
+async fn interrupt_idle_session_closes_the_socket() {
+    for round in 0..IDLE_ROUNDS {
+        let (telnet, mut peer) = connect_to_silent_peer().await;
+        telnet.interrupt_io();
+        assert!(
+            telnet.write(b"after interrupt").is_err(),
+            "round {round}: a write after interrupt_io must fail"
+        );
+        peer.set_read_timeout(Some(CEILING)).expect("peer timeout");
+        let mut buf = [0u8; 1024];
+        let mut drained = 0;
+        loop {
+            match peer.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => drained += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    assert!(
+                        !matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ),
+                        "round {round}: peer never saw the close after {drained} B: {e}"
+                    );
+                    break;
+                }
+            }
+            // Only the opening negotiation offer may precede the close.
+            assert!(drained < 64, "round {round}: peer got {drained} B");
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -133,7 +178,7 @@ async fn interrupt_io_frees_a_socket_whose_write_is_parked() {
     let mut slowest = Duration::ZERO;
     let diag = |drained: u64, reads: u64, slowest: Duration, end: &str| {
         format!(
-            "peer never saw the socket close ({end}): writer wrote {} B before parking, \
+            "peer never saw the socket close ({end}): writer has written {} B, \
              peer drained {drained} B in {reads} reads over {:?}, slowest read {slowest:?}, \
              writer finished: {:?}",
             written.load(Ordering::SeqCst),

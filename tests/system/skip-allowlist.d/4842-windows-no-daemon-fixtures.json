@@ -1,0 +1,5 @@
+{
+  "reason": "^(SSH|SSH jump-host|telnet|VNC|FTP) container fixtures? unavailable: no container runtime available",
+  "lanes": ["bulk-windows"],
+  "why": "#4842: some windows-latest runners never bring the Docker service up (the lane's start step warns). A reachable daemon would only run Windows containers, so these Linux fixtures cannot run on Windows either way"
+}

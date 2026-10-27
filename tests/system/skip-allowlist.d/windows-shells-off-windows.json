@@ -1,0 +1,5 @@
+{
+  "reason": "^Windows shells and WSL are a Windows-only feature$",
+  "lanes": ["bulk-linux", "bulk-linux-arm64", "bulk-macos"],
+  "why": "the Windows shell/WSL suite cannot run off Windows"
+}

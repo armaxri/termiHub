@@ -299,6 +299,18 @@ class TestWindowsShells(
         assert is_absolute_path(path)
         self.switch_to_connections_sidebar()
 
+    def test_file_browser_follows_powershell_cd_with_command_marks(self):
+        # #5017: PowerShell's location is not its process directory, so the
+        # browser follows its `cd` only with the opt-in Command Marks hook.
+        self.close_all_tabs()
+        self.open_cwd_following_terminal()
+        self.open_file_browser()
+        self.switch_to_connections_sidebar()
+        self.run_command("cd $env:WINDIR")
+        self.switch_to_files_sidebar()
+        assert "Windows" in self.wait_for_path_contains("Windows")
+        self.switch_to_connections_sidebar()
+
 
 @skip_on_non_windows
 @skip_without_wsl

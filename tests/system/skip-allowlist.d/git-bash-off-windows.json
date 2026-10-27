@@ -1,0 +1,5 @@
+{
+  "reason": "^Git Bash \\(Git for Windows\\) is not installed on this host$",
+  "lanes": ["bulk-linux", "bulk-linux-arm64", "bulk-macos"],
+  "why": "Git Bash exists only on Windows"
+}

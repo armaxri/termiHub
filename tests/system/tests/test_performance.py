@@ -44,6 +44,13 @@ TARGET_TERMINALS = 40
 SWITCH_LATENCY_BUDGET = 2.0
 NEW_TERMINAL_BUDGET = 5.0
 
+#: How long (s) one ``echo`` marker may take to render (or show garbled)
+#: before it is resent. Generous: a slow shell is not lost input (#4993).
+MARKER_RENDER_BUDGET = 25.0
+
+#: A first render slower than this (s) is printed as a measurement.
+MARKER_SLOW_SECONDS = 5.0
+
 #: Live WebGL contexts the terminal pool may hold at once
 #: (``DEFAULT_WEBGL_CONTEXT_CAPACITY`` in ``src/components/Terminal/webglRenderer.ts``,
 #: kept below the engines' cap of 16 so they never force-lose a context).
@@ -146,31 +153,72 @@ class TestPerformance(TerminalUi, TabsUi, SystemTest):
             assert any(row.strip() for row in m["domRows"] or []), f"{label}: blank DOM rows"
         return m
 
+    @staticmethod
+    def _marker_state(text: str, marker: str) -> str | None:
+        """``"rendered"``, ``"garbled"`` or ``None`` (still pending) for ``echo marker``.
+
+        Rendered: the echoed command line and its output both show. Garbled:
+        the output line is there but the command line that produced it is not
+        (wiped or laid out for another width, #4942). Anything else is pending.
+        """
+        if text.count(marker) >= 2:
+            return "rendered"
+        if any(row.strip() == marker for row in text.splitlines()):
+            return "garbled"
+        return None
+
     def _echo_marker(self, tab_id: str, marker: str, label: str) -> int:
         """Echo ``marker`` in the tab and wait for it to render; return resends.
 
         The marker shows twice once rendered: the echoed command and its
         output. A marker typed in the instant a tab was shown used to render
-        only once (macOS CI, #4942): the input reached the shell before the
+        garbled (macOS CI, #4942): the input reached the shell before the
         show-time PTY resize, so bash echoed the line for the old width on the
-        new grid. Input is now held until that resize settles (#4945), so a
-        marker must render on the first send. A marker that does not render
-        within a few seconds is still sent again (at most twice) so the caller
-        can tell "needed a resend" (a regression of #4945, failed by the
-        caller) apart from "never rendered" (raised here).
+        new grid. Input is now held until that resize settles (#4945, #4967),
+        so a marker must render on the first send.
+
+        A *slow* echo is not a garbled one (#4993): on the Windows runner a
+        shown tab's PowerShell can take several seconds to answer while the
+        other shells of the 40 still start, and the old 5 s resend counted
+        that as lost input. So the first send waits up to
+        :data:`MARKER_RENDER_BUDGET` for a verdict; only a garbled render (the
+        output without its command line) or no answer at all is resent, at most
+        twice, so the caller can tell "needed a resend" (a regression of #4945,
+        failed by the caller) apart from "never rendered" (raised here). A
+        slow first render is printed with its latency.
         """
         for attempt in range(3):
             self.driver.terminal_input(f"echo {marker}\n", tab_id=tab_id)
+            started = time.monotonic()
+            # A resend joins the output the first send left behind, so only the
+            # first send can be judged garbled; a resend counts once rendered.
+            def verdict(first: bool = attempt == 0) -> str | None:
+                state = self._marker_state(self.driver.read_terminal(tab_id), marker)
+                return state if first or state == "rendered" else None
+
             try:
-                self.wait(
-                    lambda: self.driver.read_terminal(tab_id).count(marker) >= 2,
-                    timeout=5.0 if attempt < 2 else 20.0,
+                state = self.wait(
+                    verdict,
+                    timeout=MARKER_RENDER_BUDGET,
                     what=f"{label} to render its marker",
                 )
-                return attempt
             except AssertionError:
-                if attempt == 2:
-                    raise
+                state = None
+            elapsed = time.monotonic() - started
+            if state == "rendered":
+                if elapsed > MARKER_SLOW_SECONDS:
+                    print(
+                        f"\n[termihub-measure] perf-05 slow marker {label} "
+                        f"rendered after {elapsed:.1f}s (attempt {attempt + 1})"
+                    )
+                return attempt
+            tail = self.driver.read_terminal(tab_id).splitlines()[-6:]
+            print(
+                f"\n[termihub-measure] perf-05 marker {label} {state or 'never rendered'} "
+                f"after {elapsed:.1f}s (attempt {attempt + 1}); buffer tail: {tail!r}"
+            )
+            if attempt == 2:
+                raise AssertionError(f"{label} never rendered its marker {marker!r}: {tail!r}")
         return 2
 
     def test_perf_03b_every_tab_renders_and_hidden_tabs_release_webgl(self):

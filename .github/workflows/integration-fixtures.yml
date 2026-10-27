@@ -397,9 +397,10 @@ jobs:
         # The elevated SFTP save, read-only detection and SFTP-only fallback tests
         # (src-tauri/src/files/sftp.rs, against the default-profile `ssh-sudo`
         # :2212, `ssh-nosudo` :2213 and `ssh-sftp-only` :2215), the sudo-password
-        # log-secrecy test (session/manager/tests/log_secrecy.rs, `ssh-sudo`) and
-        # the agent deploy test (src-tauri/src/utils/remote_exec.rs, against
-        # `ssh-password` :2201). They drive private desktop-crate code, so they
+        # log-secrecy test (session/manager/tests/log_secrecy.rs, `ssh-sudo`), the
+        # slow-rc initial-command test (session/manager/tests/initial_command.rs,
+        # `ssh-password`, #5029) and the agent deploy test
+        # (src-tauri/src/utils/remote_exec.rs, against `ssh-password` :2201). They drive private desktop-crate code, so they
         # live in the lib test binary rather than src-tauri/tests.
         # TERMIHUB_REQUIRE_DOCKER=1 turns an absent fixture into a hard failure
         # via utils::docker_fixture_gate (#3978), the same gate as the suites above.
@@ -415,6 +416,7 @@ jobs:
           -- --test-threads=1
           files::sftp::tests::
           session::manager::tests::log_secrecy::sudo_password
+          session::manager::tests::initial_command::ssh_
           utils::remote_exec::tests::agent_deploy
 
       - name: Run the agent ssh-agent relay suite against the fixtures
@@ -573,6 +575,42 @@ jobs:
         # over to its PowerShell twin).
         shell: bash
         run: scripts/internal/run-native-sshd-suites.sh
+
+      - name: Local Windows shells keep the profile's startup output
+        # core/src/backends/local_shell.rs::windows_shell_start_keeps_profile_output_and_follows_cd
+        # (#5017): a real ConPTY start of powershell.exe, pwsh and cmd, with
+        # command marks off and on, keeps what the user's profile printed (no
+        # screen clear, no setup text) and still follows `cd`. Needs a profile
+        # that prints a marker, so it is written here on the throwaway runner
+        # (profile.ps1 for both PowerShells, cmd's AutoRun, removed after), and
+        # the test is #[ignore]d everywhere else. Fails unless it actually ran.
+        if: ${{ runner.os == 'Windows' && !cancelled() }}
+        shell: pwsh
+        env:
+          TERMIHUB_TEST_PROFILE_MARKER: TH_PROFILE_LINE_5017
+        run: |
+          $docs = [Environment]::GetFolderPath('MyDocuments')
+          foreach ($d in 'WindowsPowerShell', 'PowerShell') {
+            New-Item -ItemType Directory -Force (Join-Path $docs $d) | Out-Null
+            Set-Content (Join-Path $docs "$d\profile.ps1") "Write-Output '$env:TERMIHUB_TEST_PROFILE_MARKER'"
+          }
+          cargo test -p termihub-core --all-features --lib --no-run
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $key = 'HKCU\Software\Microsoft\Command Processor'
+          reg add $key /v AutoRun /t REG_SZ /d "echo $env:TERMIHUB_TEST_PROFILE_MARKER" /f | Out-Null
+          try {
+            $out = cargo test -p termihub-core --all-features --lib `
+              windows_shell_start_keeps_profile_output_and_follows_cd -- --ignored --nocapture 2>&1
+            $code = $LASTEXITCODE
+          } finally {
+            reg delete $key /v AutoRun /f | Out-Null
+          }
+          $out | Write-Output
+          if ($code) { exit $code }
+          if (-not ($out -match 'test result: ok\. 1 passed')) {
+            Write-Output '::error::the profile-output test did not run'
+            exit 1
+          }
 
   polkit-dbus:
     # The Linux OS re-auth verifier's real polkit D-Bus path (#3553): a Debian

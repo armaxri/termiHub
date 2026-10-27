@@ -755,9 +755,9 @@ an RDP server that never answers (#4315).
 Every nightly lane also runs a **skip guard** (#4315). Each run lists its skipped
 tests and their reasons in the terminal and the GitHub step summary, and a lane
 that names itself in `TERMIHUB_SKIP_GUARD_LANE` fails on a skip reason that
-[`tests/system/skip-allowlist.json`](../tests/system/skip-allowlist.json) does not
-expect for that lane (each entry records _why_), on more skips than the lane's
-`max_skips` baseline, and when it ran nothing. The Linux leg also sets
+the allowlist [`tests/system/skip-allowlist.d/`](../tests/system/skip-allowlist.d/)
+does not expect for that lane (each entry records _why_), on more skips than the
+lane's budget, and when it ran nothing. The Linux leg also sets
 `TERMIHUB_REQUIRE_FIXTURES=1`, which fails any "fixture unavailable" skip and a
 missing RDP sidecar. Every lane runs under xdist (the serial ones with `-n 1`) so
 the harness' per-phase hang guard arms: a hung test crashes its worker with a
@@ -767,6 +767,43 @@ rest. This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#per-feature-walkthrough-triage-3695) (the live tunnel UI tests run
 on macOS against the native loopback sshd instead, #4005) and ADR-5.
+
+### Adding an allowlisted skip (#5033)
+
+The skip allowlist is a directory of small JSON **fragments**, one per file, so
+that test PRs never edit a shared number. (A single shared `max_skips` file
+conflicted on nearly every test PR, and git once merged two identical "+1"
+edits into a single +1, silently under-counting a lane.) A fragment is an entry,
+a budget, or both:
+
+```json
+{
+  "reason": "^socat is not available",
+  "nodeid": "test_serial\\.py",
+  "lanes": ["bulk-windows"],
+  "why": "socat does not exist on Windows; serial stays manual there",
+  "max_skips": { "bulk-windows": 2 }
+}
+```
+
+- `reason` and the optional `nodeid` are Python regexes (`re.search`). A skip
+  whose reason matches no entry for its lane fails the lane. Never allowlist a
+  "fixture unavailable" skip on Linux: fix the fixture instead.
+- A lane's **budget** is the sum of every fragment's `max_skips` for it, and a
+  lane no fragment budgets allows no counted skip. An entry may only budget lanes
+  its `lanes` lists, so a lane's total cannot grow without a fragment naming it.
+- Guided-manual tests gated off by conftest (`@pytest.mark.manual` plus a
+  "guided-manual test" reason) need their entry but do not count against the
+  budget (#4921).
+
+To admit a new skip, **add a new file** named `<issue>-<slug>.json`. If the
+reason is new, the fragment carries the entry and its `max_skips`. If the skip
+reuses an existing reason, add a budget-only fragment (`why` plus `max_skips`).
+Never raise a number in someone else's fragment (that reintroduces the
+conflict), and keep the `why` specific so two PRs never add byte-identical
+files. `baseline.json` holds the per-lane budgets migrated from the old file;
+lower a number there only when a lane measurably needs fewer skips. On a
+budget overrun the guard lists each contributing fragment and its count.
 
 ### Docker Hub resilience in CI (#4614)
 
@@ -1188,7 +1225,7 @@ Before the app fetches anything, the test probes the same URL from the harness
 ([`termihub_harness/https_probe.py`](../tests/system/termihub_harness/https_probe.py)).
 No answer (DNS, TLS, connect or timeout failure) or an HTTP 5xx/429 is a GitHub
 outage: the test skips with a `network unavailable: cannot reach …` reason,
-the one skip `skip-allowlist.json` admits for this module. Any other answer is
+the one skip `tests/system/skip-allowlist.d/` admits for this module. Any other answer is
 graded, so a 404 (a deleted index, a wrong default URL) fails the lane.
 
 The default index URL points at `main`. Until `main` ships plugin discovery
@@ -1238,6 +1275,14 @@ came from the OS.
 | [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-NIN-23 (keys reach only the focused one of two windows), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
 | [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click), MT-NIN-22 (one click into an inactive window focuses the clicked pane)                                                                                                                                                                            |
 | [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                                                                                           |
+
+The dead-key grade (MT-NIN-15) is quarantined on Windows: on the hosted runner
+the Enter after the composed characters is sometimes lost (#5024). It still runs
+on Linux and macOS.
+
+On a missed calibration move, the Windows backend names the window under the
+pointer and lists every window on the desktop. That is how a DevTools window,
+opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
 picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
