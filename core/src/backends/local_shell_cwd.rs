@@ -110,6 +110,17 @@ fn usable_cwd(cwd: Option<String>) -> Option<String> {
         !upper.starts_with(r"\\?\PIPE") && !upper.starts_with(r"\\.\PIPE")
     })
     .filter(|c| std::path::Path::new(c).is_dir())
+    .map(trim_trailing_separator)
+}
+
+/// Windows keeps a process's directory with a trailing `\` (`C:\x\`);
+/// report it as `C:\x`, like every other directory. A drive root (`C:\`)
+/// keeps its separator.
+fn trim_trailing_separator(mut dir: String) -> String {
+    while dir.len() > 3 && (dir.ends_with('\\') || dir.ends_with('/')) {
+        dir.pop();
+    }
+    dir
 }
 
 struct Shared {
@@ -269,7 +280,20 @@ mod tests {
         assert_eq!(usable_cwd(Some(r"\\?\PIPE\".to_string())), None);
         assert_eq!(usable_cwd(None), None);
         let here = std::env::temp_dir().to_string_lossy().into_owned();
-        assert_eq!(usable_cwd(Some(here.clone())), Some(here));
+        assert_eq!(
+            usable_cwd(Some(here.clone())),
+            Some(trim_trailing_separator(here))
+        );
+    }
+
+    #[test]
+    fn a_windows_directory_loses_its_trailing_separator() {
+        assert_eq!(
+            trim_trailing_separator(r"C:\Users\me\".into()),
+            r"C:\Users\me"
+        );
+        assert_eq!(trim_trailing_separator(r"C:\".into()), r"C:\");
+        assert_eq!(trim_trailing_separator("/home/me".into()), "/home/me");
     }
 
     /// The real process table: this test process has no same-named child,
