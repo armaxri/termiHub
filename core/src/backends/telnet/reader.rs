@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use super::auto_login::{AutoLogin, AutoLoginConfig, Outcome};
 use super::negotiation::Negotiator;
-use super::{write_locked, TelnetFilter};
+use super::{write_locked, SharedWriter, TelnetFilter};
 use crate::connection::OutputSender;
 
 /// Everything the reader thread needs.
@@ -20,7 +20,7 @@ pub(super) struct ReaderContext {
     pub stream: TcpStream,
     /// The shared write half — negotiation replies and auto-login lines are
     /// written through it so they never interleave with user input mid-write.
-    pub writer: Arc<Mutex<TcpStream>>,
+    pub writer: Arc<SharedWriter>,
     pub negotiator: Arc<Mutex<Negotiator>>,
     pub alive: Arc<AtomicBool>,
     pub output_tx: Arc<Mutex<Option<OutputSender>>>,

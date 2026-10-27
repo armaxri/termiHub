@@ -104,10 +104,7 @@ pub struct Telnet {
 
 /// Internal state of an active telnet connection.
 struct ConnectedState {
-    writer: Arc<Mutex<TcpStream>>,
-    /// An independent handle on the same socket, used to shut it down while a
-    /// write parked in the kernel still holds the `writer` lock (#4394).
-    interrupter: TcpStream,
+    writer: Arc<SharedWriter>,
     /// Option negotiation state, shared with the reader thread. Lock order is
     /// always `negotiator` → `writer` so size reports are written in order.
     negotiator: Arc<Mutex<Negotiator>>,
@@ -145,9 +142,7 @@ impl Drop for ConnectedState {
             return;
         }
         self.alive.store(false, Ordering::SeqCst);
-        if let Ok(writer) = self.writer.lock() {
-            let _ = writer.shutdown(std::net::Shutdown::Both);
-        }
+        let _ = self.writer.shutdown();
     }
 }
 
@@ -412,13 +407,50 @@ async fn connect_tcp_cancellable(
     }
 }
 
+/// The session socket's write side, shared by user input and the reader
+/// thread's negotiation replies.
+///
+/// `order` serialises writes so each reaches the wire whole and in order. The
+/// socket sits outside that lock so [`interrupt_io`](ConnectionType::interrupt_io)
+/// can shut it down while a write parked in the kernel still holds `order`
+/// (#4394). The shutdown goes through this very handle, never a `try_clone()`:
+/// on Windows, `shutdown` on a duplicated handle of a socket that
+/// `TcpStream::connect_timeout` connected can fail with `WSAENOTCONN` and
+/// leave the connection fully open, so writes keep flowing (#4901).
+pub(super) struct SharedWriter {
+    order: Mutex<()>,
+    stream: TcpStream,
+}
+
+impl SharedWriter {
+    pub(super) fn new(stream: TcpStream) -> Self {
+        Self {
+            order: Mutex::new(()),
+            stream,
+        }
+    }
+
+    /// Shut both directions of the socket down. Does not take the write lock,
+    /// so it never waits behind a parked write.
+    fn shutdown(&self) -> std::io::Result<()> {
+        self.stream.shutdown(std::net::Shutdown::Both)
+    }
+
+    /// The socket, for tests that inspect its options.
+    #[cfg(test)]
+    pub(super) fn stream(&self) -> &TcpStream {
+        &self.stream
+    }
+}
+
 /// Write `data` to the shared socket under its lock and flush.
-fn write_locked(writer: &Mutex<TcpStream>, data: &[u8]) -> Result<(), SessionError> {
-    let mut writer = writer.lock().map_err(|e| {
+fn write_locked(writer: &SharedWriter, data: &[u8]) -> Result<(), SessionError> {
+    let _order = writer.order.lock().map_err(|e| {
         SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
     })?;
-    writer.write_all(data).map_err(SessionError::Io)?;
-    writer.flush().map_err(SessionError::Io)?;
+    let mut stream = &writer.stream;
+    stream.write_all(data).map_err(SessionError::Io)?;
+    stream.flush().map_err(SessionError::Io)?;
     Ok(())
 }
 
@@ -426,7 +458,7 @@ fn write_locked(writer: &Mutex<TcpStream>, data: &[u8]) -> Result<(), SessionErr
 /// character mode).
 fn send_initial_offer(
     negotiator: &Mutex<Negotiator>,
-    writer: &Mutex<TcpStream>,
+    writer: &SharedWriter,
 ) -> Result<(), SessionError> {
     let mut negotiator = negotiator
         .lock()
@@ -541,17 +573,14 @@ impl ConnectionType for Telnet {
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(|e| SessionError::SpawnFailed(format!("Failed to set write timeout: {e}")))?;
 
-        // Clone for the reader thread, and once more for `interrupt_io`.
-        let clone_stream = || {
-            stream
-                .try_clone()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to clone TCP stream: {e}")))
-        };
-        let reader_stream = clone_stream()?;
-        let interrupter = clone_stream()?;
+        // Clone for the reader thread. `interrupt_io` must not use a clone; see
+        // `SharedWriter`.
+        let reader_stream = stream
+            .try_clone()
+            .map_err(|e| SessionError::SpawnFailed(format!("Failed to clone TCP stream: {e}")))?;
 
         let alive = Arc::new(AtomicBool::new(true));
-        let writer = Arc::new(Mutex::new(stream));
+        let writer = Arc::new(SharedWriter::new(stream));
         let negotiator = Arc::new(Mutex::new(
             Negotiator::new(&options.terminal_type)
                 .with_input_mode(options.input_mode)
@@ -587,7 +616,6 @@ impl ConnectionType for Telnet {
 
         self.state = Some(ConnectedState {
             writer,
-            interrupter,
             negotiator,
             editor: Mutex::new(LineEditor::new()),
             alive,
@@ -605,9 +633,7 @@ impl ConnectionType for Telnet {
             state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
             // Shut down the socket to unblock the reader thread.
-            if let Ok(writer) = state.writer.lock() {
-                let _ = writer.shutdown(std::net::Shutdown::Both);
-            }
+            let _ = state.writer.shutdown();
             // Clear the sender to signal the reader thread to stop, and drop
             // an untaken connect-time receiver so a reader waiting on it stops.
             if let Ok(mut guard) = self.output_tx.lock() {
@@ -626,8 +652,8 @@ impl ConnectionType for Telnet {
     }
 
     /// Shut the socket down so a `write` parked on a peer that stopped reading
-    /// returns (#4394). The parked write holds the `writer` lock, so this goes
-    /// through the separate `interrupter` handle on the same socket.
+    /// returns (#4394). The parked write holds the write lock, so this shuts
+    /// the socket down without taking it (see [`SharedWriter`]).
     ///
     /// On Unix a `shutdown` wakes a thread blocked in `send` on that socket,
     /// which then fails (`EPIPE`). Windows does not promise to abort a
@@ -638,7 +664,9 @@ impl ConnectionType for Telnet {
     fn interrupt_io(&self) {
         if let Some(state) = self.state.as_ref() {
             state.alive.store(false, Ordering::SeqCst);
-            let _ = state.interrupter.shutdown(std::net::Shutdown::Both);
+            if let Err(e) = state.writer.shutdown() {
+                debug!("Telnet interrupt_io shutdown failed: {e}");
+            }
         }
     }
 
