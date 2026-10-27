@@ -297,12 +297,17 @@ class TestOsPointerGrades(
                         found[name] = echo
                 return found
 
-            self.wait(
-                echoes,
-                what=f"the N22 echo in either pane (active: {self._pane(focused, left, right)}, "
-                f"pointer events: {[e['type'] for e in self.trusted_events(kind='pointerdown')]}, "
-                f"keys landed on: {self.key_targets()})",
-            )
+            try:
+                self.wait(echoes, what="the N22 echo in either pane")
+            except AssertionError as exc:
+                tails = {
+                    name: self.driver.read_terminal(tab_id).rstrip().splitlines()[-3:]
+                    for name, tab_id in (("left", left), ("right", right))
+                }
+                raise AssertionError(
+                    f"{exc}; active pane {self._pane(focused, left, right)}, left={left}, "
+                    f"right={right}, keys landed on {self.key_targets()}, shells end {tails!r}"
+                ) from None
             time.sleep(0.5)  # a second pane would echo by now too
             want = self._pane(expected or focused, left, right)
             got = echoes()
