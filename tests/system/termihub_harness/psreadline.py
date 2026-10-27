@@ -14,6 +14,11 @@ harness puts a shim module named ``PSReadLine``
 PSReadLine; the shim imports the real PSReadLine and sets the history path from
 :data:`HISTORY_ENV` and ``-PredictionSource None``.
 
+On Windows ``portable-pty`` rebuilds a shell's environment from the registry,
+which puts the registry's ``PSModulePath`` back. A test-bridge build therefore
+keeps the variables named in :data:`SHELL_ENV_KEEP_ENV` from the app's own
+environment; a release build has no such hook.
+
 Only the test app's environment changes. termiHub itself starts PowerShell
 untouched (#5009/#5045), and nothing is written to the user's profile.
 
@@ -38,6 +43,13 @@ SHIM_DIR = Path(__file__).resolve().parent / "psreadline_shim"
 
 #: The variable the shim reads the history file path from.
 HISTORY_ENV = "TERMIHUB_TEST_PSREADLINE_HISTORY"
+
+#: The variable naming what local shells keep from the app's environment. On
+#: Windows ``portable-pty`` replaces registry-defined variables such as
+#: ``PSModulePath`` with the registry's values; a test-bridge build keeps the
+#: names listed here (mirrors ``TEST_SHELL_ENV_KEEP_ENV`` in
+#: ``src-tauri/src/utils/test_bridge.rs``).
+SHELL_ENV_KEEP_ENV = "TERMIHUB_TEST_SHELL_ENV_KEEP"
 
 #: ``FOLDERID_Documents``, the known folder both PowerShells derive their
 #: personal module folders from.
@@ -118,4 +130,5 @@ def app_env(
     return {
         key: module_path(base_env.get(key, ""), documents),
         HISTORY_ENV: str(history),
+        SHELL_ENV_KEEP_ENV: "PSModulePath",
     }

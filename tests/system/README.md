@@ -644,7 +644,9 @@ the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
   Each Windows instance also gives its PowerShells a private PSReadLine history
   with predictions off (#5055, `termihub_harness.psreadline`): a shim module named
   `PSReadLine` goes first on the app's `PSModulePath`, loads the real one and sets
-  the history path from `TERMIHUB_TEST_PSREADLINE_HISTORY`. Without it every test
+  the history path from `TERMIHUB_TEST_PSREADLINE_HISTORY`. A test-bridge build
+  keeps that `PSModulePath` for local shells (`TERMIHUB_TEST_SHELL_ENV_KEEP`),
+  since `portable-pty` would put the registry value back. Without it every test
   app's shells share one history file, and a grade's prompt can show another
   app's command. termiHub itself still starts PowerShell untouched.
 - `AppInstance(portable="marker" | "data")` — the **portable launch mode** (#3691).

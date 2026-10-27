@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from termihub_harness import orchestrator, psreadline
-from termihub_harness.psreadline import HISTORY_ENV, SHIM_DIR
+from termihub_harness.psreadline import HISTORY_ENV, SHELL_ENV_KEEP_ENV, SHIM_DIR
 
 DOCS = r"C:\Users\me\Documents"
 PWSH_PERSONAL = DOCS + r"\PowerShell\Modules"
@@ -33,6 +33,12 @@ def test_history_file_is_inside_the_instance(tmp_path: Path):
     history = Path(env[HISTORY_ENV])
     assert history == tmp_path / "psreadline" / "ConsoleHost_history.txt"
     assert history.parent.is_dir()
+
+
+def test_local_shells_are_told_to_keep_the_module_path(tmp_path: Path):
+    # portable-pty would otherwise put the registry's PSModulePath back.
+    env = psreadline.app_env(tmp_path, {}, system="Windows", documents=DOCS)
+    assert env[SHELL_ENV_KEEP_ENV] == "PSModulePath"
 
 
 def test_two_instances_get_different_history_files(tmp_path: Path):
@@ -107,6 +113,7 @@ def test_other_platforms_launch_without_the_shim(tmp_path, monkeypatch):
     monkeypatch.delenv("PSModulePath", raising=False)
     env = _instance(monkeypatch, tmp_path, "Linux").launch_env()
     assert HISTORY_ENV not in env
+    assert SHELL_ENV_KEEP_ENV not in env
     assert "PSModulePath" not in env
 
 
@@ -114,3 +121,11 @@ def test_a_suite_can_override_the_history(tmp_path, monkeypatch):
     own = str(tmp_path / "suite-history.txt")
     instance = _instance(monkeypatch, tmp_path, "Windows", extra_env={HISTORY_ENV: own})
     assert instance.launch_env()[HISTORY_ENV] == own
+
+
+def test_shell_env_keep_name_matches_the_rust_constant():
+    rust = Path(psreadline.__file__).resolve().parents[3] / "src-tauri/src/utils/test_bridge.rs"
+    assert (
+        f'pub const TEST_SHELL_ENV_KEEP_ENV: &str = "{SHELL_ENV_KEEP_ENV}";'
+        in rust.read_text(encoding="utf-8")
+    )
