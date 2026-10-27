@@ -220,13 +220,23 @@ class TestXdndFileDrop(_XdndSuite, TerminalUi, TabsUi, LayoutUi, SidebarUi, File
             native_drag(osi, start, [target])
             source.wait_event("data-get")
             expected = "".join(quote_path(str(dropped)).split())
-            self.wait(
-                lambda: expected in "".join(self.driver.read_terminal(far["id"]).split()),
-                what="the natively dropped path in the pane under the cursor",
-            )
+
+            def landed() -> list[str]:
+                return [
+                    name
+                    for name, tab in (("near", near), ("far", far))
+                    if expected in "".join(self.driver.read_terminal(tab["id"]).split())
+                ]
+
+            where = self.wait(landed, what="the natively dropped path in a pane")
             time.sleep(1.5)
+            where = landed()
+            assert where == ["far"], (
+                f"the native drop released over the far pane landed in {where} "
+                f"(devicePixelRatio {screen.scale}): the drop position is mis-scaled"
+            )
             assert self.driver.read_terminal(near["id"]) == before_near, (
-                "the native drop also reached the other pane"
+                "the native drop also changed the other pane"
             )
             self.driver.press_key("c", f"terminal-input-{far['id']}", ctrl=True)
         self.os_activate()
