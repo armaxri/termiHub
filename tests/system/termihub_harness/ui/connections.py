@@ -254,6 +254,7 @@ class ConnectionsUi(HarnessMixin):
         *,
         shell: Optional[str] = None,
         starting_directory: Optional[str] = None,
+        command_marks: bool = False,
         connect: bool = False,
     ) -> str:
         """Create a local-shell connection (the default editor type).
@@ -264,7 +265,9 @@ class ConnectionsUi(HarnessMixin):
         ``field-startingDirectory`` so the shell opens there (supports ``/tmp``,
         ``~/...`` and ``${env:VAR}``, which the backend expands). ``connect=True``
         clicks **Save & Connect**, which saves then immediately opens the terminal
-        — so the caller never needs a sidebar double-click.
+        — so the caller never needs a sidebar double-click. ``command_marks=True``
+        turns on the opt-in "Command Marks (Shell Hook)" toggle (off by default
+        since #5009: the directory is followed without a hook).
         """
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
@@ -272,6 +275,21 @@ class ConnectionsUi(HarnessMixin):
             self.select_shell(shell)
         if starting_directory is not None:
             self._fill_starting_directory(starting_directory)
+        if command_marks:
+            self.wait(
+                lambda: self.driver.exists("field-shellIntegration"),
+                what="the Command Marks toggle",
+            )
+
+            def marks_on() -> bool:
+                # Re-click until the switch reports on: a click that lands while
+                # the form is still initialising is lost.
+                if self.driver.get_attribute("field-shellIntegration", "aria-checked") == "true":
+                    return True
+                self.driver.click("field-shellIntegration")
+                return False
+
+            self.wait(marks_on, what="the Command Marks toggle to switch on")
         self._click_editor_save(connect)
         self.require_connection(name)
         return name

@@ -72,6 +72,29 @@ pub(crate) fn nonblocking_poll_fd(master: RawFd) -> io::Result<Arc<OwnedFd>> {
     Ok(Arc::new(fd))
 }
 
+/// Whether a line editor (readline, ZLE, fish) is reading from the PTY: the
+/// slave is in non-canonical mode (`ICANON` off), which line editors switch
+/// to while they wait at a prompt and the kernel's cooked mode leaves on while
+/// the shell is still starting (#5009). `tcgetattr` on a master reports its
+/// slave's settings on Linux and macOS. An error reads as "not yet".
+pub(crate) fn line_editor_reading(fd: &OwnedFd) -> bool {
+    // SAFETY: `termios` is plain data; `tcgetattr` fills it on success and the
+    // result is only read when the call returned 0.
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    if unsafe { libc::tcgetattr(fd.as_raw_fd(), &mut termios) } != 0 {
+        return false;
+    }
+    termios.c_lflag & libc::ICANON == 0
+}
+
+/// The PTY's foreground process group (the shell at its prompt, or the job
+/// it runs), from the master; `None` if it cannot be read.
+pub(crate) fn foreground_pgid(fd: &OwnedFd) -> Option<u32> {
+    // SAFETY: `tcgetpgrp` on a valid open fd; the result is checked.
+    let pgid = unsafe { libc::tcgetpgrp(fd.as_raw_fd()) };
+    u32::try_from(pgid).ok().filter(|&p| p > 0)
+}
+
 /// Wait up to `timeout_ms` for `events` on `fd`. Errors (other than `EINTR`)
 /// are returned; readiness, hang-up and timeout all just return `Ok`.
 fn poll_for(fd: &OwnedFd, events: libc::c_short, timeout_ms: libc::c_int) -> io::Result<()> {

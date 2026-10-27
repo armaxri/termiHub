@@ -7821,6 +7821,7 @@ dependencies = [
  "p256",
  "p384",
  "p521",
+ "percent-encoding",
  "pnet_packet 0.35.0",
  "portable-pty",
  "primefield",

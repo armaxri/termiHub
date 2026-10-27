@@ -686,10 +686,19 @@ fn wsl_osc7_command() -> &'static str {
 /// Unlike [`wsl_osc7_command`], this omits the `cd $HOME` guard for `/mnt/`
 /// paths. The prompt-hook registration (bash + zsh, array-aware
 /// `PROMPT_COMMAND`) is shared via [`osc7_bash_prompt_hook`].
+///
+/// This line is typed into the shell, so it is built to be hidden (#5009):
+/// it prints nothing of its own, starts with a space (kept out of history
+/// under `HISTCONTROL=ignorespace` / `HIST_IGNORE_SPACE`), and ends by
+/// printing the setup-done mark
+/// ([`SETUP_DONE_MARK`](crate::output::setup_echo::SETUP_DONE_MARK)) that
+/// tells the output filter where the setup ends.
 fn bash_osc7_command() -> &'static str {
     concat!(
-        r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
+        " ",
         osc7_bash_prompt_hook!(),
+        "; ",
+        r"printf '\e]6973;termihub-setup-done\a'",
     )
 }
 
@@ -761,12 +770,12 @@ fn powershell_osc7_command() -> &'static str {
 /// duplicate marks would be harmless (the frontend collapses a repeated `A`
 /// on the same line and ignores a `C`/`D` with no command in flight) but are
 /// pointless. Guarded by the global `__termihub_si` so a second run cannot
-/// register the handlers twice. Injected visibly via stdin.
+/// register the handlers twice. Passed as fish's `--init-command`, so it is
+/// never typed and prints nothing (#5009).
 fn fish_shell_integration_command() -> &'static str {
     concat!(
         r#"if not set -q __termihub_si; and string match -qr '^[0-3]\.' -- $version; "#,
         r#"set -g __termihub_si 1; "#,
-        r#"echo '# [termiHub] Shell integration: setting up command marks'; "#,
         r#"function __termihub_osc133_a --on-event fish_prompt; printf '\e]133;A\a'; end; "#,
         r#"function __termihub_osc133_c --on-event fish_preexec; printf '\e]133;C\a'; end; "#,
         r#"function __termihub_osc133_d --on-event fish_postexec; printf '\e]133;D;%s\a' $status; end; "#,
@@ -1682,11 +1691,17 @@ mod tests {
             !setup.contains("/mnt/"),
             "SSH setup should not contain /mnt/ path handling, got: {setup}"
         );
-        // Should contain visible notice message
+        // Typed into the shell, so it is built to be hidden (#5009): no
+        // notice of its own, and the setup-done mark as its last statement.
         assert!(
-            setup.contains("[termiHub]"),
-            "expected visible notice, got: {setup}"
+            !setup.contains("[termiHub]") && !setup.contains("echo "),
+            "the typed setup must print nothing of its own, got: {setup}"
         );
+        assert!(
+            setup.ends_with(crate::output::setup_echo::SETUP_DONE_PRINTF),
+            "the typed setup must end with the setup-done mark, got: {setup}"
+        );
+        assert!(setup.starts_with(' '), "kept out of history, got: {setup}");
         // Must not use full screen clear
         assert!(
             !setup.contains(r"\033[2J"),

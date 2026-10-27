@@ -26,6 +26,9 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
+use super::local_shell_cwd::LocalCwdFollow;
+use super::local_shell_setup::TypedSetup;
+
 use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
 
@@ -176,6 +179,15 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         #[cfg(unix)]
         let interrupt = super::pty_unix_io::PtyInterrupt::default();
         #[cfg(unix)]
+        let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>;
+        #[cfg(not(unix))]
+        let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
+        // The shell's directory, read from the OS (#5009): the PTY's
+        // foreground process on Unix, else the shell process itself.
+        let shell_pid = child.process_id();
+        #[cfg(unix)]
+        let foreground: Option<Arc<std::os::fd::OwnedFd>>;
+        #[cfg(unix)]
         let (writer, reader) = {
             use super::pty_unix_io::{nonblocking_poll_fd, InterruptibleWriter, PollingReader};
             let master_fd = pty_pair.master.as_raw_fd().ok_or_else(|| {
@@ -183,6 +195,11 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             })?;
             let poll_fd = nonblocking_poll_fd(master_fd)
                 .map_err(|e| SessionError::SpawnFailed(format!("PTY non-blocking setup: {e}")))?;
+            let probe_fd = poll_fd.clone();
+            line_editor_reading = Some(Box::new(move || {
+                super::pty_unix_io::line_editor_reading(&probe_fd)
+            }));
+            foreground = Some(poll_fd.clone());
             (
                 InterruptibleWriter {
                     inner: writer,
@@ -250,6 +267,19 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                     let _ = guard.take();
                 }
             }),
+            line_editor_reading,
+            cwd_probe: Some(Box::new(move || {
+                #[cfg(unix)]
+                if let Some(pgid) = foreground
+                    .as_deref()
+                    .and_then(super::pty_unix_io::foreground_pgid)
+                {
+                    if let Some(cwd) = super::local_shell_cwd::process_cwd(pgid) {
+                        return Some(cwd);
+                    }
+                }
+                shell_pid.and_then(super::local_shell_cwd::process_cwd)
+            })),
         })
     }
 }
@@ -266,6 +296,8 @@ struct ConnectedState {
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
     /// The graceful path and the guard must never both kill the child.
     disconnected: bool,
+    /// The typed shell-integration setup, for bash / zsh (#5009).
+    setup: Option<Arc<TypedSetup>>,
 }
 
 impl Drop for ConnectedState {
@@ -395,100 +427,107 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         });
 
         SettingsSchema {
-            groups: vec![SettingsGroup {
-                collapsed: false,
-                key: "shell".to_string(),
-                label: "Shell".to_string(),
-                fields: vec![
-                    SettingsField {
-                        key: "shell".to_string(),
-                        label: "Shell".to_string(),
-                        description: Some("Shell program to use".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Select {
-                            options: shell_options,
+            groups: vec![
+                SettingsGroup {
+                    collapsed: false,
+                    key: "shell".to_string(),
+                    label: "Shell".to_string(),
+                    fields: vec![
+                        SettingsField {
+                            key: "shell".to_string(),
+                            label: "Shell".to_string(),
+                            description: Some("Shell program to use".to_string()),
+                            help_text: None,
+                            field_type: FieldType::Select {
+                                options: shell_options,
+                            },
+                            required: true,
+                            default: default_shell.map(|s| serde_json::json!(s)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
                         },
-                        required: true,
-                        default: default_shell.map(|s| serde_json::json!(s)),
-                        placeholder: None,
-                        supports_env_expansion: false,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "customShellPath".to_string(),
-                        label: "Shell Executable Path".to_string(),
-                        description: Some("Full path to the shell executable".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Text,
-                        required: false,
-                        default: None,
-                        placeholder: Some("/usr/local/bin/myshell".to_string()),
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: true,
-                        visible_when: Some(Condition {
-                            field: "shell".to_string(),
-                            equals: serde_json::json!("custom"),
-                            ..Default::default()
-                        }),
-                    },
-                    SettingsField {
-                        key: "startingDirectory".to_string(),
-                        label: "Starting Directory".to_string(),
-                        description: Some(
-                            "Directory to start the shell in (defaults to home)".to_string(),
-                        ),
-                        help_text: None,
-                        field_type: FieldType::FilePath {
-                            kind: FilePathKind::Directory,
+                        SettingsField {
+                            key: "customShellPath".to_string(),
+                            label: "Shell Executable Path".to_string(),
+                            description: Some("Full path to the shell executable".to_string()),
+                            help_text: None,
+                            field_type: FieldType::Text,
+                            required: false,
+                            default: None,
+                            placeholder: Some("/usr/local/bin/myshell".to_string()),
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: true,
+                            visible_when: Some(Condition {
+                                field: "shell".to_string(),
+                                equals: serde_json::json!("custom"),
+                                ..Default::default()
+                            }),
                         },
-                        required: false,
-                        default: None,
-                        placeholder: Some("~ (home directory)".to_string()),
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: true,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "initialCommand".to_string(),
-                        label: "Initial Command".to_string(),
-                        description: Some("Command to run after the shell starts".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Text,
-                        required: false,
-                        default: None,
-                        placeholder: None,
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "shellIntegration".to_string(),
-                        label: "Shell Integration".to_string(),
-                        description: Some(
-                            "Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)"
+                        SettingsField {
+                            key: "startingDirectory".to_string(),
+                            label: "Starting Directory".to_string(),
+                            description: Some(
+                                "Directory to start the shell in (defaults to home)".to_string(),
+                            ),
+                            help_text: None,
+                            field_type: FieldType::FilePath {
+                                kind: FilePathKind::Directory,
+                            },
+                            required: false,
+                            default: None,
+                            placeholder: Some("~ (home directory)".to_string()),
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: true,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "initialCommand".to_string(),
+                            label: "Initial Command".to_string(),
+                            description: Some("Command to run after the shell starts".to_string()),
+                            help_text: None,
+                            field_type: FieldType::Text,
+                            required: false,
+                            default: None,
+                            placeholder: None,
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "shellIntegration".to_string(),
+                            label: "Command Marks (Shell Hook)".to_string(),
+                            description: Some(
+                                "Type a small hook into bash/zsh for command marks (OSC 133)"
+                                    .to_string(),
+                            ),
+                            help_text: Some(
+                                concat!(
+                            "The file browser follows the shell's current directory without ",
+                            "this: termiHub reads it from the operating system, and nothing is ",
+                            "typed into your shell.\n\n",
+                            "Turn this on for command marks — jumping between prompts, selecting ",
+                            "or copying a command's output, and the success/failure marker next ",
+                            "to each finished command. termiHub then types a small hook into ",
+                            "bash or zsh once the prompt is up and keeps it off the screen, but ",
+                            "the hook stays in the shell: it is in the shell's history, its ",
+                            "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
+                            "extended. fish gets it as a startup option, PowerShell and cmd as ",
+                            "startup arguments.\n\n",
+                            "Connections saved while this was on by default were switched off ",
+                            "once when you updated; turn it back on here if you want it.",
+                        )
                                 .to_string(),
-                        ),
-                        help_text: Some(concat!(
-                            "When enabled, termiHub injects a small shell function at startup ",
-                            "that emits OSC 7 (current working directory) and OSC 133 (command ",
-                            "boundary) sequences on every prompt.\n\n",
-                            "This lets the file browser automatically follow the current directory ",
-                            "as you navigate in the shell, and enables jumping between prompts, ",
-                            "selecting or copying a command's output, and the success/failure ",
-                            "marker next to each finished command.\n\n",
-                            "The setup runs visibly in the terminal — you can always see what ",
-                            "termiHub is doing. Disable this if you manage your own shell ",
-                            "integration or prefer a clean terminal start.",
-                        ).to_string()),
-                        field_type: FieldType::Boolean,
-                        required: false,
-                        default: Some(serde_json::json!(true)),
-                        placeholder: None,
-                        supports_env_expansion: false,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
+                            ),
+                            field_type: FieldType::Boolean,
+                            required: false,
+                            default: Some(serde_json::json!(false)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
                     ],
                 },
                 SettingsGroup {
@@ -570,10 +609,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
+        // Off unless asked for: the directory is followed without it (#5009).
         let shell_integration = settings
             .get("shellIntegration")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
         let env = parse_env_vars(&settings);
         // Spawn at the size the frontend fitted, not a fixed 80x24 (#4102).
         let (cols, rows) = crate::config::terminal_size_from_settings(&settings);
@@ -614,8 +654,27 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // before anyone subscribes waits there instead of being dropped (#4719).
         self.early_output.open(&self.output_tx);
 
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(spawned.writer));
+        // The shell-integration line typed into bash / zsh, hidden where the
+        // line editor is observable (#5009).
+        let setup = osc7_for_stdin.map(|line| {
+            TypedSetup::new(
+                line,
+                spawned.line_editor_reading.is_some(),
+                writer.clone(),
+                self.output_tx.clone(),
+            )
+        });
+
+        // Follow the shell's directory from the OS, reported as OSC 7 (#5009).
+        let cwd_follow = spawned
+            .cwd_probe
+            .map(|probe| LocalCwdFollow::start(probe, self.output_tx.clone(), alive.clone()));
+
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
+        let reader_setup = setup.clone();
+        let reader_cwd = cwd_follow.clone();
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
@@ -642,7 +701,16 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         };
                         // Lock released above; the blocking send below can no
                         // longer stall other holders of `output_tx`.
-                        let _ = sender.blocking_send(data);
+                        let deliver = |data: Vec<u8>| match &reader_setup {
+                            Some(setup) => setup.forward(data, &sender),
+                            None => {
+                                let _ = sender.blocking_send(data);
+                            }
+                        };
+                        match &reader_cwd {
+                            Some(cwd) => cwd.send(data, &sender, deliver),
+                            None => deliver(data),
+                        }
                     }
                     Err(_) => break,
                 }
@@ -650,6 +718,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             alive_clone.store(false, Ordering::SeqCst);
             if let Ok(mut guard) = output_tx_clone.lock() {
                 *guard = None;
+            }
+            if let Some(cwd) = reader_cwd {
+                cwd.stop();
             }
         });
 
@@ -684,23 +755,26 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             close_pty();
         });
 
+        // Type the shell-integration setup (bash / zsh; PowerShell, cmd and
+        // fish already got theirs as startup arguments). Where the line
+        // editor is observable it waits for the prompt so its echo can be
+        // hidden (#5009); elsewhere it is typed now, as before. Failures are
+        // non-fatal — the shell works without CWD tracking.
+        if let Some(setup) = &setup {
+            match spawned.line_editor_reading {
+                Some(reading) => setup.clone().type_when_ready(reading, alive.clone()),
+                None => setup.type_now(),
+            }
+        }
+
         self.state = Some(ConnectedState {
-            writer: Arc::new(Mutex::new(spawned.writer)),
+            writer,
             resize: spawned.resize,
             kill: spawned.kill,
             alive,
             disconnected: false,
+            setup,
         });
-
-        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
-        // PowerShell and cmd already received it via startup args above.
-        // Errors are non-fatal — the shell works without CWD tracking.
-        if let Some(setup) = osc7_for_stdin {
-            let cmd = format!("{setup}\n");
-            if let Err(e) = self.write(cmd.as_bytes()) {
-                debug!("Failed to inject OSC 7 hook: {e}");
-            }
-        }
 
         Ok(())
     }
@@ -778,6 +852,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
+        // Input before the first prompt: the setup goes first, so it never
+        // splits or swallows the user's command (#5009).
+        if let Some(setup) = &state.setup {
+            setup.type_now();
+        }
         let mut writer = state.writer.lock().map_err(|e| {
             SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
         })?;
@@ -829,15 +908,20 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 /// The injection is chosen by the shell's *kind* ([`shell_kind`]), so
 /// path-valued shells (the agent's `/bin/bash`, `C:\...\pwsh.exe`) get the
 /// same integration as their bare names (#3728). PowerShell (`powershell` /
-/// `pwsh`) and `cmd` take the setup as startup flags so it runs before the
-/// first prompt without echoing; every other shell gets it back as the
-/// snippet to inject via stdin after spawn. Returns `(command, stdin_setup)`.
+/// `pwsh`), `cmd` and `fish` take the setup as startup flags so it runs
+/// before the first prompt without echoing; every other shell gets it back as
+/// the snippet to type via stdin (see [`TypedSetup`]). Returns `(command, stdin_setup)`.
 fn apply_shell_integration(
     mut cmd: ShellCommand,
     shell: &str,
     shell_integration: bool,
 ) -> (ShellCommand, Option<&'static str>) {
-    let setup = if shell_integration {
+    // PowerShell and cmd report their directory only through their startup
+    // arguments (PowerShell's location is not its process directory), and
+    // those are never typed or shown, so they always get them. The setting
+    // governs the typed bash/zsh hook (and fish's) for command marks (#5009).
+    let windows_shell = matches!(shell_kind(shell), "powershell" | "pwsh" | "cmd");
+    let setup = if shell_integration || windows_shell {
         osc7_setup_command(shell)
     } else {
         None
@@ -854,6 +938,15 @@ fn apply_shell_integration(
         "cmd" => {
             if let Some(setup) = setup {
                 cmd.args.push("/K".to_string());
+                cmd.args.push(setup.to_string());
+            }
+            (cmd, None)
+        }
+        // fish runs `--init-command` after its config files and before the
+        // first prompt, so nothing is typed or echoed (#5009).
+        "fish" => {
+            if let Some(setup) = setup {
+                cmd.args.push("--init-command".to_string());
                 cmd.args.push(setup.to_string());
             }
             (cmd, None)
@@ -1136,6 +1229,8 @@ mod tests {
                     // the mock reader, so the reader NEVER EOFs and the session
                     // can only end via the watcher's direct signal.
                 }),
+                line_editor_reading: None,
+                cwd_probe: None,
             })
         }
     }
@@ -2131,9 +2226,9 @@ mod tests {
             .expect("disconnect should not fail");
     }
 
-    /// Regression test for #408: verify the OSC 7 PROMPT_COMMAND hook is
-    /// injected into local bash sessions by checking for the `__termihub_osc7`
-    /// function definition in the echoed output.
+    /// Regression test for #408: the OSC 7 hook is installed in local bash
+    /// sessions — its prompt emits OSC 7 — while its typed setup stays off
+    /// the screen (#5009).
     #[cfg(unix)]
     #[tokio::test]
     #[serial(local_pty)]
@@ -2146,7 +2241,7 @@ mod tests {
         }
 
         let mut shell = LocalShell::new();
-        let settings = serde_json::json!({ "shell": "bash" });
+        let settings = serde_json::json!({ "shell": "bash", "shellIntegration": true });
 
         shell.connect(settings).await.expect("connect failed");
         let mut rx = shell.subscribe_output();
@@ -2157,7 +2252,7 @@ mod tests {
             while let Some(chunk) = rx.recv().await {
                 output.extend_from_slice(&chunk);
                 let text = String::from_utf8_lossy(&output);
-                if text.contains("__termihub_osc7") && text.contains("PROMPT_COMMAND") {
+                if text.contains("\x1b]7;file://") && text.contains("\x1b]133;A") {
                     return true;
                 }
             }
@@ -2165,10 +2260,14 @@ mod tests {
         })
         .await;
 
+        let text = String::from_utf8_lossy(&output);
         assert!(
             found.unwrap_or(false),
-            "expected OSC 7 setup (__termihub_osc7 + PROMPT_COMMAND) in bash output, got: {:?}",
-            String::from_utf8_lossy(&output)
+            "expected the hook's OSC 7 / OSC 133;A prompt in bash output, got: {text:?}"
+        );
+        assert!(
+            !text.contains("__termihub_osc7"),
+            "the typed setup must not be shown: {text:?}"
         );
 
         shell.disconnect().await.ok();
@@ -2420,12 +2519,60 @@ mod tests {
         assert!(stdin.is_some());
     }
 
+    /// #5009: new local and SSH connections start with the command-mark
+    /// hook off — the form's default and the backend's fallback agree.
     #[test]
-    fn shell_integration_disabled_leaves_command_untouched() {
+    fn new_connections_default_to_no_shell_hook() {
+        #[allow(unused_mut)]
+        let mut schemas = vec![LocalShell::new().settings_schema()];
+        #[cfg(feature = "ssh")]
+        schemas.push(crate::backends::ssh::Ssh::new().settings_schema());
+        for schema in schemas {
+            let field = schema
+                .groups
+                .iter()
+                .flat_map(|g| g.fields.iter())
+                .find(|f| f.key == "shellIntegration")
+                .expect("shellIntegration field");
+            assert_eq!(field.default, Some(serde_json::json!(false)));
+        }
+    }
+
+    /// fish gets its setup as `--init-command`: run before the first prompt,
+    /// never typed, so never echoed (#5009).
+    #[test]
+    fn shell_integration_fish_uses_init_command() {
+        let (cmd, stdin) =
+            apply_shell_integration(bare_command("/opt/homebrew/bin/fish"), "fish", true);
+        assert!(stdin.is_none(), "fish setup must not be typed");
+        assert_eq!(cmd.args[0], "--init-command");
+        assert_eq!(Some(cmd.args[1].as_str()), osc7_setup_command("fish"));
+        assert!(
+            !cmd.args[1].contains("echo "),
+            "prints nothing: {}",
+            cmd.args[1]
+        );
+    }
+
+    #[test]
+    fn shell_integration_off_types_nothing_into_posix_shells() {
+        for shell in ["/bin/bash", "zsh", "fish"] {
+            let (cmd, stdin) = apply_shell_integration(bare_command(shell), shell, false);
+            assert!(stdin.is_none(), "{shell}");
+            assert!(cmd.args.is_empty(), "{shell}");
+        }
+    }
+
+    /// PowerShell and cmd keep their startup-argument setup with the setting
+    /// off: it is how their directory is followed, and nothing is typed.
+    #[test]
+    fn windows_shells_keep_their_startup_argument_setup() {
         let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
         let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, false);
         assert!(stdin.is_none());
-        assert!(cmd.args.is_empty());
+        assert_eq!(cmd.args[1], "-Command");
+        let (cmd, _) = apply_shell_integration(bare_command("cmd"), "cmd", false);
+        assert_eq!(cmd.args[0], "/K");
     }
 
     #[test]
@@ -2440,6 +2587,14 @@ mod tests {
 #[cfg(all(test, unix))]
 #[path = "local_shell_osc133_tests.rs"]
 mod osc133_tests;
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_setup_echo_tests.rs"]
+mod setup_echo_tests;
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_side_effect_tests.rs"]
+mod side_effect_tests;
 
 #[cfg(all(test, unix))]
 #[path = "local_shell_interrupt_tests.rs"]
