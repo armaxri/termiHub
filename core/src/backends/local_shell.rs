@@ -26,6 +26,7 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
+use super::local_shell_cwd::LocalCwdFollow;
 use super::local_shell_setup::TypedSetup;
 
 use crate::output::early::EarlyOutput;
@@ -181,6 +182,11 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>>;
         #[cfg(not(unix))]
         let line_editor_reading: Option<Box<dyn Fn() -> bool + Send + Sync>> = None;
+        // The shell's directory, read from the OS (#5009): the PTY's
+        // foreground process on Unix, else the shell process itself.
+        let shell_pid = child.process_id();
+        #[cfg(unix)]
+        let foreground: Option<Arc<std::os::fd::OwnedFd>>;
         #[cfg(unix)]
         let (writer, reader) = {
             use super::pty_unix_io::{nonblocking_poll_fd, InterruptibleWriter, PollingReader};
@@ -193,6 +199,7 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             line_editor_reading = Some(Box::new(move || {
                 super::pty_unix_io::line_editor_reading(&probe_fd)
             }));
+            foreground = Some(poll_fd.clone());
             (
                 InterruptibleWriter {
                     inner: writer,
@@ -261,6 +268,18 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 }
             }),
             line_editor_reading,
+            cwd_probe: Some(Box::new(move || {
+                #[cfg(unix)]
+                if let Some(pgid) = foreground
+                    .as_deref()
+                    .and_then(super::pty_unix_io::foreground_pgid)
+                {
+                    if let Some(cwd) = super::local_shell_cwd::process_cwd(pgid) {
+                        return Some(cwd);
+                    }
+                }
+                shell_pid.and_then(super::local_shell_cwd::process_cwd)
+            })),
         })
     }
 }
@@ -639,9 +658,15 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             )
         });
 
+        // Follow the shell's directory from the OS, reported as OSC 7 (#5009).
+        let cwd_follow = spawned
+            .cwd_probe
+            .map(|probe| LocalCwdFollow::start(probe, self.output_tx.clone(), alive.clone()));
+
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
         let reader_setup = setup.clone();
+        let reader_cwd = cwd_follow.clone();
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
@@ -668,11 +693,15 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         };
                         // Lock released above; the blocking send below can no
                         // longer stall other holders of `output_tx`.
-                        match &reader_setup {
+                        let deliver = |data: Vec<u8>| match &reader_setup {
                             Some(setup) => setup.forward(data, &sender),
                             None => {
                                 let _ = sender.blocking_send(data);
                             }
+                        };
+                        match &reader_cwd {
+                            Some(cwd) => cwd.send(data, &sender, deliver),
+                            None => deliver(data),
                         }
                     }
                     Err(_) => break,
@@ -681,6 +710,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             alive_clone.store(false, Ordering::SeqCst);
             if let Ok(mut guard) = output_tx_clone.lock() {
                 *guard = None;
+            }
+            if let Some(cwd) = reader_cwd {
+                cwd.stop();
             }
         });
 
@@ -1185,6 +1217,7 @@ mod tests {
                     // can only end via the watcher's direct signal.
                 }),
                 line_editor_reading: None,
+                cwd_probe: None,
             })
         }
     }
@@ -2513,6 +2546,10 @@ mod osc133_tests;
 #[cfg(all(test, unix))]
 #[path = "local_shell_setup_echo_tests.rs"]
 mod setup_echo_tests;
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_side_effect_tests.rs"]
+mod side_effect_tests;
 
 #[cfg(all(test, unix))]
 #[path = "local_shell_interrupt_tests.rs"]
