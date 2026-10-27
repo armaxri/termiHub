@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
-import { contrastRatio } from "./contrast";
+import { adjustForContrast, contrastRatio } from "./contrast";
 
 /**
  * WCAG contrast regression test (accessibility audit, #2070).
@@ -67,4 +67,26 @@ describe("secondary chrome text contrast (WCAG 2.2 AA)", () => {
       expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     });
   }
+});
+
+describe("adjustForContrast (#5008)", () => {
+  it("returns a passing colour unchanged", () => {
+    expect(adjustForContrast("#ffffff", ["#000000"])).toBe("#ffffff");
+  });
+
+  it("lightens towards white on dark backgrounds", () => {
+    const out = adjustForContrast("#222222", ["#161b24", "#1c2130"]);
+    expect(contrastRatio(out, "#161b24")).toBeGreaterThanOrEqual(3);
+    expect(contrastRatio(out, "#1c2130")).toBeGreaterThanOrEqual(3);
+  });
+
+  it("darkens towards black on light backgrounds", () => {
+    const out = adjustForContrast("#eeeeee", ["#ffffff", "#f3f3f3"]);
+    expect(contrastRatio(out, "#ffffff")).toBeGreaterThanOrEqual(3);
+  });
+
+  it("leaves non-hex input or non-hex backgrounds alone", () => {
+    expect(adjustForContrast("red", ["#000000"])).toBe("red");
+    expect(adjustForContrast("#111111", ["var(--x)"])).toBe("#111111");
+  });
 });

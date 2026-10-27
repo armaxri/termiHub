@@ -242,6 +242,14 @@ pub enum ConnectionTreeNode {
         /// choice survives a save/load round-trip (#2316).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+        /// Optional icon colour: a named palette entry (e.g. `"blue"`) or a
+        /// `#rrggbb` hex string (#5008). Opaque to the backend.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon_color: Option<String>,
+        /// Optional single-emoji icon that replaces the type icon (#5008).
+        /// Opaque to the backend.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon_emoji: Option<String>,
         /// Unknown per-node fields, kept verbatim (#3947).
         #[serde(flatten)]
         extra: NodeExtra,
@@ -520,6 +528,20 @@ pub struct SavedConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub icon: Option<String>,
+    /// Optional icon colour: a named palette entry (e.g. `"blue"`) or a
+    /// `#rrggbb` hex string (#5008).
+    ///
+    /// Stored opaquely — the backend never interprets it; the frontend
+    /// resolves it against the active theme and falls back to the default
+    /// icon colour when it does not recognise the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub icon_color: Option<String>,
+    /// Optional single-emoji icon shown instead of the type / custom icon
+    /// (#5008). Stored opaquely; the frontend validates it is one grapheme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub icon_emoji: Option<String>,
     /// Runtime-only: which external file this connection was loaded from.
     /// `None` = main connections.json, `Some(path)` = external file.
     ///
@@ -600,6 +622,8 @@ mod tests {
             children: vec![ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "My SSH".to_string(),
                 config: make_ssh_config(),
                 terminal_options: None,
@@ -628,6 +652,8 @@ mod tests {
         let node = ConnectionTreeNode::Connection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             name: "Local Shell".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -643,9 +669,12 @@ mod tests {
                 config,
                 terminal_options,
                 icon,
+                icon_color,
+                icon_emoji,
                 extra,
             } => {
                 assert!(extra.is_empty(), "{extra:?}");
+                assert!(icon_color.is_none() && icon_emoji.is_none());
                 assert_eq!(name, "Local Shell");
                 assert_eq!(config.type_id, "local");
                 assert!(terminal_options.is_some());
@@ -668,6 +697,8 @@ mod tests {
                     children: vec![ConnectionTreeNode::Connection {
                         extra: Default::default(),
                         icon: None,
+                        icon_color: None,
+                        icon_emoji: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
                         terminal_options: None,
@@ -676,6 +707,8 @@ mod tests {
                 ConnectionTreeNode::Connection {
                     extra: Default::default(),
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     name: "Local".to_string(),
                     config: make_local_config(),
                     terminal_options: None,
@@ -878,6 +911,8 @@ mod tests {
         let node = ConnectionTreeNode::Connection {
             extra: Default::default(),
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             name: "Test".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -1023,6 +1058,43 @@ mod tests {
     }
 
     #[test]
+    fn saved_connection_icon_color_and_emoji_round_trip() {
+        // #5008: the per-connection icon colour and emoji must survive the
+        // IPC save/load round-trip under their camelCase wire names.
+        let json = serde_json::json!({
+            "id": "Prod",
+            "name": "Prod",
+            "config": { "type": "ssh", "config": { "host": "example.com" } },
+            "folderId": null,
+            "iconColor": "red",
+            "iconEmoji": "\u{1F680}"
+        });
+        let conn: SavedConnection = serde_json::from_value(json).unwrap();
+        assert_eq!(conn.icon_color.as_deref(), Some("red"));
+        assert_eq!(conn.icon_emoji.as_deref(), Some("\u{1F680}"));
+
+        let round_tripped = serde_json::to_value(&conn).unwrap();
+        assert_eq!(round_tripped.get("iconColor").unwrap(), "red");
+        assert_eq!(round_tripped.get("iconEmoji").unwrap(), "\u{1F680}");
+    }
+
+    #[test]
+    fn saved_connection_without_icon_color_or_emoji_loads_and_stays_clean() {
+        // Migration safety (#5008): a pre-#5008 entry has neither key; it must
+        // load with both unset and not grow stray keys on re-save.
+        let json = serde_json::json!({
+            "id": "Old",
+            "name": "Old",
+            "config": { "type": "local", "config": {} },
+            "folderId": null
+        });
+        let conn: SavedConnection = serde_json::from_value(json).unwrap();
+        assert!(conn.icon_color.is_none() && conn.icon_emoji.is_none());
+        let out = serde_json::to_value(&conn).unwrap();
+        assert!(out.get("iconColor").is_none() && out.get("iconEmoji").is_none());
+    }
+
+    #[test]
     fn saved_connection_without_icon_stays_clean() {
         // A connection with no icon must not emit a stray `icon` key.
         let conn = SavedConnection {
@@ -1033,6 +1105,8 @@ mod tests {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         };
         let json = serde_json::to_value(&conn).unwrap();
@@ -1052,6 +1126,8 @@ mod tests {
             config: make_ssh_config(),
             terminal_options: None,
             icon: Some("server".to_string()),
+            icon_color: None,
+            icon_emoji: None,
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json.get("icon").unwrap(), "server");
@@ -1081,6 +1157,8 @@ mod tests {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
             extra: extra.clone(),
         };

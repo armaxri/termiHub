@@ -395,6 +395,8 @@ export function CommandPalette(): React.ReactElement {
                       <ConnectionIcon
                         config={entry.connection.config}
                         customIcon={entry.connection.icon}
+                        iconColor={entry.connection.iconColor}
+                        iconEmoji={entry.connection.iconEmoji}
                         size={16}
                       />
                     )}

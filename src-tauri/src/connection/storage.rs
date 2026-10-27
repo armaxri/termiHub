@@ -455,6 +455,8 @@ mod tests {
             children: vec![ConnectionTreeNode::Connection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
                     type_id: "local".to_string(),
@@ -489,6 +491,8 @@ mod tests {
                 children: vec![ConnectionTreeNode::Connection {
                     extra: Default::default(),
                     icon: None,
+                    icon_color: None,
+                    icon_emoji: None,
                     name: "SSH".to_string(),
                     config: crate::terminal::backend::ConnectionConfig {
                         type_id: "ssh".to_string(),
@@ -590,6 +594,8 @@ mod tests {
             connections: vec![SavedConnection {
                 extra: Default::default(),
                 icon: None,
+                icon_color: None,
+                icon_emoji: None,
                 id: "Work/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
