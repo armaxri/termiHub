@@ -20,6 +20,13 @@ name: WSL Live (Windows)
 # several minutes): nightly + manual + PRs that touch the WSL code paths.
 # `TERMIHUB_REQUIRE_WSL=1` turns a missing distro from a skip into a failure, so
 # a broken setup reds this lane instead of skipping to a false green.
+#
+# A second job (`wsl-spawn-grades`, #4962) builds the system-test app and grades
+# MT-SHI-01/03 through the Python harness: `termiHub spawn --pick` lists every
+# distribution and opens the picked one, and `spawn --kind wsl` opens the
+# default distro or a saved connection's. That needs a SECOND distribution, so
+# the job imports Alpine's minirootfs (3.6 MB, pinned by SHA-256) next to
+# Debian; the two report different `ID=`s in /etc/os-release.
 
 on:
   schedule:
@@ -56,6 +63,11 @@ on:
       - "core/src/files/transfer/retry.rs"
       - "core/src/files/transfer/scheduler.rs"
       - "core/src/files/transfer/state.rs"
+      # The spawn path the wsl-spawn-grades job drives (#4962).
+      - "src-tauri/src/commands/spawn.rs"
+      - "src-tauri/src/spawn/**"
+      - "src/components/Spawn/**"
+      - "tests/system/tests/test_external_spawn.py"
       - ".github/workflows/wsl-live.yml"
 
 concurrency:
@@ -146,3 +158,128 @@ jobs:
           fi
           # Serial: the session test and the init-script test share the distro's /tmp.
           cargo test "${args[@]}" -- --test-threads=1 --nocapture
+
+  # MT-SHI-01/03 (#4962): the desktop app's WSL spawns against two real
+  # distributions, through the Python bridge harness. Its own job so the core
+  # tests above keep their fast feedback; both install WSL from the same cache.
+  wsl-spawn-grades:
+    name: WSL spawn grades (Windows, MT-SHI-01/03)
+    runs-on: windows-latest
+    # A debug build of the whole app on Windows plus two short grades.
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install WSL and a Debian distribution
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        timeout-minutes: 20
+        with:
+          distribution: Debian-12
+          wsl-version: 2
+          use-cache: "true"
+
+      - name: Skip the distribution's first-launch user setup
+        # Same RunOOBE reset as the wsl-live job: the spawned tab is an
+        # interactive `wsl.exe -d`, which must land in a shell, not the OOBE.
+        shell: pwsh
+        run: |
+          $name = 'Debian-12'
+          $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+          $key = Get-ChildItem $lxss |
+            Where-Object { (Get-ItemProperty $_.PSPath).DistributionName -eq $name }
+          if (-not $key) { throw "no Lxss registration for $name" }
+          Set-ItemProperty -Path $key.PSPath -Name RunOOBE -Value 0 -Type DWord
+          wsl.exe --terminate $name
+
+      - name: Import a second distribution (Alpine minirootfs)
+        # Pinned by SHA-256: a changed or truncated download fails here, never
+        # in a grade. `wsl --import` gets a plain tar (decompressed here), which
+        # every WSL version accepts. Debian stays the default distribution.
+        shell: pwsh
+        env:
+          ALPINE_URL: https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/alpine-minirootfs-3.22.7-x86_64.tar.gz
+          ALPINE_SHA256: 57e364a241bab0699cd8a760c0fd7b270e9cbcbd3cee822cb2b07ca6d925c16c
+          WSL_UTF8: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tgz = Join-Path $env:RUNNER_TEMP 'alpine-minirootfs.tar.gz'
+          $tar = Join-Path $env:RUNNER_TEMP 'alpine-minirootfs.tar'
+          $dir = Join-Path $env:RUNNER_TEMP 'wsl-alpine'
+          Invoke-WebRequest -Uri $env:ALPINE_URL -OutFile $tgz -MaximumRetryCount 4 -RetryIntervalSec 10
+          $hash = (Get-FileHash -Algorithm SHA256 $tgz).Hash.ToLowerInvariant()
+          if ($hash -ne $env:ALPINE_SHA256) { throw "Alpine rootfs SHA-256 $hash != $env:ALPINE_SHA256" }
+          $in = [IO.File]::OpenRead($tgz)
+          $gz = [IO.Compression.GZipStream]::new($in, [IO.Compression.CompressionMode]::Decompress)
+          $out = [IO.File]::Create($tar)
+          $gz.CopyTo($out)
+          $out.Dispose(); $gz.Dispose(); $in.Dispose()
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          wsl.exe --import termihub-alpine $dir $tar --version 2
+          if ($LASTEXITCODE -ne 0) { throw "wsl --import failed ($LASTEXITCODE)" }
+          wsl.exe --set-default Debian-12
+          if ($LASTEXITCODE -ne 0) { throw "wsl --set-default failed ($LASTEXITCODE)" }
+          wsl.exe -d termihub-alpine --exec cat /etc/os-release
+          if ($LASTEXITCODE -ne 0) { throw "the imported distribution does not start" }
+          wsl.exe --list --verbose
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The app build is not the core-only build above: its own key.
+          shared-key: wsl-live-app
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Setup uv
+        # uv version comes from .github/uv-version (#1552, WA-CI-017).
+        uses: ./.github/actions/setup-uv
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: tests/system/uv.lock
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the desktop app (debug)
+        # The shared system-test app recipe (test bridge + mock-remote-desktop,
+        # #3664), under Git Bash like the integration lane.
+        shell: bash
+        run: scripts/internal/build-system-test-app.sh --debug
+
+      - name: Run the WSL spawn grades
+        # TERMIHUB_REQUIRE_WSL=1: fewer than two distributions fails the grades
+        # instead of skipping them. The skip guard (lane `wsl-live`, no
+        # allowlisted skips) also fails any skip and an empty selection.
+        # --reruns 0: a first failure is the honest result for two grades.
+        shell: bash
+        env:
+          TERMIHUB_REQUIRE_WSL: "1"
+          TERMIHUB_SKIP_GUARD_LANE: wsl-live
+        run: >-
+          ./tests/system/pytest.sh -m integration -k TestWslSpawnGrades -v
+          -n 1 --dist loadscope --reruns 0 -r aR
+
+      - name: Upload failure artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wsl-spawn-grades-artifacts
+          path: tests/system/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
