@@ -427,100 +427,105 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         });
 
         SettingsSchema {
-            groups: vec![SettingsGroup {
-                collapsed: false,
-                key: "shell".to_string(),
-                label: "Shell".to_string(),
-                fields: vec![
-                    SettingsField {
-                        key: "shell".to_string(),
-                        label: "Shell".to_string(),
-                        description: Some("Shell program to use".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Select {
-                            options: shell_options,
+            groups: vec![
+                SettingsGroup {
+                    collapsed: false,
+                    key: "shell".to_string(),
+                    label: "Shell".to_string(),
+                    fields: vec![
+                        SettingsField {
+                            key: "shell".to_string(),
+                            label: "Shell".to_string(),
+                            description: Some("Shell program to use".to_string()),
+                            help_text: None,
+                            field_type: FieldType::Select {
+                                options: shell_options,
+                            },
+                            required: true,
+                            default: default_shell.map(|s| serde_json::json!(s)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
                         },
-                        required: true,
-                        default: default_shell.map(|s| serde_json::json!(s)),
-                        placeholder: None,
-                        supports_env_expansion: false,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "customShellPath".to_string(),
-                        label: "Shell Executable Path".to_string(),
-                        description: Some("Full path to the shell executable".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Text,
-                        required: false,
-                        default: None,
-                        placeholder: Some("/usr/local/bin/myshell".to_string()),
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: true,
-                        visible_when: Some(Condition {
-                            field: "shell".to_string(),
-                            equals: serde_json::json!("custom"),
-                            ..Default::default()
-                        }),
-                    },
-                    SettingsField {
-                        key: "startingDirectory".to_string(),
-                        label: "Starting Directory".to_string(),
-                        description: Some(
-                            "Directory to start the shell in (defaults to home)".to_string(),
-                        ),
-                        help_text: None,
-                        field_type: FieldType::FilePath {
-                            kind: FilePathKind::Directory,
+                        SettingsField {
+                            key: "customShellPath".to_string(),
+                            label: "Shell Executable Path".to_string(),
+                            description: Some("Full path to the shell executable".to_string()),
+                            help_text: None,
+                            field_type: FieldType::Text,
+                            required: false,
+                            default: None,
+                            placeholder: Some("/usr/local/bin/myshell".to_string()),
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: true,
+                            visible_when: Some(Condition {
+                                field: "shell".to_string(),
+                                equals: serde_json::json!("custom"),
+                                ..Default::default()
+                            }),
                         },
-                        required: false,
-                        default: None,
-                        placeholder: Some("~ (home directory)".to_string()),
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: true,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "initialCommand".to_string(),
-                        label: "Initial Command".to_string(),
-                        description: Some("Command to run after the shell starts".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Text,
-                        required: false,
-                        default: None,
-                        placeholder: None,
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "shellIntegration".to_string(),
-                        label: "Shell Integration".to_string(),
-                        description: Some(
-                            "Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)"
+                        SettingsField {
+                            key: "startingDirectory".to_string(),
+                            label: "Starting Directory".to_string(),
+                            description: Some(
+                                "Directory to start the shell in (defaults to home)".to_string(),
+                            ),
+                            help_text: None,
+                            field_type: FieldType::FilePath {
+                                kind: FilePathKind::Directory,
+                            },
+                            required: false,
+                            default: None,
+                            placeholder: Some("~ (home directory)".to_string()),
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: true,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "initialCommand".to_string(),
+                            label: "Initial Command".to_string(),
+                            description: Some("Command to run after the shell starts".to_string()),
+                            help_text: None,
+                            field_type: FieldType::Text,
+                            required: false,
+                            default: None,
+                            placeholder: None,
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "shellIntegration".to_string(),
+                            label: "Command Marks (Shell Hook)".to_string(),
+                            description: Some(
+                                "Type a small hook into bash/zsh for command marks (OSC 133)"
+                                    .to_string(),
+                            ),
+                            help_text: Some(
+                                concat!(
+                            "The file browser follows the shell's current directory without ",
+                            "this: termiHub reads it from the operating system, and nothing is ",
+                            "typed into your shell.\n\n",
+                            "Turn this on for command marks — jumping between prompts, selecting ",
+                            "or copying a command's output, and the success/failure marker next ",
+                            "to each finished command. termiHub then types a small hook into ",
+                            "bash or zsh once the prompt is up and keeps it off the screen, but ",
+                            "the hook stays in the shell: it is in the shell's history, its ",
+                            "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
+                            "extended. fish gets it as a startup option, PowerShell and cmd as ",
+                            "startup arguments.",
+                        )
                                 .to_string(),
-                        ),
-                        help_text: Some(concat!(
-                            "When enabled, termiHub injects a small shell function at startup ",
-                            "that emits OSC 7 (current working directory) and OSC 133 (command ",
-                            "boundary) sequences on every prompt.\n\n",
-                            "This lets the file browser automatically follow the current directory ",
-                            "as you navigate in the shell, and enables jumping between prompts, ",
-                            "selecting or copying a command's output, and the success/failure ",
-                            "marker next to each finished command.\n\n",
-                            "The setup is typed into bash and zsh once their prompt is up and kept ",
-                            "off the screen; your MOTD and startup output stay as they are. ",
-                            "Disable this if you manage your own shell integration.",
-                        ).to_string()),
-                        field_type: FieldType::Boolean,
-                        required: false,
-                        default: Some(serde_json::json!(true)),
-                        placeholder: None,
-                        supports_env_expansion: false,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
+                            ),
+                            field_type: FieldType::Boolean,
+                            required: false,
+                            default: Some(serde_json::json!(false)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
                     ],
                 },
                 SettingsGroup {
@@ -602,10 +607,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
+        // Off unless asked for: the directory is followed without it (#5009).
         let shell_integration = settings
             .get("shellIntegration")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
         let env = parse_env_vars(&settings);
         // Spawn at the size the frontend fitted, not a fixed 80x24 (#4102).
         let (cols, rows) = crate::config::terminal_size_from_settings(&settings);
@@ -2228,7 +2234,7 @@ mod tests {
         }
 
         let mut shell = LocalShell::new();
-        let settings = serde_json::json!({ "shell": "bash" });
+        let settings = serde_json::json!({ "shell": "bash", "shellIntegration": true });
 
         shell.connect(settings).await.expect("connect failed");
         let mut rx = shell.subscribe_output();

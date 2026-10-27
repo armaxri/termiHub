@@ -233,10 +233,8 @@ async fn a_default_session_follows_cwd_without_typing_anything() {
             .to_string();
         read_until(&mut rx, &mut out, &home_name).await;
         assert!(out.contains("RC-BANNER-LINE"), "{shell_name}: {out:?}");
-        assert!(
-            out.contains("\x1b]7;file://"),
-            "{shell_name}: start directory reported: {out:?}"
-        );
+        // The start directory is reported once the first prompt settles.
+        read_until(&mut rx, &mut out, "\x1b]7;file://").await;
 
         let cd = format!("cd '{}'\r", target.path().display());
         shell.write(cd.as_bytes()).expect("write");
