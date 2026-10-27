@@ -2169,6 +2169,8 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "My Folder".to_string(),
             name: "My Folder".to_string(),
@@ -2316,6 +2318,8 @@ mod tests {
         conn.folder_id = Some("Unknown".to_string());
 
         let folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Unknown".to_string(),
             name: "Unknown".to_string(),
@@ -2629,6 +2633,8 @@ mod tests {
         let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
         setup
             .save_folder(ConnectionFolder {
+                icon_color: None,
+                icon_emoji: None,
                 extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
@@ -3122,6 +3128,8 @@ mod tests {
         let ext = dir.path().join("team.json");
         let ext_str = ext.to_str().unwrap();
         let folders = vec![ConnectionFolder {
+            icon_color: None,
+            icon_emoji: None,
             extra: Default::default(),
             id: "Ops".to_string(),
             name: "Ops".to_string(),
