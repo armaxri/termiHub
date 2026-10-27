@@ -1,0 +1,5 @@
+{
+  "reason": "^(armed |keyboard-interactive |real-swap )?deployed-agent (container )?fixture unavailable: no container runtime \\(Docker/Podman\\) reachable",
+  "lanes": ["bulk-windows"],
+  "why": "#4842: some windows-latest runners never bring the Docker service up, and a reachable daemon would run Windows containers only; the deployed-agent containers need a Linux daemon either way"
+}

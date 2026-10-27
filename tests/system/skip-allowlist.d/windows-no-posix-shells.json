@@ -1,0 +1,5 @@
+{
+  "reason": "^bash/zsh/sh local shells are POSIX-only$",
+  "lanes": ["bulk-windows"],
+  "why": "POSIX shells do not exist on Windows"
+}

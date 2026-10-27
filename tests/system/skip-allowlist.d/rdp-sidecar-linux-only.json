@@ -1,0 +1,6 @@
+{
+  "reason": "^RDP sidecar not built",
+  "nodeid": "test_rdp\\.py",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "the RDP sidecar is built on Linux only (scripts/internal/build-system-test-app.sh); the RDP fixture is a Linux container"
+}

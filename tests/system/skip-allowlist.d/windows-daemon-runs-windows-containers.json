@@ -1,0 +1,5 @@
+{
+  "reason": "the docker daemon runs windows containers",
+  "lanes": ["bulk-windows"],
+  "why": "the Windows runner's daemon runs Windows containers only, not the Linux fixtures"
+}

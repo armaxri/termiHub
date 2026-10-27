@@ -1,0 +1,6 @@
+{
+  "reason": "^zsh is not installed on this host$",
+  "nodeid": "test_terminal_command_marks\\.py",
+  "lanes": ["bulk-linux", "bulk-linux-arm64"],
+  "why": "the ubuntu runner image ships no zsh; bash and sh run"
+}

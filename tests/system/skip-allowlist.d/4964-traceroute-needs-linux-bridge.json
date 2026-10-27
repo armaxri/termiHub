@@ -1,0 +1,6 @@
+{
+  "reason": "^the traceroute hop fixture needs a Linux host attached to the Docker bridge$",
+  "nodeid": "test_network_tools_traceroute\\.py",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "#4964: the hosted macOS/Windows runners have no Linux Docker daemon whose bridge the host sits on; the multi-hop chain runs on the Linux lanes"
+}

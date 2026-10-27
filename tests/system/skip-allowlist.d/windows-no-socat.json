@@ -1,0 +1,5 @@
+{
+  "reason": "socat is not available",
+  "lanes": ["bulk-windows"],
+  "why": "socat (the virtual serial pair) does not exist on Windows; serial stays manual there"
+}

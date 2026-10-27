@@ -1,0 +1,6 @@
+{
+  "reason": "^no working Docker/Podman runtime$",
+  "nodeid": "test_external_spawn\\.py",
+  "lanes": ["bulk-macos"],
+  "why": "macOS runners ship no Docker"
+}

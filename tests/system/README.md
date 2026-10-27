@@ -489,8 +489,10 @@ bad compose file, a build error) the harness raises `ComposeFixtureFailed` with
 fixture timeout on a working runtime: a `compose` timeout, a port that never
 opens, a server that never greets or answers (#4315). Off CI the same failures
 still degrade to a skip. The nightly lanes additionally fail on any skip their
-committed allowlist ([`skip-allowlist.json`](skip-allowlist.json)) does not
-expect — see `termihub_harness/skip_guard.py`.
+committed allowlist ([`skip-allowlist.d/`](skip-allowlist.d/), one JSON
+fragment per file) does not expect, or more skips than a lane's summed budget —
+see `termihub_harness/skip_guard.py` and
+[Adding an allowlisted skip](../../docs/testing.md#adding-an-allowlisted-skip-5033).
 
 **Docker or Podman** — the runtime is detected like `scripts/test-system-linux.sh`:
 a `CONTAINER_CMD` env override wins; otherwise Docker is preferred and Podman is

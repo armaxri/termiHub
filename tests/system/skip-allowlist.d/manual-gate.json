@@ -1,0 +1,5 @@
+{
+  "reason": "^guided-manual test: pass --manual to run",
+  "lanes": ["*"],
+  "why": "guided-manual tests need an operator at a TTY; CI never passes --manual"
+}

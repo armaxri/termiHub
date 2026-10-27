@@ -12,7 +12,7 @@ harness process, with the stdlib only:
 * **no answer** (DNS failure, refused / reset connection, TLS failure,
   timeout) or a **server-side failure** (HTTP 5xx, 429) is an outage — the
   test skips with :func:`outage_reason`, whose ``network unavailable: …``
-  prefix is the one entry ``skip-allowlist.json`` admits for it;
+  prefix is the one entry ``skip-allowlist.d/`` admits for it;
 * **any other answer** — 200, and above all a 404 — is a real result the test
   grades. A missing index or package must fail, never skip.
 
@@ -41,7 +41,7 @@ __all__ = [
     "probe",
 ]
 
-#: Prefix of every outage skip reason; ``skip-allowlist.json`` matches on it.
+#: Prefix of every outage skip reason; ``skip-allowlist.d/`` matches on it.
 NETWORK_UNAVAILABLE = "network unavailable: cannot reach"
 
 #: HTTP statuses that mean "the server is having a problem", not "no such file".

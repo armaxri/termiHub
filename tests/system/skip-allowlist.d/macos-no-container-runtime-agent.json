@@ -1,0 +1,5 @@
+{
+  "reason": "fixture unavailable: no container runtime \\(Docker/Podman\\) reachable",
+  "lanes": ["bulk-macos"],
+  "why": "macOS runners ship no Docker: the deployed-agent containers cannot run there"
+}

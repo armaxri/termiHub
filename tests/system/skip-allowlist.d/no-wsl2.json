@@ -1,0 +1,5 @@
+{
+  "reason": "^no WSL2 distribution installed on this host$",
+  "lanes": ["bulk-linux", "bulk-linux-arm64", "bulk-macos", "bulk-windows"],
+  "why": "hosted runners ship no WSL2 distribution"
+}

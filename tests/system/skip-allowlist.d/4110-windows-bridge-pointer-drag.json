@@ -1,0 +1,5 @@
+{
+  "reason": "^the bridge's pointer drag never lands on Windows yet \\(#4110\\)$",
+  "lanes": ["bulk-windows"],
+  "why": "known Windows bridge gap, tracked in #4110"
+}
