@@ -22,6 +22,7 @@ import {
   writeText as writeClipboard,
 } from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
+import { reserveSessionInputSlot, type SessionInputSlot } from "@/services/sessionInputGate";
 import {
   registerTerminalInputInjector,
   registerTerminalReadyProbe,
@@ -37,6 +38,14 @@ import { isFitReady, isProposedFitSafe } from "./safeFit";
 import { errorMessage } from "@/utils/errorMessage";
 
 const LARGE_PASTE_THRESHOLD = 5000;
+
+/**
+ * How long (ms) a paste waiting on the large-paste confirmation keeps its place
+ * in the input order (#5026). The dialog is modal, so typing cannot reach the
+ * terminal meanwhile; the bound only stops a forgotten dialog from holding
+ * injected input forever. After it the paste, if confirmed, simply goes last.
+ */
+const PASTE_CONFIRM_SLOT_MAX_MS = 60_000;
 
 /**
  * The number of connected broadcast targets a paste into `tabId` would reach
@@ -542,6 +551,26 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     useAppStore.getState().setTabSessionId(tabId, null);
   }, []);
 
+  /**
+   * The sessions a paste into `tabId` reaches. Broadcast fan-out (#1981): when
+   * this tab is the active broadcast source, every connected target — matching
+   * the onData fan-out and the context-menu paste path — not just the source.
+   */
+  const pasteTargets = useCallback(
+    (tabId: string, sessionId: SessionId): Array<{ tabId: string; sessionId: SessionId }> => {
+      const bcView = currentBroadcastView();
+      if (!bcView.active || bcView.sourceTabId !== tabId) return [{ tabId, sessionId }];
+      return useAppStore
+        .getState()
+        .getBroadcastTargetTabIds()
+        .flatMap((targetTabId) => {
+          const targetSessionId = getSessionId(targetTabId);
+          return targetSessionId ? [{ tabId: targetTabId, sessionId: targetSessionId }] : [];
+        });
+    },
+    [getSessionId]
+  );
+
   const pasteToTerminal = useCallback(
     async (tabId: string) => {
       const sessionId = sessionRegistryRef.current.get(tabId);
@@ -573,8 +602,26 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       );
       lastPasteAtRef.current.set(tabId, now);
 
-      const text = await readClipboard();
-      if (!text) return;
+      // Reserve the paste's place in each receiving session's input order now,
+      // before the async clipboard read, so keys typed after the shortcut land
+      // after the pasted text, as in a real terminal (#5026).
+      const slots = new Map<SessionId, SessionInputSlot>();
+      for (const target of pasteTargets(tabId, sessionId)) {
+        slots.set(target.sessionId, reserveSessionInputSlot(target.sessionId, "paste"));
+      }
+      const releaseSlots = () => slots.forEach((slot) => slot.cancel());
+
+      let text: string;
+      try {
+        text = await readClipboard();
+      } catch (err) {
+        releaseSlots();
+        throw err;
+      }
+      if (!text) {
+        releaseSlots();
+        return;
+      }
 
       const doPaste = async () => {
         // Bracket the payload per-terminal — bracketed-paste mode is a per-terminal
@@ -584,39 +631,40 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
           const xterm = xtermRegistryRef.current.get(targetTabId);
           const payload =
             xterm && xterm.modes.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
-          return sendInput(targetSessionId, payload);
+          const send = () => sendInput(targetSessionId, payload);
+          // Fill the reserved slot; a target that appeared since just queues.
+          const slot = slots.get(targetSessionId);
+          return slot ? slot.fill(send) : send();
         };
-
-        // Broadcast fan-out (#1981): when this tab is the active broadcast source,
-        // paste into every connected target — matching the onData fan-out and the
-        // context-menu paste path — not just the source session.
-        const store = useAppStore.getState();
-        const bcView = currentBroadcastView();
-        if (bcView.active && bcView.sourceTabId === tabId) {
+        try {
           await Promise.all(
-            store.getBroadcastTargetTabIds().flatMap((targetTabId) => {
-              const targetSessionId = getSessionId(targetTabId);
-              return targetSessionId ? [pasteInto(targetTabId, targetSessionId)] : [];
-            })
+            pasteTargets(tabId, sessionId).map((t) => pasteInto(t.tabId, t.sessionId))
           );
-          return;
+        } finally {
+          // A target gone since the reservation must not keep its slot.
+          releaseSlots();
         }
-
-        await pasteInto(tabId, sessionId);
       };
 
       // A multi-line paste from a broadcast source would run on every target at
       // once, so it always asks first and names the target count (#3443).
       const broadcastTargetCount = broadcastPasteTargetCount(tabId, text);
       if (text.length > LARGE_PASTE_THRESHOLD || broadcastTargetCount > 1) {
+        // Keep the paste's place while the user decides; declining gives it up.
+        slots.forEach((slot) => slot.extend(PASTE_CONFIRM_SLOT_MAX_MS));
         useAppStore
           .getState()
-          .showLargePasteDialog(text.length, doPaste, broadcastTargetCount || undefined);
+          .showLargePasteDialog(
+            text.length,
+            doPaste,
+            broadcastTargetCount || undefined,
+            releaseSlots
+          );
       } else {
         await doPaste();
       }
     },
-    [getSessionId]
+    [pasteTargets]
   );
 
   const sendInputToTerminal = useCallback(async (tabId: string, data: string): Promise<boolean> => {
