@@ -85,16 +85,6 @@ export const LANES = [
     sources: [DEVELOP_DISPATCH],
   },
   {
-    // Dispatched only (#4847): it opens its PR against develop, so main has
-    // nothing to grade; it keeps no schedule of its own.
-    file: "cargo-update-lockfile.yml",
-    cadence: "daily",
-    cron: "0 4 * * *",
-    dispatch: true,
-    ownSchedule: false,
-    sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
-  },
-  {
     // Dispatched (#4847): its own schedule grades main only (weekly).
     file: "windows-ssh-host.yml",
     cadence: "daily",
@@ -166,6 +156,18 @@ export const LANES = [
     // Dispatched only (#4847): the expectation is kept current on develop, so
     // it keeps no schedule of its own.
     file: "branch-protection.yml",
+    cadence: "weekly",
+    cron: "17 6 * * 1",
+    dispatch: true,
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
+  },
+  {
+    // Report-only dependency check (#5011; replaces the lockfile-PR chore):
+    // pending cargo updates, cargo-deny and outdated npm packages for develop.
+    // Dispatched only, no schedule of its own; a self-path develop push also
+    // runs it.
+    file: "dependency-report.yml",
     cadence: "weekly",
     cron: "17 6 * * 1",
     dispatch: true,

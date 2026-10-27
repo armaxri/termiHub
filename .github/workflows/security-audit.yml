@@ -61,7 +61,7 @@ on:
     branches: [ main, develop ]
   schedule:
     # main ONLY — 04:41 UTC daily (off the hour to dodge scheduler congestion;
-    # after the 04:00 cargo-update-lockfile run). A scheduled run executes
+    # after the 04:00 dispatched develop run). A scheduled run executes
     # MAIN's copy of this file and checks out main.
     #
     # develop's daily audit is not a cron here (#4847): GitHub would run main's

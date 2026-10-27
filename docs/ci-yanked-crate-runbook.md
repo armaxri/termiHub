@@ -37,78 +37,47 @@ The recurrence is the problem: a yank or advisory is published upstream at an
 arbitrary time, so the check flips red across all open PRs at once, with no code
 change to point at. That looks like a broken PR and is not one.
 
-## Proactive mitigation (should catch most of these)
+## Weekly report (no automatic updates)
 
-The [`Cargo Update Lockfile`](../.github/workflows/cargo-update-lockfile.yml)
-workflow runs `cargo update` **daily** (04:00 UTC) and on demand
-(`workflow_dispatch`). It pulls compatible patch/minor bumps — including
-off-yanked replacements and freshly-published advisory fixes — into `Cargo.lock`
-**and `rdp-sidecar/Cargo.lock`** (#4357) and opens a single PR against `develop`
-when either lockfile changed, for the maintainer to review and merge (#4912). Keeping the
-lockfile current means a freshly-yanked patch or advisory fix is usually already
-in `develop` before it can red PRs. The cadence is **daily** (previously weekly;
-see #2645): a weekly refresh left every open PR's Security Audit red for up to a
-week when an advisory landed mid-week, so daily shrinks that window to ~a day.
+**No automated job updates dependencies.** Per the maintainer decision of
+2026-10-24 (restated 2026-10-26, #5011) no workflow or bot may create a
+dependency-update branch or PR, push, or merge. Checks only _report_; the
+maintainer decides what to update and lands it by hand with the manual path
+below. (The former daily `Cargo Update Lockfile` chore, which opened a lockfile
+PR — #2645, #4357, #4465, #4912 — and the Dependabot github-actions config were
+removed in #5011.)
+
+The [`Dependency Report`](../.github/workflows/dependency-report.yml) workflow
+runs **weekly** (Mondays 06:17 UTC, dispatched on `develop` by
+`scheduled-dispatch.yml`) and on demand. With a read-only token, and without
+writing anything, it puts into its job summary:
+
+- the compatible updates `cargo update` _would_ make, for `Cargo.lock` and
+  `rdp-sidecar/Cargo.lock` (`cargo update --dry-run --verbose`), plus how many
+  crates have a newer SemVer-incompatible version;
+- `cargo deny check advisories bans licenses sources` for both lockfiles (each
+  with its own `deny.toml`);
+- outdated npm packages (`pnpm outdated`). npm advisories stay with the Security
+  Audit workflow's `pnpm audit` gates.
+
+The run **fails only when something is actionable**: a cargo-deny finding (a
+yanked crate, an advisory not on the accepted ignore list, a ban, license or
+source violation). Pending updates and outdated packages are information.
+Security Audit still audits every `develop`/`main` push and runs daily, so a
+yank or advisory surfaces there within a day; the weekly report adds the list
+of updates that would clear it.
 
 Run it on demand the moment a yank or advisory is spotted:
 
 ```bash
-gh workflow run cargo-update-lockfile.yml --repo armaxri/termiHub
+gh workflow run dependency-report.yml --repo armaxri/termiHub --ref develop
 ```
 
-Operational notes for that PR:
-
-- **It never merges; the maintainer decides.** Per the maintainer decision of
-  2026-10-24 (#4912) dependency updates are never merged automatically. The job
-  assigns the PR to `armaxri`, requests their review, and the PR body opens with
-  "Waiting for a maintainer decision". A human reviews the lockfile diff and the
-  CI checks, then merges it (merge commit) or closes it. The job also drops any
-  auto-merge an earlier version of the chore armed on the open PR.
-- **A lockfile that fails the gate opens as a draft, and the run fails.** Before
-  opening the PR, the job itself runs the lockfile gate on the refreshed lock:
-  `cargo check --workspace --all-targets --all-features --locked` (it compiles),
-  `cargo check --manifest-path rdp-sidecar/Cargo.toml --all-targets --locked`
-  when the sidecar lockfile changed, the pre-release tripwire
-  (`scripts/internal/check-prerelease-crates.mjs`, both lockfiles) and the same
-  cargo-deny gate as Security Audit
-  (`cargo deny check advisories bans licenses sources`) for the workspace and,
-  from `rdp-sidecar/`, for the sidecar. If any of them fails (a
-  bump that does not compile, a pre-release bump off the allowlist, a crate
-  yanked or flagged after the update, a new license, …), the PR is opened, or an
-  open one converted, as a **draft** with the failing output at the top of its
-  body, and the workflow run fails so the red scheduled run is noticed (#3755,
-  #4465). Fix it with the manual path below on that branch or a fresh one; the
-  next passing run marks the PR ready again.
-- **The PR carries the `automation` label** so the coordinator/maintainer can
-  spot it fast.
-- **The job dispatches the per-PR CI itself.** The PR is pushed with the
-  built-in `GITHUB_TOKEN`, which does not trigger `pull_request`/`push`
-  workflows (a GitHub safeguard), but a `workflow_dispatch` made with
-  `GITHUB_TOKEN` does run. So after a passing gate the job runs
-  `gh workflow run` for **Code Quality**, **Build** and **Security Audit** with
-  `--ref chore/cargo-update-lockfile` (the job holds `actions: write` for this).
-  Their check runs, including the required `PR Gate`, attach to the PR's head
-  commit and show on the PR. A dispatch runs every area on every platform, like
-  a push to `develop`. If the checks are missing (a dispatch failed — the run
-  summary warns), close and reopen the PR, or merge `develop` into the branch:
-  either is a human-actor event that starts the normal per-PR CI. The repo
-  setting **Settings → Actions → General → "Allow GitHub Actions to create and
-  approve pull requests"** must be enabled for the job to open the PR at all.
-- **`GITHUB_TOKEN` only.** No GitHub App, PAT or other secret is involved; the
-  App/PAT token chain of #4469 existed only so an unattended auto-merge could
-  wait for real CI, and was removed with the auto-merge (#4912).
-- **The gate never sees a write token.** It compiles freshly-bumped, unreviewed
-  crates, so it runs in a read-only job with no secrets. A separate job that
-  compiles nothing takes the refreshed lockfiles and the verdict, pushes the
-  branch, opens the PR and dispatches its CI (#4465).
-- **It uses a fixed automation branch** (`chore/cargo-update-lockfile`) that the
-  job force-updates each run, so repeated runs refresh the same PR rather than
-  piling up new ones. That force-update touches only this bot-owned branch —
-  never a human branch, `develop`, or `main`.
+Notes for a hand-made lockfile update:
 
 - **A pre-release bump reds the tripwire.** If `cargo update` moves a pre-release
-  crate (e.g. `rsa 0.10.0-rc.18` → `rc.19`), the chore's gate (and Rust Code
-  Quality, at "Check pre-release crates are reviewed") fails on
+  crate (e.g. `rsa 0.10.0-rc.18` → `rc.19`), Rust Code Quality (at "Check
+  pre-release crates are reviewed") fails on
   `scripts/internal/check-prerelease-crates.mjs` (SUP-002). That is intended:
   review the bump, then update the exact version in
   `.github/prerelease-allowlist.json` on the same PR.
@@ -120,9 +89,9 @@ Operational notes for that PR:
   (#4465). Lift those pins, with their allowlist entries, in a reviewed PR when
   russh moves to a stable RustCrypto line.
 
-## Fast manual fix (when a yank or advisory slips through between runs)
+## Fast manual fix
 
-When a yank or a fresh advisory reds the PRs before the daily chore catches it,
+When a yank or a fresh advisory reds the PRs (or the weekly report flags one),
 do this — it is fast once you know the shape. **Do not** try to debug the failing
 PR; the PR is fine.
 
@@ -190,16 +159,16 @@ Rationale:
   often for a soundness or security reason). For a safety-critical app, shipping
   a withdrawn dependency unnoticed is the worse failure mode. The gate exists
   precisely so that cannot happen silently (#2074).
-- The pain is **recurrence and simultaneity**, not the gate's strictness. The
-  proactive `cargo update` chore above attacks that directly by keeping the
-  lockfile fresh, and the manual path above makes the occasional slip-through a
-  ~5-minute fix rather than a scramble. Weakening the gate would trade a loud,
+- The pain is **recurrence and simultaneity**, not the gate's strictness. Since
+  #3326 Security Audit no longer runs on every PR (a fresh finding surfaces
+  post-merge and on the daily lane), the weekly Dependency Report lists the
+  pending updates, and the manual path above makes a finding a ~5-minute fix
+  rather than a scramble. Weakening the gate would trade a loud,
   actionable signal for a silent risk without removing the underlying churn.
-- If the interruption ever becomes intolerable despite the chore, the
+- If the interruption ever becomes intolerable, the
   proportionate step is **not** to weaken the release gate but to split the
   yanked check into its own non-fail-fast job (advisory on PRs, still blocking
   on the `develop`/`main` push and release lanes) so a fresh yank surfaces
   without gating unrelated PR work. That is a larger change with its own
   trade-off (a yank could merge to `develop` before being noticed), so it is
-  recorded here as the fallback, not the default. Revisit only if the chore
-  proves insufficient in practice.
+  recorded here as the fallback, not the default.
