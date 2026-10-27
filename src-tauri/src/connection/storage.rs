@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn v4_build_refuses_to_overwrite_v5_file() {
         use crate::utils::migrate::{guard_not_newer, VersionedStore};
-        assert!(ConnectionStore::CURRENT_VERSION >= 5);
+        const { assert!(ConnectionStore::CURRENT_VERSION >= 5) };
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
         storage
