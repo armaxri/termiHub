@@ -35,6 +35,8 @@ fn connection(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection 
 /// A deterministic folder, optionally nested under a parent.
 fn folder(id: &str, name: &str, parent_id: Option<&str>, expanded: bool) -> ConnectionFolder {
     ConnectionFolder {
+        icon_color: None,
+        icon_emoji: None,
         extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),
