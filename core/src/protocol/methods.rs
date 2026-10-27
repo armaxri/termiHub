@@ -375,6 +375,13 @@ pub struct Capabilities {
     /// ignore the unknown field and truncate: the desktop never sends it to
     /// them.
     pub file_create_new: bool,
+    /// Whether the agent stores an icon colour and emoji on its saved
+    /// connection definitions — `icon_color` / `icon_emoji` on
+    /// `connections.create` / `connections.update` and in the definitions it
+    /// reports (protocol 0.33.0, #5021). Absent (read as `false`) on older
+    /// agents, which ignore the unknown keys: the desktop hides the controls
+    /// for them instead of letting a choice silently vanish.
+    pub definition_icon_style: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -1032,6 +1039,14 @@ pub struct ConnectionCreateParams {
     #[cfg_attr(test, ts(type = "unknown"))]
     pub terminal_options: Option<serde_json::Value>,
     pub icon: Option<String>,
+    /// Icon colour: a palette name or `#rrggbb` (#5021). Stored opaquely. An
+    /// agent older than protocol 0.33.0 ignores the key and does not store it.
+    #[serde(default)]
+    pub icon_color: Option<String>,
+    /// Single-emoji icon shown instead of the glyph (#5021). Stored opaquely;
+    /// ignored by an agent older than protocol 0.33.0.
+    #[serde(default)]
+    pub icon_emoji: Option<String>,
 }
 
 // ── connections.update ─────────────────────────────────────────────
@@ -1087,6 +1102,23 @@ pub struct ConnectionUpdateParams {
     )]
     #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
     pub icon: Option<serde_json::Value>,
+    /// Icon colour (#5021). Use JSON `null` to clear, omit to leave unchanged.
+    #[serde(
+        default,
+        with = "optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
+    pub icon_color: Option<serde_json::Value>,
+    /// Single-emoji icon (#5021). Use JSON `null` to clear, omit to leave
+    /// unchanged.
+    #[serde(
+        default,
+        with = "optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
+    pub icon_emoji: Option<serde_json::Value>,
 }
 
 // ── connections.delete ─────────────────────────────────────────────
@@ -1181,6 +1213,14 @@ pub struct ConnectionDefinition {
     /// Custom icon name (lucide-react PascalCase or "lab:camelCase").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Icon colour: a palette name or `#rrggbb` (#5021). Absent when unset and
+    /// from agents older than protocol 0.33.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    /// Single-emoji icon shown instead of the glyph (#5021). Absent when unset
+    /// and from agents older than protocol 0.33.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_emoji: Option<String>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
@@ -2238,6 +2278,8 @@ mod tests {
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             icon: None,
+            icon_color: None,
+            icon_emoji: None,
             source_file: None,
         };
         // `serde_json` (no `preserve_order`) emits struct fields in declaration
@@ -2262,12 +2304,45 @@ mod tests {
             folder_id: None,
             terminal_options: Some(json!({ "fontSize": 14 })),
             icon: Some("Terminal".to_string()),
+            icon_color: None,
+            icon_emoji: None,
             source_file: Some("/home/pi/team.json".to_string()),
         };
         assert_eq!(
             serde_json::to_string(&def).unwrap(),
             r#"{"id":"ext-1","name":"Team","session_type":"local","config":null,"persistent":false,"folder_id":null,"terminal_options":{"fontSize":14},"icon":"Terminal","source_file":"/home/pi/team.json"}"#
         );
+    }
+
+    /// #5021: a definition's icon colour / emoji are on the wire only when set
+    /// (after `icon`, before `source_file`), so an unstyled definition keeps the
+    /// exact pre-#5021 bytes; an older agent's reply without them parses unset.
+    #[test]
+    fn connection_definition_icon_style_is_skipped_when_unset() {
+        let def = ConnectionDefinition {
+            id: "c".to_string(),
+            name: "Prod".to_string(),
+            session_type: "shell".to_string(),
+            config: Value::Null,
+            persistent: false,
+            folder_id: None,
+            terminal_options: None,
+            icon: Some("Server".to_string()),
+            icon_color: Some("red".to_string()),
+            icon_emoji: Some("\u{1F680}".to_string()),
+            source_file: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&def).unwrap(),
+            "{\"id\":\"c\",\"name\":\"Prod\",\"session_type\":\"shell\",\"config\":null,\
+             \"persistent\":false,\"folder_id\":null,\"icon\":\"Server\",\
+             \"icon_color\":\"red\",\"icon_emoji\":\"\u{1F680}\"}"
+        );
+        let older: ConnectionDefinition =
+            serde_json::from_value(json!({"id": "c", "name": "Prod", "session_type": "shell"}))
+                .unwrap();
+        assert_eq!(older.icon_color, None);
+        assert_eq!(older.icon_emoji, None);
     }
 
     /// A full snake_case reply deserializes into `ConnectionDefinition`.
@@ -2727,6 +2802,7 @@ mod tests {
                     symlink: true,
                 },
                 file_create_new: true,
+                definition_icon_style: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2762,6 +2838,8 @@ mod tests {
         );
         // #4433: the host-level exclusive create.
         assert_eq!(v["capabilities"]["fileCreateNew"], true);
+        // #5021: icon colour / emoji on saved definitions.
+        assert_eq!(v["capabilities"]["definitionIconStyle"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3308,7 +3386,9 @@ mod tests {
             "persistent": true,
             "folder_id": "folder-1",
             "terminal_options": {"scrollbackLines": 5000},
-            "icon": "server"
+            "icon": "server",
+            "icon_color": null,
+            "icon_emoji": null
         }));
         assert_wire_round_trip::<ConnectionCreateParams>(json!({
             "name": "Temp",
@@ -3317,7 +3397,9 @@ mod tests {
             "persistent": false,
             "folder_id": null,
             "terminal_options": null,
-            "icon": null
+            "icon": null,
+            "icon_color": null,
+            "icon_emoji": null
         }));
     }
 
@@ -3342,6 +3424,56 @@ mod tests {
             "terminal_options": null,
             "icon": null
         }));
+    }
+
+    /// #5021: the icon colour / emoji ride `connections.create` as two more
+    /// always-serialized keys; a payload from an older desktop without them
+    /// still decodes, with both unset.
+    #[test]
+    fn connection_create_params_carry_icon_style() {
+        assert_wire_round_trip::<ConnectionCreateParams>(json!({
+            "name": "Prod",
+            "type": "ssh",
+            "config": {"host": "h"},
+            "persistent": false,
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null,
+            "icon_color": "red",
+            "icon_emoji": "\u{1F680}"
+        }));
+        let older: ConnectionCreateParams = serde_json::from_value(json!({
+            "name": "Prod",
+            "type": "ssh",
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null
+        }))
+        .unwrap();
+        assert_eq!(older.icon_color, None);
+        assert_eq!(older.icon_emoji, None);
+    }
+
+    /// #5021: `icon_color` / `icon_emoji` are tri-state patch fields — omitted
+    /// leaves them unchanged, an explicit `null` clears them.
+    #[test]
+    fn connection_update_params_icon_style_is_tri_state() {
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({
+            "id": "conn-1",
+            "icon_color": "#336699",
+            "icon_emoji": "\u{1F525}"
+        }));
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({
+            "id": "conn-1",
+            "icon_color": null,
+            "icon_emoji": null
+        }));
+        let omitted: ConnectionUpdateParams =
+            serde_json::from_value(json!({"id": "conn-1"})).unwrap();
+        assert!(omitted.icon_color.is_none() && omitted.icon_emoji.is_none());
+        let cleared: ConnectionUpdateParams =
+            serde_json::from_value(json!({"id": "conn-1", "icon_color": null})).unwrap();
+        assert_eq!(cleared.icon_color, Some(Value::Null));
     }
 
     #[test]
