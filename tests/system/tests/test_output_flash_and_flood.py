@@ -19,11 +19,11 @@ Retires two "watch the screen" release checks into plain asserts:
   round trips, which run on the WebView's JS thread, as the responsiveness
   probe. Then Ctrl+C must stop the output promptly and give a prompt back.
 
-MT-LOCAL-03 (the WSL variant of the flash grade) stays guided: no CI lane runs
-the desktop app against a real WSL distribution (``wsl-live.yml`` builds and
-tests only the core crate, where ``live_wsl_session_sources_init_script_
-silently_self_cleans_and_tracks_cwd`` already asserts the setup body never
-reaches the terminal).
+MT-LOCAL-03 (the WSL variant of the flash grade) stays guided: the only CI job
+that runs the desktop app against a real WSL distribution grades the spawns
+(``wsl-live.yml`` → ``wsl-spawn-grades``, #4962), and the core tests there
+(``live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cwd``)
+already assert the setup body never reaches the terminal.
 
 Every run records its measurements in the ``[termihub-test-timing]`` summary
 (``measure:*`` ops); the thresholds below are sized from those (see

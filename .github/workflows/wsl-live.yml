@@ -232,8 +232,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '22'
-          cache: 'pnpm'
+          node-version: "22"
+          cache: "pnpm"
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -249,7 +249,7 @@ jobs:
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
         uses: ./.github/actions/setup-uv
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
 
