@@ -96,7 +96,7 @@ class TestOsPointerGrades(
         self.close_all_tabs()
         self.wait(lambda: self.tab_count() == 0, what="every tab to close")
         folder = Path(tempfile.mkdtemp(prefix="thub-editor-dnd-"))
-        self.ensure_terminal()
+        self.open_cwd_following_terminal()
         self.run_command(f'cd "{folder}"')
         self.open_file_browser()
         self.wait_for_path_contains(folder.name)

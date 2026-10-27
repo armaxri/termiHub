@@ -120,7 +120,7 @@ class TestFileBrowserLocal(
         displayed temp-dir path.
         """
         self.restart_app()
-        self.ensure_terminal()
+        self.open_cwd_following_terminal()
         # Keep the browser hidden while we cd; revealing it re-reads the CWD.
         self.switch_to_connections_sidebar()
         # Use forward slashes so the cd is valid regardless of which shell the
@@ -189,7 +189,7 @@ class TestFileBrowserLocal(
     def test_browser_follows_cd_in_the_terminal(self):
         target, needle = self.shell.scratch_dirs()[0]
         self.restart_app()
-        self.ensure_terminal()
+        self.open_cwd_following_terminal()
         self.open_file_browser()
         self.switch_to_connections_sidebar()  # return focus to the terminal
         self.run_command(f"cd {target}")
@@ -200,7 +200,7 @@ class TestFileBrowserLocal(
     def test_cwd_survives_a_sidebar_view_round_trip(self):
         target, needle = self.shell.scratch_dirs()[0]
         self.restart_app()
-        self.ensure_terminal()
+        self.open_cwd_following_terminal()
         self.run_command(f"cd {target}")
         self.switch_to_files_sidebar()
         self.wait_for_path_contains(needle)
@@ -221,8 +221,7 @@ class TestFileBrowserLocal(
         # this unported).
         (target_a, needle_a), (target_b, needle_b) = self.shell.scratch_dirs()
         self.restart_app()
-        self.ensure_terminal()
-        tab1 = self.tab_ids()[0]
+        tab1 = self.open_cwd_following_terminal() or self.tab_ids()[0]
         self.open_file_browser()
         # Shell 1 → dir A (hide the browser, cd, reveal it — the proven recipe).
         self.switch_to_connections_sidebar()
@@ -230,11 +229,17 @@ class TestFileBrowserLocal(
         self.switch_to_files_sidebar()
         self.wait_for_path_contains(needle_a)
         # A second shell → dir B, opened from the terminal toolbar.
-        before = self.tab_ids()
+        # (On Windows a second Command Marks PowerShell: without them its `cd`
+        # is not followed, #5017.)
         self.switch_to_connections_sidebar()
-        self.driver.click("terminal-view-new-terminal")
-        self.wait(lambda: len(self.tab_ids()) == len(before) + 1, what="a second terminal tab")
-        tab2 = next(t for t in self.tab_ids() if t not in before)
+        tab2 = self.open_cwd_following_terminal() if sys.platform.startswith("win") else None
+        if tab2 is None:
+            before = self.tab_ids()
+            self.driver.click("terminal-view-new-terminal")
+            self.wait(
+                lambda: len(self.tab_ids()) == len(before) + 1, what="a second terminal tab"
+            )
+            tab2 = next(t for t in self.tab_ids() if t not in before)
         # The new terminal is active; wait for its own shell prompt, then cd it.
         self.wait(
             lambda: self.driver.read_terminal(tab2).strip() != "",
