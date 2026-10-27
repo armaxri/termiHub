@@ -459,9 +459,11 @@ fn build_shell_command_with(
 ///   injected visibly via stdin.
 /// - `"powershell"` / `"pwsh"` — OSC 7: overrides the `prompt` function to
 ///   emit a `file://` URI (both `powershell.exe` and `pwsh`); injected via
-///   `-NoExit -Command` startup args (not stdin) to avoid echo.
+///   `-NoExit -Command` startup args (not stdin) to avoid echo. Only for the
+///   opt-in hook: without it PowerShell's `cd` is not followed (#5017).
 /// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
-///   (not stdin) to avoid echo.
+///   (not stdin) to avoid echo; only for the opt-in hook, since cmd's
+///   directory is followed from its process without it (#5017).
 /// - `"fish"` — OSC 133 only (fish emits OSC 7 natively): registers
 ///   `fish_prompt` / `fish_preexec` / `fish_postexec` event handlers;
 ///   injected visibly via stdin.
@@ -761,8 +763,13 @@ pub fn bash_env_setup_script() -> &'static str {
 /// preserved; a default `PS <path}> ` prompt is used only when none exists.
 /// The whole setup is guarded by `$global:__th_si`, so running it twice cannot
 /// capture termiHub's own `prompt` as the "original" and recurse.
-/// Ends with `Clear-Host` to clear the screen. Injected via `-NoExit -Command`
-/// startup args so the command never echoes.
+/// Only used with the opt-in command-mark hook (#5017): PowerShell's location
+/// is not its process directory, so without it the file browser does not
+/// follow PowerShell. Injected locally via `-NoExit -Command` startup args, so it is never
+/// echoed, and it prints nothing and clears nothing: whatever the user's
+/// profile printed at startup stays on screen (#5017). Only the copy typed
+/// over SSH (the opt-in hook) clears the screen afterwards, to take its own
+/// echo off it (see `remote_shell::TYPED_POWERSHELL_CLEAR`).
 fn powershell_osc7_command() -> &'static str {
     concat!(
         r#"if(-not $global:__th_si){$global:__th_si=1;"#,
@@ -784,7 +791,7 @@ fn powershell_osc7_command() -> &'static str {
         r#"$__th_rl=$function:PSConsoleHostReadLine;"#,
         r#"function PSConsoleHostReadLine{$l=& $__th_rl;[Console]::Write([char]27+']133;C'+[char]7);$l}"#,
         r#"}"#,
-        r#"};Clear-Host"#,
+        r#"}"#,
     )
 }
 
@@ -821,10 +828,12 @@ fn fish_shell_integration_command() -> &'static str {
 /// path — no URL encoding or slash conversion needed. The prompt is also
 /// bracketed by **OSC 133** `A` (prompt start) and `B` (input start) marks so
 /// prompt navigation works (#3415); cmd has no pre/post-exec hook, so there is
-/// no `C`/`D` and no exit-status decoration. Ends with `cls` to clear the
-/// screen. Injected via `/K` startup arg so the command never echoes.
+/// no `C`/`D` and no exit-status decoration. Injected via `/K` startup arg so
+/// the command never echoes, and it clears nothing (#5017). Only used with the
+/// opt-in command-mark hook: cmd's directory is its process directory, which
+/// the passive follower reads without it.
 fn cmd_osc9_command() -> &'static str {
-    r"PROMPT=$E]133;A$E\$E]9;9;$P$E\$P$G$E]133;B$E\ & cls"
+    r"PROMPT=$E]133;A$E\$E]9;9;$P$E\$P$G$E]133;B$E\"
 }
 
 /// Resolve the path and arguments to launch a WSL distribution.
@@ -1889,8 +1898,8 @@ mod tests {
             setup.contains("$P"),
             "expected $P (current path) in PROMPT, got: {setup}"
         );
-        // Must clear screen at end
-        assert!(setup.contains("cls"), "expected cls at end, got: {setup}");
+        // Must not clear the screen: that wiped cmd's banner (#5017).
+        assert_no_screen_clear(setup);
     }
 
     #[test]
@@ -1934,11 +1943,41 @@ mod tests {
             setup.contains("COMPUTERNAME"),
             "expected hostname via $env:COMPUTERNAME, got: {setup}"
         );
-        // Must clear screen at end
-        assert!(
-            setup.contains("Clear-Host"),
-            "expected Clear-Host at end, got: {setup}"
-        );
+        // Must not clear the screen: that wipes what the user's profile
+        // printed at startup (#5017).
+        assert_no_screen_clear(setup);
+    }
+
+    /// A startup setup must leave the screen alone: no `Clear-Host` / `cls` /
+    /// `clear` and no erase-display or reset sequence, so the user's profile
+    /// output, cmd's banner and an SSH banner stay visible (#5017).
+    fn assert_no_screen_clear(setup: &str) {
+        let lower = setup.to_ascii_lowercase();
+        for clear in ["clear-host", "cls", "clear", "[2j", "[3j"] {
+            assert!(
+                !lower.contains(clear),
+                "setup must not clear the screen ({clear}): {setup}"
+            );
+        }
+    }
+
+    /// The startup setups of the Windows shells print nothing and clear
+    /// nothing: they run before the first prompt, after the user's profile
+    /// (PowerShell) or instead of cmd's banner, and must not hide either
+    /// (#5017).
+    #[test]
+    fn windows_shell_setups_do_not_clear_the_screen() {
+        for shell in ["powershell", "pwsh", "cmd"] {
+            let setup = osc7_setup_command(shell).expect("a setup");
+            assert_no_screen_clear(setup);
+            let lower = setup.to_ascii_lowercase();
+            for print in ["write-host", "write-output", "echo "] {
+                assert!(
+                    !lower.contains(print),
+                    "{shell} setup prints ({print}): {setup}"
+                );
+            }
+        }
     }
 
     /// The dispatch in [`osc7_setup_command`] must be shell-aware: PowerShell
@@ -2116,8 +2155,8 @@ mod tests {
             "setup must be guarded: {setup}"
         );
         assert!(
-            setup.ends_with("};Clear-Host"),
-            "guard must close before Clear-Host: {setup}"
+            setup.ends_with("}}"),
+            "the guard must close the setup, with nothing after it: {setup}"
         );
     }
 

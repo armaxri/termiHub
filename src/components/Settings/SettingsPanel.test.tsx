@@ -173,7 +173,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     const checkbox = findShellIntegrationCheckbox();
     expect(checkbox).not.toBeNull();
-    // Displayed value is true (from FULL_SETTINGS or the ?? true fallback)
+    // Displayed value is true (from FULL_SETTINGS)
     expect(isChecked(checkbox!)).toBe(true);
 
     // User disables shell integration → dirty
@@ -268,5 +268,18 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     expect(isChecked(checkbox!)).toBe(true);
     expect(currentSettingsView().stopXServerWhenIdle).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+  });
+  // #5042: the shell hook is opt-in, so a settings file that never stored the
+  // app-level default shows it off — and the label names what it really is.
+  it("shows the shell-hook default off when the setting was never saved", async () => {
+    seedSettings(SPARSE_SETTINGS);
+    render();
+    await act(async () => {});
+
+    const checkbox = findShellIntegrationCheckbox();
+    expect(checkbox).not.toBeNull();
+    expect(isChecked(checkbox!)).toBe(false);
+    expect(container.textContent).toContain("Command Marks (Shell Hook) by Default");
+    expect(container.textContent).not.toContain("Shell Integration by Default");
   });
 });

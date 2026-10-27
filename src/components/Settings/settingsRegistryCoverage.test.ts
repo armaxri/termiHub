@@ -180,9 +180,11 @@ describe("settings registry coverage (#2828)", () => {
   describe("previously unsearchable settings are now found by search", () => {
     const finds = (query: string, id: string) => filterSettings(query).some((s) => s.id === id);
 
-    it("finds the SSH shell-integration default", () => {
+    it("finds the shell-hook (command marks) default", () => {
       expect(finds("shell integration", "defaultShellIntegration")).toBe(true);
-      expect(finds("osc 7", "defaultShellIntegration")).toBe(true);
+      expect(finds("command marks", "defaultShellIntegration")).toBe(true);
+      expect(finds("shell hook", "defaultShellIntegration")).toBe(true);
+      expect(finds("osc 133", "defaultShellIntegration")).toBe(true);
     });
 
     it("finds the SSH X11-forwarding default", () => {

@@ -94,7 +94,10 @@ warnLargePortScan?: boolean,
  */
 warnLargePingSweep?: boolean, 
 /**
- * Default value for Shell Integration toggle in new SSH connections.
+ * Default value for the Command Marks (Shell Hook) toggle in new local,
+ * SSH and WSL connections. Off by default: the hook is typed into the
+ * shell, so it is opt-in (#5042). A v1 file's `true` is switched off once
+ * on load (the v1 → v2 schema step).
  */
 defaultShellIntegration?: boolean, 
 /**

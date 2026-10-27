@@ -80,7 +80,12 @@ class TestOsKeyboardGrades(
         """A fresh local shell (optionally ``cd``-ed into ``folder``); its tab id."""
         self.close_all_tabs()
         self.wait(lambda: self.tab_count() == 0, what="every tab to close")
-        self.ensure_terminal()
+        if folder is None:
+            self.ensure_terminal()
+        else:
+            # The browser follows this `cd` (on Windows only with Command
+            # Marks on, #5017).
+            self.open_cwd_following_terminal()
         tab = self.active_tab()
         assert tab is not None
         if folder is not None:
