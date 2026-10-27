@@ -17,8 +17,11 @@
 //!    output is anything else (see its module docs).
 //!
 //! Without a line-editor probe (Windows ConPTY, test doubles) the setup is
-//! typed at once and shown, exactly as before: dropping ConPTY output would
-//! desynchronise its screen model from the terminal.
+//! typed at once and shown: dropping ConPTY output would desynchronise its
+//! screen model from the terminal. A bash on Windows is therefore handed the
+//! setup through its environment instead (#5014); the line is then only the
+//! fallback, typed when the shell's output shows the setup never ran (see
+//! [`PromptWatch`]).
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
 
+use super::local_shell_setup_watch::{PromptWatch, Verdict};
 use crate::connection::{OutputSender, PromptProbe};
 use crate::output::setup_echo::{HideOutcome, SetupEchoFilter};
 
@@ -43,6 +47,9 @@ struct State {
     /// The setup line, until it has been typed.
     pending: Option<Vec<u8>>,
     filter: SetupEchoFilter,
+    /// Set when the shell got the setup through its environment: the line
+    /// is typed only if this sees that the setup did not run.
+    watch: Option<PromptWatch>,
 }
 
 /// One session's typed setup: when to type it, and hiding its echo.
@@ -54,20 +61,32 @@ pub(crate) struct TypedSetup {
     /// reader skips the lock from then on. Until then every chunk goes
     /// through the filter, which also remembers the first prompt.
     bypass: AtomicBool,
+    /// Whether output still goes to the [`PromptWatch`].
+    watching: AtomicBool,
     writer: Writer,
     output_tx: SenderSlot,
 }
 
 impl TypedSetup {
     /// Prepare `line` (without its newline) to be typed into the shell.
-    pub(crate) fn new(line: &str, hide: bool, writer: Writer, output_tx: SenderSlot) -> Arc<Self> {
+    /// `bootstrapped`: the shell was also handed the setup through its
+    /// environment, so the line is only typed if that does not run.
+    pub(crate) fn new(
+        line: &str,
+        hide: bool,
+        bootstrapped: bool,
+        writer: Writer,
+        output_tx: SenderSlot,
+    ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(State {
                 pending: Some(format!("{line}\n").into_bytes()),
                 filter: SetupEchoFilter::new(),
+                watch: bootstrapped.then(|| PromptWatch::new(Instant::now())),
             }),
             hide,
             bypass: AtomicBool::new(!hide),
+            watching: AtomicBool::new(bootstrapped),
             writer,
             output_tx,
         })
@@ -126,6 +145,53 @@ impl TypedSetup {
         });
     }
 
+    /// Before the user's input: a typed setup goes first, so it never splits
+    /// or swallows their command. A bootstrapped one runs at the prompt by
+    /// itself, so nothing is typed for it here.
+    pub(crate) fn before_input(self: &Arc<Self>) {
+        if !self.watching.load(Ordering::SeqCst) {
+            self.type_now();
+        }
+    }
+
+    /// Bootstrapped setup: type the line only if the shell's output shows
+    /// the setup did not run (see [`PromptWatch`]); gives up when the
+    /// session ends (`alive` cleared).
+    pub(crate) fn type_unless_bootstrapped(self: Arc<Self>, alive: Arc<AtomicBool>) {
+        std::thread::spawn(move || loop {
+            if !alive.load(Ordering::SeqCst) {
+                return;
+            }
+            let verdict = match self.state.lock() {
+                Ok(mut state) => {
+                    let verdict = state
+                        .watch
+                        .as_ref()
+                        .map_or(Verdict::Type, |w| w.verdict(Instant::now()));
+                    if verdict == Verdict::Ran {
+                        state.pending = None;
+                    }
+                    verdict
+                }
+                Err(_) => return,
+            };
+            match verdict {
+                Verdict::Wait => std::thread::sleep(READY_POLL),
+                Verdict::Ran => {
+                    debug!("the shell ran the bootstrapped setup");
+                    self.watching.store(false, Ordering::SeqCst);
+                    return;
+                }
+                Verdict::Type => {
+                    debug!("the bootstrapped setup did not run; typing it");
+                    self.watching.store(false, Ordering::SeqCst);
+                    self.type_now();
+                    return;
+                }
+            }
+        });
+    }
+
     fn is_pending(&self) -> bool {
         self.state.lock().is_ok_and(|s| s.pending.is_some())
     }
@@ -134,6 +200,13 @@ impl TypedSetup {
     /// the hide is over. The send happens under the state lock then, so the
     /// timer thread's releases keep their order.
     pub(crate) fn forward(&self, data: Vec<u8>, sender: &OutputSender) {
+        if self.watching.load(Ordering::SeqCst) {
+            if let Ok(mut state) = self.state.lock() {
+                if let Some(watch) = state.watch.as_mut() {
+                    watch.feed(&data, Instant::now());
+                }
+            }
+        }
         if self.bypass.load(Ordering::SeqCst) {
             let _ = sender.blocking_send(data);
             return;
