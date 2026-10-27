@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tracing::debug;
 
+use super::update_develop::{
+    evaluate_develop_release, parse_build_commit_time, select_channel, GitHubDevRelease,
+    UpdateChannel, DEVELOP_RELEASE_API_URL,
+};
 use crate::connection::manager::ConnectionManager;
 
 const GITHUB_API_URL: &str = "https://api.github.com/repos/armaxri/termiHub/releases/latest";
@@ -74,6 +78,36 @@ pub struct UpdateInfo {
     pub release_notes: String,
     /// Whether the release is marked as a security update via `<!-- security -->`.
     pub is_security: bool,
+    /// Release feed this check consulted (`stable`, `develop`, or `none` when
+    /// this build does not check). Develop results put the newer build's short
+    /// commit in `latest_version`.
+    #[serde(default)]
+    pub channel: UpdateChannel,
+    /// Develop channel only: short commit of the newer develop build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub build_commit: Option<String>,
+    /// Develop channel only: RFC 3339 time the newer develop build was published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub build_published_at: Option<String>,
+}
+
+impl UpdateInfo {
+    /// A "no update" result that did not consult any feed (rate limit, error,
+    /// or a build that does not check).
+    fn unavailable(running_version: String, channel: UpdateChannel) -> Self {
+        Self {
+            available: false,
+            latest_version: running_version,
+            release_url: String::new(),
+            release_notes: String::new(),
+            is_security: false,
+            channel,
+            build_commit: None,
+            build_published_at: None,
+        }
+    }
 }
 
 /// Subset of the GitHub Releases API response that we consume.
@@ -91,18 +125,21 @@ fn parse_tag(tag: &str) -> anyhow::Result<Version> {
     Version::parse(stripped).with_context(|| format!("Invalid version tag: {tag}"))
 }
 
-/// Fetch the latest release from GitHub and compare against `running_version`.
+/// GET a GitHub API URL and decode the JSON body.
 ///
-/// Returns `Err` on network / parse failures so callers can handle them
+/// Returns `Err` on network / HTTP / parse failures so callers can handle them
 /// gracefully without panicking.
-pub async fn fetch_update_info(running_version: &str) -> anyhow::Result<UpdateInfo> {
+async fn fetch_github_json<T: serde::de::DeserializeOwned>(
+    url: &str,
+    running_version: &str,
+) -> anyhow::Result<T> {
     let client = reqwest::Client::builder()
         .user_agent(format!("termiHub/{running_version}"))
         .build()
         .context("Failed to build HTTP client")?;
 
     let response = client
-        .get(GITHUB_API_URL)
+        .get(url)
         .send()
         .await
         .context("Failed to reach GitHub API")?;
@@ -112,20 +149,23 @@ pub async fn fetch_update_info(running_version: &str) -> anyhow::Result<UpdateIn
         return Err(anyhow::anyhow!("GitHub API returned HTTP {status}"));
     }
 
-    let release: GitHubRelease = response
+    response
         .json()
         .await
-        .context("Failed to parse GitHub API response")?;
+        .context("Failed to parse GitHub API response")
+}
 
+/// Compare a stable-channel release against `running_version` by semver.
+fn evaluate_stable_release(
+    release: GitHubRelease,
+    running_version: &str,
+) -> anyhow::Result<UpdateInfo> {
     // Skip pre-releases on the stable channel.
     if release.prerelease {
         let running = parse_tag(running_version)?;
         return Ok(UpdateInfo {
-            available: false,
-            latest_version: running.to_string(),
             release_url: release.html_url,
-            release_notes: String::new(),
-            is_security: false,
+            ..UpdateInfo::unavailable(running.to_string(), UpdateChannel::Stable)
         });
     }
 
@@ -142,7 +182,29 @@ pub async fn fetch_update_info(running_version: &str) -> anyhow::Result<UpdateIn
         release_url: release.html_url,
         release_notes: body,
         is_security,
+        channel: UpdateChannel::Stable,
+        build_commit: None,
+        build_published_at: None,
     })
+}
+
+/// Fetch the latest stable release from GitHub and compare against `running_version`.
+pub async fn fetch_update_info(running_version: &str) -> anyhow::Result<UpdateInfo> {
+    let release: GitHubRelease = fetch_github_json(GITHUB_API_URL, running_version).await?;
+    evaluate_stable_release(release, running_version)
+}
+
+/// Fetch the rolling develop pre-release and compare it against this build's
+/// embedded commit hash and commit time (#5023).
+async fn fetch_develop_update_info(running_version: &str) -> anyhow::Result<UpdateInfo> {
+    let release: GitHubDevRelease =
+        fetch_github_json(DEVELOP_RELEASE_API_URL, running_version).await?;
+    let build_commit_time = parse_build_commit_time(env!("TERMIHUB_BUILD_COMMIT_TIME"));
+    Ok(evaluate_develop_release(
+        release,
+        env!("GIT_HASH"),
+        build_commit_time,
+    ))
 }
 
 /// The self-update security marker the release pipeline emits
@@ -220,7 +282,17 @@ pub async fn check_for_updates(
     } else {
         base_version
     };
-    debug!("Checking for updates (running={running_version}, force={force})");
+    let channel = select_channel(
+        tauri::is_dev(),
+        is_ci_dev_build(),
+        env!("TERMIHUB_BUILD_BRANCH"),
+    );
+    debug!("Checking for updates (running={running_version}, channel={channel:?}, force={force})");
+
+    if channel == UpdateChannel::None {
+        debug!("Update check skipped — this build does not check for updates");
+        return Ok(UpdateInfo::unavailable(running_version, channel));
+    }
 
     let settings = manager.get_settings();
     let update_settings = settings.updates.clone();
@@ -229,41 +301,28 @@ pub async fn check_for_updates(
     if !should_check(&update_settings.last_check_time, force) {
         debug!("Update check skipped — last check was less than 1 hour ago");
         // Return "not available" without hitting the network.
-        return Ok(UpdateInfo {
-            available: false,
-            latest_version: running_version,
-            release_url: String::new(),
-            release_notes: String::new(),
-            is_security: false,
-        });
+        return Ok(UpdateInfo::unavailable(running_version, channel));
     }
 
-    let info = match fetch_update_info(&running_version).await {
-        Ok(info) => info,
-        Err(err) => {
-            tracing::warn!("Update check failed: {err:#}");
-            // Persist the timestamp even on failure to avoid hammering the API.
-            let mut new_settings = manager.get_settings();
-            new_settings.updates.last_check_time = Some(now_iso8601());
-            if let Err(save_err) = manager.save_settings(new_settings) {
-                tracing::warn!("Failed to persist update check timestamp: {save_err:#}");
-            }
-            return Ok(UpdateInfo {
-                available: false,
-                latest_version: running_version,
-                release_url: String::new(),
-                release_notes: String::new(),
-                is_security: false,
-            });
-        }
+    let result = match channel {
+        UpdateChannel::Develop => fetch_develop_update_info(&running_version).await,
+        _ => fetch_update_info(&running_version).await,
     };
 
-    // Persist last_check_time.
+    // Persist last_check_time, even on failure to avoid hammering the API.
     let mut new_settings = manager.get_settings();
     new_settings.updates.last_check_time = Some(now_iso8601());
     if let Err(save_err) = manager.save_settings(new_settings) {
         tracing::warn!("Failed to persist update check timestamp: {save_err:#}");
     }
+
+    let info = match result {
+        Ok(info) => info,
+        Err(err) => {
+            tracing::warn!("Update check failed: {err:#}");
+            return Ok(UpdateInfo::unavailable(running_version, channel));
+        }
+    };
 
     debug!(
         "Update check complete: available={}, latest={}",
@@ -395,21 +454,27 @@ mod tests {
         .to_string()
     }
 
-    /// Parse mock JSON directly into a GitHubRelease to test detection logic.
+    /// Parse mock JSON into a GitHubRelease and run the stable-channel logic.
     fn detect_from_json(running: &str, json: &str) -> UpdateInfo {
         let release: GitHubRelease = serde_json::from_str(json).unwrap();
-        let latest = parse_tag(&release.tag_name).unwrap();
-        let running_v = parse_tag(running).unwrap();
-        let available = latest > running_v;
-        let body = release.body.unwrap_or_default();
-        let is_security = is_security_release(&body);
-        UpdateInfo {
-            available,
-            latest_version: latest.to_string(),
-            release_url: release.html_url,
-            release_notes: body,
-            is_security,
-        }
+        evaluate_stable_release(release, running).unwrap()
+    }
+
+    #[test]
+    fn stable_channel_result_is_tagged_stable() {
+        let info = detect_from_json("0.1.0", &make_release_json("v0.2.0", false, "x"));
+        assert_eq!(info.channel, UpdateChannel::Stable);
+        assert!(info.build_commit.is_none());
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["channel"], "stable");
+        assert!(json.get("buildCommit").is_none());
+    }
+
+    #[test]
+    fn stable_channel_ignores_prerelease() {
+        let info = detect_from_json("0.1.0", &make_release_json("v0.9.0", true, "x"));
+        assert!(!info.available);
+        assert_eq!(info.latest_version, "0.1.0");
     }
 
     #[test]

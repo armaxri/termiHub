@@ -76,6 +76,8 @@ fn ssh_with_saved_password(name: &str) -> SavedConnection {
         folder_id: None,
         terminal_options: None,
         icon: None,
+        icon_color: None,
+        icon_emoji: None,
         source_file: None,
     }
 }

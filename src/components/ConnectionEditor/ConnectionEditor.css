@@ -65,6 +65,60 @@
   border: 1px solid var(--border-primary);
 }
 
+/* Icon colour swatches and emoji suggestions (#5008). */
+.connection-editor__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.connection-editor__swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--spacing-xl);
+  height: var(--spacing-xl);
+  padding: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.connection-editor__swatch:hover {
+  border-color: var(--focus-border);
+}
+
+.connection-editor__swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.connection-editor__swatch--selected {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+.connection-editor__swatch-dot {
+  width: var(--spacing-md);
+  height: var(--spacing-md);
+  border-radius: var(--radius-full);
+}
+
+.connection-editor__emoji-input {
+  max-width: calc(var(--spacing-xl) * 4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connection-editor__swatch {
+    transition: none;
+  }
+}
+
 .agent-settings__shell-warning {
   display: inline;
   margin: 0 0 0 var(--spacing-sm);

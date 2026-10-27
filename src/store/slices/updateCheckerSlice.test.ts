@@ -44,6 +44,7 @@ const info = (over: Partial<UpdateInfo> = {}): UpdateInfo => ({
   releaseUrl: "https://example/0.2.0",
   releaseNotes: "notes",
   isSecurity: false,
+  channel: "stable",
   ...over,
 });
 

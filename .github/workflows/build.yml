@@ -3,8 +3,7 @@ name: Build
 on:
   pull_request:
     branches: [ main, develop ]
-  # The daily lockfile chore dispatches this on its PR branch (#4912): its
-  # GITHUB_TOKEN-pushed PR gets no pull_request run.
+  # Manual full run on any ref.
   workflow_dispatch:
 
 # Cancel an in-flight PR build when a newer commit is pushed to the same PR —

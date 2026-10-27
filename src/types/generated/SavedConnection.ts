@@ -18,6 +18,20 @@ export type SavedConnection = { id: string, name: string, config: ConnectionConf
  */
 icon?: string, 
 /**
+ * Optional icon colour: a named palette entry (e.g. `"blue"`) or a
+ * `#rrggbb` hex string (#5008).
+ *
+ * Stored opaquely — the backend never interprets it; the frontend
+ * resolves it against the active theme and falls back to the default
+ * icon colour when it does not recognise the value.
+ */
+iconColor?: string, 
+/**
+ * Optional single-emoji icon shown instead of the type / custom icon
+ * (#5008). Stored opaquely; the frontend validates it is one grapheme.
+ */
+iconEmoji?: string, 
+/**
  * Runtime-only: which external file this connection was loaded from.
  * `None` = main connections.json, `Some(path)` = external file.
  *
