@@ -41,7 +41,12 @@ class TerminalUi(HarnessMixin):
 
     if TYPE_CHECKING:  # provided by ConnectionsUi / SidebarUi, mixed in alongside
         def create_local_connection(
-            self, name: str, *, shell: Optional[str] = None, connect: bool = False
+            self,
+            name: str,
+            *,
+            shell: Optional[str] = None,
+            command_marks: bool = False,
+            connect: bool = False,
         ) -> str: ...
 
         def switch_to_connections_sidebar(self) -> None: ...

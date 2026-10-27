@@ -890,7 +890,9 @@ plugin type may use `timeoutSecs` for its own setting, this rename applies **onl
 `core/src/connection/connect_timeout.rs` does the rename, so every read path calls it with
 the connection's type id:
 
-- `connections.json` is at schema **v5**. The v4 → v5 step renames the key in every saved
+- `connections.json` was at schema **v5** for this. (v6, #5009, then switched the old
+  `shellIntegration: true` default off once for local and SSH connections; the agent's
+  definitions store did the same as its v2.) The v4 → v5 step renames the key in every saved
   FTP connection and keeps the user's value; if both keys are present, `connectTimeoutSecs`
   wins. A v4 build refuses to overwrite a v5 file (`guard_not_newer`). Without that, its
   `timeoutSecs`-keyed FTP form would re-save the timeout at the default of 30.

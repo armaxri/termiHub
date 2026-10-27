@@ -17,6 +17,12 @@
  * {@link INPUT_HOLD_MAX_MS}, so a resize that never settles, or a frame that
  * never comes (an occluded window), delays input briefly instead of swallowing
  * it.
+ *
+ * A paste reserves a slot in the same order (#5026): its clipboard read is
+ * async, so keys typed right after the paste shortcut would otherwise reach the
+ * shell before the pasted text. Input sent after the reservation waits behind
+ * the slot until the paste fills it (or gives it up), so the paste lands in
+ * keystroke order, as in a real terminal.
  */
 
 import { frontendLog } from "@/utils/frontendLog";
@@ -24,9 +30,18 @@ import { frontendLog } from "@/utils/frontendLog";
 /** Upper bound (ms) on any single hold; after it the hold lifts on its own. */
 export const INPUT_HOLD_MAX_MS = 1000;
 
+/**
+ * One place in a session's input order. A ready entry carries its send; a slot
+ * entry ({@link reserveSessionInputSlot}) has none until it is filled, and
+ * input queued after it waits for it.
+ */
+interface Entry {
+  run: (() => void) | null;
+}
+
 interface Gate {
   holds: number;
-  queue: Array<() => void>;
+  queue: Entry[];
 }
 
 const gates = new Map<string, Gate>();
@@ -34,9 +49,41 @@ const gates = new Map<string, Gate>();
 /** When input was last handed to each session's send (ms epoch). */
 const lastSentAt = new Map<string, number>();
 
+/**
+ * The slot being filled right now, if any: input sent for its session while its
+ * fill runs takes the slot's place in the order instead of queueing at the end.
+ */
+let filling: { sessionId: string; gate: Gate; slot: Entry } | null = null;
+
 /** When input was last sent to `sessionId` (ms epoch), if ever. */
 export function lastSessionInputAt(sessionId: string): number | undefined {
   return lastSentAt.get(sessionId);
+}
+
+function gateFor(sessionId: string): Gate {
+  let gate = gates.get(sessionId);
+  if (!gate) {
+    gate = { holds: 0, queue: [] };
+    gates.set(sessionId, gate);
+  }
+  return gate;
+}
+
+/**
+ * Send what is ready at the head of `gate`'s queue, stopping at a hold or at an
+ * unfilled slot. Once nothing holds it and nothing waits in it, the gate is
+ * dropped, so later input goes straight out.
+ */
+function drain(sessionId: string, gate: Gate): void {
+  while (gate.holds === 0 && gate.queue.length > 0) {
+    const run = gate.queue[0].run;
+    if (!run) return;
+    gate.queue.shift();
+    run();
+  }
+  if (gate.holds === 0 && gate.queue.length === 0 && gates.get(sessionId) === gate) {
+    gates.delete(sessionId);
+  }
 }
 
 /**
@@ -50,12 +97,7 @@ export function holdSessionInput(
   reason: string,
   maxMs: number = INPUT_HOLD_MAX_MS
 ): () => void {
-  let gate = gates.get(sessionId);
-  if (!gate) {
-    gate = { holds: 0, queue: [] };
-    gates.set(sessionId, gate);
-  }
-  const held = gate;
+  const held = gateFor(sessionId);
   held.holds += 1;
   let released = false;
   const release = (): void => {
@@ -63,12 +105,7 @@ export function holdSessionInput(
     released = true;
     clearTimeout(timer);
     held.holds -= 1;
-    if (held.holds > 0) return;
-    // Detach the gate before draining: a hold taken while draining starts a new
-    // gate, so input sent after it queues behind it, while everything queued
-    // here goes out now, in order.
-    if (gates.get(sessionId) === held) gates.delete(sessionId);
-    for (const send of held.queue.splice(0)) send();
+    drain(sessionId, held);
   };
   const timer = setTimeout(() => {
     if (released) return;
@@ -81,7 +118,85 @@ export function holdSessionInput(
   return release;
 }
 
-/** Whether `sessionId`'s input is currently held. */
+/** A reserved place in a session's input order (see {@link reserveSessionInputSlot}). */
+export interface SessionInputSlot {
+  /**
+   * Run `send` now. Input it sends for the slot's session (synchronously, as
+   * `sendInput` does before its first await) goes out in the slot's place, ahead
+   * of everything sent after the reservation. Once the slot is settled
+   * (cancelled or lifted), `send` simply runs, and its input queues normally.
+   */
+  fill<T>(send: () => Promise<T>): Promise<T>;
+  /** Give the slot up; input queued behind it flows on (idempotent). */
+  cancel(): void;
+  /** Restart the slot's bound with `maxMs` (e.g. while a confirmation is shown). */
+  extend(maxMs: number): void;
+}
+
+/**
+ * Reserve `sessionId`'s next place in its input order (#5026).
+ *
+ * Input sent after the reservation waits until the slot is filled or cancelled,
+ * so a paste whose clipboard read is still pending keeps the place of the
+ * shortcut that started it, the way a real terminal inserts a paste in
+ * keystroke order. Input sent before it is not delayed. A slot not settled
+ * within `maxMs` lifts itself, so a read that never resolves delays typing
+ * briefly instead of swallowing it.
+ */
+export function reserveSessionInputSlot(
+  sessionId: string,
+  reason: string,
+  maxMs: number = INPUT_HOLD_MAX_MS
+): SessionInputSlot {
+  const gate = gateFor(sessionId);
+  const slot: Entry = { run: null };
+  gate.queue.push(slot);
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const settle = (): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    const at = gate.queue.indexOf(slot);
+    if (at >= 0) gate.queue.splice(at, 1);
+    drain(sessionId, gate);
+  };
+  const arm = (ms: number): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (settled) return;
+      frontendLog(
+        "terminal",
+        `input slot (${reason}) lifted after ${ms}ms without fill session=${sessionId}`
+      );
+      settle();
+    }, ms);
+  };
+  arm(maxMs);
+
+  return {
+    fill<T>(send: () => Promise<T>): Promise<T> {
+      if (settled) return send();
+      const outer = filling;
+      filling = { sessionId, gate, slot };
+      let result: Promise<T>;
+      try {
+        result = send();
+      } finally {
+        filling = outer;
+        settle();
+      }
+      return result;
+    },
+    cancel: settle,
+    extend(ms: number): void {
+      if (!settled) arm(ms);
+    },
+  };
+}
+
+/** Whether `sessionId`'s input is currently held (by a hold or a pending slot). */
 export function isSessionInputHeld(sessionId: string): boolean {
   return gates.has(sessionId);
 }
@@ -95,12 +210,20 @@ export function whenSessionInputOpen<T>(sessionId: string, send: () => Promise<T
     lastSentAt.set(sessionId, Date.now());
     return send();
   };
-  const gate = gates.get(sessionId);
+  const fillingSlot = filling && filling.sessionId === sessionId ? filling : null;
+  const gate = fillingSlot ? fillingSlot.gate : gates.get(sessionId);
   if (!gate) return sendNow();
   return new Promise<T>((resolve, reject) => {
-    gate.queue.push(() => {
-      sendNow().then(resolve, reject);
-    });
+    const entry: Entry = {
+      run: () => {
+        sendNow().then(resolve, reject);
+      },
+    };
+    // A slot's fill goes in the slot's place (ahead of it, so several sends of
+    // one fill keep their order); anything else queues at the end.
+    const at = fillingSlot ? gate.queue.indexOf(fillingSlot.slot) : -1;
+    if (at >= 0) gate.queue.splice(at, 0, entry);
+    else gate.queue.push(entry);
   });
 }
 
