@@ -122,4 +122,31 @@ test("connection rows show icon colours and emoji legibly in Dark and Light", as
     await editor.screenshot({ path: file });
     await testInfo.attach(`icon-style editor (${theme})`, { path: file, contentType: "image/png" });
   }
+
+  // The searchable emoji picker (bundled data, no network), in both themes.
+  const external: string[] = [];
+  page.on("request", (req) => {
+    if (!req.url().startsWith(new URL(page.url()).origin)) external.push(req.url());
+  });
+  await editor.locator("[data-testid=connection-editor-choose-icon-emoji]").click();
+  const dialog = page.getByRole("dialog");
+  // The first button is frimousse's hidden sizer; wait for a real one.
+  await dialog.locator("[data-testid=emoji-picker-emoji]", { hasText: "\u{1F600}" }).waitFor();
+  for (const theme of THEMES) {
+    await page.evaluate((t) => window.__visual.applyTheme(t), theme);
+    await settle(page);
+    const file = join(SCREENS, "icon-style", `emoji-picker-${theme}.png`);
+    await dialog.screenshot({ path: file });
+    await testInfo.attach(`icon-style emoji picker (${theme})`, {
+      path: file,
+      contentType: "image/png",
+    });
+  }
+  await dialog.locator("[data-testid=emoji-picker-search]").fill("penguin");
+  await dialog.locator("[data-testid=emoji-picker-emoji]", { hasText: "\u{1F427}" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(editor.locator("[data-testid=connection-editor-icon-emoji]")).toHaveValue(
+    "\u{1F427}"
+  );
+  expect(external, "the emoji picker made no network requests").toEqual([]);
 });
