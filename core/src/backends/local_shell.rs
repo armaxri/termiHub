@@ -679,13 +679,15 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // The shell-integration line typed into bash / zsh, hidden where the
         // line editor is observable (#5009).
         let setup = osc7_for_stdin.map(|line| {
-            TypedSetup::new(
+            let setup = TypedSetup::new(
                 line,
                 spawned.line_editor_reading.is_some(),
                 bootstrapped,
                 writer.clone(),
                 self.output_tx.clone(),
-            )
+            );
+            setup.set_width(cols);
+            setup
         });
 
         // Follow the shell's directory from the OS, reported as OSC 7 (#5009).
@@ -907,6 +909,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
+        if let Some(setup) = &state.setup {
+            setup.set_width(cols);
+        }
         (state.resize)(cols, rows)
     }
 
