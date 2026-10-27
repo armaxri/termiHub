@@ -161,6 +161,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-NIN-07": f"{_OS_POINTER}::test_tab_drag_released_outside_window_tears_off",
     "MT-NIN-15": f"{_OS_KEYS}::test_dead_keys_compose_once_in_terminal_and_editor",
     "MT-NIN-20": f"{_OS_KEYS}::test_focus_survives_app_switch",
+    "MT-NIN-22": f"{_OS_POINTER}::test_click_into_inactive_window_focuses_clicked_pane",
+    "MT-NIN-23": f"{_OS_KEYS}::test_typing_goes_only_to_focused_window",
     # #4980: autorepeat key-downs at the HID tap; press-and-hold would swallow them.
     "MT-LOCAL-08": f"{_OS_KEYS}::test_macos_key_repeat_has_no_accent_picker",
     "MT-NIN-30": f"{_OS_POINTER}::{_RIGHT_CLICK}",

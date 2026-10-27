@@ -9,9 +9,8 @@ outside the window go through the OS exactly as for a user.
 Retires the guided checks MT-NIN-07 (a tab released outside the window tears
 off), MT-CONN-01 (drag a connection into a folder), MT-FB-20 (drag an editor tab
 to another panel), MT-UI-26..28/30 (right-click: menu by default, opt-in Quick
-Copy/Paste) and MT-NIN-30 (Windows right-click pastes once). MT-NIN-22 (a click
-into an inactive window) stays guided: the injected click did not move the
-window focus reliably on the CI runners.
+Copy/Paste), MT-NIN-30 (Windows right-click pastes once) and MT-NIN-22 (one
+click into an inactive window focuses the clicked pane, #4979).
 
 Integration lane (nightly); on a developer machine the suite skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.
@@ -44,6 +43,7 @@ from termihub_harness import (
     folder_toggle_testid,
     unique_name,
 )
+from termihub_harness.os_input import HelperWindow
 from termihub_harness.ui.os_input_ui import has_line, linux_window_manager, terminal_echo
 from termihub_harness.ui.terminal import NEW_TERMINAL
 from termihub_harness.ui.windows import (
@@ -230,6 +230,67 @@ class TestOsPointerGrades(
             lambda: not self.driver.exists("terminal-context-copy-all"), what="the menu to close"
         )
         assert self.driver.read_terminal(tab_id) == before, "the right-click pasted"
+
+    # ── MT-NIN-22: one click into an inactive window ─────────────────────────
+    def _two_shell_panes(self) -> tuple[str, str]:
+        """Two side-by-side shells; their tab ids, left pane first."""
+        self.close_all_tabs()
+        self.wait(lambda: self.tab_count() == 0, what="every tab to close")
+        self.ensure_terminal()
+        self.driver.click(SPLIT_H)
+        self.wait(lambda: self.leaf_count() == 2, what="a second panel")
+        self.driver.click(NEW_TERMINAL)
+        self.wait(lambda: self.tab_count() == 2, what="a shell in each pane")
+        left_panel = self.leaf_ids()[0]
+        tabs = window_tabs(self.driver)
+        left = next(t["id"] for t in tabs if self.panel_of_tab(t["id"]) == left_panel)
+        right = next(t["id"] for t in tabs if t["id"] != left)
+        for tab_id in (left, right):
+            self.wait(lambda t=tab_id: self.driver.read_terminal(t).strip(), what="its prompt")
+        return left, right
+
+    def test_click_into_inactive_window_focuses_clicked_pane(self):
+        """MT-NIN-22: with another app in front, ONE real click into the right
+        shell of an inactive termiHub window activates the window and the keys
+        typed next land in the right pane only (Windows/Linux). macOS may keep
+        the first click for the window activation: there the keys land in the
+        pane the app shows focused, never in an unfocused one."""
+        osi = self.os_input()
+        left, right = self._two_shell_panes()
+        with HelperWindow() as helper:
+            osi.allow_pid(helper.pid)
+            screen = self.os_activate()
+            self.os_click(f"terminal-renderer-{left}", screen=screen)
+            self.wait(
+                lambda: (self.active_tab() or {}).get("id") == left, what="the left pane active"
+            )
+            osi.activate(helper.pid)
+            self.wait(lambda: not self.has_focus(), what="termiHub to lose focus")
+            self.reset_input_probe()
+
+            self.os_click(f"terminal-renderer-{right}", screen=screen)
+            self.wait(
+                lambda: osi.frontmost_pid() == self.app.pid,
+                what=f"the click to front termiHub (frontmost PID {osi.frontmost_pid()})",
+            )
+            self.wait(self.has_focus, what="the clicked window to take the focus")
+            expected = right if sys.platform != "darwin" else None
+            if expected is not None:
+                self.wait(
+                    lambda: (self.active_tab() or {}).get("id") == right,
+                    what=f"the right pane active (pointer events: "
+                    f"{[e['type'] for e in self.trusted_events()]})",
+                )
+            osi.type_text("echo N22_abc_\n")
+            focused = (self.active_tab() or {}).get("id")
+            target = expected or focused
+            assert target in (left, right), f"no shell pane is focused ({focused})"
+            assert self._wait_echo(target, "N22") == "abc"
+            other = left if target == right else right
+            assert terminal_echo(self.driver.read_terminal(other), "N22") is None, (
+                "the keys also reached the unfocused pane"
+            )
+        assert "abc" not in helper.typed(), "the keys went to the other app"
 
     # Last in the suite: it leaves a resized window behind.
     # ── MT-NIN-07: tab tear-off ──────────────────────────────────────────────

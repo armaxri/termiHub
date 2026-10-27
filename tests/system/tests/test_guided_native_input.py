@@ -15,16 +15,16 @@ the screen shows (preedit placement, highlights, candidate window).
 
 Covered: MT-NIN-02..04 (native file drag-and-drop on a scaled display, across
 two displays, under Wayland), MT-NIN-10..14 and 16 (IME,
-emoji picker), MT-NIN-21..24 (focus after the native Save dialog, a click into
-an inactive window, per-window typing, remote-desktop key release on blur). The
+emoji picker), MT-NIN-21 and 24 (focus after the native Save dialog,
+remote-desktop key release on blur). The
 IME commit-once logic is automated in ``test_ime_composition.py``. Real OS key
 and pointer events retired MT-NIN-07 (tab tear-off), MT-NIN-15 (dead keys),
-MT-NIN-20 (focus after an app switch), MT-NIN-30 (Windows right-click paste) and
-MT-NIN-31 (real Caps Lock) into ``test_os_input_keyboard.py`` /
+MT-NIN-20 (focus after an app switch), MT-NIN-22 (a click into an inactive
+window, #4979), MT-NIN-23 (per-window typing, #4979), MT-NIN-30 (Windows
+right-click paste) and MT-NIN-31 (real Caps Lock) into ``test_os_input_keyboard.py`` /
 ``test_os_input_pointer.py`` (#4935). Synthetic Tauri drag-drop events and real
 X11 XDND drags retired MT-NIN-01, 05 and 06 into ``test_os_file_drop.py`` /
-``test_os_file_drop_xdnd.py`` (#4936). MT-NIN-22/23 stay guided: injected clicks
-did not move the window focus reliably on the CI runners (see #4935's PR).
+``test_os_file_drop_xdnd.py`` (#4936).
 
 Run with ``./pytest.sh --manual -k guided_native_input -s``.
 """
@@ -50,7 +50,6 @@ from termihub_harness import (
     WindowsUi,
     unique_name,
 )
-from termihub_harness.ui.windows import window_tabs
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
 
@@ -211,7 +210,7 @@ class TestGuidedNativeInput(
         )
         assert "👍" in self.wait_for_output("👍", tab_id=tab["id"])
 
-    # ── MT-NIN-21..24: native focus ──────────────────────────────────────────
+    # ── MT-NIN-21, 24: native focus ──────────────────────────────────────────
     def test_focus_returns_after_native_save_dialog(self):
         """MT-NIN-21."""
         self.close_all_tabs()
@@ -224,33 +223,6 @@ class TestGuidedNativeInput(
             "macOS shows a sheet, others a dialog; `one` and `two` land at the editor caret "
             "and the tab shows the saved name.",
         )
-
-    def test_click_into_inactive_window_focuses_clicked_pane(self):
-        """MT-NIN-22."""
-        self._two_shell_panes()
-        self.manual_step(
-            "Click into the LEFT shell, click another app's window, then click once into "
-            "the RIGHT shell and type `abc`.",
-            "Windows/Linux: `abc` lands in the RIGHT pane. macOS: it lands in whichever "
-            "pane is drawn focused. Never in an unfocused pane.",
-        )
-
-    def test_typing_goes_only_to_focused_window(self):
-        """MT-NIN-23."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        second = self.open_new_window()
-        second.click(NEW_TERMINAL)
-        self.wait(lambda: window_tabs(second), what="a shell in the second window")
-        main_before = len(window_tabs(self.driver))
-        second_before = len(window_tabs(second))
-        self.manual_step(
-            f"Place the windows side by side. Type `aaa` in window A's shell and `bbb` in "
-            f"window B's. With B focused press {_MOD}+Shift+`.",
-            "`aaa` shows only in A and `bbb` only in B.",
-        )
-        self.wait(lambda: len(window_tabs(second)) == second_before + 1, what="the new tab in B")
-        assert len(window_tabs(self.driver)) == main_before, "window A gained a tab"
 
     def test_remote_desktop_releases_held_keys_on_blur(self):
         """MT-NIN-24 (a real VNC/RDP host with a text editor open)."""
