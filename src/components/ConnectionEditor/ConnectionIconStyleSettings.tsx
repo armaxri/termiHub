@@ -1,25 +1,10 @@
 import { useState } from "react";
-import { Ban, Pipette } from "lucide-react";
+import { Ban, Pipette, Smile } from "lucide-react";
 import { Button, Field, Input } from "@/components/ui";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { useIconSurfaces } from "@/hooks/useIconSurfaces";
+import { EmojiPickerDialog } from "./EmojiPickerDialog";
 import { ICON_COLOR_PALETTE, isHexIconColor, resolveIconColor } from "@/utils/connectionIconStyle";
-
-/** Quick-pick emoji suggestions; any emoji can be typed or pasted instead. */
-export const SUGGESTED_ICON_EMOJI = [
-  "🚀",
-  "🔥",
-  "⭐",
-  "🏠",
-  "🏭",
-  "🧪",
-  "🔒",
-  "🌐",
-  "🐧",
-  "🐳",
-  "🗄️",
-  "⚠️",
-] as const;
 
 export interface ConnectionIconStyleSettingsProps {
   /** Palette name, `#rrggbb`, or unset. */
@@ -44,6 +29,7 @@ export function ConnectionIconStyleSettings({
   iconEmojiError,
 }: ConnectionIconStyleSettingsProps) {
   const [customOpen, setCustomOpen] = useState(false);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const surfaces = useIconSurfaces();
   const customHex = iconColor && isHexIconColor(iconColor) ? iconColor : undefined;
 
@@ -122,7 +108,7 @@ export function ConnectionIconStyleSettings({
         label="Emoji Icon"
         htmlFor="connection-editor-icon-emoji"
         error={iconEmojiError ?? undefined}
-        hint="One emoji shown instead of the icon. Type or paste it, or open the system emoji picker (Ctrl+Cmd+Space on macOS, Win+. on Windows)."
+        hint="One emoji shown instead of the icon. Choose one from the picker, or type or paste it."
       >
         <>
           <div className="connection-editor__color-row">
@@ -140,6 +126,14 @@ export function ConnectionIconStyleSettings({
               }}
               data-testid="connection-editor-icon-emoji"
             />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setEmojiPickerOpen(true)}
+              data-testid="connection-editor-choose-icon-emoji"
+            >
+              <Smile size={14} aria-hidden="true" /> Choose…
+            </Button>
             {iconEmoji && (
               <Button
                 variant="secondary"
@@ -151,28 +145,14 @@ export function ConnectionIconStyleSettings({
               </Button>
             )}
           </div>
-          <div
-            className="connection-editor__emoji-suggestions"
-            role="group"
-            aria-label="Suggested emoji"
-          >
-            {SUGGESTED_ICON_EMOJI.map((emoji, index) => (
-              <button
-                key={emoji}
-                type="button"
-                className={swatchClass(iconEmoji === emoji)}
-                aria-label={`Use ${emoji}`}
-                aria-pressed={iconEmoji === emoji}
-                onClick={() => onIconEmojiChange(emoji)}
-                data-testid={`icon-emoji-suggestion-${index}`}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
         </>
       </Field>
 
+      <EmojiPickerDialog
+        open={emojiPickerOpen}
+        onOpenChange={setEmojiPickerOpen}
+        onEmojiSelect={(emoji) => onIconEmojiChange(emoji)}
+      />
       <ColorPickerDialog
         open={customOpen}
         onOpenChange={setCustomOpen}

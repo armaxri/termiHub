@@ -48,7 +48,7 @@ export function isHexIconColor(value: string): boolean {
 }
 
 /** The palette entry for a stored name, or `undefined`. */
-export function findPaletteEntry(value: string): IconPaletteEntry | undefined {
+function findPaletteEntry(value: string): IconPaletteEntry | undefined {
   return ICON_COLOR_PALETTE.find((e) => e.name === value);
 }
 

@@ -66,15 +66,10 @@
 }
 
 /* Icon colour swatches and emoji suggestions (#5008). */
-.connection-editor__swatches,
-.connection-editor__emoji-suggestions {
+.connection-editor__swatches {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-xs);
-}
-
-.connection-editor__emoji-suggestions {
-  margin-top: var(--spacing-xs);
 }
 
 .connection-editor__swatch {

@@ -203,6 +203,31 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** Search the open emoji picker and click `emoji` once it renders. */
+async function pickFromEmojiPicker(query: string, emoji: string): Promise<void> {
+  const buttons = () =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="emoji-picker-emoji"]'));
+  const until = async (check: () => boolean) => {
+    for (let i = 0; i < 150 && !check(); i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+    }
+    expect(check()).toBe(true);
+  };
+  await until(() => buttons().length > 0);
+  setInput(
+    document.querySelector('[data-testid="emoji-picker-search"]') as HTMLInputElement,
+    query
+  );
+  await until(() => buttons().some((b) => b.textContent === emoji));
+  act(() =>
+    buttons()
+      .find((b) => b.textContent === emoji)!
+      .click()
+  );
+}
+
 describe("ConnectionEditor icon colour + emoji", () => {
   it("loads both from the existing connection without being dirty", async () => {
     seedExisting({ iconColor: "teal", iconEmoji: "🐳" });
@@ -215,7 +240,7 @@ describe("ConnectionEditor icon colour + emoji", () => {
     expect(isDirty()).toBe(false);
   });
 
-  it("saves a picked palette colour and a suggested emoji", async () => {
+  it("saves a picked palette colour and an emoji from the picker", async () => {
     const addConnection = vi.fn();
     useAppStore.setState({ addConnection });
     renderEditor("new");
@@ -225,7 +250,8 @@ describe("ConnectionEditor icon colour + emoji", () => {
 
     openCategory("appearance");
     act(() => (q("icon-color-swatch-red") as HTMLButtonElement).click());
-    act(() => (q("icon-emoji-suggestion-0") as HTMLButtonElement).click());
+    act(() => (q("connection-editor-choose-icon-emoji") as HTMLButtonElement).click());
+    await pickFromEmojiPicker("whale", "🐳");
     await flush();
     expect(isDirty()).toBe(true);
 
@@ -234,7 +260,7 @@ describe("ConnectionEditor icon colour + emoji", () => {
 
     const saved = addConnection.mock.calls[0][0] as SavedConnection;
     expect(saved.iconColor).toBe("red");
-    expect(saved.iconEmoji).toBe("🚀");
+    expect(saved.iconEmoji).toBe("🐳");
   });
 
   it("blocks Save with an inline error for a non-emoji value", async () => {
