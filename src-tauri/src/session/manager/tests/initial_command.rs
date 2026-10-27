@@ -434,3 +434,74 @@ async fn local_zsh_initial_command_waits_for_the_prompt_after_a_slow_rc() {
     });
     assert_typed_at_the_prompt(&manager, &writes, "local", settings, "ready-5029$ ").await;
 }
+
+/// The rc snippet the SSH test installs in the `ssh-password` fixture's
+/// `.bashrc`. It only runs at the test's odd PTY size, so every other
+/// session on the shared fixture is untouched.
+const SSH_SLOW_RC: &str = "\n# termihub-5029: slow rc for the initial-command test\n\
+if [ \"$(stty size 2>/dev/null)\" = \"37 111\" ]; then \
+echo RC-START; sleep 2; echo RC-DONE; PS1='ready-5029$ '; fi\n";
+
+/// Add [`SSH_SLOW_RC`] to the fixture user's `.bashrc`, once.
+fn install_ssh_slow_rc() {
+    let container = termihub_core::test_fixtures::fixture_container("ssh-password");
+    let script = "grep -q termihub-5029 ~/.bashrc || printf '%s' \"$1\" >> ~/.bashrc";
+    let status = std::process::Command::new("docker")
+        .args([
+            "exec", "-u", "testuser", &container, "sh", "-c", script, "sh",
+        ])
+        .arg(SSH_SLOW_RC)
+        .status()
+        .expect("run docker exec");
+    assert!(
+        status.success(),
+        "installing the slow rc in {container} failed"
+    );
+}
+
+/// The fixture's host key is unknown; trust it (process-wide, first
+/// registration wins, same as the other desktop SSH tests).
+fn trust_all_host_keys() {
+    use termihub_core::backends::ssh::host_key::{
+        set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+    };
+    struct TrustAll;
+    #[async_trait::async_trait]
+    impl HostKeyVerifier for TrustAll {
+        async fn verify(&self, _info: &HostKeyInfo) -> bool {
+            true
+        }
+    }
+    let _ = set_host_key_verifier(Arc::new(TrustAll));
+}
+
+fn ssh_backend() -> Box<dyn ConnectionType> {
+    Box::new(termihub_core::backends::ssh::Ssh::new())
+}
+
+/// A default (unhooked) bash over a real sshd (the `ssh-password` Docker
+/// fixture) whose rc sleeps 2 s: the initial command waits for the remote
+/// prompt to settle instead of landing in the still-cooked remote tty
+/// (#5029). Skips without the container; hard-fails under
+/// `TERMIHUB_REQUIRE_DOCKER=1`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ssh_initial_command_waits_for_the_prompt_after_a_slow_rc() {
+    let port = termihub_core::test_fixtures::fixture_port("TERMIHUB_TEST_SSH_PASSWORD_PORT", 2201);
+    if !crate::utils::docker_fixture_gate::fixture_ready("ssh-password", port) {
+        return;
+    }
+    install_ssh_slow_rc();
+    trust_all_host_keys();
+    let (manager, writes) = recording_manager("ssh", ssh_backend);
+    let settings = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": port,
+        "username": "testuser",
+        "authMethod": "password",
+        "password": "testpass",
+        "shellIntegration": false,
+        "cols": 111,
+        "rows": 37,
+    });
+    assert_typed_at_the_prompt(&manager, &writes, "ssh", settings, "ready-5029$ ").await;
+}
