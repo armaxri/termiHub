@@ -12,8 +12,10 @@ between windows, including dragging rows *out* — is graded in
 Retires MT-NIN-01 (multi-file drop quoting, together with the XDND grade),
 MT-NIN-05 (drop onto the file browser copies), MT-UI-34 (the drop lands in the
 pane under the cursor) and MT-FB-30 (a 5000-entry folder stays virtualised and
-accepts a drop). The hit-testing grade also covers the 1x half of MT-NIN-02;
-a real scaled display stays guided.
+accepts a drop). The hit-testing grade also runs at devicePixelRatio 2 in the
+scaled-display lane, beside the real XDND MT-NIN-02 grade (#4997). The
+synthetic positions are what each platform's native layer reports: device
+pixels on Windows, CSS pixels on Linux and macOS.
 
 Integration lane (nightly).
 """
@@ -39,6 +41,7 @@ from termihub_harness import (
     TabsUi,
     TerminalUi,
 )
+from termihub_harness.ui.os_drop import check_device_pixel_ratio
 from termihub_harness.ui.terminal import NEW_TERMINAL
 from termihub_harness.ui.windows import window_tabs
 
@@ -159,7 +162,9 @@ class TestSyntheticOsFileDrop(
         """MT-UI-34: with two shell panes the highlight follows the cursor from
         one pane to the other and is gone over the tab bar; a drop inserts the
         path only into the pane it was released over, and a drop on the tab bar
-        inserts nothing. (MT-NIN-02's hit-testing at the runner's scale.)"""
+        inserts nothing. MT-NIN-02: the scaled-display lane runs it under
+        ``GDK_SCALE=2`` (devicePixelRatio 2, #4997), the bulk lane at 1x."""
+        check_device_pixel_ratio(self.driver.os_input_probe())
         self.close_all_tabs()
         self.ensure_terminal()
         self.driver.click(SPLIT_H)

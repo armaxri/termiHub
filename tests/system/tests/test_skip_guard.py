@@ -432,6 +432,9 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
         "os-input-macos": 1,
         # 6 from the old file; the #5024 quarantine fragment's +1 went with the skip.
         "os-input-windows": 6,
+        # #4997: the scale-2 drop-grade lanes, budgeted 0 by their own fragment.
+        "scaled-display-linux": 0,
+        "scaled-display-linux-arm64": 0,
     }
 
 
