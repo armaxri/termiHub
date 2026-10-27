@@ -146,6 +146,12 @@ from .ssh_agent import (
     sha256_fingerprints,
 )
 from .systemtest import RerunResetError, SystemTest, unique_name
+from .traceroute_fixture import (
+    TRACEROUTE_NEEDS_LINUX,
+    TracerouteFixtureUnavailable,
+    TracerouteHops,
+    ensure_traceroute_fixture,
+)
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
     AgentUi,
@@ -159,6 +165,7 @@ from .ui import (
     JumpHostUi,
     LayoutUi,
     ManualUi,
+    OsDropUi,
     OsInputUi,
     MonitoringUi,
     NetworkToolsUi,
@@ -229,6 +236,7 @@ __all__ = [
     "SettingsUi",
     "SETTINGS_REGION",
     "ManualUi",
+    "OsDropUi",
     "OsInputUi",
     "NetworkToolsUi",
     "PluginsUi",
@@ -268,6 +276,10 @@ __all__ = [
     "RdpSessionProbe",
     "find_rdp_helper",
     "wait_for_rdp",
+    "TRACEROUTE_NEEDS_LINUX",
+    "TracerouteFixtureUnavailable",
+    "TracerouteHops",
+    "ensure_traceroute_fixture",
     "VNC_CONTAINER_SUFFIX",
     "VNC_FB_HEIGHT",
     "VNC_FB_WIDTH",

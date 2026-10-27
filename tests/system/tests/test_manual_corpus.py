@@ -68,6 +68,9 @@ _OS_POINTER = "test_os_input_pointer.py"
 _OS_MAC = "test_os_input_macos_app.py"
 _RIGHT_CLICK = "test_right_click_platform_default_and_quick_copy_paste"
 _COPY_PASTE = "test_copy_paste_shortcuts_and_plain_ctrl_c"
+_DROP = "test_os_file_drop.py"
+_XDND = "test_os_file_drop_xdnd.py"
+_DRAG_OUT = "test_row_dragged_out_lands_in_the_os_folder_and_is_not_reimported"
 
 #: Manual items retired into automated (not ``manual``-marked) tests (#4927),
 #: mapped to the ``"<module>::<test function>"`` whose docstring names the id,
@@ -186,6 +189,18 @@ AUTOMATED_IDS: dict[str, str] = {
     ),
     # #4953: agent auth against a private ssh-agent the suite starts itself.
     "MT-SSH-07": "test_ssh_agent_auth.py::test_ssh_agent_auth_connects",
+    # #4936: synthetic Tauri drag-drop events (every OS) and real X11 XDND drags.
+    "MT-NIN-01": f"{_DROP}::test_multi_file_drop_is_quoted_per_platform",
+    "MT-NIN-05": f"{_DROP}::test_os_drop_onto_file_browser_copies_into_folder",
+    "MT-UI-34": f"{_DROP}::test_drop_targets_only_the_pane_under_the_cursor",
+    "MT-FB-30": f"{_DROP}::test_large_directory_stays_virtualised_and_accepts_os_drop",
+    "MT-NIN-06": f"{_XDND}::{_DRAG_OUT}",
+    "MT-FB-31": f"{_XDND}::{_DRAG_OUT}",
+    "MT-RD-10": (
+        "test_vnc_file_transfer.py::test_os_drop_uploads_files_and_a_folder_and_keeps_both"
+    ),
+    # #4964: traced through a two-router Docker chain, unprivileged (IP_RECVERR).
+    "MT-NET-16": "test_network_tools_traceroute.py::test_traceroute_hops_stream_in_and_complete",
 }
 
 #: Automated items that were never in the retired YAML corpus — they lived only
@@ -230,6 +245,7 @@ LATER_GUIDED_IDS = frozenset(
         "MT-CONN-01",
         "MT-FB-20",
         "MT-SSH-07",
+        "MT-UI-34",
     }
 )
 

@@ -1,6 +1,7 @@
 //! Small utility helpers shared across the core crate.
 
 pub mod backoff;
+pub mod console_ctrl;
 pub mod entry_extra;
 pub mod no_window;
 pub mod persist;

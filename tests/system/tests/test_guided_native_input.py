@@ -4,24 +4,26 @@ Ported from the retired ``tests/manual/native-input.yaml`` (TIN-017, #3764).
 The bridge injects synthetic DOM events inside the webview, so three paths
 never go through it: native OS file drops (Tauri reports physical screen
 coordinates), IME composition (the OS input method owns the preedit and the
-candidate window) and real window focus. ``test_input_routing.py`` walks the
-plain drags; this suite covers the rest.
+candidate window) and real window focus. This suite covers what the automated
+OS-input and file-drop lanes cannot reach.
 
 The harness builds the exact scene (split panes, shells, scratch files with
 awkward names, an open editor, an open connection editor) and, where the result
-is observable, asserts it afterwards: the dropped files are listed by the
-shell, the dropped file landed in the folder, the connection saved with its
-IME-typed name. The operator performs the native gesture and judges what only
+is observable, asserts it afterwards: the connection saved with its IME-typed
+name, the focus where it belongs. The operator performs the native gesture and judges what only
 the screen shows (preedit placement, highlights, candidate window).
 
-Covered: MT-NIN-01..06 (native file drag-and-drop), MT-NIN-10..14 and 16 (IME,
+Covered: MT-NIN-02..04 (native file drag-and-drop on a scaled display, across
+two displays, under Wayland), MT-NIN-10..14 and 16 (IME,
 emoji picker), MT-NIN-21..24 (focus after the native Save dialog, a click into
 an inactive window, per-window typing, remote-desktop key release on blur). The
 IME commit-once logic is automated in ``test_ime_composition.py``. Real OS key
 and pointer events retired MT-NIN-07 (tab tear-off), MT-NIN-15 (dead keys),
 MT-NIN-20 (focus after an app switch), MT-NIN-30 (Windows right-click paste) and
 MT-NIN-31 (real Caps Lock) into ``test_os_input_keyboard.py`` /
-``test_os_input_pointer.py`` (#4935). MT-NIN-22/23 stay guided: injected clicks
+``test_os_input_pointer.py`` (#4935). Synthetic Tauri drag-drop events and real
+X11 XDND drags retired MT-NIN-01, 05 and 06 into ``test_os_file_drop.py`` /
+``test_os_file_drop_xdnd.py`` (#4936). MT-NIN-22/23 stay guided: injected clicks
 did not move the window focus reliably on the CI runners (see #4935's PR).
 
 Run with ``./pytest.sh --manual -k guided_native_input -s``.
@@ -92,39 +94,19 @@ class TestGuidedNativeInput(
         self.open_file_in_editor(name)
         return name
 
-    # ── MT-NIN-01..06: native file drag-and-drop ─────────────────────────────
-    def test_multi_file_drop_is_quoted_per_platform(self):
-        """MT-NIN-01."""
-        folder = self._scratch_dir("nin01")
-        for name in ("plain.txt", "two words.txt", "it's.txt"):
-            (folder / name).write_text("x\n", encoding="utf-8")
-        self.close_all_tabs()
-        self.ensure_terminal()
-        prefix = "Get-Item " if sys.platform == "win32" else "ls -l "
-        quoting = "double quotes" if sys.platform == "win32" else "single quotes, it's as '\\''"
-        self.manual_step(
-            f"Type `{prefix}` in the terminal (no Enter). Select the three files in "
-            f"{folder} in your file manager and drag them together onto the terminal. "
-            "Look at the prompt line, then press Enter.",
-            f"The drop highlight shows while hovering; all three paths are inserted in "
-            f"{quoting}, nothing runs before Enter.",
-        )
-        self.wait_for_output("two words.txt")
-        out = self.wait_for_output("plain.txt")
-        assert "it's.txt" in out, "the apostrophe file was not listed"
-        assert "not found" not in out.lower() and "cannot find" not in out.lower()
-
+    # ── MT-NIN-02..04: native file drag-and-drop on real displays ───────────
     def test_drop_targets_pane_under_cursor_on_scaled_display(self):
         """MT-NIN-02 (Retina / 150% / fractional scaling)."""
         self._two_shell_panes()
         dropped = self._scratch_dir("nin02") / "drop-scaled.txt"
         dropped.write_text("x\n", encoding="utf-8")
+        # Hit-testing and the tab-bar case are automated at the runner's scale
+        # (test_os_file_drop.py); only a real scaled display is left.
         self.manual_step(
-            f"On a scaled display, drag {dropped} slowly across both panes over the "
-            "divider and drop it just inside the RIGHT pane. Drag it again and drop it "
-            "on the tab bar.",
-            "The highlight switches exactly at the divider; only the RIGHT shell gets "
-            "the path; the tab-bar drop inserts nothing.",
+            f"On a scaled (Retina / 150% / fractional) display, drag {dropped} slowly "
+            "over the divider and drop it just inside the RIGHT pane.",
+            "The highlight switches exactly at the divider and only the RIGHT shell "
+            "gets the path.",
         )
 
     def test_drop_after_moving_window_to_other_scale_display(self):
@@ -141,54 +123,17 @@ class TestGuidedNativeInput(
 
     @pytest.mark.manual(platforms=["linux"])
     def test_linux_drop_under_wayland_and_x11(self):
-        """MT-NIN-04 (run once in a Wayland and once in an X11 session)."""
+        """MT-NIN-04 (a Wayland session; X11 is automated in test_os_file_drop_xdnd.py)."""
         self.close_all_tabs()
         self.ensure_terminal()
         self.open_file_browser()
         self.manual_step(
-            "Check `echo $XDG_SESSION_TYPE`. Drop a file from Files/Dolphin onto the "
-            "terminal, then onto the file-browser listing. Repeat after logging into the "
-            "other session type.",
-            "In both sessions the terminal gets the quoted path, the listing copies the "
-            "file, and the highlight shows while hovering.",
+            "In a Wayland session (`echo $XDG_SESSION_TYPE` says wayland), drop a file "
+            "from Files/Dolphin onto the terminal, then onto the file-browser listing. "
+            "Then drag a file-browser row out onto the desktop.",
+            "The terminal gets the quoted path, the listing copies the file with the "
+            "highlight showing while hovering, and the dragged-out row lands as a copy.",
         )
-
-    def test_os_drop_onto_file_browser_copies_into_folder(self):
-        """MT-NIN-05."""
-        target = self._scratch_dir("nin05-target")
-        source = self._scratch_dir("nin05-source") / "copy-me.txt"
-        source.write_text("payload\n", encoding="utf-8")
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command(f'cd "{target}"')
-        self.open_file_browser()
-        self.wait_for_path_contains(target.name)
-        self.manual_step(
-            f"Drag {source} from your file manager onto the file-browser listing.",
-            "The listing highlights while hovering and a 'Copied copy-me.txt' toast "
-            "appears.",
-        )
-        self.wait_for_file_row("copy-me.txt")
-        assert (target / "copy-me.txt").read_text(encoding="utf-8") == "payload\n"
-        assert source.exists(), "the drop moved the file instead of copying it"
-
-    def test_drag_row_out_and_back_is_not_reimported(self):
-        """MT-NIN-06."""
-        folder = self._scratch_dir("nin06")
-        (folder / "drag-out.txt").write_text("drag-out\n", encoding="utf-8")
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command(f'cd "{folder}"')
-        self.open_file_browser()
-        self.wait_for_file_row("drag-out.txt")
-        self.manual_step(
-            "Drag the drag-out.txt row into a different folder in your file manager. "
-            "Then drag it out again, move outside the window, come back over the file "
-            "browser and release there.",
-            "The file lands in the OS folder with the same contents; releasing back over "
-            "termiHub does nothing (no highlight, no toast).",
-        )
-        assert sorted(p.name for p in folder.iterdir()) == ["drag-out.txt"]
 
     # ── MT-NIN-10..14, 16: IME, emoji picker ─────────────────────────────────
     def _ime_in_terminal(self, setup: str, convert: str) -> None:
