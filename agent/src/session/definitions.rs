@@ -2166,10 +2166,9 @@ mod tests {
     }
 
     /// #5021: a file written before icon styles (no keys) loads with both
-    /// unset and re-saves without stray keys, so it stays readable as-is by an
-    /// older agent; and a file a newer agent wrote with the keys keeps them
-    /// across an older agent's save, which holds them in `extra` (#3931) —
-    /// pinned here by round-tripping an entry with keys this agent stores.
+    /// unset and re-saves without stray keys; an entry carrying the keys keeps
+    /// them across a save (an older agent holds them in `extra`, #3931). The
+    /// keys are additive and need no schema step of their own.
     #[tokio::test]
     async fn icon_style_is_compatible_with_older_files() {
         let tmp = TempDir::new().unwrap();
@@ -3052,6 +3051,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -3064,6 +3065,79 @@ mod tests {
         let reloaded = ConnectionStore::new(path);
         assert_eq!(hook(reloaded.get("ssh").await), json!(true));
         assert_eq!(hook(reloaded.get("local").await), json!(false));
+    }
+
+    /// #5021 + #5009: a v1 file with the old `shellIntegration: true` default
+    /// and no icon style keys loads migrated (hook off) with both icon fields
+    /// unset; a v1 entry that already carries icon style keys keeps them
+    /// through the v1→v2 migration, a save at v2, and a reload.
+    #[tokio::test]
+    async fn v1_file_migrates_alongside_icon_style() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "version": "1",
+                "connections": [
+                    {"id": "plain", "name": "Plain", "session_type": "ssh",
+                     "config": {"shellIntegration": true}},
+                    {"id": "styled", "name": "Styled", "session_type": "local",
+                     "config": {"shellIntegration": true},
+                     "icon_color": "teal", "icon_emoji": "\u{1F433}"}
+                ],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        let plain = store.get("plain").await.unwrap();
+        assert_eq!(plain.config["shellIntegration"], json!(false));
+        assert!(plain.icon_color.is_none() && plain.icon_emoji.is_none());
+        let styled = store.get("styled").await.unwrap();
+        assert_eq!(styled.config["shellIntegration"], json!(false));
+        assert_eq!(styled.icon_color.as_deref(), Some("teal"));
+        assert_eq!(styled.icon_emoji.as_deref(), Some("\u{1F433}"));
+
+        // A save writes v2 with the icon keys only where set.
+        store
+            .update(
+                "plain",
+                Some("Plain 2".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some("red".into())),
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let raw = read_json(&path);
+        assert_eq!(raw["version"], json!(DEFINITIONS_STORE_VERSION.to_string()));
+        assert_eq!(
+            raw_entry(&raw, "connections", "plain")["icon_color"],
+            json!("red")
+        );
+        assert!(raw_entry(&raw, "connections", "plain")
+            .get("icon_emoji")
+            .is_none());
+        assert_eq!(
+            raw_entry(&raw, "connections", "styled")["icon_color"],
+            json!("teal")
+        );
+
+        let reloaded = ConnectionStore::new(path);
+        let plain = reloaded.get("plain").await.unwrap();
+        assert_eq!(plain.config["shellIntegration"], json!(false));
+        assert_eq!(plain.icon_color.as_deref(), Some("red"));
+        let styled = reloaded.get("styled").await.unwrap();
+        assert_eq!(styled.icon_emoji.as_deref(), Some("\u{1F433}"));
     }
 
     /// An older-version file runs through the numbered migrate chain.
