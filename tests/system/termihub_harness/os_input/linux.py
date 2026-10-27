@@ -14,6 +14,7 @@ directly, which is what a WM does on a click or Alt+Tab.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -229,12 +230,25 @@ class XWindowManager:
         self._proc: Optional[subprocess.Popen] = None
 
     def running(self) -> bool:
-        """Whether a EWMH window manager owns the display (``_NET_SUPPORTING_WM_CHECK``)."""
+        """Whether a EWMH window manager owns the display (``_NET_SUPPORTING_WM_CHECK``).
+
+        The root property names the WM's check window, which carries the same
+        property pointing at itself. A WM that exited leaves the root property
+        behind, naming a window that is gone: then no WM runs (#4979). Trusting
+        the root property alone made every suite after the first run without one.
+        """
         try:
             out = self._run(["xprop", "-root", "_NET_SUPPORTING_WM_CHECK"])
         except OsInputUnavailable:
             return False
-        return "window id" in out
+        match = re.search(r"window id # (0x[0-9a-fA-F]+)", out)
+        if match is None:
+            return False
+        try:
+            child = self._run(["xprop", "-id", match.group(1), "_NET_SUPPORTING_WM_CHECK"])
+        except OsInputUnavailable:
+            return False
+        return match.group(1) in child
 
     def start(self, timeout: float = 15.0) -> "XWindowManager":
         if not global_injection_allowed():

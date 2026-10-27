@@ -1243,6 +1243,14 @@ Accessibility raise action on the window matched by frame on macOS) and proves
 with `osInputProbe`'s `hasFocus` that only that window's webview holds the
 focus before typing.
 
+On Linux each OS-input suite starts its own openbox and stops it afterwards. An
+openbox that exited leaves the root window's `_NET_SUPPORTING_WM_CHECK` behind,
+so the harness checks that the window it names still answers before it treats a
+window manager as running. Trusting the root property alone made every suite
+after the first run without a window manager: no click-to-focus, and
+`termihub spawn` could not raise the window. That is why the injected click did
+not move the focus in #4935.
+
 MT-LOCAL-08 (macOS key repeat) posts its autorepeat key-downs at the HID tap,
 not to the PID (#4980). AppKit drops every autorepeat key-down posted with
 `CGEventPostToPid`, in a plain `NSTextView` as much as in WKWebView. At the HID
