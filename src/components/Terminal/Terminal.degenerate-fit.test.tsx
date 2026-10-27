@@ -278,7 +278,7 @@ describe("fits while the terminal is still parked (#5025)", () => {
 
     // Once laid out, the real grid reaches the PTY.
     await layOut(944, 560);
-    expect(ipc.resizes.at(-1)).toBe("118x28");
+    expect(ipc.resizes[ipc.resizes.length - 1]).toBe("118x28");
     expect(ipc.resizes.filter(degenerate)).toEqual([]);
   });
 
@@ -286,7 +286,7 @@ describe("fits while the terminal is still parked (#5025)", () => {
     renderTerminal(true);
     await settle();
     await layOut(944, 560);
-    expect(ipc.resizes.at(-1)).toBe("118x28");
+    expect(ipc.resizes[ipc.resizes.length - 1]).toBe("118x28");
 
     // Parked again (e.g. mid-reparent) when the font finishes loading.
     h.state.containerWidth = 0;
