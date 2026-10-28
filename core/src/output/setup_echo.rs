@@ -15,11 +15,14 @@
 //!   echo of the typed text (plus escape sequences and whitespace). Everything
 //!   before that point — MOTD, rc-file output, the first prompt — is emitted
 //!   untouched. The echo, the setup's own output and the end mark are dropped.
-//!   The row of the first prompt is then cleared, so the shell's next prompt
-//!   (drawn by the now-integrated shell, with its OSC 133 marks) takes its
-//!   place instead of appearing twice. Rows above it are cleared only where
-//!   they hold the same text as the next prompt's upper rows (a two-line
-//!   prompt), never a banner or other output.
+//!   The first prompt's rows are then erased, with everything below them,
+//!   so the shell's next prompt (drawn by the now-integrated shell, with its
+//!   OSC 133 marks) takes their place instead of appearing twice, and no
+//!   stale text is left under it. Lines above the cursor's line count only
+//!   where they hold the same text as the next prompt's upper lines (a
+//!   two-line prompt), never a banner or other output. Given the terminal's
+//!   width ([`SetupEchoFilter::set_width`]), the rows a long prompt wrapped
+//!   onto count too (#5054).
 //! - **Typed too early.** When the line reached a tty still in cooked mode,
 //!   the tty echoed it ahead of the first prompt and the line editor echoed
 //!   it again. If only the first prompt (the same rows as the next prompt)
@@ -47,6 +50,8 @@
 //! that model from the terminal.
 
 use std::time::{Duration, Instant};
+
+use super::setup_echo_rows::rows_above_prompt;
 
 /// The mark the setup snippet prints as its very last statement:
 /// `ESC ] 6973 ; termihub-setup-done BEL`. An OSC no terminal implements, so
@@ -79,10 +84,8 @@ const RECENT_BYTES: usize = 4096;
 /// Bracketed paste on: what readline and ZLE send once a prompt is drawn.
 const BRACKETED_PASTE_ON: &[u8] = b"\x1b[?2004h";
 
-/// Clear the cursor's row and return to its first column.
-const ERASE_ROW: &[u8] = b"\r\x1b[2K";
-/// Move one row up and clear it.
-const ERASE_ROW_ABOVE: &[u8] = b"\x1b[1A\x1b[2K";
+/// Erase from the cursor to the end of the screen.
+const ERASE_BELOW: &[u8] = b"\x1b[J";
 
 /// How a hide attempt ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +134,13 @@ pub struct SetupEchoFilter {
     recent: Vec<u8>,
     outcome: Option<HideOutcome>,
     finished: bool,
+    /// The terminal's width, to count the rows a wrapped prompt spans.
+    cols: usize,
+    /// Whether the width changed while hiding, after the first prompt was
+    /// drawn. The terminal has then reflowed it, but not the cursor's row
+    /// (xterm.js leaves that one to the shell's redraw), so its wrapped rows
+    /// are no longer above the cursor.
+    resized: bool,
 }
 
 impl Default for SetupEchoFilter {
@@ -148,7 +158,19 @@ impl SetupEchoFilter {
             recent: Vec::new(),
             outcome: None,
             finished: false,
+            cols: 0,
+            resized: false,
         }
+    }
+
+    /// The terminal's width in columns (0: unknown). Set at spawn and on
+    /// every resize, so a prompt that wraps is replaced with all its rows.
+    pub fn set_width(&mut self, cols: u16) {
+        let cols = usize::from(cols);
+        if self.is_active() && cols != self.cols {
+            self.resized = true;
+        }
+        self.cols = cols;
     }
 
     /// Start hiding: `typed` is about to be written to the shell. Arming again
@@ -338,15 +360,19 @@ impl SetupEchoFilter {
             // same text as the next one) go too, so nothing needs clearing.
             out = pre[..early].to_vec();
         } else {
-            // Clear the first prompt's rows; the next prompt takes its place.
+            // Erase the first prompt's rows — those it wrapped onto too — and
+            // everything below; the next prompt takes its place (#5054).
             let mut before = std::mem::take(&mut self.recent);
             before.extend_from_slice(&pre[..echo]);
-            let rows = prompt_rows_above(&before, next);
+            let lines = prompt_rows_above(&before, next);
+            let cols = if self.resized { 0 } else { self.cols };
+            let rows = rows_above_prompt(&before, next, lines, cols).unwrap_or(lines);
             out = pre[..echo].to_vec();
-            out.extend_from_slice(ERASE_ROW);
-            for _ in 0..rows {
-                out.extend_from_slice(ERASE_ROW_ABOVE);
+            out.push(b'\r');
+            if rows > 0 {
+                out.extend_from_slice(format!("\x1b[{rows}A").as_bytes());
             }
+            out.extend_from_slice(ERASE_BELOW);
         }
         out.extend(buf);
         out
@@ -522,7 +548,7 @@ fn visible(data: &[u8]) -> Vec<(usize, u8)> {
 }
 
 /// The index just past the escape sequence starting at `data[at]` (an ESC).
-fn skip_escape(data: &[u8], at: usize) -> usize {
+pub(crate) fn skip_escape(data: &[u8], at: usize) -> usize {
     let mut i = at + 1;
     match data.get(i) {
         // CSI: parameters and intermediates, then a final byte in @..~.

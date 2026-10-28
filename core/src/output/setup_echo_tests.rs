@@ -367,3 +367,138 @@ fn visible_skips_escape_sequences() {
         .collect();
     assert_eq!(vis, b"if(x)");
 }
+
+/// A 50-column prompt at 40 columns, drawn the way readline wraps it: the
+/// character past the edge, a CR, then that character again.
+const WIDE_PROMPT_TOP: &str = "Mac-1761234567890-bt149-5f91d326-0b7c-4c";
+const WIDE_PROMPT_TAIL: &str = "3e-runner$ ";
+
+fn wide_prompt() -> String {
+    format!("{WIDE_PROMPT_TOP}3\r{WIDE_PROMPT_TAIL}")
+}
+
+/// Like [`run`], at a known terminal width.
+fn run_at_width(before: &str, after: &str, cols: u16) -> Vec<u8> {
+    let mut f = SetupEchoFilter::new();
+    f.set_width(cols);
+    let mut out = f.feed(before.as_bytes(), at(T0_MS));
+    f.arm(TYPED.as_bytes(), at(10));
+    out.extend(f.feed(after.as_bytes(), at(20)));
+    out.extend(f.poll(at(20) + REPROMPT_CAP));
+    assert_eq!(f.outcome(), Some(HideOutcome::Hidden));
+    out
+}
+
+fn screen_at(bytes: &[u8], cols: usize) -> Vec<String> {
+    let mut s = Screen::new(cols);
+    s.feed(bytes);
+    s.lines()
+}
+
+#[test]
+fn a_first_prompt_wrapped_at_the_width_is_replaced_whole() {
+    // #5054: clearing only the cursor's row left the wrapped prompt's top
+    // row behind, above the next prompt.
+    let before = format!(
+        "The default interactive shell is now zsh\r\n.\r\n{}",
+        wide_prompt()
+    );
+    let after = format!(
+        "{}\r\n{}\x1b]133;A\x07{}",
+        TYPED.trim_end(),
+        done(),
+        wide_prompt()
+    );
+    let out = run_at_width(&before, &after, 40);
+    assert_eq!(
+        screen_at(&out, 40),
+        vec![
+            "The default interactive shell is now zsh",
+            ".",
+            WIDE_PROMPT_TOP,
+            WIDE_PROMPT_TAIL.trim_end(),
+        ],
+        "{:?}",
+        String::from_utf8_lossy(&out)
+    );
+}
+
+#[test]
+fn output_on_the_wrapped_prompts_first_row_is_kept() {
+    // A partial line (no newline) before the prompt, moved past the way
+    // zsh's PROMPT_SP does it (fill the row, wrap, CR): the prompt starts on
+    // the next row, and only the prompt's own rows go.
+    let before = format!("rc-partial-line{} \r{}", " ".repeat(25), wide_prompt());
+    let after = format!(
+        "{}\r\n{}\x1b]133;A\x07{}",
+        TYPED.trim_end(),
+        done(),
+        wide_prompt()
+    );
+    let out = run_at_width(&before, &after, 40);
+    assert_eq!(
+        screen_at(&out, 40),
+        vec![
+            "rc-partial-line",
+            WIDE_PROMPT_TOP,
+            WIDE_PROMPT_TAIL.trim_end()
+        ]
+    );
+}
+
+#[test]
+fn the_width_set_last_is_the_one_measured() {
+    let before = format!("USER-RC: hi\r\n{}", wide_prompt());
+    let after = format!(
+        "{}\r\n{}\x1b]133;A\x07{}",
+        TYPED.trim_end(),
+        done(),
+        wide_prompt()
+    );
+    let mut f = SetupEchoFilter::new();
+    f.set_width(80);
+    let mut out = f.feed(before.as_bytes(), at(T0_MS));
+    f.set_width(40);
+    f.arm(TYPED.as_bytes(), at(10));
+    out.extend(f.feed(after.as_bytes(), at(20)));
+    out.extend(f.poll(at(20) + REPROMPT_CAP));
+    assert_eq!(
+        screen_at(&out, 40),
+        vec!["USER-RC: hi", WIDE_PROMPT_TOP, WIDE_PROMPT_TAIL.trim_end()]
+    );
+}
+
+#[test]
+fn rows_below_the_replaced_prompt_are_erased() {
+    // Whatever a terminal still holds below the first prompt (stale rows a
+    // reflow or a redraw left there) is erased with it, so the command's
+    // output never lands on old text.
+    let before = "USER-RC: hi\r\n$ ";
+    let (out, _) = run(before, &bash_after(), 4096);
+    let text = String::from_utf8_lossy(&out);
+    assert!(text.contains("\r\x1b[J"), "{text:?}");
+}
+
+#[test]
+fn a_resize_while_hiding_counts_line_breaks_only() {
+    // The terminal reflowed the first prompt, but not the cursor's row: the
+    // cursor is on the prompt's top row, and the row above it (rc output)
+    // must stay.
+    let before = format!("USER-RC: hi\r\n{}", wide_prompt());
+    let after = format!(
+        "{}\r\n{}\x1b]133;A\x07{}",
+        TYPED.trim_end(),
+        done(),
+        wide_prompt()
+    );
+    let mut f = SetupEchoFilter::new();
+    f.set_width(40);
+    let mut out = f.feed(before.as_bytes(), at(T0_MS));
+    f.arm(TYPED.as_bytes(), at(10));
+    f.set_width(80);
+    out.extend(f.feed(after.as_bytes(), at(20)));
+    out.extend(f.poll(at(20) + REPROMPT_CAP));
+    let text = String::from_utf8_lossy(&out);
+    assert!(!text.contains("\x1b[1A"), "{text:?}");
+    assert!(text.contains("\r\x1b[J"), "{text:?}");
+}
