@@ -198,6 +198,8 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-FB-30": f"{_DROP}::test_large_directory_stays_virtualised_and_accepts_os_drop",
     "MT-NIN-06": f"{_XDND}::{_DRAG_OUT}",
     "MT-FB-31": f"{_XDND}::{_DRAG_OUT}",
+    # #4997: a real XDND drop into split panes at devicePixelRatio 2 (GDK_SCALE=2).
+    "MT-NIN-02": f"{_XDND}::test_real_drop_lands_in_the_pane_under_the_cursor",
     "MT-RD-10": (
         "test_vnc_file_transfer.py::test_os_drop_uploads_files_and_a_folder_and_keeps_both"
     ),

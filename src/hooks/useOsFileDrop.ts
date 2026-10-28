@@ -1,7 +1,31 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isOwnDragOut } from "@/utils/fileDragOut";
+import { getPlatform, type Platform } from "@/utils/platform";
 import { subscribeGuarded } from "./useTauriListener";
+
+/**
+ * Converts a Tauri drag-drop `position` to CSS pixels in the webview (#4997).
+ *
+ * Tauri types the position as a `PhysicalPosition`, but wry passes on whatever
+ * the native layer reports, and only Windows reports device pixels:
+ * - Windows (WebView2): `ScreenToClient` on the per-monitor-DPI-aware window
+ *   gives device pixels, so divide by `devicePixelRatio`.
+ * - Linux (WebKitGTK): GTK's `drag-motion` / `drag-drop` widget coordinates
+ *   are already logical (scaled by `GDK_SCALE`), i.e. CSS pixels.
+ * - macOS (WKWebView): AppKit's `draggingLocation` is in points, i.e. CSS pixels.
+ *
+ * Dividing everywhere put a drop on a scaled Linux or macOS display at half its
+ * real coordinates, into whatever pane sat nearer the window origin.
+ */
+export function dropPositionToCss(
+  position: { x: number; y: number },
+  platform: Platform = getPlatform(),
+  devicePixelRatio: number = window.devicePixelRatio
+): { x: number; y: number } {
+  const scale = platform === "windows" && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  return { x: position.x / scale, y: position.y / scale };
+}
 
 /**
  * Listens for OS-level file drag-and-drop events (Finder, Explorer, etc.) over a
@@ -34,11 +58,9 @@ export function useOsFileDrop(
     const isOver = (pos: { x: number; y: number } | undefined): boolean => {
       const el = containerRef.current;
       if (!pos || !el) return false;
-      // DragDropEvent position is PhysicalPosition (device pixels); convert to logical CSS pixels.
-      const logX = pos.x / window.devicePixelRatio;
-      const logY = pos.y / window.devicePixelRatio;
+      const { x, y } = dropPositionToCss(pos);
       const rect = el.getBoundingClientRect();
-      return logX >= rect.left && logX <= rect.right && logY >= rect.top && logY <= rect.bottom;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     };
 
     // Disposed guard (FES2-005): an unmount before registration resolves still

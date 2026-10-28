@@ -421,9 +421,10 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
     totals are unchanged."""
     allowlist = sg.load_allowlist()
     assert {lane: allowlist.budget(lane) for lane in sorted(allowlist.lanes)} == {
-        "bulk-linux": 60,
-        "bulk-linux-arm64": 21,
-        "bulk-macos": 215,
+        # +1 each for the Windows-only #5055 PSReadLine isolation grade.
+        "bulk-linux": 61,
+        "bulk-linux-arm64": 22,
+        "bulk-macos": 216,
         "bulk-windows": 226,
         "display-linux": 0,
         "display-linux-arm64": 0,
@@ -432,6 +433,9 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
         "os-input-macos": 1,
         # 6 from the old file; the #5024 quarantine fragment's +1 went with the skip.
         "os-input-windows": 6,
+        # #4997: the scale-2 drop-grade lanes, budgeted 0 by their own fragment.
+        "scaled-display-linux": 0,
+        "scaled-display-linux-arm64": 0,
     }
 
 

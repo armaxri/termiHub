@@ -13,8 +13,8 @@ is observable, asserts it afterwards: the connection saved with its IME-typed
 name, the focus where it belongs. The operator performs the native gesture and judges what only
 the screen shows (preedit placement, highlights, candidate window).
 
-Covered: MT-NIN-02..04 (native file drag-and-drop on a scaled display, across
-two displays, under Wayland), MT-NIN-10..14 and 16 (IME,
+Covered: MT-NIN-03..04 (native file drag-and-drop across two displays with
+different scales, under Wayland), MT-NIN-10..14 and 16 (IME,
 emoji picker), MT-NIN-21 and 24 (focus after the native Save dialog,
 remote-desktop key release on blur). The
 IME commit-once logic is automated in ``test_ime_composition.py``. Real OS key
@@ -24,7 +24,8 @@ window, #4979), MT-NIN-23 (per-window typing, #4979), MT-NIN-30 (Windows
 right-click paste) and MT-NIN-31 (real Caps Lock) into ``test_os_input_keyboard.py`` /
 ``test_os_input_pointer.py`` (#4935). Synthetic Tauri drag-drop events and real
 X11 XDND drags retired MT-NIN-01, 05 and 06 into ``test_os_file_drop.py`` /
-``test_os_file_drop_xdnd.py`` (#4936).
+``test_os_file_drop_xdnd.py`` (#4936), and MT-NIN-02 with a scale-2 lane
+(#4997).
 
 Run with ``./pytest.sh --manual -k guided_native_input -s``.
 """
@@ -93,21 +94,9 @@ class TestGuidedNativeInput(
         self.open_file_in_editor(name)
         return name
 
-    # ── MT-NIN-02..04: native file drag-and-drop on real displays ───────────
-    def test_drop_targets_pane_under_cursor_on_scaled_display(self):
-        """MT-NIN-02 (Retina / 150% / fractional scaling)."""
-        self._two_shell_panes()
-        dropped = self._scratch_dir("nin02") / "drop-scaled.txt"
-        dropped.write_text("x\n", encoding="utf-8")
-        # Hit-testing and the tab-bar case are automated at the runner's scale
-        # (test_os_file_drop.py); only a real scaled display is left.
-        self.manual_step(
-            f"On a scaled (Retina / 150% / fractional) display, drag {dropped} slowly "
-            "over the divider and drop it just inside the RIGHT pane.",
-            "The highlight switches exactly at the divider and only the RIGHT shell "
-            "gets the path.",
-        )
-
+    # ── MT-NIN-03..04: native file drag-and-drop on real displays ───────────
+    # MT-NIN-02 (a scaled display) is automated at devicePixelRatio 2 in
+    # test_os_file_drop_xdnd.py (#4997).
     def test_drop_after_moving_window_to_other_scale_display(self):
         """MT-NIN-03 (two displays with different scale factors)."""
         self._two_shell_panes()

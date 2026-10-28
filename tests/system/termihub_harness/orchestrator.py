@@ -31,6 +31,7 @@ import psutil
 from . import coverage
 from . import known_hosts
 from . import portable as portable_staging
+from . import psreadline
 from .relaunch import describe_candidates, find_relaunched_app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -422,6 +423,8 @@ class AppInstance:
         env.update(self._profile_overrides())
         # Read the harness's per-run known_hosts, never the user's (#4339).
         env.update(known_hosts.app_env())
+        # A private PSReadLine history, no history predictions (#5055).
+        env.update(psreadline.app_env(self._scratch_dir, env))
         env.update(self._extra_env)
         for name in self._unset_env:
             env.pop(name, None)
