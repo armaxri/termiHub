@@ -16,6 +16,8 @@ mod cwd_follow_thread;
 mod local_shell_env;
 #[cfg(feature = "local-shell")]
 mod local_shell_setup;
+#[cfg(feature = "local-shell")]
+mod local_shell_setup_watch;
 #[cfg(all(feature = "local-shell", unix))]
 mod pty_unix_io;
 

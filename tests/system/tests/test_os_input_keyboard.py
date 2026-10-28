@@ -173,10 +173,6 @@ class TestOsKeyboardGrades(
                 osi.key(combo)
 
     # ── MT-NIN-15: dead keys ─────────────────────────────────────────────────
-    @pytest.mark.skipif(
-        sys.platform == "win32",
-        reason="quarantined on Windows: the Enter after composed dead keys is lost (#5024)",
-    )
     def test_dead_keys_compose_once_in_terminal_and_editor(self):
         """MT-NIN-15: a dead key and its letter arrive as one composed character,
         with no bare accent before it, in the terminal and in the editor."""

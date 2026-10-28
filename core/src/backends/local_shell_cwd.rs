@@ -2,7 +2,9 @@
 //!
 //! The local backend owns the shell's PTY, so the directory comes straight
 //! from the operating system: the PTY's foreground process (the shell at its
-//! prompt, or a nested shell) or, where that is unknown, the shell itself.
+//! prompt, or a nested shell) or, where that is unknown, the shell itself —
+//! on Windows its innermost same-program descendant, past Git Bash's
+//! launcher (#5014).
 //! [`sysinfo`] reads it on Linux (`/proc/<pid>/cwd`), macOS
 //! (`proc_pidinfo`) and Windows (the process parameters). The
 //! [`CwdFollower`](crate::session::cwd_follow::CwdFollower) decides when;
@@ -26,4 +28,184 @@ pub(crate) fn process_cwd(pid: u32) -> Option<String> {
     );
     let cwd = system.process(pid)?.cwd()?;
     Some(cwd.to_string_lossy().into_owned()).filter(|c| !c.is_empty())
+}
+
+/// One process, as [`innermost_same_program`] sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProcessEntry {
+    pub pid: u32,
+    pub parent: Option<u32>,
+    /// The executable's file name (`bash.exe`).
+    pub name: String,
+    /// Start time in seconds; the newer child wins.
+    pub start: u64,
+}
+
+/// The process whose directory stands for the shell's when the terminal's
+/// foreground process is unknown (Windows ConPTY, #5014): starting at the
+/// spawned `root`, follow the newest child running the same program for as
+/// long as there is one.
+///
+/// Git for Windows' `bin\bash.exe` is a launcher that runs the real
+/// `usr\bin\bash.exe` as its child and never changes directory itself, so
+/// the shell is the launcher's child; a `bash` started inside it is followed
+/// the same way, like a nested shell is through the foreground process on
+/// Unix. Any other child (`vim`, `git`) leaves the shell where it is.
+pub(crate) fn innermost_same_program(root: u32, processes: &[ProcessEntry]) -> u32 {
+    let Some(name) = processes
+        .iter()
+        .find(|p| p.pid == root)
+        .map(|p| p.name.to_ascii_lowercase())
+    else {
+        return root;
+    };
+    let mut current = root;
+    // A process table can carry a pid-reuse cycle; never walk more steps
+    // than there are processes.
+    for _ in 0..processes.len() {
+        let next = processes
+            .iter()
+            .filter(|p| {
+                p.parent == Some(current) && p.pid != current && p.name.eq_ignore_ascii_case(&name)
+            })
+            .max_by_key(|p| (p.start, p.pid));
+        match next {
+            Some(child) => current = child.pid,
+            None => break,
+        }
+    }
+    current
+}
+
+/// The working directory of the shell spawned as `root`, through
+/// [`innermost_same_program`] (Windows: Git Bash's launcher, #5014).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn innermost_shell_cwd(root: u32) -> Option<String> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let processes: Vec<ProcessEntry> = system
+        .processes()
+        .values()
+        .map(|p| ProcessEntry {
+            pid: p.pid().as_u32(),
+            parent: p.parent().map(|pp| pp.as_u32()),
+            name: p.name().to_string_lossy().into_owned(),
+            start: p.start_time(),
+        })
+        .collect();
+    usable_cwd(process_cwd(innermost_same_program(root, &processes)))
+}
+
+/// `cwd` when it is a directory a file browser can show. MSYS reports a
+/// virtual directory (`cd /proc`) as the pipe namespace `\\?\PIPE\`
+/// (#5014), which Windows also calls a directory; that is left unreported,
+/// so the last real directory stays.
+fn usable_cwd(cwd: Option<String>) -> Option<String> {
+    cwd.filter(|c| {
+        let upper = c.to_ascii_uppercase();
+        !upper.starts_with(r"\\?\PIPE") && !upper.starts_with(r"\\.\PIPE")
+    })
+    .filter(|c| std::path::Path::new(c).is_dir())
+    .map(trim_trailing_separator)
+}
+
+/// Windows keeps a process's directory with a trailing `\` (`C:\x\`);
+/// report it as `C:\x`, like every other directory. A drive root (`C:\`)
+/// keeps its separator.
+fn trim_trailing_separator(mut dir: String) -> String {
+    while dir.len() > 3 && (dir.ends_with('\\') || dir.ends_with('/')) {
+        dir.pop();
+    }
+    dir
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(pid: u32, parent: u32, name: &str, start: u64) -> ProcessEntry {
+        ProcessEntry {
+            pid,
+            parent: Some(parent),
+            name: name.to_string(),
+            start,
+        }
+    }
+
+    #[test]
+    fn git_bash_launcher_is_followed_to_the_real_shell() {
+        // bin\bash.exe (launcher) -> usr\bin\bash.exe (the shell).
+        let table = [p(10, 1, "bash.exe", 5), p(11, 10, "bash.exe", 5)];
+        assert_eq!(innermost_same_program(10, &table), 11);
+    }
+
+    #[test]
+    fn a_nested_shell_is_followed_and_other_programs_are_not() {
+        let table = [
+            p(10, 1, "bash.exe", 5),
+            p(11, 10, "bash.exe", 5),
+            p(12, 11, "vim.exe", 6),
+            p(13, 11, "BASH.EXE", 7),
+            p(14, 13, "less.exe", 8),
+        ];
+        assert_eq!(innermost_same_program(10, &table), 13);
+    }
+
+    #[test]
+    fn the_newest_same_named_child_wins() {
+        let table = [
+            p(10, 1, "bash.exe", 5),
+            p(30, 10, "bash.exe", 6),
+            p(20, 10, "bash.exe", 9),
+        ];
+        assert_eq!(innermost_same_program(10, &table), 20);
+    }
+
+    #[test]
+    fn an_unknown_or_childless_root_is_itself() {
+        assert_eq!(innermost_same_program(10, &[]), 10);
+        assert_eq!(innermost_same_program(10, &[p(10, 1, "cmd.exe", 1)]), 10);
+    }
+
+    #[test]
+    fn a_pid_cycle_does_not_hang() {
+        let table = [p(10, 11, "bash.exe", 1), p(11, 10, "bash.exe", 1)];
+        let found = innermost_same_program(10, &table);
+        assert!(found == 10 || found == 11);
+    }
+
+    #[test]
+    fn a_virtual_msys_directory_is_not_reported() {
+        assert_eq!(usable_cwd(Some(r"\\?\PIPE\".to_string())), None);
+        assert_eq!(usable_cwd(None), None);
+        let here = std::env::temp_dir().to_string_lossy().into_owned();
+        assert_eq!(
+            usable_cwd(Some(here.clone())),
+            Some(trim_trailing_separator(here))
+        );
+    }
+
+    #[test]
+    fn a_windows_directory_loses_its_trailing_separator() {
+        assert_eq!(
+            trim_trailing_separator(r"C:\Users\me\".into()),
+            r"C:\Users\me"
+        );
+        assert_eq!(trim_trailing_separator(r"C:\".into()), r"C:\");
+        assert_eq!(trim_trailing_separator("/home/me".into()), "/home/me");
+    }
+
+    /// The real process table: this test process has no same-named child,
+    /// so its own directory comes back.
+    #[test]
+    fn innermost_shell_cwd_reads_a_real_process() {
+        let me = std::process::id();
+        let cwd = innermost_shell_cwd(me).expect("own cwd");
+        let expected = std::env::current_dir().expect("cwd");
+        assert_eq!(
+            std::path::Path::new(&cwd).canonicalize().ok(),
+            expected.canonicalize().ok()
+        );
+    }
 }
