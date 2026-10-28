@@ -15,11 +15,20 @@ import pytest
 
 from termihub_harness.os_input import GlobalInjectionRefused, OsInput, OsInputUnavailable, OsWindow
 from termihub_harness.os_input import xdnd
-from termihub_harness.os_input.xdnd import free_region, native_drag, partner_command, uri_paths
+from termihub_harness.os_input.linux import on_screen
+from termihub_harness.os_input.xdnd import (
+    free_region,
+    native_drag,
+    partner_command,
+    partner_env,
+    uri_paths,
+)
 from termihub_harness.ui.os_drop import (
     DRAG_DROP,
     DRAG_ENTER,
     DRAG_OVER,
+    EXPECT_DPR_ENV,
+    check_device_pixel_ratio,
     drop_payloads,
     physical_point,
 )
@@ -28,10 +37,17 @@ CI = {"GITHUB_ACTIONS": "true"}
 
 
 # ── Synthetic Tauri drag-drop events ─────────────────────────────────────────
-def test_physical_point_scales_the_css_point_by_device_pixel_ratio():
+def test_physical_point_scales_the_css_point_by_device_pixel_ratio_on_windows():
     probe = {"rect": {"left": 10, "top": 20, "width": 100, "height": 50}, "devicePixelRatio": 2}
-    assert physical_point(probe) == {"x": 120.0, "y": 90.0}
-    assert physical_point(probe, 0.0, 1.0) == {"x": 20.0, "y": 140.0}
+    assert physical_point(probe, platform="win32") == {"x": 120.0, "y": 90.0}
+    assert physical_point(probe, 0.0, 1.0, platform="win32") == {"x": 20.0, "y": 140.0}
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_physical_point_stays_in_css_pixels_on_linux_and_macos(platform):
+    """#4997: GTK and AppKit report logical drop coordinates at any scale."""
+    probe = {"rect": {"left": 10, "top": 20, "width": 100, "height": 50}, "devicePixelRatio": 2}
+    assert physical_point(probe, platform=platform) == {"x": 60.0, "y": 45.0}
 
 
 def test_physical_point_defaults_to_scale_one():
@@ -139,3 +155,25 @@ def test_native_drag_releases_even_when_a_move_is_refused():
     with pytest.raises(GlobalInjectionRefused):
         native_drag(fake, (10, 10), [(200, 200)], hover=0.2, on_hover=steal_focus)
     assert fake.calls[-1] == ("button", "left", False)
+
+
+def test_partner_env_drops_gtk_scaling():
+    """#4997: XDND partners stay at scale 1 under a GDK_SCALE=2 lane."""
+    env = partner_env({"GDK_SCALE": "2", "GDK_DPI_SCALE": "1", "DISPLAY": ":99"})
+    assert env == {"DISPLAY": ":99"}
+
+
+def test_device_pixel_ratio_check():
+    """#4997: a scaled lane fails when the instance did not take the scale."""
+    assert check_device_pixel_ratio({"devicePixelRatio": 1}, {}) == 1.0
+    assert check_device_pixel_ratio({"devicePixelRatio": 2}, {EXPECT_DPR_ENV: "2"}) == 2.0
+    with pytest.raises(AssertionError, match="wrong scale"):
+        check_device_pixel_ratio({"devicePixelRatio": 1}, {EXPECT_DPR_ENV: "2"})
+
+
+@pytest.mark.parametrize(
+    ("geometry", "visible"),
+    [((0, 0, 100, 100), True), ((-50, -50, 100, 100), True), ((-200, -200, 10, 10), False)],
+)
+def test_off_screen_helper_windows_are_not_targets(geometry, visible):
+    assert on_screen(*geometry) is visible
