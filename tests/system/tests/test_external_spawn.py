@@ -33,6 +33,7 @@ Docker SSH fixture (``ssh_password_fixtures`` skips without it).
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -58,6 +59,7 @@ from termihub_harness import (
     container_runtime,
     unique_name,
 )
+from termihub_harness.wsl import detect_wsl_distros
 
 pytestmark = pytest.mark.integration
 
@@ -488,3 +490,145 @@ class TestExternalContainerSpawn(SpawnUi, SystemTest):
         finally:
             _remove_spawned_containers(runtime, spawn_dir)
 
+
+
+# ── MT-SHI-01 / MT-SHI-03: WSL spawns on the live WSL lane (#4962) ───────────
+#: Set by ``wsl-live.yml``: a missing second distribution fails the grades
+#: instead of skipping them to a false green.
+_REQUIRE_WSL = os.environ.get("TERMIHUB_REQUIRE_WSL") == "1"
+_IS_WINDOWS = sys.platform.startswith("win")
+_WSL_DISTROS = detect_wsl_distros() if _IS_WINDOWS else []
+
+
+def _wsl_gap() -> Optional[str]:
+    """Why this host cannot grade the WSL spawns, or ``None`` when it can.
+
+    The first two reasons are the ones ``test_windows_shells.py`` already uses
+    (and the skip allowlist admits on the bulk lanes); a single distribution
+    is a developer-machine gap only — the WSL lane imports a second one.
+    """
+    if not _IS_WINDOWS:
+        return "Windows shells and WSL are a Windows-only feature"
+    if not _WSL_DISTROS:
+        return "no WSL2 distribution installed on this host"
+    if len(_WSL_DISTROS) < 2:
+        return "only one WSL distribution installed; MT-SHI-01/03 need two"
+    return None
+
+
+_WSL_GAP = _wsl_gap()
+
+
+def _os_release_id(distro: str) -> str:
+    """``ID`` from the distribution's ``/etc/os-release``, read outside the app."""
+    result = subprocess.run(
+        ["wsl.exe", "-d", distro, "--exec", "cat", "/etc/os-release"],
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    text = result.stdout.decode("utf-8", errors="replace")
+    match = re.search(r'^ID="?([^"\r\n]+)"?\s*$', text, re.MULTILINE)
+    assert result.returncode == 0 and match, (
+        f"could not read /etc/os-release of {distro!r}: rc={result.returncode} "
+        f"stdout={text!r} stderr={result.stderr!r}"
+    )
+    return match.group(1)
+
+
+def _mnt_path(win_path: Path) -> str:
+    """The ``/mnt/<drive>/…`` form of a ``C:\\…`` path (what the spawn cd's to)."""
+    drive, rest = str(win_path).split(":", 1)
+    return f"/mnt/{drive.lower()}{rest.replace(chr(92), '/')}"
+
+
+@pytest.mark.skipif(_WSL_GAP is not None and not _REQUIRE_WSL, reason=_WSL_GAP or "")
+class TestWslSpawnGrades(SpawnUi, ConnectionsUi, SystemTest):
+    """WSL spawns against two real distributions (``wsl-live.yml``, #4962).
+
+    The lane imports a second distribution (Alpine) next to the default one
+    (Debian), so "which distribution did the tab open" is answered by the
+    ``ID`` in its ``/etc/os-release``. The default is the first one
+    ``wsl.exe --list`` reports, exactly as the app picks it.
+    """
+
+    def setup_method(self) -> None:
+        if _WSL_GAP is not None:
+            pytest.fail(f"TERMIHUB_REQUIRE_WSL=1 but {_WSL_GAP}")
+        self.default_distro = _WSL_DISTROS[0]
+        self.other_distro = _WSL_DISTROS[1]
+        self.default_id = _os_release_id(self.default_distro)
+        self.other_id = _os_release_id(self.other_distro)
+        assert self.default_id != self.other_id, (
+            f"both distributions report ID={self.default_id}; the grades cannot "
+            f"tell {self.default_distro!r} from {self.other_distro!r}"
+        )
+
+    def assert_wsl_tab(self, tab: dict[str, Any], os_id: str, location: Path) -> None:
+        """The tab runs the distribution with ``ID=os_id``, cd'd to ``location``.
+
+        The needles come from shell arithmetic, so the echoed command line can
+        never contain them; only the command's output can.
+        """
+        self.run_in_tab(
+            tab["id"],
+            '. /etc/os-release; echo "OSID:$ID:$((40+2))"',
+            f"OSID:{os_id}:42",
+            timeout=90.0,
+        )
+        expected = _mnt_path(location)
+        self.run_in_tab(
+            tab["id"],
+            f'[ "$(pwd)" = "{expected}" ] && echo "CWDOK$((40+2))" || echo "CWD:$(pwd)"',
+            "CWDOK42",
+        )
+
+    def test_picker_lists_every_distro_and_opens_the_picked_one(self, spawn_dir: Path):
+        """MT-SHI-01: ``spawn --pick`` lists every WSL distribution; picking the
+        non-default one opens a tab running it at the /mnt/ form of the location."""
+        self.spawn_cli("--pick", "--location", str(spawn_dir))
+        self.wait(lambda: self.driver.exists(PICKER), what="the Session Picker")
+        self.wait(
+            lambda: not self.driver.exists("spawn-picker-loading"),
+            timeout=60.0,
+            what="the picker's spawn targets to load",
+        )
+        for distro in _WSL_DISTROS:
+            assert self.driver.exists(f"spawn-picker-row-wsl:{distro}"), (
+                f"the picker's WSL section is missing {distro!r} (installed: {_WSL_DISTROS})"
+            )
+
+        before = self.spawned_ids()
+        self.driver.click(f"spawn-picker-radio-wsl:{self.other_distro}")
+        self.driver.click("spawn-picker-open")
+        self.wait(
+            lambda: not self.driver.exists(PICKER), what="the picker to close on Open"
+        )
+
+        tab = self.wait_new_spawned_tab(before)
+        self.assert_spawned_badge(tab)
+        self.assert_wsl_tab(tab, self.other_id, spawn_dir)
+
+    def test_wsl_spawn_opens_default_then_saved_connection_distro(self, spawn_dir: Path):
+        """MT-SHI-03: ``spawn --kind wsl`` opens the default distribution at the
+        /mnt/c/... form of the location; with ``--connection`` of a saved WSL
+        connection for the other distribution, the tab runs that one."""
+        assert _mnt_path(spawn_dir).startswith("/mnt/"), spawn_dir
+
+        before = self.spawned_ids()
+        self.spawn_cli("--kind", "wsl", "--location", str(spawn_dir))
+        tab = self.wait_new_spawned_tab(before)
+        self.assert_spawned_badge(tab)
+        self.assert_wsl_tab(tab, self.default_id, spawn_dir)
+
+        name = unique_name("shi03")
+        self.create_wsl_connection(name, distribution=self.other_distro)
+        conn = self.require_stable_connection(name)
+
+        before = self.spawned_ids()
+        self.spawn_cli(
+            "--kind", "wsl", "--connection", str(conn["id"]), "--location", str(spawn_dir)
+        )
+        tab = self.wait_new_spawned_tab(before)
+        self.assert_spawned_badge(tab)
+        self.assert_wsl_tab(tab, self.other_id, spawn_dir)

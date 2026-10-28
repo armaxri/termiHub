@@ -205,6 +205,13 @@ AUTOMATED_IDS: dict[str, str] = {
     ),
     # #4964: traced through a two-router Docker chain, unprivileged (IP_RECVERR).
     "MT-NET-16": "test_network_tools_traceroute.py::test_traceroute_hops_stream_in_and_complete",
+    # #4962: two real WSL distributions on the WSL lane (wsl-live.yml).
+    "MT-SHI-01": (
+        "test_external_spawn.py::test_picker_lists_every_distro_and_opens_the_picked_one"
+    ),
+    "MT-SHI-03": (
+        "test_external_spawn.py::test_wsl_spawn_opens_default_then_saved_connection_distro"
+    ),
     # #4960: a synthetic MobaXterm.ini / .mxtsessions fixture; APPDATA redirected on Windows.
     "MT-APP-05": (
         "test_mobaxterm_import.py::test_mobaxterm_import_previews_and_imports_the_fixture"

@@ -417,26 +417,27 @@ def test_every_workflow_lane_is_known_and_no_fragment_names_an_unknown_lane():
 
 
 def test_the_committed_budgets_match_the_pre_fragment_max_skips():
-    """#5033 migrated the hand-kept per-lane max_skips into fragments; the
-    totals are unchanged."""
-    allowlist = sg.load_allowlist()
-    assert {lane: allowlist.budget(lane) for lane in sorted(allowlist.lanes)} == {
-        # +1 each for the Windows-only #5055 PSReadLine isolation grade.
-        "bulk-linux": 61,
-        "bulk-linux-arm64": 22,
-        "bulk-macos": 216,
+    """#5033 migrated the hand-kept per-lane max_skips into ``baseline.json``
+    unchanged. Later fragments add their own budgets on top (#4962), so the
+    baseline is pinned here, not the lane totals: pinning the sums would make
+    every new budget fragment edit this shared test again."""
+    baseline = json.loads((sg.ALLOWLIST_DIR / "baseline.json").read_text(encoding="utf-8"))
+    assert baseline["max_skips"] == {
+        "bulk-linux": 60,
+        "bulk-linux-arm64": 21,
+        "bulk-macos": 215,
         "bulk-windows": 226,
         "display-linux": 0,
         "display-linux-arm64": 0,
         "display-macos": 0,
         "display-windows": 0,
         "os-input-macos": 1,
-        # 6 from the old file; the #5024 quarantine fragment's +1 went with the skip.
         "os-input-windows": 6,
-        # #4997: the scale-2 drop-grade lanes, budgeted 0 by their own fragment.
-        "scaled-display-linux": 0,
-        "scaled-display-linux-arm64": 0,
     }
+    # Fragments only ever add to the baseline.
+    allowlist = sg.load_allowlist()
+    for lane, floor in baseline["max_skips"].items():
+        assert allowlist.budget(lane) >= floor, lane
 
 
 def test_the_legacy_single_file_allowlist_is_gone():
