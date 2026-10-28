@@ -63,6 +63,8 @@ pub(crate) fn init_platform_and_capture(
         // Read the harness's per-run known_hosts instead of the user's real
         // ~/.ssh/known_hosts (#4339). Set before any SSH connect can start.
         utils::test_bridge::install_known_hosts_override();
+        // Let local shells keep the harness's PSModulePath (#5055).
+        utils::test_bridge::install_shell_env_keep();
 
         if utils::test_bridge::always_on_top_opt_out() {
             info!(
