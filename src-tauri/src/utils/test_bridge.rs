@@ -64,6 +64,45 @@ fn known_hosts_override_from(raw: Option<std::ffi::OsString>) -> Option<std::pat
         .map(std::path::PathBuf::from)
 }
 
+/// Env var listing (`;`-separated) the variables every local shell keeps from
+/// the app's own environment under the test bridge (#5055). On Windows,
+/// `portable-pty` replaces registry-defined variables such as `PSModulePath`
+/// with the registry's values; the system-test harness names `PSModulePath`
+/// here so its PSReadLine shim reaches each test app's PowerShells.
+pub const TEST_SHELL_ENV_KEEP_ENV: &str = "TERMIHUB_TEST_SHELL_ENV_KEEP";
+
+/// Hand local shells the variables named in [`TEST_SHELL_ENV_KEEP_ENV`], with
+/// the values the app was launched with. Called only in test-bridge mode; a
+/// production build never compiles it.
+pub fn install_shell_env_keep() {
+    let vars = shell_env_keep_from(
+        std::env::var(TEST_SHELL_ENV_KEEP_ENV).ok().as_deref(),
+        |name| std::env::var(name).ok(),
+    );
+    if vars.is_empty() {
+        return;
+    }
+    let names: Vec<&str> = vars.iter().map(|(name, _)| name.as_str()).collect();
+    let shown = names.join(", ");
+    if termihub_core::backends::local_shell::set_shell_env_override(vars) {
+        tracing::info!("Local shells keep the app's {shown} (#5055)");
+    }
+}
+
+/// Pure core of [`install_shell_env_keep`]: the `;`-separated names, trimmed,
+/// each paired with its value; empty and unset names are dropped.
+fn shell_env_keep_from(
+    raw: Option<&str>,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    raw.unwrap_or_default()
+        .split(';')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter_map(|name| lookup(name).map(|value| (name.to_string(), value)))
+        .collect()
+}
+
 /// Whether an env-var value reads as truthy (`1`/`true`, any case).
 fn flag_is_truthy(raw: &str) -> bool {
     matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true")
@@ -235,6 +274,27 @@ mod tests {
         assert_eq!(
             known_hosts_override_from(Some("/tmp/run/known_hosts".into())),
             Some(std::path::PathBuf::from("/tmp/run/known_hosts"))
+        );
+    }
+
+    #[test]
+    fn shell_env_keep_pairs_each_named_variable_with_its_value() {
+        let lookup = |name: &str| match name {
+            "PSModulePath" => Some(r"C:\shim;C:\modules".to_string()),
+            "OTHER" => Some("x".to_string()),
+            _ => None,
+        };
+        assert!(shell_env_keep_from(None, lookup).is_empty());
+        assert!(shell_env_keep_from(Some(""), lookup).is_empty());
+        assert_eq!(
+            shell_env_keep_from(Some(" PSModulePath ;; UNSET; OTHER"), lookup),
+            vec![
+                (
+                    "PSModulePath".to_string(),
+                    r"C:\shim;C:\modules".to_string()
+                ),
+                ("OTHER".to_string(), "x".to_string()),
+            ]
         );
     }
 
