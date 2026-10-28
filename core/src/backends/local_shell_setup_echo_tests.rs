@@ -63,6 +63,11 @@ impl Session {
             "envVars": [
                 { "key": "HOME", "value": home_str },
                 { "key": "ZDOTDIR", "value": home_str },
+                // macOS's /bin/bash prints a "default interactive shell is
+                // now zsh" notice when the account's login shell is bash, as
+                // on the CI runner (#5061); the screens here expect only the
+                // rc output.
+                { "key": "BASH_SILENCE_DEPRECATION_WARNING", "value": "1" },
             ],
         });
         shell.connect(settings).await.expect("connect failed");
