@@ -292,11 +292,9 @@ class TestOsPointerGrades(
             def echoes() -> dict[str, str]:
                 found = {}
                 for name, tab_id in (("left", left), ("right", right)):
-                    # By prefix: on macOS the output row can keep stale banner
-                    # text after the echo (#5054).
-                    for line in self.driver.read_terminal(tab_id).splitlines():
-                        if line.startswith("N22_"):
-                            found[name] = line[len("N22_") :].split("_", 1)[0]
+                    echo = terminal_echo(self.driver.read_terminal(tab_id), "N22")
+                    if echo is not None:
+                        found[name] = echo
                 return found
 
             try:
