@@ -1270,11 +1270,11 @@ from the element's DOM rect, calibrated by one trusted `pointermove` the
 need no guessing. That verb also returns `isTrusted`, which proves the input
 came from the OS.
 
-| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
-| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click)                                                                                                                                                                                        |
-| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                               |
+| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-NIN-23 (keys reach only the focused one of two windows), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
+| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click), MT-NIN-22 (one click into an inactive window focuses the clicked pane)                                                                                                                                                                            |
+| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                                                                                           |
 
 The dead-key grade (MT-NIN-15) once lost its Enter on the Windows runner about
 one run in three (#5024). It was not the app: the frontend sent every key, the
@@ -1291,9 +1291,26 @@ opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
 picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
-injection can judge. MT-NIN-22 (a click into an inactive window) and MT-NIN-23
-(typing reaches only the focused one of two windows) stay guided too: on the
-hosted runners an injected click did not move the window focus reliably.
+injection can judge.
+
+MT-NIN-22 and MT-NIN-23 need one window of several in front (#4979). MT-NIN-22
+clicks into the right shell of the termiHub window while a harness helper app is
+in front: on Linux the suite's openbox focuses the clicked window, so the keys
+typed next must land in the right pane only; on macOS the first click may only
+activate the window, so the keys must land in the pane the app shows focused.
+MT-NIN-23 raises each of two termiHub windows in turn **by its OS window
+handle** (`windowactivate` on X11, `SetForegroundWindow` on Windows, the
+Accessibility raise action on the window matched by frame on macOS) and proves
+with `osInputProbe`'s `hasFocus` that only that window's webview holds the
+focus before typing.
+
+On Linux each OS-input suite starts its own openbox and stops it afterwards. An
+openbox that exited leaves the root window's `_NET_SUPPORTING_WM_CHECK` behind,
+so the harness checks that the window it names still answers before it treats a
+window manager as running. Trusting the root property alone made every suite
+after the first run without a window manager: no click-to-focus, and
+`termihub spawn` could not raise the window. That is why the injected click did
+not move the focus in #4935.
 
 MT-LOCAL-08 (macOS key repeat) posts its autorepeat key-downs at the HID tap,
 not to the PID (#4980). AppKit drops every autorepeat key-down posted with

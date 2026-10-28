@@ -27,6 +27,7 @@ use crate::session::shell::{
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 use super::cwd_follow_thread::CwdFollowThread;
+pub use super::local_shell_env::set_shell_env_override;
 use super::local_shell_setup::TypedSetup;
 
 use crate::output::early::EarlyOutput;
@@ -127,6 +128,10 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         let mut cmd = CommandBuilder::new(&command.program);
         for arg in &command.args {
             cmd.arg(arg);
+        }
+        // Empty outside a test-bridge build (#5055, see `local_shell_env`).
+        for (key, value) in super::local_shell_env::shell_env_override() {
+            cmd.env(key, value);
         }
         for (key, value) in &command.env {
             cmd.env(key, value);

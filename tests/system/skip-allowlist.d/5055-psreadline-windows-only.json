@@ -1,0 +1,7 @@
+{
+  "reason": "^PSReadLine history isolation is a Windows test-harness concern$",
+  "nodeid": "test_psreadline_isolation\\.py",
+  "lanes": ["bulk-linux", "bulk-linux-arm64", "bulk-macos"],
+  "max_skips": { "bulk-linux": 1, "bulk-linux-arm64": 1, "bulk-macos": 1 },
+  "why": "the two-app PSReadLine history grade runs only on Windows, where PSReadLine shares one history file (#5055)"
+}
