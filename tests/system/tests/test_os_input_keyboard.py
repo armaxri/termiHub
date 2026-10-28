@@ -10,9 +10,8 @@ what reached the shell, the editor file on disk and the OS clipboard.
 Retires the guided checks MT-NIN-15 (dead keys), MT-NIN-20 (focus after an app
 switch), MT-NIN-31 (real Caps Lock), MT-SHI-02 (external spawn raises the
 window), MT-KB-01..04 (copy and paste shortcuts) and MT-LOCAL-08 (macOS key
-repeat, autorepeat key-downs at the HID tap, #4980). MT-NIN-23 (per-window
-typing) stays guided: injected focus switches between two windows of one app
-did not behave like the real thing on the CI runners.
+repeat, autorepeat key-downs at the HID tap, #4980) and MT-NIN-23 (keys reach
+only the focused one of two windows, each raised by its OS window handle, #4979).
 
 Integration lane (nightly); on a developer machine the suite skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.
@@ -44,8 +43,11 @@ from termihub_harness import (
     read_os_clipboard,
     unique_name,
 )
-from termihub_harness.os_input import HelperWindow, OsInput, primary_modifier
+from termihub_harness.bridge import Driver
+from termihub_harness.os_input import HelperWindow, OsInput, OsWindow, primary_modifier
 from termihub_harness.ui.os_input_ui import has_line, linux_window_manager, terminal_echo
+from termihub_harness.ui.terminal import NEW_TERMINAL
+from termihub_harness.ui.windows import CLOSE_DIALOG_END, window_tabs
 
 pytestmark = pytest.mark.integration
 
@@ -95,14 +97,20 @@ class TestOsKeyboardGrades(
     def _focus_terminal(self, tab_id: str, screen=None) -> None:
         self.os_click(f"terminal-renderer-{tab_id}", screen=screen)
 
-    def _wait_echo(self, tab_id: str, tag: str, *, driver=None) -> str:
+    def _wait_echo(self, tab_id: str, tag: str, *, driver=None, why=None) -> str:
         driver = driver or self.driver
-        return self.wait(
-            lambda: (lambda got: None if got is None else [got])(
-                terminal_echo(driver.read_terminal(tab_id), tag)
-            ),
-            what=f"the {tag} echo",
-        )[0]
+        try:
+            return self.wait(
+                lambda: (lambda got: None if got is None else [got])(
+                    terminal_echo(driver.read_terminal(tab_id), tag)
+                ),
+                what=f"the {tag} echo",
+            )[0]
+        except AssertionError as exc:
+            if why is None:
+                raise
+            tail = driver.read_terminal(tab_id).rstrip().splitlines()[-3:]
+            raise AssertionError(f"{exc}; {why()}; terminal ends {tail!r}") from None
 
     def _echo_after_interrupt(self, osi: OsInput, tab_id: str, tag: str) -> str:
         """Type ``echo <tag>_ok_`` once the shell is back at its prompt; the echo.
@@ -349,6 +357,114 @@ class TestOsKeyboardGrades(
             osi.key(f"{MOD}+s")
             self._wait_file(path, "xyz")
         assert "abc" not in helper.typed() and "xyz" not in helper.typed()
+
+    # ── MT-NIN-23: keys reach only the focused one of two windows ────────────
+    def _second_window_shell(self) -> tuple[Driver, str]:
+        """A second app window with a shell of its own; its driver and tab id."""
+        second = self.open_new_window()
+        second.click(NEW_TERMINAL)
+        tab = self.wait(lambda: (window_tabs(second) or [None])[0], what="a shell in window B")
+        self.wait(lambda: second.read_terminal(tab["id"]).strip(), what="window B's prompt")
+        return second, tab["id"]
+
+    def _close_second_window(self, second: Driver) -> None:
+        """Close window B (ending its shell) so later suites see one window."""
+        second.close_window()
+        self.wait(
+            lambda: len(self.driver.windows()) == 1 or second.exists(CLOSE_DIALOG_END),
+            what="window B's close dialog",
+        )
+        if len(self.driver.windows()) > 1:
+            second.click(CLOSE_DIALOG_END)
+        self.wait(lambda: len(self.driver.windows()) == 1, what="window B to close")
+
+    def _click_uncovered(self, osi: OsInput, screen, tab_id: str, cover: OsWindow) -> None:
+        """A real click into ``tab_id``'s shell where window ``cover`` does not lie.
+
+        Window A is pinned always-on-top (#957), so only the part of B's shell
+        outside A's frame takes a click; B's new shell may not hold B's
+        keyboard focus on its own.
+        """
+        renderer = f"terminal-renderer-{tab_id}"
+        for fy in (0.9, 0.5, 0.1):
+            for fx in (0.95, 0.75, 0.5, 0.25, 0.05):
+                point = screen.point(renderer, fx, fy)
+                if not cover.contains(*point):
+                    osi.click(*point)
+                    return
+        raise AssertionError(f"window A {cover} covers all of window B's shell {screen.window}")
+
+    def _raise(self, osi: OsInput, window: OsWindow, focused: Driver, other: Driver) -> None:
+        """Raise ``window`` by its OS handle and prove its webview has the focus."""
+        osi.activate(window=window)
+        self.wait(
+            lambda: self.has_focus(focused) and not self.has_focus(other),
+            what=f"window {window.handle} to hold the focus alone (frontmost window "
+            f"{osi._frontmost_window()}, PID {osi.frontmost_pid()})",  # noqa: SLF001
+        )
+
+    def test_typing_goes_only_to_focused_window(self):
+        """MT-NIN-23: with two windows open, each raised by its OS window handle in
+        turn, typed keys reach only the shell of the focused window, and the
+        New Terminal shortcut opens its tab in that window only."""
+        osi = self.os_input()
+        a_tab = self._shell()
+        # A frame of its own, so neither OS nor Accessibility can mix the two
+        # windows up; calibrated while it is the only window.
+        before = self.os_activate().window
+        # The hosted runners' screens are ~1024x768 and B opens at A's origin,
+        # clamped to the screen: the minimum size leaves B's shell a strip A
+        # does not cover.
+        self.driver.resize_window(800, 600)
+        self.wait(
+            lambda: any(w.width < before.width for w in osi.windows()),
+            what=f"the resize to reach the OS window (was {before})",
+        )
+        screen = self.os_activate()
+        main = screen.window
+        second, b_tab = self._second_window_shell()
+        try:
+            b_window = self.wait(
+                lambda: max(
+                    (w for w in osi.windows() if w.handle != main.handle),
+                    key=lambda w: w.width * w.height,
+                    default=None,
+                ),
+                what=f"window B's OS window (main is {main})",
+            )
+            self._raise(osi, main, self.driver, second)
+            # The New Window shortcut left A's focus on the activity bar: put it
+            # back into A's shell. B's new shell took B's focus when it opened.
+            self._focus_terminal(a_tab, screen)
+            osi.type_text("echo WA_aaa_\n")
+            assert self._wait_echo(a_tab, "WA") == "aaa"
+
+            self._raise(osi, b_window, second, self.driver)
+            self._click_uncovered(osi, screen.for_window(second, b_window), b_tab, main)
+            self.wait(
+                lambda: self.has_focus(second) and not self.has_focus(self.driver),
+                what="window B to keep the focus after the click into its shell",
+            )
+            self.reset_input_probe(second)
+            osi.type_text("echo WB_bbb_\n")
+            assert self._wait_echo(
+                b_tab, "WB", driver=second, why=lambda: f"keys landed on {self.key_targets(second)}"
+            ) == "bbb"
+            main_tabs = len(window_tabs(self.driver))
+            second_tabs = len(window_tabs(second))
+            osi.key(f"{MOD}+shift+`")
+            self.wait(
+                lambda: len(window_tabs(second)) == second_tabs + 1, what="the new tab in B"
+            )
+
+            assert terminal_echo(second.read_terminal(b_tab), "WA") is None, "B got A's keys"
+            assert terminal_echo(self.driver.read_terminal(a_tab), "WB") is None, "A got B's keys"
+            assert len(window_tabs(self.driver)) == main_tabs, "window A gained a tab"
+        finally:
+            self._close_second_window(second)
+            self.driver.resize_window(1280, 800)
+            # Give the main window the OS focus back, as a user's click would.
+            self.os_activate()
 
     # ── MT-SHI-02: external spawn brings the window to the front ─────────────
     def test_external_spawn_brings_window_to_front(self):

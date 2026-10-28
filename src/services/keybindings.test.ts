@@ -152,6 +152,26 @@ describe("eventMatchesCombo", () => {
     const event = makeKeyEvent("+", { ctrl: true, shift: true });
     expect(eventMatchesCombo(event, combo)).toBe(false);
   });
+
+  // #4979: a real Ctrl+Shift+` on a US layout reports key "~", so the default
+  // New Terminal shortcut never fired from a real keyboard on Windows/Linux.
+  it("matches a real Ctrl+Shift+` (producing ~) against the Shift+` binding", () => {
+    const combo: KeyCombo = { key: "`", ctrl: true, shift: true };
+    const event = makeKeyEvent("~", { ctrl: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("does not match the shifted character when the binding needs no Shift", () => {
+    const combo: KeyCombo = { key: "`", ctrl: true };
+    const event = makeKeyEvent("~", { ctrl: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(false);
+  });
+
+  it("does not match the shifted character of another key", () => {
+    const combo: KeyCombo = { key: "`", ctrl: true, shift: true };
+    const event = makeKeyEvent("!", { ctrl: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(false);
+  });
 });
 
 describe("eventMatchesCombo — layout-independent physical-key matching (I18N-011)", () => {

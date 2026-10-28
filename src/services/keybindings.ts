@@ -624,6 +624,26 @@ const SHIFT_KEY_TO_BASE: Record<string, string> = {
 };
 
 /**
+ * The character Shift produces on each US-layout punctuation key, mapped back to
+ * the key. A binding that requires Shift on a punctuation key (Ctrl+Shift+`) is
+ * written with the unshifted key, but a real key press reports the shifted
+ * character (`~`) as `event.key` (#4979).
+ */
+const SHIFTED_PUNCT_TO_BASE: Record<string, string> = {
+  "~": "`",
+  _: "-",
+  "+": "=",
+  "{": "[",
+  "}": "]",
+  "|": "\\",
+  ":": ";",
+  '"': "'",
+  "<": ",",
+  ">": ".",
+  "?": "/",
+};
+
+/**
  * Physical-key `KeyboardEvent.code` for a combo whose key is a single Latin
  * letter or digit, or `null` for anything else (punctuation, named keys like
  * `Tab`/`Enter`/`ArrowUp`/`F1`, multi-char keys).
@@ -676,6 +696,15 @@ export function eventMatchesCombo(event: KeyboardEvent, combo: KeyCombo): boolea
     if (!!combo.alt !== event.altKey) return false;
     if (!!combo.meta !== event.metaKey) return false;
     return true;
+  }
+
+  // A Shift binding on a punctuation key: the event reports the shifted character.
+  if (combo.shift && event.shiftKey && SHIFTED_PUNCT_TO_BASE[event.key] === combo.key) {
+    return (
+      !!combo.ctrl === event.ctrlKey &&
+      !!combo.alt === event.altKey &&
+      !!combo.meta === event.metaKey
+    );
   }
 
   // Check shift-equivalence: if the event key is a shifted variant of the combo key,
