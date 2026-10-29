@@ -10,6 +10,7 @@ import {
 import { monitorKeyForTab } from "../tabQueries";
 import type { TerminalExitInfo } from "@/types/terminal";
 import {
+  cancelConnecting as apiCancelConnecting,
   closeTerminal as apiCloseTerminal,
   detachPersistentTab as apiDetachPersistentTab,
 } from "@/services/api";
@@ -111,6 +112,12 @@ export interface TerminalSessionStateSlice {
    * keeps the tab open — distinct from Cancel, which closes the tab (#1128).
    */
   abortTerminalConnect: (tabId: string) => void;
+  /**
+   * A direct connect attempt failed (#5081): fold the session-lifecycle region
+   * out of `connecting`. The backend folds only an initial attempt's failure, so
+   * without this a failed **retry** left the overlay on "Connecting…" forever.
+   */
+  settleFailedConnect: (tabId: string, error: string) => void;
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close).
   // The exited / exit-info / disconnect-error view-state now lives purely in the shared
@@ -222,6 +229,29 @@ export interface TerminalSessionStateSlice {
   cancelAutoReconnect: (tabId: string, error?: string) => void;
 }
 
+/**
+ * End the tab's in-flight connect attempt (#5081): cancel its backend handshake
+ * (the attempt's id is `${tabId}:${retryCount}`, as `Terminal.tsx` builds it)
+ * and fold the session-lifecycle region out of `connecting`. Without both, an
+ * aborted or timed-out attempt kept running and the overlay — which shows
+ * "Connecting…" while the region says so — never reached a final state.
+ * Skipped while the backend redrive owns a reconnect loop.
+ */
+function endConnectAttempt(tabId: string, retryCount: number, error: string): void {
+  const connectId = `${tabId}:${retryCount}`;
+  const failed = (err: unknown) =>
+    frontendLog("disconnect", `cancel connect ${connectId} failed: ${errorMessage(err)}`);
+  try {
+    // Unknown ids (nothing in flight) are a backend no-op.
+    void apiCancelConnecting(connectId).catch(failed);
+  } catch (err) {
+    failed(err);
+  }
+  if (currentSessionView()[tabId]?.status === "connecting") {
+    mirrorSessionIntent("session.connectFailed", tabId, error);
+  }
+}
+
 export const createTerminalSessionStateSlice: StateCreator<
   AppState,
   [],
@@ -318,6 +348,13 @@ export const createTerminalSessionStateSlice: StateCreator<
         "disconnect",
         `connect timeout (${kind}) for tab=${tabId} — transitioning to Failed`
       );
+      if (kind === "connecting") {
+        endConnectAttempt(
+          tabId,
+          state.terminalRetryCounters[tabId] ?? 0,
+          connectTimeoutMessage(kind)
+        );
+      }
       return {
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
@@ -340,6 +377,7 @@ export const createTerminalSessionStateSlice: StateCreator<
         "disconnect",
         `connect aborted by user for tab=${tabId} — transitioning to Failed`
       );
+      endConnectAttempt(tabId, state.terminalRetryCounters[tabId] ?? 0, ABORTED_CONNECT_MESSAGE);
       // Clear every in-flight pre-connect flag and land on a retryable Failed
       // state (spawn error set) so the overlay shows Retry and the tab stays
       // open. Distinct from closeTab, which tears the tab down entirely.
@@ -354,6 +392,12 @@ export const createTerminalSessionStateSlice: StateCreator<
         terminalSpawnErrorKinds: omitKey(state.terminalSpawnErrorKinds, tabId),
       };
     }),
+
+  settleFailedConnect: (tabId, error) => {
+    if (currentSessionView()[tabId]?.status === "connecting") {
+      mirrorSessionIntent("session.connectFailed", tabId, error);
+    }
+  },
 
   // Per-tab terminal session disconnects (runtime-only). The exited / exit-info
   // / disconnect-error view-state now lives purely in the shared

@@ -7,7 +7,7 @@ import {
 } from "./connectProgressBridge";
 
 describe("connectProgressBridge", () => {
-  beforeEach(() => useConnectProgressStore.setState({ byTab: {} }));
+  beforeEach(() => useConnectProgressStore.setState({ byTab: {}, currentAttempt: {} }));
 
   it("keys each report by the tab id parsed from the connect id", () => {
     recordConnectProgress({ connectId: "tab-1:0", stage: "resolve", status: "Resolving h" });

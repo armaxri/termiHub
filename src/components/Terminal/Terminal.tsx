@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
-import { clearConnectProgress } from "@/store/connectProgressBridge";
+import { beginConnectAttempt } from "@/store/connectProgressBridge";
+import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { connectTimeoutMessage } from "@/utils/connectTimeout";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -751,8 +753,9 @@ export function Terminal({
               // id. If it did, the old effect's cleanup would cancel the fresh
               // attempt's token instead of its own (#1125).
               connectInFlightRef.current.add(connectId);
-              // A fresh attempt starts its stepper from the first stage (#5068).
-              clearConnectProgress(tabId);
+              // A fresh attempt starts its stepper from the first stage (#5068)
+              // and ignores late reports from an earlier attempt (#5081).
+              beginConnectAttempt(tabId, connectId);
               try {
                 // Pass the tab's resilient-reconnect determination (#2439) so a
                 // genuine drop is folded server-side as `session.reconnect` vs
@@ -836,10 +839,27 @@ export function Terminal({
                 if (isCanceled()) return;
               } else {
                 // Direct connection (SSH, Telnet, serial, local) — show error.
+                // An attempt the user aborted (or the client deadline ended)
+                // keeps that outcome; its cancelled connect's rejection is noise.
+                const shown = useAppStore.getState().terminalSpawnErrors[tabId];
+                if (
+                  shown === ABORTED_CONNECT_MESSAGE ||
+                  shown === connectTimeoutMessage("connecting")
+                ) {
+                  return;
+                }
                 // Strip any backend code marker so a machine token
                 // (e.g. an auth-failure signal) never leaks into the overlay,
                 // and keep the code as the typed failure kind (I18N-009).
                 setClassifiedSpawnError(tabId, err);
+                // The backend folds only an initial attempt's failure; settle a
+                // retry's here so the overlay leaves "Connecting…" (#5081).
+                useAppStore
+                  .getState()
+                  .settleFailedConnect(
+                    tabId,
+                    useAppStore.getState().terminalSpawnErrors[tabId] ?? ""
+                  );
                 return;
               }
             }
