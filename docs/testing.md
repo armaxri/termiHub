@@ -1270,11 +1270,11 @@ from the element's DOM rect, calibrated by one trusted `pointermove` the
 need no guessing. That verb also returns `isTrusted`, which proves the input
 came from the OS.
 
-| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-NIN-23 (keys reach only the focused one of two windows), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
-| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click), MT-NIN-22 (one click into an inactive window focuses the clicked pane)                                                                                                                                                                            |
-| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                                                                                           |
+| Suite                                                                            | Grades                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_os_input_keyboard.py`](../tests/system/tests/test_os_input_keyboard.py)   | MT-NIN-15 (dead keys: US-International on Linux and Windows, Option combos on macOS), German AltGr+E → € and the ^ dead key (Linux), MT-NIN-31 (real Caps Lock), MT-KB-01..04 (copy/paste shortcuts, plain Ctrl+C on macOS/Linux), MT-NIN-20 (focus after an app switch), MT-NIN-21 (focus after the native Save dialog), MT-NIN-23 (keys reach only the focused one of two windows), MT-SHI-02 (spawn raises the window), MT-LOCAL-08 (macOS key repeat) |
+| [`test_os_input_pointer.py`](../tests/system/tests/test_os_input_pointer.py)     | MT-NIN-07 (tab tear-off), MT-CONN-01 (connection into a folder), MT-FB-20 (editor tab to another panel), MT-UI-26/27/28/30 and MT-NIN-30 (right-click), MT-NIN-22 (one click into an inactive window focuses the clicked pane)                                                                                                                                                                                                                            |
+| [`test_os_input_macos_app.py`](../tests/system/tests/test_os_input_macos_app.py) | MT-WIN-01..04 (Dock reopen, Cmd+Q, Dock / AppleScript quit and Log Out, as Apple events by PID)                                                                                                                                                                                                                                                                                                                                                           |
 
 The dead-key grade (MT-NIN-15) once lost its Enter on the Windows runner about
 one run in three (#5024). It was not the app: the frontend sent every key, the
@@ -1289,9 +1289,21 @@ On a missed calibration move, the Windows backend names the window under the
 pointer and lists every window on the desktop. That is how a DevTools window,
 opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
-Still guided: MT-NIN-21 (focus after the native Save dialog), MT-NIN-16 (OS emoji
-picker) and the IME candidate window (MT-NIN-10..14) — native UI no input
-injection can judge.
+Still guided: MT-NIN-16 (OS emoji picker) and the IME candidate window
+(MT-NIN-10..14) — native UI no input injection can judge.
+
+MT-NIN-21 (#4982) drives the real native Save dialog with keys: Cmd/Ctrl+S on a
+scratch editor opens it (a sheet on macOS, the GTK file chooser on Linux, the
+common file dialog on Windows). The harness finds it by the test instance's PID
+only — a new top-level window of that PID, or an Accessibility sheet on its
+window on macOS — and on Linux and Windows types only once the dialog holds the
+focus. Escape cancels it; the grade then types `one` and checks the Monaco
+caret moved. A second Cmd/Ctrl+S gets a full path (on macOS through the panel's
+Go to Folder field, Cmd+Shift+G, and then the name), Enter saves, the tab takes
+the saved name, and `two` typed next lands at the caret and in the saved file.
+On macOS the dialog's keys go through the HID tap (global, CI or opt-in only):
+keys posted to the app's PID never reached the save panel, and Escape left the
+sheet open.
 
 MT-NIN-22 and MT-NIN-23 need one window of several in front (#4979). MT-NIN-22
 clicks into the right shell of the termiHub window while a harness helper app is
@@ -3005,7 +3017,7 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 
 Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does all the setup and asks only for the irreducible look, click or physical step. From `tests/system/`: `./pytest.sh --manual -s` (or `./scripts/run-guided-manual.sh -k <suite>` from the repo root), which writes a sign-off report to `tests/reports/`. Platform-scoped tests run only on their OS (override with `--manual-platform`). See [Guided-Manual Tests in the Python Harness](#guided-manual-tests-in-the-python-harness-preferred) for how they work.
 
-- [ ] `test_guided_native_input.py` — MT-NIN-03 … 04 (file drops across displays with different scales, under Wayland; MT-NIN-02 is automated, #4997; MT-NIN-01/05/06 are automated, #4936), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-21 … 24 (Save-dialog focus, click into an inactive window, per-window typing, remote-desktop key release). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
+- [ ] `test_guided_native_input.py` — MT-NIN-03 … 04 (file drops across displays with different scales, under Wayland; MT-NIN-02 is automated, #4997; MT-NIN-01/05/06 are automated, #4936), MT-NIN-10 … 14 and 16 (IME, emoji picker; commit-once automated, #3059), MT-NIN-24 (remote-desktop key release; MT-NIN-22/23 are automated, #4979; MT-NIN-21, the Save-dialog focus, is automated, #4982). MT-NIN-07/15/20/30/31 are graded with real OS input (#4935)
 - [ ] `test_guided_credentials.py` — MT-CRED-11 … 16 (Touch ID / Windows Hello / polkit export and biometric unlock). MT-CRED-01/02/03 and MT-CRED-18 are automated in `test_os_credential_store.py` (#4929), MT-CRED-17 (dialog spacing) in the rendered visual checks (#4928): check the integration lane is green on all three OSes instead
 - [ ] `test_guided_app_os.py` — MT-SHI-04 … 06 (one glance at the OS context menu; the artifacts are automated in `test_shell_integration_artifacts.py`, #4963). MT-SHI-01/03 (WSL spawn picker, saved-distro spawn) are graded on the WSL lane (#4962): check `wsl-live.yml` is green instead. MT-WIN-01 … 04 and MT-SHI-02 are graded with real OS events by PID (#4935); MT-FB-30/31 (large folder, drag out) are automated (#4936); MT-APP-05 (MobaXterm import) is graded against a committed fixture in `test_mobaxterm_import.py` (#4960)
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
