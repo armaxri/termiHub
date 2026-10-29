@@ -617,21 +617,33 @@ pub fn get_default_shell() -> Option<String> {
 
 /// List available serial ports, respecting the user-configured prefix set.
 ///
-/// When no prefix list has been saved, all built-in prefixes are used.
+/// When no prefix list has been saved, all built-in prefixes are used. The
+/// result is in natural order (`COM3 < COM10`, #5066). The serial editor polls
+/// this every ~1.5 s while it is visible, so the enumeration runs on the
+/// blocking pool rather than the main thread.
 #[tauri::command]
-pub fn list_serial_ports(conn_manager: State<'_, ConnectionManager>) -> Vec<String> {
-    let settings = conn_manager.get_settings();
-    match &settings.serial_port_scan_prefixes {
-        Some(prefixes) => {
-            let enabled: Vec<&str> = prefixes
-                .iter()
+pub async fn list_serial_ports(
+    conn_manager: State<'_, ConnectionManager>,
+) -> Result<Vec<String>, TerminalError> {
+    let enabled: Option<Vec<String>> = conn_manager
+        .get_settings()
+        .serial_port_scan_prefixes
+        .map(|prefixes| {
+            prefixes
+                .into_iter()
                 .filter(|p| p.enabled)
-                .map(|p| p.prefix.as_str())
-                .collect();
+                .map(|p| p.prefix)
+                .collect()
+        });
+    tauri::async_runtime::spawn_blocking(move || match enabled {
+        Some(prefixes) => {
+            let enabled: Vec<&str> = prefixes.iter().map(String::as_str).collect();
             termihub_core::session::serial::list_serial_ports_with_enabled_prefixes(&enabled)
         }
         None => termihub_core::session::serial::list_serial_ports(),
-    }
+    })
+    .await
+    .map_err(|e| TerminalError::InternalError(format!("Serial port enumeration failed: {e}")))
 }
 
 /// Check if Docker is available on the local system.
