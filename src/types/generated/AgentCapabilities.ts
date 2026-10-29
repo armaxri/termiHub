@@ -94,6 +94,14 @@ fileCreateNew?: boolean,
  */
 definitionIconStyle?: boolean, 
 /**
+ * Whether the agent serves `serial.list_ports` — a fresh enumeration of
+ * its host's serial ports (protocol 0.34.0, #5069), which the connection
+ * editor polls while an agent-hosted serial Port field is visible. `false`
+ * for older agents, whose Port field keeps the `available_serial_ports`
+ * snapshot taken at connect.
+ */
+serialPortRescan?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

@@ -196,6 +196,7 @@ describe("wire contract: agent connect / definitions", () => {
     });
     expect(result.capabilities.fileCreateNew).toBe(true);
     expect(result.capabilities.definitionIconStyle).toBe(true);
+    expect(result.capabilities.serialPortRescan).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
       displayName: "Local Shell",
@@ -222,6 +223,7 @@ describe("wire contract: agent connect / definitions", () => {
       "maxSessions",
       "monitoringSupported",
       "outputFlow",
+      "serialPortRescan",
       "sessionFiles",
       "sessionMonitoring",
       "sessionProcesses",
@@ -235,6 +237,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.fileCreateNew).toBe(false);
     // #5021: an older agent cannot store definition icon styles.
     expect(result.capabilities.definitionIconStyle).toBe(false);
+    // #5069: an older agent keeps its connect-time serial port snapshot.
+    expect(result.capabilities.serialPortRescan).toBe(false);
   });
 
   it("decodes saved definitions with null vs absent optionals", async () => {
