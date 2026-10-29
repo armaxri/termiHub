@@ -23,6 +23,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -41,6 +42,7 @@ from termihub_harness import (
     WindowsUi,
     connection_item_testid,
     folder_toggle_testid,
+    read_os_clipboard,
     unique_name,
 )
 from termihub_harness.os_input import HelperWindow
@@ -168,10 +170,45 @@ class TestOsPointerGrades(
         renderer = f"terminal-renderer-{tab_id}"
         self.os_click(renderer, screen=screen, button="right")
         assert not self.driver.exists("terminal-context-copy-all"), "a menu opened"
+        # Each step below is asynchronous in the app (the clipboard write, the
+        # typed keys' echo, the clipboard read + paste), so the next real input
+        # waits for the previous one to land: typing `_\n` while the paste was
+        # still in flight ran `echo RC__` and left the marker on the next prompt
+        # (#5005, linux-arm64).
+        self._wait_terminal_stage(
+            tab_id,
+            lambda: (read_os_clipboard() or "").strip() == marker,
+            "the selection copied to the OS clipboard",
+        )
+        screen = self.os_activate()  # a clipboard reader may have taken the focus
         osi.type_text("echo RC_")
+        self._wait_terminal_stage(
+            tab_id,
+            lambda: self._input_line(tab_id).endswith("echo RC_"),
+            "the typed `echo RC_` on the input line",
+        )
         self.os_click(renderer, screen=screen, button="right", fy=0.9)
+        self._wait_terminal_stage(
+            tab_id,
+            lambda: self._input_line(tab_id).endswith(f"echo RC_{marker}"),
+            "the pasted marker on the input line",
+        )
         osi.type_text("_\n")
         assert self._wait_echo(tab_id, "RC") == marker
+
+    def _input_line(self, tab_id: str) -> str:
+        """The terminal's last non-blank row: the prompt and what was typed."""
+        rows = [row for row in self.driver.read_terminal(tab_id).splitlines() if row.strip()]
+        return rows[-1].rstrip() if rows else ""
+
+    def _wait_terminal_stage(self, tab_id: str, ready: Callable[[], bool], what: str) -> None:
+        """Wait for ``ready``; on a timeout name the stage, the clipboard and the shell's tail."""
+        try:
+            self.wait(ready, what=what)
+        except AssertionError as exc:
+            tail = self.driver.read_terminal(tab_id).rstrip().splitlines()[-4:]
+            clip = (read_os_clipboard() or "")[:80]
+            raise AssertionError(f"{exc}; clipboard has {clip!r}, shell ends {tail!r}") from None
 
     def test_right_click_platform_default_and_quick_copy_paste(self):
         """MT-UI-26: on macOS/Linux a plain right-click opens the terminal menu
