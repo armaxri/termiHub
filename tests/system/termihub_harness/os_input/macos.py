@@ -20,9 +20,9 @@ from __future__ import annotations
 import re
 import subprocess
 import time
-from typing import Any, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
-from .base import OsInput, OsInputUnavailable, OsWindow
+from .base import OsInput, OsInputUnavailable, OsWindow, parse_combo
 from .keymap import mac_keycode, us_key_for_char
 
 #: ``CGEventFlags`` per portable modifier.
@@ -265,6 +265,94 @@ class MacOsInput(OsInput):
         frame = self._ax_frame(focused)
         matches = [w.handle for w in self._windows(pid) if self._frame_of(w) == frame]
         return matches[0] if len(matches) == 1 else None
+
+    # ── Native dialogs (a sheet on one of the PID's windows) ─────────────────
+    def native_dialog_open(self, baseline: Iterable[int], pid: Optional[int] = None) -> bool:
+        """A new window of ``pid``, or an Accessibility sheet on one of its windows.
+
+        An ``NSSavePanel`` run for a window is a sheet: it may not show up as a
+        window of its own in the CG window list, but the app's Accessibility tree
+        (looked up by PID) lists it as an ``AXSheet`` child of that window.
+        """
+        return super().native_dialog_open(baseline, pid) or self._ax_sheet_open(
+            self._check_target(pid)
+        )
+
+    @staticmethod
+    def _ax_sheet_open(pid: int) -> bool:
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+            kAXChildrenAttribute,
+            kAXRoleAttribute,
+            kAXWindowsAttribute,
+        )
+
+        app = AXUIElementCreateApplication(pid)
+        err, windows = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, None)
+        if err or not windows:
+            return False
+        for window in windows:
+            err, children = AXUIElementCopyAttributeValue(window, kAXChildrenAttribute, None)
+            if err or not children:
+                continue
+            for child in children:
+                err, role = AXUIElementCopyAttributeValue(child, kAXRoleAttribute, None)
+                if not err and role == "AXSheet":
+                    return True
+        return False
+
+    def dialog_key(self, combo: str) -> None:
+        """Press ``combo`` at the HID tap, for the app's ``NSSavePanel`` sheet.
+
+        A key posted to the app's PID never reached the panel: Escape left the
+        sheet open on the CI runner (run 40841269749, #4982), likely because
+        AppKit hosts the panel's content in its own service process. At the HID
+        tap the key goes to the key window, the sheet, as a typed key does
+        (green in run 40847600826).
+        Global: GitHub runner or opt-in, the test instance frontmost before
+        every event.
+        """
+        mods, key = parse_combo(combo)
+        self._hid_key(mac_keycode(key), combo_flags(mods))
+
+    def dialog_type(self, text: str) -> None:
+        """Type ASCII ``text`` at the HID tap (see :meth:`dialog_key`)."""
+        for char in text:
+            mapped = us_key_for_char(char)
+            if mapped is None:
+                raise ValueError(f"cannot type {char!r} at the HID tap")
+            key, shift = mapped
+            self._hid_key(mac_keycode(key), FLAGS["shift"] if shift else 0)
+
+    def _hid_key(self, keycode: int, flags: int) -> None:
+        target = self._check_target(None)
+        q = self._q
+        for down in (True, False):
+            self._require_global(target)
+            event = q.CGEventCreateKeyboardEvent(None, keycode, down)
+            q.CGEventSetFlags(event, flags)
+            q.CGEventPost(q.kCGHIDEventTap, event)
+            time.sleep(self.KEY_DELAY)
+
+    def describe_focus(self) -> str:
+        """Role, subrole and value of the test instance's focused UI element (read-only)."""
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+            kAXFocusedUIElementAttribute,
+        )
+
+        app = AXUIElementCreateApplication(self.pid)
+        err, element = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, None)
+        if err or element is None:
+            return f"no focused element (AX error {err})"
+        parts = []
+        for name in ("AXRole", "AXSubrole", "AXTitle", "AXValue"):
+            err, value = AXUIElementCopyAttributeValue(element, name, None)
+            if not err and value is not None:
+                parts.append(f"{name}={str(value)[:80]!r}")
+        return " ".join(parts) or "a focused element without attributes"
 
     # ── Keys ─────────────────────────────────────────────────────────────────
     def _post_key(self, pid: int, keycode: int, down: bool, flags: int) -> None:

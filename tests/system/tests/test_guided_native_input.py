@@ -15,11 +15,11 @@ the screen shows (preedit placement, highlights, candidate window).
 
 Covered: MT-NIN-03..04 (native file drag-and-drop across two displays with
 different scales, under Wayland), MT-NIN-10..14 and 16 (IME,
-emoji picker), MT-NIN-21 and 24 (focus after the native Save dialog,
-remote-desktop key release on blur). The
+emoji picker), MT-NIN-24 (remote-desktop key release on blur). The
 IME commit-once logic is automated in ``test_ime_composition.py``. Real OS key
 and pointer events retired MT-NIN-07 (tab tear-off), MT-NIN-15 (dead keys),
-MT-NIN-20 (focus after an app switch), MT-NIN-22 (a click into an inactive
+MT-NIN-20 (focus after an app switch), MT-NIN-21 (focus after the native Save
+dialog, #4982), MT-NIN-22 (a click into an inactive
 window, #4979), MT-NIN-23 (per-window typing, #4979), MT-NIN-30 (Windows
 right-click paste) and MT-NIN-31 (real Caps Lock) into ``test_os_input_keyboard.py`` /
 ``test_os_input_pointer.py`` (#4935). Synthetic Tauri drag-drop events and real
@@ -199,20 +199,7 @@ class TestGuidedNativeInput(
         )
         assert "👍" in self.wait_for_output("👍", tab_id=tab["id"])
 
-    # ── MT-NIN-21, 24: native focus ──────────────────────────────────────────
-    def test_focus_returns_after_native_save_dialog(self):
-        """MT-NIN-21."""
-        self.close_all_tabs()
-        self.ensure_terminal()
-        self.run_command("echo hello")
-        self.wait_for_output("hello")
-        self.manual_step(
-            f"Right-click the tab > Open in Editor. Press {_MOD}+S, then Escape, then type "
-            f"`one`. Press {_MOD}+S again, save to a scratch folder with Enter, type `two`.",
-            "macOS shows a sheet, others a dialog; `one` and `two` land at the editor caret "
-            "and the tab shows the saved name.",
-        )
-
+    # ── MT-NIN-24: native focus ──────────────────────────────────────────────
     def test_remote_desktop_releases_held_keys_on_blur(self):
         """MT-NIN-24 (a real VNC/RDP host with a text editor open)."""
         self.close_all_tabs()
