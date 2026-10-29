@@ -471,8 +471,21 @@ fn list_serial_ports_with_dev_and_prefixes(
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (dev_dir, extra_prefixes);
-        crate_ports
+        sort_serial_ports_naturally(crate_ports)
     }
+}
+
+/// Sort serial port names in natural order and drop duplicates.
+///
+/// Embedded numbers compare numerically, so `COM3 < COM9 < COM10 < COM27` and
+/// `/dev/ttyUSB2 < /dev/ttyUSB10` — rather than the raw OS enumeration order
+/// (Windows' registry order is effectively arbitrary) or a plain lexicographic
+/// sort (`COM10 < COM3`). Every port list the desktop and the agent report goes
+/// through this, so all consumers see the same order (#5066).
+pub fn sort_serial_ports_naturally(mut ports: Vec<String>) -> Vec<String> {
+    ports.sort_by(|a, b| alphanumeric_sort::compare_str(a, b).then_with(|| a.cmp(b)));
+    ports.dedup();
+    ports
 }
 
 /// Merge `serial2`'s enumeration with the `/dev` scan hits, deduplicated and sorted.
@@ -500,9 +513,7 @@ fn merge_linux_serial_ports(
             ports.push(extra);
         }
     }
-    ports.sort();
-    ports.dedup();
-    ports
+    sort_serial_ports_naturally(ports)
 }
 
 /// Whether `port` belongs to a built-in scan prefix that is not enabled.
@@ -813,6 +824,75 @@ mod tests {
         assert_eq!(parsed.flow_control, serial2::FlowControl::RtsCts);
     }
 
+    // --- sort_serial_ports_naturally tests (#5066) ------------------------
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn natural_sort_orders_windows_com_ports_numerically() {
+        // The order the maintainer saw in the dropdown (#5066).
+        let raw = names(&[
+            "COM7", "COM27", "COM29", "COM28", "COM30", "COM9", "COM10", "COM11", "COM3", "COM31",
+        ]);
+        assert_eq!(
+            sort_serial_ports_naturally(raw),
+            names(&[
+                "COM3", "COM7", "COM9", "COM10", "COM11", "COM27", "COM28", "COM29", "COM30",
+                "COM31",
+            ])
+        );
+    }
+
+    #[test]
+    fn natural_sort_orders_linux_device_paths_numerically() {
+        let raw = names(&[
+            "/dev/ttyUSB10",
+            "/dev/ttyS1",
+            "/dev/ttyUSB2",
+            "/dev/ttyACM0",
+            "/dev/ttyS0",
+        ]);
+        assert_eq!(
+            sort_serial_ports_naturally(raw),
+            names(&[
+                "/dev/ttyACM0",
+                "/dev/ttyS0",
+                "/dev/ttyS1",
+                "/dev/ttyUSB2",
+                "/dev/ttyUSB10",
+            ])
+        );
+    }
+
+    #[test]
+    fn natural_sort_groups_macos_cu_before_tty() {
+        let raw = names(&[
+            "/dev/tty.usbserial-110",
+            "/dev/cu.usbserial-110",
+            "/dev/tty.usbserial-2",
+            "/dev/cu.usbserial-2",
+            "/dev/cu.Bluetooth-Incoming-Port",
+        ]);
+        assert_eq!(
+            sort_serial_ports_naturally(raw),
+            names(&[
+                "/dev/cu.Bluetooth-Incoming-Port",
+                "/dev/cu.usbserial-2",
+                "/dev/cu.usbserial-110",
+                "/dev/tty.usbserial-2",
+                "/dev/tty.usbserial-110",
+            ])
+        );
+    }
+
+    #[test]
+    fn natural_sort_removes_duplicates() {
+        let raw = names(&["COM10", "COM2", "COM10", "COM2"]);
+        assert_eq!(sort_serial_ports_naturally(raw), names(&["COM2", "COM10"]));
+    }
+
     // --- list_serial_ports tests -----------------------------------------
 
     #[test]
@@ -916,9 +996,8 @@ mod tests {
                 &["ttyS2", "ttyAMA1", "uart0", "serial0", "ttyS0"],
             );
             let ports = list_serial_ports_with_dev(dir.path());
-            let mut sorted = ports.clone();
-            sorted.sort();
-            assert_eq!(ports, sorted, "ports should be sorted alphabetically");
+            let sorted = sort_serial_ports_naturally(ports.clone());
+            assert_eq!(ports, sorted, "ports should be sorted naturally");
         }
 
         // --- Former manual items MT-SER-07 / MT-SER-08 (#3683) -------------
