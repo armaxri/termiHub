@@ -680,6 +680,13 @@ pub struct AppSettings {
     #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub combine_emoji: Option<bool>,
+    /// Row order of Network Tools host lists (Ping Sweep, Port Scanner, #5067):
+    /// `"address"` (numeric address order) or `"response"` (the order hosts
+    /// answered). `None` → the frontend default (`"address"`). Owned by the
+    /// frontend `AppSettings.networkHostOrder`; the backend only persists it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "\"address\" | \"response\"", optional))]
+    pub network_host_order: Option<String>,
     /// Forward-compatibility catch-all (#2311).
     ///
     /// Preserves any field the frontend `AppSettings` interface
@@ -777,6 +784,7 @@ impl Default for AppSettings {
             terminal_command_decorations: None,
             terminal_inline_images: None,
             combine_emoji: None,
+            network_host_order: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -2340,6 +2348,27 @@ mod tests {
         assert_eq!(value["combineEmoji"], serde_json::json!(true));
         let reloaded = storage.load_with_recovery().unwrap().data;
         assert_eq!(reloaded.combine_emoji, Some(true));
+    }
+
+    #[test]
+    fn network_host_order_defaults_unset_and_survives_save_load() {
+        // #5067: the Network Tools host-list order is remembered across restarts.
+        // Absent means the frontend default (address order).
+        assert!(AppSettings::default().network_host_order.is_none());
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let incoming = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "networkHostOrder": "response"
+        }"#;
+        let settings: AppSettings = serde_json::from_str(incoming).unwrap();
+        assert!(settings.extra.is_empty(), "{:?}", settings.extra);
+        storage.save(&settings).unwrap();
+
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert_eq!(reloaded.network_host_order.as_deref(), Some("response"));
     }
 
     #[test]

@@ -21,6 +21,9 @@ import { countHosts } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { insertSortedByHost } from "@/utils/hostSort";
+import { HostOrderField } from "./HostOrderField";
+import { useHostOrder } from "./useHostOrder";
 
 /** Host count above which the sweep warns before starting. */
 const LARGE_SWEEP_THRESHOLD = 1024;
@@ -35,6 +38,8 @@ interface SweepRow {
   hostname?: string | null;
 }
 
+const sweepRowHost = (r: SweepRow) => r.host;
+
 /**
  * Ping Sweep diagnostic tab content.
  *
@@ -47,7 +52,11 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
   const [timeoutMs, setTimeoutMs] = useState<number | "">(1000);
   const [concurrency, setConcurrency] = useState<number | "">(64);
+  // Responders in arrival ("response") order, plus the same rows kept in
+  // numeric address order as they stream in (#5067).
   const [results, setResults] = useState<SweepRow[]>([]);
+  const [resultsByAddress, setResultsByAddress] = useState<SweepRow[]>([]);
+  const { order, setOrder } = useHostOrder();
   const [summary, setSummary] = useState<PingSweepSummary | null>(null);
   const [warnOpen, setWarnOpen] = useState(false);
   // Local, deferred opt-out state — committed to settings only on confirm,
@@ -79,10 +88,9 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
     register(
       await onSweepResult((p) => {
         if (!matchesTask(p.taskId)) return;
-        setResults((prev) => [
-          ...prev,
-          { host: p.host, latencyMs: p.latencyMs, hostname: p.hostname },
-        ]);
+        const row = { host: p.host, latencyMs: p.latencyMs, hostname: p.hostname };
+        setResults((prev) => [...prev, row]);
+        setResultsByAddress((prev) => insertSortedByHost(prev, row, sweepRowHost));
       })
     );
     register(
@@ -109,6 +117,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
     cancel: networkPingSweepCancel,
     onReset: useCallback(() => {
       setResults([]);
+      setResultsByAddress([]);
       setSummary(null);
     }, []),
     subscribe,
@@ -147,7 +156,8 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
     { key: "hostname", label: "Name" },
   ];
 
-  const formattedRows = results.map((r) => ({
+  const displayed = order === "address" ? resultsByAddress : results;
+  const formattedRows = displayed.map((r) => ({
     host: r.host,
     status: "up",
     latencyMs: formatLatencyMs(r.latencyMs),
@@ -164,7 +174,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
     summary: summary
       ? `${summary.up} up, ${summary.down} down of ${summary.total} host${summary.total === 1 ? "" : "s"}`
       : `${results.length} up`,
-    table: pingSweepResultsTable(results),
+    table: pingSweepResultsTable(resultsByAddress),
     error,
   }));
 
@@ -259,6 +269,12 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
             data-testid="ping-sweep-concurrency"
           />
         </Field>
+        <HostOrderField
+          id="ping-sweep-order"
+          order={order}
+          onChange={setOrder}
+          data-testid="ping-sweep-order"
+        />
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}
