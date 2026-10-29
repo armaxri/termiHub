@@ -41,7 +41,7 @@ async function settle(): Promise<void> {
 /** Render the field as the connection editor does for an agent-hosted serial connection. */
 async function render(
   value: string,
-  snapshot: string[],
+  snapshot: string[] | undefined,
   agentId: string | undefined,
   onChange: (v: unknown) => void = vi.fn()
 ): Promise<void> {
@@ -147,5 +147,14 @@ describe("serialPort field of an agent-hosted connection (#5069)", () => {
     expect(agentLister).not.toHaveBeenCalled();
     expect(localLister).not.toHaveBeenCalled();
     expect(optionValues()).toEqual(["/dev/ttyUSB2", "/dev/ttyUSB10"]);
+  });
+
+  it("never scans the local machine for an agent-hosted field, even after unsupported", async () => {
+    agentLister.mockResolvedValue({ supported: false, ports: [] });
+    await render("", undefined, "agent-1");
+    await rescan();
+    await rescan();
+    expect(localLister).not.toHaveBeenCalled();
+    expect(optionValues()).toEqual([]);
   });
 });

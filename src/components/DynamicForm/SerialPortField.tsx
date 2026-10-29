@@ -23,6 +23,8 @@ interface SerialPortFieldProps {
   testIdBase: string;
 }
 
+const NO_PORTS: string[] = [];
+
 /** Raised by the agent lister when the agent cannot list its ports on demand. */
 class AgentRescanUnsupported extends Error {}
 
@@ -41,6 +43,8 @@ export function SerialPortField({
   testIdBase,
 }: SerialPortFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // An agent-hosted field never scans the local machine: no snapshot = none.
+  const externalPorts = propPorts ?? (agentId !== undefined ? NO_PORTS : undefined);
   // The agent id whose agent answered "not supported": it keeps its snapshot.
   const [unsupportedAgent, setUnsupportedAgent] = useState<string | null>(null);
   const agentRescan = agentId !== undefined && unsupportedAgent !== agentId;
@@ -62,13 +66,13 @@ export function SerialPortField({
   // up within ~2 s: locally (#5066) or on the agent's host (#5069). Without
   // agent rescan support, an agent-supplied list is used as given.
   const detected = useSerialPortRescan({
-    enabled: propPorts === undefined || agentRescan,
+    enabled: externalPorts === undefined || agentRescan,
     lister: agentRescan ? agentLister : undefined,
     targetRef: inputRef,
   });
   const suppliedPorts = useMemo(
-    () => (propPorts === undefined ? undefined : sortSerialPorts(propPorts)),
-    [propPorts]
+    () => (externalPorts === undefined ? undefined : sortSerialPorts(externalPorts)),
+    [externalPorts]
   );
   // An agent's snapshot stands in until its first scan succeeds.
   const showDetected = suppliedPorts === undefined || (agentRescan && detected.scanned);
