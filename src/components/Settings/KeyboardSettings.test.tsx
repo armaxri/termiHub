@@ -66,6 +66,18 @@ describe("KeyboardSettings", () => {
     expect(container.textContent).toContain("Paste");
   });
 
+  it("shows both macOS command palette defaults in its row (#5084)", async () => {
+    const ua = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)");
+    try {
+      await renderComponent();
+      expect(container.textContent).toContain("Cmd+P / Cmd+Shift+P");
+    } finally {
+      ua.mockRestore();
+    }
+  });
+
   it("renders reset all button", async () => {
     await renderComponent();
     const resetBtn = container.querySelector('[data-testid="keyboard-settings-reset-all"]');

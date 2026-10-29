@@ -87,6 +87,42 @@ describe("command palette shortcut", () => {
     expect(paletteInput()).not.toBeNull();
   });
 
+  it("Cmd+Shift+P also opens the palette on macOS (#5084)", async () => {
+    setUserAgent(MAC_UA);
+    await mount();
+
+    const event = await press({ key: "P", code: "KeyP", metaKey: true, shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(useAppStore.getState().commandPaletteOpen).toBe(true);
+    expect(paletteInput()).not.toBeNull();
+  });
+
+  it.each([
+    ["Cmd+P", { key: "p", code: "KeyP", metaKey: true }],
+    ["Cmd+Shift+P", { key: "P", code: "KeyP", metaKey: true, shiftKey: true }],
+  ])("%s opens the palette on macOS while a terminal has focus (#5084)", async (_n, init) => {
+    setUserAgent(MAC_UA);
+    await mount();
+    const xterm = document.createElement("div");
+    xterm.className = "xterm";
+    const textarea = document.createElement("textarea");
+    xterm.appendChild(textarea);
+    document.body.appendChild(xterm);
+    try {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+      await act(async () => {
+        textarea.dispatchEvent(event);
+      });
+      await flushAsync();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(useAppStore.getState().commandPaletteOpen).toBe(true);
+    } finally {
+      xterm.remove();
+    }
+  });
+
   it.each([
     ["Windows", WINDOWS_UA],
     ["Linux", LINUX_UA],
