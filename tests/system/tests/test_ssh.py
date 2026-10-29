@@ -493,6 +493,50 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
         )
 
 
+    def test_running_x_server_is_adopted_without_a_setup_prompt(self):
+        """The adopt half of MT-SSH-50 (#4965): a running X server is adopted.
+
+        Connecting with X11 forwarding while an X server already runs (Xvfb on
+        CI) must not prompt to set one up: the connect forwards to it, and Open
+        Connections lists it as an adopted, external X server, never a managed
+        one or the "No X server / Set up" row. The Wayland-only half is
+        ``test_ssh_x11_wayland.py``.
+        """
+        if not sys.platform.startswith("linux"):
+            pytest.skip("X server adoption is graded on Linux (macOS: MT-SSH-51, Windows: MT-SSH-52)")
+        if not _local_x_server_available():
+            pytest.skip("no local X server to forward to (DISPLAY unset, no /tmp/.X11-unix)")
+
+        name = unique_name("x11-adopt")
+        self.create_ssh_connection(
+            name, host=HOST, port=SSH_X11_PORT, username=SSH_USERNAME, connect=True
+        )
+        self.handle_password_prompt()
+        self.accept_host_key_prompt()
+        tab = self.wait(lambda: self.find_tab(name), what="the X11 SSH tab")
+        self.wait(self.has_terminal, what="the X11 SSH terminal")
+        self.run_command("echo TH_X11_ADOPT=$DISPLAY")
+        self.wait_for_output("TH_X11_ADOPT=localhost:", tab_id=tab["id"])
+        assert not self.driver.exists("x-server-connect-consent-dialog"), (
+            "connecting with a running X server prompted to set one up"
+        )
+
+        self.driver.click("activity-bar-settings")
+        self.wait(
+            lambda: self.driver.exists("settings-menu-open-connections"),
+            what="the settings menu",
+        )
+        self.driver.click("settings-menu-open-connections")
+        self.wait(
+            lambda: self.driver.exists("open-connections-x-server-row"),
+            what="the adopted X server row in Open Connections",
+        )
+        row = self.driver.get_text("open-connections-x-server-row")
+        assert "External X server" in row and "external" in row, row
+        assert not self.driver.exists("open-connections-x-server-setup")
+        self.dismiss_menu()
+        self.close_all_tabs()
+
     def test_forwarded_x11_client_opens_a_window_on_the_local_display(self):
         """MT-XPLAT-03, MT-SSH-15: a remote X11 client's window appears locally.
 
