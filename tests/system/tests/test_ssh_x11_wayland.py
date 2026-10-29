@@ -210,6 +210,9 @@ class TestWaylandOnlyX11Hint(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi
             timeout=30.0,
             what="the connect to log the typed XWayland gap",
         )
+        assert "failed to acquire X server session" not in self._app_log_text(), (
+            "the connect reported a generic lease failure instead of the gap"
+        )
 
         # The X server setup flow shows the actionable XWayland hint.
         self.driver.click("activity-bar-settings")
