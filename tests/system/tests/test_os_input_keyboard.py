@@ -11,7 +11,9 @@ Retires the guided checks MT-NIN-15 (dead keys), MT-NIN-20 (focus after an app
 switch), MT-NIN-31 (real Caps Lock), MT-SHI-02 (external spawn raises the
 window), MT-KB-01..04 (copy and paste shortcuts) and MT-LOCAL-08 (macOS key
 repeat, autorepeat key-downs at the HID tap, #4980) and MT-NIN-23 (keys reach
-only the focused one of two windows, each raised by its OS window handle, #4979).
+only the focused one of two windows, each raised by its OS window handle, #4979)
+and MT-NIN-21 (focus after the real native Save dialog, cancelled and confirmed,
+#4982).
 
 Integration lane (nightly); on a developer machine the suite skips unless
 ``TERMIHUB_OS_INPUT_GLOBAL=1`` says nothing else is on the display.
@@ -19,6 +21,7 @@ Integration lane (nightly); on a developer machine the suite skips unless
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import tempfile
 import time
@@ -357,6 +360,152 @@ class TestOsKeyboardGrades(
             osi.key(f"{MOD}+s")
             self._wait_file(path, "xyz")
         assert "abc" not in helper.typed() and "xyz" not in helper.typed()
+
+    # ── MT-NIN-21: focus after the native Save dialog ────────────────────────
+    def _capture_to_scratch_editor(self) -> str:
+        """Open a shell's output in a scratch (untitled) editor; its tab id."""
+        tab_id = self._shell()
+        self.run_command("echo SAVEDLG")
+        self.wait(
+            lambda: has_line(self.driver.read_terminal(tab_id), "SAVEDLG"), what="the echo"
+        )
+        self.driver.context_menu(f"tab-{tab_id}")
+        self.wait(
+            lambda: self.driver.exists("tab-context-open-in-editor"), what="the tab context menu"
+        )
+        self.driver.click("tab-context-open-in-editor")
+        self.wait(
+            lambda: self.driver.exists("file-editor-scratch-badge"),
+            what="the captured-output editor with its Unsaved badge",
+        )
+        tab = self.wait(lambda: self.find_tab("(output)"), what="the captured-output tab")
+        return tab["id"]
+
+    def _caret(self) -> tuple[int, int]:
+        status = self.wait_for_editor_status()
+        return int(status["line"]), int(status["column"])
+
+    def _wait_caret(self, expected: tuple[int, int], why: str) -> None:
+        try:
+            self.wait(lambda: self._caret() == expected, timeout=10.0, what=f"the caret at {expected}")
+        except AssertionError:
+            osi = self.os_input()
+            raise AssertionError(
+                f"{why}: the caret is at {self._caret()}, not {expected}; webview focus "
+                f"{self.has_focus()}, keys landed on {self.key_targets()}, frontmost PID "
+                f"{osi.frontmost_pid()} window {osi.frontmost_window()}, focused element "
+                f"{osi.describe_focus()!r}"
+            ) from None
+
+    def _open_save_dialog(self, osi: OsInput, baseline: set[int], main: OsWindow) -> None:
+        """Press the Save shortcut and wait for the app's native Save dialog to hold focus.
+
+        The dialog is found by the test instance's PID: a new top-level window of
+        it (GTK file chooser, Windows common dialog) or a sheet on its window
+        (macOS). Where keys go to the focused window, they wait until the
+        dialog, not the main window, has it.
+        """
+        osi.key(f"{MOD}+s")
+        self.wait(
+            lambda: osi.native_dialog_open(baseline),
+            timeout=20.0,
+            what=f"the native Save dialog (windows {osi.windows()})",
+        )
+        if osi.is_global:
+            self.wait(
+                lambda: osi.frontmost_window() not in (None, main.handle),
+                what=f"the Save dialog to take the focus (frontmost {osi.frontmost_window()})",
+            )
+        time.sleep(1.0)  # the dialog's name field takes the focus once it is shown
+
+    def _wait_dialog_closed(self, osi: OsInput, baseline: set[int]) -> None:
+        self.wait(
+            lambda: not osi.native_dialog_open(baseline),
+            timeout=20.0,
+            what=f"the Save dialog to close (focused element {osi.describe_focus()!r})",
+        )
+
+    @staticmethod
+    def _save_dialog_path(osi: OsInput, path: Path) -> None:
+        """Type ``path`` into the open Save dialog and confirm it with Enter."""
+        if sys.platform == "darwin":
+            # NSSavePanel's Save As field takes a name; the folder is chosen in
+            # its Go to Folder field (Cmd+Shift+G), which hands the focus back to
+            # the Save As field when it closes.
+            osi.dialog_key("cmd+shift+g")
+            time.sleep(1.0)
+            osi.dialog_type(str(path.parent))
+            time.sleep(0.5)
+            osi.dialog_key("enter")
+            time.sleep(1.5)
+            osi.dialog_key("cmd+a")
+            osi.dialog_type(path.name)
+        else:
+            # The GTK and Windows file-name fields both take a full path.
+            osi.dialog_key("home")
+            osi.dialog_key("shift+end")
+            osi.dialog_type(str(path))
+        time.sleep(0.5)
+        osi.dialog_key("enter")
+
+    def test_focus_returns_after_native_save_dialog(self):
+        """MT-NIN-21: Cmd/Ctrl+S on an untitled editor opens the real native Save
+        dialog (a sheet on macOS, the GTK file chooser on Linux, the common file
+        dialog on Windows). Escape cancels it and the keys typed next land at the
+        editor caret; a second Cmd/Ctrl+S saved to a path typed into the dialog
+        renames the tab to the saved name, and typing goes on at the caret."""
+        osi = self.os_input()
+        folder = Path(tempfile.mkdtemp(prefix="thub-savedlg-"))
+        path = folder / f"{unique_name('savedlg')}.txt"
+        editor_tab = self._capture_to_scratch_editor()
+        screen = self.os_activate()
+        main = screen.window
+        baseline = {w.handle for w in osi.windows()}
+        self.focus_editor()
+        time.sleep(0.5)  # let Monaco's input take the focus before the first key
+        line, column = self._caret()
+        try:
+            # Escape: the dialog closes without saving, focus is back in the editor.
+            self._open_save_dialog(osi, baseline, main)
+            osi.dialog_key("escape")
+            self._wait_dialog_closed(osi, baseline)
+            self.wait(self.has_focus, what="the webview to regain focus after Escape")
+            self.reset_input_probe()
+            osi.type_text("one")
+            self._wait_caret((line, column + 3), "`one` typed after Escape missed the editor")
+            assert self.driver.exists("file-editor-scratch-badge"), "Escape saved the buffer"
+
+            # Save to a typed path: the tab takes the saved name, typing goes on.
+            self._open_save_dialog(osi, baseline, main)
+            self._save_dialog_path(osi, path)
+            self._wait_dialog_closed(osi, baseline)
+            self.wait(path.exists, what=f"{path} to be written by the Save dialog")
+            self.wait(
+                lambda: (self.active_tab() or {}).get("title") == path.name,
+                what=f"the tab to show the saved name {path.name!r} "
+                f"(has {(self.active_tab() or {}).get('title')!r})",
+            )
+            assert (self.active_tab() or {}).get("id") == editor_tab
+            self.wait(self.has_focus, what="the webview to regain focus after saving")
+            self.reset_input_probe()
+            osi.type_text("two")
+            self._wait_caret((line, column + 6), "`two` typed after the save missed the editor")
+            osi.key(f"{MOD}+s")  # now a plain save to the chosen path, no dialog
+            self.wait(
+                lambda: "onetwo" in path.read_text(encoding="utf-8"),
+                what=f"{path.name} to hold the typed text (has "
+                f"{path.read_text(encoding='utf-8')[-200:]!r})",
+            )
+            assert not osi.native_dialog_open(baseline), "a saved file opened the dialog again"
+            row = path.read_text(encoding="utf-8").splitlines()[line - 1]
+            assert row.find("onetwo") == column - 1, (
+                f"the typed text is not at the caret ({line}, {column}): line {line} is {row!r}"
+            )
+        finally:
+            # Never leave a native dialog over the next test's window.
+            with contextlib.suppress(Exception):  # never mask the grade's own failure
+                if osi.native_dialog_open(baseline):
+                    osi.dialog_key("escape")
 
     # ── MT-NIN-23: keys reach only the focused one of two windows ────────────
     def _second_window_shell(self) -> tuple[Driver, str]:
