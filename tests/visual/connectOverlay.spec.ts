@@ -165,7 +165,7 @@ test("the wired connect overlay renders telnet, SSH, failed and timed-out in Dar
     config: { host: "timeout.example", port: 23 },
   });
   await expect(page.locator(`${OVERLAY} .ui-content-overlay__heading`)).toHaveText(
-    "Connection timed out"
+    "Timed out"
   );
   await shoot(page, "timed-out", testInfo);
 });

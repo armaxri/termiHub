@@ -341,9 +341,10 @@ export function TerminalConnectionOverlay({
   // stage, an agent session, or a single-step type).
   const failedAt: StepId | undefined = viaAgent ? "start" : reported;
   const showSteps = failedAt !== undefined || steps.length === 1;
+  // Same words as the ConnectProgress defaults; spelled out for the announcement.
   const headings: Record<ConnectProgressPhase, string> = {
     failed: "Connection failed",
-    timeout: "Connection timed out",
+    timeout: "Timed out",
     aborted: "Connection aborted",
     connecting: "",
     retrying: "",

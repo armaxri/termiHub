@@ -1803,6 +1803,21 @@
   letter-spacing: var(--letter-spacing-ui);
 }
 
+/* A connect that finishes within 250 ms (local shells) never flashes the
+   surface: the busy body fades in after that delay, CSS-only (#5068). */
+.ui-connect-progress[data-phase="connecting"] > .ui-content-overlay {
+  animation: ui-cp-appear var(--transition-normal) 250ms both;
+}
+
+@keyframes ui-cp-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .ui-connect-progress__ring {
   /* Defaults; ConnectProgress overrides them inline per attempt. */
   --cp-progress: 0;
