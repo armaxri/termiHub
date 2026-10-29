@@ -169,6 +169,9 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// Emit a persistent session state change. Default no-op for test implementations.
     fn emit_persistent_state(&self, _event: &PersistentSessionStateEvent) {}
 
+    /// Emit a connect-stage update (#5068). Default no-op for test emitters.
+    fn emit_connect_progress(&self, _event: &super::connect_progress::ConnectProgressEvent) {}
+
     /// Fold a genuine-drop session-lifecycle transition **server-side** (#2439).
     ///
     /// Called from the `terminal-exit` source ([`SessionManager::emit_and_cleanup`])
@@ -259,6 +262,10 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
     fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
         let _ = self.emit("persistent-session-state-changed", event);
+    }
+
+    fn emit_connect_progress(&self, event: &super::connect_progress::ConnectProgressEvent) {
+        let _ = self.emit("connect-progress", event);
     }
 
     fn fold_session_drop(&self, tab_id: &str, fold: DropFold) {
@@ -1209,9 +1216,15 @@ impl SessionManager {
                         .create(type_id)
                         .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?
                 };
-                if let Err(e) = with_prompt_owner(
+                // Stage updates stream to the tab's connect overlay (#5068).
+                let progress_emitter = emitter.clone();
+                if let Err(e) = super::connect_progress::with_connect_progress(
                     connect_id,
-                    conn.connect_cancellable(settings.clone(), cancel_token.clone()),
+                    move |event| progress_emitter.emit_connect_progress(event),
+                    with_prompt_owner(
+                        connect_id,
+                        conn.connect_cancellable(settings.clone(), cancel_token.clone()),
+                    ),
                 )
                 .await
                 {
