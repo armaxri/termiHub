@@ -159,6 +159,7 @@ async fn assert_clean_rows_after_first_command(shell_name: &str, integration: bo
         prompt_after(t, "HT208050", integration)
     })
     .await;
+    let submitted = s.raw.len();
     s.shell
         .write(format!("{COMMAND}\r").as_bytes())
         .expect("write");
@@ -167,34 +168,33 @@ async fn assert_clean_rows_after_first_command(shell_name: &str, integration: bo
         prompt_after(t, &done, integration)
     })
     .await;
-    let mut screen = s.screen();
-    let mut want = expected_screen(usize::from(cols));
-    if integration && bash_major(shell_name) == Some(3) && PROMPT.len() >= usize::from(cols) {
-        // bash 3's readline draws the typed command off by the input mark's
-        // width after a wrapped prompt (#5059). The rows of the command line
-        // are its own; every other row must still be exact.
-        let banner = BANNER.iter().flat_map(|l| wrapped(l, cols.into())).count();
-        let command = wrapped(&format!("{PROMPT} {COMMAND}"), cols.into()).len();
-        for rows in [&mut screen, &mut want] {
-            for row in rows.iter_mut().skip(banner + 1).take(command - 1) {
-                *row = "<command line, #5059>".to_string();
-            }
-        }
-    }
+    let screen = s.screen();
+    let want = expected_screen(usize::from(cols));
     assert_eq!(screen, want, "{label}\nraw: {:?}", s.text());
+    if integration {
+        assert_command_marked(&String::from_utf8_lossy(&s.raw[submitted..]), &label);
+    }
     s.close().await;
 }
 
-/// The major version of a bash binary, if it is one.
-fn bash_major(shell_name: &str) -> Option<u32> {
-    if !shell_name.ends_with("bash") {
-        return None;
-    }
-    let out = std::process::Command::new(shell_name)
-        .args(["-c", "echo ${BASH_VERSINFO[0]}"])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+/// The command is recorded: its output is bracketed by `C` (output starts)
+/// and `D;0` (finished) — on bash 3 too, which has no `PS0` and, after #5059,
+/// no `B` on its prompt (its `C` comes from a `DEBUG` trap).
+fn assert_command_marked(after_submit: &str, label: &str) {
+    let c_mark = "\x1b]133;C\x07";
+    let d_mark = "\x1b]133;D;0\x07";
+    let marked = after_submit.split_once(c_mark).is_some_and(|(echo, rest)| {
+        echo.contains("\r\n") && rest.starts_with(&format!("{OUTPUT}\r\n")) && rest.contains(d_mark)
+    });
+    assert!(
+        marked,
+        "{label}: the command must be marked C … output … D;0: {after_submit:?}"
+    );
+    assert_eq!(
+        after_submit.matches("\x1b]133;C").count(),
+        1,
+        "{label}: exactly one C per command: {after_submit:?}"
+    );
 }
 
 async fn assert_clean_rows_everywhere(integration: bool) {

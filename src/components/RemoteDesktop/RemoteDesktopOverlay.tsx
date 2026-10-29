@@ -1,6 +1,8 @@
-import { useId } from "react";
-import { RefreshCw, AlertCircle, Power } from "lucide-react";
-import { Button, Spinner, ContentOverlay } from "@/components/ui";
+import { useId, useRef } from "react";
+import { AlertCircle, Power, Ban, Monitor } from "lucide-react";
+import { Button, ContentOverlay } from "@/components/ui";
+import { ConnectProgress, type ConnectStage } from "@/components/ui/ConnectProgress";
+import { connectTypeLabel } from "@/utils/connectStages";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
 import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
@@ -8,6 +10,8 @@ import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectSt
 interface RemoteDesktopOverlayProps {
   state: GraphicalSessionState;
   host: string;
+  /** `"rdp"` or `"vnc"`, for the type chip. */
+  protocol?: string;
   reconnectAttempt: number;
   message: string | null;
   /** Cancel an in-progress auto-reconnect (tears the session down). */
@@ -40,6 +44,16 @@ function restingHeading(state: GraphicalSessionState): string {
   }
 }
 
+/** The graphical connect steps: Connect → Authenticate → Desktop (#5068). */
+function graphicalStages(state: GraphicalSessionState): ConnectStage[] {
+  const at = state === "authenticating" ? 1 : 0;
+  return ["Connect", "Authenticate", "Desktop"].map((label, i) => ({
+    id: label.toLowerCase(),
+    label,
+    state: i < at ? "done" : i === at ? "active" : "pending",
+  }));
+}
+
 /**
  * The one shared set of connection-state overlays for graphical remote-desktop
  * sessions (#1680): connecting (with Cancel, #4298), reconnecting (with attempt counter + Cancel)
@@ -56,6 +70,7 @@ function restingHeading(state: GraphicalSessionState): string {
 export function RemoteDesktopOverlay({
   state,
   host,
+  protocol = "rdp",
   reconnectAttempt,
   message,
   onCancel,
@@ -65,24 +80,37 @@ export function RemoteDesktopOverlay({
 }: RemoteDesktopOverlayProps) {
   const messageId = useId();
   const hintId = useId();
+  // The ring's elapsed readout counts from when this overlay first showed.
+  const startedAt = useRef(Date.now()).current;
   if (state === "active" || state === "resizing") return null;
 
+  const common = {
+    target: host,
+    typeLabel: connectTypeLabel(protocol),
+    typeIcon: <Monitor size={20} aria-hidden />,
+    startedAt,
+  };
+
   if (state === "connecting" || state === "authenticating") {
+    const status = state === "authenticating" ? "Authenticating" : "Establishing connection";
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
-        <ContentOverlay
-          icon={<Spinner size="lg" label={null} className="rd-overlay__icon" />}
-          busy
+        <ConnectProgress
+          {...common}
+          phase="connecting"
           heading={`Connecting to ${host}…`}
-          subheading={state === "authenticating" ? "Authenticating" : "Establishing connection"}
+          stages={graphicalStages(state)}
+          status={status}
+          announcement={`Connecting to ${host}… ${status}`}
           actions={
             <Button
               variant="secondary"
               size="sm"
+              icon={<Ban size={14} />}
               onClick={onCancelConnect}
               data-testid="remote-desktop-cancel-connect"
             >
-              Cancel
+              Abort
             </Button>
           }
         />
@@ -91,16 +119,18 @@ export function RemoteDesktopOverlay({
   }
 
   if (state === "reconnecting") {
+    const attempt = reconnectAttemptLabel(reconnectAttempt, MAX_RECONNECT_ATTEMPTS);
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-reconnecting">
-        <ContentOverlay
-          icon={<Spinner size="lg" label={null} icon={RefreshCw} className="rd-overlay__icon" />}
-          busy
+        <ConnectProgress
+          {...common}
+          phase="retrying"
           heading={RECONNECTING_HEADING}
-          subheading={reconnectAttemptLabel(reconnectAttempt, MAX_RECONNECT_ATTEMPTS)}
+          attempt={{ current: Math.max(1, reconnectAttempt), max: MAX_RECONNECT_ATTEMPTS }}
+          announcement={`${RECONNECTING_HEADING} ${attempt}`}
           actions={
-            <Button variant="secondary" size="sm" onClick={onCancel}>
-              Cancel
+            <Button variant="secondary" size="sm" icon={<Ban size={14} />} onClick={onCancel}>
+              Abort
             </Button>
           }
         />

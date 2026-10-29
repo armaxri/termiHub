@@ -484,3 +484,28 @@ async fn connect_tcp_reports_an_unreachable_proxy() {
     assert!(text.contains("Could not reach the HTTP proxy"), "{text}");
     assert!(!text.contains(PASSWORD), "{text}");
 }
+
+/// #5068: a direct dial reports Resolve, then Connect with the resolved
+/// address, before connecting.
+#[tokio::test]
+async fn direct_dial_reports_resolve_then_connect() {
+    use crate::connection::connect_progress::{with_reporter, ConnectProgressReporter};
+    use std::sync::{Arc, Mutex};
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let reporter = ConnectProgressReporter::new(move |u| sink.lock().unwrap().push(u));
+
+    let stream = with_reporter(reporter, connect_tcp("127.0.0.1", port, None)).await;
+    assert!(stream.is_ok());
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.iter().map(|u| u.stage).collect::<Vec<_>>(),
+        vec![ConnectStage::Resolve, ConnectStage::Connect]
+    );
+    assert_eq!(
+        seen[1].status.as_deref(),
+        Some(format!("TCP connect to 127.0.0.1:{port}").as_str())
+    );
+}

@@ -246,6 +246,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     const tab = activeTreeTabs(s).find((t) => t.id === tabId);
     return readConfigString(tab?.config, "host") ?? title ?? "remote";
   });
+  // "rdp" / "vnc", for the connect overlay's type chip (#5068).
+  const protocol = useAppStore(
+    (s) => activeTreeTabs(s).find((t) => t.id === tabId)?.config.type ?? "rdp"
+  );
 
   const handleCtrlAltDel = useCallback(() => {
     // Press then release Ctrl, Alt, Delete.
@@ -427,6 +431,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         <RemoteDesktopOverlay
           state={session.state}
           host={host}
+          protocol={protocol}
           reconnectAttempt={session.reconnectAttempt}
           message={session.message}
           onCancel={session.cancelReconnect}

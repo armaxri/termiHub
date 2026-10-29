@@ -611,6 +611,25 @@ pub fn detect_available_shells() -> Vec<String> {
 ///   `PS1` once. It is best effort: a prompt framework that rebuilds `PS1`
 ///   on every prompt simply drops it, and the frontend treats `B` as optional.
 ///
+/// # bash 3 (macOS's `/bin/bash`, #5059)
+///
+/// bash 3 has no `PS0`, and its readline counts an invisible `\[ \]` sequence
+/// on a wrapped prompt's last row as visible, so a `B` there draws every typed
+/// character 8 columns off. bash 3 therefore gets no `B`; its `C` comes from a
+/// `DEBUG` trap instead, armed by `PS1` (`${__th_e[__th_c=1]}` expands to
+/// nothing; the subscript sets `__th_c`), i.e. after all of `PROMPT_COMMAND`.
+/// So only the first command run from the prompt emits `C`: not the user's
+/// own `PROMPT_COMMAND` entries, and not an empty line (the trap disarms when
+/// `PROMPT_COMMAND` reaches `__termihub_osc7`). The trap saves and restores
+/// `$_`, which it would otherwise clobber (`mkdir d && cd $_`). A bash that
+/// already has a `DEBUG` trap (bash-preexec) keeps it and gets `B` instead.
+///
+/// # Length
+///
+/// The snippet is typed, and readline clears the screen once a line plus its
+/// prompt outgrow the pane (rows × columns), which defeats hiding the setup
+/// (#5009) in a small pane. Hence the terse separators.
+///
 /// The frontend tolerates duplicate or missing marks (a `D` with no command
 /// in flight — the first prompt, an empty Enter — is ignored), so emitting `D`
 /// unconditionally before each prompt is safe.
@@ -644,25 +663,28 @@ pub fn detect_available_shells() -> Vec<String> {
 macro_rules! osc7_bash_prompt_hook {
     () => {
         concat!(
-            r#"__termihub_osc7(){ local __th_s=$?; "#,
-            r#"printf '\e]133;D;%s\a' "$__th_s"; "#,
-            r#"printf '\e]7;file://%s\a' "$PWD"; "#,
-            r#"printf '\e]133;A\a'; "#,
-            r#"return $__th_s; }; "#,
-            r#"__termihub_osc133_c(){ printf '\e]133;C\a'; }; "#,
-            r#"if [ -z "$__termihub_si" ]; then __termihub_si=1; "#,
+            r#"__termihub_osc7(){ local __th_s=$?;"#,
+            r#"printf '\e]133;D;%s\a\e]7;file://%s\a\e]133;A\a' "$__th_s" "$PWD";"#,
+            r#"return $__th_s;};"#,
+            r#"__termihub_osc133_c(){ printf '\e]133;C\a'; };"#,
+            r#"if [ -z "$__termihub_si" ]; then __termihub_si=1;"#,
             r#"if [ -n "$ZSH_VERSION" ]; then "#,
-            r#"precmd_functions=(__termihub_osc7 $precmd_functions); "#,
-            r#"preexec_functions+=(__termihub_osc133_c); "#,
-            r#"PS1="$PS1"$'%{\e]133;B\a%}'; "#,
+            r#"precmd_functions=(__termihub_osc7 $precmd_functions);"#,
+            r#"preexec_functions+=(__termihub_osc133_c);"#,
+            r#"PS1="$PS1"$'%{\e]133;B\a%}';"#,
             r#"else "#,
             r#"case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "#,
-            r#""declare -a"*) PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}");; "#,
-            r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; "#,
-            r#"esac; "#,
-            r#"PS0="$PS0"'\e]133;C\a'; "#,
-            r#"PS1="$PS1"'\[\e]133;B\a\]'; "#,
-            r#"fi; "#,
+            r#""declare -a"*) PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}");;"#,
+            r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";;"#,
+            r#"esac;"#,
+            r#"if ((BASH_VERSINFO<4))&&[ -z "$(trap -p DEBUG)" ];then "#,
+            r#"PS1+='${__th_e[__th_c=1]}';"#,
+            r#"trap '__th_u=$_;case $__th_c$BASH_COMMAND in 1__termihub_osc7);;"#,
+            r#"1*)__termihub_osc133_c;esac;__th_c=;: "$__th_u"' DEBUG;else "#,
+            r#"PS0="$PS0"'\e]133;C\a';"#,
+            r#"PS1="$PS1"'\[\e]133;B\a\]';"#,
+            r#"fi;"#,
+            r#"fi;"#,
             r#"fi"#,
         )
     };
@@ -2080,6 +2102,47 @@ mod tests {
                 "{shell}: zsh must append a zero-width B mark to PS1: {setup}"
             );
         }
+    }
+
+    /// bash 3 (#5059): `C` from a `DEBUG` trap armed by `PS1`, no `B` (its
+    /// readline miscounts it on a wrapped prompt); only when no `DEBUG` trap
+    /// is set already. bash ≥ 4 keeps `PS0`/`B`.
+    #[test]
+    fn osc133_bash3_marks_output_from_a_debug_trap_instead_of_b() {
+        for shell in POSIX_SHELLS {
+            let setup = osc7_setup_command(shell).expect("expected Some");
+            let branch = setup
+                .find(r#"if ((BASH_VERSINFO<4))&&[ -z "$(trap -p DEBUG)" ];then "#)
+                .expect("bash 3 branch");
+            let bash3 = &setup[branch..setup[branch..].find(";else ").unwrap() + branch];
+            assert!(
+                bash3.contains("PS1+='${__th_e[__th_c=1]}'")
+                    && bash3.contains("1__termihub_osc7);;1*)__termihub_osc133_c;")
+                    && bash3.contains(r#"__th_u=$_;"#)
+                    && bash3.contains(r#": "$__th_u"' DEBUG"#),
+                "{shell}: bash 3 must emit C from an armed DEBUG trap: {bash3}"
+            );
+            assert!(
+                !bash3.contains("133;B"),
+                "{shell}: bash 3 must not get B: {bash3}"
+            );
+            assert!(
+                setup[branch..].contains(r#"PS1="$PS1"'\[\e]133;B\a\]'"#),
+                "{shell}: bash >= 4 keeps B: {setup}"
+            );
+        }
+    }
+
+    /// The typed setup must fit a small pane with a long prompt: readline
+    /// clears the screen once line plus prompt outgrow rows × columns (#5059).
+    #[test]
+    fn typed_bash_setup_fits_a_40_by_24_pane_with_a_long_prompt() {
+        let setup = osc7_setup_command("bash").expect("expected Some");
+        assert!(
+            setup.len() + 73 < 40 * 24,
+            "setup is {} bytes: {setup}",
+            setup.len()
+        );
     }
 
     /// Running the snippet twice must not register duplicate hooks or append

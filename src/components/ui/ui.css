@@ -1783,3 +1783,322 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* === ConnectProgress (#5068 phase-1 prototype) ===
+   The one shared connecting surface (src/components/ui/ConnectProgress.tsx):
+   a progress ring that tracks the connect timeout, a stage stepper, a live
+   status line and one primary action, laid out by `.ui-content-overlay`.
+   Motion never depends on a JS timer: the ring fill is a CSS animation whose
+   negative delay is the elapsed time at render, and the comet orbit is a
+   compositor-only `transform` on an HTML element. Under reduced motion both
+   stop; the fill then follows `--cp-progress`, refreshed every second, and the
+   ticking time line carries the liveness signal. */
+.ui-connect-progress {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* UI font for chrome; only the status line stays monospace. */
+  font-family: var(--font-family);
+  letter-spacing: var(--letter-spacing-ui);
+}
+
+/* A connect that finishes within 250 ms (local shells) never flashes the
+   surface: the busy body fades in after that delay, CSS-only (#5068). */
+.ui-connect-progress[data-phase="connecting"] > .ui-content-overlay {
+  animation: ui-cp-appear var(--transition-normal) 250ms both;
+}
+
+@keyframes ui-cp-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ui-connect-progress__ring {
+  /* Defaults; ConnectProgress overrides them inline per attempt. */
+  --cp-progress: 0;
+  --cp-duration: 0ms;
+  --cp-delay: 0ms;
+  --cp-circumference: 175.929;
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.ui-connect-progress__ring-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.ui-connect-progress__ring-track,
+.ui-connect-progress__ring-fill {
+  fill: none;
+  stroke-width: 3;
+}
+
+.ui-connect-progress__ring-track {
+  stroke: var(--bg-active);
+}
+
+.ui-connect-progress__ring-fill {
+  stroke: var(--accent-color);
+  stroke-linecap: round;
+  stroke-dashoffset: calc(var(--cp-circumference) * (1 - var(--cp-progress)) * 1px);
+  animation: ui-cp-ring-fill var(--cp-duration) linear var(--cp-delay) 1 forwards;
+}
+
+@keyframes ui-cp-ring-fill {
+  from {
+    stroke-dashoffset: calc(var(--cp-circumference) * 1px);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Unknown total (auto-retry backoff, no deadline): a fainter track, comet only. */
+.ui-connect-progress__ring--indeterminate .ui-connect-progress__ring-track {
+  stroke: color-mix(in srgb, var(--accent-color) 22%, var(--bg-active));
+}
+
+/* The orbiting comet: the always-moving "alive" cue (reuses `th-spin`). */
+.ui-connect-progress__comet {
+  position: absolute;
+  inset: 0;
+  animation: th-spin 1.6s linear infinite;
+  will-change: transform;
+}
+
+.ui-connect-progress__comet-dot {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: calc(var(--spacing-xs) * -1);
+  border-radius: var(--radius-full);
+  background: var(--accent-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 28%, transparent);
+}
+
+.ui-connect-progress__ring-icon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-primary);
+}
+
+/* Resting outcome badge (failed / timed out / aborted). */
+.ui-connect-progress__badge {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+.ui-connect-progress[data-phase="timeout"] .ui-connect-progress__badge {
+  color: var(--color-warning);
+  background: var(--bg-warning);
+}
+
+.ui-connect-progress[data-phase="aborted"] .ui-connect-progress__badge {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.ui-connect-progress__meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-xs);
+}
+
+/* Stage stepper: dots joined by a connector that fills as stages complete. */
+.ui-connect-progress__steps {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 420px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ui-connect-progress__step {
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.ui-connect-progress__step + .ui-connect-progress__step::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--border-primary);
+}
+
+.ui-connect-progress__step[data-state="done"]::before,
+.ui-connect-progress__step[data-state="active"]::before,
+.ui-connect-progress__step[data-state="failed"]::before {
+  background: var(--accent-color);
+}
+
+.ui-connect-progress__step-dot {
+  position: relative;
+  z-index: var(--z-base);
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--border-primary);
+  background: var(--bg-primary);
+  color: var(--text-on-accent);
+}
+
+.ui-connect-progress__step[data-state="done"] .ui-connect-progress__step-dot {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+}
+
+.ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot {
+  border-color: var(--accent-color);
+  box-shadow: inset 0 0 0 3px var(--bg-primary);
+  background: var(--accent-color);
+}
+
+.ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--accent-color);
+  animation: ui-cp-halo 1.4s ease-out infinite;
+}
+
+@keyframes ui-cp-halo {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+.ui-connect-progress__step[data-state="failed"] .ui-connect-progress__step-dot {
+  border-color: var(--color-error);
+  background: var(--color-error);
+}
+
+.ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-label {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ui-connect-progress__step[data-state="failed"] .ui-connect-progress__step-label {
+  color: var(--color-error);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ui-connect-progress__step-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Live status / last log line: a terminal-flavoured line with an accent rule. */
+.ui-connect-progress__status {
+  max-width: 420px;
+  margin: 0;
+  padding: var(--spacing-xxs) 0 var(--spacing-xxs) var(--spacing-sm);
+  border-left: 2px solid var(--accent-color);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.ui-connect-progress__status-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-connect-progress__time {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-connect-progress__error {
+  width: 100%;
+  max-width: 460px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-secondary);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-connect-progress__ring-fill,
+  .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot::after {
+    animation: none !important;
+  }
+  .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot::after {
+    opacity: 0;
+  }
+}
+
+/* The type chip reuses the ring's glyph at chip size. */
+.ui-connect-progress__meta .ui-chip__icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* An aborted attempt is the user's choice, not an error: its stopped stage is
+   shown neutral rather than red. */
+.ui-connect-progress[data-phase="aborted"]
+  .ui-connect-progress__step[data-state="failed"]
+  .ui-connect-progress__step-dot {
+  border-color: var(--text-secondary);
+  background: var(--text-secondary);
+}
+
+.ui-connect-progress[data-phase="aborted"]
+  .ui-connect-progress__step[data-state="failed"]
+  .ui-connect-progress__step-label {
+  color: var(--text-secondary);
+}

@@ -14,6 +14,7 @@
 //! Inject any `Box<dyn SshConnector>` implementation that returns in-memory
 //! pipes. `MockSshConnector` (in `#[cfg(test)]`) provides this.
 
+use crate::connection::connect_progress::{self, ConnectStage};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -377,6 +378,7 @@ impl SshConnector for RusshSshConnector {
             }
         }
 
+        connect_progress::report(ConnectStage::Shell, Some("Opening the remote shell".into()));
         let mut channel = session
             .channel_open_session()
             .await

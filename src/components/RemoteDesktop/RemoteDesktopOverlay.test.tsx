@@ -69,18 +69,18 @@ describe("RemoteDesktopOverlay", () => {
   });
 
   it.each(["connecting", "authenticating"] as const)(
-    "offers Cancel on the %s overlay that aborts the connect (#4298)",
+    "offers Abort on the %s overlay that aborts the connect (#4298, #5068)",
     (state) => {
       const { onCancelConnect, onCancel } = render(state);
       const cancel = query("remote-desktop-cancel-connect");
-      expect(cancel?.textContent).toBe("Cancel");
+      expect(cancel?.textContent).toBe("Abort");
       act(() => cancel?.click());
       expect(onCancelConnect).toHaveBeenCalledOnce();
       expect(onCancel).not.toHaveBeenCalled();
     }
   );
 
-  it("shows the reconnecting overlay with a clamped attempt counter and Cancel", () => {
+  it("shows the reconnecting overlay with a clamped attempt counter and Abort", () => {
     const { onCancel } = render("reconnecting", { reconnectAttempt: 0 });
     const el = query("remote-desktop-overlay-reconnecting");
     // Worded exactly like a terminal tab's reconnect (#3730).
@@ -89,7 +89,7 @@ describe("RemoteDesktopOverlay", () => {
     // shared reconnect policy's 10 attempts.
     expect(el?.textContent).toContain("Attempt 1 of 10");
     const cancel = Array.from(el?.querySelectorAll("button") ?? []).find(
-      (b) => b.textContent === "Cancel"
+      (b) => b.textContent === "Abort"
     );
     act(() => cancel?.click());
     expect(onCancel).toHaveBeenCalledOnce();
@@ -176,7 +176,7 @@ describe("RemoteDesktopOverlay", () => {
     it.each([
       ["connecting", {}, "Connecting to rd-host… Establishing connection"],
       ["authenticating", {}, "Connecting to rd-host… Authenticating"],
-      ["reconnecting", { reconnectAttempt: 2 }, null],
+      ["reconnecting", { reconnectAttempt: 2 }, "Connection lost — reconnecting… Attempt 2 of 10"],
     ] as const)("%s", (state, overrides, expected) => {
       const records: MutationRecord[] = [];
       const observer = new MutationObserver((recs) => records.push(...recs));

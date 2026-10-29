@@ -1,0 +1,3171 @@
+<!doctype html>
+<!--
+  Concept: one shared, interactive connecting overlay for every connection type (#5068).
+  Single-file concept (see docs/concepts/implemented/ai-driven-concept-workflow.html).
+  Option A's styles are copied verbatim from the React prototype
+  (src/components/ui/ui.css → "ConnectProgress"), so the mockup and the prototype match.
+  Screenshot one option/theme with ?shot=a-dark | a-light | b-dark | b-light.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connecting Overlay (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* ── App tokens the overlay uses (src/styles/variables.css + themes) ── */
+      .th-dark,
+      .th-light {
+        --spacing-xxs: 2px;
+        --spacing-xs: 4px;
+        --spacing-sm: 8px;
+        --spacing-sm-md: 10px;
+        --spacing-md: 12px;
+        --spacing-lg: 16px;
+        --spacing-xl: 24px;
+        --font-size-2xs: 10px;
+        --font-size-xs: 11px;
+        --font-size-sm: 12px;
+        --font-size-md: 13px;
+        --font-weight-medium: 500;
+        --font-weight-semibold: 600;
+        --letter-spacing-ui: -0.008em;
+        --radius-xs: 2px;
+        --radius-full: 999px;
+        --radius-xl: 14px;
+        --control-height-sm: 24px;
+        --control-height-md: 28px;
+        --control-height-lg: 32px;
+        --transition-fast: 130ms cubic-bezier(0.16, 1, 0.3, 1);
+        --transition-normal: 220ms cubic-bezier(0.16, 1, 0.3, 1);
+        --z-base: 1;
+        --text-on-accent: #ffffff;
+        --color-error-bg: color-mix(in srgb, var(--color-error) 12%, transparent);
+        --bg-warning: color-mix(in srgb, var(--color-warning) 12%, transparent);
+        --overlay-content-bg: color-mix(in srgb, var(--terminal-bg) 88%, transparent);
+        --overlay-blur-sm: blur(2px);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+        color: var(--text-primary);
+      }
+      .th-dark {
+        --terminal-bg: #0f1117;
+        --bg-input: #1a1e2c;
+      }
+      .th-light {
+        --bg-primary: #ffffff;
+        --bg-secondary: #f3f3f3;
+        --bg-tertiary: #e8e8e8;
+        --bg-hover: #e8e8e8;
+        --bg-active: #d6d6d6;
+        --bg-input: #ffffff;
+        --tab-bg: #ececec;
+        --tab-active-bg: #ffffff;
+        --tab-border: #f3f3f3;
+        --text-primary: #383a42;
+        --text-secondary: #5e6670;
+        --text-disabled: #a0a0a0;
+        --text-accent: #0366d6;
+        --border-primary: #d1d5da;
+        --border-secondary: #e1e4e8;
+        --accent-color: #0366d6;
+        --accent-hover: #0350a0;
+        --color-success: #22863a;
+        --color-warning: #856900;
+        --color-error: #cb2431;
+        --state-connected: #22863a;
+        --state-connecting: #b08800;
+        --state-disconnected: #cb2431;
+        --terminal-bg: #ffffff;
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+      @keyframes th-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* ── Shared primitives the overlay composes (src/components/ui/ui.css) ── */
+      .ui-content-overlay {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: var(--spacing-md);
+        padding: var(--spacing-xl);
+        text-align: center;
+      }
+      .ui-content-overlay__heading {
+        margin: 0;
+        font-size: var(--font-size-md);
+        font-weight: var(--font-weight-semibold);
+        color: var(--text-primary);
+      }
+      .ui-content-overlay__subheading {
+        margin: 0;
+        font-size: var(--font-size-sm);
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+      .ui-content-overlay__actions {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        margin-top: var(--spacing-xs);
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .ui-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: var(--spacing-xs);
+        height: var(--control-height-md);
+        padding: 0 var(--spacing-sm);
+        font-family: var(--font-family);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-medium);
+        letter-spacing: var(--letter-spacing-ui);
+        border-radius: var(--radius-md);
+        border: 1px solid transparent;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .ui-btn__icon {
+        display: inline-flex;
+      }
+      .ui-btn__icon .li {
+        width: 14px;
+        height: 14px;
+      }
+      .ui-btn--primary {
+        background: var(--accent-color);
+        color: var(--text-on-accent);
+      }
+      .ui-btn--secondary {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border-color: var(--border-primary);
+      }
+      .ui-btn--ghost {
+        background: transparent;
+        color: var(--text-secondary);
+      }
+      .ui-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--spacing-xs);
+        padding: var(--spacing-xxs) var(--spacing-sm);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-full);
+        background-color: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: var(--font-size-xs);
+        line-height: 1.4;
+      }
+      .ui-chip__icon {
+        display: inline-flex;
+        color: var(--text-secondary);
+      }
+      .terminal-connection-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        background-color: var(--overlay-content-bg);
+        backdrop-filter: var(--overlay-blur-sm);
+        color: var(--text-primary);
+        overflow: hidden;
+      }
+      .li--20 {
+        width: 20px;
+        height: 20px;
+      }
+      .li--26 {
+        width: 26px;
+        height: 26px;
+      }
+      /* Mockup only: hold the fill at the cell's elapsed point (the app lets it run). */
+      .ui-connect-progress__ring-fill {
+        animation-play-state: paused !important;
+      }
+      .ui-connect-progress__step-dot .li {
+        width: 10px;
+        height: 10px;
+        stroke-width: 3;
+      }
+
+      /* ── Option A — the prototype's CSS, verbatim ───────────────────── */
+      /* === ConnectProgress (#5068 phase-1 prototype) ===
+   The one shared connecting surface (src/components/ui/ConnectProgress.tsx):
+   a progress ring that tracks the connect timeout, a stage stepper, a live
+   status line and one primary action, laid out by `.ui-content-overlay`.
+   Motion never depends on a JS timer: the ring fill is a CSS animation whose
+   negative delay is the elapsed time at render, and the comet orbit is a
+   compositor-only `transform` on an HTML element. Under reduced motion both
+   stop; the fill then follows `--cp-progress`, refreshed every second, and the
+   ticking time line carries the liveness signal. */
+      .ui-connect-progress {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        /* UI font for chrome; only the status line stays monospace. */
+        font-family: var(--font-family);
+        letter-spacing: var(--letter-spacing-ui);
+      }
+
+      .ui-connect-progress__ring {
+        /* Defaults; ConnectProgress overrides them inline per attempt. */
+        --cp-progress: 0;
+        --cp-duration: 0ms;
+        --cp-delay: 0ms;
+        --cp-circumference: 175.929;
+        position: relative;
+        width: 64px;
+        height: 64px;
+        flex-shrink: 0;
+        color: var(--text-secondary);
+      }
+
+      .ui-connect-progress__ring-svg {
+        width: 100%;
+        height: 100%;
+        transform: rotate(-90deg);
+        overflow: visible;
+      }
+
+      .ui-connect-progress__ring-track,
+      .ui-connect-progress__ring-fill {
+        fill: none;
+        stroke-width: 3;
+      }
+
+      .ui-connect-progress__ring-track {
+        stroke: var(--bg-active);
+      }
+
+      .ui-connect-progress__ring-fill {
+        stroke: var(--accent-color);
+        stroke-linecap: round;
+        stroke-dashoffset: calc(var(--cp-circumference) * (1 - var(--cp-progress)) * 1px);
+        animation: ui-cp-ring-fill var(--cp-duration) linear var(--cp-delay) 1 forwards;
+      }
+
+      @keyframes ui-cp-ring-fill {
+        from {
+          stroke-dashoffset: calc(var(--cp-circumference) * 1px);
+        }
+        to {
+          stroke-dashoffset: 0;
+        }
+      }
+
+      /* Unknown total (auto-retry backoff, no deadline): a fainter track, comet only. */
+      .ui-connect-progress__ring--indeterminate .ui-connect-progress__ring-track {
+        stroke: color-mix(in srgb, var(--accent-color) 22%, var(--bg-active));
+      }
+
+      /* The orbiting comet: the always-moving "alive" cue (reuses `th-spin`). */
+      .ui-connect-progress__comet {
+        position: absolute;
+        inset: 0;
+        animation: th-spin 1.6s linear infinite;
+        will-change: transform;
+      }
+
+      .ui-connect-progress__comet-dot {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: 7px;
+        height: 7px;
+        margin-left: calc(var(--spacing-xs) * -1);
+        border-radius: var(--radius-full);
+        background: var(--accent-color);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 28%, transparent);
+      }
+
+      .ui-connect-progress__ring-icon {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: var(--text-primary);
+      }
+
+      /* Resting outcome badge (failed / timed out / aborted). */
+      .ui-connect-progress__badge {
+        display: grid;
+        place-items: center;
+        width: 56px;
+        height: 56px;
+        border-radius: var(--radius-full);
+        color: var(--color-error);
+        background: var(--color-error-bg);
+      }
+
+      .ui-connect-progress[data-phase="timeout"] .ui-connect-progress__badge {
+        color: var(--color-warning);
+        background: var(--bg-warning);
+      }
+
+      .ui-connect-progress[data-phase="aborted"] .ui-connect-progress__badge {
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+      }
+
+      .ui-connect-progress__meta {
+        display: inline-flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: var(--spacing-xs);
+      }
+
+      /* Stage stepper: dots joined by a connector that fills as stages complete. */
+      .ui-connect-progress__steps {
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        max-width: 420px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .ui-connect-progress__step {
+        position: relative;
+        flex: 1 1 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--spacing-xs);
+        min-width: 0;
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+      }
+
+      .ui-connect-progress__step + .ui-connect-progress__step::before {
+        content: "";
+        position: absolute;
+        top: 7px;
+        right: 50%;
+        width: 100%;
+        height: 2px;
+        background: var(--border-primary);
+      }
+
+      .ui-connect-progress__step[data-state="done"]::before,
+      .ui-connect-progress__step[data-state="active"]::before,
+      .ui-connect-progress__step[data-state="failed"]::before {
+        background: var(--accent-color);
+      }
+
+      .ui-connect-progress__step-dot {
+        position: relative;
+        z-index: var(--z-base);
+        display: grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border-radius: var(--radius-full);
+        border: 2px solid var(--border-primary);
+        background: var(--bg-primary);
+        color: var(--text-on-accent);
+      }
+
+      .ui-connect-progress__step[data-state="done"] .ui-connect-progress__step-dot {
+        border-color: var(--accent-color);
+        background: var(--accent-color);
+      }
+
+      .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot {
+        border-color: var(--accent-color);
+        box-shadow: inset 0 0 0 3px var(--bg-primary);
+        background: var(--accent-color);
+      }
+
+      .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot::after {
+        content: "";
+        position: absolute;
+        inset: -2px;
+        border-radius: var(--radius-full);
+        border: 2px solid var(--accent-color);
+        animation: ui-cp-halo 1.4s ease-out infinite;
+      }
+
+      @keyframes ui-cp-halo {
+        from {
+          opacity: 0.7;
+          transform: scale(1);
+        }
+        to {
+          opacity: 0;
+          transform: scale(1.9);
+        }
+      }
+
+      .ui-connect-progress__step[data-state="failed"] .ui-connect-progress__step-dot {
+        border-color: var(--color-error);
+        background: var(--color-error);
+      }
+
+      .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-label {
+        color: var(--text-primary);
+        font-weight: var(--font-weight-semibold);
+      }
+
+      .ui-connect-progress__step[data-state="failed"] .ui-connect-progress__step-label {
+        color: var(--color-error);
+        font-weight: var(--font-weight-semibold);
+      }
+
+      .ui-connect-progress__step-label {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* Live status / last log line: a terminal-flavoured line with an accent rule. */
+      .ui-connect-progress__status {
+        max-width: 420px;
+        margin: 0;
+        padding: var(--spacing-xxs) 0 var(--spacing-xxs) var(--spacing-sm);
+        border-left: 2px solid var(--accent-color);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+        text-align: left;
+      }
+
+      .ui-connect-progress__status-text {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ui-connect-progress__time {
+        margin: 0;
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .ui-connect-progress__error {
+        width: 100%;
+        max-width: 460px;
+        padding: var(--spacing-sm) var(--spacing-md);
+        background: var(--bg-secondary);
+        border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-xs);
+        color: var(--color-error);
+        line-height: 1.5;
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .ui-connect-progress__ring-fill,
+        .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot::after {
+          animation: none !important;
+        }
+        .ui-connect-progress__step[data-state="active"] .ui-connect-progress__step-dot::after {
+          opacity: 0;
+        }
+      }
+
+      /* The type chip reuses the ring's glyph at chip size. */
+      .ui-connect-progress__meta .ui-chip__icon svg {
+        width: 12px;
+        height: 12px;
+      }
+
+      /* An aborted attempt is the user's choice, not an error: its stopped stage is
+   shown neutral rather than red. */
+      .ui-connect-progress[data-phase="aborted"]
+        .ui-connect-progress__step[data-state="failed"]
+        .ui-connect-progress__step-dot {
+        border-color: var(--text-secondary);
+        background: var(--text-secondary);
+      }
+
+      .ui-connect-progress[data-phase="aborted"]
+        .ui-connect-progress__step[data-state="failed"]
+        .ui-connect-progress__step-label {
+        color: var(--text-secondary);
+      }
+
+      /* ── Option B — compact card + progress bar + expandable log ─────── */
+      .cc-host {
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-family);
+      }
+      .cc {
+        width: 380px;
+        max-width: calc(100% - var(--spacing-xl));
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing-sm);
+        padding: var(--spacing-md);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+      }
+      .cc-head {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+      }
+      .cc-tile {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        flex-shrink: 0;
+        border-radius: var(--radius-md);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+      }
+      .cc[data-phase="failed"] .cc-tile {
+        background: var(--color-error-bg);
+        color: var(--color-error);
+      }
+      .cc[data-phase="timeout"] .cc-tile {
+        background: var(--bg-warning);
+        color: var(--color-warning);
+      }
+      .cc[data-phase="aborted"] .cc-tile {
+        color: var(--text-secondary);
+      }
+      .cc-tile__dot {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        width: 9px;
+        height: 9px;
+        border-radius: var(--radius-full);
+        background: var(--state-connecting);
+        border: 2px solid var(--bg-secondary);
+      }
+      .cc-titles {
+        flex: 1;
+        min-width: 0;
+      }
+      .cc-title {
+        margin: 0;
+        font-size: var(--font-size-md);
+        font-weight: var(--font-weight-semibold);
+      }
+      .cc-sub {
+        margin: 0;
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .cc-elapsed {
+        font-size: var(--font-size-sm);
+        font-variant-numeric: tabular-nums;
+        color: var(--text-secondary);
+      }
+      .cc-bar {
+        position: relative;
+        height: 4px;
+        border-radius: var(--radius-full);
+        background: var(--bg-active);
+        overflow: hidden;
+      }
+      .cc-bar__fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: var(--radius-full);
+        background: var(--accent-color);
+      }
+      .cc[data-phase="failed"] .cc-bar__fill {
+        background: var(--color-error);
+      }
+      .cc[data-phase="timeout"] .cc-bar__fill {
+        background: var(--color-warning);
+      }
+      .cc[data-phase="aborted"] .cc-bar__fill {
+        width: 100%;
+        background: var(--text-disabled);
+      }
+      .cc-bar__shimmer {
+        position: absolute;
+        inset: 0;
+        width: 30%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          color-mix(in srgb, var(--accent-color) 55%, transparent),
+          transparent
+        );
+        animation: cc-sweep 1.4s linear infinite;
+      }
+      @keyframes cc-sweep {
+        from {
+          transform: translateX(-100%);
+        }
+        to {
+          transform: translateX(340%);
+        }
+      }
+      .cc-row {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--spacing-sm);
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+      }
+      .cc-row span:first-child {
+        font-family: var(--font-mono);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cc[data-phase="failed"] .cc-row span:first-child,
+      .cc[data-phase="timeout"] .cc-row span:first-child {
+        color: var(--color-error);
+      }
+      .cc-log {
+        border-top: 1px solid var(--border-secondary);
+        padding-top: var(--spacing-xs);
+      }
+      .cc-log__toggle {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-xs);
+        width: 100%;
+        padding: var(--spacing-xxs) 0;
+        border: 0;
+        background: none;
+        color: var(--text-secondary);
+        font: inherit;
+        font-size: var(--font-size-xs);
+        cursor: pointer;
+      }
+      .cc-log__toggle .li {
+        width: 12px;
+        height: 12px;
+      }
+      .cc-log__last {
+        margin-left: auto;
+        font-family: var(--font-mono);
+        color: var(--text-disabled);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 60%;
+      }
+      .cc-log__lines {
+        margin: var(--spacing-xs) 0 0;
+        padding: var(--spacing-xs) var(--spacing-sm);
+        list-style: none;
+        border-radius: var(--radius-sm);
+        background: var(--terminal-bg);
+        font-family: var(--font-mono);
+        font-size: var(--font-size-2xs);
+        line-height: 1.6;
+        color: var(--text-secondary);
+      }
+      .cc-log__line {
+        display: flex;
+        gap: var(--spacing-sm);
+      }
+      .cc-log__ts {
+        color: var(--text-disabled);
+      }
+      .cc-log__line--ok span:last-child {
+        color: var(--color-success);
+      }
+      .cc-log__line--err span:last-child {
+        color: var(--color-error);
+      }
+      .cc-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--spacing-sm);
+      }
+
+      /* ── Mock panel frame ────────────────────────────────────────────── */
+      .shot__title {
+        margin: 18px 0 8px;
+      }
+      .shot-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .shot-cell {
+        margin: 0;
+      }
+      .cx-frame {
+        height: 400px;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--border-primary);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--terminal-bg);
+        font-family: var(--font-family);
+      }
+      .cx-frame .tab {
+        max-width: 220px;
+      }
+      .cx-frame .state-dot {
+        margin-left: 4px;
+      }
+      .cx-surface {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+      }
+      .cx-ghost {
+        height: 100%;
+        background: var(--terminal-bg);
+        color: var(--text-primary);
+      }
+      .th-light .terminal .prompt {
+        color: var(--color-success);
+      }
+
+      /* Neutralize concept.css prose rules (.concept p / li / ol) inside the mock
+         panels, then restore each overlay element's own size (as in ui.css). */
+      .concept .cx-frame p,
+      .concept .cx-frame li {
+        margin: 0;
+        line-height: 1.4;
+        color: inherit;
+      }
+      .concept .cx-frame ol {
+        margin: 0;
+        padding: 0;
+      }
+      .concept .cx-frame .ui-content-overlay__heading,
+      .concept .cx-frame .cc-title {
+        font-size: var(--font-size-md);
+        color: var(--text-primary);
+      }
+      .concept .cx-frame .ui-content-overlay__subheading {
+        font-size: var(--font-size-sm);
+      }
+      .concept .cx-frame .ui-connect-progress__step,
+      .concept .cx-frame .ui-connect-progress__status,
+      .concept .cx-frame .ui-connect-progress__time,
+      .concept .cx-frame .cc-sub {
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+      }
+      .concept .cx-frame .ui-connect-progress__step[data-state="active"] {
+        color: var(--text-primary);
+      }
+      .concept .cx-frame .ui-connect-progress__step[data-state="failed"] {
+        color: var(--color-error);
+      }
+      .concept .cx-frame .cc-log__line {
+        font-size: var(--font-size-2xs);
+        color: var(--text-secondary);
+      }
+      .concept .cx-frame .cc-log__lines {
+        margin-top: var(--spacing-xs);
+        padding: var(--spacing-xs) var(--spacing-sm);
+      }
+      .cx-frame .ui-connect-progress__error {
+        white-space: normal;
+      }
+
+      /* ── Screenshot mode: ?shot=a-dark shows only that gallery ───────── */
+      body[data-shot] .concept > :not(.shot-host) {
+        display: none;
+      }
+      body[data-shot] .shot-host .shot,
+      body[data-shot] .shot-host > :not(.shot) {
+        display: none;
+      }
+      body[data-shot="a-dark"] .shot[data-shot="a-dark"],
+      body[data-shot="a-light"] .shot[data-shot="a-light"],
+      body[data-shot="b-dark"] .shot[data-shot="b-dark"],
+      body[data-shot="b-light"] .shot[data-shot="b-light"] {
+        display: block;
+      }
+      body[data-shot] .shot-host {
+        display: block;
+      }
+      body[data-shot] .shot__title {
+        margin-top: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .ui-connect-progress__comet,
+        .cc-bar__shimmer {
+          display: none;
+        }
+      }
+    </style>
+    <script>
+      (function () {
+        var s = new URLSearchParams(location.search).get("shot");
+        if (s) document.documentElement.setAttribute("data-shot-pending", s);
+        document.addEventListener("DOMContentLoaded", function () {
+          if (s) document.body.setAttribute("data-shot", s);
+        });
+      })();
+    </script>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m7 11 2-2-2-2" />
+        <path d="M11 13h4" />
+        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      </symbol>
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-ban" viewBox="0 0 24 24">
+        <path d="M4.929 4.929 19.07 19.071" />
+        <circle cx="12" cy="12" r="10" />
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24">
+        <path
+          d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
+        />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" x2="12" y1="8" y2="12" />
+        <line x1="12" x2="12.01" y1="16" y2="16" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <path d="M12 6v6l4 2" />
+        <circle cx="12" cy="12" r="10" />
+      </symbol>
+      <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+      <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+    </svg>
+
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Connecting Overlay — one shared, live connect surface</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented · Option A approved by the maintainer</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/5068">#5068</a></span
+          >
+          <span><code>docs/concepts/implemented/connecting-overlay.html</code></span>
+        </div>
+      </header>
+
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#today">Today: inventory &amp; why the spinner looks frozen</a></li>
+          <li><a href="#ui">UI Interface — Option A vs Option B</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Opening a connection today shows a lone spinner over the terminal with
+          <em>“Connecting… · Elapsed 4s · times out in 86s · Abort / Cancel”</em>. The maintainer’s
+          hands-on verdict: the spinner looks stuck, and the surface looks ugly. Every connection
+          type (local, SSH, telnet, serial, Docker, WSL, agent, RDP/VNC) also gets a slightly
+          different variant of it.
+        </p>
+        <p>
+          This concept replaces all of them with <strong>one shared connect surface</strong> that
+          shows <em>what</em> is happening (target, type, stage, last status line),
+          <em>how long</em> it may still take (a timeout-tracking ring or bar), and offers one
+          obvious primary action.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            One component for every connection type, composed from <code>src/components/ui</code>,
+            tokens only.
+          </li>
+          <li>
+            Visible stages where known (resolve → connect → authenticate → session); a live status
+            line.
+          </li>
+          <li>Elapsed / timeout as a progress ring or bar, not as prose.</li>
+          <li>
+            Motion that can never look frozen, and a reduced-motion mode that still reads as
+            “alive”.
+          </li>
+          <li>
+            Abort as the primary action; clear Abort / Close semantics (no two buttons that look
+            alike).
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Changing connect timeouts, retry budgets, or auth flows (host-key / password prompts
+            keep their dialogs).
+          </li>
+          <li>
+            The agent <em>deploy</em> wizard (AgentSetupDialog) — it can reuse the stepper later.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 id="today">
+          Today: inventory &amp; why the spinner looks frozen <a class="anchor" href="#today">#</a>
+        </h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Surface</th>
+                <th>Where</th>
+                <th>States it can show</th>
+                <th>Stage info the backend reports</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Terminal connect overlay (local, SSH, telnet, serial, Docker, WSL, agent-hosted
+                  shells)
+                </td>
+                <td><code>src/components/Terminal/TerminalConnectionOverlay.tsx</code></td>
+                <td>
+                  restoring session · waiting for agent (Retry now / Abort / Cancel, “Times out in
+                  Ns”) · auto-retrying “attempt N” (Retry now / Abort / Cancel) · connecting (Abort
+                  / Cancel, elapsed + countdown, slow hint after 20s) · failed (Retry / Cancel +
+                  contextual hint + copyable fix command)
+                </td>
+                <td>
+                  <strong>None.</strong> A boolean <code>connecting</code> from the
+                  session-lifecycle region, a client-side deadline
+                  (<code>terminalConnectDeadline</code>, 90s connect / agent wait), and the
+                  auto-retry count. Host-key, password and keyboard-interactive prompts interrupt as
+                  dialogs.
+                </td>
+              </tr>
+              <tr>
+                <td>Remote desktop (RDP / VNC)</td>
+                <td><code>src/components/RemoteDesktop/RemoteDesktopOverlay.tsx</code></td>
+                <td>
+                  connecting / authenticating (Cancel) · reconnecting “attempt n of N” (Cancel) ·
+                  auth failed / connect failed / connection lost / server closed (Reconnect)
+                </td>
+                <td>
+                  <code>GraphicalState</code>: <code>connecting</code> →
+                  <code>authenticating</code> → <code>active</code>, plus reconnect attempts. No
+                  elapsed / timeout shown.
+                </td>
+              </tr>
+              <tr>
+                <td>File-browser tab (SFTP)</td>
+                <td><code>src/components/Terminal/FileBrowserTab.tsx</code></td>
+                <td>connecting (spinner, no actions) · error</td>
+                <td>None.</td>
+              </tr>
+              <tr>
+                <td>RDP cross-window placeholder</td>
+                <td><code>RemoteDesktopTab.tsx</code></td>
+                <td>“Reconnecting view…”</td>
+                <td>None.</td>
+              </tr>
+              <tr>
+                <td>Jump-host path probe</td>
+                <td><code>src/components/Sidebar/ConnectionPathDialog.tsx</code></td>
+                <td>per hop: connecting → connected / failed</td>
+                <td>
+                  <strong>Yes</strong>: per-node probe events. This is the model to reuse for SSH
+                  stages.
+                </td>
+              </tr>
+              <tr>
+                <td>Tab strip / status bar</td>
+                <td><code>Tab.tsx</code>, <code>StatusBar.tsx</code></td>
+                <td>spinning dot / “Connecting…”</td>
+                <td>Mirrors the session state only.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Why the spinner reads as frozen</h3>
+        <ol>
+          <li>
+            <strong>It is a lone, featureless glyph.</strong> A 32px <code>Loader2</code> arc,
+            uniform stroke, spinning at 1 rev/s, over a blurred terminal. Nothing else on screen
+            moves except one number that changes once per second, so there is nothing to confirm
+            progress.
+          </li>
+          <li>
+            <strong>Under reduced motion it is frozen by design.</strong> The shared spinner carries
+            <code>.motion-essential-spinner</code>, which renders it static under
+            <code>prefers-reduced-motion</code> (#4039). The only liveness cue left is the
+            once-per-second text. (The maintainer’s Mac has Reduce Motion <em>off</em>, so this is
+            not the observed case, but it is the same surface.)
+          </li>
+          <li>
+            <strong>The rotation can stall with the main thread.</strong> The spin is CSS
+            (<code>th-spin</code>), not JS, but it rotates an inline <code>&lt;svg&gt;</code> inside
+            a <code>backdrop-filter</code> layer laid over the xterm canvas. WebKit does not
+            reliably composite that, so the spin runs on the main thread, and a connect burst (IPC,
+            store fan-out, xterm writes) makes it stutter or pause. The elapsed text comes from a 1s
+            <code>setInterval</code>, which WKWebView throttles when the window is occluded or in
+            the background.
+          </li>
+        </ol>
+        <p>
+          <strong>Fix built into both options:</strong> liveness comes from a compositor-only
+          <code>transform</code> on an HTML element (the comet / the shimmer), and the timeout fill
+          is a CSS animation started with a negative delay equal to the elapsed time, so it advances
+          on the animation clock and never waits on a JS timer. Under reduced motion both stop; the
+          fill steps once per second instead, and a status line that changes with each stage carries
+          the progress signal. The visual lane checks the ring's animations run
+          (<code>tests/visual/connectOverlay.spec.ts</code>); an on-device glance on macOS is the
+          remaining manual check for the WebKit stall (item 3).
+        </p>
+      </section>
+
+      <section class="shot-host">
+        <h2 id="ui">UI Interface — Option A vs Option B <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          Both options are shown for three connection types (Telnet, SSH through a jump host, an
+          agent-hosted shell waiting for its agent) and for the three resting outcomes (failed,
+          timed out, aborted), in Dark and in Light. A frozen screenshot cannot show the motion;
+          open this file in a browser to see it.
+        </p>
+
+        <div class="mockup-section">
+          <h3>
+            Option A — stage stepper + progress ring + live status line (approved, implemented)
+          </h3>
+          <div class="mockup-note">
+            Centred over the terminal. The ring fills toward the timeout, and a comet orbits it so
+            the surface is visibly alive. The type glyph sits in the centre. Below: target, type
+            chips, the stage stepper (the active stage pulses), the latest status / log line, and
+            “elapsed · times out in”. One action while busy (<strong>Abort</strong>); Retry / Close
+            tab when resting. Implemented as <code>src/components/ui/ConnectProgress.tsx</code>; its
+            styles are the ones this page uses.
+          </div>
+        </div>
+        <div class="shot" data-shot="a-dark">
+          <h4 class="shot__title">Option A · Dark</h4>
+          <div class="shot-grid">
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · connecting</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="connecting">
+                      <div class="ui-content-overlay">
+                        <div
+                          class="ui-connect-progress__ring"
+                          style="--cp-progress: 0.0444; --cp-duration: 90000ms; --cp-delay: -3996ms"
+                        >
+                          <svg viewBox="0 0 64 64" class="ui-connect-progress__ring-svg">
+                            <circle
+                              class="ui-connect-progress__ring-track"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                            />
+                            <circle
+                              class="ui-connect-progress__ring-fill"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                              stroke-dasharray="175.929"
+                            /></svg
+                          ><span class="ui-connect-progress__comet" style="transform: rotate(70deg)"
+                            ><span class="ui-connect-progress__comet-dot"></span></span
+                          ><span class="ui-connect-progress__ring-icon"
+                            ><svg class="li li--20"><use href="#i-terminal" /></svg
+                          ></span>
+                        </div>
+                        <p class="ui-content-overlay__heading">Connecting to 192.168.0.42</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">Telnet</span></span
+                            ><span class="ui-chip">port 23</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="active">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Session</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >TCP handshake with 192.168.0.42:23…</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">4s elapsed · times out in 86s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-ban" /></svg></span
+                            >Abort
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH via jump host · authenticating</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="connecting">
+                      <div class="ui-content-overlay">
+                        <div
+                          class="ui-connect-progress__ring"
+                          style="
+                            --cp-progress: 0.4222;
+                            --cp-duration: 90000ms;
+                            --cp-delay: -37998ms;
+                          "
+                        >
+                          <svg viewBox="0 0 64 64" class="ui-connect-progress__ring-svg">
+                            <circle
+                              class="ui-connect-progress__ring-track"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                            />
+                            <circle
+                              class="ui-connect-progress__ring-fill"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                              stroke-dasharray="175.929"
+                            /></svg
+                          ><span
+                            class="ui-connect-progress__comet"
+                            style="transform: rotate(200deg)"
+                            ><span class="ui-connect-progress__comet-dot"></span></span
+                          ><span class="ui-connect-progress__ring-icon"
+                            ><svg class="li li--20"><use href="#i-terminal" /></svg
+                          ></span>
+                        </div>
+                        <p class="ui-content-overlay__heading">Connecting to prod-db</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">SSH</span></span
+                            ><span class="ui-chip">via bastion</span
+                            ><span class="ui-chip">admin</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Host key</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="active">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Authenticate</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Shell</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >Trying public key ~/.ssh/id_ed25519…</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">38s elapsed · times out in 52s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-ban" /></svg></span
+                            >Abort
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · waiting for agent</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="connecting">
+                      <div class="ui-content-overlay">
+                        <div
+                          class="ui-connect-progress__ring"
+                          style="--cp-progress: 0.2; --cp-duration: 90000ms; --cp-delay: -18000ms"
+                        >
+                          <svg viewBox="0 0 64 64" class="ui-connect-progress__ring-svg">
+                            <circle
+                              class="ui-connect-progress__ring-track"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                            />
+                            <circle
+                              class="ui-connect-progress__ring-fill"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                              stroke-dasharray="175.929"
+                            /></svg
+                          ><span
+                            class="ui-connect-progress__comet"
+                            style="transform: rotate(310deg)"
+                            ><span class="ui-connect-progress__comet-dot"></span></span
+                          ><span class="ui-connect-progress__ring-icon"
+                            ><svg class="li li--20"><use href="#i-network" /></svg
+                          ></span>
+                        </div>
+                        <p class="ui-content-overlay__heading">Connecting to build-01</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-network" /></svg></span
+                              ><span class="ui-chip__label">Agent</span></span
+                            ><span class="ui-chip">bash</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="active">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Agent</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Start session</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >Waiting for the agent transport to come up…</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">12s elapsed · times out in 48s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-zap" /></svg></span
+                            >Retry now</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-ban" /></svg></span
+                            >Abort
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH · failed</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="failed">
+                      <div class="ui-content-overlay">
+                        <span class="ui-connect-progress__badge"
+                          ><svg class="li li--26"><use href="#i-alert" /></svg
+                        ></span>
+                        <p class="ui-content-overlay__heading">Connection failed</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">SSH</span></span
+                            ><span class="ui-chip">prod-db</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Host key</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="failed">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Authenticate</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Shell</span>
+                          </li>
+                        </ol>
+                        <div class="ui-connect-progress__error">
+                          Permission denied (publickey,password).
+                        </div>
+                        <p class="ui-connect-progress__time">Failed after 6s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--primary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-refresh" /></svg></span
+                            >Retry</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            >Close tab
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · timed out</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="timeout">
+                      <div class="ui-content-overlay">
+                        <span class="ui-connect-progress__badge"
+                          ><svg class="li li--26"><use href="#i-clock" /></svg
+                        ></span>
+                        <p class="ui-content-overlay__heading">Timed out</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">Telnet</span></span
+                            ><span class="ui-chip">192.168.0.42</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="failed">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Session</span>
+                          </li>
+                        </ol>
+                        <div class="ui-connect-progress__error">
+                          No response from 192.168.0.42:23 — the host may be offline or filtered.
+                        </div>
+                        <p class="ui-connect-progress__time">Gave up after 1m 30s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--primary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-refresh" /></svg></span
+                            >Retry</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            >Close tab
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · aborted</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="aborted">
+                      <div class="ui-content-overlay">
+                        <span class="ui-connect-progress__badge"
+                          ><svg class="li li--26"><use href="#i-ban" /></svg
+                        ></span>
+                        <p class="ui-content-overlay__heading">Connection aborted</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-network" /></svg></span
+                              ><span class="ui-chip__label">Agent</span></span
+                            ><span class="ui-chip">build-01</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="failed">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Agent</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Start session</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >You aborted the connect. The tab stays open.</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">Stopped after 12s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--primary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-refresh" /></svg></span
+                            >Retry</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            >Close tab
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+          </div>
+        </div>
+        <div class="shot" data-shot="a-light">
+          <h4 class="shot__title">Option A · Light</h4>
+          <div class="shot-grid">
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · connecting</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="connecting">
+                      <div class="ui-content-overlay">
+                        <div
+                          class="ui-connect-progress__ring"
+                          style="--cp-progress: 0.0444; --cp-duration: 90000ms; --cp-delay: -3996ms"
+                        >
+                          <svg viewBox="0 0 64 64" class="ui-connect-progress__ring-svg">
+                            <circle
+                              class="ui-connect-progress__ring-track"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                            />
+                            <circle
+                              class="ui-connect-progress__ring-fill"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                              stroke-dasharray="175.929"
+                            /></svg
+                          ><span class="ui-connect-progress__comet" style="transform: rotate(70deg)"
+                            ><span class="ui-connect-progress__comet-dot"></span></span
+                          ><span class="ui-connect-progress__ring-icon"
+                            ><svg class="li li--20"><use href="#i-terminal" /></svg
+                          ></span>
+                        </div>
+                        <p class="ui-content-overlay__heading">Connecting to 192.168.0.42</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">Telnet</span></span
+                            ><span class="ui-chip">port 23</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="active">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Session</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >TCP handshake with 192.168.0.42:23…</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">4s elapsed · times out in 86s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-ban" /></svg></span
+                            >Abort
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH via jump host · authenticating</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="connecting">
+                      <div class="ui-content-overlay">
+                        <div
+                          class="ui-connect-progress__ring"
+                          style="
+                            --cp-progress: 0.4222;
+                            --cp-duration: 90000ms;
+                            --cp-delay: -37998ms;
+                          "
+                        >
+                          <svg viewBox="0 0 64 64" class="ui-connect-progress__ring-svg">
+                            <circle
+                              class="ui-connect-progress__ring-track"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                            />
+                            <circle
+                              class="ui-connect-progress__ring-fill"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                              stroke-dasharray="175.929"
+                            /></svg
+                          ><span
+                            class="ui-connect-progress__comet"
+                            style="transform: rotate(200deg)"
+                            ><span class="ui-connect-progress__comet-dot"></span></span
+                          ><span class="ui-connect-progress__ring-icon"
+                            ><svg class="li li--20"><use href="#i-terminal" /></svg
+                          ></span>
+                        </div>
+                        <p class="ui-content-overlay__heading">Connecting to prod-db</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">SSH</span></span
+                            ><span class="ui-chip">via bastion</span
+                            ><span class="ui-chip">admin</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Host key</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="active">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Authenticate</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Shell</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >Trying public key ~/.ssh/id_ed25519…</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">38s elapsed · times out in 52s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-ban" /></svg></span
+                            >Abort
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · waiting for agent</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="connecting">
+                      <div class="ui-content-overlay">
+                        <div
+                          class="ui-connect-progress__ring"
+                          style="--cp-progress: 0.2; --cp-duration: 90000ms; --cp-delay: -18000ms"
+                        >
+                          <svg viewBox="0 0 64 64" class="ui-connect-progress__ring-svg">
+                            <circle
+                              class="ui-connect-progress__ring-track"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                            />
+                            <circle
+                              class="ui-connect-progress__ring-fill"
+                              cx="32"
+                              cy="32"
+                              r="28"
+                              stroke-dasharray="175.929"
+                            /></svg
+                          ><span
+                            class="ui-connect-progress__comet"
+                            style="transform: rotate(310deg)"
+                            ><span class="ui-connect-progress__comet-dot"></span></span
+                          ><span class="ui-connect-progress__ring-icon"
+                            ><svg class="li li--20"><use href="#i-network" /></svg
+                          ></span>
+                        </div>
+                        <p class="ui-content-overlay__heading">Connecting to build-01</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-network" /></svg></span
+                              ><span class="ui-chip__label">Agent</span></span
+                            ><span class="ui-chip">bash</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="active">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Agent</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Start session</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >Waiting for the agent transport to come up…</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">12s elapsed · times out in 48s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-zap" /></svg></span
+                            >Retry now</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--secondary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-ban" /></svg></span
+                            >Abort
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH · failed</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="failed">
+                      <div class="ui-content-overlay">
+                        <span class="ui-connect-progress__badge"
+                          ><svg class="li li--26"><use href="#i-alert" /></svg
+                        ></span>
+                        <p class="ui-content-overlay__heading">Connection failed</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">SSH</span></span
+                            ><span class="ui-chip">prod-db</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Host key</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="failed">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Authenticate</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Shell</span>
+                          </li>
+                        </ol>
+                        <div class="ui-connect-progress__error">
+                          Permission denied (publickey,password).
+                        </div>
+                        <p class="ui-connect-progress__time">Failed after 6s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--primary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-refresh" /></svg></span
+                            >Retry</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            >Close tab
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · timed out</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="timeout">
+                      <div class="ui-content-overlay">
+                        <span class="ui-connect-progress__badge"
+                          ><svg class="li li--26"><use href="#i-clock" /></svg
+                        ></span>
+                        <p class="ui-content-overlay__heading">Timed out</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-terminal" /></svg></span
+                              ><span class="ui-chip__label">Telnet</span></span
+                            ><span class="ui-chip">192.168.0.42</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="done">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-check" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Resolve</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="failed">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Connect</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Session</span>
+                          </li>
+                        </ol>
+                        <div class="ui-connect-progress__error">
+                          No response from 192.168.0.42:23 — the host may be offline or filtered.
+                        </div>
+                        <p class="ui-connect-progress__time">Gave up after 1m 30s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--primary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-refresh" /></svg></span
+                            >Retry</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            >Close tab
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · aborted</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay">
+                    <div class="ui-connect-progress" data-phase="aborted">
+                      <div class="ui-content-overlay">
+                        <span class="ui-connect-progress__badge"
+                          ><svg class="li li--26"><use href="#i-ban" /></svg
+                        ></span>
+                        <p class="ui-content-overlay__heading">Connection aborted</p>
+                        <p class="ui-content-overlay__subheading">
+                          <span class="ui-connect-progress__meta"
+                            ><span class="ui-chip"
+                              ><span class="ui-chip__icon"
+                                ><svg class="li"><use href="#i-network" /></svg></span
+                              ><span class="ui-chip__label">Agent</span></span
+                            ><span class="ui-chip">build-01</span></span
+                          >
+                        </p>
+                        <ol class="ui-connect-progress__steps">
+                          <li class="ui-connect-progress__step" data-state="failed">
+                            <span class="ui-connect-progress__step-dot"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            ><span class="ui-connect-progress__step-label">Agent</span>
+                          </li>
+                          <li class="ui-connect-progress__step" data-state="pending">
+                            <span class="ui-connect-progress__step-dot"></span
+                            ><span class="ui-connect-progress__step-label">Start session</span>
+                          </li>
+                        </ol>
+                        <p class="ui-connect-progress__status">
+                          <span class="ui-connect-progress__status-text"
+                            >You aborted the connect. The tab stays open.</span
+                          >
+                        </p>
+                        <p class="ui-connect-progress__time">Stopped after 12s</p>
+                        <div class="ui-content-overlay__actions">
+                          <button class="ui-btn ui-btn--sm ui-btn--primary">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-refresh" /></svg></span
+                            >Retry</button
+                          ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                            <span class="ui-btn__icon"
+                              ><svg class="li"><use href="#i-x" /></svg></span
+                            >Close tab
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+          </div>
+        </div>
+
+        <div class="mockup-section" style="margin-top: 28px">
+          <h3>Option B — compact card + progress bar + expandable log (not chosen)</h3>
+          <div class="mockup-note">
+            A small floating card (like a toast, centred). The header has the type tile with a
+            “connecting” dot, a title, a sub-line (“step 2 of 3 — Connect”) and the elapsed time.
+            Below it: a thin timeout bar with a moving shimmer, the current status, and a
+            <strong>Show details</strong> disclosure that expands into a timestamped connect log.
+            Denser and more “tool-like”; the stages are text, not a graphic.
+          </div>
+        </div>
+        <div class="shot" data-shot="b-dark">
+          <h4 class="shot__title">Option B · Dark</h4>
+          <div class="shot-grid">
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · connecting</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="connecting">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-terminal" /></svg
+                          ><span class="cc-tile__dot"></span
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connecting to 192.168.0.42</p>
+                          <p class="cc-sub">Telnet · port 23 · step 2 of 3 — Connect</p>
+                        </div>
+                        <span class="cc-elapsed">4s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 4.4%"></span
+                        ><span class="cc-bar__shimmer"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>TCP handshake with 192.168.0.42:23…</span
+                        ><span>times out in 86s</span>
+                      </div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >TCP connect to :23…</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-ban" /></svg></span
+                          >Abort
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH via jump host · authenticating</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="connecting">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-terminal" /></svg
+                          ><span class="cc-tile__dot"></span
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connecting to prod-db</p>
+                          <p class="cc-sub">SSH · via bastion · step 4 of 5 — Authenticate</p>
+                        </div>
+                        <span class="cc-elapsed">38s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 42%"></span
+                        ><span class="cc-bar__shimmer"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>Trying public key ~/.ssh/id_ed25519…</span
+                        ><span>times out in 52s</span>
+                      </div>
+                      <div class="cc-log cc-log--open">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-down" /></svg>Hide details<span
+                            class="cc-log__last"
+                          ></span>
+                        </button>
+                        <ol class="cc-log__lines">
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:01</span
+                            ><span>bastion: connected, host key verified</span>
+                          </li>
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:02</span
+                            ><span>prod-db: TCP via bastion connected</span>
+                          </li>
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:02</span
+                            ><span>prod-db: host key ED25519 verified</span>
+                          </li>
+                          <li class="cc-log__line">
+                            <span class="cc-log__ts">12:04:03</span
+                            ><span>Trying public key ~/.ssh/id_ed25519…</span>
+                          </li>
+                        </ol>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-ban" /></svg></span
+                          >Abort
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · waiting for agent</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="connecting">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-network" /></svg
+                          ><span class="cc-tile__dot"></span
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connecting to build-01</p>
+                          <p class="cc-sub">Agent · bash · waiting for agent</p>
+                        </div>
+                        <span class="cc-elapsed">12s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 20%"></span
+                        ><span class="cc-bar__shimmer"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>Waiting for the agent transport…</span><span>times out in 48s</span>
+                      </div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >Agent build-01 offline — waiting</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-zap" /></svg></span
+                          >Retry now</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-ban" /></svg></span
+                          >Abort
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH · failed</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="failed">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-alert" /></svg
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connection failed</p>
+                          <p class="cc-sub">SSH · prod-db · at Authenticate</p>
+                        </div>
+                        <span class="cc-elapsed">6s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 100%"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>Permission denied (publickey,password).</span><span></span>
+                      </div>
+                      <div class="cc-log cc-log--open">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-down" /></svg>Hide details<span
+                            class="cc-log__last"
+                          ></span>
+                        </button>
+                        <ol class="cc-log__lines">
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:02</span
+                            ><span>prod-db: host key ED25519 verified</span>
+                          </li>
+                          <li class="cc-log__line">
+                            <span class="cc-log__ts">12:04:03</span
+                            ><span>publickey ~/.ssh/id_ed25519 rejected</span>
+                          </li>
+                          <li class="cc-log__line cc-log__line--err">
+                            <span class="cc-log__ts">12:04:07</span
+                            ><span>Permission denied (publickey,password).</span>
+                          </li>
+                        </ol>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--primary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-refresh" /></svg></span
+                          >Retry</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-x" /></svg></span
+                          >Close tab
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · timed out</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="timeout">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-clock" /></svg
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Timed out</p>
+                          <p class="cc-sub">Telnet · 192.168.0.42 · at Connect</p>
+                        </div>
+                        <span class="cc-elapsed">1m 30s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 100%"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>No response from 192.168.0.42:23</span><span></span>
+                      </div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >No response from 192.168.0.42:23</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--primary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-refresh" /></svg></span
+                          >Retry</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-x" /></svg></span
+                          >Close tab
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · aborted</figcaption>
+              <div class="cx-frame th-dark">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="aborted">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-ban" /></svg
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connection aborted</p>
+                          <p class="cc-sub">Agent · build-01 · the tab stays open</p>
+                        </div>
+                        <span class="cc-elapsed">12s</span>
+                      </div>
+                      <div class="cc-bar cc-bar--indeterminate">
+                        <span class="cc-bar__fill"></span>
+                      </div>
+                      <div class="cc-row"><span>You aborted the connect.</span><span></span></div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >Aborted by you</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--primary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-refresh" /></svg></span
+                          >Retry</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-x" /></svg></span
+                          >Close tab
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+          </div>
+        </div>
+        <div class="shot" data-shot="b-light">
+          <h4 class="shot__title">Option B · Light</h4>
+          <div class="shot-grid">
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · connecting</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="connecting">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-terminal" /></svg
+                          ><span class="cc-tile__dot"></span
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connecting to 192.168.0.42</p>
+                          <p class="cc-sub">Telnet · port 23 · step 2 of 3 — Connect</p>
+                        </div>
+                        <span class="cc-elapsed">4s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 4.4%"></span
+                        ><span class="cc-bar__shimmer"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>TCP handshake with 192.168.0.42:23…</span
+                        ><span>times out in 86s</span>
+                      </div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >TCP connect to :23…</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-ban" /></svg></span
+                          >Abort
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH via jump host · authenticating</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="connecting">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-terminal" /></svg
+                          ><span class="cc-tile__dot"></span
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connecting to prod-db</p>
+                          <p class="cc-sub">SSH · via bastion · step 4 of 5 — Authenticate</p>
+                        </div>
+                        <span class="cc-elapsed">38s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 42%"></span
+                        ><span class="cc-bar__shimmer"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>Trying public key ~/.ssh/id_ed25519…</span
+                        ><span>times out in 52s</span>
+                      </div>
+                      <div class="cc-log cc-log--open">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-down" /></svg>Hide details<span
+                            class="cc-log__last"
+                          ></span>
+                        </button>
+                        <ol class="cc-log__lines">
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:01</span
+                            ><span>bastion: connected, host key verified</span>
+                          </li>
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:02</span
+                            ><span>prod-db: TCP via bastion connected</span>
+                          </li>
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:02</span
+                            ><span>prod-db: host key ED25519 verified</span>
+                          </li>
+                          <li class="cc-log__line">
+                            <span class="cc-log__ts">12:04:03</span
+                            ><span>Trying public key ~/.ssh/id_ed25519…</span>
+                          </li>
+                        </ol>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-ban" /></svg></span
+                          >Abort
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · waiting for agent</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--connecting"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="connecting">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-network" /></svg
+                          ><span class="cc-tile__dot"></span
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connecting to build-01</p>
+                          <p class="cc-sub">Agent · bash · waiting for agent</p>
+                        </div>
+                        <span class="cc-elapsed">12s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 20%"></span
+                        ><span class="cc-bar__shimmer"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>Waiting for the agent transport…</span><span>times out in 48s</span>
+                      </div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >Agent build-01 offline — waiting</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-zap" /></svg></span
+                          >Retry now</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--secondary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-ban" /></svg></span
+                          >Abort
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">SSH · failed</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">prod-db</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="failed">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-alert" /></svg
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connection failed</p>
+                          <p class="cc-sub">SSH · prod-db · at Authenticate</p>
+                        </div>
+                        <span class="cc-elapsed">6s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 100%"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>Permission denied (publickey,password).</span><span></span>
+                      </div>
+                      <div class="cc-log cc-log--open">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-down" /></svg>Hide details<span
+                            class="cc-log__last"
+                          ></span>
+                        </button>
+                        <ol class="cc-log__lines">
+                          <li class="cc-log__line cc-log__line--ok">
+                            <span class="cc-log__ts">12:04:02</span
+                            ><span>prod-db: host key ED25519 verified</span>
+                          </li>
+                          <li class="cc-log__line">
+                            <span class="cc-log__ts">12:04:03</span
+                            ><span>publickey ~/.ssh/id_ed25519 rejected</span>
+                          </li>
+                          <li class="cc-log__line cc-log__line--err">
+                            <span class="cc-log__ts">12:04:07</span
+                            ><span>Permission denied (publickey,password).</span>
+                          </li>
+                        </ol>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--primary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-refresh" /></svg></span
+                          >Retry</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-x" /></svg></span
+                          >Close tab
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Telnet · timed out</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">192.168.0.42</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="timeout">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-clock" /></svg
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Timed out</p>
+                          <p class="cc-sub">Telnet · 192.168.0.42 · at Connect</p>
+                        </div>
+                        <span class="cc-elapsed">1m 30s</span>
+                      </div>
+                      <div class="cc-bar">
+                        <span class="cc-bar__fill" style="width: 100%"></span>
+                      </div>
+                      <div class="cc-row">
+                        <span>No response from 192.168.0.42:23</span><span></span>
+                      </div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >No response from 192.168.0.42:23</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--primary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-refresh" /></svg></span
+                          >Retry</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-x" /></svg></span
+                          >Close tab
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+            <figure class="shot-cell">
+              <figcaption class="state-label">Agent session · aborted</figcaption>
+              <div class="cx-frame th-light">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg
+                    ><span class="tab__title">build-01 shell</span
+                    ><span class="state-dot state-dot--disconnected"></span>
+                  </div>
+                </div>
+                <div class="cx-surface">
+                  <div class="terminal cx-ghost">
+                    <span class="prompt">$</span> ssh-keygen -lf ~/.ssh/known_hosts
+                    <span class="prompt">$</span> make deploy ENV=staging …
+                  </div>
+                  <div class="terminal-connection-overlay cc-host">
+                    <div class="cc" data-phase="aborted">
+                      <div class="cc-head">
+                        <span class="cc-tile"
+                          ><svg class="li"><use href="#i-ban" /></svg
+                        ></span>
+                        <div class="cc-titles">
+                          <p class="cc-title">Connection aborted</p>
+                          <p class="cc-sub">Agent · build-01 · the tab stays open</p>
+                        </div>
+                        <span class="cc-elapsed">12s</span>
+                      </div>
+                      <div class="cc-bar cc-bar--indeterminate">
+                        <span class="cc-bar__fill"></span>
+                      </div>
+                      <div class="cc-row"><span>You aborted the connect.</span><span></span></div>
+                      <div class="cc-log">
+                        <button class="cc-log__toggle">
+                          <svg class="li"><use href="#i-chev-right" /></svg>Show details<span
+                            class="cc-log__last"
+                            >Aborted by you</span
+                          >
+                        </button>
+                      </div>
+                      <div class="cc-actions">
+                        <button class="ui-btn ui-btn--sm ui-btn--primary">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-refresh" /></svg></span
+                          >Retry</button
+                        ><button class="ui-btn ui-btn--sm ui-btn--ghost">
+                          <span class="ui-btn__icon"
+                            ><svg class="li"><use href="#i-x" /></svg></span
+                          >Close tab
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 28px">Comparison</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>A — stepper + ring</th>
+                <th>B — card + bar + log</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Feels alive / interactive</td>
+                <td>Strong: ring, comet, pulsing active stage, stage ticks as it advances</td>
+                <td>Medium: shimmer bar, text changes</td>
+              </tr>
+              <tr>
+                <td>Where it is stuck, at a glance</td>
+                <td>Strong: the failed stage is marked in the stepper</td>
+                <td>Medium: text (“at Authenticate”), the log has detail</td>
+              </tr>
+              <tr>
+                <td>Diagnostics</td>
+                <td>Latest line only (a log disclosure can be added later)</td>
+                <td>Strong: timestamped log in place</td>
+              </tr>
+              <tr>
+                <td>Works with no stage info (local, Docker, SFTP today)</td>
+                <td>Good: the stepper is omitted; ring + status line remain</td>
+                <td>Good</td>
+              </tr>
+              <tr>
+                <td>Fits small split panes</td>
+                <td>Good down to ~300×260 (stepper labels ellipsize)</td>
+                <td>Good (fixed 380px card, shrinks)</td>
+              </tr>
+              <tr>
+                <td>Consistency with today’s overlays</td>
+                <td>
+                  Same centred <code>ContentOverlay</code> column, so every surface migrates 1:1
+                </td>
+                <td>New floating-card pattern</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <h3>Actions: one meaning per button</h3>
+        <ul>
+          <li>
+            <strong>Abort</strong> (busy, primary): stop the connect and land on the
+            <em>aborted</em> resting state. The tab stays open. Today’s separate
+            <strong>Cancel</strong> (= close the tab) is dropped from the busy state, because the
+            tab’s own × already closes it and two adjacent buttons with different meanings were the
+            confusion.
+          </li>
+          <li><strong>Retry now</strong> (waiting for agent / backing off): skip the wait.</li>
+          <li>
+            <strong>Retry</strong> (resting, primary, auto-focused on the active tab) and
+            <strong>Close tab</strong> (ghost).
+          </li>
+        </ul>
+        <h3>Stages per connection type</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Stages shown</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>SSH (+ jump hosts)</td>
+                <td>
+                  Resolve · Connect · Host key · Authenticate · Shell (a jump host adds “via
+                  bastion”; its own hops reuse the path-probe events)
+                </td>
+                <td><code>connect-progress</code> event</td>
+              </tr>
+              <tr>
+                <td>Telnet</td>
+                <td>Resolve · Connect · Session</td>
+                <td><code>connect-progress</code> event</td>
+              </tr>
+              <tr>
+                <td>Serial</td>
+                <td>Open port · Session</td>
+                <td><code>connect-progress</code> event</td>
+              </tr>
+              <tr>
+                <td>Agent-hosted session</td>
+                <td>
+                  Agent · Start session (the inner connect runs on the agent and reports no stages)
+                </td>
+                <td>existing <code>terminalWaitingForAgent</code> + the connect in flight</td>
+              </tr>
+              <tr>
+                <td>RDP / VNC</td>
+                <td>
+                  Connect · Authenticate · Desktop; the ring has no timeout fill (the graphical
+                  connect timeout lives in the backend), the comet still orbits
+                </td>
+                <td>existing <code>GraphicalState</code></td>
+              </tr>
+              <tr>
+                <td>Local / WSL / Docker / SFTP / plugin types</td>
+                <td>one step, “Start session” (usually under 250 ms, so not shown — see below)</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Timing rules</h3>
+        <ul>
+          <li>
+            Show the surface only after <strong>250 ms</strong>, so instant local spawns never flash
+            it.
+          </li>
+          <li>
+            After 20 s a hint below the status line says “Taking longer than usual — the host may be
+            slow to respond or unreachable” (today’s hint, kept).
+          </li>
+          <li>
+            Retrying: the ring has no fill (the total is unknown); the time line reads “Attempt 2 of
+            5 · next try in 3s”, or “Attempt 2 · 4s elapsed” when the next try is not scheduled.
+            Restoring a persistent session uses the same surface with the heading “Restoring
+            session…” and no stepper.
+          </li>
+          <li>
+            The failure body keeps today’s contextual hint and copyable fix command
+            (<code>connectionErrorHint</code>).
+          </li>
+        </ul>
+        <h3>Accessibility &amp; motion</h3>
+        <ul>
+          <li>
+            The surface composes <code>ContentOverlay</code>: <code>aria-busy</code>, a polite live
+            region for busy states, assertive for failures, focus to the primary action on the
+            active tab.
+          </li>
+          <li>The stepper is an <code>&lt;ol&gt;</code> with <code>aria-current="step"</code>.</li>
+          <li>
+            Reduced motion: no comet, no pulse, no shimmer. The fill steps once per second, and the
+            status line and stepper carry progress.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+        <div class="diagram">
+          <span class="diagram__caption">Connect-surface phases</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Connecting: open tab (shown after 250 ms)
+    Connecting --> Connecting: stage advanced / status line
+    Connecting --> [*]: session ready
+    Connecting --> Failed: backend error
+    Connecting --> TimedOut: deadline reached
+    Connecting --> Aborted: Abort
+    Connecting --> Retrying: auto-retry (agent / reconnect)
+    Retrying --> Connecting: attempt starts / Retry now
+    Retrying --> Failed: budget spent
+    Retrying --> Aborted: Abort
+    Failed --> Connecting: Retry
+    TimedOut --> Connecting: Retry
+    Aborted --> Connecting: Retry
+    Failed --> [*]: Close tab
+    TimedOut --> [*]: Close tab
+    Aborted --> [*]: Close tab
+          </pre>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Stage reporting</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant UI as ConnectProgress
+    participant Store as connectProgressBridge
+    participant BE as backend (core connect)
+    UI->>BE: create_connection (connectId = tabId:retry)
+    BE-->>Store: connect-progress {stage: resolve, status}
+    BE-->>Store: connect-progress {stage: connect}
+    BE-->>Store: connect-progress {stage: authenticate, status: "Trying public key…"}
+    Store-->>UI: latest stage + status (re-render)
+    BE-->>UI: session id / typed error
+          </pre>
+        </div>
+      </section>
+
+      <section>
+        <h2 id="impl">Implementation <a class="anchor" href="#impl">#</a></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Where</th>
+                <th>What</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/components/ui/ConnectProgress.tsx</code> + <code>ui.css</code></td>
+                <td>
+                  The shared surface: ring (CSS fill with a negative start delay frozen at mount,
+                  compositor comet), stepper, status line, time line, resting badges, a 250 ms CSS
+                  appear delay; composed on <code>ContentOverlay</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>TerminalConnectionOverlay.tsx</code> (all shell / connection types)</td>
+                <td>
+                  Restoring, waiting for agent, auto-retry, connecting and the failed / timed-out /
+                  aborted resting states; Abort is the one busy action; Retry + Close tab when
+                  resting; hints, copy command and credential re-entry kept.
+                </td>
+              </tr>
+              <tr>
+                <td><code>RemoteDesktopOverlay.tsx</code>, <code>FileBrowserTab.tsx</code></td>
+                <td>
+                  Same component; <code>GraphicalState</code> maps to Connect / Authenticate /
+                  Desktop.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core::connection::connect_progress</code></td>
+                <td>
+                  Typed <code>ConnectStage</code> / <code>ConnectProgressUpdate</code> (ts-rs) and a
+                  task-scoped reporter; SSH, telnet and serial report their stages. Outside a scope
+                  reports are no-ops, so the <code>ConnectionType</code> trait is unchanged.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/session/connect_progress.rs</code></td>
+                <td>
+                  Scopes the reporter around a direct connect and emits
+                  <code>connect-progress</code> keyed by the attempt's <code>connectId</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/store/connectProgressBridge.ts</code>,
+                  <code>src/utils/connectStages.ts</code>
+                </td>
+                <td>Per-tab latest stage; step lists, labels, target / chip derivation.</td>
+              </tr>
+              <tr>
+                <td><code>tests/visual/connectOverlay.spec.ts</code></td>
+                <td>
+                  Real tabs in the booted app: Light/Dark screenshots (telnet connecting, SSH
+                  authenticating, failed, timed out) and a check that the comet and fill animations
+                  are running and advancing with reduced motion off.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept connecting-overlay</code>. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> 2026-10-29, PR #5072
+          (<code>dev8/feature/5068-connecting-overlay</code>) · <strong>Status:</strong> in sync
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>All connection types use the shared surface</td>
+                <td>Terminal overlay, remote-desktop overlay and file-only tab render it</td>
+                <td>Resolved</td>
+                <td>Implemented</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Backend reports connect stages</td>
+                <td><code>connect-progress</code> from SSH, telnet and serial</td>
+                <td>Resolved</td>
+                <td>Implemented</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Serial stages “Open port · Configure”; local shells show no stepper</td>
+                <td>“Open port · Session”; local shells show one step</td>
+                <td>Concept updated</td>
+                <td>Maintainer phase-2 brief asked for these stage sets</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Agent sessions continue with the inner type's stages</td>
+                <td>Agent · Start session only</td>
+                <td>Concept updated</td>
+                <td>The inner connect runs on the agent, which does not forward stage reports</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>RDP ring tracks the timeout</td>
+                <td>Indeterminate ring (comet only)</td>
+                <td>Concept updated</td>
+                <td>The graphical connect timeout is not known to the frontend</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

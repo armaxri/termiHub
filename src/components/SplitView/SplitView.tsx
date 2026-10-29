@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import { connectOverlayIdentity } from "@/utils/connectStages";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   DndContext,
@@ -521,11 +522,7 @@ export function SplitView() {
                   panelId={zoomedTab.panelId}
                   tabTitle={zoomedTab.title}
                   isVisible={true}
-                  sessionType={
-                    zoomedTab.config.type === "remote-session"
-                      ? readSessionType(zoomedTab.config.config)
-                      : zoomedTab.config.type
-                  }
+                  {...connectOverlayIdentity(zoomedTab.config)}
                 />
               ) : zoomedTab.contentType === "terminal" ? (
                 // The zoomed terminal gets the same right-click menu as the
@@ -926,11 +923,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               panelId={panel.id}
               tabTitle={tab.title}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-              sessionType={
-                tab.config.type === "remote-session"
-                  ? readSessionType(tab.config.config)
-                  : tab.config.type
-              }
+              {...connectOverlayIdentity(tab.config)}
             />
           ) : (
             <TerminalContextMenu
