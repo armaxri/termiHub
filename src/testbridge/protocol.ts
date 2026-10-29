@@ -907,6 +907,12 @@ export interface TerminalMeasurement {
   decorations: TerminalDecoration[];
   /** Where the cell grid (`.xterm-screen`) sits in the page; `null` before xterm has a screen (#4937). */
   screenRect: PageRect | null;
+  /**
+   * The part of the page the cell grid can show through (#5065): the window
+   * clipped by every ancestor that clips its overflow. Columns of the grid right
+   * of it are cut off. `null` before xterm has a screen.
+   */
+  visibleRect: PageRect | null;
   /** The page's size and device pixel ratio (#4937). */
   page: PageMetrics;
   /** Scroll position, as `getTerminalViewport` reports it. */

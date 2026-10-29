@@ -649,6 +649,7 @@ class Driver:
              "decorations": [{"classes", "background",  # OSC 133 bars,
                               "top", "left", "width", "height"}, ...],  # flash
              "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px
+             "visibleRect": {"left", "top", "width", "height"} | None,  # clip, page px
              "page": {"devicePixelRatio", "innerWidth", "innerHeight"},  # (#4937)
              "viewportY": int, "baseY": int}
 

@@ -159,6 +159,34 @@ function measureScreenRect(element: HTMLElement): PageRect | null {
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
 }
 
+/**
+ * The window region the cell grid can show through (#5065): the viewport,
+ * intersected with the padding box of every ancestor whose overflow clips.
+ * `null` before xterm has a screen.
+ */
+function measureVisibleRect(element: HTMLElement): PageRect | null {
+  const screen = element.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen) return null;
+  const view = element.ownerDocument.defaultView ?? window;
+  let left = 0;
+  let top = 0;
+  let right = view.innerWidth;
+  let bottom = view.innerHeight;
+  for (let node = screen.parentElement; node; node = node.parentElement) {
+    const style = view.getComputedStyle(node);
+    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    const rect = node.getBoundingClientRect();
+    const innerLeft = rect.left + node.clientLeft;
+    const innerTop = rect.top + node.clientTop;
+    left = Math.max(left, innerLeft);
+    top = Math.max(top, innerTop);
+    // clientWidth/Height exclude borders and any classic scrollbar.
+    right = Math.min(right, innerLeft + node.clientWidth);
+    bottom = Math.min(bottom, innerTop + node.clientHeight);
+  }
+  return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+}
+
 /** Read a registered terminal's real render-path state (`measureTerminal`). */
 export function measureTerminal({
   element,
@@ -187,6 +215,7 @@ export function measureTerminal({
     paint: measurePaint(element, xterm),
     decorations: measureDecorations(element),
     screenRect: measureScreenRect(element),
+    visibleRect: measureVisibleRect(element),
     page: {
       devicePixelRatio: view.devicePixelRatio,
       innerWidth: view.innerWidth,
