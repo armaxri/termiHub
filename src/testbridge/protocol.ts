@@ -913,6 +913,12 @@ export interface TerminalMeasurement {
    * of it are cut off. `null` before xterm has a screen.
    */
   visibleRect: PageRect | null;
+  /**
+   * Right edge (page px) of the text the DOM renderer painted (#5065): its
+   * glyphs, not its cells, so a row drawn wider than its cells shows here.
+   * `null` when the DOM renderer has no rows mounted (WebGL is live).
+   */
+  domTextRight: number | null;
   /** The page's size and device pixel ratio (#4937). */
   page: PageMetrics;
   /** Scroll position, as `getTerminalViewport` reports it. */

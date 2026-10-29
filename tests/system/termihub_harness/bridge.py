@@ -650,6 +650,7 @@ class Driver:
                               "top", "left", "width", "height"}, ...],  # flash
              "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px
              "visibleRect": {"left", "top", "width", "height"} | None,  # clip, page px
+             "domTextRight": float | None,  # DOM renderer's painted text edge, page px
              "page": {"devicePixelRatio", "innerWidth", "innerHeight"},  # (#4937)
              "viewportY": int, "baseY": int}
 

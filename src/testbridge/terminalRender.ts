@@ -187,6 +187,26 @@ function measureVisibleRect(element: HTMLElement): PageRect | null {
   return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
+/**
+ * Right edge (page px) of the glyphs the DOM renderer painted (#5065), or
+ * `null` when it is not mounted. Measured with a range over each row's text,
+ * so it is where the text ends, not where xterm's cells end.
+ */
+function measureDomTextRight(element: HTMLElement): number | null {
+  const rows = element.querySelector(".xterm-rows");
+  if (!rows) return null;
+  const range = element.ownerDocument.createRange();
+  let right = 0;
+  for (const row of Array.from(rows.children)) {
+    if (!(row.textContent ?? "").replace(/\u00a0/g, " ").trim()) continue;
+    range.selectNodeContents(row);
+    for (const rect of Array.from(range.getClientRects())) {
+      if (rect.width > 0) right = Math.max(right, rect.right);
+    }
+  }
+  return right;
+}
+
 /** Read a registered terminal's real render-path state (`measureTerminal`). */
 export function measureTerminal({
   element,
@@ -216,6 +236,7 @@ export function measureTerminal({
     decorations: measureDecorations(element),
     screenRect: measureScreenRect(element),
     visibleRect: measureVisibleRect(element),
+    domTextRight: measureDomTextRight(element),
     page: {
       devicePixelRatio: view.devicePixelRatio,
       innerWidth: view.innerWidth,

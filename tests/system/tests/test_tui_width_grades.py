@@ -90,9 +90,17 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
         cell = (m.get("cell") or {}).get("width") or 0
         screen, visible = m.get("screenRect"), m.get("visibleRect")
         visible_cols = None
-        if cell > 0 and screen and visible:
-            right = visible["left"] + visible["width"]
+        right = visible["left"] + visible["width"] if visible else None
+        if cell > 0 and screen and right is not None:
             visible_cols = math.floor((right - screen["left"] + PX_EPSILON) / cell)
+        # The DOM renderer paints glyphs, not cells, and clips each row at the
+        # grid's edge: text wider than its cells is cut off there even when the
+        # grid itself fits the pane.
+        text_right = m.get("domTextRight")
+        overflow = 0.0
+        if text_right is not None and right is not None and screen and cell > 0:
+            edge = min(right, screen["left"] + grid["cols"] * cell)
+            overflow = round(text_right - edge, 1)
         match = re.match(rf"{tag}:(\d+)x(\d+):", rows[0]) if rows else None
         program = (int(match.group(1)), int(match.group(2))) if match else None
         expected = ruler(grid["cols"])
@@ -103,6 +111,7 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
             "grid": (grid["cols"], grid["rows"]),
             "proposed": m.get("proposed"),
             "visibleCols": visible_cols,
+            "textOverflowPx": overflow,
             "cell": cell,
             "renderer": m.get("renderer"),
             "dpr": (m.get("page") or {}).get("devicePixelRatio"),
@@ -120,6 +129,7 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
             and cols <= r["visibleCols"]
             and r["rulerRows"] > 0
             and not r["badRows"]
+            and r["textOverflowPx"] <= PX_EPSILON
         )
 
     def _assert_fits(self, tab: str, tag: str, when: str) -> dict[str, Any]:
@@ -174,6 +184,34 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
         self.wait(lambda: (self.active_tab() or {}).get("id") != tab, what="the second tab")
         self.switch_to_tab(tab)
         self._assert_fits(tab, tag, "after switching back")
+        self._quit_tui(tab, tag)
+
+    def test_tui_fits_the_pane_after_a_resize_while_hidden(self):
+        tab, tag = self._start_tui()
+        try:
+            self.driver.resize_window(*LARGE_WINDOW)
+            self._assert_fits(tab, tag, "before hiding the tab")
+            self.open_new_terminal()
+            self.wait(lambda: (self.active_tab() or {}).get("id") != tab, what="the second tab")
+            self.driver.resize_window(*SMALL_WINDOW)
+            self.switch_to_tab(tab)
+            self._assert_fits(tab, tag, "when shown after a resize while hidden")
+        finally:
+            self.driver.resize_window(*LARGE_WINDOW)
+        self._quit_tui(tab, tag)
+
+    def test_tui_fits_the_pane_on_the_dom_renderer(self):
+        """The DOM renderer (no WebGL: VMs, remote sessions, a lost context) fits too."""
+        tab, tag = self._start_tui()
+        self._assert_fits(tab, tag, "before the renderer swap")
+        if self.driver.measure_terminal(tab).get("renderer") == "webgl":
+            assert self.driver.lose_terminal_webgl_context(tab), "no WebGL context to lose"
+            self.wait(
+                lambda: self.driver.measure_terminal(tab).get("renderer") == "dom",
+                timeout=30.0,
+                what="the DOM renderer fallback",
+            )
+        self._assert_fits(tab, tag, "on the DOM renderer")
         self._quit_tui(tab, tag)
 
     def test_tui_fits_the_pane_after_window_resizes(self):
