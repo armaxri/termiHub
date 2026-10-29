@@ -258,6 +258,10 @@ export function ConnectProgress({
 
   const icon = busy ? (
     <ProgressRing
+      // One ring per attempt (#5081): a new start time remounts it, so its
+      // animation and frozen start offset begin afresh instead of inheriting
+      // the previous attempt's.
+      key={startedAt}
       icon={typeIcon}
       elapsedMs={elapsedMs}
       totalMs={phase === "retrying" ? undefined : totalMs}

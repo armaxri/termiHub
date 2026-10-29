@@ -156,7 +156,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **VS Code-inspired layout** — Activity bar, sidebar, status bar with customizable positions
 - **Themes** — Dark, Light, Solarized Dark, Solarized Light, and System (auto-detects OS preference) themes, plus your own custom themes built in the Theme Editor, theme import/export, and themes installed by plugins
-- **Command palette** — Search and run any command (`Cmd+P` on macOS, `Ctrl+Shift+P` on Windows/Linux)
+- **Command palette** — Search and run any command (`Cmd+P` or `Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux)
 - **Layout presets** — Default, Focus (no sidebar), and Zen (minimal UI) modes
 - **Built-in editor** — Edit local and remote files with Monaco Editor (syntax highlighting, search, minimap)
 - **Schema-driven settings** — Connection types declare their own settings; the UI renders them automatically
@@ -421,7 +421,7 @@ The most-used default shortcuts:
 | New local terminal             | `` Cmd+Shift+` ``             | `` Ctrl+Shift+` ``                  |
 | Close active tab               | `Cmd+W`                       | `Ctrl+Shift+W`                      |
 | Next / previous tab            | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab`       |
-| Command palette                | `Cmd+P`                       | `Ctrl+Shift+P`                      |
+| Command palette                | `Cmd+P` / `Cmd+Shift+P`       | `Ctrl+Shift+P`                      |
 | Find in terminal               | `Cmd+F`                       | `Ctrl+Shift+F`                      |
 | Jump to previous / next prompt | `Cmd+Up` / `Cmd+Down`         | `Ctrl+Shift+Up` / `Ctrl+Shift+Down` |
 | Split right / split down       | `Cmd+\` / `Cmd+Shift+\`       | `Alt+Shift+\` / `Alt+Shift+-`       |

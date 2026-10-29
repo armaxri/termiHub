@@ -1,0 +1,12 @@
+{
+  "reason": "^(an X server socket is present \\(/tmp/\\.X11-unix: [^)]*\\); the Wayland-only grade runs in its own step|the Wayland-only X11 hint grade is Linux-only)$",
+  "nodeid": "test_ssh_x11_wayland\\.py",
+  "lanes": ["bulk-linux", "bulk-linux-arm64", "bulk-macos", "bulk-windows"],
+  "why": "#4965: the Wayland-only grade needs a host with no X socket, so it runs in its own headless-weston step (lane wayland-linux); under Xvfb and off Linux it skips. macOS/Windows +1 more for the Linux-only X server adoption grade in test_ssh.py, which skips there on its fixture",
+  "max_skips": {
+    "bulk-linux": 1,
+    "bulk-linux-arm64": 1,
+    "bulk-macos": 2,
+    "bulk-windows": 2
+  }
+}

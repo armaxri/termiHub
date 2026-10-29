@@ -55,6 +55,15 @@ export interface KeyBinding {
   macDefault: KeyCombo | KeyCombo[] | null;
   /** Default key combo for Windows/Linux. `null` means the action ships unbound. */
   winLinuxDefault: KeyCombo | KeyCombo[] | null;
+  /**
+   * Additional single-combo defaults for macOS that trigger the same action
+   * (e.g. Cmd+Shift+P besides Cmd+P for the command palette, #5084). They are
+   * active only while the action has no user override: rebinding or unbinding
+   * the action replaces every default, and reset restores them.
+   */
+  macAlternates?: KeyCombo[];
+  /** Additional single-combo defaults for Windows/Linux (see {@link macAlternates}). */
+  winLinuxAlternates?: KeyCombo[];
   /** Whether the user can rebind this shortcut. */
   configurable: boolean;
   /**

@@ -420,6 +420,10 @@ jobs:
             gir1.2-gtk-3.0 \
             socat \
             libasound2-dev
+          # weston (headless backend) gives the Wayland-only X11 hint grade
+          # (test_ssh_x11_wayland.py, #4965) a Wayland session. No recommends:
+          # the grade needs a host WITHOUT Xwayland.
+          sudo apt-get install -y --no-install-recommends weston
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
         # ubuntu-24.04 ships an AppArmor policy that blocks unprivileged user
@@ -600,6 +604,26 @@ jobs:
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'bulk-linux-arm64' || 'bulk-linux' }}
           TERMIHUB_REQUIRE_FIXTURES: "1"
         run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui or test_native_capture_grades or test_native_paint_grades)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR --rerun-show-tracebacks
+
+      - name: Run the Wayland-only X11 hint grade (Linux, headless weston)
+        # MT-SSH-50 (#4965): on a Wayland session without XWayland an
+        # X11-forwarding connect must guide the XWayland install, not fail
+        # generically. The suite starts its own headless weston (no
+        # --xwayland) and launches the app on it with DISPLAY unset. It needs
+        # a host with no X server socket in /tmp/.X11-unix, so it runs here,
+        # after the Xvfb step above has exited, outside xvfb-run; under Xvfb
+        # it skips (allowlisted for the bulk lanes). The ssh-x11 fixture is
+        # still up from the fixture step. Own skip-guard lane with no skips
+        # allowed: a missing weston, a stray X socket or an Xwayland on PATH
+        # reds this step instead of passing it as a skip. Runs even when the
+        # bulk step failed: independent evidence.
+        if: (success() || failure()) && runner.os == 'Linux'
+        env:
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'ubuntu-24.04-arm' && 'wayland-linux-arm64' || 'wayland-linux' }}
+          TERMIHUB_REQUIRE_FIXTURES: "1"
+        run: >-
+          env -u DISPLAY -u WAYLAND_DISPLAY dbus-run-session -- ./tests/system/pytest.sh -m integration
+          tests/test_ssh_x11_wayland.py -v -n 1 --dist loadscope --reruns 0 -r aR
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
