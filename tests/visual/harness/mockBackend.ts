@@ -82,6 +82,8 @@ declare global {
     __VISUAL_INVOKED__?: string[];
     /** `false` releases the connect-overlay scenario's held session folds (#5068). */
     __VISUAL_HOLD_CONNECT__?: boolean;
+    /** Every PTY resize the app sent, in order (#5065). */
+    __VISUAL_RESIZES__?: { sessionId: string; cols: number; rows: number }[];
     /** `sessionId:intervalMs` of every refresh-interval change the app asked for (#4949). */
     __VISUAL_MONITOR_INTERVALS__?: string[];
   }
@@ -601,6 +603,8 @@ function regionView(region: string, populated: boolean): unknown {
 }
 
 let version = 0;
+/** Terminal sessions created so far (each `create_connection` makes one). */
+let terminalSessions = 0;
 
 /** Answer one IPC command. Unknown commands resolve to `null` and are recorded. */
 export function handleCommand(cmd: string, args: Args): unknown {
@@ -758,8 +762,21 @@ export function handleCommand(cmd: string, args: Args): unknown {
         }
         return new Promise(() => {});
       }
-      return scenario.terminal ? VISUAL_SESSION_ID : null;
+      if (!scenario.terminal) return null;
+      // The first terminal keeps the well-known id; later ones get their own,
+      // so each tab has its own session (#5065).
+      terminalSessions += 1;
+      return terminalSessions === 1
+        ? VISUAL_SESSION_ID
+        : `${VISUAL_SESSION_ID}-${terminalSessions}`;
     }
+    case "resize_terminal":
+      (window.__VISUAL_RESIZES__ ??= []).push({
+        sessionId: String(args?.sessionId ?? ""),
+        cols: Number(args?.cols),
+        rows: Number(args?.rows),
+      });
+      return null;
     case "plugin:dialog|open":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
     case "preview_plugin":
