@@ -14,6 +14,7 @@
 import type { TerminalHandles } from "@/components/Terminal/TerminalRegistry";
 import { errorMessage } from "@/utils/errorMessage";
 import {
+  readCharSize,
   readRawRenderedCellHeight,
   readRawRenderedCellWidth,
 } from "@/components/Terminal/xtermDimensions";
@@ -207,6 +208,26 @@ function measureDomTextRight(element: HTMLElement): number | null {
   return right;
 }
 
+/**
+ * The font's character cell measured now, the way xterm's canvas strategy
+ * measures it (`measureText("W")`), or `null` without `OffscreenCanvas` /
+ * font-bounding-box metrics (xterm then measures with the DOM instead).
+ */
+function measureCurrentCharCell(
+  xterm: TerminalHandles["xterm"]
+): { width: number; height: number } | null {
+  if (typeof OffscreenCanvas === "undefined") return null;
+  const ctx = new OffscreenCanvas(100, 100).getContext("2d");
+  if (!ctx) return null;
+  ctx.font = `${xterm.options.fontSize}px ${xterm.options.fontFamily}`;
+  const metrics = ctx.measureText("W");
+  if (!("fontBoundingBoxAscent" in metrics)) return null;
+  return {
+    width: metrics.width,
+    height: metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent,
+  };
+}
+
 /** Read a registered terminal's real render-path state (`measureTerminal`). */
 export function measureTerminal({
   element,
@@ -237,6 +258,7 @@ export function measureTerminal({
     screenRect: measureScreenRect(element),
     visibleRect: measureVisibleRect(element),
     domTextRight: measureDomTextRight(element),
+    charCell: { measured: readCharSize(xterm) ?? null, current: measureCurrentCharCell(xterm) },
     page: {
       devicePixelRatio: view.devicePixelRatio,
       innerWidth: view.innerWidth,

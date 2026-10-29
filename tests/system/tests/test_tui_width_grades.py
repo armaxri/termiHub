@@ -27,6 +27,7 @@ import math
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -49,9 +50,30 @@ FRAME_TIMEOUT = 30.0
 _tags = itertools.count(1)
 
 
+def _cell_current(char_cell: Optional[dict[str, Any]]) -> bool:
+    """Whether xterm fits with the font as loaded now, not a stale fallback (#5082).
+
+    xterm measures its cell once when it opens; a web font that loads later
+    leaves it fitting the fallback font's cell (wrong rows and columns) until
+    something makes it measure again. ``current`` is ``None`` where xterm
+    measures with the DOM rather than canvas metrics; nothing to compare then.
+    """
+    if not char_cell or not char_cell.get("current"):
+        return True
+    measured, current = char_cell.get("measured"), char_cell["current"]
+    return bool(measured) and all(
+        abs(measured[k] - current[k]) < 0.01 for k in ("width", "height")
+    )
+
+
 def ruler(cols: int) -> str:
     """The probe's ruler row for ``cols`` columns (see tui_width_probe.mjs)."""
     return "".join(str(i % 10) for i in range(1, cols)) + "|"
+
+
+#: Delay before the first-open reading, so the terminal web font has loaded
+#: and the app has had its chance to re-fit for it (no resize in between).
+FONT_SETTLE_S = 2.0
 
 
 class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
@@ -112,6 +134,7 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
             "proposed": m.get("proposed"),
             "visibleCols": visible_cols,
             "textOverflowPx": overflow,
+            "charCell": m.get("charCell"),
             "cell": cell,
             "renderer": m.get("renderer"),
             "dpr": (m.get("page") or {}).get("devicePixelRatio"),
@@ -130,6 +153,7 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
             and r["rulerRows"] > 0
             and not r["badRows"]
             and r["textOverflowPx"] <= PX_EPSILON
+            and _cell_current(r["charCell"])
         )
 
     def _assert_fits(self, tab: str, tag: str, when: str) -> dict[str, Any]:
@@ -148,8 +172,11 @@ class TestTuiWidthGrades(TerminalUi, TabsUi, SystemTest):
 
     # ── grades ───────────────────────────────────────────────────────────────
     def test_tui_fits_the_pane_on_first_open(self):
+        """Cols and rows fit right after open — no resize — with the loaded font (#5082)."""
         tab, tag = self._start_tui()
         self._assert_fits(tab, tag, "on first open")
+        time.sleep(FONT_SETTLE_S)
+        self._assert_fits(tab, tag, "once the terminal font has loaded")
         self._quit_tui(tab, tag)
 
     def test_tui_fits_the_pane_after_a_split(self):
