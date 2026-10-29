@@ -71,7 +71,7 @@ import {
   RESIZE_INPUT_HOLD_MAX_MS,
 } from "@/services/sessionInputGate";
 import { createShellRedrawWait } from "./shellRedrawWait";
-import { getRenderedCellWidth } from "./xtermDimensions";
+import { getRenderedCellWidth, remeasureCharSize } from "./xtermDimensions";
 import {
   CommandMarkTracker,
   type CommandMarksSnapshot,
@@ -1746,14 +1746,35 @@ export function Terminal({
     setupTerminal(xterm, fitAddon, connectAbort.signal, connectId);
 
     // Re-fit once web fonts finish loading. The terminal font (Nerd Font
-    // Mono) ships via @font-face with `font-display: swap`, so xterm's
-    // initial cell-width measurement is taken against the fallback
-    // monospace and FitAddon then computes one column fewer than the real
-    // font would fit. Without this extra fit, the last column never
-    // appears until the user manually resizes the window. Verified via
-    // DOM measurement: FitAddon's stale 8.5 px fallback cell width
-    // produced cols=112 at parent width 967, while the real Nerd Font at
-    // 8.43 px / col yields cols=113 with no slider overlap.
+    // Mono) ships via @font-face with `font-display: swap` and usually loads
+    // after the terminal opened, so xterm measured its cell against the
+    // fallback font. xterm re-measures only on a font-option change, a resize
+    // or a pixel-ratio change — none of which a font load is — so a plain
+    // re-fit proposed the same fallback grid: on a Retina Mac 44 rows where the
+    // loaded font fits 39, the bottom rows below the pane until the next
+    // window resize (#5082). Make xterm measure the loaded font first.
+    // `force`: re-fit even when the cell is unchanged (the initial load).
+    const refitForLoadedFont = (force: boolean) => {
+      if (connectAbort.signal.aborted) return;
+      const changed = remeasureCharSize(xterm);
+      if (!changed && !force) return;
+      if (changed) frontendLog("terminal", `font cell re-measured tab=${tabId}`);
+      // Off screen the re-fit is owed to the next show, like a container
+      // change (#4863); a parked container is not fitted at all (#5025).
+      if (!isOnScreenRef.current) {
+        hiddenFitPendingRef.current = true;
+        return;
+      }
+      try {
+        if (!horizontalScrollingRef.current) fitIfSafe(el, fitAddon);
+      } catch (err) {
+        // Once per font load; the next ResizeObserver fit will catch it.
+        frontendLog("terminal", `re-fit after font load failed tab=${tabId}: ${errorMessage(err)}`);
+      }
+    };
+    // A face that loads later (bold, a user-chosen web font) can change the
+    // cell too; `loadingdone` fires once per batch of loaded faces.
+    const onFontsLoaded = () => refitForLoadedFont(false);
     if (typeof document !== "undefined" && document.fonts) {
       void document.fonts
         .load(`${baseFontSize}px "MesloLGS Nerd Font Mono"`)
@@ -1762,24 +1783,8 @@ export function Terminal({
           frontendLog("terminal", `terminal font failed to load: ${errorMessage(err)}`)
         )
         .then(() => document.fonts.ready)
-        .then(() => {
-          if (connectAbort.signal.aborted) return;
-          // Off screen the re-fit is owed to the next show, like a container
-          // change (#4863); a parked container is not fitted at all (#5025).
-          if (!isOnScreenRef.current) {
-            hiddenFitPendingRef.current = true;
-            return;
-          }
-          try {
-            fitIfSafe(el, fitAddon);
-          } catch (err) {
-            // Once per terminal; the next ResizeObserver fit will catch it.
-            frontendLog(
-              "terminal",
-              `re-fit after font load failed tab=${tabId}: ${errorMessage(err)}`
-            );
-          }
-        });
+        .then(() => refitForLoadedFont(true));
+      document.fonts.addEventListener?.("loadingdone", onFontsLoaded);
     }
 
     // Forward wheel events from the gap below the canvas to xterm.
@@ -1907,6 +1912,9 @@ export function Terminal({
 
     return () => {
       stopDprWatch();
+      if (typeof document !== "undefined") {
+        document.fonts?.removeEventListener?.("loadingdone", onFontsLoaded);
+      }
       connectAbort.abort();
       // If the tab is torn down while a connect is in flight (e.g. the user hit
       // Cancel on the connecting overlay), abort the backend's handshake instead

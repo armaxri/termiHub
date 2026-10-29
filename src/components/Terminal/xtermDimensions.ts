@@ -35,9 +35,17 @@ interface XtermRenderService {
   dimensions?: XtermRenderDimensions;
 }
 
+/** Private service that measures the font's character cell (#5082). */
+interface XtermCharSizeService {
+  width?: number;
+  height?: number;
+  measure?: () => void;
+}
+
 /** Private core object hung off a public {@link XTerm} as `_core`. */
 interface XtermCore {
   _renderService?: XtermRenderService;
+  _charSizeService?: XtermCharSizeService;
 }
 
 /** A public terminal viewed through its private `_core` handle. */
@@ -88,4 +96,40 @@ export function readRawRenderedCellHeight(xterm: XTerm): number | undefined {
   const height = (xterm as unknown as XtermWithPrivateCore)._core?._renderService?.dimensions?.css
     ?.cell?.height;
   return typeof height === "number" ? height : undefined;
+}
+
+/** A character cell size in CSS px, as xterm's char-size service holds it. */
+export interface CharSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * The character cell xterm last measured for its font (#5082), or `undefined`
+ * when the private char-size service is missing (an xterm upgrade changed it).
+ */
+export function readCharSize(xterm: XTerm): CharSize | undefined {
+  const service = (xterm as unknown as XtermWithPrivateCore)._core?._charSizeService;
+  const { width, height } = service ?? {};
+  return typeof width === "number" && typeof height === "number" ? { width, height } : undefined;
+}
+
+/**
+ * Make xterm measure its font's character cell again and report whether the
+ * size changed (#5082).
+ *
+ * xterm measures the cell when it opens and afterwards only on a font-option
+ * change, a resize or a pixel-ratio change. A web font that finishes loading
+ * after the terminal opened changes none of those, so xterm keeps the fallback
+ * font's cell and every fit proposes the fallback grid. A change re-renders at
+ * the new cell (xterm fires its char-size event); the caller still re-fits.
+ * Returns `false` when the private service is missing.
+ */
+export function remeasureCharSize(xterm: XTerm): boolean {
+  const service = (xterm as unknown as XtermWithPrivateCore)._core?._charSizeService;
+  if (typeof service?.measure !== "function") return false;
+  const before = readCharSize(xterm);
+  service.measure();
+  const after = readCharSize(xterm);
+  return before?.width !== after?.width || before?.height !== after?.height;
 }

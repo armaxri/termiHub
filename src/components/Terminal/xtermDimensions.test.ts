@@ -10,9 +10,14 @@
  * fail LOUDLY in CI if an xterm upgrade restructures the internals, instead of
  * letting horizontal scrolling silently mis-size at runtime.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
-import { getRenderedCellWidth, readRawRenderedCellWidth } from "./xtermDimensions";
+import {
+  getRenderedCellWidth,
+  readCharSize,
+  readRawRenderedCellWidth,
+  remeasureCharSize,
+} from "./xtermDimensions";
 
 /** Minimal shape of the private xterm path the adapter reads, for stub building. */
 interface CellWidthStub {
@@ -86,6 +91,58 @@ describe("xterm private render-service shape (upgrade guard)", () => {
     term.open(host);
     try {
       expect(typeof readRawRenderedCellWidth(term)).toBe("number");
+    } finally {
+      term.dispose();
+      host.remove();
+    }
+  });
+});
+
+describe("char-size service (#5082)", () => {
+  /** An xterm-shaped object whose char-size service measures `next`. */
+  function withCharSize(width: number, height: number, next: { width: number; height: number }) {
+    const service = {
+      width,
+      height,
+      measure: vi.fn(() => {
+        service.width = next.width;
+        service.height = next.height;
+      }),
+    };
+    return { term: { _core: { _charSizeService: service } } as unknown as Terminal, service };
+  }
+
+  it("reads the measured cell", () => {
+    const { term } = withCharSize(8.43, 16, { width: 8.43, height: 16 });
+    expect(readCharSize(term)).toEqual({ width: 8.43, height: 16 });
+  });
+
+  it("re-measures and reports a changed cell (fallback font → loaded web font)", () => {
+    const { term, service } = withCharSize(8.43, 16, { width: 8.43, height: 18 });
+    expect(remeasureCharSize(term)).toBe(true);
+    expect(service.measure).toHaveBeenCalledTimes(1);
+    expect(readCharSize(term)).toEqual({ width: 8.43, height: 18 });
+  });
+
+  it("reports an unchanged cell as unchanged", () => {
+    const { term } = withCharSize(8.43, 18, { width: 8.43, height: 18 });
+    expect(remeasureCharSize(term)).toBe(false);
+  });
+
+  it("is a no-op when the private service is missing", () => {
+    const term = {} as unknown as Terminal;
+    expect(readCharSize(term)).toBeUndefined();
+    expect(remeasureCharSize(term)).toBe(false);
+  });
+
+  it("still exposes the char-size service on a real opened xterm instance (upgrade guard)", () => {
+    const term = new Terminal();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    term.open(host);
+    try {
+      expect(readCharSize(term)).toBeDefined();
+      expect(() => remeasureCharSize(term)).not.toThrow();
     } finally {
       term.dispose();
       host.remove();
