@@ -1,9 +1,11 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { open } from "@/services/nativeDialog";
 import { HelpCircle, Info, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
-import { listAgentDockerContainers, listDockerContainers, listSerialPorts } from "@/services/api";
+import { listAgentDockerContainers, listDockerContainers } from "@/services/api";
+import { sortSerialPorts } from "@/utils/serialPorts";
+import { useSerialPortRescan } from "./useSerialPortRescan";
 import type { DockerContainerInfo } from "@/services/api";
 import {
   composeServicesFromContainers,
@@ -668,18 +670,21 @@ function SerialPortField({
   a11y,
   testIdBase,
 }: FieldProps & { availablePorts?: string[]; a11y: FieldA11y; testIdBase: string }) {
-  const [detectedPorts, setDetectedPorts] = useState<string[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Local ports are re-enumerated while the field is on screen so plug/unplug
+  // shows up within ~2 s (#5066); an agent-supplied list is used as given.
+  const detected = useSerialPortRescan({ enabled: propPorts === undefined, targetRef: inputRef });
+  const suppliedPorts = useMemo(
+    () => (propPorts === undefined ? undefined : sortSerialPorts(propPorts)),
+    [propPorts]
+  );
+  const availablePorts = suppliedPorts ?? detected.ports;
+  const loaded = suppliedPorts !== undefined || detected.loaded;
+  const newPorts = suppliedPorts !== undefined ? [] : [...detected.newPorts];
   const currentValue = (value as string) ?? "";
-
-  useEffect(() => {
-    if (propPorts !== undefined) return;
-    listSerialPorts()
-      .then(setDetectedPorts)
-      .catch(() => setDetectedPorts([]));
-  }, [propPorts]);
-
-  const availablePorts = propPorts ?? detectedPorts;
-  const isDisconnected = currentValue !== "" && !availablePorts.includes(currentValue);
+  // The selection is never changed by a rescan: an unplugged selected port
+  // stays selected and is flagged instead.
+  const isDisconnected = loaded && currentValue !== "" && !availablePorts.includes(currentValue);
   // An editable combobox (input + datalist) rather than a plain <select>: the
   // detected ports are offered as suggestions, but the user can still type any
   // device path the OS doesn't enumerate (a virtual/socat PTY, an uncommon
@@ -689,6 +694,7 @@ function SerialPortField({
   return (
     <>
       <Input
+        ref={inputRef}
         id={a11y.id}
         type="text"
         value={currentValue}
@@ -704,12 +710,21 @@ function SerialPortField({
       />
       <datalist id={listId}>
         {availablePorts.map((port) => (
-          <option key={port} value={port} />
+          <option
+            key={port}
+            value={port}
+            label={detected.newPorts.has(port) ? `${port} (new)` : undefined}
+          />
         ))}
       </datalist>
       {isDisconnected && (
         <p className="settings-form__hint" data-testid={`${testIdBase}-disconnected`}>
           {currentValue} (not connected)
+        </p>
+      )}
+      {newPorts.length > 0 && (
+        <p className="settings-form__hint" role="status" data-testid={`${testIdBase}-new`}>
+          Newly detected: {newPorts.join(", ")}
         </p>
       )}
     </>
