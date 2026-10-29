@@ -594,6 +594,32 @@ mod tests {
         }
 
         #[test]
+        fn unmanaged_connect_ensure_resolves_like_the_probe_path() {
+            // On Linux/macOS the manager never spawns a server, so claiming a
+            // session lease fails whenever no TCP server listens on :0 — the
+            // normal case for a Unix-socket X server or a Wayland-only session.
+            // The connect path must then resolve exactly like the probe path
+            // (adopt the user-run server, or the classified gap such as "install
+            // XWayland"), never a generic lease failure (#4965).
+            let mgr = std::sync::Arc::new(manager(vec![], false));
+            let probe = ensure_x_server(&mgr, true);
+            let connect = ensure_x_server_for_session(&mgr, true, None);
+            match (probe, connect) {
+                (Err(probe), Err(connect)) => assert_eq!(connect.to_string(), probe.to_string()),
+                (Ok(probe), Ok((connect, guard))) => {
+                    assert_eq!(connect.report.state, probe.report.state);
+                    assert!(guard.is_none(), "an adopted user-run server claims no lease");
+                }
+                (probe, connect) => panic!(
+                    "connect resolved differently from the probe: probe ok={}, connect={:?}",
+                    probe.is_ok(),
+                    connect.err().map(|e| e.to_string())
+                ),
+            }
+            assert_eq!(mgr.session_count(), 0, "no session counted without a lease");
+        }
+
+        #[test]
         fn session_lease_releases_on_drop() {
             // The lease returned by the connect path releases exactly one
             // session when dropped, preserving the manager's refcount.
