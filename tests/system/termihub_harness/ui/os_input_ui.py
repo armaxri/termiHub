@@ -79,6 +79,14 @@ class OsInputUi(HarnessMixin):
         events = (driver or self.driver).os_input_probe()["events"]
         return [e for e in events if e.get("isTrusted") and (kind is None or e["type"] == kind)]
 
+    def key_targets(self, driver: Optional[Driver] = None) -> list[Optional[str]]:
+        """The ``data-testid`` each OS-delivered keydown landed on, deduplicated in order."""
+        targets: list[Optional[str]] = []
+        for event in self.trusted_events(driver, kind="keydown"):
+            if event.get("testId") not in targets:
+                targets.append(event.get("testId"))
+        return targets
+
     def reset_input_probe(self, driver: Optional[Driver] = None) -> None:
         (driver or self.driver).os_input_probe(reset=True)
 

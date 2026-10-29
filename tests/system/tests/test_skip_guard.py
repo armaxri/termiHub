@@ -418,16 +418,11 @@ def test_every_workflow_lane_is_known_and_no_fragment_names_an_unknown_lane():
 
 def test_the_committed_budgets_match_the_pre_fragment_max_skips():
     """#5033 migrated the hand-kept per-lane max_skips into ``baseline.json``
-    unchanged. Only that fragment is pinned: a later fragment adds its own
-    budget on top (#4998) without editing this test."""
-    allowlist = sg.load_allowlist()
-    baseline = {
-        lane: count
-        for lane, fragments in allowlist.budgets.items()
-        for name, count in fragments
-        if name == "baseline.json"
-    }
-    assert baseline == {
+    unchanged. Later fragments add their own budgets on top (#4962), so the
+    baseline is pinned here, not the lane totals: pinning the sums would make
+    every new budget fragment edit this shared test again."""
+    baseline = json.loads((sg.ALLOWLIST_DIR / "baseline.json").read_text(encoding="utf-8"))
+    assert baseline["max_skips"] == {
         "bulk-linux": 60,
         "bulk-linux-arm64": 21,
         "bulk-macos": 215,
@@ -439,6 +434,10 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
         "os-input-macos": 1,
         "os-input-windows": 6,
     }
+    # Fragments only ever add to the baseline.
+    allowlist = sg.load_allowlist()
+    for lane, floor in baseline["max_skips"].items():
+        assert allowlist.budget(lane) >= floor, lane
 
 
 def test_the_legacy_single_file_allowlist_is_gone():

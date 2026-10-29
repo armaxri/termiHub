@@ -493,6 +493,7 @@ impl SshConnector for RusshSshConnector {
             .then(|| setup.first().map(|(_, line)| line.clone().into_bytes()))
             .flatten();
         let mut echo_filter = SetupEchoFilter::new();
+        echo_filter.set_width(config.cols);
         // A cmd.exe host is held only when it has something to set up (#4610).
         let mut gate = SetupGate::new(
             remote_shell::defers_setup_until_prompt(remote_shell, !setup.is_empty()) || hide_echo,
@@ -624,6 +625,7 @@ impl SshConnector for RusshSshConnector {
                                 }
                             }
                             Some(ChannelCmd::Resize(cols, rows)) => {
+                                echo_filter.set_width(u16::try_from(cols).unwrap_or(u16::MAX));
                                 if !should_continue_after_send(
                                     channel.window_change(cols, rows, 0, 0).await,
                                     "resize",

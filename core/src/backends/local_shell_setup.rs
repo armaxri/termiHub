@@ -196,6 +196,14 @@ impl TypedSetup {
         self.state.lock().is_ok_and(|s| s.pending.is_some())
     }
 
+    /// The terminal's width, so a wrapped first prompt is replaced whole
+    /// (#5054). Set at spawn and on every resize.
+    pub(crate) fn set_width(&self, cols: u16) {
+        if let Ok(mut state) = self.state.lock() {
+            state.filter.set_width(cols);
+        }
+    }
+
     /// Hand a chunk of shell output on to `sender`, through the filter until
     /// the hide is over. The send happens under the state lock then, so the
     /// timer thread's releases keep their order.

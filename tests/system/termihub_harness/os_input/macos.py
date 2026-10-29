@@ -167,13 +167,104 @@ class MacOsInput(OsInput):
             NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps
         )
         deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            if self._frontmost_pid() == window.pid:
-                return
+        while self._frontmost_pid() != window.pid and time.monotonic() < deadline:
             time.sleep(0.1)
-        # Newer macOS ignores activation requests from a background process;
-        # the reopen Apple event makes the app activate itself.
-        self.send_apple_event(window.pid, K_CORE_EVENT_CLASS, K_AE_REOPEN)
+        if self._frontmost_pid() != window.pid:
+            # Newer macOS ignores activation requests from a background process;
+            # the reopen Apple event makes the app activate itself.
+            self.send_apple_event(window.pid, K_CORE_EVENT_CLASS, K_AE_REOPEN)
+        # Activation alone fronts the app's *last* key window. With several
+        # windows of one PID, raise the chosen one through Accessibility (#4979).
+        # Best effort, like the base class' frontmost-window wait: a caller that
+        # needs proof checks the window's own focus.
+        if len(self._windows(window.pid)) > 1:
+            self._ax_raise(window)
+
+    # ── Accessibility (one window of several) ────────────────────────────────
+    @staticmethod
+    def _ax_frame(element: Any) -> Optional[tuple[int, int, int, int]]:
+        """``(x, y, width, height)`` of an AX window, top-left global points."""
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXValueGetValue,
+            kAXPositionAttribute,
+            kAXSizeAttribute,
+            kAXValueCGPointType,
+            kAXValueCGSizeType,
+        )
+
+        err, pos = AXUIElementCopyAttributeValue(element, kAXPositionAttribute, None)
+        err2, size = AXUIElementCopyAttributeValue(element, kAXSizeAttribute, None)
+        if err or err2 or pos is None or size is None:
+            return None
+        ok, point = AXValueGetValue(pos, kAXValueCGPointType, None)
+        ok2, extent = AXValueGetValue(size, kAXValueCGSizeType, None)
+        if not (ok and ok2):
+            return None
+        return (
+            int(round(point.x)),
+            int(round(point.y)),
+            int(round(extent.width)),
+            int(round(extent.height)),
+        )
+
+    @staticmethod
+    def _frame_of(window: OsWindow) -> tuple[int, int, int, int]:
+        return window.x, window.y, window.width, window.height
+
+    def _ax_window_for(self, window: OsWindow) -> Any:
+        """The AX element of ``window`` (matched by its frame), or ``None``."""
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+            kAXWindowsAttribute,
+        )
+
+        app = AXUIElementCreateApplication(window.pid)
+        err, elements = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, None)
+        if err or not elements:
+            return None
+        matches = [e for e in elements if self._ax_frame(e) == self._frame_of(window)]
+        # Two windows with the very same frame cannot be told apart by frame.
+        return matches[0] if len(matches) == 1 else None
+
+    def _ax_raise(self, window: OsWindow) -> bool:
+        """Make ``window`` its app's main (and so key) window and raise it.
+
+        False when no single Accessibility window matches its frame.
+        """
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementPerformAction,
+            AXUIElementSetAttributeValue,
+            kAXMainAttribute,
+            kAXRaiseAction,
+        )
+
+        element = self._ax_window_for(window)
+        if element is None:
+            return False
+        AXUIElementSetAttributeValue(element, kAXMainAttribute, True)
+        AXUIElementPerformAction(element, kAXRaiseAction)
+        return True
+
+    def _frontmost_window(self) -> Optional[int]:
+        """The focused window of the active app, matched to its CG window number."""
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+            kAXFocusedWindowAttribute,
+        )
+
+        pid = self._frontmost_pid()
+        if pid is None:
+            return None
+        app = AXUIElementCreateApplication(pid)
+        err, focused = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, None)
+        if err or focused is None:
+            return None
+        frame = self._ax_frame(focused)
+        matches = [w.handle for w in self._windows(pid) if self._frame_of(w) == frame]
+        return matches[0] if len(matches) == 1 else None
 
     # ── Keys ─────────────────────────────────────────────────────────────────
     def _post_key(self, pid: int, keycode: int, down: bool, flags: int) -> None:

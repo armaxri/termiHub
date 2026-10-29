@@ -4,6 +4,7 @@ pub mod prompt_mark;
 pub mod prompt_settle;
 pub mod session_log;
 pub mod setup_echo;
+mod setup_echo_rows;
 #[cfg(test)]
 pub(crate) mod test_screen;
 

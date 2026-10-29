@@ -1,0 +1,9 @@
+{
+  "why": "TestWslSpawnGrades (MT-SHI-01/03, #4962) runs only on the wsl-live lane, which has two real distributions; on the bulk lanes its two tests skip with the existing windows-shells-off-windows / no-wsl2 reasons",
+  "max_skips": {
+    "bulk-linux": 2,
+    "bulk-linux-arm64": 2,
+    "bulk-macos": 2,
+    "bulk-windows": 2
+  }
+}

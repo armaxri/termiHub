@@ -26,6 +26,8 @@ pub(super) struct ShellState {
     pub history_in_session: usize,
     /// Lines of the history file written at exit that mention termiHub.
     pub history_file: usize,
+    /// Every line of the history file written at exit.
+    pub history_lines: Vec<String>,
     /// Shell functions whose name or body mentions termiHub.
     pub functions: usize,
     /// Shell variables named like termiHub's.
@@ -75,8 +77,12 @@ async fn read_until(rx: &mut crate::connection::OutputReceiver, out: &mut String
     assert!(ok, "timed out waiting for {needle:?}: {out:?}");
 }
 
+/// The command typed as the user, before the probe.
+const USER_COMMAND: &str = "echo user-$((1))-command";
+
 /// Start `shell_name` with the injection on or off, let it settle, run a
-/// user command, probe its state, exit, and read the history file.
+/// user command ([`USER_COMMAND`]), probe its state ([`PROBE`]), `exit`, and
+/// read the history file.
 pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> ShellState {
     let home = tempfile::tempdir().expect("temp HOME");
     let hist = home.path().join(".th_history");
@@ -115,7 +121,9 @@ pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> Shel
     while let Ok(Some(c)) = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
         out.push_str(&String::from_utf8_lossy(&c));
     }
-    shell.write(b"echo user-$((1))-command\r").expect("write");
+    shell
+        .write(format!("{USER_COMMAND}\r").as_bytes())
+        .expect("write");
     read_until(&mut rx, &mut out, "user-1-command").await;
     shell.write(format!("{PROBE}\r").as_bytes()).expect("write");
     read_until(&mut rx, &mut out, "TH1END").await;
@@ -136,6 +144,7 @@ pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> Shel
     ShellState {
         history_in_session: field(&out, "HIST").parse().unwrap_or(usize::MAX),
         history_file: file.lines().filter(|l| l.contains("termihub")).count(),
+        history_lines: file.lines().map(str::to_string).collect(),
         functions: field(&out, "FUNCS").parse().unwrap_or(usize::MAX),
         variables: field(&out, "VARS").parse().unwrap_or(usize::MAX),
         prompt_command: field(&out, "PC"),
@@ -171,9 +180,23 @@ async fn a_default_session_leaves_the_shell_untouched() {
             continue;
         }
         let state = measure(shell, None).await;
-        // The probe line itself mentions termihub once in bash's history.
+        // The history holds exactly what the test typed — nothing termiHub
+        // typed. (#5061: this is the line-by-line evidence; the counts below
+        // only see lines that mention termihub.)
+        assert_eq!(
+            state.history_lines,
+            [USER_COMMAND, PROBE, "exit"],
+            "{shell}: only the test's own commands: {state:?}"
+        );
+        // The probe line itself is the one history entry that mentions
+        // termihub. In session, bash 5 lists it from the probe's own `fc`;
+        // macOS's /bin/bash 3.2 leaves the running line out (#5061), and zsh
+        // only adds it after the line has run.
         let own = usize::from(shell == "bash");
-        assert_eq!(state.history_in_session, own, "{shell}: {state:?}");
+        assert!(
+            state.history_in_session <= own,
+            "{shell}: in-session history: {state:?}"
+        );
         assert_eq!(
             state.history_file, 1,
             "{shell}: only the probe line: {state:?}"

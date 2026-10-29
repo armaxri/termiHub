@@ -388,6 +388,11 @@ describe("live lane path filters (#4618)", () => {
       "core/src/files/transfer/retry.rs",
       "core/src/files/transfer/scheduler.rs",
       "core/src/files/transfer/state.rs",
+      // The desktop spawn path the wsl-spawn-grades job drives (#4962).
+      "src-tauri/src/commands/spawn.rs",
+      "src-tauri/src/spawn/**",
+      "src/components/Spawn/**",
+      "tests/system/tests/test_external_spawn.py",
       ".github/workflows/wsl-live.yml",
     ],
   };
