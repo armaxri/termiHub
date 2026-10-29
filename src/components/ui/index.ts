@@ -130,6 +130,15 @@ export type { StatusDotProps, StatusTone, StatusDotSize } from "./StatusDot";
 export { ContentOverlay } from "./ContentOverlay";
 export type { ContentOverlayProps } from "./ContentOverlay";
 
+export { ConnectProgress } from "./ConnectProgress";
+export type {
+  ConnectProgressProps,
+  ConnectProgressPhase,
+  ConnectStage,
+  ConnectStageState,
+  ConnectAttempt,
+} from "./ConnectProgress";
+
 export { LiveRegion } from "./LiveRegion";
 export type { LiveRegionProps, LiveRegionPoliteness } from "./LiveRegion";
 
