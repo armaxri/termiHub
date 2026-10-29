@@ -89,6 +89,22 @@ describe("ShortcutsOverlay", () => {
     expect(document.body.textContent).not.toContain("macOS");
   });
 
+  it("lists both macOS command palette shortcuts (#5084)", () => {
+    clearOverrides();
+    const ua = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)");
+    try {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const row = document.querySelector('[data-testid="shortcut-row-command-palette"]');
+      expect(row?.textContent).toContain("Cmd+P / Cmd+Shift+P");
+    } finally {
+      ua.mockRestore();
+    }
+  });
+
   it("shows category group labels", () => {
     act(() => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);

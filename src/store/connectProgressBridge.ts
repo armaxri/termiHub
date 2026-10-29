@@ -17,6 +17,8 @@ export interface TabConnectProgress {
 
 interface ConnectProgressState {
   byTab: Record<string, TabConnectProgress>;
+  /** The attempt each tab is currently on; reports from other attempts are stale. */
+  currentAttempt: Record<string, string>;
 }
 
 /**
@@ -24,17 +26,35 @@ interface ConnectProgressState {
  * Runtime-only and deliberately outside the app store: it is a pure display
  * feed for the connect overlay, cleared when a tab starts a new attempt.
  */
-export const useConnectProgressStore = create<ConnectProgressState>(() => ({ byTab: {} }));
+export const useConnectProgressStore = create<ConnectProgressState>(() => ({
+  byTab: {},
+  currentAttempt: {},
+}));
 
 /** Fold one `connect-progress` event into the per-tab map. */
 export function recordConnectProgress(event: ConnectProgressEvent): void {
   const tabId = tabIdFromConnectId(event.connectId);
   if (!tabId) return;
+  // A late report from an aborted / superseded attempt must not move the new
+  // attempt's stepper (#5081).
+  const current = useConnectProgressStore.getState().currentAttempt[tabId];
+  if (current !== undefined && current !== event.connectId) return;
   useConnectProgressStore.setState((s) => ({
     byTab: {
       ...s.byTab,
       [tabId]: { connectId: event.connectId, stage: event.stage, status: event.status },
     },
+  }));
+}
+
+/**
+ * A new connect attempt starts for `tabId` (#5081): forget the previous
+ * attempt's progress and accept reports only for `connectId` from now on.
+ */
+export function beginConnectAttempt(tabId: string, connectId: string): void {
+  clearConnectProgress(tabId);
+  useConnectProgressStore.setState((s) => ({
+    currentAttempt: { ...s.currentAttempt, [tabId]: connectId },
   }));
 }
 

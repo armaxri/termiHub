@@ -7,6 +7,7 @@ import {
   getDefaultBindings,
   getEffectiveCombo,
   formatBindingForDisplay,
+  formatActionBindings,
   setOverride,
   setOverrides,
   clearOverrides,
@@ -40,9 +41,11 @@ const keybindingFields: ListFilterFields<KeyBinding> = (binding) => {
   const combo = effective ?? binding.winLinuxDefault;
   const comboStr = isUnboundCombo(effective)
     ? "unbound"
-    : combo
-      ? formatBindingForDisplay(combo)
-      : "";
+    : effective
+      ? (formatActionBindings(binding.action) ?? "")
+      : combo
+        ? formatBindingForDisplay(combo)
+        : "";
   return [binding.label, binding.action, binding.category, comboStr];
 };
 
@@ -75,8 +78,7 @@ const RECORDING_INSTRUCTIONS =
 
 /** Human-readable effective binding of `action` ("unbound" when it has none). */
 function describeEffective(action: string): string {
-  const combo = getEffectiveCombo(action);
-  return combo && !isUnboundCombo(combo) ? formatBindingForDisplay(combo) : "unbound";
+  return formatActionBindings(action) ?? "unbound";
 }
 
 interface KeyboardSettingsProps {
@@ -447,7 +449,8 @@ function KeybindingRow({
 }: KeybindingRowProps) {
   const combo = getEffectiveCombo(binding.action);
   const isUnbound = !combo || isUnboundCombo(combo);
-  const displayStr = combo && !isUnboundCombo(combo) ? formatBindingForDisplay(combo) : "(unbound)";
+  // Alternate defaults are listed too, e.g. "Cmd+P / Cmd+Shift+P" (#5084).
+  const displayStr = formatActionBindings(binding.action) ?? "(unbound)";
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Live preview of the combos captured so far while recording (e.g. "Cmd+K"

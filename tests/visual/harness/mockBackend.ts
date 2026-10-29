@@ -82,6 +82,8 @@ declare global {
     __VISUAL_INVOKED__?: string[];
     /** `false` releases the connect-overlay scenario's held session folds (#5068). */
     __VISUAL_HOLD_CONNECT__?: boolean;
+    /** Connect ids the app cancelled with `cancel_connecting` (#5081). */
+    __VISUAL_CANCELLED_CONNECTS__?: string[];
     /** Every PTY resize the app sent, in order (#5065). */
     __VISUAL_RESIZES__?: { sessionId: string; cols: number; rows: number }[];
     /** `sessionId:intervalMs` of every refresh-interval change the app asked for (#4949). */
@@ -603,6 +605,8 @@ function regionView(region: string, populated: boolean): unknown {
 }
 
 let version = 0;
+/** Hanging `create_connection` calls of the connect-overlay scenario, by connect id. */
+const pendingConnects = new Map<string, () => void>();
 /** Terminal sessions created so far (each `create_connection` makes one). */
 let terminalSessions = 0;
 
@@ -748,6 +752,14 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "session_monitoring_set_interval":
       (window.__VISUAL_MONITOR_INTERVALS__ ??= []).push(`${args?.sessionId}:${args?.intervalMs}`);
       return null;
+    case "cancel_connecting": {
+      const connectId = String(args?.connectId ?? "");
+      (window.__VISUAL_CANCELLED_CONNECTS__ ??= []).push(connectId);
+      const cancel = pendingConnects.get(connectId);
+      pendingConnects.delete(connectId);
+      cancel?.();
+      return cancel !== undefined;
+    }
     case "create_connection": {
       if (scenario.connectOverlay) {
         const host = (args?.settings as { host?: string } | undefined)?.host;
@@ -760,7 +772,14 @@ export function handleCommand(cmd: string, args: Args): unknown {
         if (host === "timeout.example") {
           return Promise.reject({ code: "timeout", message: "Connection timed out after 30s" });
         }
-        return new Promise(() => {});
+        // Pending until `cancel_connecting` names its connect id, which
+        // rejects it as the backend does for a cancelled connect (#5081).
+        const connectId = String(args?.connectId ?? "");
+        return new Promise((_resolve, reject) => {
+          pendingConnects.set(connectId, () =>
+            reject({ code: "cancelled", message: "Connection cancelled" })
+          );
+        });
       }
       if (!scenario.terminal) return null;
       // The first terminal keeps the well-known id; later ones get their own,

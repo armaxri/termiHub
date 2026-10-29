@@ -103,6 +103,19 @@ describe("ConnectProgress", () => {
     expect(ring().style.getPropertyValue("--cp-delay")).toBe("-4000ms");
   });
 
+  it("starts a fresh ring when a new attempt starts (#5081)", () => {
+    render(base());
+    const first = q(".ui-connect-progress__ring") as HTMLElement;
+    expect(first.style.getPropertyValue("--cp-delay")).toBe("-4000ms");
+    // Retry: a new attempt 30s later, observed 1s after it started.
+    const T1 = T0 + 30_000;
+    render(base({ startedAt: T1, deadlineAt: T1 + 90_000, now: T1 + 1_000 }));
+    const second = q(".ui-connect-progress__ring") as HTMLElement;
+    expect(second).not.toBe(first);
+    expect(second.style.getPropertyValue("--cp-delay")).toBe("-1000ms");
+    expect(second.style.getPropertyValue("--cp-progress")).toBe(String(1 / 90));
+  });
+
   it("is indeterminate when there is no deadline", () => {
     render(base({ deadlineAt: undefined }));
     expect(q(".ui-connect-progress__ring--indeterminate")).not.toBeNull();
