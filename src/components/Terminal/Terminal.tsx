@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { clearConnectProgress } from "@/store/connectProgressBridge";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -750,6 +751,8 @@ export function Terminal({
               // id. If it did, the old effect's cleanup would cancel the fresh
               // attempt's token instead of its own (#1125).
               connectInFlightRef.current.add(connectId);
+              // A fresh attempt starts its stepper from the first stage (#5068).
+              clearConnectProgress(tabId);
               try {
                 // Pass the tab's resilient-reconnect determination (#2439) so a
                 // genuine drop is folded server-side as `session.reconnect` vs

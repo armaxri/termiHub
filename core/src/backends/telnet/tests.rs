@@ -866,3 +866,37 @@ async fn e2e_manual_login_sends_nothing_at_prompt() {
     telnet.write(b"!").expect("write marker");
     assert_eq!(read_until(&mut peer, b"!"), b"!".to_vec());
 }
+
+/// #5068: a telnet connect reports Resolve → Connect → Session, on both the
+/// inline and the cancellable (blocking-thread) connect paths.
+#[tokio::test]
+async fn connect_reports_resolve_connect_session_stages() {
+    use crate::connection::connect_progress::{with_reporter, ConnectProgressReporter};
+    for cancellable in [false, true] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let accept = std::thread::spawn(move || listener.accept());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let reporter = ConnectProgressReporter::new(move |u| sink.lock().unwrap().push(u.stage));
+
+        let mut telnet = Telnet::new();
+        let settings = serde_json::json!({ "host": addr.ip().to_string(), "port": addr.port() });
+        let token = cancellable.then(tokio_util::sync::CancellationToken::new);
+        with_reporter(reporter, telnet.connect_cancellable(settings, token))
+            .await
+            .expect("connect should succeed");
+        let _peer = accept.join().expect("accept thread").expect("accept");
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                ConnectStage::Resolve,
+                ConnectStage::Connect,
+                ConnectStage::Session
+            ],
+            "cancellable = {cancellable}"
+        );
+        telnet.disconnect().await.expect("disconnect");
+    }
+}

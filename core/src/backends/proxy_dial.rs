@@ -19,6 +19,7 @@
 //! `proxy-dial` feature, which the `ssh` and `vnc` features both enable, and
 //! stays reachable as `backends::ssh::proxy` for the SSH backend.
 
+use crate::connection::connect_progress::{report, ConnectStage};
 use std::net::{IpAddr, Ipv4Addr};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -52,12 +53,32 @@ pub async fn connect_tcp(
         // Typed, locale-independent discriminant so consumers classify an
         // unreachable host structurally (I18N-002 / ERR-003).
         // `host:port` text, as before #4867, so a bracketed IPv6 literal works.
-        return TcpStream::connect(format!("{host}:{port}"))
+        // Resolve first, then connect, so the two stages report separately
+        // (#5068); together this is what `TcpStream::connect("host:port")` does.
+        report(ConnectStage::Resolve, Some(format!("Resolving {host}")));
+        let addrs: Vec<_> = tokio::net::lookup_host(format!("{host}:{port}"))
+            .await
+            .map_err(|e| SessionError::ConnectionFailed(e.to_string()))?
+            .collect();
+        if let Some(first) = addrs.first() {
+            report(
+                ConnectStage::Connect,
+                Some(format!("TCP connect to {first}")),
+            );
+        }
+        return TcpStream::connect(&addrs[..])
             .await
             .map_err(|e| SessionError::ConnectionFailed(e.to_string()));
     };
 
     let kind = proxy.proxy_type.label();
+    report(
+        ConnectStage::Connect,
+        Some(format!(
+            "Through {kind} proxy {}:{}",
+            proxy.host, proxy.port
+        )),
+    );
     let mut stream = TcpStream::connect(format!("{}:{}", proxy.host, proxy.port))
         .await
         .map_err(|e| {

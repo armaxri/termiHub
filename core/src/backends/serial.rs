@@ -3,6 +3,7 @@
 //! Uses `serial2-tokio` for native async serial I/O. This is the canonical
 //! implementation shared by both the desktop and agent crates.
 
+use crate::connection::connect_progress::{self, ConnectStage};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -459,7 +460,15 @@ impl ConnectionType for Serial {
 
         info!(port = %parsed.port, baud_rate = parsed.baud_rate, "Opening serial port");
 
+        connect_progress::report(
+            ConnectStage::OpenPort,
+            Some(format!(
+                "Opening {} at {} baud",
+                parsed.port, parsed.baud_rate
+            )),
+        );
         let port_handle = open_serial_port(&parsed)?;
+        connect_progress::report(ConnectStage::Session, None);
         let port = Arc::new(port_handle);
 
         let alive = Arc::new(AtomicBool::new(true));

@@ -9,6 +9,7 @@
     "app-quit-cancelled",
     "app-quit-requested",
     "cli-workspace-requested",
+    "connect-progress",
     "connection-ids-changed",
     "connection-test-cert-prompt",
     "connections-changed",
