@@ -784,15 +784,27 @@ class AppInstance:
         if self._process is None or self._bridge_port is None:
             raise RuntimeError("app was never started")
         deadline = time.monotonic() + timeout
-        old_pid = self._process.pid
-        if not self.wait_exited(timeout):
+        # The process restarting itself is the tracked relaunch once the app has
+        # restarted itself before (a second backup restore in one suite): wait
+        # for *it*, and take only a newer process, or the second adopt re-adopts
+        # the relaunch that is about to exit and its successor outlives the
+        # suite (#5086).
+        current = self._relaunched
+        old_pid = self._process.pid if current is None else current.pid
+        not_before = self._started_at
+        if current is None:
+            exited = self.wait_exited(timeout)
+        else:
+            exited = self._wait_relaunched_exited(current, timeout)
+            not_before = max(not_before, self._create_time(current))
+        if not exited:
             raise AssertionError(f"the app (pid {old_pid}) did not exit to restart itself")
         while True:
             found = find_relaunched_app(
                 self._binary,
                 self._bridge_port,
                 exclude_pid=old_pid,
-                not_before=self._started_at,
+                not_before=not_before,
             )
             if found is not None:
                 self._relaunched = found
@@ -806,6 +818,25 @@ class AppInstance:
                     + ("; ".join(seen) if seen else "none")
                 )
             time.sleep(0.2)
+
+    @staticmethod
+    def _wait_relaunched_exited(proc: psutil.Process, timeout: float) -> bool:
+        """Wait up to ``timeout`` for a tracked relaunch to exit; True if it did."""
+        try:
+            proc.wait(timeout=timeout)
+        except psutil.TimeoutExpired:
+            return False
+        except psutil.NoSuchProcess:
+            pass
+        return True
+
+    @staticmethod
+    def _create_time(proc: psutil.Process) -> float:
+        """``proc``'s start time (psutil caches it, so it survives the exit)."""
+        try:
+            return proc.create_time()
+        except psutil.Error:
+            return 0.0
 
     def _terminate_relaunched(self) -> None:
         """Kill the self-relaunched app and its process tree (see ``adopt_self_restart``)."""
