@@ -179,6 +179,27 @@ def test_drag_releases_the_button_even_when_a_move_is_refused():
     assert fake.calls[-1] == ("button", "left", False)
 
 
+def test_click_releases_the_button_when_the_press_moved_the_foreground():
+    """A press that lands on a foreign window over the point makes it frontmost;
+    the release is still sent (and the click fails), never left held (#5086)."""
+    fake = FakeInput(100, env=CI)
+    original = fake._pointer_button
+
+    def press_steals_focus(pid: int, button: str, down: bool) -> None:
+        original(pid, button, down)
+        if down:
+            fake.front = 999
+
+    fake._pointer_button = press_steals_focus  # type: ignore[method-assign]
+    with pytest.raises(GlobalInjectionRefused, match="999"):
+        fake.click(10, 20, button="right")
+    assert [c for c in fake.calls if c[0] == "button"] == [
+        ("button", "right", True),
+        ("button", "right", False),
+    ]
+    assert fake.click_state == 1
+
+
 def test_drag_moves_in_steps_to_the_end():
     fake = FakeInput(100, env=CI)
     fake.drag((0, 0), (100, 50), steps=4, hold=0)
