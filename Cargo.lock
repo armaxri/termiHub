@@ -105,6 +105,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "alphanumeric-sort"
+version = "1.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a97de3ad85c4425a2c267a5e91adbe49f9f14e650bd9c78e96b6bc00e5f6673a"
+
+[[package]]
 name = "ambient-authority"
 version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7796,6 +7802,7 @@ dependencies = [
  "aead 0.6.0-rc.10",
  "aes 0.9.3",
  "aes-gcm 0.11.0-rc.4",
+ "alphanumeric-sort",
  "anyhow",
  "argon2 0.6.0-rc.8",
  "async-trait",
