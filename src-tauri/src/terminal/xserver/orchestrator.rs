@@ -50,33 +50,48 @@ pub fn ensure_x_server(
 }
 
 /// Ensure a usable local X server **and** claim a session against it, returning
-/// an owned [`SessionGuard`] whose drop releases the session exactly once (the
-/// SSH X11 connect path, #1107).
+/// an owned [`SessionGuard`](super::manager::SessionGuard) whose drop releases the
+/// session exactly once (the SSH X11 connect path, #1107).
 ///
 /// The guard is threaded into core's connect path as a session-lifetime
 /// resource, so [`release_session`](XServerManager::release_session) — and thus
 /// the existing idle-shutdown behavior — fires when the session ends. The
 /// returned [`EnsureOutcome::report`] reflects the freshly-incremented count.
+///
+/// On platforms without a managed server (Linux, macOS) the lease only covers a
+/// TCP server on `:0`; when there is none, the connect resolves exactly like the
+/// probe path — adopting a user-run (Unix-socket) server, launching XQuartz, or
+/// returning the classified gap such as "install XWayland" — with no lease, so
+/// it never reports a generic lease failure (#4965).
 pub fn ensure_x_server_for_session(
     manager: &Arc<XServerManager>,
     provide_automatically: bool,
     cancel: Option<&CancellationToken>,
-) -> Result<(EnsureOutcome, super::manager::SessionGuard), XServerError> {
+) -> Result<(EnsureOutcome, Option<super::manager::SessionGuard>), XServerError> {
     // Acquire first: this drives the same adopt/reuse/spawn logic as
     // `ensure_running` while bumping the refcount, and hands back a guard that
     // releases on drop. If acquisition fails there is nothing to release.
-    let guard = manager
-        .acquire_session_lease()
-        .map_err(|e| XServerError::LaunchFailed {
-            message: format!("failed to acquire X server session: {e}"),
-        })?;
+    let guard = match manager.acquire_session_lease() {
+        Ok(guard) => guard,
+        // Unix: nothing on TCP :0 to lease. Resolve without a claim; an adopted
+        // user-run server is never stopped, so it needs no refcount.
+        Err(_) if !manager.provides_managed() => {
+            let outcome = ensure_x_server_impl(manager, provide_automatically, cancel)?;
+            return Ok((outcome, None));
+        }
+        Err(e) => {
+            return Err(XServerError::LaunchFailed {
+                message: format!("failed to acquire X server session: {e}"),
+            })
+        }
+    };
     // Resolve the (now running) server for the report/forwarder. The lease
     // already ensured it, so this reuses the live process without a second
     // acquire. `cancel` is the SSH connect-abort token so an aborted connect
     // short-cuts the macOS XQuartz readiness wait (#1260). If resolution somehow
     // fails, dropping `guard` releases the session we just claimed.
     let outcome = ensure_x_server_impl(manager, provide_automatically, cancel)?;
-    Ok((outcome, guard))
+    Ok((outcome, Some(guard)))
 }
 
 /// Shared adopt/reuse/spawn + resolve body for the probe and connect paths. The
@@ -591,6 +606,35 @@ mod tests {
             let status = current_status(&mgr);
             assert_eq!(status.state, XServerState::Running);
             assert_eq!(status.session_count, 2, "live count surfaced in status");
+        }
+
+        #[test]
+        fn unmanaged_connect_ensure_resolves_like_the_probe_path() {
+            // On Linux/macOS the manager never spawns a server, so claiming a
+            // session lease fails whenever no TCP server listens on :0 — the
+            // normal case for a Unix-socket X server or a Wayland-only session.
+            // The connect path must then resolve exactly like the probe path
+            // (adopt the user-run server, or the classified gap such as "install
+            // XWayland"), never a generic lease failure (#4965).
+            let mgr = std::sync::Arc::new(manager(vec![], false));
+            let probe = ensure_x_server(&mgr, true);
+            let connect = ensure_x_server_for_session(&mgr, true, None);
+            match (probe, connect) {
+                (Err(probe), Err(connect)) => assert_eq!(connect.to_string(), probe.to_string()),
+                (Ok(probe), Ok((connect, guard))) => {
+                    assert_eq!(connect.report.state, probe.report.state);
+                    assert!(
+                        guard.is_none(),
+                        "an adopted user-run server claims no lease"
+                    );
+                }
+                (probe, connect) => panic!(
+                    "connect resolved differently from the probe: probe ok={}, connect={:?}",
+                    probe.is_ok(),
+                    connect.err().map(|e| e.to_string())
+                ),
+            }
+            assert_eq!(mgr.session_count(), 0, "no session counted without a lease");
         }
 
         #[test]
