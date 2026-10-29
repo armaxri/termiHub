@@ -625,16 +625,17 @@ pub fn get_default_shell() -> Option<String> {
 pub async fn list_serial_ports(
     conn_manager: State<'_, ConnectionManager>,
 ) -> Result<Vec<String>, TerminalError> {
-    let enabled: Option<Vec<String>> = conn_manager
-        .get_settings()
-        .serial_port_scan_prefixes
-        .map(|prefixes| {
-            prefixes
-                .into_iter()
-                .filter(|p| p.enabled)
-                .map(|p| p.prefix)
-                .collect()
-        });
+    let enabled: Option<Vec<String>> =
+        conn_manager
+            .get_settings()
+            .serial_port_scan_prefixes
+            .map(|prefixes| {
+                prefixes
+                    .into_iter()
+                    .filter(|p| p.enabled)
+                    .map(|p| p.prefix)
+                    .collect()
+            });
     tauri::async_runtime::spawn_blocking(move || match enabled {
         Some(prefixes) => {
             let enabled: Vec<&str> = prefixes.iter().map(String::as_str).collect();
