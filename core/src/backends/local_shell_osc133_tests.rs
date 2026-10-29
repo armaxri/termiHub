@@ -150,13 +150,19 @@ impl Session {
     /// *before* readline puts the terminal into raw mode and draws `PS1`. Input
     /// written in that window is echoed by the tty itself, then again by
     /// readline after the prompt, so the early echo and the prompt line land
-    /// between `C` and `D` when there is no `C` (bash < 4.4). `B` is part of
+    /// between `C` and `D` when there is no `C` (bash 4.0–4.3). `B` is part of
     /// `PS1`, so once it is out the line editor owns the terminal.
+    ///
+    /// bash 3 gets no `B` (#5059: its readline miscounts it on a wrapped
+    /// prompt); there the prompt's own text (`bash-3.2$ ` in the test's empty
+    /// `HOME`) is the sign that readline has drawn it.
     async fn wait_for_input_start(&mut self) {
         let (a, b) = (mark("A"), mark("B"));
         self.read_until("a fully drawn prompt (A … B)", |out| {
-            out.rfind(&a)
-                .is_some_and(|pos| out[pos + a.len()..].contains(&b))
+            out.rfind(&a).is_some_and(|pos| {
+                let prompt = &out[pos + a.len()..];
+                prompt.contains(&b) || prompt.ends_with("$ ") || prompt.ends_with("# ")
+            })
         })
         .await;
     }
@@ -231,8 +237,10 @@ async fn assert_marks_bracket_real_commands(shell_name: &str) {
         seq[d..].contains(&a),
         "a new prompt (A) must follow D: {seq:?}"
     );
-    if shell_name == "zsh" {
-        assert!(seq.contains(&c), "zsh's preexec hook must emit C: {seq:?}");
+    if shell_name == "zsh" || shell_name == "/bin/bash" {
+        // zsh: a preexec hook; /bin/bash: PS0 (bash 5 on Linux) or, for
+        // macOS's bash 3.2, a DEBUG trap (#5059).
+        assert!(seq.contains(&c), "{shell_name} must emit C: {seq:?}");
     }
 
     // false: the D mark carries the real non-zero exit status.
@@ -339,12 +347,65 @@ async fn bash_marks_commands_with_their_exit_codes() {
 }
 
 /// `/bin/bash` by path: on macOS that is the system bash 3.2, which has no
-/// `PS0` and so no `C` mark — the path the macOS CI runner took in #4071, which
-/// a Homebrew `bash` earlier on `PATH` would otherwise hide on a developer Mac.
+/// `PS0` (its `C` comes from a `DEBUG` trap) and gets no `B` (#5059) — the
+/// path the macOS CI runner took in #4071, which a Homebrew `bash` earlier on
+/// `PATH` would otherwise hide on a developer Mac.
 #[tokio::test]
 #[serial(local_pty)]
 async fn system_bash_marks_commands_with_their_exit_codes() {
     assert_marks_bracket_real_commands("/bin/bash").await;
+}
+
+/// One `C` per command, none for an empty line or for the user's own
+/// `PROMPT_COMMAND` entries, and `$_` intact — the `DEBUG`-trap `C` of bash 3
+/// (#5059) must hold to what `PS0` gives bash 5.
+async fn assert_one_c_per_command(shell_name: &str) {
+    if !installed(shell_name) {
+        eprintln!("{shell_name} not installed — skipping");
+        return;
+    }
+    let c = mark("C");
+    let mut session = Session::start(shell_name).await;
+    let rc = strip_non_marks(
+        &session
+            .run(r#"PROMPT_COMMAND="$PROMPT_COMMAND;true""#)
+            .await,
+    );
+    assert_eq!(rc.matches(&c).count(), 1, "{shell_name}: {rc:?}");
+    for _ in 0..2 {
+        let empty = strip_non_marks(&session.run("").await);
+        assert!(
+            !empty.contains(&c),
+            "{shell_name}: an empty line is no command: {empty:?}"
+        );
+    }
+    let last_arg = session.run(r#"true th_last && echo "U=[$_]""#).await;
+    assert!(
+        last_arg.contains("U=[th_last]"),
+        "{shell_name}: $_ must survive: {last_arg:?}"
+    );
+    let marks = strip_non_marks(&last_arg);
+    assert_eq!(
+        marks.matches(&c).count(),
+        1,
+        "{shell_name}: one C: {marks:?}"
+    );
+    let pos_c = marks.find(&c).expect("C");
+    let pos_d = marks.find(&mark("D;0")).expect("D;0");
+    assert!(pos_c < pos_d, "{shell_name}: C before D: {marks:?}");
+    session.close().await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn system_bash_emits_one_c_per_command() {
+    assert_one_c_per_command("/bin/bash").await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn bash_emits_one_c_per_command() {
+    assert_one_c_per_command("bash").await;
 }
 
 #[tokio::test]
