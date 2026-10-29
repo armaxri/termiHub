@@ -1,0 +1,7 @@
+{
+  "why": "#4965: the Wayland-only X11 hint step (headless weston) is opted in and must run its grade, so it allows no skip",
+  "max_skips": {
+    "wayland-linux": 0,
+    "wayland-linux-arm64": 0
+  }
+}
