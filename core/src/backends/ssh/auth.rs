@@ -4,6 +4,7 @@
 //! russh session, and [`check_ssh_agent_status()`] for querying SSH agent
 //! availability.
 
+use crate::connection::connect_progress::{self, ConnectStage};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -154,6 +155,13 @@ where
         handler
     };
 
+    connect_progress::report(
+        ConnectStage::HostKey,
+        Some(format!(
+            "Verifying host key of {}:{}",
+            config.host, config.port
+        )),
+    );
     let mut session = russh::client::connect_stream(russh_config, stream, handler)
         .await
         .map_err(|e| {
@@ -171,6 +179,7 @@ where
             }
         })?;
 
+    connect_progress::report(ConnectStage::Authenticate, Some(auth_status(config)));
     authenticate(&mut session, config).await?;
 
     Ok((session, registry, liveness))
@@ -215,6 +224,24 @@ pub async fn connect_and_authenticate_over_channel_with_liveness(
 /// success, or as a fallback after a refused password when the server offers
 /// it. See [`keyboard_interactive`](super::keyboard_interactive) for the
 /// prompt flow and the password auto-answer heuristic.
+/// The status line shown while authenticating with `config`'s method (#5068).
+fn auth_status(config: &SshConfig) -> String {
+    let who = format!("{}@{}", config.username, config.host);
+    match config.auth_method.as_str() {
+        AUTH_METHOD_KEYBOARD_INTERACTIVE => format!("Keyboard-interactive login as {who}"),
+        "agent" => format!("Trying SSH agent keys for {who}"),
+        "key" => format!(
+            "Trying public key {} for {who}",
+            config
+                .key_path
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("~/.ssh/id_rsa")
+        ),
+        _ => format!("Password login as {who}"),
+    }
+}
+
 async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<(), SessionError> {
     // A registered-but-unavailable prompter (the agent's relay with no capable
     // desktop attached, #3375) is the same as none: auto-answer only.
@@ -905,3 +932,7 @@ mod tests {
 #[cfg(test)]
 #[path = "auth_unattended_tests.rs"]
 mod unattended_tests;
+
+#[cfg(test)]
+#[path = "auth_progress_tests.rs"]
+mod progress_tests;

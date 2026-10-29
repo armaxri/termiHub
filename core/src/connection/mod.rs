@@ -16,6 +16,7 @@
 pub mod auto_reconnect;
 pub mod clipboard_dib;
 pub mod clipboard_image;
+pub mod connect_progress;
 pub mod connect_timeout;
 pub mod graphical;
 pub mod graphical_files;

@@ -58,6 +58,12 @@ export interface VisualScenario {
    * tab gets a live session the spec feeds output to through `emit` (#4949).
    */
   terminal?: boolean;
+  /**
+   * `create_connection` never resolves, so a tab stays on its connect overlay
+   * (#5068) — except host `fail.example` (rejects: auth refused) and
+   * `timeout.example` (rejects with the typed `timeout` code).
+   */
+  connectOverlay?: boolean;
   /** Seed one live SSH host monitor ({@link MONITOR_KEY}) for Open Connections (#4949). */
   monitoring?: boolean;
   /** Seed root connections (#5008) and folders (#5020) with icon colours and emoji. */
@@ -74,6 +80,10 @@ declare global {
      * intent), so a check can compare what two triggers of one action did.
      */
     __VISUAL_INVOKED__?: string[];
+    /** `false` releases the connect-overlay scenario's held session folds (#5068). */
+    __VISUAL_HOLD_CONNECT__?: boolean;
+    /** Every PTY resize the app sent, in order (#5065). */
+    __VISUAL_RESIZES__?: { sessionId: string; cols: number; rows: number }[];
     /** `sessionId:intervalMs` of every refresh-interval change the app asked for (#4949). */
     __VISUAL_MONITOR_INTERVALS__?: string[];
   }
@@ -593,6 +603,8 @@ function regionView(region: string, populated: boolean): unknown {
 }
 
 let version = 0;
+/** Terminal sessions created so far (each `create_connection` makes one). */
+let terminalSessions = 0;
 
 /** Answer one IPC command. Unknown commands resolve to `null` and are recorded. */
 export function handleCommand(cmd: string, args: Args): unknown {
@@ -614,6 +626,23 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return null;
     case "intent_dispatch": {
       const intent = (args?.intent ?? {}) as { intentId?: string };
+      // The connect-overlay scenario keeps the client's optimistic
+      // session-lifecycle folds (connect → connecting, connectFailed → failed)
+      // by acknowledging them with a version that never arrives, so the tab
+      // shows the real overlay without a backend region (#5068).
+      // A spec sets `__VISUAL_HOLD_CONNECT__ = false` before opening a tab whose
+      // connect should fail, so its overlay leaves Connecting for the failure.
+      if (
+        scenario.connectOverlay &&
+        intentKind?.startsWith("session.") &&
+        window.__VISUAL_HOLD_CONNECT__ !== false
+      ) {
+        return {
+          intentId: intent.intentId ?? "",
+          status: "accepted",
+          produced: [{ region: "session-lifecycle", version: 1_000_000 + version++ }],
+        };
+      }
       return { intentId: intent.intentId ?? "", status: "applied", produced: [] };
     }
 
@@ -719,8 +748,35 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "session_monitoring_set_interval":
       (window.__VISUAL_MONITOR_INTERVALS__ ??= []).push(`${args?.sessionId}:${args?.intervalMs}`);
       return null;
-    case "create_connection":
-      return scenario.terminal ? VISUAL_SESSION_ID : null;
+    case "create_connection": {
+      if (scenario.connectOverlay) {
+        const host = (args?.settings as { host?: string } | undefined)?.host;
+        if (host === "fail.example") {
+          return Promise.reject({
+            code: "connection_failed",
+            message: "Permission denied (publickey,password).",
+          });
+        }
+        if (host === "timeout.example") {
+          return Promise.reject({ code: "timeout", message: "Connection timed out after 30s" });
+        }
+        return new Promise(() => {});
+      }
+      if (!scenario.terminal) return null;
+      // The first terminal keeps the well-known id; later ones get their own,
+      // so each tab has its own session (#5065).
+      terminalSessions += 1;
+      return terminalSessions === 1
+        ? VISUAL_SESSION_ID
+        : `${VISUAL_SESSION_ID}-${terminalSessions}`;
+    }
+    case "resize_terminal":
+      (window.__VISUAL_RESIZES__ ??= []).push({
+        sessionId: String(args?.sessionId ?? ""),
+        cols: Number(args?.cols),
+        rows: Number(args?.rows),
+      });
+      return null;
     case "plugin:dialog|open":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
     case "preview_plugin":

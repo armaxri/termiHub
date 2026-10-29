@@ -46,6 +46,12 @@ interface ConnectionSettingsFormProps {
    */
   availablePorts?: string[];
   /**
+   * When set, `serialPort` fields rescan this connected agent's ports while
+   * visible (#5069) — pass the agent's id only when it advertises
+   * `serialPortRescan`. `availablePorts` stays the fallback.
+   */
+  serialPortAgentId?: string;
+  /**
    * Whether `dockerContainer` fields may list the LOCAL container runtime's
    * containers (PROD-017). Pass `false` for agent-hosted connections, whose
    * containers live on the agent's machine; the field then accepts a typed
@@ -101,6 +107,7 @@ export function ConnectionSettingsForm({
   credentialSavedHint,
   storedFieldSecrets,
   availablePorts,
+  serialPortAgentId,
   localContainerListing = true,
   containerListingAgentId,
   savedConnections = NO_CONNECTIONS,
@@ -378,6 +385,7 @@ export function ConnectionSettingsForm({
                               : undefined
                           }
                           availablePorts={availablePorts}
+                          serialPortAgentId={serialPortAgentId}
                           containerContext={
                             field.fieldType.type === "dockerContainer"
                               ? {

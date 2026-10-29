@@ -207,6 +207,8 @@ fn agent_fixture() -> Value {
             "fileCreateNew": true,
             // Icon colour / emoji on saved definitions (#5021).
             "definitionIconStyle": true,
+            // Live serial port rescans via `serial.list_ports` (#5069).
+            "serialPortRescan": true,
             "agentVersion": "1.4.2"
         }),
     );

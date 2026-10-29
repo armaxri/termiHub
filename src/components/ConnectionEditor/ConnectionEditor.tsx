@@ -1835,6 +1835,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               ? (existingAgent?.capabilities?.availableSerialPorts ?? [])
               : undefined
           }
+          serialPortAgentId={
+            isAgentDefinitionMode && existingAgent?.capabilities?.serialPortRescan
+              ? existingAgent.id
+              : undefined
+          }
           localContainerListing={!isAgentDefinitionMode}
           containerListingAgentId={isAgentDefinitionMode ? existingAgent?.id : undefined}
           savedConnections={connections}

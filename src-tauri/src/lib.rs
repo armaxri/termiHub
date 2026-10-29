@@ -817,6 +817,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::agent::list_agent_sessions,
             commands::agent::list_agent_host_sessions,
             commands::agent_docker::list_agent_docker_containers,
+            commands::agent_serial::list_agent_serial_ports,
             commands::agent::take_over_agent_session,
             commands::agent::close_agent_session,
             commands::agent::list_agent_connections,

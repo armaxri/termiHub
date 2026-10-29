@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { clearConnectProgress } from "@/store/connectProgressBridge";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -60,6 +61,7 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
+import { watchDevicePixelRatio } from "./devicePixelRatioWatch";
 import { fitIfSafe, isFitReady, isGridSettled, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { createOrderedResize } from "./orderedResize";
@@ -749,6 +751,8 @@ export function Terminal({
               // id. If it did, the old effect's cleanup would cancel the fresh
               // attempt's token instead of its own (#1125).
               connectInFlightRef.current.add(connectId);
+              // A fresh attempt starts its stepper from the first stage (#5068).
+              clearConnectProgress(tabId);
               try {
                 // Pass the tab's resilient-reconnect determination (#2439) so a
                 // genuine drop is folded server-side as `session.reconnect` vs
@@ -1866,7 +1870,43 @@ export function Terminal({
     });
     resizeObserver.observe(el);
 
+    // A device-pixel-ratio change (monitor move, display scale, the WebView
+    // settling on its scale at start-up) leaves the container's CSS size alone,
+    // so the observer above never fires — but the WebGL cell is floored to whole
+    // device pixels and changes with the ratio. The old grid then overflows the
+    // pane and its right-most columns are cut off (#5065). Re-fit once xterm has
+    // re-measured for the new ratio (next frame); off screen it is owed to the
+    // next show, like a container change (#4863).
+    const stopDprWatch = watchDevicePixelRatio(window, (ratio) => {
+      if (!isOnScreenRef.current) {
+        hiddenFitPendingRef.current = true;
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (connectAbort.signal.aborted || !isOnScreenRef.current) return;
+        frontendLog("terminal", `re-fit after pixel ratio ${ratio} tab=${tabId}`);
+        try {
+          if (horizontalScrollingRef.current) {
+            // Columns stay pinned; only the rows and the scroll width follow.
+            const dims = fitAddon.proposeDimensions();
+            if (dims && dims.rows !== xterm.rows) xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
+            updateHorizontalScrollWidth(xterm, fitAddon, el);
+          } else {
+            fitIfSafe(el, fitAddon);
+          }
+          scrollbar.update();
+        } catch (err) {
+          // Once per ratio change; the next ResizeObserver fit re-fits.
+          frontendLog(
+            "terminal",
+            `re-fit after a pixel ratio change failed tab=${tabId}: ${errorMessage(err)}`
+          );
+        }
+      });
+    });
+
     return () => {
+      stopDprWatch();
       connectAbort.abort();
       // If the tab is torn down while a connect is in flight (e.g. the user hit
       // Cancel on the connecting overlay), abort the backend's handshake instead

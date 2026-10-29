@@ -641,6 +641,7 @@ fn connection(
             host_file_attribute_ops: None,
             file_create_new: false,
             definition_icon_style: false,
+            serial_port_rescan: false,
             agent_version: String::new(),
         }
         .into(),

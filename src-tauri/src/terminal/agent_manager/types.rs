@@ -127,6 +127,14 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub definition_icon_style: bool,
+    /// Whether the agent serves `serial.list_ports` — a fresh enumeration of
+    /// its host's serial ports (protocol 0.34.0, #5069), which the connection
+    /// editor polls while an agent-hosted serial Port field is visible. `false`
+    /// for older agents, whose Port field keeps the `available_serial_ports`
+    /// snapshot taken at connect.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub serial_port_rescan: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

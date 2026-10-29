@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.34.0        | Yes (the desktop requests 0.24.0; `serialPortRescan` lets the Port field of an agent-hosted serial connection follow plug / unplug)   |
 | 0.24.0          | 0.33.0        | Yes (the desktop requests 0.24.0; `definitionIconStyle` shows the icon colour / emoji controls for agent connections)                 |
 | 0.24.0          | 0.32.0        | Yes (the desktop requests 0.24.0; `agent.logs.*` lets Export Diagnostics include the agent's log files)                               |
 | 0.24.0          | 0.31.0        | Yes (the desktop requests 0.24.0; `clientCapabilities.fractionalLatency` gets it sub-millisecond `latencyMs` in network tool results) |
@@ -415,6 +416,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.34.0 (additive, minor)** — adds [`serial.list_ports`](#seriallist_ports) (#5069): a fresh enumeration of the agent host's serial ports, naturally sorted (`COM3` before `COM10`), so the connection editor's Port field of an **agent-hosted** serial connection picks up adapters plugged into / removed from the agent host while it is visible (the desktop polls it every ~1.5 s, backing off on errors). The `initialize` result gains `capabilities.serialPortRescan: true`. Negotiation is by **capability**: the desktop calls the method only on an agent that advertises the flag and keeps the `availableSerialPorts` snapshot taken at `initialize` for an older one (should such an agent still be asked, its `-32601` is read the same way). An older desktop never calls the method. The desktop still requests `0.24.0`.
 
 **0.33.0 (additive, minor)** — saved connection definitions carry an optional **icon colour** and **emoji** (#5021): [`connections.create`](#connectionscreate) takes `icon_color` / `icon_emoji`, [`connections.update`](#connectionsupdate) takes them as tri-state patches (explicit `null` clears, omitted leaves unchanged), and [`connections.list`](#connectionslist) and the create / update results report them when set. The agent stores both opaquely (a palette name or `#rrggbb`, and a single emoji, validated by the desktop) and leaves them out of `connections.json` when unset, so the keys need no store schema step of their own (the store version is unchanged by this release); an agent that loads a file carrying them without knowing them keeps them as unknown fields. The `initialize` result gains `capabilities.definitionIconStyle: true`. Negotiation is by **capability**: an older agent ignores the unknown keys and would silently drop the choice, so the desktop shows the icon colour / emoji controls only for an agent that advertises the flag. An older desktop never sends the keys. The desktop still requests `0.24.0`.
 
@@ -573,6 +576,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.forwardFlow`                | `boolean`              | [`agent.forward.connect`](#agentforwardconnect) grants a requested `window` and [`agent.forward.ack`](#agentforwardack) is honored (0.28.0+; absent = `false`)                                         |
 | `capabilities.hostFileAttributeOps`       | `object`               | `{ permissions, owner, symlink }` booleans: the chmod / chown / symlink the agent host's own file system performs, for local sessions and host-level file requests (0.29.0+; absent = by session type) |
 | `capabilities.definitionIconStyle`        | `boolean`              | Saved connection definitions store `icon_color` / `icon_emoji` (0.33.0+; absent = `false`, the desktop hides the icon colour / emoji controls)                                                         |
+| `capabilities.serialPortRescan`           | `boolean`              | [`serial.list_ports`](#seriallist_ports) re-enumerates the host's serial ports on demand (0.34.0+; absent = `false`, the desktop keeps the `availableSerialPorts` snapshot)                            |
 | `capabilities.fileCreateNew`              | `boolean`              | [`write_range`](#connectionfileswrite_range) honors `create_new` as an exclusive create on the agent host's own file system (0.30.0+; absent = `false`, never send the flag)                           |
 
 > **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
@@ -2046,8 +2050,11 @@ List all saved connections and folders.
 | `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                          |
 
 > **Persistence and downgrade safety (#3920):** the agent saves these definitions
-> in its `connections.json` with a schema `version` (`"1"`; a file without one is
-> read as v1). If that file was written by a **newer** agent, this agent leaves it
+> in its `connections.json` with a schema `version` (currently `"3"`; a file
+> without one is read as v1). Older files are migrated forward on load, one step
+> at a time: v1 → v2 switches the command-mark shell hook off once for local
+> shell and SSH connections (#5012), and v2 → v3 does the same for WSL
+> connections (#5046). If that file was written by a **newer** agent, this agent leaves it
 > untouched: `connections.list` returns no saved connections, and every mutating
 > `connections.*` method (`create`, `update`, `delete`, `folders.create`,
 > `folders.update`, `folders.delete`) fails with `-32603` and a message saying the
@@ -3951,6 +3958,39 @@ Each container:
 | `composeService` | `string`  | Docker Compose service from the `com.docker.compose.service` label (0.15.0+; omitted when absent) |
 
 **Errors:** `-32007` before `initialize`; `-32602` for an unknown `runtime`; `-32603` when the runtime is unreachable, with the runtime's own explanation as the message (the desktop shows it and keeps the typed name/ID field). A pre-0.14.0 agent answers `-32601`, which the desktop treats as "this agent cannot list containers".
+
+### `serial.list_ports`
+
+Enumerate the **agent host's** serial ports afresh (#5069, protocol 0.34.0). `capabilities.availableSerialPorts` is a snapshot taken at `initialize`; the connection editor polls this method instead while the Port field of an agent-hosted serial connection is visible (every ~1.5 s, backing off up to 15 s while requests fail), so an adapter plugged into or removed from the agent host appears / disappears within ~2 s. Same enumeration as the snapshot, in natural order. Read-only; called only on an agent advertising `capabilities.serialPortRescan`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "serial.list_ports",
+  "params": {},
+  "id": 57
+}
+```
+
+No params (any given are ignored).
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "ports": ["/dev/ttyUSB0", "/dev/ttyUSB1"] },
+  "id": 57
+}
+```
+
+| Result Field | Type       | Description                                                                   |
+| ------------ | ---------- | ----------------------------------------------------------------------------- |
+| `ports`      | `string[]` | The host's serial port paths / names in natural order; empty when it has none |
+
+**Errors:** `-32007` before `initialize`. A pre-0.34.0 agent answers `-32601`, which the desktop treats as "keep the connect-time snapshot".
 
 ---
 

@@ -27,6 +27,16 @@ vi.mock("lucide-react", () => ({
   Loader2: () => null,
   Zap: () => null,
   Ban: () => null,
+  X: () => null,
+  Check: () => null,
+  CircleAlert: () => null,
+  Clock: () => null,
+  Cable: () => null,
+  Container: () => null,
+  Globe: () => null,
+  Monitor: () => null,
+  Terminal: () => null,
+  Wifi: () => null,
   Copy: () => null,
 }));
 

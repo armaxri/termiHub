@@ -21,6 +21,16 @@ vi.mock("lucide-react", () => ({
   Loader2: () => null,
   Zap: () => null,
   Ban: () => null,
+  X: () => null,
+  Check: () => null,
+  CircleAlert: () => null,
+  Clock: () => null,
+  Cable: () => null,
+  Container: () => null,
+  Globe: () => null,
+  Monitor: () => null,
+  Terminal: () => null,
+  Wifi: () => null,
   Copy: () => null,
 }));
 
@@ -80,9 +90,8 @@ describe("TerminalConnectionOverlay — connecting state", () => {
     });
     await flushSessionRegion();
     expect(container.textContent).toContain("Connecting");
-    expect(
-      container.querySelector("[data-testid='terminal-connection-cancel-btn']")
-    ).not.toBeNull();
+    // One action while busy (#5068): Abort; the tab's own × closes the tab.
+    expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
   });
 
@@ -120,7 +129,7 @@ describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
     container.remove();
   });
 
-  it("shows an Abort button (distinct from Cancel) while connecting", async () => {
+  it("shows Abort as the only action while connecting (#5068)", async () => {
     seedConnecting();
     act(() => {
       root.render(
@@ -134,10 +143,8 @@ describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
     });
     await flushSessionRegion();
     expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
-    // Cancel (closes the tab) is still offered alongside Abort.
-    expect(
-      container.querySelector("[data-testid='terminal-connection-cancel-btn']")
-    ).not.toBeNull();
+    // No separate Cancel any more: the tab's own × closes the tab (#5068).
+    expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
   });
 
   it("Abort calls abortTerminalConnect (not closeTab) while connecting", async () => {
@@ -292,11 +299,10 @@ describe("TerminalConnectionOverlay — auto-retrying state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("attempt 4");
+    expect(container.textContent).toContain("Attempt 4");
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
-    expect(
-      container.querySelector("[data-testid='terminal-connection-cancel-btn']")
-    ).not.toBeNull();
+    expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
   });
 });
 
@@ -350,7 +356,7 @@ describe("TerminalConnectionOverlay — reattaching state", () => {
       );
     });
     expect(container.textContent).toContain("Restoring session");
-    expect(container.textContent).not.toContain("Waiting for agent");
+    expect(container.textContent).not.toContain("Waiting for the agent");
   });
 });
 
@@ -370,7 +376,7 @@ describe("TerminalConnectionOverlay — waiting-for-agent state", () => {
     container.remove();
   });
 
-  it("shows waiting message and only Cancel when terminalWaitingForAgent is set", () => {
+  it("shows the waiting message with Retry now and Abort when terminalWaitingForAgent is set", () => {
     useAppStore.setState({ terminalWaitingForAgent: { [TAB_ID]: "agent-1" } });
     act(() => {
       root.render(
@@ -382,11 +388,10 @@ describe("TerminalConnectionOverlay — waiting-for-agent state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("Waiting for agent");
+    expect(container.textContent).toContain("Waiting for the agent");
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
-    expect(
-      container.querySelector("[data-testid='terminal-connection-cancel-btn']")
-    ).not.toBeNull();
+    expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
   });
 
   it("waiting-for-agent takes priority over auto-retrying", () => {
@@ -404,7 +409,7 @@ describe("TerminalConnectionOverlay — waiting-for-agent state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("Waiting for agent");
+    expect(container.textContent).toContain("Waiting for the agent");
   });
 });
 
@@ -662,12 +667,12 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(retryFn).toHaveBeenCalledWith(TAB_ID);
   });
 
-  it("Cancel button calls closeTab with tabId and panelId", async () => {
+  it("Close tab calls closeTab with tabId and panelId", async () => {
     const closeFn = vi.fn();
     useAppStore.setState({
       closeTab: closeFn,
+      terminalSpawnErrors: { [TAB_ID]: "Connection refused" },
     } as never);
-    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay

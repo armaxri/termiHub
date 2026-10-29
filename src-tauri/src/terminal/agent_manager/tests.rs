@@ -335,6 +335,7 @@ fn capabilities_round_trip_serialization() {
         host_file_attribute_ops: None,
         file_create_new: false,
         definition_icon_style: false,
+        serial_port_rescan: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -949,6 +950,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             host_file_attribute_ops: None,
             file_create_new: false,
             definition_icon_style: false,
+            serial_port_rescan: false,
             agent_version: String::new(),
         }
         .into(),
@@ -1155,6 +1157,7 @@ pub(super) fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::J
             host_file_attribute_ops: None,
             file_create_new: false,
             definition_icon_style: false,
+            serial_port_rescan: false,
             agent_version: String::new(),
         }
         .into(),
@@ -1862,6 +1865,32 @@ fn capabilities_without_definition_icon_style_default_to_false() {
     assert!(caps.definition_icon_style);
     assert_eq!(
         serde_json::to_value(&caps).unwrap()["definitionIconStyle"],
+        true
+    );
+}
+
+/// #5069: an older agent's `initialize` has no `serialPortRescan`, so the
+/// connection editor keeps its `availableSerialPorts` snapshot and never calls
+/// `serial.list_ports`.
+#[test]
+fn capabilities_without_serial_port_rescan_default_to_false() {
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "availableSerialPorts": ["/dev/ttyUSB0"],
+    }))
+    .unwrap();
+    assert!(!caps.serial_port_rescan);
+    assert_eq!(caps.available_serial_ports, vec!["/dev/ttyUSB0"]);
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "serialPortRescan": true,
+    }))
+    .unwrap();
+    assert!(caps.serial_port_rescan);
+    assert_eq!(
+        serde_json::to_value(&caps).unwrap()["serialPortRescan"],
         true
     );
 }

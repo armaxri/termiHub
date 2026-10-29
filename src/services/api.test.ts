@@ -73,6 +73,7 @@ import {
   checkDockerAvailable,
   listDockerContainers,
   listAgentDockerContainers,
+  listAgentSerialPorts,
   checkPodmanAvailable,
   detectAgentArch,
   setupRemoteAgent,
@@ -925,6 +926,18 @@ describe("api service", () => {
         agentId: "agent-1",
         runtime: null,
       });
+    });
+  });
+
+  describe("agent serial ports", () => {
+    it("listAgentSerialPorts forwards the agent id (#5069)", async () => {
+      const reply = { supported: true, ports: ["/dev/ttyUSB0"] };
+      mockedInvoke.mockResolvedValue(reply);
+
+      const result = await listAgentSerialPorts("agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_agent_serial_ports", { agentId: "agent-1" });
+      expect(result).toEqual(reply);
     });
   });
 

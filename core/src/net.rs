@@ -96,6 +96,18 @@ where
 /// successful connection wins. Resolution failure and exhausted-candidate
 /// failure both surface as a clean [`io::Error`] rather than a panic.
 pub fn connect_timeout_resolved(host: &str, port: u16, timeout: Duration) -> io::Result<TcpStream> {
+    connect_timeout_resolved_reporting(host, port, timeout, |_| {})
+}
+
+/// [`connect_timeout_resolved`], calling `on_connecting` with each candidate
+/// address right before its TCP connect is attempted — so a caller can report
+/// the resolve → connect transition (#5068).
+pub fn connect_timeout_resolved_reporting(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    mut on_connecting: impl FnMut(&std::net::SocketAddr),
+) -> io::Result<TcpStream> {
     let addrs: Vec<_> = (host, port)
         .to_socket_addrs()
         .map_err(|e| {
@@ -115,6 +127,7 @@ pub fn connect_timeout_resolved(host: &str, port: u16, timeout: Duration) -> io:
 
     let mut last_err: Option<io::Error> = None;
     for addr in addrs {
+        on_connecting(&addr);
         match TcpStream::connect_timeout(&addr, timeout) {
             Ok(stream) => return Ok(stream),
             Err(e) => last_err = Some(e),

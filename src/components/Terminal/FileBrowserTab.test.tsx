@@ -172,7 +172,7 @@ describe("FileBrowserTab", () => {
       return container.querySelector("[data-testid='content-overlay-live']");
     }
 
-    it("connecting: shared Spinner + busy overlay announced through the live region", async () => {
+    it("connecting: shared connect surface (#5068) + busy overlay announced through the live region", async () => {
       // Never resolve, so the tab stays in its connecting phase.
       mockedCreateTerminal.mockReturnValueOnce(new Promise<string>(() => {}));
       const tabId = addFileBrowserTab();
@@ -184,12 +184,11 @@ describe("FileBrowserTab", () => {
         "[data-testid='file-browser-tab-connecting']"
       ) as HTMLElement;
       expect(body).not.toBeNull();
-      expect(body.classList.contains("ui-content-overlay")).toBe(true);
-      expect(body.getAttribute("aria-busy")).toBe("true");
-      const spinner = body.querySelector(".ui-spinner");
-      expect(spinner).not.toBeNull();
-      expect(spinner?.getAttribute("class")).toContain("motion-essential-spinner");
-      expect(spinner?.getAttribute("aria-hidden")).toBe("true");
+      expect(body.classList.contains("ui-connect-progress")).toBe(true);
+      expect(body.querySelector(".ui-content-overlay")?.getAttribute("aria-busy")).toBe("true");
+      const ring = body.querySelector(".ui-connect-progress__ring");
+      expect(ring).not.toBeNull();
+      expect(ring?.getAttribute("aria-hidden")).toBe("true");
       const region = liveRegion();
       expect(region?.getAttribute("role")).toBe("status");
       expect(region?.getAttribute("aria-live")).toBe("polite");

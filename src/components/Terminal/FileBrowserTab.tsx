@@ -2,7 +2,14 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { FolderOpen, AlertCircle, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
-import { Button, ContentOverlay, Spinner, toast } from "@/components/ui";
+import { Button, ContentOverlay, toast } from "@/components/ui";
+import { ConnectProgress } from "@/components/ui/ConnectProgress";
+import {
+  buildStages,
+  connectOverlayIdentity,
+  connectTypeLabel,
+  stepsFor,
+} from "@/utils/connectStages";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -41,6 +48,10 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
   // Title is reactive so a rename shows through; the config is read once in the
   // effect since it is stable for the tab's lifetime.
   const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
+  const config = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.config);
+  const identity = connectOverlayIdentity(config ?? { type: "" });
+  // The connect ring's elapsed readout counts from the attempt's start.
+  const [startedAt, setStartedAt] = useState(() => Date.now());
 
   useEffect(() => {
     let canceled = false;
@@ -65,6 +76,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
       }
 
       setPhase("connecting");
+      setStartedAt(Date.now());
       setError(null);
       try {
         // Name the saved connection (#3876) so a transfer on this session can
@@ -130,11 +142,18 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
       data-testid="file-browser-tab"
     >
       {phase === "connecting" && (
-        <ContentOverlay
-          icon={<Spinner size={32} label={null} className="file-browser-tab__icon" />}
-          busy
+        // The shared connect surface (#5068); file-only types report no stages.
+        <ConnectProgress
+          phase="connecting"
           heading="Connecting…"
-          subheading={`Opening ${title || "the connection"}.`}
+          target={identity.target || title || "the connection"}
+          typeLabel={connectTypeLabel(identity.sessionType)}
+          typeIcon={<FolderOpen size={20} aria-hidden />}
+          details={identity.details}
+          stages={buildStages(stepsFor(identity.sessionType), undefined)}
+          status={`Opening ${title || "the connection"}.`}
+          announcement={`Connecting… Opening ${title || "the connection"}.`}
+          startedAt={startedAt}
           data-testid="file-browser-tab-connecting"
         />
       )}

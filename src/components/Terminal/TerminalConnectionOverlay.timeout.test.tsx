@@ -15,6 +15,17 @@ vi.mock("lucide-react", () => ({
   Loader2: () => null,
   Zap: () => null,
   Ban: () => null,
+  X: () => null,
+  Check: () => null,
+  CircleAlert: () => null,
+  Clock: () => null,
+  Cable: () => null,
+  Container: () => null,
+  Globe: () => null,
+  Monitor: () => null,
+  Terminal: () => null,
+  Wifi: () => null,
+  Copy: () => null,
 }));
 
 const TAB_ID = "tab-timeout";
@@ -66,7 +77,7 @@ describe("TerminalConnectionOverlay — timeouts", () => {
     useAppStore.getState().setTerminalWaitingForAgent(TAB_ID, "agent-1");
     render(root);
     // The overlay must communicate that the wait is bounded.
-    expect(container.textContent).toContain("Times out in");
+    expect(container.textContent).toContain("times out in");
   });
 
   it("transitions the waiting-for-agent tab to Failed after the timeout elapses", () => {

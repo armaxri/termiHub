@@ -1,4 +1,5 @@
 pub mod agent_port_forward;
+pub mod connect_progress;
 mod file_ops;
 pub mod frame_guard;
 pub mod graphical_browse;
