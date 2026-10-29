@@ -1301,6 +1301,9 @@ focus. Escape cancels it; the grade then types `one` and checks the Monaco
 caret moved. A second Cmd/Ctrl+S gets a full path (on macOS through the panel's
 Go to Folder field, Cmd+Shift+G, and then the name), Enter saves, the tab takes
 the saved name, and `two` typed next lands at the caret and in the saved file.
+On macOS the dialog's keys go through the HID tap (global, CI or opt-in only):
+keys posted to the app's PID never reached the save panel, and Escape left the
+sheet open.
 
 MT-NIN-22 and MT-NIN-23 need one window of several in front (#4979). MT-NIN-22
 clicks into the right shell of the termiHub window while a harness helper app is
