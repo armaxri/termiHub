@@ -1,0 +1,7 @@
+{
+  "reason": "^native macOS/Windows drags; X11 runs the XDND suite$",
+  "nodeid": "test_os_input_native_drag\\.py",
+  "lanes": ["bulk-linux", "bulk-linux-arm64"],
+  "why": "#4998: the AppKit/OLE drag partners are macOS/Windows windows; Linux grades the same drags natively with the GTK partners in test_os_file_drop_xdnd.py",
+  "max_skips": { "bulk-linux": 2, "bulk-linux-arm64": 2 }
+}

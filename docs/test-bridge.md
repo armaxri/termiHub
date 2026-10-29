@@ -994,7 +994,7 @@ rendering, terminal I/O, and state — but **not** the native OS input pipeline
 (native drag-and-drop coordinates, IME, real keyboard focus). The real-input
 `tauri-driver` path that once ran on Linux/Windows was retired (#1027). OS file
 drops are graded by emitting the `tauri://drag-*` window events through
-`emitEvent` plus real X11 XDND drags (#4936), and keys, pointer and focus by
+`emitEvent` plus real native drags (X11 XDND, #4936; macOS and Windows, #4998), and keys, pointer and focus by
 real OS input aimed at the test instance's PID (#4935); what is left is gated by
 the release-gating guided-manual
 [`test_guided_native_input.py`](../tests/system/tests/test_guided_native_input.py) matrix.
