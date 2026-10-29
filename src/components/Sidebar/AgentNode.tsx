@@ -102,12 +102,14 @@ import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessi
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { PersistentStateDot } from "./PersistentStateDot";
+import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 import { errorMessage } from "@/utils/errorMessage";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 const EMPTY_FOLDERS: AgentFolderInfo[] = [];
+const NO_SERIAL_PORTS: string[] = [];
 
 /**
  * Tone for an agent connection-state dot, from the shared `--state-*` palette.
@@ -1173,19 +1175,20 @@ export function AgentNode({
     });
   }, [agent, addTab]);
 
-  const handleNewSerialSession = useCallback(() => {
-    const defaultPort = agent.capabilities?.availableSerialPorts?.[0];
-    if (!defaultPort) return;
-    addTab(`Serial: ${defaultPort}`, "remote-session", {
-      type: "remote-session",
-      config: {
-        agentId: agent.id,
-        sessionType: "serial",
-        serialPort: defaultPort,
-        persistent: false,
-      },
-    });
-  }, [agent, addTab]);
+  const handleNewSerialSession = useCallback(
+    (port: string) => {
+      addTab(`Serial: ${port}`, "remote-session", {
+        type: "remote-session",
+        config: {
+          agentId: agent.id,
+          sessionType: "serial",
+          serialPort: port,
+          persistent: false,
+        },
+      });
+    },
+    [agent.id, addTab]
+  );
 
   const handleAttachSession = useCallback(
     (session: OpenableAgentSession) => {
@@ -1609,12 +1612,12 @@ export function AgentNode({
                 <Terminal size={14} />
                 New Shell Session
               </MenuItem>
-              {(agent.capabilities?.availableSerialPorts?.length ?? 0) > 0 && (
-                <MenuItem onSelect={handleNewSerialSession} data-testid="context-agent-new-serial">
-                  <Cable size={14} />
-                  New Serial Session
-                </MenuItem>
-              )}
+              <AgentNewSerialSessionItem
+                agentId={agent.id}
+                snapshot={agent.capabilities?.availableSerialPorts ?? NO_SERIAL_PORTS}
+                canRescan={agent.capabilities?.serialPortRescan === true}
+                onSelectPort={handleNewSerialSession}
+              />
               <MenuSeparator />
               <MenuItem
                 onSelect={() => handleNewConnection(null)}
