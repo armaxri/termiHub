@@ -28,6 +28,7 @@ from typing import Callable, IO, Mapping, Optional, Sequence
 
 import psutil
 
+from . import app_leaks
 from . import coverage
 from . import known_hosts
 from . import portable as portable_staging
@@ -486,6 +487,8 @@ class AppInstance:
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
         env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        # A CLI run that falls through to a full launch is found as a leak (#5086).
+        env[app_leaks.OWNER_ENV] = app_leaks.launch_tag()
         env.update(self._profile_overrides())
         env.update(known_hosts.app_env())
         env.update(self._extra_env)
@@ -543,6 +546,16 @@ class AppInstance:
         if self._relaunched is not None:
             return self._relaunched.pid
         return self._process.pid if self._process is not None else None
+
+    def tracked_bridge_port(self) -> Optional[int]:
+        """The bridge port of the app this instance runs, or ``None`` once stopped.
+
+        A process carrying it is this instance's (e.g. a self-relaunch not yet
+        adopted), never a leak (:mod:`termihub_harness.app_leaks`).
+        """
+        if self._process is None and self._relaunched is None:
+            return None
+        return self._bridge_port
 
     def read_log(self) -> str:
         """The captured app log so far (empty string if nothing was captured)."""
@@ -604,6 +617,10 @@ class AppInstance:
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        # Tag the app (and any relaunch, which inherits it) with this pytest
+        # process, so one it outlives its instance is found and reaped (#5086).
+        env[app_leaks.OWNER_ENV] = app_leaks.launch_tag()
+        app_leaks.register(self)
         # Pin WebView2 to a per-instance user-data folder so teardown can reap
         # only this instance's msedgewebview2.exe hosts (issue #1022). The app
         # (Tauri) sets no data_directory, so WebView2 honours this env var.
