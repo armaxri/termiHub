@@ -22,7 +22,7 @@ import subprocess
 import time
 from typing import Any, Iterable, Optional, Sequence
 
-from .base import OsInput, OsInputUnavailable, OsWindow
+from .base import OsInput, OsInputUnavailable, OsWindow, parse_combo
 from .keymap import mac_keycode, us_key_for_char
 
 #: ``CGEventFlags`` per portable modifier.
@@ -301,6 +301,38 @@ class MacOsInput(OsInput):
                 if not err and role == "AXSheet":
                     return True
         return False
+
+    def dialog_key(self, combo: str) -> None:
+        """Press ``combo`` at the HID tap, for the app's ``NSSavePanel`` sheet.
+
+        The save panel's content is served out of process (the AppKit open and
+        save panel service), so a key posted to the app's PID never reaches its
+        fields: Escape left the sheet open on the CI runner (#4982). At the HID
+        tap the key goes to the key window, the sheet, as a typed key does.
+        Global: GitHub runner or opt-in, the test instance frontmost before
+        every event.
+        """
+        mods, key = parse_combo(combo)
+        self._hid_key(mac_keycode(key), combo_flags(mods))
+
+    def dialog_type(self, text: str) -> None:
+        """Type ASCII ``text`` at the HID tap (see :meth:`dialog_key`)."""
+        for char in text:
+            mapped = us_key_for_char(char)
+            if mapped is None:
+                raise ValueError(f"cannot type {char!r} at the HID tap")
+            key, shift = mapped
+            self._hid_key(mac_keycode(key), FLAGS["shift"] if shift else 0)
+
+    def _hid_key(self, keycode: int, flags: int) -> None:
+        target = self._check_target(None)
+        q = self._q
+        for down in (True, False):
+            self._require_global(target)
+            event = q.CGEventCreateKeyboardEvent(None, keycode, down)
+            q.CGEventSetFlags(event, flags)
+            q.CGEventPost(q.kCGHIDEventTap, event)
+            time.sleep(self.KEY_DELAY)
 
     def describe_focus(self) -> str:
         """Role, subrole and value of the test instance's focused UI element (read-only)."""

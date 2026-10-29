@@ -200,6 +200,18 @@ class OsInput:
         """
         return bool(self.dialog_windows(baseline, pid))
 
+    def dialog_key(self, combo: str) -> None:
+        """Press ``combo`` into a native dialog of the test instance.
+
+        The same as :meth:`key` where keys go to the focused window anyway
+        (X11, Windows); the macOS backend posts it at the HID tap instead.
+        """
+        self.key(combo)
+
+    def dialog_type(self, text: str) -> None:
+        """Type ``text`` into a native dialog of the test instance (see :meth:`dialog_key`)."""
+        self.type_text(text)
+
     def describe_focus(self) -> str:
         """The focused UI element of the frontmost app (diagnostics; may be empty)."""
         return ""

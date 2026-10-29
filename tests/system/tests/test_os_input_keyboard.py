@@ -432,21 +432,21 @@ class TestOsKeyboardGrades(
             # NSSavePanel's Save As field takes a name; the folder is chosen in
             # its Go to Folder field (Cmd+Shift+G), which hands the focus back to
             # the Save As field when it closes.
-            osi.key("cmd+shift+g")
+            osi.dialog_key("cmd+shift+g")
             time.sleep(1.0)
-            osi.type_text(str(path.parent))
+            osi.dialog_type(str(path.parent))
             time.sleep(0.5)
-            osi.key("enter")
+            osi.dialog_key("enter")
             time.sleep(1.5)
-            osi.key("cmd+a")
-            osi.type_text(path.name)
+            osi.dialog_key("cmd+a")
+            osi.dialog_type(path.name)
         else:
             # The GTK and Windows file-name fields both take a full path.
-            osi.key("home")
-            osi.key("shift+end")
-            osi.type_text(str(path))
+            osi.dialog_key("home")
+            osi.dialog_key("shift+end")
+            osi.dialog_type(str(path))
         time.sleep(0.5)
-        osi.key("enter")
+        osi.dialog_key("enter")
 
     def test_focus_returns_after_native_save_dialog(self):
         """MT-NIN-21: Cmd/Ctrl+S on an untitled editor opens the real native Save
@@ -467,7 +467,7 @@ class TestOsKeyboardGrades(
         try:
             # Escape: the dialog closes without saving, focus is back in the editor.
             self._open_save_dialog(osi, baseline, main)
-            osi.key("escape")
+            osi.dialog_key("escape")
             self._wait_dialog_closed(osi, baseline)
             self.wait(self.has_focus, what="the webview to regain focus after Escape")
             self.reset_input_probe()
@@ -505,7 +505,7 @@ class TestOsKeyboardGrades(
             # Never leave a native dialog over the next test's window.
             with contextlib.suppress(Exception):  # never mask the grade's own failure
                 if osi.native_dialog_open(baseline):
-                    osi.key("escape")
+                    osi.dialog_key("escape")
 
     # ── MT-NIN-23: keys reach only the focused one of two windows ────────────
     def _second_window_shell(self) -> tuple[Driver, str]:
