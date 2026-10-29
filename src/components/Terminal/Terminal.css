@@ -154,11 +154,12 @@
    the UI-wide `--letter-spacing-ui` rule on body. That extra ~0.11 px per
    character snowballs across a 113-column line into ~13 px of overhang,
    which xterm doesn't know about; the rightmost 1–2 columns visually
-   slide off the right edge while xterm thinks they fit. Force
-   letter-spacing back to 0 inside the terminal so the rendered glyphs
-   actually match xterm's cell-width measurement. */
-.xterm,
-.xterm * {
+   slide off the right edge while xterm thinks they fit. Reset it to 0 on
+   the terminal root only, so it stops inheriting: xterm's DOM renderer sets
+   its own correcting letter-spacing on the rows container, and the glyph
+   spans must inherit that one — zeroing every descendant cancelled it, so
+   text wider than its cells ran past the row's clipped edge (#5065). */
+.xterm {
   letter-spacing: 0;
 }
 
