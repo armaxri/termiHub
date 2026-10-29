@@ -157,6 +157,11 @@ AUTOMATED_IDS: dict[str, str] = {
     "MT-SSH-09": f"{_HANDOFF}::test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab",
     "MT-XPLAT-03": f"test_ssh.py::{_X11_WINDOW}",
     "MT-SSH-15": f"test_ssh.py::{_X11_WINDOW}",
+    # #4965: a headless weston without XWayland; the adopt half is graded under Xvfb.
+    "MT-SSH-50": (
+        "test_ssh_x11_wayland.py::"
+        "test_x11_connect_on_wayland_only_guides_the_xwayland_install"
+    ),
     # #4935: real OS key / pointer events aimed at the test instance's PID.
     "MT-NIN-07": f"{_OS_POINTER}::test_tab_drag_released_outside_window_tears_off",
     "MT-NIN-15": f"{_OS_KEYS}::test_dead_keys_compose_once_in_terminal_and_editor",

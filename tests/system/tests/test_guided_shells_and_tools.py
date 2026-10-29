@@ -9,7 +9,10 @@ The harness opens the shells, creates the X11 SSH connection against the
 ``ssh-x11`` fixture, and starts the ping / HTTP monitor. The operator watches
 and judges.
 
-Covered: MT-LOCAL-03/31, MT-SSH-50/51/52, MT-NET-21. MT-NET-16 (traceroute)
+Covered: MT-LOCAL-03/31, MT-SSH-51/52, MT-NET-21. MT-SSH-50 (Linux X server
+adoption and the Wayland-only XWayland hint) is automated since #4965
+(``test_ssh.py`` under Xvfb, ``test_ssh_x11_wayland.py`` under headless
+weston). MT-NET-16 (traceroute)
 is automated since #4964 against a multi-hop Docker chain
 (``test_network_tools_traceroute.py``). MT-LOCAL-30/32/33
 are automated since #4931 (``test_windows_shells.py``,
@@ -118,23 +121,7 @@ class TestGuidedShellsAndTools(
             "winget; Git Bash is now a normal row and the set-up entry is gone.",
         )
 
-    # ── MT-SSH-50/51/52: X11 on the real desktop ─────────────────────────────
-    @pytest.mark.manual(platforms=["linux"])
-    @pytest.mark.usefixtures("ssh_x11_fixtures")
-    def test_x11_forwarding_on_real_linux_desktop(self):
-        """MT-SSH-50."""
-        self._x11_ssh_session()
-        self.handle_password_prompt(SSH_PASSWORD)
-        self.wait(self.has_terminal, what="the X11 SSH terminal")
-        # The forwarded window itself is graded on Xvfb by test_ssh.py (MT-XPLAT-03,
-        # #4932); the real desktop keeps the adopt-the-X-server and Wayland checks.
-        self.manual_step(
-            "Run `xeyes` in the SSH terminal. Then, on a Wayland-only session without "
-            "XWayland, connect the same connection again.",
-            "No prompt (your running X server is adopted); Wayland-only shows the "
-            "XWayland install hint, not a generic error.",
-        )
-
+    # ── MT-SSH-51/52: X11 install on the real desktop ────────────────────────
     @pytest.mark.manual(platforms=["macos"])
     @pytest.mark.usefixtures("ssh_x11_fixtures")
     def test_xquartz_install_and_x11_window_on_macos(self):
