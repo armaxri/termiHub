@@ -23,6 +23,7 @@ use std::time::Duration;
 use tracing::{debug, info};
 
 use crate::config::{expand_config_value, TelnetConfig};
+use crate::connection::connect_progress::{self, ConnectStage};
 use crate::connection::{
     Capabilities, ConnectionType, OutputReceiver, OutputSender, SettingsSchema,
 };
@@ -384,9 +385,18 @@ async fn connect_tcp_cancellable(
     timeout: Duration,
     cancel: Option<CancellationToken>,
 ) -> Result<TcpStream, SessionError> {
+    // Captured here so the report works on the blocking thread too (#5068).
+    let progress = connect_progress::current();
     let do_connect = move || {
-        crate::net::connect_timeout_resolved(&host, port, timeout)
-            .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))
+        crate::net::connect_timeout_resolved_reporting(&host, port, timeout, |addr| {
+            if let Some(p) = &progress {
+                p.report(
+                    ConnectStage::Connect,
+                    Some(format!("TCP connect to {addr}")),
+                );
+            }
+        })
+        .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))
     };
     match cancel {
         None => do_connect(),
@@ -551,6 +561,10 @@ impl ConnectionType for Telnet {
         // an already-resolved `SocketAddr`, so a hostname (`router.local`,
         // `bbs.example.com`) must be resolved first — a bare IP-literal parse
         // would reject every hostname (CORE-015).
+        connect_progress::report(
+            ConnectStage::Resolve,
+            Some(format!("Resolving {}", config.host)),
+        );
         let stream = connect_tcp_cancellable(
             config.host.clone(),
             config.port,
@@ -592,6 +606,10 @@ impl ConnectionType for Telnet {
         // window size (and request SGA in character mode); a refusing server
         // answers DONT/WONT and nothing else changes.
         send_initial_offer(&negotiator, &writer)?;
+        connect_progress::report(
+            ConnectStage::Session,
+            Some("Negotiating telnet options".to_string()),
+        );
 
         // Set up the output channel. Its receiver is kept for the first
         // subscriber, so a greeting the server sends before anyone subscribes
