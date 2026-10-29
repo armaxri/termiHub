@@ -206,7 +206,12 @@ use termihub_core::monitoring::{
 /// reports, with the matching `capabilities.definitionIconStyle` flag (#5021).
 /// An older agent ignores the unknown keys, so the desktop shows the controls
 /// only to an agent that advertises the flag; an older desktop never sends them.
-const AGENT_PROTOCOL_VERSION: &str = "0.33.0";
+/// Bumped to 0.34.0 for the additive `serial.list_ports` method and the
+/// matching `capabilities.serialPortRescan` flag (#5069): the desktop polls
+/// the host's serial ports while an agent-hosted serial connection's Port field
+/// is visible. It calls the method only on an agent that advertises the flag
+/// and keeps the `availableSerialPorts` snapshot for an older one.
+const AGENT_PROTOCOL_VERSION: &str = "0.34.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -902,6 +907,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_crash_reports(module)?;
     agent_logs::register(module)?;
     register_docker_list_containers(module)?;
+    register_serial_list_ports(module)?;
     Ok(())
 }
 
@@ -1084,6 +1090,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 host_file_attribute_ops: host_file_attribute_ops(),
                 file_create_new: true,
                 definition_icon_style: true,
+                serial_port_rescan: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -3226,6 +3233,33 @@ fn docker_list_reply(
     }
 }
 
+// ── serial.list_ports (#5069) ────────────────────────────────────────
+
+/// `serial.list_ports` — enumerate **this host's** serial ports afresh, so the
+/// desktop's Port field of an agent-hosted serial connection follows plug /
+/// unplug while it is visible (the `initialize` capability is only a snapshot).
+/// Same enumeration as that snapshot, naturally sorted. Read-only; takes no
+/// params (any are ignored).
+fn register_serial_list_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::SERIAL_LIST_PORTS, |_params, ctx, _ext| async move {
+        if !ctx.lock().await.initialized {
+            return Err(not_initialized());
+        }
+        // Enumeration touches the OS (and `/dev` on Linux): keep it off the
+        // async workers, the desktop polls this every ~1.5 s.
+        let ports = tokio::task::spawn_blocking(termihub_core::session::serial::list_serial_ports)
+            .await
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
+        serial_list_reply(ports)
+    })?;
+    Ok(())
+}
+
+/// Wrap an enumeration into the `serial.list_ports` reply.
+fn serial_list_reply(ports: Vec<String>) -> Result<Value, ErrorObjectOwned> {
+    to_result_value(&pm::SerialListPortsResult { ports })
+}
+
 // ── Capability detection ───────────────────────────────────────────
 
 /// Well-known shell paths to probe on a Unix host (unused on Windows outside tests).
@@ -3960,10 +3994,11 @@ mod tests {
     /// (#4433), and 0.31.0 the `fractionalLatency` client capability (#4542),
     /// and 0.32.0 the `agent.logs.*` methods (#4519), and 0.33.0 the
     /// definition icon colour / emoji with its `definitionIconStyle`
-    /// capability (#5021).
+    /// capability (#5021), and 0.34.0 `serial.list_ports` with its
+    /// `serialPortRescan` capability (#5069).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.33.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.34.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -7210,6 +7245,9 @@ mod tests {
 
     /// `docker.list_containers` — init gate, params, reply mapping (#3424).
     mod docker_list_tests;
+
+    /// `serial.list_ports` — init gate, reply, capability (#5069).
+    mod serial_list_tests;
 
     /// Update-RPC auth token + matched-downgrade pin (AGT-003 / SEC-006, #3213).
     mod update_auth_tests;
