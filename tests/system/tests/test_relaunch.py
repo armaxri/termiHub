@@ -123,6 +123,57 @@ def test_adopt_self_restart_tracks_and_reaps_the_relaunched_process(tmp_path, mo
     assert not instance.is_running()
 
 
+#: A stand-in app that restarts itself twice, like two backup restores in one
+#: suite: the first process relaunches at once; that relaunch waits for the
+#: trigger file, relaunches again and lingers a moment before exiting, as an
+#: app shutting down does.
+_TWICE_RESTARTING_APP = """\
+import os, subprocess, sys, time
+script, trigger, stage = sys.argv[0], sys.argv[1], sys.argv[2]
+if stage == "first":
+    subprocess.Popen([sys.executable, script, trigger, "second"])
+    sys.exit(0)
+if stage == "second":
+    while not os.path.exists(trigger):
+        time.sleep(0.05)
+    subprocess.Popen([sys.executable, script, trigger, "third"])
+    time.sleep(2)
+    sys.exit(0)
+time.sleep(120)
+"""
+
+
+def test_a_second_self_restart_adopts_the_new_relaunch(tmp_path, monkeypatch):
+    """Two self-restarts on one instance (#5086): the second adopt must wait for
+    the *tracked* relaunch to exit and adopt its successor, not re-adopt the
+    relaunch that is about to exit, which left the newest app running after
+    teardown, pinned over the next suites' windows."""
+    interpreter = Path(psutil.Process().exe())
+    if not interpreter.exists():
+        pytest.skip("cannot resolve this interpreter's binary")
+    monkeypatch.setattr(orchestrator, "app_binary_path", lambda: interpreter)
+    script = tmp_path / "app.py"
+    script.write_text(_TWICE_RESTARTING_APP)
+    trigger = tmp_path / "restart-again"
+    instance = orchestrator.AppInstance(config_dir=tmp_path, echo_logs=False)
+    instance.start(orchestrator.free_port(), [str(script), str(trigger), "first"])
+    third = None
+    try:
+        instance.adopt_self_restart(timeout=30)
+        second = instance.pid
+        trigger.write_text("")
+        instance.adopt_self_restart(timeout=30)
+        third = instance.pid
+        assert third not in (None, second), "re-adopted the relaunch that was exiting"
+        assert psutil.Process(third).cmdline()[-1] == "third"
+    finally:
+        instance.stop()
+    assert third is not None
+    assert not psutil.pid_exists(third) or (
+        psutil.Process(third).status() == psutil.STATUS_ZOMBIE
+    ), "stop() left the second relaunch running"
+
+
 def test_adopt_self_restart_fails_when_the_app_does_not_exit(tmp_path, monkeypatch):
     interpreter = Path(psutil.Process().exe())
     monkeypatch.setattr(orchestrator, "app_binary_path", lambda: interpreter)
