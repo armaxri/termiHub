@@ -270,7 +270,7 @@ impl XServerProvisioner for XServerProvisionerImpl {
                 );
                 Ok(XServerLease {
                     resolved: Some(outcome.resolved),
-                    guard: Some(Box::new(guard)),
+                    guard: guard.map(|g| Box::new(g) as Box<dyn std::any::Any + Send>),
                 })
             }
             Err(e) => {
@@ -300,13 +300,13 @@ pub(crate) async fn ensure_off_reactor(
 
 /// Like [`ensure_off_reactor`] but claims a dependent session against the manager
 /// (#1107), returning the outcome plus a [`SessionGuard`](manager::SessionGuard)
-/// whose drop releases the session. Used by the SSH connect provisioner so the
+/// whose drop releases the session (`None` for an unleased Unix server, #4965). Used by the SSH connect provisioner so the
 /// refcount tracks live X11-forwarding sessions.
 pub(crate) async fn ensure_session_off_reactor(
     app: &AppHandle,
     manager: Arc<XServerManager>,
     cancel: Option<CancellationToken>,
-) -> Result<(EnsureOutcome, manager::SessionGuard), XServerError> {
+) -> Result<(EnsureOutcome, Option<manager::SessionGuard>), XServerError> {
     let provide = resolve_provide_automatically(app);
     tokio::task::spawn_blocking(move || {
         ensure_x_server_for_session(&manager, provide, cancel.as_ref())

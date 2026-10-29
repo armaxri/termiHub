@@ -338,6 +338,12 @@ impl XServerManager {
         Ok(info)
     }
 
+    /// Whether this platform spawns a termiHub-managed server (Windows). When
+    /// `false` the manager only adopts a server already listening on TCP `:0`.
+    pub fn provides_managed(&self) -> bool {
+        self.provides_managed
+    }
+
     /// Acquire a session and return a RAII [`SessionGuard`] that releases it
     /// exactly once when dropped.
     ///
