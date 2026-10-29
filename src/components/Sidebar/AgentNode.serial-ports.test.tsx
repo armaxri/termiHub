@@ -84,7 +84,7 @@ function makeAgent(snapshot: string[], serialPortRescan?: boolean): RemoteAgentD
     isExpanded: true,
     agentSettings: DEFAULT_AGENT_SETTINGS,
     capabilities: {
-      connectionTypes: ["serial"],
+      connectionTypes: [],
       maxSessions: 10,
       availableShells: ["bash"],
       availableSerialPorts: snapshot,
@@ -97,7 +97,7 @@ function makeAgent(snapshot: string[], serialPortRescan?: boolean): RemoteAgentD
 
 let container: HTMLDivElement;
 let root: Root;
-let addTab: ReturnType<typeof vi.fn>;
+let addTab: ReturnType<typeof vi.fn<(...args: unknown[]) => string>>;
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 4; i++) {
@@ -118,7 +118,7 @@ describe("AgentNode — New Serial Session port list (#5075)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    addTab = vi.fn();
+    addTab = vi.fn((..._args: unknown[]) => "tab-id");
     useAppStore.setState({ addTab });
   });
 
