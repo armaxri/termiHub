@@ -2,8 +2,9 @@ import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   getDefaultBindings,
-  getEffectiveCombo,
+  formatActionBindings,
   formatBindingForDisplay,
+  formatComboForDisplay,
   getOverrides,
   isUnboundCombo,
 } from "@/services/keybindings";
@@ -49,8 +50,11 @@ function bindingText(combo: KeyCombo | KeyCombo[] | null, mac: boolean): string 
  * built-in default, since overrides are stored for this machine only.
  */
 function platformBindingText(binding: KeyBinding, mac: boolean): string {
-  if (mac === isMac()) return bindingText(getEffectiveCombo(binding.action), mac);
-  return bindingText(mac ? binding.macDefault : binding.winLinuxDefault, mac);
+  if (mac === isMac()) return formatActionBindings(binding.action, mac) ?? "Unbound";
+  const text = bindingText(mac ? binding.macDefault : binding.winLinuxDefault, mac);
+  if (text === "Unbound") return text;
+  const alternates = (mac ? binding.macAlternates : binding.winLinuxAlternates) ?? [];
+  return [text, ...alternates.map((c) => formatComboForDisplay(c, mac))].join(" / ");
 }
 
 /**

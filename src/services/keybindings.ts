@@ -57,6 +57,9 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Command Palette",
     category: "general",
     macDefault: { key: "p", meta: true },
+    // Cmd+Shift+P is the VS Code habit (#5084). Cmd combos never collide with
+    // the shell key map, and no other macOS default uses it.
+    macAlternates: [{ key: "P", meta: true, shift: true }],
     // Avoid bare Ctrl+P: readline "previous-history". Ctrl+Shift+P matches the
     // familiar VS Code command-palette shortcut and does not collide with the
     // shell key map.
@@ -734,6 +737,40 @@ export function getEffectiveCombo(action: string): KeyCombo | KeyCombo[] | null 
 }
 
 /**
+ * The alternate default combos of an action on the running platform (#5084).
+ * Empty when the action has a user override: an override (including an
+ * explicit unbind) replaces every default, so the user can drop an alternate
+ * by rebinding the action to just its primary combo.
+ */
+export function getEffectiveAlternates(action: string): KeyCombo[] {
+  if (overrides.some((o) => o.action === action)) return [];
+  const binding = DEFAULT_BINDINGS.find((b) => b.action === action);
+  if (!binding) return [];
+  return (isMac() ? binding.macAlternates : binding.winLinuxAlternates) ?? [];
+}
+
+/**
+ * Every effective binding of an action — the primary combo followed by its
+ * alternates — or an empty list when the action is unbound or unknown.
+ */
+function getEffectiveBindings(action: string): Array<KeyCombo | KeyCombo[]> {
+  const primary = getEffectiveCombo(action);
+  if (!primary || isUnboundCombo(primary)) return [];
+  return [primary, ...getEffectiveAlternates(action)];
+}
+
+/**
+ * Display text listing every effective binding of an action, e.g.
+ * `Cmd+P / Cmd+Shift+P` (#5084), or `null` when it is unbound. Used by the
+ * shortcuts overlay and Settings so alternate defaults are discoverable.
+ */
+export function formatActionBindings(action: string, mac: boolean = isMac()): string | null {
+  const bindings = getEffectiveBindings(action);
+  if (bindings.length === 0) return null;
+  return bindings.map((b) => formatBindingForDisplay(b, mac)).join(" / ");
+}
+
+/**
  * Find which action matches a keyboard event (single-combo bindings only).
  * For chord support, use processKeyEvent() instead.
  */
@@ -755,6 +792,9 @@ export function findMatchingAction(event: KeyboardEvent): string | null {
 
     const single = Array.isArray(combo) ? combo[0] : combo;
     if (eventMatchesCombo(event, single)) {
+      return binding.action;
+    }
+    if (getEffectiveAlternates(binding.action).some((alt) => eventMatchesCombo(event, alt))) {
       return binding.action;
     }
   }
@@ -839,13 +879,10 @@ export function checkConflict(
   for (const binding of DEFAULT_BINDINGS) {
     if (binding.action === excludeAction) continue;
 
-    const effective = getEffectiveCombo(binding.action);
-    if (!effective) continue;
-    if (isUnboundCombo(effective)) continue;
-
-    if (bindingsCollide(candidateSeq, normalizeSequence(effective))) {
-      return binding.action;
-    }
+    const collides = getEffectiveBindings(binding.action).some((effective) =>
+      bindingsCollide(candidateSeq, normalizeSequence(effective))
+    );
+    if (collides) return binding.action;
   }
   return null;
 }

@@ -4,12 +4,7 @@ import { Modal, Button, SearchInput } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { ShortcutCategory, ShortcutScope, KeyBinding } from "@/types/keybindings";
-import {
-  getDefaultBindings,
-  getEffectiveCombo,
-  formatBindingForDisplay,
-  isUnboundCombo,
-} from "@/services/keybindings";
+import { getDefaultBindings, formatActionBindings } from "@/services/keybindings";
 import "./ShortcutsOverlay.css";
 
 /**
@@ -61,9 +56,8 @@ interface ShortcutsOverlayProps {
  * persistence serializer.
  */
 function currentPlatformBindingText(action: string): string {
-  const effective = getEffectiveCombo(action);
-  if (!effective || isUnboundCombo(effective)) return "Unbound";
-  return formatBindingForDisplay(effective);
+  // Lists alternate defaults too, e.g. "Cmd+P / Cmd+Shift+P" (#5084).
+  return formatActionBindings(action) ?? "Unbound";
 }
 
 /**
