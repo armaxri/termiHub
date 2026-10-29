@@ -305,10 +305,11 @@ class MacOsInput(OsInput):
     def dialog_key(self, combo: str) -> None:
         """Press ``combo`` at the HID tap, for the app's ``NSSavePanel`` sheet.
 
-        The save panel's content is served out of process (the AppKit open and
-        save panel service), so a key posted to the app's PID never reaches its
-        fields: Escape left the sheet open on the CI runner (#4982). At the HID
-        tap the key goes to the key window, the sheet, as a typed key does.
+        A key posted to the app's PID never reached the panel: Escape left the
+        sheet open on the CI runner (run 40841269749, #4982), likely because
+        AppKit hosts the panel's content in its own service process. At the HID
+        tap the key goes to the key window, the sheet, as a typed key does
+        (green in run 40847600826).
         Global: GitHub runner or opt-in, the test instance frontmost before
         every event.
         """
