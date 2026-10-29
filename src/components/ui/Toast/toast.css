@@ -15,9 +15,16 @@
   font-family: var(--font-family);
 }
 
+/*
+ * Grid, not flex: icon | message | close on the first row, and the optional
+ * action button on its own row under the message (#5079). Inline, a long
+ * action label ("Install XWayland…") squeezed the message and wrapped the
+ * label one syllable per line.
+ */
 .th-toast {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--spacing-sm);
   width: 100%;
   padding: var(--spacing-md);
@@ -32,6 +39,8 @@
 }
 
 .th-toast [data-icon] {
+  grid-column: 1;
+  grid-row: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -46,6 +55,8 @@
 }
 
 .th-toast [data-content] {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs);
@@ -63,18 +74,17 @@
 }
 
 /*
- * sonner renders the close button as the toast's first child; `order` moves it
- * to the visual end and `margin-left: auto` pins it to the top-right corner
- * (align-items: flex-start), clear of the icon, message, and action button.
- * Sizing/hover/focus mirror the shared modal close button (.ui-modal__close).
+ * sonner renders the close button as the toast's first child; the grid places
+ * it in the last column of the first row — the top-right corner, clear of the
+ * icon, message, and action button. Sizing/hover/focus mirror the shared modal
+ * close button (.ui-modal__close).
  */
 .th-toast [data-close-button] {
-  order: 1;
+  grid-column: 3;
+  grid-row: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  margin-left: auto;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -98,6 +108,36 @@
 .th-toast__close-icon {
   width: 15px;
   height: 15px;
+}
+
+/*
+ * The inline action (ToastAction): a compact secondary button under the
+ * message, its label on one line. Mirrors .ui-btn--secondary at the `xs` size.
+ */
+.th-toast [data-button] {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-height-sm);
+  padding: 0 var(--spacing-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.th-toast [data-button]:hover {
+  background: var(--bg-hover);
+}
+.th-toast [data-button]:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
 /* ── Intent accents ─────────────────────────────────────────────────── */
