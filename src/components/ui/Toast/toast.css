@@ -81,7 +81,11 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  /* --text-primary, not --text-secondary: secondary falls below 3:1 on the
+     toast surface (--bg-dropdown) in both Solarized themes (#5091). Guarded by
+     toastCloseContrast.test.ts. */
+  color: var(--text-primary);
+  opacity: 1;
   cursor: pointer;
   transition:
     background var(--transition-fast),
