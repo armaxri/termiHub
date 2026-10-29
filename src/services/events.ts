@@ -36,6 +36,7 @@ import type { VscodeEditCompleteEvent } from "@/types/generated/VscodeEditComple
 import type { LocalFileChangedPayload } from "@/types/generated/LocalFileChangedPayload";
 import type { LocalDirChangedPayload } from "@/types/generated/LocalDirChangedPayload";
 import type { HopStatusPayload } from "@/types/generated/HopStatusPayload";
+import type { ConnectProgressEvent } from "@/types/generated/ConnectProgressEvent";
 import type { ProbeCompletePayload } from "@/types/generated/ProbeCompletePayload";
 import type { SpawnRequest } from "@/types/generated/SpawnRequest";
 
@@ -702,6 +703,21 @@ export async function onJumpHostHopStatus(
   callback: (payload: HopStatusPayload) => void
 ): Promise<UnlistenFn> {
   return await listen<HopStatusPayload>(TAURI_EVENT.jumpHostHopStatus, (event) => {
+    callback(event.payload);
+  });
+}
+
+export type { ConnectProgressEvent };
+
+/**
+ * Subscribe to connect-stage updates (#5068): a direct connect reports each
+ * stage it reaches (resolve, connect, host key, authenticate, shell / session,
+ * open port), keyed by the attempt's `connectId` (`${tabId}:${retryCount}`).
+ */
+export async function onConnectProgress(
+  callback: (payload: ConnectProgressEvent) => void
+): Promise<UnlistenFn> {
+  return await listen<ConnectProgressEvent>(TAURI_EVENT.connectProgress, (event) => {
     callback(event.payload);
   });
 }

@@ -88,6 +88,21 @@ describe("ConnectProgress", () => {
     expect(ring.style.getPropertyValue("--cp-progress")).toBe(String(4 / 90));
   });
 
+  it("keeps the animation delay fixed across ticks so the fill never jumps ahead", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + 4_000);
+    render(base({ now: undefined }));
+    const ring = () => q(".ui-connect-progress__ring") as HTMLElement;
+    expect(ring().style.getPropertyValue("--cp-delay")).toBe("-4000ms");
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    // The readout and the reduced-motion fallback move on…
+    expect(ring().style.getPropertyValue("--cp-progress")).toBe(String(7 / 90));
+    // …but the running animation's delay is untouched.
+    expect(ring().style.getPropertyValue("--cp-delay")).toBe("-4000ms");
+  });
+
   it("is indeterminate when there is no deadline", () => {
     render(base({ deadlineAt: undefined }));
     expect(q(".ui-connect-progress__ring--indeterminate")).not.toBeNull();

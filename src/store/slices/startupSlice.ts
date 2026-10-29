@@ -13,6 +13,7 @@ import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import { ensureAgentsSubscribed } from "@/store/agentsBridge";
 import { ensureConnectionsSubscribed } from "@/store/connectionsBridge";
 import { ensureSettingsSubscribed } from "@/store/settingsBridge";
+import { ensureConnectProgressSubscribed } from "@/store/connectProgressBridge";
 import { toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -84,6 +85,9 @@ export const createStartupSlice: StateCreator<AppState, [], [], StartupSlice> = 
       } catch (subErr) {
         frontendLog("app_store", `settings region subscribe failed: ${errorMessage(subErr)}`);
       }
+      // Connect-stage reports feed the connect overlay's stepper (#5068). The
+      // helper logs its own failure and never rejects.
+      void ensureConnectProgressSubscribed();
       // The agent list is region-authoritative (#2409): the backend seeds the
       // `agents` region from the persisted list at startup and re-folds it on the
       // `load_connections_and_folders` above (#2403), so prime the region

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { Ban, Check, CircleAlert, Clock, X } from "lucide-react";
 import { ContentOverlay } from "./ContentOverlay";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
@@ -64,7 +64,22 @@ export interface ConnectProgressProps {
   /** Failure body (message + hint) for the resting phases. */
   error?: React.ReactNode;
   /** Action buttons (Abort while busy; Retry / Close tab when resting). */
-  actions: React.ReactNode;
+  actions?: React.ReactNode;
+  /** Heading override (e.g. "Restoring session"); defaults per phase. */
+  heading?: string;
+  /**
+   * Time-line override (e.g. "Gave up after 1m 30s" once the deadline is
+   * gone); `""` hides the line.
+   */
+  timeText?: string;
+  /** Test hook on the time line. */
+  timeTestId?: string;
+  /** Extra body content after the error (hints, credential re-entry). */
+  children?: React.ReactNode;
+  /** Plain-text announcement for a resting phase (see {@link ContentOverlay}). */
+  announcement?: string;
+  /** Focus the first action when shown (pass the tab's "is active" flag). */
+  autoFocusPrimaryAction?: boolean;
   /** Test hook on the root element. */
   "data-testid"?: string;
 }
@@ -117,10 +132,15 @@ function ProgressRing({
   reducedMotion: boolean;
 }) {
   const determinate = totalMs !== undefined && totalMs > 0;
+  // The animation's negative delay is fixed when the ring mounts (or the total
+  // changes): re-setting it every tick would jump the running animation ahead.
+  const [frozen, setFrozen] = useState({ totalMs, delay: elapsedMs });
+  if (frozen.totalMs !== totalMs) setFrozen({ totalMs, delay: elapsedMs });
+  const startDelay = frozen.totalMs === totalMs ? frozen.delay : elapsedMs;
   const style = determinate
     ? ({
         "--cp-duration": `${totalMs}ms`,
-        "--cp-delay": `-${elapsedMs}ms`,
+        "--cp-delay": `-${startDelay}ms`,
         "--cp-progress": String(Math.min(1, elapsedMs / totalMs)),
         "--cp-circumference": String(RING_C),
       } as React.CSSProperties)
@@ -186,13 +206,13 @@ function timeLine(
   attempt?: ConnectAttempt
 ): string {
   const elapsedMs = Math.max(0, now - startedAt);
+  const elapsed = `${formatElapsed(Math.floor(elapsedMs / 1000))} elapsed`;
   if (phase === "retrying" && attempt) {
     const of = attempt.max ? ` of ${attempt.max}` : "";
     const next =
-      attempt.nextInSeconds !== undefined ? ` · next try in ${attempt.nextInSeconds}s` : "";
-    return `Attempt ${attempt.current}${of}${next}`;
+      attempt.nextInSeconds !== undefined ? `next try in ${attempt.nextInSeconds}s` : elapsed;
+    return `Attempt ${attempt.current}${of} · ${next}`;
   }
-  const elapsed = `${formatElapsed(Math.floor(elapsedMs / 1000))} elapsed`;
   if (deadlineAt === undefined) return elapsed;
   if (phase === "timeout") {
     return `Gave up after ${formatElapsed(Math.round((deadlineAt - startedAt) / 1000))}`;
@@ -202,10 +222,10 @@ function timeLine(
 }
 
 /**
- * PROTOTYPE (#5068 phase 1, not wired into production): the one shared
- * connecting surface for every connection type — a progress ring that tracks
- * the timeout, a stage stepper, the live status line, and one primary action.
- * Composes {@link ContentOverlay} for layout, focus and live-region behaviour.
+ * The one shared connecting surface for every connection type (#5068): a
+ * progress ring that tracks the timeout, a stage stepper, the live status
+ * line, and one primary action. Composes {@link ContentOverlay} for layout,
+ * focus and live-region behaviour.
  */
 export function ConnectProgress({
   phase,
@@ -221,8 +241,15 @@ export function ConnectProgress({
   attempt,
   error,
   actions,
+  heading: headingOverride,
+  timeText,
+  timeTestId = "connect-progress-time",
+  children,
+  announcement,
+  autoFocusPrimaryAction = false,
   "data-testid": testId,
 }: ConnectProgressProps): React.ReactElement {
+  const errorId = useId();
   const busy = phase === "connecting" || phase === "retrying";
   const reducedMotion = usePrefersReducedMotion();
   const now = useNow(busy, fixedNow);
@@ -241,9 +268,11 @@ export function ConnectProgress({
       {RESTING_ICON[phase]}
     </span>
   );
-  const heading = busy
-    ? `${phase === "retrying" ? "Reconnecting" : "Connecting"} to ${target}`
-    : RESTING_HEADING[phase];
+  const heading =
+    headingOverride ??
+    (busy
+      ? `${phase === "retrying" ? "Reconnecting" : "Connecting"} to ${target}`
+      : RESTING_HEADING[phase]);
 
   return (
     <div className="ui-connect-progress" data-phase={phase} data-testid={testId}>
@@ -252,6 +281,9 @@ export function ConnectProgress({
         busy={busy}
         heading={heading}
         announce={busy ? undefined : phase === "aborted" ? "polite" : "assertive"}
+        announcement={announcement}
+        describedBy={error ? errorId : undefined}
+        autoFocusPrimaryAction={autoFocusPrimaryAction}
         subheading={
           <span className="ui-connect-progress__meta">
             <span className="ui-chip">
@@ -276,10 +308,17 @@ export function ConnectProgress({
             <span className="ui-connect-progress__status-text">{status}</span>
           </p>
         )}
-        {error && <div className="ui-connect-progress__error">{error}</div>}
-        <p className="ui-connect-progress__time" data-testid="connect-progress-time">
-          {timeLine(phase, startedAt, deadlineAt, now, attempt)}
-        </p>
+        {error && (
+          <div id={errorId} className="ui-connect-progress__error">
+            {error}
+          </div>
+        )}
+        {children}
+        {timeText !== "" && (
+          <p className="ui-connect-progress__time" data-testid={timeTestId}>
+            {timeText ?? timeLine(phase, startedAt, deadlineAt, now, attempt)}
+          </p>
+        )}
       </ContentOverlay>
     </div>
   );

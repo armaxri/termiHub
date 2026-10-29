@@ -1,8 +1,18 @@
-import { useCallback, useEffect, useId } from "react";
-import { ServerCrash, RefreshCw, Zap, Ban, Copy } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
+import { RefreshCw, Zap, Ban, Copy, X } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
-import { ContentOverlay, Spinner, toast } from "@/components/ui";
+import { toast } from "@/components/ui";
+import {
+  ConnectProgress,
+  type ConnectProgressPhase,
+  type ConnectStage,
+} from "@/components/ui/ConnectProgress";
+import { useTabConnectProgress } from "@/store/connectProgressBridge";
+import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { buildStages, connectTypeLabel, stepsFor, type StepId } from "@/utils/connectStages";
+import { connectTimeoutMs, CONNECTING_TIMEOUT_MS } from "@/utils/connectTimeout";
+import { ConnectTypeIcon } from "./ConnectTypeIcon";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { useElapsed } from "@/hooks/useElapsed";
@@ -25,22 +35,25 @@ interface TerminalConnectionOverlayProps {
    * Used, with the typed failure kind, to select contextual error hints.
    */
   sessionType?: string;
+  /** The session runs on a remote agent (a `remote-session` tab). */
+  viaAgent?: boolean;
+  /** Host / port path from the tab's config; falls back to the tab title. */
+  target?: string;
+  /** Detail chips (port, jump host, baud rate). */
+  details?: string[];
 }
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
 const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
 
 /**
- * The shared spinner for every busy state (restoring, waiting, connecting).
- * Decorative: the overlay's `busy` live region announces the steady heading.
+ * A busy screen's announcement: heading plus one steady detail, joined like
+ * {@link ContentOverlay}'s default (no second stop after "…"). Stage changes
+ * deliberately do not re-announce.
  */
-const busyIcon = (
-  <Spinner
-    size={32}
-    label={null}
-    className="terminal-connection-overlay__icon terminal-connection-overlay__icon--busy"
-  />
-);
+function busyAnnouncement(heading: string, detail: string): string {
+  return `${heading}${/[.…!?:]$/.test(heading) ? " " : ". "}${detail}`;
+}
 
 /**
  * Copy a suggested fix command to the clipboard so the user can paste and run it
@@ -77,16 +90,20 @@ function CommandBlock({ command, testId }: { command: string; testId?: string })
 }
 
 /**
- * Shown over a terminal slot while the backend session is being established.
+ * Shown over a terminal slot while the backend session is being established —
+ * the shared connect surface ({@link ConnectProgress}, #5068) for every shell
+ * and connection type.
  *
- * Five states (highest priority first):
+ * States (highest priority first):
  *   reattaching       — fetching cached scrollback after persistent session reattach
- *   waiting-for-agent — parent agent transport still connecting
+ *   waiting-for-agent — parent agent transport still connecting (stage "Agent")
  *   auto-retrying     — agent session failed, retrying in background
- *   connecting        — createTerminal() is in-flight
- *   failed            — spawn failed; user can retry or cancel
+ *   connecting        — createTerminal() is in-flight; backend stage reports
+ *                       (`connect-progress`) drive the stepper
+ *   failed            — spawn failed, timed out or was aborted; Retry or Close tab
  *
- * Cancel closes the tab via closeTab(tabId, panelId).
+ * While busy the one action is Abort (the tab's own × closes it); Abort stops
+ * the connect and keeps the tab on a retryable resting state (#1128).
  */
 export function TerminalConnectionOverlay({
   tabId,
@@ -94,6 +111,9 @@ export function TerminalConnectionOverlay({
   tabTitle,
   isVisible,
   sessionType = "",
+  viaAgent = false,
+  target,
+  details = [],
 }: TerminalConnectionOverlayProps) {
   const closeTab = useAppStore((s) => s.closeTab);
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
@@ -109,26 +129,20 @@ export function TerminalConnectionOverlay({
   // Typed failure kind from the backend's locale-independent error code
   // (I18N-009) — the only input, with the backend family, to hint selection.
   const errorKind = useAppStore((s) => s.terminalSpawnErrorKinds[tabId] ?? "other");
+  // The latest backend stage report for this tab's attempt (#5068).
+  const progress = useTabConnectProgress(tabId);
 
   // Tick a wall-clock timer while any active connect attempt is in flight so the
-  // overlay can show elapsed time and flag an unusually slow connect (#1127).
+  // overlay can flag an unusually slow connect (#1127).
   const isActivelyConnecting = isConnecting || autoRetryCount > 0 || !!waitingForAgent;
   const elapsedSeconds = useElapsed(isActivelyConnecting);
-  const elapsedLabel = formatElapsed(elapsedSeconds);
   const isSlowConnect = elapsedSeconds >= SLOW_CONNECT_THRESHOLD_SECONDS;
 
   // Client-side timeout: bound the WaitingForAgent and Connecting waits so a tab
-  // can never park on an indefinite spinner. WaitingForAgent has no backend
-  // timeout at all; Connecting relies on the backend one, so this is a safety
-  // net that outlasts it. On expiry the tab transitions to Failed with a
-  // contextual hint (#1129). auto-retry manages its own visible-failure cadence,
-  // so it is intentionally not timed here.
+  // can never park on an indefinite spinner (#1129). The deadline lives in the
+  // store (set on entry to the timed state), so a remount re-arms the timer for
+  // the REMAINING time rather than restarting the countdown (#1263).
   const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
-  // The timeout is anchored to a wall-clock deadline held in the store (set on
-  // entry to the timed state), not to this component's lifetime. The overlay
-  // only reads it, so unmounting and remounting mid-connect (dragging the tab to
-  // another panel/split, a zoom re-key) re-arms the timer for the REMAINING time
-  // rather than restarting the countdown from zero (#1263).
   const connectDeadline = useAppStore((s) => s.terminalConnectDeadline[tabId]);
   const deadlineAt = connectDeadline?.at;
   const deadlineKind = connectDeadline?.kind;
@@ -142,12 +156,13 @@ export function TerminalConnectionOverlay({
     return () => clearTimeout(id);
   }, [tabId, deadlineAt, deadlineKind, failTerminalConnectTimeout]);
 
-  // Whole seconds remaining before the timeout fires (>= 0), for the visible
-  // countdown. Derived from the same stored deadline as the timer above and
-  // recomputed on the per-second elapsed tick (elapsedSeconds), so the display
-  // and the actual fire share one clock and both survive a remount.
-  const remainingSeconds =
-    deadlineAt !== undefined ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)) : 0;
+  // The ring's start: derived from the stored deadline so it survives a
+  // remount; without one (auto-retry, reattach) from when this overlay mounted.
+  const mountedAt = useRef(Date.now()).current;
+  const startedAt =
+    deadlineAt !== undefined && deadlineKind
+      ? deadlineAt - connectTimeoutMs(deadlineKind)
+      : mountedAt;
 
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
@@ -159,15 +174,14 @@ export function TerminalConnectionOverlay({
     retryTerminalSpawn(tabId);
   }, [tabId, retryTerminalSpawn]);
 
-  // Abort: stop the in-flight connect and land on a retryable Failed state,
-  // keeping the tab open — distinct from Cancel, which closes the tab (#1128).
+  // Abort: stop the in-flight connect and land on a retryable resting state,
+  // keeping the tab open (#1128).
   const handleAbort = useCallback(() => {
     abortTerminalConnect(tabId);
   }, [tabId, abortTerminalConnect]);
 
   // Retry now (waiting-for-agent): stop parking on the agent and re-run the
-  // spawn immediately, mirroring the wake path when the agent comes online.
-  // retryTerminalSpawn already clears the waiting flag as part of the retry.
+  // spawn immediately. retryTerminalSpawn already clears the waiting flag.
   const handleRetryNowWaiting = useCallback(() => {
     retryTerminalSpawn(tabId);
   }, [tabId, retryTerminalSpawn]);
@@ -178,14 +192,9 @@ export function TerminalConnectionOverlay({
     reconnectTerminal(tabId);
   }, [tabId, reconnectTerminal]);
 
-  // Remediation commands are host-OS specific (e.g. only Linux has the serial
-  // dialout group, #1831; the ssh-agent start command differs per OS).
+  // Remediation commands are host-OS specific (#1831). The hint is a pure
+  // function of (backend family, failure kind) (#2088, I18N-009).
   const platform = getPlatform();
-  // The hint is a pure function of (backend family, failure kind): the family
-  // keeps a hint on the backend that raised it (#2088), and the kind comes from
-  // the backend's error code, never from matching the (English or OS-localized)
-  // message text (I18N-009). The message itself carries no remediation clause
-  // — the backend states only the fact — so it is displayed verbatim.
   const backendFamily = backendFamilyFromSessionType(sessionType);
   const hint = connectionErrorHint(backendFamily, errorKind, platform);
   const hintCopyTestId =
@@ -193,19 +202,60 @@ export function TerminalConnectionOverlay({
       ? "terminal-connection-agent-copy-btn"
       : "terminal-connection-serial-copy-btn";
 
-  // The spawn error is part of the failure overlay's accessible description.
-  const errorTextId = useId();
-
   const cls = `terminal-connection-overlay${isVisible ? "" : " terminal-connection-overlay--hidden"}`;
+  const steps = stepsFor(sessionType, viaAgent);
+  const reported: StepId | undefined =
+    progress && steps.includes(progress.stage) ? progress.stage : undefined;
+  const slowHint = isSlowConnect ? (
+    <p className="terminal-connection-overlay__hint-text">
+      Taking longer than usual — the host may be slow to respond or unreachable.
+    </p>
+  ) : null;
+  const common = {
+    target: target || tabTitle,
+    typeLabel: connectTypeLabel(sessionType),
+    typeIcon: <ConnectTypeIcon type={sessionType} />,
+    details: viaAgent ? [...details, "via agent"] : details,
+    startedAt,
+    deadlineAt,
+  };
+  const abortBtn = (
+    <Button
+      size="sm"
+      variant="secondary"
+      icon={<Ban size={14} />}
+      onClick={handleAbort}
+      data-testid="terminal-connection-abort-btn"
+    >
+      Abort
+    </Button>
+  );
+  const retryNowBtn = (onClick: () => void) => (
+    <Button
+      size="sm"
+      variant="secondary"
+      icon={<Zap size={14} />}
+      onClick={onClick}
+      data-testid="terminal-connection-retry-now-btn"
+    >
+      Retry now
+    </Button>
+  );
 
   if (isReattaching) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <ContentOverlay
-          icon={busyIcon}
-          busy
+        <ConnectProgress
+          {...common}
+          phase="connecting"
           heading="Restoring session…"
-          subheading="Loading cached scrollback from the persistent session."
+          status="Loading cached scrollback from the persistent session."
+          announcement={busyAnnouncement(
+            "Restoring session…",
+            "Loading cached scrollback from the persistent session."
+          )}
+          deadlineAt={undefined}
+          timeText=""
         />
       </div>
     );
@@ -214,49 +264,24 @@ export function TerminalConnectionOverlay({
   if (waitingForAgent) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <ContentOverlay
-          icon={busyIcon}
-          busy
+        <ConnectProgress
+          {...common}
+          phase="connecting"
           heading="Waiting for agent…"
-          subheading="Waiting for the agent to connect before starting the session."
+          stages={buildStages(["agent", "start"], "agent")}
+          status="Waiting for the agent to connect before starting the session."
+          announcement={busyAnnouncement(
+            "Waiting for agent…",
+            "Waiting for the agent to connect before starting the session."
+          )}
+          timeTestId="terminal-connection-timeout"
           actions={
             <>
-              <Button
-                size="sm"
-                variant="primary"
-                icon={<Zap size={14} />}
-                onClick={handleRetryNowWaiting}
-                data-testid="terminal-connection-retry-now-btn"
-              >
-                Retry now
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Ban size={14} />}
-                onClick={handleAbort}
-                data-testid="terminal-connection-abort-btn"
-              >
-                Abort
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleCancel}
-                data-testid="terminal-connection-cancel-btn"
-              >
-                Cancel
-              </Button>
+              {retryNowBtn(handleRetryNowWaiting)}
+              {abortBtn}
             </>
           }
-        >
-          <p
-            className="terminal-connection-overlay__elapsed"
-            data-testid="terminal-connection-timeout"
-          >
-            Times out in {remainingSeconds}s
-          </p>
-        </ContentOverlay>
+        />
       </div>
     );
   }
@@ -264,115 +289,77 @@ export function TerminalConnectionOverlay({
   if (autoRetryCount > 0) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <ContentOverlay
-          icon={busyIcon}
-          busy
+        <ConnectProgress
+          {...common}
+          phase="retrying"
           heading={`Connecting… (attempt ${autoRetryCount + 1})`}
-          subheading={tabTitle}
+          attempt={{ current: autoRetryCount + 1 }}
+          announcement={busyAnnouncement(`Connecting… (attempt ${autoRetryCount + 1})`, tabTitle)}
+          deadlineAt={undefined}
+          timeTestId="terminal-connection-elapsed"
           actions={
             <>
-              <Button
-                size="sm"
-                variant="primary"
-                icon={<Zap size={14} />}
-                onClick={handleRetryNowAutoRetry}
-                data-testid="terminal-connection-retry-now-btn"
-              >
-                Retry now
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Ban size={14} />}
-                onClick={handleAbort}
-                data-testid="terminal-connection-abort-btn"
-              >
-                Abort
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleCancel}
-                data-testid="terminal-connection-cancel-btn"
-              >
-                Cancel
-              </Button>
+              {retryNowBtn(handleRetryNowAutoRetry)}
+              {abortBtn}
             </>
           }
         >
-          <p
-            className="terminal-connection-overlay__elapsed"
-            data-testid="terminal-connection-elapsed"
-          >
-            Elapsed {elapsedLabel}
-          </p>
-          {isSlowConnect && (
-            <p className="terminal-connection-overlay__hint-text">
-              Taking longer than usual — the host may be slow to respond or unreachable.
-            </p>
-          )}
-        </ContentOverlay>
+          {slowHint}
+        </ConnectProgress>
       </div>
     );
   }
 
   if (isConnecting) {
+    const stages: ConnectStage[] = buildStages(steps, viaAgent ? "start" : reported);
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <ContentOverlay
-          icon={busyIcon}
-          busy
+        <ConnectProgress
+          {...common}
+          phase="connecting"
           heading="Connecting…"
-          subheading={tabTitle}
-          actions={
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Ban size={14} />}
-                onClick={handleAbort}
-                data-testid="terminal-connection-abort-btn"
-              >
-                Abort
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleCancel}
-                data-testid="terminal-connection-cancel-btn"
-              >
-                Cancel
-              </Button>
-            </>
-          }
+          announcement={busyAnnouncement("Connecting…", tabTitle)}
+          stages={stages}
+          status={progress?.status ?? undefined}
+          timeTestId="terminal-connection-elapsed"
+          actions={abortBtn}
         >
-          <p
-            className="terminal-connection-overlay__elapsed"
-            data-testid="terminal-connection-elapsed"
-          >
-            Elapsed {elapsedLabel} · times out in {remainingSeconds}s
-          </p>
-          {isSlowConnect && (
-            <p className="terminal-connection-overlay__hint-text">
-              Taking longer than usual — the host may be slow to respond or unreachable.
-            </p>
-          )}
-        </ContentOverlay>
+          {slowHint}
+        </ConnectProgress>
       </div>
     );
   }
 
+  // Resting: failed, timed out, or aborted by the user.
+  const phase: ConnectProgressPhase =
+    error === ABORTED_CONNECT_MESSAGE ? "aborted" : errorKind === "timeout" ? "timeout" : "failed";
+  // Mark the stage it stopped at — only when it is actually known (a reported
+  // stage, an agent session, or a single-step type).
+  const failedAt: StepId | undefined = viaAgent ? "start" : reported;
+  const showSteps = failedAt !== undefined || steps.length === 1;
+  const headings: Record<ConnectProgressPhase, string> = {
+    failed: "Connection failed",
+    timeout: "Connection timed out",
+    aborted: "Connection aborted",
+    connecting: "",
+    retrying: "",
+  };
   return (
     <div className={cls} data-testid="terminal-connection-overlay">
-      <ContentOverlay
-        icon={<ServerCrash size={32} className="terminal-connection-overlay__icon" />}
-        heading="Connection failed"
-        subheading={tabTitle}
-        announce="assertive"
+      <ConnectProgress
+        {...common}
+        phase={phase}
+        heading={headings[phase]}
+        stages={showSteps ? buildStages(steps, failedAt, true) : undefined}
         // `error` is already the store's display string, not a raw IPC error.
-        announcement={["Connection failed.", `${tabTitle}:`, error].join(" ")}
-        describedBy={errorTextId}
+        error={error}
+        announcement={[`${headings[phase]}.`, `${tabTitle}:`, error].join(" ")}
         autoFocusPrimaryAction={isVisible}
+        timeText={
+          phase === "timeout"
+            ? `Gave up after ${formatElapsed(Math.round(CONNECTING_TIMEOUT_MS / 1000))}`
+            : ""
+        }
         actions={
           <>
             <Button
@@ -387,20 +374,15 @@ export function TerminalConnectionOverlay({
             <Button
               size="sm"
               variant="ghost"
+              icon={<X size={14} />}
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
-              Cancel
+              Close tab
             </Button>
           </>
         }
       >
-        <div className="terminal-connection-overlay__error-box">
-          <span id={errorTextId} className="terminal-connection-overlay__error-text">
-            {error}
-          </span>
-        </div>
-
         {hint &&
           (hint.title || hint.command ? (
             <div className="terminal-connection-overlay__hint">
@@ -416,7 +398,7 @@ export function TerminalConnectionOverlay({
         {/* The server rejected the credentials (typed `auth_failed` kind):
             offer to enter new ones inline and reconnect (#3089). */}
         {errorKind === "auth" && <CredentialReentry tabId={tabId} />}
-      </ContentOverlay>
+      </ConnectProgress>
     </div>
   );
 }

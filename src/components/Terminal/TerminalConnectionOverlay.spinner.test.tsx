@@ -22,6 +22,16 @@ vi.mock("lucide-react", () => {
     Loader2: icon("icon-loader"),
     Zap: icon("icon-zap"),
     Ban: icon("icon-ban"),
+    X: icon("icon-x"),
+    Check: icon("icon-check"),
+    CircleAlert: icon("icon-circlealert"),
+    Clock: icon("icon-clock"),
+    Cable: icon("icon-cable"),
+    Container: icon("icon-container"),
+    Globe: icon("icon-globe"),
+    Monitor: icon("icon-monitor"),
+    Terminal: icon("icon-terminal"),
+    Wifi: icon("icon-wifi"),
     Copy: icon("icon-copy"),
   };
 });
@@ -38,6 +48,7 @@ function resetStore() {
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
     terminalReattaching: {},
+    terminalConnectDeadline: {},
   });
 }
 
@@ -59,6 +70,10 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
 
   async function renderConnecting() {
     harness.transport.setSession(TAB_ID, connecting());
+    // The connect deadline the store arms on entry to Connecting (#1263).
+    useAppStore.setState({
+      terminalConnectDeadline: { [TAB_ID]: { kind: "connecting", at: Date.now() + 86_000 } },
+    });
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -72,20 +87,18 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
     await flushSessionRegion();
   }
 
-  // Regression for #2601: the connecting spinner is the sole "work in progress"
-  // cue. Under `prefers-reduced-motion: reduce` the global backstop collapses
-  // every animation to a single 0.01ms frame. The `motion-essential-spinner`
-  // marker opts the element out of that collapse into a deliberate *static* icon
-  // (#4039 — the earlier opacity pulse read as blinking). jsdom does not run
-  // animations, so assert the wiring (marker class + spin class) here; the CSS
-  // contract itself is pinned in `styles/animations.reducedMotion.test.ts`.
-  it("marks the spinner as essential motion so reduced motion renders it static", async () => {
+  // #5068: the connect surface's motion is CSS-only — the ring fill is a CSS
+  // animation and the comet a compositor `transform` — so it can never wait on a
+  // stalled JS timer. jsdom runs no animations; assert the wiring here. The live
+  // animation is checked in the visual lane (tests/visual/connectOverlay.spec.ts).
+  it("renders the progress ring with its CSS-driven timeout fill and comet", async () => {
     await renderConnecting();
-    const spinner = container.querySelector("[data-testid='icon-loader']");
-    expect(spinner).not.toBeNull();
-    expect(spinner?.className).toContain("ui-spinner");
-    expect(spinner?.className).toContain("terminal-connection-overlay__icon--busy");
-    expect(spinner?.className).toContain("motion-essential-spinner");
+    const ring = container.querySelector<HTMLElement>(".ui-connect-progress__ring");
+    expect(ring).not.toBeNull();
+    expect(ring?.style.getPropertyValue("--cp-duration")).toBe("90000ms");
+    expect(ring?.style.getPropertyValue("--cp-delay")).toMatch(/^-\d+ms$/);
+    expect(container.querySelector(".ui-connect-progress__ring-fill")).not.toBeNull();
+    expect(container.querySelector(".ui-connect-progress__comet")).not.toBeNull();
   });
 
   describe("steady status label (#4039)", () => {
@@ -101,11 +114,12 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       return container.querySelector("[data-testid='content-overlay-live']");
     }
 
-    it("reduced motion: static spinner sits beside a steady, announced 'Connecting…' label", async () => {
+    it("reduced motion: no comet, a static ring beside a steady, announced 'Connecting…' label", async () => {
       motion = mockReducedMotion(true);
       await renderConnecting();
-      const spinner = container.querySelector("[data-testid='icon-loader']");
-      expect(spinner?.className).toContain("motion-essential-spinner");
+      expect(container.querySelector(".ui-connect-progress__comet")).toBeNull();
+      const ring = container.querySelector<HTMLElement>(".ui-connect-progress__ring");
+      expect(ring?.style.getPropertyValue("--cp-progress")).not.toBe("");
       const label = statusLabel();
       expect(label?.textContent).toBe("Connecting…");
       // #4512: the steady label is announced by the overlay's always-mounted
@@ -117,8 +131,8 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       expect(region?.getAttribute("role")).toBe("status");
       expect(region?.getAttribute("aria-live")).toBe("polite");
       expect(region?.textContent).toBe("Connecting… my-server");
-      // Adjacent: the label is the spinner's next sibling in the overlay body.
-      expect(spinner?.nextElementSibling).toBe(label);
+      // Adjacent: the label is the ring's next sibling in the overlay body.
+      expect(ring?.nextElementSibling).toBe(label);
       expect(label?.parentElement?.getAttribute("aria-busy")).toBe("true");
     });
 
@@ -149,13 +163,10 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       expect(mutations).toHaveLength(0);
     });
 
-    it("full motion: renders the same spinner and label (nothing changes)", async () => {
+    it("full motion: adds the orbiting comet, same label", async () => {
       motion = mockReducedMotion(false);
       await renderConnecting();
-      const spinner = container.querySelector("[data-testid='icon-loader']");
-      expect(spinner?.className).toContain("ui-spinner");
-      expect(spinner?.className).toContain("terminal-connection-overlay__icon--busy");
-      expect(spinner?.className).toContain("motion-essential-spinner");
+      expect(container.querySelector(".ui-connect-progress__comet")).not.toBeNull();
       expect(statusLabel()?.textContent).toBe("Connecting…");
     });
   });
