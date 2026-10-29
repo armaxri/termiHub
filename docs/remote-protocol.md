@@ -2050,8 +2050,11 @@ List all saved connections and folders.
 | `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                          |
 
 > **Persistence and downgrade safety (#3920):** the agent saves these definitions
-> in its `connections.json` with a schema `version` (`"1"`; a file without one is
-> read as v1). If that file was written by a **newer** agent, this agent leaves it
+> in its `connections.json` with a schema `version` (currently `"3"`; a file
+> without one is read as v1). Older files are migrated forward on load, one step
+> at a time: v1 → v2 switches the command-mark shell hook off once for local
+> shell and SSH connections (#5012), and v2 → v3 does the same for WSL
+> connections (#5046). If that file was written by a **newer** agent, this agent leaves it
 > untouched: `connections.list` returns no saved connections, and every mutating
 > `connections.*` method (`create`, `update`, `delete`, `folders.create`,
 > `folders.update`, `folders.delete`) fails with `-32603` and a message saying the
