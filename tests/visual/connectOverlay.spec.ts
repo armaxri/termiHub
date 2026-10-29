@@ -80,10 +80,42 @@ async function progress(page: Page, tabId: string, stage: string, status: string
   );
 }
 
+/**
+ * The busy body fades in after 250 ms (#5068). Wait until it, and every
+ * ancestor up to the overlay, is fully opaque with its animations finished, and
+ * the heading is visible — so a capture mid-fade fails instead of passing blank.
+ */
+async function expectFullyVisible(page: Page, what: string): Promise<void> {
+  const body = page.locator(`${OVERLAY} .ui-content-overlay`);
+  await expect(body.locator(".ui-content-overlay__heading"), `${what}: heading`).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        body.evaluate((el) => {
+          const overlay = el.closest("[data-testid=terminal-connection-overlay]");
+          let opacity = 1;
+          for (let n: Element | null = el; n; n = n.parentElement) {
+            opacity *= Number(getComputedStyle(n).opacity);
+            if (n === overlay) break;
+          }
+          const fading = el
+            .getAnimations()
+            .some(
+              (a) =>
+                a.playState !== "finished" && (a as CSSAnimation).animationName === "ui-cp-appear"
+            );
+          return fading ? -1 : opacity;
+        }),
+      { message: `${what}: the overlay body is fully opaque before the screenshot` }
+    )
+    .toBe(1);
+}
+
 async function shoot(page: Page, name: string, testInfo: { attach: Function }) {
   for (const theme of THEMES) {
     await page.evaluate((t) => window.__visual.applyTheme(t), theme);
     await settle(page);
+    await expectFullyVisible(page, `${name} (${theme})`);
     const file = join(SCREENS, "connect-overlay", `${name}-${theme}.png`);
     await page.locator(OVERLAY).screenshot({ path: file });
     await testInfo.attach(`connect overlay ${name} (${theme})`, {
