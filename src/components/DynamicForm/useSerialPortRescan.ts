@@ -5,6 +5,22 @@ import { sortSerialPorts } from "@/utils/serialPorts";
 /** How often the port list is re-enumerated while it is visible (#5066). */
 export const SERIAL_PORT_RESCAN_INTERVAL_MS = 1500;
 
+/**
+ * Upper bound of the retry delay while scans keep failing (#5069): a slow or
+ * dropped agent link is retried at most this often instead of every interval.
+ */
+export const SERIAL_PORT_RESCAN_MAX_BACKOFF_MS = 15000;
+
+/**
+ * Delay before the next scan after `failures` consecutive failed scans: the
+ * normal interval, doubled per failure, capped at
+ * {@link SERIAL_PORT_RESCAN_MAX_BACKOFF_MS}.
+ */
+export function serialPortRescanDelay(failures: number): number {
+  const factor = 2 ** Math.min(failures, 16);
+  return Math.min(SERIAL_PORT_RESCAN_INTERVAL_MS * factor, SERIAL_PORT_RESCAN_MAX_BACKOFF_MS);
+}
+
 /** How long a freshly plugged port stays marked as new. */
 export const NEW_SERIAL_PORT_HIGHLIGHT_MS = 5000;
 
@@ -14,7 +30,10 @@ const NO_NEW_PORTS: ReadonlySet<string> = new Set();
 export interface SerialPortRescanOptions {
   /** Scan at all — false when the port list is supplied externally (remote agent). */
   enabled: boolean;
-  /** Port enumerator; defaults to the local `list_serial_ports` command. */
+  /**
+   * Port enumerator; defaults to the local `list_serial_ports` command. An
+   * agent-hosted field passes one that asks the agent (#5069).
+   */
   lister?: () => Promise<string[]>;
   /**
    * Element whose on-screen visibility gates polling. When given (and the
@@ -27,8 +46,10 @@ export interface SerialPortRescanOptions {
 export interface SerialPortRescanResult {
   /** Detected ports in natural order. */
   ports: readonly string[];
-  /** True once the first scan has completed. */
+  /** True once the first scan has completed (successfully or not). */
   loaded: boolean;
+  /** True once a scan has succeeded, i.e. `ports` is a real enumeration. */
+  scanned: boolean;
   /** Ports that appeared within the last {@link NEW_SERIAL_PORT_HIGHLIGHT_MS}. */
   newPorts: ReadonlySet<string>;
 }
@@ -74,8 +95,10 @@ function useElementShown(ref: RefObject<Element | null> | undefined): boolean {
  * plugged adapters appear and unplugged ones disappear within ~2 s (#5066).
  *
  * Polling runs only while `enabled`, the window is shown and (when a
- * `targetRef` is given) its element is on screen; it stops on unmount. A scan
- * never overlaps the previous one, a failed scan keeps the last good list, and
+ * `targetRef` is given) its element is on screen; it stops on unmount. The next
+ * scan is scheduled only once the previous one settles, so scans never overlap.
+ * A failed scan keeps the last good list and backs off the next attempt
+ * ({@link serialPortRescanDelay}) so a slow agent link is not flooded (#5069);
  * an unchanged result keeps the previous array identity (no re-render churn).
  */
 export function useSerialPortRescan({
@@ -85,6 +108,7 @@ export function useSerialPortRescan({
 }: SerialPortRescanOptions): SerialPortRescanResult {
   const [ports, setPorts] = useState<readonly string[]>(NO_PORTS);
   const [loaded, setLoaded] = useState(false);
+  const [scanned, setScanned] = useState(false);
   const [newPorts, setNewPorts] = useState<ReadonlySet<string>>(NO_NEW_PORTS);
   const previousRef = useRef<ReadonlySet<string> | null>(null);
   const appearedAtRef = useRef(new Map<string, number>());
@@ -98,7 +122,8 @@ export function useSerialPortRescan({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    let inFlight = false;
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const apply = (raw: string[]) => {
       const next = sortSerialPorts(raw);
@@ -121,32 +146,34 @@ export function useSerialPortRescan({
       setPorts((prev) => (sameList(prev, next) ? prev : next));
       setNewPorts((prev) => (sameSet(prev, fresh) ? prev : fresh));
       setLoaded(true);
+      setScanned(true);
     };
 
     const scan = () => {
-      if (inFlight) return;
-      inFlight = true;
       listerRef
         .current()
         .then((raw) => {
-          if (!cancelled) apply(raw);
+          if (cancelled) return;
+          failures = 0;
+          apply(raw);
         })
         .catch(() => {
-          // Keep the last good list; the next tick retries.
-          if (!cancelled) setLoaded(true);
+          // Keep the last good list; retry after a growing delay.
+          if (cancelled) return;
+          failures += 1;
+          setLoaded(true);
         })
         .finally(() => {
-          inFlight = false;
+          if (!cancelled) timer = setTimeout(scan, serialPortRescanDelay(failures));
         });
     };
 
     scan();
-    const id = setInterval(scan, SERIAL_PORT_RESCAN_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearTimeout(timer);
     };
   }, [active]);
 
-  return { ports, loaded, newPorts };
+  return { ports, loaded, scanned, newPorts };
 }

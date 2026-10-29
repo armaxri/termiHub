@@ -66,6 +66,7 @@ import type { AgentDefinitionInfo } from "@/types/generated/AgentDefinitionInfo"
 import type { AgentDeployConfig } from "@/types/generated/AgentDeployConfig";
 import type { AgentDeployResult } from "@/types/generated/AgentDeployResult";
 import type { AgentDockerContainersResult } from "@/types/generated/AgentDockerContainersResult";
+import type { AgentSerialPortsResult } from "@/types/generated/AgentSerialPortsResult";
 import type { AgentFolderInfo } from "@/types/generated/AgentFolderInfo";
 import type { AgentHostSessionInfo } from "@/types/generated/AgentHostSessionInfo";
 import type { AgentHostSessionsResult } from "@/types/generated/AgentHostSessionsResult";
@@ -1275,6 +1276,19 @@ export async function listLocalSessions(): Promise<LocalSessionInfo[]> {
 /** List available serial ports */
 export async function listSerialPorts(): Promise<string[]> {
   return await invoke<string[]>("list_serial_ports");
+}
+
+/** Result of {@link listAgentSerialPorts}, generated via ts-rs. */
+export type { AgentSerialPortsResult };
+
+/**
+ * List the serial ports of a connected agent's host, freshly enumerated, for
+ * the Port field of an agent-hosted serial connection (#5069). Resolves with
+ * `supported: false` for an agent too old to list them on demand; rejects when
+ * the agent is not connected or does not answer in time.
+ */
+export async function listAgentSerialPorts(agentId: string): Promise<AgentSerialPortsResult> {
+  return await invoke<AgentSerialPortsResult>("list_agent_serial_ports", { agentId });
 }
 
 /** List available shells on this platform */
