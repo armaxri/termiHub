@@ -1,6 +1,7 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { SettingsField } from "@/types/schema";
 import { Input } from "@/components/ui";
+import { listAgentSerialPorts } from "@/services/api";
 import { sortSerialPorts } from "@/utils/serialPorts";
 import { useSerialPortRescan } from "./useSerialPortRescan";
 
@@ -10,34 +11,70 @@ interface SerialPortFieldProps {
   onChange: (v: unknown) => void;
   /** Ports supplied externally (a remote agent's snapshot); skips the local scan. */
   availablePorts?: string[];
+  /**
+   * Rescan this connected agent's ports instead of using `availablePorts` as
+   * given (#5069) — set only for an agent advertising `serialPortRescan`.
+   * `availablePorts` (its connect-time snapshot) is shown until the first
+   * agent scan answers, and kept if the agent turns out not to support it.
+   */
+  agentId?: string;
   /** The control's `id`, `aria-describedby` and invalid state from DynamicField. */
   a11y: { id: string; describedBy?: string; invalid: boolean };
   testIdBase: string;
 }
 
+/** Raised by the agent lister when the agent cannot list its ports on demand. */
+class AgentRescanUnsupported extends Error {}
+
 /**
  * Editable combobox for a `serialPort` field: detected ports in natural order,
- * rescanned while visible (#5066), with "(new)" / "(not connected)" hints.
+ * rescanned while visible (#5066) — on the agent's host for an agent-hosted
+ * connection (#5069) — with "(new)" / "(not connected)" hints.
  */
 export function SerialPortField({
   field,
   value,
   onChange,
   availablePorts: propPorts,
+  agentId,
   a11y,
   testIdBase,
 }: SerialPortFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // Local ports are re-enumerated while the field is on screen so plug/unplug
-  // shows up within ~2 s (#5066); an agent-supplied list is used as given.
-  const detected = useSerialPortRescan({ enabled: propPorts === undefined, targetRef: inputRef });
+  // The agent id whose agent answered "not supported": it keeps its snapshot.
+  const [unsupportedAgent, setUnsupportedAgent] = useState<string | null>(null);
+  const agentRescan = agentId !== undefined && unsupportedAgent !== agentId;
+  const agentLister = useMemo(
+    () =>
+      agentId === undefined
+        ? undefined
+        : async () => {
+            const result = await listAgentSerialPorts(agentId);
+            if (!result.supported) {
+              setUnsupportedAgent(agentId);
+              throw new AgentRescanUnsupported(agentId);
+            }
+            return result.ports;
+          },
+    [agentId]
+  );
+  // Ports are re-enumerated while the field is on screen so plug/unplug shows
+  // up within ~2 s: locally (#5066) or on the agent's host (#5069). Without
+  // agent rescan support, an agent-supplied list is used as given.
+  const detected = useSerialPortRescan({
+    enabled: propPorts === undefined || agentRescan,
+    lister: agentRescan ? agentLister : undefined,
+    targetRef: inputRef,
+  });
   const suppliedPorts = useMemo(
     () => (propPorts === undefined ? undefined : sortSerialPorts(propPorts)),
     [propPorts]
   );
-  const availablePorts = suppliedPorts ?? detected.ports;
-  const loaded = suppliedPorts !== undefined || detected.loaded;
-  const newPorts = suppliedPorts !== undefined ? [] : [...detected.newPorts];
+  // An agent's snapshot stands in until its first scan succeeds.
+  const showDetected = suppliedPorts === undefined || (agentRescan && detected.scanned);
+  const availablePorts = showDetected ? detected.ports : (suppliedPorts ?? detected.ports);
+  const loaded = showDetected ? detected.loaded : true;
+  const newPorts = showDetected ? [...detected.newPorts] : [];
   const currentValue = (value as string) ?? "";
   // The selection is never changed by a rescan: an unplugged selected port
   // stays selected and is flagged instead.
@@ -70,7 +107,7 @@ export function SerialPortField({
           <option
             key={port}
             value={port}
-            label={detected.newPorts.has(port) ? `${port} (new)` : undefined}
+            label={showDetected && detected.newPorts.has(port) ? `${port} (new)` : undefined}
           />
         ))}
       </datalist>

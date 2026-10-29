@@ -47,6 +47,12 @@ interface DynamicFieldProps {
    */
   availablePorts?: string[];
   /**
+   * For `serialPort` fields of an agent-hosted connection: rescan this
+   * connected agent's ports while visible (#5069). Pass it only for an agent
+   * advertising `serialPortRescan`; `availablePorts` stays its fallback.
+   */
+  serialPortAgentId?: string;
+  /**
    * Context for `dockerContainer` fields (PROD-017): the connection's selected
    * container runtime (`auto` / `docker` / `podman`) the picker lists from,
    * and whether listing is possible at all. For an agent-hosted connection the
@@ -101,6 +107,7 @@ export function DynamicField({
   credentialSaved,
   storedSecret,
   availablePorts,
+  serialPortAgentId,
   containerContext,
   savedConnectionContext,
   testId,
@@ -161,7 +168,7 @@ export function DynamicField({
           onChange,
           a11y,
           testIdBase,
-          availablePorts,
+          { availablePorts, agentId: serialPortAgentId },
           onBlur,
           platformNote != null,
           containerContext,
@@ -196,6 +203,12 @@ export function DynamicField({
   );
 }
 
+/** Where a `serialPort` field's ports come from (see {@link DynamicFieldProps}). */
+interface SerialPortSource {
+  availablePorts?: string[];
+  agentId?: string;
+}
+
 function renderFieldInput(
   field: SettingsField,
   fieldType: FieldType,
@@ -203,7 +216,7 @@ function renderFieldInput(
   onChange: (v: unknown) => void,
   a11y: FieldA11y,
   testIdBase: string,
-  availablePorts?: string[],
+  serialPorts: SerialPortSource,
   onBlur?: () => void,
   /** Force-disable the control because its feature is unavailable on this
    * platform (audit PROD-019). Currently only honoured by boolean toggles. */
@@ -284,7 +297,8 @@ function renderFieldInput(
           field={field}
           value={value}
           onChange={onChange}
-          availablePorts={availablePorts}
+          availablePorts={serialPorts.availablePorts}
+          agentId={serialPorts.agentId}
           a11y={a11y}
           testIdBase={testIdBase}
         />
