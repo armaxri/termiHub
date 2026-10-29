@@ -121,7 +121,7 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       const ring = container.querySelector<HTMLElement>(".ui-connect-progress__ring");
       expect(ring?.style.getPropertyValue("--cp-progress")).not.toBe("");
       const label = statusLabel();
-      expect(label?.textContent).toBe("Connecting…");
+      expect(label?.textContent).toBe("Connecting to my-server");
       // #4512: the steady label is announced by the overlay's always-mounted
       // polite live region (mounted empty, then filled); the heading itself
       // carries no live attributes, so the state is spoken exactly once.
@@ -130,7 +130,7 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       const region = liveRegion();
       expect(region?.getAttribute("role")).toBe("status");
       expect(region?.getAttribute("aria-live")).toBe("polite");
-      expect(region?.textContent).toBe("Connecting… my-server");
+      expect(region?.textContent).toBe("Connecting to my-server…");
       // Adjacent: the label is the ring's next sibling in the overlay body.
       expect(ring?.nextElementSibling).toBe(label);
       expect(label?.parentElement?.getAttribute("aria-busy")).toBe("true");
@@ -167,7 +167,7 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       motion = mockReducedMotion(false);
       await renderConnecting();
       expect(container.querySelector(".ui-connect-progress__comet")).not.toBeNull();
-      expect(statusLabel()?.textContent).toBe("Connecting…");
+      expect(statusLabel()?.textContent).toBe("Connecting to my-server");
     });
   });
 });

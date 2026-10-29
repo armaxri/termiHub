@@ -299,7 +299,7 @@ describe("TerminalConnectionOverlay — auto-retrying state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("attempt 4");
+    expect(container.textContent).toContain("Attempt 4");
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
@@ -356,7 +356,7 @@ describe("TerminalConnectionOverlay — reattaching state", () => {
       );
     });
     expect(container.textContent).toContain("Restoring session");
-    expect(container.textContent).not.toContain("Waiting for agent");
+    expect(container.textContent).not.toContain("Waiting for the agent");
   });
 });
 
@@ -388,7 +388,7 @@ describe("TerminalConnectionOverlay — waiting-for-agent state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("Waiting for agent");
+    expect(container.textContent).toContain("Waiting for the agent");
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
@@ -409,7 +409,7 @@ describe("TerminalConnectionOverlay — waiting-for-agent state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("Waiting for agent");
+    expect(container.textContent).toContain("Waiting for the agent");
   });
 });
 

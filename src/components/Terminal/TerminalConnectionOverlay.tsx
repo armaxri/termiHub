@@ -11,7 +11,11 @@ import {
 import { useTabConnectProgress } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
 import { buildStages, connectTypeLabel, stepsFor, type StepId } from "@/utils/connectStages";
-import { connectTimeoutMs, CONNECTING_TIMEOUT_MS } from "@/utils/connectTimeout";
+import {
+  connectTimeoutMessage,
+  connectTimeoutMs,
+  CONNECTING_TIMEOUT_MS,
+} from "@/utils/connectTimeout";
 import { ConnectTypeIcon } from "./ConnectTypeIcon";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
@@ -267,11 +271,10 @@ export function TerminalConnectionOverlay({
         <ConnectProgress
           {...common}
           phase="connecting"
-          heading="Waiting for agent…"
           stages={buildStages(["agent", "start"], "agent")}
           status="Waiting for the agent to connect before starting the session."
           announcement={busyAnnouncement(
-            "Waiting for agent…",
+            `Connecting to ${common.target}`,
             "Waiting for the agent to connect before starting the session."
           )}
           timeTestId="terminal-connection-timeout"
@@ -292,9 +295,11 @@ export function TerminalConnectionOverlay({
         <ConnectProgress
           {...common}
           phase="retrying"
-          heading={`Connecting… (attempt ${autoRetryCount + 1})`}
           attempt={{ current: autoRetryCount + 1 }}
-          announcement={busyAnnouncement(`Connecting… (attempt ${autoRetryCount + 1})`, tabTitle)}
+          announcement={busyAnnouncement(
+            `Reconnecting to ${common.target}`,
+            `Attempt ${autoRetryCount + 1}`
+          )}
           deadlineAt={undefined}
           timeTestId="terminal-connection-elapsed"
           actions={
@@ -317,8 +322,7 @@ export function TerminalConnectionOverlay({
         <ConnectProgress
           {...common}
           phase="connecting"
-          heading="Connecting…"
-          announcement={busyAnnouncement("Connecting…", tabTitle)}
+          announcement={`Connecting to ${common.target}…`}
           stages={stages}
           status={progress?.status ?? undefined}
           timeTestId="terminal-connection-elapsed"
@@ -355,8 +359,9 @@ export function TerminalConnectionOverlay({
         error={error}
         announcement={[`${headings[phase]}.`, `${tabTitle}:`, error].join(" ")}
         autoFocusPrimaryAction={isVisible}
+        // Only the client's own deadline knows how long it waited.
         timeText={
-          phase === "timeout"
+          error === connectTimeoutMessage("connecting")
             ? `Gave up after ${formatElapsed(Math.round(CONNECTING_TIMEOUT_MS / 1000))}`
             : ""
         }

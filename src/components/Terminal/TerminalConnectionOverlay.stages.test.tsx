@@ -5,6 +5,7 @@ import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";
 import { recordConnectProgress, useConnectProgressStore } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { connectTimeoutMessage } from "@/utils/connectTimeout";
 import {
   connecting,
   flushSessionRegion,
@@ -118,7 +119,7 @@ describe("TerminalConnectionOverlay — connect stages", () => {
 
   it("shows the timed-out and aborted resting phases", () => {
     useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "Timed out" },
+      terminalSpawnErrors: { [TAB_ID]: connectTimeoutMessage("connecting") },
       terminalSpawnErrorKinds: { [TAB_ID]: "timeout" },
     });
     render({ sessionType: "telnet" });
