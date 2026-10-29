@@ -7,7 +7,7 @@ import { TAURI_EVENT } from "./eventNames";
 import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
-import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
+import { XServerConsentRequest, XServerError, XServerProgress } from "@/types/xserver";
 import { SshHostKeyPromptPayload } from "@/types/sshHostKey";
 import type { ConnectionIdChange } from "@/types/connection";
 import type {
@@ -755,6 +755,21 @@ export async function onXServerProgress(
   callback: (progress: XServerProgress) => void
 ): Promise<UnlistenFn> {
   return await listen<XServerProgress>(TAURI_EVENT.xServerProgress, (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to connect-time X server provisioning failures (#5079): an
+ * X11-forwarding SSH connect could not get a usable local X server (e.g. a
+ * Wayland session without XWayland). The payload is the typed
+ * {@link XServerError}; the connect itself continues without forwarding.
+ * Returns the unlisten handle.
+ */
+export async function onXServerConnectFailed(
+  callback: (error: XServerError) => void
+): Promise<UnlistenFn> {
+  return await listen<XServerError>(TAURI_EVENT.xServerConnectFailed, (event) => {
     callback(event.payload);
   });
 }

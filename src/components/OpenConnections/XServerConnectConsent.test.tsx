@@ -37,6 +37,7 @@ vi.mock("@/services/events", () => ({
     progressCallback = cb;
     return Promise.resolve(() => {});
   },
+  onXServerConnectFailed: () => Promise.resolve(() => {}),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: () => {} }));

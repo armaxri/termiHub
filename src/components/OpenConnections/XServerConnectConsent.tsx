@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { AppWindow } from "lucide-react";
 import { toast } from "@/components/ui";
 import { xServerConnectConsentReply, xServerInstallDependency } from "@/services/api";
-import { onXServerConsentNeeded, onXServerProgress } from "@/services/events";
+import {
+  onXServerConnectFailed,
+  onXServerConsentNeeded,
+  onXServerProgress,
+} from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   type XServerConsentRequest,
@@ -14,6 +18,35 @@ import { driveXServerEnsure } from "./xServerProvisioning";
 import { guideTerminalInstall } from "./guideTerminalInstall";
 import { errorMessage } from "@/utils/errorMessage";
 import { subscribeGuarded, useTauriSubscription } from "@/hooks/useTauriListener";
+
+/**
+ * Stable id of the connect-time "X11 forwarding unavailable" toast (#5079), so
+ * a burst of failing connects (e.g. restoring several X11 tabs) updates one
+ * toast instead of stacking a copy per connect.
+ */
+export const X_SERVER_CONNECT_FAILED_TOAST_ID = "x-server-connect-failed";
+
+/**
+ * Toast copy for a connect whose X server provisioning failed (#5079): the
+ * typed message plus, for a missing dependency, its install hint — so the
+ * guidance is readable without opening anything — and an action that opens the
+ * shared error screen (with its Install / Retry recovery).
+ */
+export function connectFailureToast(error: XServerError): {
+  title: string;
+  description: string;
+  actionLabel: string;
+} {
+  const isDependencyMissing = error.kind === "dependencyMissing";
+  const hint = isDependencyMissing ? error.installHint : undefined;
+  return {
+    title: "X11 forwarding unavailable",
+    description: hint ? `${error.message} ${hint}` : error.message,
+    actionLabel: isDependencyMissing
+      ? `Install ${error.dependency ?? "dependency"}…`
+      : "Show details",
+  };
+}
 
 /** Progress steps that end the backend-driven connect provisioning. */
 const TERMINAL_STEPS = new Set(["ready", "failed", "skipped"]);
@@ -41,9 +74,18 @@ type Driver = "backend" | "ensure";
  * failure adds an Install action). "Not now" replies `notNow` and the connect
  * continues without X forwarding. The consent / progress / error markup is the
  * shared {@link XServerSetupContent}.
+ *
+ * A connect whose provisioning fails outside this dialog (e.g. a Wayland-only
+ * Linux session without XWayland, #5079) arrives as `x-server-connect-failed`
+ * with the typed error: it raises a toast carrying the guidance, whose action
+ * opens this dialog straight on the error screen. If this dialog is already
+ * showing that connect's provisioning, the typed error is folded into its error
+ * screen instead, so the user never gets both.
  */
 export function XServerConnectConsent() {
   const [request, setRequest] = useState<XServerConsentRequest | null>(null);
+  // Showing a connect failure's details (#5079) — open without a consent prompt.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [phase, setPhase] = useState<XServerSetupPhase>("consent");
   const [progress, setProgress] = useState<XServerProgress | null>(null);
   const [error, setError] = useState<XServerError | null>(null);
@@ -65,6 +107,35 @@ export function XServerConnectConsent() {
       setProgress(null);
       setError(null);
       setRawError(null);
+    },
+    "x_server_connect_consent"
+  );
+
+  // A connect could not get a usable X server (#5079): surface the typed
+  // guidance now rather than only in the log.
+  useTauriSubscription(
+    onXServerConnectFailed,
+    (failure) => {
+      frontendLog(
+        "x_server_connect_consent",
+        `connect failed: ${failure.kind}: ${failure.message}`
+      );
+      const dialogOpen = request !== null || detailsOpen;
+      if (dialogOpen && phase !== "consent") {
+        // This dialog is driving that connect's provisioning — give its error
+        // screen the typed error (install hint + action) instead of a toast.
+        setError(failure);
+        setRawError(failure.message);
+        setPhase("error");
+        return;
+      }
+      const copy = connectFailureToast(failure);
+      toast.error(copy.title, {
+        id: X_SERVER_CONNECT_FAILED_TOAST_ID,
+        description: copy.description,
+        testId: "x-server-connect-failed-toast",
+        action: { label: copy.actionLabel, onClick: () => showDetails(failure) },
+      });
     },
     "x_server_connect_consent"
   );
@@ -167,7 +238,7 @@ export function XServerConnectConsent() {
 
   return (
     <XServerSetupContent
-      open={request !== null}
+      open={request !== null || detailsOpen}
       onOpenChange={handleOpenChange}
       testIdPrefix="x-server-connect-consent"
       phase={phase}
@@ -192,9 +263,20 @@ export function XServerConnectConsent() {
     frontendLog("x_server_connect_consent", `${decision} (id=${request.id})`);
   }
 
+  /** Open the dialog on the error screen for a failed connect (#5079). */
+  function showDetails(failure: XServerError) {
+    frontendLog("x_server_connect_consent", `showing connect failure details (${failure.kind})`);
+    driverRef.current = "ensure";
+    setDetailsOpen(true);
+    setError(failure);
+    setRawError(failure.message);
+    setPhase("error");
+  }
+
   /** Dismiss the dialog and reset local state for the next prompt. */
   function close() {
     setRequest(null);
+    setDetailsOpen(false);
     setPhase("consent");
     setProgress(null);
     setError(null);
