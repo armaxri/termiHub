@@ -161,6 +161,14 @@ pub const EMBEDDED_SERVER_CLEAR_ACTIVITY: &str = "embedded_server.clear_activity
 /// older agent answers "method not found" and the desktop falls back to a typed
 /// container name/ID.
 pub const DOCKER_LIST_CONTAINERS: &str = "docker.list_containers";
+/// List the serial ports of the **agent host**, freshly enumerated, so the
+/// connection editor's Port field of an agent-hosted serial connection picks up
+/// plug / unplug while it is visible (#5069). No params; result:
+/// [`SerialListPortsResult`]. Added append-only in protocol 0.34.0 with the
+/// [`Capabilities::serial_port_rescan`] flag: the desktop calls it only on an
+/// agent that advertises the flag and keeps the `availableSerialPorts`
+/// snapshot of `initialize` for an older one.
+pub const SERIAL_LIST_PORTS: &str = "serial.list_ports";
 pub const TOOL_LIST: &str = "tool.list";
 pub const TOOL_RUN: &str = "tool.run";
 /// Start a streaming tool run (#3353): returns at once; results arrive as
@@ -382,6 +390,12 @@ pub struct Capabilities {
     /// agents, which ignore the unknown keys: the desktop hides the controls
     /// for them instead of letting a choice silently vanish.
     pub definition_icon_style: bool,
+    /// Whether the agent serves [`SERIAL_LIST_PORTS`]: a fresh enumeration of
+    /// its host's serial ports, which the desktop polls while an agent-hosted
+    /// serial connection's Port field is visible (protocol 0.34.0, #5069).
+    /// Absent (read as `false`) on older agents, for which the desktop keeps
+    /// the `availableSerialPorts` snapshot taken at `initialize`.
+    pub serial_port_rescan: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -2129,6 +2143,19 @@ pub struct DockerListContainersResult {
     pub containers: Vec<DockerContainerEntry>,
 }
 
+// ── serial.list_ports (#5069) ──────────────────────────────────────
+
+/// Result of [`SERIAL_LIST_PORTS`]: the agent host's serial ports in natural
+/// order (`COM3` before `COM10`), as `session::serial::list_serial_ports`
+/// enumerates them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialListPortsResult {
+    /// Port paths / names; empty when the host has none.
+    #[serde(default)]
+    pub ports: Vec<String>,
+}
+
 // ── connection.exit / connection.error (notification payloads) ─────
 
 /// Notification (agent → desktop): a session reported an error (#3759).
@@ -2803,6 +2830,7 @@ mod tests {
                 },
                 file_create_new: true,
                 definition_icon_style: true,
+                serial_port_rescan: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2840,6 +2868,8 @@ mod tests {
         assert_eq!(v["capabilities"]["fileCreateNew"], true);
         // #5021: icon colour / emoji on saved definitions.
         assert_eq!(v["capabilities"]["definitionIconStyle"], true);
+        // #5069: the agent serves `serial.list_ports`.
+        assert_eq!(v["capabilities"]["serialPortRescan"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -4725,6 +4755,25 @@ mod tests {
         assert!(r.containers[0].running);
         assert_eq!(r.containers[1].image, "");
         assert!(!r.containers[1].running);
+    }
+
+    /// `serial.list_ports` (#5069): the result is `{ "ports": [...] }` in the
+    /// given order, and a reply without `ports` reads as no ports.
+    #[test]
+    fn serial_list_ports_wire_shape() {
+        assert_eq!(SERIAL_LIST_PORTS, "serial.list_ports");
+        let r = SerialListPortsResult {
+            ports: vec!["COM3".to_string(), "COM10".to_string()],
+        };
+        assert_eq!(
+            serde_json::to_value(&r).unwrap(),
+            json!({ "ports": ["COM3", "COM10"] })
+        );
+        let back: SerialListPortsResult =
+            serde_json::from_value(json!({ "ports": ["COM3", "COM10"] })).unwrap();
+        assert_eq!(back, r);
+        let empty: SerialListPortsResult = serde_json::from_value(json!({})).unwrap();
+        assert!(empty.ports.is_empty());
     }
 
     // ── DUP-001 (#3226): desktop-side DTOs keep the historical wire shape ──

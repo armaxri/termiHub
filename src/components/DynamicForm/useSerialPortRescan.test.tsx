@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import {
   useSerialPortRescan,
   SERIAL_PORT_RESCAN_INTERVAL_MS,
+  SERIAL_PORT_RESCAN_MAX_BACKOFF_MS,
+  serialPortRescanDelay,
   type SerialPortRescanOptions,
   type SerialPortRescanResult,
 } from "./useSerialPortRescan";
@@ -171,5 +173,73 @@ describe("useSerialPortRescan (#5066)", () => {
     await tick();
     expect(result.current.ports).toEqual(["COM3"]);
     expect(result.current.loaded).toBe(true);
+  });
+
+  it("doubles the delay after each consecutive failure up to the cap", () => {
+    expect(serialPortRescanDelay(0)).toBe(SERIAL_PORT_RESCAN_INTERVAL_MS);
+    expect(serialPortRescanDelay(1)).toBe(SERIAL_PORT_RESCAN_INTERVAL_MS * 2);
+    expect(serialPortRescanDelay(2)).toBe(SERIAL_PORT_RESCAN_INTERVAL_MS * 4);
+    expect(serialPortRescanDelay(50)).toBe(SERIAL_PORT_RESCAN_MAX_BACKOFF_MS);
+  });
+
+  it("backs off while scans keep failing so a slow agent link is not flooded (#5069)", async () => {
+    const lister = vi.fn().mockRejectedValue(new Error("timed out"));
+    renderHook(() => ({ enabled: true, lister }));
+    await flush();
+    expect(lister).toHaveBeenCalledTimes(1);
+
+    // First retry after 2× the interval, not 1×.
+    await tick();
+    expect(lister).toHaveBeenCalledTimes(1);
+    await tick();
+    expect(lister).toHaveBeenCalledTimes(2);
+
+    // Then 4× the interval.
+    await tick();
+    await tick();
+    await tick();
+    expect(lister).toHaveBeenCalledTimes(2);
+    await tick();
+    expect(lister).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns to the normal interval after a successful scan", async () => {
+    const lister = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("timed out"))
+      .mockResolvedValue(["COM3"]);
+    const { result } = renderHook(() => ({ enabled: true, lister }));
+    await flush();
+    await tick();
+    await tick();
+    expect(lister).toHaveBeenCalledTimes(2);
+    expect(result.current.ports).toEqual(["COM3"]);
+    await tick();
+    expect(lister).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits a full interval after a slow scan completes before the next one", async () => {
+    let resolve: (ports: string[]) => void = () => {};
+    const lister = vi.fn(
+      () =>
+        new Promise<string[]>((r) => {
+          resolve = r;
+        })
+    );
+    renderHook(() => ({ enabled: true, lister }));
+    await tick();
+    resolve(["COM3"]);
+    await flush();
+    // Completion restarts the clock: no immediate catch-up scan.
+    await act(async () => {
+      vi.advanceTimersByTime(SERIAL_PORT_RESCAN_INTERVAL_MS - 1);
+    });
+    await flush();
+    expect(lister).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    await flush();
+    expect(lister).toHaveBeenCalledTimes(2);
   });
 });

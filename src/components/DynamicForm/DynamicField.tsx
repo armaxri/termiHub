@@ -1,11 +1,9 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { open } from "@/services/nativeDialog";
 import { HelpCircle, Info, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listAgentDockerContainers, listDockerContainers } from "@/services/api";
-import { sortSerialPorts } from "@/utils/serialPorts";
-import { useSerialPortRescan } from "./useSerialPortRescan";
 import type { DockerContainerInfo } from "@/services/api";
 import {
   composeServicesFromContainers,
@@ -15,6 +13,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
+import { SerialPortField } from "./SerialPortField";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { textFieldsMatchQuery } from "@/utils/searchMatching";
@@ -47,6 +46,12 @@ interface DynamicFieldProps {
    * Use this to pass ports from a remote agent's capabilities.
    */
   availablePorts?: string[];
+  /**
+   * For `serialPort` fields of an agent-hosted connection: rescan this
+   * connected agent's ports while visible (#5069). Pass it only for an agent
+   * advertising `serialPortRescan`; `availablePorts` stays its fallback.
+   */
+  serialPortAgentId?: string;
   /**
    * Context for `dockerContainer` fields (PROD-017): the connection's selected
    * container runtime (`auto` / `docker` / `podman`) the picker lists from,
@@ -102,6 +107,7 @@ export function DynamicField({
   credentialSaved,
   storedSecret,
   availablePorts,
+  serialPortAgentId,
   containerContext,
   savedConnectionContext,
   testId,
@@ -162,7 +168,7 @@ export function DynamicField({
           onChange,
           a11y,
           testIdBase,
-          availablePorts,
+          { availablePorts, agentId: serialPortAgentId },
           onBlur,
           platformNote != null,
           containerContext,
@@ -197,6 +203,12 @@ export function DynamicField({
   );
 }
 
+/** Where a `serialPort` field's ports come from (see {@link DynamicFieldProps}). */
+interface SerialPortSource {
+  availablePorts?: string[];
+  agentId?: string;
+}
+
 function renderFieldInput(
   field: SettingsField,
   fieldType: FieldType,
@@ -204,7 +216,7 @@ function renderFieldInput(
   onChange: (v: unknown) => void,
   a11y: FieldA11y,
   testIdBase: string,
-  availablePorts?: string[],
+  serialPorts: SerialPortSource,
   onBlur?: () => void,
   /** Force-disable the control because its feature is unavailable on this
    * platform (audit PROD-019). Currently only honoured by boolean toggles. */
@@ -285,7 +297,8 @@ function renderFieldInput(
           field={field}
           value={value}
           onChange={onChange}
-          availablePorts={availablePorts}
+          availablePorts={serialPorts.availablePorts}
+          agentId={serialPorts.agentId}
           a11y={a11y}
           testIdBase={testIdBase}
         />
@@ -658,75 +671,6 @@ function PortField({
         aria-required={field.required || undefined}
         data-testid={testIdBase}
       />
-    </>
-  );
-}
-
-function SerialPortField({
-  field,
-  value,
-  onChange,
-  availablePorts: propPorts,
-  a11y,
-  testIdBase,
-}: FieldProps & { availablePorts?: string[]; a11y: FieldA11y; testIdBase: string }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  // Local ports are re-enumerated while the field is on screen so plug/unplug
-  // shows up within ~2 s (#5066); an agent-supplied list is used as given.
-  const detected = useSerialPortRescan({ enabled: propPorts === undefined, targetRef: inputRef });
-  const suppliedPorts = useMemo(
-    () => (propPorts === undefined ? undefined : sortSerialPorts(propPorts)),
-    [propPorts]
-  );
-  const availablePorts = suppliedPorts ?? detected.ports;
-  const loaded = suppliedPorts !== undefined || detected.loaded;
-  const newPorts = suppliedPorts !== undefined ? [] : [...detected.newPorts];
-  const currentValue = (value as string) ?? "";
-  // The selection is never changed by a rescan: an unplugged selected port
-  // stays selected and is flagged instead.
-  const isDisconnected = loaded && currentValue !== "" && !availablePorts.includes(currentValue);
-  // An editable combobox (input + datalist) rather than a plain <select>: the
-  // detected ports are offered as suggestions, but the user can still type any
-  // device path the OS doesn't enumerate (a virtual/socat PTY, an uncommon
-  // /dev path) — matching the field's "or type a device path directly" intent.
-  const listId = `${testIdBase}-list`;
-
-  return (
-    <>
-      <Input
-        ref={inputRef}
-        id={a11y.id}
-        type="text"
-        value={currentValue}
-        onChange={(e) => onChange(e.target.value || undefined)}
-        placeholder={field.placeholder}
-        list={listId}
-        autoComplete="off"
-        spellCheck={false}
-        aria-required={field.required || undefined}
-        aria-describedby={a11y.describedBy}
-        error={a11y.invalid}
-        data-testid={testIdBase}
-      />
-      <datalist id={listId}>
-        {availablePorts.map((port) => (
-          <option
-            key={port}
-            value={port}
-            label={detected.newPorts.has(port) ? `${port} (new)` : undefined}
-          />
-        ))}
-      </datalist>
-      {isDisconnected && (
-        <p className="settings-form__hint" data-testid={`${testIdBase}-disconnected`}>
-          {currentValue} (not connected)
-        </p>
-      )}
-      {newPorts.length > 0 && (
-        <p className="settings-form__hint" role="status" data-testid={`${testIdBase}-new`}>
-          Newly detected: {newPorts.join(", ")}
-        </p>
-      )}
     </>
   );
 }
