@@ -26,7 +26,7 @@ pub(crate) mod windows;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use termihub_core::backends::ssh::x11::{XServerLease, XServerProvisioner};
 use tokio_util::sync::CancellationToken;
 
@@ -42,7 +42,8 @@ pub use orchestrator::{
 };
 pub use types::{
     XServerConsentRequest, XServerError, XServerPlatform, XServerProgress, XServerState,
-    XServerStatusReport, X_SERVER_CONSENT_NEEDED_EVENT, X_SERVER_PROGRESS_EVENT,
+    XServerStatusReport, X_SERVER_CONNECT_FAILED_EVENT, X_SERVER_CONSENT_NEEDED_EVENT,
+    X_SERVER_PROGRESS_EVENT,
 };
 
 /// Emit an X server provisioning progress event (best-effort).
@@ -60,6 +61,14 @@ pub(crate) fn emit_progress(app: &AppHandle, step: &str, message: &str, progress
             progress,
         },
     );
+}
+
+/// Tell the UI that an X11-forwarding connect could not get a usable local X
+/// server (#5079), carrying the typed [`XServerError`] so the guidance (install
+/// hint, install mode, dependency) reaches the user at connect time instead of
+/// only the log. Best-effort, like [`emit_progress`].
+pub(crate) fn emit_connect_failure<R: Runtime>(app: &AppHandle<R>, error: &XServerError) {
+    let _ = app.emit(X_SERVER_CONNECT_FAILED_EVENT, error);
 }
 
 /// Whether `name` resolves to an executable on `PATH` (best-effort).
@@ -256,6 +265,7 @@ impl XServerProvisioner for XServerProvisionerImpl {
         // XQuartz readiness wait (#1260). `Ok` always carries a resolved server;
         // the "nothing usable" case is an `Err`, and the "no provisioner
         // registered" case is handled in core.
+        let aborted = cancel.clone();
         match ensure_session_off_reactor(&self.app, self.manager.clone(), cancel).await {
             Ok((outcome, guard)) => {
                 emit_progress(
@@ -276,6 +286,14 @@ impl XServerProvisioner for XServerProvisionerImpl {
             Err(e) => {
                 let message = e.to_string();
                 emit_progress(&self.app, "failed", &message, 1.0);
+                // Surface the typed gap at connect time (#5079) — unless the
+                // user aborted the connect, where a hint would only be noise.
+                if !aborted
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    emit_connect_failure(&self.app, &e);
+                }
                 Err(message)
             }
         }
@@ -343,7 +361,41 @@ pub fn init(
 
 #[cfg(test)]
 mod tests {
-    use super::any_path_exists;
+    use super::{
+        any_path_exists, emit_connect_failure, XServerError, X_SERVER_CONNECT_FAILED_EVENT,
+    };
+    use std::sync::{Arc, Mutex};
+    use tauri::Listener;
+
+    #[test]
+    fn connect_failure_event_carries_the_typed_xwayland_gap() {
+        let app = tauri::test::mock_app();
+        let seen = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let sink = seen.clone();
+        app.handle()
+            .listen_any(X_SERVER_CONNECT_FAILED_EVENT, move |event| {
+                sink.lock()
+                    .unwrap()
+                    .push(serde_json::from_str(event.payload()).unwrap());
+            });
+
+        emit_connect_failure(app.handle(), &XServerError::linux_xwayland_missing());
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "exactly one event per failed connect");
+        let payload = &seen[0];
+        assert_eq!(payload["kind"], "dependencyMissing");
+        assert_eq!(payload["dependency"], "XWayland");
+        assert_eq!(payload["installMode"], "backend");
+        assert!(payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("Wayland session without XWayland"));
+        assert!(payload["installHint"]
+            .as_str()
+            .unwrap()
+            .contains("XWayland package"));
+    }
 
     #[test]
     fn detects_when_a_path_exists() {

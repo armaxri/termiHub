@@ -60,6 +60,7 @@
     "window-layout-changed",
     "windows-changed",
     "workflow-local-process-output",
+    "x-server-connect-failed",
     "x-server-consent-needed",
     "x-server-progress"
   ]
