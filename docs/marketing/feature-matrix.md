@@ -91,7 +91,7 @@ Managed from the Services view, which is experimental.
 | Workspaces / tab groups | Save and restore named layouts of connections and splits                                                                                   | Stable       |
 | Session auto-restore    | Reopen previous sessions on launch, with a Recent Sessions list                                                                            | Stable       |
 | Broadcast input         | Type once, mirror input across a group of terminals                                                                                        | Stable       |
-| Command palette         | Searchable command launcher (Cmd+P / Ctrl+Shift+P)                                                                                         | Stable       |
+| Command palette         | Searchable command launcher (Cmd+P or Cmd+Shift+P / Ctrl+Shift+P)                                                                          | Stable       |
 | Find in terminal        | Search terminal output (Cmd+F / Ctrl+Shift+F)                                                                                              | Stable       |
 | Prompt navigation       | Shell integration (OSC 133): jump between prompts, exit-status marks, copy last output                                                     | Stable       |
 | Inline images           | SIXEL and iTerm2 inline images in the terminal                                                                                             | Stable       |

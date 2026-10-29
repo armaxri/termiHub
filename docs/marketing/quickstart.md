@@ -103,7 +103,7 @@ few protocol limits the editor calls out (an **FTP** badge in the editor toolbar
   run sessions side by side.
 - **Organize connections** — create folders and drag connections into them; color-code
   tabs to distinguish prod / staging / dev.
-- **Open the command palette** — **Cmd+P** (macOS) / **Ctrl+Shift+P** (Win/Linux) to search
+- **Open the command palette** — **Cmd+P** or **Cmd+Shift+P** (macOS) / **Ctrl+Shift+P** (Win/Linux) to search
   and run any command.
 - **Try a tunnel or a network tool** — set up local/remote/dynamic SSH forwarding in the SSH
   connection editor's **Port Forwarding** section, or run ping / traceroute / port scan /
