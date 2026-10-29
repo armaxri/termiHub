@@ -321,4 +321,11 @@ terminalInlineImages?: boolean,
  * (#4177). Experimental and opt-in: `None`/`Some(false)` keeps the
  * Unicode 11 width tables (the frontend default).
  */
-combineEmoji?: boolean, };
+combineEmoji?: boolean, 
+/**
+ * Row order of Network Tools host lists (Ping Sweep, Port Scanner, #5067):
+ * `"address"` (numeric address order) or `"response"` (the order hosts
+ * answered). `None` → the frontend default (`"address"`). Owned by the
+ * frontend `AppSettings.networkHostOrder`; the backend only persists it.
+ */
+networkHostOrder?: "address" | "response", };

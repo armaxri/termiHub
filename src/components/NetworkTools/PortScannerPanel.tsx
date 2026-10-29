@@ -21,6 +21,9 @@ import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { insertSortedByHost } from "@/utils/hostSort";
+import { HostOrderField } from "./HostOrderField";
+import { useHostOrder } from "./useHostOrder";
 
 /** Probe count above which the scanner warns before starting. */
 const LARGE_SCAN_THRESHOLD = 1000;
@@ -36,13 +39,21 @@ interface ScanRow {
   latencyMs?: number | null;
 }
 
+const scanRowHost = (r: ScanRow) => r.host;
+/** Within one host, address order lists ports ascending. */
+const byPort = (a: ScanRow, b: ScanRow) => a.port - b.port;
+
 /** Port Scanner diagnostic tab content. */
 export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
   const [ports, setPorts] = useState("22,80,443,8080,8443");
   const [timeoutMs, setTimeoutMs] = useState<number | "">(2000);
   const [concurrency, setConcurrency] = useState<number | "">(100);
+  // Results in arrival ("response") order, plus the same rows kept in address
+  // order (host numerically, then port) as they stream in (#5067).
   const [results, setResults] = useState<ScanRow[]>([]);
+  const [resultsByAddress, setResultsByAddress] = useState<ScanRow[]>([]);
+  const { order, setOrder } = useHostOrder();
   const [summary, setSummary] = useState<PortScanSummary | null>(null);
   const [warnOpen, setWarnOpen] = useState(false);
   // Local, deferred opt-out state — committed to settings only on confirm,
@@ -76,10 +87,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     register(
       await onScanResult((p) => {
         if (!matchesTask(p.taskId)) return;
-        setResults((prev) => [
-          ...prev,
-          { host: p.host, port: p.port, state: p.state, latencyMs: p.latencyMs },
-        ]);
+        const row = { host: p.host, port: p.port, state: p.state, latencyMs: p.latencyMs };
+        setResults((prev) => [...prev, row]);
+        setResultsByAddress((prev) => insertSortedByHost(prev, row, scanRowHost, byPort));
       })
     );
     register(
@@ -106,6 +116,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     cancel: networkPortScanCancel,
     onReset: useCallback(() => {
       setResults([]);
+      setResultsByAddress([]);
       setSummary(null);
     }, []),
     subscribe,
@@ -155,7 +166,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         { key: "latencyMs", label: "Latency" },
       ];
 
-  const formattedRows = results.map((r) => ({
+  const displayed = order === "address" ? resultsByAddress : results;
+  const formattedRows = displayed.map((r) => ({
     host: r.host,
     port: r.port,
     state: r.state,
@@ -167,8 +179,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const liveOpen = useMemo(() => results.filter((r) => r.state === "open").length, [results]);
 
   const handleExport = useCallback(async () => {
-    await exportNetworkResults(`port-scan-${host || "results"}`, portScanResultsToCsv(results));
-  }, [host, results]);
+    await exportNetworkResults(`port-scan-${host || "results"}`, portScanResultsToCsv(displayed));
+  }, [host, displayed]);
 
   // Record every finished scan to the local history (PROD-032).
   useRecordRunOnFinish("port-scanner", status, () => ({
@@ -181,7 +193,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     summary: summary
       ? `${summary.open} open, ${summary.closed} closed, ${summary.filtered} filtered of ${summary.total} ports`
       : `${results.length} checked, ${liveOpen} open`,
-    table: portScanResultsTable(results),
+    table: portScanResultsTable(resultsByAddress),
     error,
   }));
 
@@ -301,6 +313,12 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
             data-testid="port-scanner-concurrency"
           />
         </Field>
+        <HostOrderField
+          id="port-scanner-order"
+          order={order}
+          onChange={setOrder}
+          data-testid="port-scanner-order"
+        />
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}
