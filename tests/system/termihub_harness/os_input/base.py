@@ -179,6 +179,31 @@ class OsInput:
         """Width and height of the primary screen, in OS screen units."""
         return self._screen_size()
 
+    def frontmost_window(self) -> Optional[int]:
+        """Handle of the focused top-level window, or ``None`` if unknowable."""
+        return self._frontmost_window()
+
+    def dialog_windows(self, baseline: Iterable[int], pid: Optional[int] = None) -> list[OsWindow]:
+        """Windows of ``pid`` that are not in ``baseline`` (handles seen before).
+
+        A native dialog the app opened (GTK file chooser, Windows common file
+        dialog) is a top-level window of the app's own PID, so it is found by
+        that owner PID, never by its title or class.
+        """
+        known = set(baseline)
+        return [w for w in self.windows(pid) if w.handle not in known]
+
+    def native_dialog_open(self, baseline: Iterable[int], pid: Optional[int] = None) -> bool:
+        """Whether ``pid`` shows a native dialog (a window not in ``baseline``).
+
+        The macOS backend also counts a sheet attached to one of its windows.
+        """
+        return bool(self.dialog_windows(baseline, pid))
+
+    def describe_focus(self) -> str:
+        """The focused UI element of the frontmost app (diagnostics; may be empty)."""
+        return ""
+
     def describe_point(self, x: float, y: float) -> str:
         """What the OS would deliver a pointer event at ``(x, y)`` to (diagnostics).
 

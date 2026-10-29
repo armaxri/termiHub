@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import subprocess
 import time
-from typing import Any, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 from .base import OsInput, OsInputUnavailable, OsWindow
 from .keymap import mac_keycode, us_key_for_char
@@ -265,6 +265,61 @@ class MacOsInput(OsInput):
         frame = self._ax_frame(focused)
         matches = [w.handle for w in self._windows(pid) if self._frame_of(w) == frame]
         return matches[0] if len(matches) == 1 else None
+
+    # ── Native dialogs (a sheet on one of the PID's windows) ─────────────────
+    def native_dialog_open(self, baseline: Iterable[int], pid: Optional[int] = None) -> bool:
+        """A new window of ``pid``, or an Accessibility sheet on one of its windows.
+
+        An ``NSSavePanel`` run for a window is a sheet: it may not show up as a
+        window of its own in the CG window list, but the app's Accessibility tree
+        (looked up by PID) lists it as an ``AXSheet`` child of that window.
+        """
+        return super().native_dialog_open(baseline, pid) or self._ax_sheet_open(
+            self._check_target(pid)
+        )
+
+    @staticmethod
+    def _ax_sheet_open(pid: int) -> bool:
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+            kAXChildrenAttribute,
+            kAXRoleAttribute,
+            kAXWindowsAttribute,
+        )
+
+        app = AXUIElementCreateApplication(pid)
+        err, windows = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, None)
+        if err or not windows:
+            return False
+        for window in windows:
+            err, children = AXUIElementCopyAttributeValue(window, kAXChildrenAttribute, None)
+            if err or not children:
+                continue
+            for child in children:
+                err, role = AXUIElementCopyAttributeValue(child, kAXRoleAttribute, None)
+                if not err and role == "AXSheet":
+                    return True
+        return False
+
+    def describe_focus(self) -> str:
+        """Role, subrole and value of the test instance's focused UI element (read-only)."""
+        from ApplicationServices import (  # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+            kAXFocusedUIElementAttribute,
+        )
+
+        app = AXUIElementCreateApplication(self.pid)
+        err, element = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, None)
+        if err or element is None:
+            return f"no focused element (AX error {err})"
+        parts = []
+        for name in ("AXRole", "AXSubrole", "AXTitle", "AXValue"):
+            err, value = AXUIElementCopyAttributeValue(element, name, None)
+            if not err and value is not None:
+                parts.append(f"{name}={str(value)[:80]!r}")
+        return " ".join(parts) or "a focused element without attributes"
 
     # ── Keys ─────────────────────────────────────────────────────────────────
     def _post_key(self, pid: int, keycode: int, down: bool, flags: int) -> None:
