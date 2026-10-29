@@ -879,11 +879,11 @@
       <header class="concept-header">
         <h1>Connecting Overlay — one shared, live connect surface</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · design gate (phase 1)</span>
+          <span class="concept-status">Implemented · Option A approved by the maintainer</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/5068">#5068</a></span
           >
-          <span><code>docs/concepts/backlog/connecting-overlay.html</code></span>
+          <span><code>docs/concepts/implemented/connecting-overlay.html</code></span>
         </div>
       </header>
 
@@ -1056,8 +1056,9 @@
           is a CSS animation started with a negative delay equal to the elapsed time, so it advances
           on the animation clock and never waits on a JS timer. Under reduced motion both stop; the
           fill steps once per second instead, and a status line that changes with each stage carries
-          the progress signal. Whether the WebKit stall (item 3) is the real cause will be checked
-          on the device in phase 2, with an A/B build.
+          the progress signal. The visual lane checks the ring's animations run
+          (<code>tests/visual/connectOverlay.spec.ts</code>); an on-device glance on macOS is the
+          remaining manual check for the WebKit stall (item 3).
         </p>
       </section>
 
@@ -1071,13 +1072,16 @@
         </p>
 
         <div class="mockup-section">
-          <h3>Option A — stage stepper + progress ring + live status line (recommended)</h3>
+          <h3>
+            Option A — stage stepper + progress ring + live status line (approved, implemented)
+          </h3>
           <div class="mockup-note">
             Centred over the terminal. The ring fills toward the timeout, and a comet orbits it so
             the surface is visibly alive. The type glyph sits in the centre. Below: target, type
             chips, the stage stepper (the active stage pulses), the latest status / log line, and
             “elapsed · times out in”. One action while busy (<strong>Abort</strong>); Retry / Close
-            tab when resting. This is exactly what the React prototype renders.
+            tab when resting. Implemented as <code>src/components/ui/ConnectProgress.tsx</code>; its
+            styles are the ones this page uses.
           </div>
         </div>
         <div class="shot" data-shot="a-dark">
@@ -2066,7 +2070,7 @@
         </div>
 
         <div class="mockup-section" style="margin-top: 28px">
-          <h3>Option B — compact card + progress bar + expandable log</h3>
+          <h3>Option B — compact card + progress bar + expandable log (not chosen)</h3>
           <div class="mockup-note">
             A small floating card (like a toast, centred). The header has the type tile with a
             “connecting” dot, a title, a sub-line (“step 2 of 3 — Connect”) and the elapsed time.
@@ -2908,31 +2912,36 @@
                   Resolve · Connect · Host key · Authenticate · Shell (a jump host adds “via
                   bastion”; its own hops reuse the path-probe events)
                 </td>
-                <td>new <code>connect-progress</code> event (phase 2)</td>
+                <td><code>connect-progress</code> event</td>
               </tr>
               <tr>
                 <td>Telnet</td>
                 <td>Resolve · Connect · Session</td>
-                <td>new event</td>
+                <td><code>connect-progress</code> event</td>
               </tr>
               <tr>
                 <td>Serial</td>
-                <td>Open port · Configure</td>
-                <td>new event</td>
+                <td>Open port · Session</td>
+                <td><code>connect-progress</code> event</td>
               </tr>
               <tr>
                 <td>Agent-hosted session</td>
-                <td>Agent · Start session (then the inner type’s stages)</td>
-                <td>existing <code>terminalWaitingForAgent</code> + new event</td>
+                <td>
+                  Agent · Start session (the inner connect runs on the agent and reports no stages)
+                </td>
+                <td>existing <code>terminalWaitingForAgent</code> + the connect in flight</td>
               </tr>
               <tr>
                 <td>RDP / VNC</td>
-                <td>Connect · Authenticate · Desktop</td>
+                <td>
+                  Connect · Authenticate · Desktop; the ring has no timeout fill (the graphical
+                  connect timeout lives in the backend), the comet still orbits
+                </td>
                 <td>existing <code>GraphicalState</code></td>
               </tr>
               <tr>
-                <td>Local / WSL / Docker / SFTP</td>
-                <td>none: ring + status line only (usually under 300 ms, see below)</td>
+                <td>Local / WSL / Docker / SFTP / plugin types</td>
+                <td>one step, “Start session” (usually under 250 ms, so not shown — see below)</td>
                 <td>—</td>
               </tr>
             </tbody>
@@ -2945,12 +2954,14 @@
             it.
           </li>
           <li>
-            After 20 s the status line adds “Taking longer than usual — the host may be slow or
-            unreachable” (today’s hint, kept).
+            After 20 s a hint below the status line says “Taking longer than usual — the host may be
+            slow to respond or unreachable” (today’s hint, kept).
           </li>
           <li>
             Retrying: the ring has no fill (the total is unknown); the time line reads “Attempt 2 of
-            5 · next try in 3s”.
+            5 · next try in 3s”, or “Attempt 2 · 4s elapsed” when the next try is not scheduled.
+            Restoring a persistent session uses the same surface with the heading “Restoring
+            session…” and no stepper.
           </li>
           <li>
             The failure body keeps today’s contextual hint and copyable fix command
@@ -2997,61 +3008,84 @@ stateDiagram-v2
           </pre>
         </div>
         <div class="diagram">
-          <span class="diagram__caption">Stage reporting (phase 2)</span>
+          <span class="diagram__caption">Stage reporting</span>
           <pre class="mermaid">
 sequenceDiagram
     participant UI as ConnectProgress
-    participant Store as session-lifecycle region
+    participant Store as connectProgressBridge
     participant BE as backend (core connect)
-    UI->>Store: open tab
-    Store->>BE: create session
+    UI->>BE: create_connection (connectId = tabId:retry)
     BE-->>Store: connect-progress {stage: resolve, status}
     BE-->>Store: connect-progress {stage: connect}
-    BE-->>Store: connect-progress {stage: auth, status: "Trying public key…"}
-    BE-->>Store: session ready / typed error
-    Store-->>UI: phase + stages + status (re-render)
+    BE-->>Store: connect-progress {stage: authenticate, status: "Trying public key…"}
+    Store-->>UI: latest stage + status (re-render)
+    BE-->>UI: session id / typed error
           </pre>
         </div>
       </section>
 
       <section>
-        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <h2 id="impl">Implementation <a class="anchor" href="#impl">#</a></h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>File</th>
-                <th>Change</th>
+                <th>Where</th>
+                <th>What</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>src/components/ui/ConnectProgress.tsx</code> + <code>ui.css</code></td>
                 <td>
-                  <strong>Prototype exists</strong> (phase 1, not wired): ring, stepper, status
-                  line, time line, resting badges, composed on <code>ContentOverlay</code>.
-                  Unit-tested; the visual lane renders a gallery
-                  (<code>tests/visual/connectProgress.spec.ts</code>).
+                  The shared surface: ring (CSS fill with a negative start delay frozen at mount,
+                  compositor comet), stepper, status line, time line, resting badges, a 250 ms CSS
+                  appear delay; composed on <code>ContentOverlay</code>.
                 </td>
               </tr>
               <tr>
-                <td><code>TerminalConnectionOverlay.tsx</code></td>
+                <td><code>TerminalConnectionOverlay.tsx</code> (all shell / connection types)</td>
                 <td>
-                  Phase 2: render <code>ConnectProgress</code> for all five states; drop the
-                  busy-state Cancel; keep the hints and copy-command blocks as the
-                  <code>error</code> body.
+                  Restoring, waiting for agent, auto-retry, connecting and the failed / timed-out /
+                  aborted resting states; Abort is the one busy action; Retry + Close tab when
+                  resting; hints, copy command and credential re-entry kept.
                 </td>
               </tr>
               <tr>
                 <td><code>RemoteDesktopOverlay.tsx</code>, <code>FileBrowserTab.tsx</code></td>
-                <td>Phase 2: same component; map <code>GraphicalState</code> to stages.</td>
+                <td>
+                  Same component; <code>GraphicalState</code> maps to Connect / Authenticate /
+                  Desktop.
+                </td>
               </tr>
               <tr>
-                <td>core / src-tauri</td>
+                <td><code>core::connection::connect_progress</code></td>
                 <td>
-                  Phase 2b: a typed <code>connect-progress</code> event (stage id + optional status)
-                  from the SSH, telnet and serial connect paths into the session-lifecycle region.
-                  Until then, stages are derived on the frontend (agent wait → connect → session).
+                  Typed <code>ConnectStage</code> / <code>ConnectProgressUpdate</code> (ts-rs) and a
+                  task-scoped reporter; SSH, telnet and serial report their stages. Outside a scope
+                  reports are no-ops, so the <code>ConnectionType</code> trait is unchanged.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/session/connect_progress.rs</code></td>
+                <td>
+                  Scopes the reporter around a direct connect and emits
+                  <code>connect-progress</code> keyed by the attempt's <code>connectId</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/store/connectProgressBridge.ts</code>,
+                  <code>src/utils/connectStages.ts</code>
+                </td>
+                <td>Per-tab latest stage; step lists, labels, target / chip derivation.</td>
+              </tr>
+              <tr>
+                <td><code>tests/visual/connectOverlay.spec.ts</code></td>
+                <td>
+                  Real tabs in the booted app: Light/Dark screenshots (telnet connecting, SSH
+                  authenticating, failed, timed out) and a check that the comet and fill animations
+                  are running and advancing with reduced motion off.
                 </td>
               </tr>
             </tbody>
@@ -3067,7 +3101,10 @@ sequenceDiagram
             of truth.
           </p>
         </blockquote>
-        <p><strong>Last synced:</strong> never (design gate) · <strong>Status:</strong> diverged</p>
+        <p>
+          <strong>Last synced:</strong> 2026-10-29, PR #5072
+          (<code>dev8/feature/5068-connecting-overlay</code>) · <strong>Status:</strong> in sync
+        </p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -3076,23 +3113,44 @@ sequenceDiagram
                 <th>Artifact claim</th>
                 <th>Code reality</th>
                 <th>Type</th>
-                <th>Recommendation</th>
+                <th>Resolution</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>1</td>
                 <td>All connection types use the shared surface</td>
-                <td>Prototype only; production overlays unchanged</td>
-                <td>Missing</td>
-                <td>Phase 2 after maintainer approval</td>
+                <td>Terminal overlay, remote-desktop overlay and file-only tab render it</td>
+                <td>Resolved</td>
+                <td>Implemented</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>Backend reports connect stages</td>
-                <td>No stage events for terminal backends</td>
-                <td>Missing</td>
-                <td>Phase 2b</td>
+                <td><code>connect-progress</code> from SSH, telnet and serial</td>
+                <td>Resolved</td>
+                <td>Implemented</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Serial stages “Open port · Configure”; local shells show no stepper</td>
+                <td>“Open port · Session”; local shells show one step</td>
+                <td>Concept updated</td>
+                <td>Maintainer phase-2 brief asked for these stage sets</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Agent sessions continue with the inner type's stages</td>
+                <td>Agent · Start session only</td>
+                <td>Concept updated</td>
+                <td>The inner connect runs on the agent, which does not forward stage reports</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>RDP ring tracks the timeout</td>
+                <td>Indeterminate ring (comet only)</td>
+                <td>Concept updated</td>
+                <td>The graphical connect timeout is not known to the frontend</td>
               </tr>
             </tbody>
           </table>
