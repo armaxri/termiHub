@@ -25,6 +25,17 @@ be retired (termiHub #4125).
   (see `README.md`). It is already in the `ironrdp-rdpdr` 0.9.0 release, so there is nothing
   to submit and it does not change when the fork can retire.
 
+- **Update 2026-11-09 (#5124): unknown MajorFunctions.** The fork completes Device I/O Requests
+  whose MajorFunction 0.7.0 does not know as change 4 (see `README.md`). The flush and security
+  MajorFunctions come from upstream
+  [`d1c63ecd7b`](https://github.com/Devolutions/IronRDP/commit/d1c63ecd7bd13c9ae3d88f3ae84176f214f41f61)
+  (IronRDP#1590), already in 0.9.0. Completing any **other** MajorFunction with
+  `STATUS_UNSUCCESSFUL` (MS-RDPEFS 3.1.5.2) instead of a decode error is fork-only: master's
+  `DeviceIoRequest::decode` still fails, which ends an `ironrdp-session` session. Not submitted
+  yet. Before retiring the fork, check whether the adopted release still fails such a request
+  (the sidecar test `unknown_major_function_irp_is_completed_and_the_channel_keeps_serving` does);
+  if it does, report it upstream and keep this delta until it is fixed.
+
 - **Base:** upstream `ironrdp-rdpdr` `0.7.0`, tag `ironrdp-rdpdr-v0.7.0`, commit
   `11a0810cfbbabd8b8023875a05e3041216d4b01b`.
 - **Upstream state (checked 2026-10-06, master `38b074e4befe`):** the bug is already fixed on

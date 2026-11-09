@@ -12,7 +12,7 @@ use pdu::efs::{
     ClientNameRequestUnicodeFlag, CoreCapability, CoreCapabilityKind, DEFAULT_PRINTER_DRIVER_NAME,
     DeviceAnnounceHeader, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse, DeviceIoRequest,
     DeviceIoResponse, DeviceType, Devices, MajorFunction, NtStatus, PrinterIoRequest, ServerDeviceAnnounceResponse,
-    UnsupportedDriveIoRequest, VERSION_MINOR_RDP51, VersionAndIdPdu, VersionAndIdPduKind,
+    UnknownMajorFunctionRequest, UnsupportedDriveIoRequest, VERSION_MINOR_RDP51, VersionAndIdPdu, VersionAndIdPduKind,
 };
 use pdu::esc::{ScardCall, ScardIoCtlCode};
 use pdu::{DeviceIoCompletion, PacketId, RdpdrPdu, SharedHeader};
@@ -362,10 +362,51 @@ impl Rdpdr {
             UnsupportedDriveIoRequest::DirectoryControl(device_io_request) => SvcMessage::from(
                 DeviceIoCompletion::Bare(DeviceIoResponse::new(device_io_request, NtStatus::UNSUCCESSFUL)),
             ),
+            // termiHub fork delta (#5124): MS-RDPEFS does not describe the security functions, but
+            // Windows clients implement them with these response layouts (upstream master's
+            // `ClientDriveQuerySecurityResponse` / `ClientDriveSetSecurityResponse`). This client
+            // has no Windows ACLs to report or apply, so they are completed as not supported,
+            // which is what a Windows file system without security support answers.
+            UnsupportedDriveIoRequest::QuerySecurity(device_io_request) => {
+                SvcMessage::from(DeviceIoCompletion::QuerySecurity(not_supported(device_io_request)))
+            }
+            UnsupportedDriveIoRequest::SetSecurity {
+                device_io_request,
+                length,
+            } => SvcMessage::from(DeviceIoCompletion::SetSecurity {
+                device_io_reply: not_supported(device_io_request),
+                length,
+            }),
         };
         debug!(?message, "Completing unsupported filesystem IRP");
 
         message
+    }
+
+    /// termiHub fork delta (#5124): completes a Device I/O Request whose MajorFunction this crate
+    /// does not know, for a device the client announced. Ignored like any other request when the
+    /// device was not announced (MS-RDPEFS 3.1.5.2).
+    ///
+    /// > If the request contains MajorFunction or MinorFunction fields that are not described by this
+    /// > protocol, the request SHOULD be completed with a Device I/O Response message that has the
+    /// > IoStatus field set to STATUS_UNSUCCESSFUL.
+    /// source: <https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpefs/9925f2e4-8d5a-4777-a41a-7ba6ef6e8bff>
+    fn handle_unknown_major_function(&self, req: UnknownMajorFunctionRequest) -> Vec<SvcMessage> {
+        if self.device_list.for_device_type(req.device_id).is_err() {
+            return Vec::new();
+        }
+        debug!(
+            device_id = req.device_id,
+            completion_id = req.completion_id,
+            major = format_args!("{:#010x}", req.major_function),
+            "Completing IRP with an unknown MajorFunction"
+        );
+
+        vec![SvcMessage::from(DeviceIoCompletion::Bare(DeviceIoResponse {
+            device_id: req.device_id,
+            completion_id: req.completion_id,
+            io_status: NtStatus::UNSUCCESSFUL,
+        }))]
     }
 
     fn unsupported_printer_io_response(device_io_request: DeviceIoRequest) -> SvcMessage {
@@ -393,6 +434,16 @@ impl SvcProcessor for Rdpdr {
                 "Ignoring unhandled RDPDR printer-cache PDU"
             );
             return Ok(vec![]);
+        }
+
+        // termiHub fork delta (#5124): a Device I/O Request with a MajorFunction this crate does not
+        // know is completed instead of failing to decode, which would end the whole session.
+        if header.packet_id == PacketId::CoreDeviceIoRequest {
+            let req = DeviceIoRequest::decode_or_unknown(&mut src).map_err(|e| decode_err!(e))?;
+            return match req {
+                Ok(req) => self.handle_device_io_request(req, &mut src),
+                Err(unknown) => Ok(self.handle_unknown_major_function(unknown)),
+            };
         }
 
         let pdu = RdpdrPdu::decode_body(header, &mut src).map_err(|e| decode_err!(e))?;
@@ -427,6 +478,7 @@ impl SvcProcessor for Rdpdr {
             | RdpdrPdu::DeviceReadResponse(_)
             | RdpdrPdu::DeviceWriteResponse(_)
             | RdpdrPdu::ClientDriveSetInformationResponse(_)
+            | RdpdrPdu::DeviceFlushBuffersResponse(_)
             | RdpdrPdu::EmptyResponse => Err(pdu_other_err!("Rdpdr", "received unexpected packet")),
         }
     }
@@ -635,6 +687,151 @@ mod termihub_fork_tests {
         assert!(rdpdr.process(&request).is_err());
     }
 
+    // termiHub fork delta (#5124): MajorFunctions 0.7.0 did not know.
+
+    /// A raw Device I/O Request header with any MajorFunction value, for `device_id`.
+    fn raw_device_io_request(device_id: u32, major_function: u32) -> Vec<u8> {
+        let mut encoded = vec![0x72, 0x44, 0x52, 0x49]; // RDPDR_CTYP_CORE + PAKID_CORE_DEVICE_IOREQUEST
+        for field in [device_id, 1, COMPLETION_ID, major_function, 0] {
+            encoded.extend_from_slice(&field.to_le_bytes());
+        }
+        encoded
+    }
+
+    #[test]
+    fn flush_buffers_reaches_the_backend() {
+        let mut rdpdr = drive_rdpdr();
+        let request = raw_device_io_request(DEVICE_ID, 0x09); // IRP_MJ_FLUSH_BUFFERS
+
+        rdpdr.process(&request).expect("a flush does not end the session");
+        let backend = rdpdr.downcast_backend::<RecordingBackend>().expect("recording backend");
+        assert!(matches!(
+            backend.drive_requests.as_slice(),
+            [ServerDriveIoRequest::DeviceFlushBuffersRequest(req)]
+                if req.device_io_request.major_function == MajorFunction::FlushBuffers
+                    && req.device_io_request.completion_id == COMPLETION_ID
+        ));
+    }
+
+    #[test]
+    fn flush_buffers_response_is_a_header_only_completion() {
+        let response = RdpdrPdu::DeviceFlushBuffersResponse(pdu::efs::DeviceFlushBuffersResponse {
+            device_io_response: DeviceIoResponse {
+                device_id: DEVICE_ID,
+                completion_id: COMPLETION_ID,
+                io_status: NtStatus::SUCCESS,
+            },
+        });
+        let encoded = encode_vec(&response).expect("encode");
+        assert_eq!(encoded.len(), 16, "DR_DEVICE_IOCOMPLETION without a body");
+        assert_eq!(&encoded[..4], &[0x72, 0x44, 0x43, 0x49]);
+        assert_eq!(read_u32(&encoded[12..]), 0, "STATUS_SUCCESS");
+    }
+
+    #[test]
+    fn query_security_is_completed_as_not_supported() {
+        let mut rdpdr = drive_rdpdr();
+        let mut request = raw_device_io_request(DEVICE_ID, 0x14); // IRP_MJ_QUERY_SECURITY
+        request.extend_from_slice(&0x0000_0007_u32.to_le_bytes()); // OWNER | GROUP | DACL
+
+        let encoded = single_completion(&mut rdpdr, &request, NtStatus::NOT_SUPPORTED);
+        assert_eq!(encoded.len(), 20, "query security response without a descriptor");
+        assert_eq!(read_u32(&encoded[16..]), 0, "Length");
+    }
+
+    #[test]
+    fn set_security_is_completed_as_not_supported() {
+        let mut rdpdr = drive_rdpdr();
+        let mut request = raw_device_io_request(DEVICE_ID, 0x15); // IRP_MJ_SET_SECURITY
+        request.extend_from_slice(&0x0000_0004_u32.to_le_bytes()); // DACL
+        request.extend_from_slice(&20_u32.to_le_bytes()); // Length
+        request.extend_from_slice(&[0; 24]); // Padding
+        request.extend_from_slice(&[1; 20]); // SecurityDescriptor
+
+        let encoded = single_completion(&mut rdpdr, &request, NtStatus::NOT_SUPPORTED);
+        assert_eq!(encoded.len(), 20, "set security response");
+        assert_eq!(read_u32(&encoded[16..]), 20, "Length echoes the request");
+    }
+
+    #[test]
+    fn unknown_major_function_is_completed_as_unsuccessful() {
+        let mut rdpdr = drive_rdpdr();
+        for major_function in [0x01, 0x07, 0x08, 0x0d, 0x10, 0x12, 0x16, 0x1b, 0xdead_beef] {
+            let mut request = raw_device_io_request(DEVICE_ID, major_function);
+            request.extend_from_slice(&[0xAA; 7]); // an unknown body is ignored
+
+            let encoded = single_completion(&mut rdpdr, &request, NtStatus::UNSUCCESSFUL);
+            assert_eq!(encoded.len(), 16, "header-only DR_DEVICE_IOCOMPLETION (MS-RDPEFS 3.1.5.2)");
+        }
+
+        // The channel keeps serving: FileFsSizeInformation still reaches the backend.
+        let request = information_request(MajorFunction::QueryVolumeInformation, 3, &[]);
+        rdpdr.process(&request).expect("supported query volume information");
+        assert_eq!(backend_requests(&rdpdr), 1);
+    }
+
+    #[test]
+    fn unknown_major_function_for_an_unannounced_device_is_ignored() {
+        let mut rdpdr = drive_rdpdr();
+        let responses = rdpdr
+            .process(&raw_device_io_request(DEVICE_ID + 1, 0x42))
+            .expect("not an error");
+        assert!(responses.is_empty());
+        let responses = rdpdr
+            .process(&raw_device_io_request(DEVICE_ID + 1, 0x14))
+            .expect("not an error");
+        assert!(responses.is_empty());
+    }
+
+    #[test]
+    fn malformed_requests_with_new_major_functions_are_still_decode_errors() {
+        let mut rdpdr = drive_rdpdr();
+
+        // Header cut short, with an unknown and a known MajorFunction
+        for major_function in [0x42, 0x09] {
+            let mut request = raw_device_io_request(DEVICE_ID, major_function);
+            request.truncate(request.len() - 4);
+            assert!(rdpdr.process(&request).is_err());
+        }
+
+        // Query security without its SecurityInformation
+        let mut request = raw_device_io_request(DEVICE_ID, 0x14);
+        request.extend_from_slice(&[0; 3]);
+        assert!(rdpdr.process(&request).is_err());
+
+        // Set security with a SecurityDescriptor shorter than its Length
+        let mut request = raw_device_io_request(DEVICE_ID, 0x15);
+        request.extend_from_slice(&0x0000_0004_u32.to_le_bytes());
+        request.extend_from_slice(&20_u32.to_le_bytes());
+        request.extend_from_slice(&[0; 24]);
+        request.extend_from_slice(&[1; 19]);
+        assert!(rdpdr.process(&request).is_err());
+
+        // Set security without its fixed part
+        let mut request = raw_device_io_request(DEVICE_ID, 0x15);
+        request.extend_from_slice(&[0; 31]);
+        assert!(rdpdr.process(&request).is_err());
+
+        assert_eq!(backend_requests(&rdpdr), 0);
+    }
+
+    #[test]
+    fn new_major_functions_round_trip() {
+        for (value, major_function) in [
+            (0x09, MajorFunction::FlushBuffers),
+            (0x14, MajorFunction::QuerySecurity),
+            (0x15, MajorFunction::SetSecurity),
+        ] {
+            assert_eq!(MajorFunction::try_from(value).expect("known"), major_function);
+            assert_eq!(u32::from(major_function), value);
+        }
+        assert!(MajorFunction::try_from(0x42).is_err());
+
+        // The public header decoder still rejects an unknown MajorFunction.
+        let request = raw_device_io_request(DEVICE_ID, 0x42);
+        assert!(DeviceIoRequest::decode(&mut ReadCursor::new(&request[4..])).is_err());
+    }
+
     #[test]
     fn public_decode_still_rejects_unsupported_requests() {
         fn decode(request: &[u8]) -> ironrdp_core::DecodeResult<ServerDriveIoRequest> {
@@ -652,5 +849,14 @@ mod termihub_fork_tests {
         assert!(decode(&query_directory_request(37)).is_err());
         assert!(decode(&device_io_request(MajorFunction::DirectoryControl, MinorFunction::from(0x99))).is_err());
         assert!(decode(&information_request(MajorFunction::QueryVolumeInformation, 3, &[])).is_ok());
+
+        // termiHub fork delta (#5124)
+        let mut query_security = device_io_request(MajorFunction::QuerySecurity, MinorFunction::from(0));
+        query_security.extend_from_slice(&[0; 4]);
+        assert!(decode(&query_security).is_err());
+        let mut set_security = device_io_request(MajorFunction::SetSecurity, MinorFunction::from(0));
+        set_security.extend_from_slice(&[0; 32]);
+        assert!(decode(&set_security).is_err());
+        assert!(decode(&device_io_request(MajorFunction::FlushBuffers, MinorFunction::from(0))).is_ok());
     }
 }

@@ -10,8 +10,8 @@ use self::efs::{
     ClientDeviceListAnnounce, ClientDeviceListRemove, ClientDriveQueryDirectoryResponse,
     ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse, ClientDriveSetInformationResponse,
     ClientNameRequest, CoreCapability, CoreCapabilityKind, DeviceCloseResponse, DeviceControlResponse,
-    DeviceCreateResponse, DeviceIoRequest, DeviceReadResponse, DeviceWriteResponse, ServerDeviceAnnounceResponse,
-    VersionAndIdPdu, VersionAndIdPduKind,
+    DeviceCreateResponse, DeviceFlushBuffersResponse, DeviceIoRequest, DeviceReadResponse, DeviceWriteResponse,
+    ServerDeviceAnnounceResponse, VersionAndIdPdu, VersionAndIdPduKind,
 };
 
 pub mod efs;
@@ -35,6 +35,8 @@ pub enum RdpdrPdu {
     DeviceReadResponse(DeviceReadResponse),
     DeviceWriteResponse(DeviceWriteResponse),
     ClientDriveSetInformationResponse(ClientDriveSetInformationResponse),
+    /// termiHub fork delta (#5124, from upstream master)
+    DeviceFlushBuffersResponse(DeviceFlushBuffersResponse),
     UserLoggedon,
     EmptyResponse,
 }
@@ -96,6 +98,7 @@ impl RdpdrPdu {
             | RdpdrPdu::DeviceReadResponse(_)
             | RdpdrPdu::DeviceWriteResponse(_)
             | RdpdrPdu::ClientDriveSetInformationResponse(_)
+            | RdpdrPdu::DeviceFlushBuffersResponse(_)
             | RdpdrPdu::EmptyResponse => SharedHeader {
                 component: Component::RdpdrCtypCore,
                 packet_id: PacketId::CoreDeviceIoCompletion,
@@ -154,6 +157,7 @@ impl Encode for RdpdrPdu {
             RdpdrPdu::DeviceReadResponse(pdu) => pdu.encode(dst),
             RdpdrPdu::DeviceWriteResponse(pdu) => pdu.encode(dst),
             RdpdrPdu::ClientDriveSetInformationResponse(pdu) => pdu.encode(dst),
+            RdpdrPdu::DeviceFlushBuffersResponse(pdu) => pdu.encode(dst),
             RdpdrPdu::UserLoggedon => Ok(()),
             RdpdrPdu::EmptyResponse => {
                 // https://github.com/FreeRDP/FreeRDP/blob/dfa231c0a55b005af775b833f92f6bcd30363d77/channels/drive/client/drive_main.c#L601
@@ -181,6 +185,7 @@ impl Encode for RdpdrPdu {
             RdpdrPdu::DeviceReadResponse(pdu) => pdu.name(),
             RdpdrPdu::DeviceWriteResponse(pdu) => pdu.name(),
             RdpdrPdu::ClientDriveSetInformationResponse(pdu) => pdu.name(),
+            RdpdrPdu::DeviceFlushBuffersResponse(pdu) => pdu.name(),
             RdpdrPdu::UserLoggedon => "UserLoggedon",
             RdpdrPdu::EmptyResponse => "EmptyResponse",
         }
@@ -205,6 +210,7 @@ impl Encode for RdpdrPdu {
                 RdpdrPdu::DeviceReadResponse(pdu) => pdu.size(),
                 RdpdrPdu::DeviceWriteResponse(pdu) => pdu.size(),
                 RdpdrPdu::ClientDriveSetInformationResponse(pdu) => pdu.size(),
+                RdpdrPdu::DeviceFlushBuffersResponse(pdu) => pdu.size(),
                 RdpdrPdu::UserLoggedon => 0,
                 RdpdrPdu::EmptyResponse => size_of::<u32>(),
             }
@@ -231,6 +237,16 @@ pub(crate) enum DeviceIoCompletion {
         device_io_reply: efs::DeviceIoResponse,
         length: u32,
     },
+    /// termiHub fork delta (#5124): a failed Query Security completion (upstream master's
+    /// `ClientDriveQuerySecurityResponse` without a security descriptor): the reply header and a
+    /// Length of 0.
+    QuerySecurity(efs::DeviceIoResponse),
+    /// termiHub fork delta (#5124): a Set Security completion (upstream master's
+    /// `ClientDriveSetSecurityResponse`): the reply header and the request's Length.
+    SetSecurity {
+        device_io_reply: efs::DeviceIoResponse,
+        length: u32,
+    },
 }
 
 impl Encode for DeviceIoCompletion {
@@ -243,9 +259,21 @@ impl Encode for DeviceIoCompletion {
         .encode(dst)?;
         match self {
             Self::Bare(response) => response.encode(dst),
-            Self::SetVolumeInformation { device_io_reply, length } => {
+            Self::SetVolumeInformation {
+                device_io_reply,
+                length,
+            }
+            | Self::SetSecurity {
+                device_io_reply,
+                length,
+            } => {
                 device_io_reply.encode(dst)?;
                 dst.write_u32(*length);
+                Ok(())
+            }
+            Self::QuerySecurity(device_io_reply) => {
+                device_io_reply.encode(dst)?;
+                dst.write_u32(0); // Length: no SecurityDescriptor follows
                 Ok(())
             }
         }
@@ -255,6 +283,8 @@ impl Encode for DeviceIoCompletion {
         match self {
             Self::Bare(_) => "DR_DEVICE_IOCOMPLETION",
             Self::SetVolumeInformation { .. } => "DR_DRIVE_SET_VOLUME_INFORMATION_RSP",
+            Self::QuerySecurity(_) => "DR_DRIVE_QUERY_SECURITY_RSP",
+            Self::SetSecurity { .. } => "DR_DRIVE_SET_SECURITY_RSP",
         }
     }
 
@@ -262,7 +292,10 @@ impl Encode for DeviceIoCompletion {
         SharedHeader::SIZE
             + match self {
                 Self::Bare(response) => response.size(),
-                Self::SetVolumeInformation { device_io_reply, .. } => device_io_reply.size() + 4 /* Length */,
+                // Each has a Length field after the reply header.
+                Self::SetVolumeInformation { device_io_reply, .. }
+                | Self::SetSecurity { device_io_reply, .. }
+                | Self::QuerySecurity(device_io_reply) => device_io_reply.size() + 4,
             }
     }
 }
@@ -320,6 +353,9 @@ impl fmt::Debug for RdpdrPdu {
             Self::ClientDriveSetInformationResponse(it) => {
                 write!(f, "RdpdrPdu({it:?})")
             }
+            Self::DeviceFlushBuffersResponse(it) => {
+                write!(f, "RdpdrPdu({it:?})")
+            }
             Self::UserLoggedon => {
                 write!(f, "RdpdrPdu(UserLoggedon)")
             }
@@ -375,6 +411,12 @@ impl From<DeviceReadResponse> for RdpdrPdu {
 impl From<DeviceWriteResponse> for RdpdrPdu {
     fn from(value: DeviceWriteResponse) -> Self {
         Self::DeviceWriteResponse(value)
+    }
+}
+
+impl From<DeviceFlushBuffersResponse> for RdpdrPdu {
+    fn from(value: DeviceFlushBuffersResponse) -> Self {
+        Self::DeviceFlushBuffersResponse(value)
     }
 }
 

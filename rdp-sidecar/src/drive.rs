@@ -48,15 +48,15 @@ use ironrdp::rdpdr::pdu::efs::{
     ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse,
     ClientDriveSetInformationResponse, CreateDisposition, CreateOptions, DesiredAccess,
     DeviceCloseRequest, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse,
-    DeviceCreateRequest, DeviceCreateResponse, DeviceIoRequest, DeviceIoResponse,
-    DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse,
-    FileAttributeTagInformation, FileAttributes, FileBasicInformation,
-    FileBothDirectoryInformation, FileDirectoryInformation, FileFsAttributeInformation,
-    FileFsDeviceInformation, FileFsFullSizeInformation, FileFsSizeInformation,
-    FileFsVolumeInformation, FileFullDirectoryInformation, FileInformationClass,
-    FileInformationClassLevel, FileNamesInformation, FileStandardInformation, FileSystemAttributes,
-    FileSystemInformationClass, FileSystemInformationClassLevel, Information, NtStatus,
-    ServerDeviceAnnounceResponse, ServerDriveIoRequest, ServerDriveQueryDirectoryRequest,
+    DeviceCreateRequest, DeviceCreateResponse, DeviceFlushBuffersRequest,
+    DeviceFlushBuffersResponse, DeviceIoRequest, DeviceIoResponse, DeviceReadRequest,
+    DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse, FileAttributeTagInformation,
+    FileAttributes, FileBasicInformation, FileBothDirectoryInformation, FileDirectoryInformation,
+    FileFsAttributeInformation, FileFsDeviceInformation, FileFsFullSizeInformation,
+    FileFsSizeInformation, FileFsVolumeInformation, FileFullDirectoryInformation,
+    FileInformationClass, FileInformationClassLevel, FileNamesInformation, FileStandardInformation,
+    FileSystemAttributes, FileSystemInformationClass, FileSystemInformationClassLevel, Information,
+    NtStatus, ServerDeviceAnnounceResponse, ServerDriveIoRequest, ServerDriveQueryDirectoryRequest,
     ServerDriveQueryInformationRequest, ServerDriveQueryVolumeInformationRequest,
     ServerDriveSetInformationRequest,
 };
@@ -179,6 +179,7 @@ impl DriveRedirectBackend {
             ServerDriveIoRequest::DeviceCloseRequest(req) => self.handle_close(req),
             ServerDriveIoRequest::DeviceReadRequest(req) => self.handle_read(req),
             ServerDriveIoRequest::DeviceWriteRequest(req) => self.handle_write(req),
+            ServerDriveIoRequest::DeviceFlushBuffersRequest(req) => self.handle_flush(req),
             ServerDriveIoRequest::ServerDriveQueryInformationRequest(req) => {
                 self.handle_query_information(req)
             }
@@ -415,6 +416,25 @@ impl DriveRedirectBackend {
             }),
             Err(e) => write_error(io, io_error_to_nt_status(&e)),
         }
+    }
+
+    /// IRP_MJ_FLUSH_BUFFERS (a Windows `FlushFileBuffers` on the shared folder, #5124).
+    /// Every write already reaches the OS before it is acknowledged (see [`write_at`]),
+    /// so a flush asks the OS to make the file durable. A directory handle has
+    /// nothing to flush.
+    fn handle_flush(&mut self, req: DeviceFlushBuffersRequest) -> RdpdrPdu {
+        let io = req.device_io_request;
+        let status = match self.open_files.get(&io.file_id) {
+            None => NtStatus::UNSUCCESSFUL,
+            Some(open) if open.is_dir => NtStatus::SUCCESS,
+            Some(open) => match flush_file(&open.path) {
+                Ok(()) => NtStatus::SUCCESS,
+                Err(e) => io_error_to_nt_status(&e),
+            },
+        };
+        RdpdrPdu::DeviceFlushBuffersResponse(DeviceFlushBuffersResponse {
+            device_io_response: DeviceIoResponse::new(io, status),
+        })
     }
 
     fn handle_query_information(&mut self, req: ServerDriveQueryInformationRequest) -> RdpdrPdu {
@@ -877,6 +897,11 @@ fn write_at(path: &PathBuf, offset: u64, data: &[u8]) -> std::io::Result<u32> {
     Ok(u32::try_from(data.len()).unwrap_or(u32::MAX))
 }
 
+/// Ask the OS to write `path`'s data to its storage device (fsync).
+fn flush_file(path: &PathBuf) -> std::io::Result<()> {
+    OpenOptions::new().write(true).open(path)?.sync_all()
+}
+
 /// Truncate or extend a file to `len` bytes (used by end-of-file / allocation
 /// set-information).
 fn set_file_len(path: &PathBuf, len: i64) -> std::io::Result<()> {
@@ -1041,6 +1066,46 @@ mod tests {
         assert!(wildcard_match("file?.dat", "file1.dat"));
         assert!(!wildcard_match("file?.dat", "file12.dat"));
         assert!(wildcard_match("READ*", "readme")); // case-insensitive
+    }
+
+    fn flush_status(backend: &mut DriveRedirectBackend, file_id: u32) -> NtStatus {
+        match backend.handle_flush(DeviceFlushBuffersRequest {
+            device_io_request: io_request(file_id, MajorFunction::FlushBuffers),
+        }) {
+            RdpdrPdu::DeviceFlushBuffersResponse(r) => r.device_io_response.io_status,
+            other => panic!("expected DeviceFlushBuffersResponse, got {other:?}"),
+        }
+    }
+
+    /// IRP_MJ_FLUSH_BUFFERS (#5124): an open file is flushed, a directory has
+    /// nothing to flush, and an unknown handle fails like the other handlers.
+    #[test]
+    fn flush_buffers_flushes_open_files() {
+        let (mut backend, dir) = backend_with_root();
+        let file_id = create_ok_id(
+            &mut backend,
+            "flush.txt",
+            CreateDisposition::FILE_OVERWRITE_IF,
+            CreateOptions::empty(),
+        );
+        backend.handle_write(DeviceWriteRequest {
+            device_io_request: io_request(file_id, MajorFunction::Write),
+            offset: 0,
+            write_data: b"durable".to_vec(),
+        });
+        assert_eq!(flush_status(&mut backend, file_id), NtStatus::SUCCESS);
+        assert_eq!(fs::read(dir.path().join("flush.txt")).unwrap(), b"durable");
+
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        let dir_id = create_ok_id(
+            &mut backend,
+            "sub",
+            CreateDisposition::FILE_OPEN,
+            CreateOptions::FILE_DIRECTORY_FILE,
+        );
+        assert_eq!(flush_status(&mut backend, dir_id), NtStatus::SUCCESS);
+
+        assert_eq!(flush_status(&mut backend, 0xffff), NtStatus::UNSUCCESSFUL);
     }
 
     #[test]
