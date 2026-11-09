@@ -528,6 +528,11 @@ impl SshConnector for RusshSshConnector {
         );
         // fish 4 waits for the terminal's answer to its queries (#5094).
         gate.pass_terminal_replies(is_fish);
+        // A cmd.exe host with the (opt-in) hook gets its setup as one line
+        // that erases its own echo and leaves no history entry (#5109).
+        if remote_shell == RemoteShell::Cmd && integration_typed {
+            gate.join_cmd_setup(config.cols);
+        }
         for (what, line) in setup {
             if let Some(data) = gate.setup(line.into_bytes()) {
                 remote_shell::setup_trace(shell_requested_at, "send (ungated setup)", &data);

@@ -78,6 +78,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
 
+use super::cmd_hook::{cmd_hook_line, cursor_column, join_cmd_setup};
 use super::exec::{ssh_exec_with_stdin, SshExecOutput};
 use super::handler::SshSession;
 use crate::errors::CoreError;
@@ -381,7 +382,12 @@ pub fn erases_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
 ///   lines are still typed — joined into one line that ends with the done
 ///   mark, so their echo is hidden like the rest ([`join_fish_setup`],
 ///   #5094).
-/// - cmd.exe and unknown shells: nothing.
+/// - cmd.exe (#5109): the hook's `PROMPT` ([`cmd_hook_line`]), ended with
+///   CR. The connector joins it with the other setup lines at the first
+///   prompt ([`SetupGate::join_cmd_setup`]), so the one line erases its own
+///   echo and is followed by Alt+F7, which takes it out of the console's
+///   command history.
+/// - Unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
         RemoteShell::Posix | RemoteShell::WindowsPosix => {
@@ -398,7 +404,8 @@ pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
             powershell_hook_line().map(|l| join_powershell_setup(&[l]))
         }
-        RemoteShell::Cmd | RemoteShell::Unknown => None,
+        RemoteShell::Cmd => Some(cmd_hook_line()),
+        RemoteShell::Unknown => None,
     }
 }
 
@@ -850,7 +857,17 @@ pub struct SetupGate {
     /// Whether the terminal's answers to the shell's queries pass while
     /// holding ([`pass_terminal_replies`](Self::pass_terminal_replies)).
     pass_replies: bool,
+    /// The terminal's width when the setup is joined into one cmd.exe line
+    /// at the first prompt ([`join_cmd_setup`](Self::join_cmd_setup)).
+    cmd_join: Option<u16>,
+    /// The output before the first prompt settled, kept (up to
+    /// [`CMD_PROMPT_OUTPUT_CAP`] bytes) to find the prompt's column.
+    before_prompt: Vec<u8>,
 }
+
+/// How much output before the first prompt [`SetupGate::join_cmd_setup`]
+/// keeps: the first prompt is near its end.
+const CMD_PROMPT_OUTPUT_CAP: usize = 64 * 1024;
 
 impl SetupGate {
     /// A gate that holds when `hold` is set (see [`defers_setup_until_prompt`])
@@ -872,7 +889,17 @@ impl SetupGate {
             held: Vec::new(),
             started: now,
             pass_replies: false,
+            cmd_join: None,
+            before_prompt: Vec::new(),
         }
+    }
+
+    /// Join the setup lines into one cmd.exe line when they are typed, at a
+    /// terminal `cols` wide (#5109): the first prompt's column, read from the
+    /// output so far, says how many rows the line's echo will take, which the
+    /// line then erases ([`join_cmd_setup`]).
+    pub fn join_cmd_setup(&mut self, cols: u16) {
+        self.cmd_join = Some(cols);
     }
 
     /// Let the terminal's answers to the shell's own queries through while
@@ -922,7 +949,17 @@ impl SetupGate {
     pub fn on_output(&mut self, now: Instant, data: &[u8]) {
         match &mut self.phase {
             Phase::Open => {}
-            Phase::AwaitPrompt { last_output, .. } => *last_output = Some(now),
+            Phase::AwaitPrompt { last_output, .. } => {
+                *last_output = Some(now);
+                if self.cmd_join.is_some() {
+                    self.before_prompt.extend_from_slice(data);
+                    let excess = self
+                        .before_prompt
+                        .len()
+                        .saturating_sub(CMD_PROMPT_OUTPUT_CAP);
+                    self.before_prompt.drain(..excess);
+                }
+            }
             Phase::AwaitSetup {
                 last_output, marks, ..
             } => {
@@ -993,6 +1030,16 @@ impl SetupGate {
                     last_output: None,
                     marks: PromptMarkDetector::new(),
                 };
+                if let Some(cols) = self.cmd_join.take() {
+                    let lines: Vec<String> = self
+                        .setup
+                        .iter()
+                        .map(|l| String::from_utf8_lossy(l).into_owned())
+                        .collect();
+                    let col = cursor_column(&self.before_prompt, usize::from(cols));
+                    self.before_prompt = Vec::new();
+                    self.setup = vec![join_cmd_setup(&lines, col, usize::from(cols)).into_bytes()];
+                }
                 self.setup.clone()
             }
             Phase::AwaitSetup {
@@ -1601,9 +1648,45 @@ mod tests {
     }
 
     #[test]
-    fn cmd_and_unknown_get_no_setup() {
-        assert_eq!(integration_setup_line(RemoteShell::Cmd), None);
+    fn unknown_gets_no_setup_and_cmd_the_prompt_hook() {
         assert_eq!(integration_setup_line(RemoteShell::Unknown), None);
+        // #5109: cmd.exe gets the PROMPT hook, CR-ended; the gate joins it.
+        assert_eq!(
+            integration_setup_line(RemoteShell::Cmd),
+            Some(cmd_hook_line())
+        );
+    }
+
+    /// #5109: with the hook, a cmd.exe gate types its setup as ONE line at the
+    /// first prompt: the env line, the echo erase sized from the prompt's
+    /// column, the PROMPT, then CR and Alt+F7 — and opens on the prompt mark.
+    #[test]
+    fn cmd_hook_setup_is_joined_at_the_first_prompt() {
+        use super::super::cmd_hook::CMD_CLEAR_HISTORY;
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(
+            defers_setup_until_prompt(RemoteShell::Cmd, true),
+            SetupDone::PromptMark,
+            t0,
+        );
+        gate.join_cmd_setup(40);
+        assert_eq!(gate.setup(b"set \"V=x\"\r".to_vec()), None);
+        assert_eq!(gate.setup(cmd_hook_line().into_bytes()), None);
+        assert_eq!(gate.write(b"dir\r".to_vec()), None);
+        // A 20-column prompt, drawn the way ConPTY does.
+        gate.on_output(t0, b"\x1b[2J\x1b[HBanner\r\n\x1b[3;1HC:\\Users\\abcdefghi>");
+        let typed = gate.poll(t0 + SETUP_GATE_SETTLE);
+        assert_eq!(typed.len(), 1, "one joined line");
+        let line = String::from_utf8(typed[0].clone()).unwrap();
+        let (body, tail) = line.split_once('\r').unwrap();
+        assert_eq!(tail, CMD_CLEAR_HISTORY);
+        assert!(body.starts_with("set \"V=x\"&for /f "), "{body}");
+        let rows = (20 + body.chars().count()).div_ceil(40);
+        assert!(body.contains(&format!("%b[{rows}A%b[J%b[A")), "{body}");
+        // The user's input waits for the hook's prompt mark.
+        assert!(gate.poll(t0 + SETUP_GATE_SETTLE).is_empty());
+        gate.on_output(t0 + SETUP_GATE_SETTLE, b"\x1b]133;A\x1b\\C:\\>");
+        assert_eq!(gate.poll(t0 + SETUP_GATE_SETTLE), vec![b"dir\r".to_vec()]);
     }
 
     // ── Env-var fallback per shell (#4147) ──────────────────────────────
@@ -2260,7 +2343,6 @@ mod tests {
         env_vars.insert("V".to_string(), "x".to_string());
         let env_line = env_setup_line(RemoteShell::Cmd, &env_vars).unwrap();
         let x11 = x11_setup_lines(RemoteShell::Cmd, 10, None);
-        assert_eq!(integration_setup_line(RemoteShell::Cmd), None);
 
         let t0 = Instant::now();
         let hold = defers_setup_until_prompt(RemoteShell::Cmd, true);
