@@ -9,9 +9,10 @@
 //! it runs, over an SSH exec channel (which the server runs through the same
 //! login shell / Win32-OpenSSH `DefaultShell` as the interactive session).
 //!
-//! The probe is a single `echo` whose output differs per shell family:
+//! The probe is a single `echo` whose output differs per shell family. The
+//! words before the `termihub_shell_probe_os` separator name the shell:
 //!
-//! | Shell | `%OS%` | `$PSHOME` | `$FISH_VERSION` | Output between the markers |
+//! | Shell | `%OS%` | `$PSHOME` | `$FISH_VERSION` | Output before the separator |
 //! | --- | --- | --- | --- | --- |
 //! | POSIX (bash, zsh, sh, dash) | literal | nothing | nothing | `%OS%` |
 //! | fish (#5016) | literal | nothing | fish's version | `%OS%` + a version |
@@ -21,6 +22,18 @@
 //! fish has to be told apart from the POSIX shells (#5016): the bash/zsh hook
 //! is a parse error in fish, so it gets setup lines in its own syntax. A fish
 //! version starts with a digit, which no `$PSHOME` path does.
+//!
+//! The words after the separator, `$OSTYPE $MSYSTEM`, tell a POSIX shell on a
+//! *Windows* host (#5015) — an OpenSSH `DefaultShell` set to Git Bash, MSYS2 or
+//! Cygwin — from one on Linux/macOS: bash and zsh set `$OSTYPE` to `msys` /
+//! `cygwin` there (`linux-gnu`, `darwin…` elsewhere), and MSYS2 / Git Bash
+//! export `$MSYSTEM` (`MINGW64`, `UCRT64`, `MSYS`...), which covers a `sh` /
+//! `dash` that has no `$OSTYPE`. Such a host is
+//! [`RemoteShell::WindowsPosix`]: its output is rendered by the server's
+//! ConPTY, so its setup echo is never filtered (see [`hides_setup_echo`]).
+//! PowerShell expands both to nothing (they are not its variables) and cmd.exe
+//! leaves them literal, so neither changes their classification. They sit after
+//! a separator because a Unix `$OSTYPE` would otherwise read like a `$PSHOME`.
 //!
 //! The probe uses no quotes and no shell metacharacters on purpose:
 //! Win32-OpenSSH hands the command line to `powershell.exe -c`, which strips
@@ -71,10 +84,13 @@ use crate::session::shell::{fish_typed_setup_command, osc7_setup_command};
 pub const SHELL_PROBE_START: &str = "termihub_shell_probe";
 /// Closing marker of the probe's output.
 pub const SHELL_PROBE_END: &str = "termihub_shell_probe_end";
+/// Separates the shell-family words of the probe's output from its
+/// host-OS words, `$OSTYPE $MSYSTEM` (#5015).
+pub const SHELL_PROBE_OS: &str = "termihub_shell_probe_os";
 
 /// The probe command run over an exec channel (see the module docs).
-pub const SHELL_PROBE_COMMAND: &str =
-    "echo termihub_shell_probe %OS% $PSHOME $FISH_VERSION termihub_shell_probe_end";
+pub const SHELL_PROBE_COMMAND: &str = "echo termihub_shell_probe %OS% $PSHOME $FISH_VERSION \
+     termihub_shell_probe_os $OSTYPE $MSYSTEM termihub_shell_probe_end";
 
 /// Upper bound on the probe (#4670).
 ///
@@ -95,8 +111,15 @@ pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 /// The flavour of the remote login shell, as far as shell integration cares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RemoteShell {
-    /// A POSIX-style shell (bash, zsh, sh, dash, ...).
+    /// A POSIX-style shell (bash, zsh, sh, dash, ...) on a Linux/macOS host.
     Posix,
+    /// A POSIX-style shell on a Windows host (#5015): the OpenSSH
+    /// `DefaultShell` is Git Bash, an MSYS2 shell or Cygwin's. Typed the same
+    /// setup lines as [`RemoteShell::Posix`], but its setup echo is never
+    /// filtered: Win32-OpenSSH renders the session through ConPTY, whose
+    /// screen model must see every byte, so showing the setup is the safe
+    /// fallback.
+    WindowsPosix,
     /// fish (#5016): not POSIX, so it gets setup lines in its own syntax.
     Fish {
         /// fish 4.0+, which reports its directory (OSC 7) and marks its
@@ -133,8 +156,15 @@ pub fn classify_shell_probe(stdout: &str) -> RemoteShell {
         return RemoteShell::Unknown;
     };
     let between = &tokens[start + 1..start + 1 + len];
-    match between {
-        // `%OS%` untouched and `$PSHOME` expanded to nothing: a POSIX shell.
+    // Every answer to the current probe carries the separator (#5015).
+    let Some(sep) = between.iter().position(|t| *t == SHELL_PROBE_OS) else {
+        return RemoteShell::Unknown;
+    };
+    let (family, host_os) = (&between[..sep], &between[sep + 1..]);
+    match family {
+        // `%OS%` untouched and `$PSHOME` expanded to nothing: a POSIX shell,
+        // on Windows when `$OSTYPE` / `$MSYSTEM` say MSYS2 or Cygwin (#5015).
+        ["%OS%"] if host_os.iter().any(|t| is_windows_posix_os(t)) => RemoteShell::WindowsPosix,
         ["%OS%"] => RemoteShell::Posix,
         // `$FISH_VERSION` expanded to a version (`3.7.1`, `4.0.2`): fish
         // (#5016). Checked before PowerShell, whose home is never a number.
@@ -155,6 +185,17 @@ pub fn classify_shell_probe(stdout: &str) -> RemoteShell {
         }
         _ => RemoteShell::Unknown,
     }
+}
+
+/// Whether `word` (a value of `$OSTYPE` or `$MSYSTEM`) names a POSIX layer on
+/// Windows (#5015): `msys` / `cygwin` (`$OSTYPE` of bash and zsh there) or an
+/// MSYS2 environment (`MSYS`, `MINGW64`, `UCRT64`, `CLANG64`...). Unix values
+/// (`linux-gnu`, `darwin23.0`, `freebsd14.0`...) never match.
+fn is_windows_posix_os(word: &str) -> bool {
+    let word = word.to_ascii_lowercase();
+    ["msys", "cygwin", "mingw", "ucrt", "clang"]
+        .iter()
+        .any(|prefix| word.starts_with(prefix))
 }
 
 /// Whether the fish `version` (`$FISH_VERSION`, e.g. `3.7.1`, `4.0b1`) is
@@ -239,8 +280,8 @@ pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
 /// The shell-integration line to type into a session whose login shell is
 /// `shell`, including its line terminator, or `None` to inject nothing.
 ///
-/// - POSIX: the bash/zsh OSC 7 hook, ended with LF — unchanged from before
-///   detection existed.
+/// - POSIX (on Linux/macOS or, #5015, Windows): the bash/zsh OSC 7 hook,
+///   ended with LF — unchanged from before detection existed.
 /// - PowerShell (Windows or Unix): the PowerShell OSC 7 / OSC 133 prompt
 ///   override plus [`TYPED_POWERSHELL_CLEAR`], ended with CR, which is Enter for PSReadLine (an LF would leave
 ///   the line unsubmitted and merge it with the user's first command). The
@@ -256,7 +297,9 @@ pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
 /// - cmd.exe and unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
-        RemoteShell::Posix => osc7_setup_command("bash").map(|s| format!("{s}\n")),
+        RemoteShell::Posix | RemoteShell::WindowsPosix => {
+            osc7_setup_command("bash").map(|s| format!("{s}\n"))
+        }
         RemoteShell::Fish {
             native_integration: false,
         } => Some(format!("{}\n", fish_typed_setup_command())),
@@ -275,7 +318,7 @@ pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
 /// cmd.exe. `None` for an undetected shell, which gets no typed setup at all.
 pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
     match shell {
-        RemoteShell::Posix | RemoteShell::Fish { .. } => Some("\n"),
+        RemoteShell::Posix | RemoteShell::WindowsPosix | RemoteShell::Fish { .. } => Some("\n"),
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell | RemoteShell::Cmd => Some("\r"),
         RemoteShell::Unknown => None,
     }
@@ -295,12 +338,16 @@ pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
 ///   setup's answer to settle ([`SetupDone::OutputSettled`]). A cmd.exe host
 ///   with nothing to set up is left ungated, as before.
 /// - POSIX shells never: they read the LF-ended lines fine from the cooked
-///   tty, and their behaviour stays unchanged.
+///   tty, and their behaviour stays unchanged. A POSIX shell on Windows
+///   (#5015) keeps that pre-#5009 behaviour too: ungated and unfiltered.
 pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
     match shell {
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell => true,
         RemoteShell::Cmd => has_setup,
-        RemoteShell::Posix | RemoteShell::Fish { .. } | RemoteShell::Unknown => false,
+        RemoteShell::Posix
+        | RemoteShell::WindowsPosix
+        | RemoteShell::Fish { .. }
+        | RemoteShell::Unknown => false,
     }
 }
 
@@ -311,9 +358,11 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// host is then also held until its first prompt, so the setup reaches the
 /// line editor rather than the cooked tty, whose own echo would come first.
 ///
-/// Not PowerShell or cmd.exe: a Windows host renders through ConPTY, whose
-/// screen model must see every byte (its typed PowerShell setup ends with
-/// [`TYPED_POWERSHELL_CLEAR`] instead).
+/// Not PowerShell, cmd.exe or a POSIX shell on Windows
+/// ([`RemoteShell::WindowsPosix`], #5015): a Windows host renders through
+/// ConPTY, whose screen model must see every byte, so there the setup is
+/// shown rather than risk desynchronising it (a typed PowerShell setup ends
+/// with [`TYPED_POWERSHELL_CLEAR`] instead).
 pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
     matches!(shell, RemoteShell::Posix | RemoteShell::Fish { .. }) && has_integration
 }
@@ -448,7 +497,9 @@ pub fn env_setup_line(shell: RemoteShell, env: &HashMap<String, String>) -> Opti
             continue;
         }
         let statement = match shell {
-            RemoteShell::Posix => Some(format!("{name}={}", posix_quote(value))),
+            RemoteShell::Posix | RemoteShell::WindowsPosix => {
+                Some(format!("{name}={}", posix_quote(value)))
+            }
             RemoteShell::Fish { .. } => Some(format!("set -gx {name} {}", fish_quote(value))),
             RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
                 Some(format!("$env:{name}={}", powershell_quote(value)))
@@ -468,7 +519,9 @@ pub fn env_setup_line(shell: RemoteShell, env: &HashMap<String, String>) -> Opti
         return None;
     }
     let line = match shell {
-        RemoteShell::Posix => format!("export {}", statements.join(" ")),
+        RemoteShell::Posix | RemoteShell::WindowsPosix => {
+            format!("export {}", statements.join(" "))
+        }
         RemoteShell::Cmd => statements.join(" & "),
         // A leading space: fish never saves such a line to its history.
         RemoteShell::Fish { .. } => format!(" {}", statements.join("; ")),
@@ -512,7 +565,9 @@ pub fn x11_setup_lines(shell: RemoteShell, display_num: u32, cookie: Option<&str
     });
     let mut lines = Vec::new();
     match shell {
-        RemoteShell::Posix => {
+        // Git Bash / MSYS2 have no `xauth` as a rule; the `2>/dev/null`
+        // silences "command not found" there (#5015).
+        RemoteShell::Posix | RemoteShell::WindowsPosix => {
             lines.push(format!("export DISPLAY=localhost:{display_num}.0{eol}"));
             if let Some(cookie) = cookie {
                 lines.push(format!(
@@ -842,7 +897,7 @@ mod tests {
     #[test]
     fn classifies_posix_output() {
         assert_eq!(
-            classify_shell_probe("termihub_shell_probe %OS% termihub_shell_probe_end\n"),
+            classify_shell_probe("termihub_shell_probe %OS% termihub_shell_probe_os linux-gnu termihub_shell_probe_end\n"),
             RemoteShell::Posix
         );
     }
@@ -851,20 +906,20 @@ mod tests {
     fn classifies_windows_powershell_output_one_argument_per_line() {
         let out =
             "termihub_shell_probe\r\n%OS%\r\nC:\\Windows\\System32\\WindowsPowerShell\\v1.0\r\n\
-                   termihub_shell_probe_end\r\n";
+                   termihub_shell_probe_os\r\ntermihub_shell_probe_end\r\n";
         assert_eq!(classify_shell_probe(out), RemoteShell::PowerShell);
     }
 
     #[test]
     fn classifies_pwsh_with_a_spaced_home_and_on_linux() {
         let win = "termihub_shell_probe\n%OS%\nC:\\Program Files\\PowerShell\\7\n\
-                   termihub_shell_probe_end\n";
+                   termihub_shell_probe_os\ntermihub_shell_probe_end\n";
         assert_eq!(classify_shell_probe(win), RemoteShell::PowerShell);
         let linux = "termihub_shell_probe\n%OS%\n/opt/microsoft/powershell/7\n\
-                     termihub_shell_probe_end\n";
+                     termihub_shell_probe_os\ntermihub_shell_probe_end\n";
         assert_eq!(classify_shell_probe(linux), RemoteShell::UnixPowerShell);
         let mac = "termihub_shell_probe\n%OS%\n/usr/local/microsoft/powershell/7\n\
-                   termihub_shell_probe_end\n";
+                   termihub_shell_probe_os\ntermihub_shell_probe_end\n";
         assert_eq!(classify_shell_probe(mac), RemoteShell::UnixPowerShell);
     }
 
@@ -872,7 +927,7 @@ mod tests {
     fn classifies_cmd_output() {
         assert_eq!(
             classify_shell_probe(
-                "termihub_shell_probe Windows_NT $PSHOME $FISH_VERSION termihub_shell_probe_end\r\n"
+                "termihub_shell_probe Windows_NT $PSHOME $FISH_VERSION termihub_shell_probe_os $OSTYPE $MSYSTEM termihub_shell_probe_end\r\n"
             ),
             RemoteShell::Cmd
         );
@@ -892,7 +947,7 @@ mod tests {
             ("4.6.0", true),
             ("10.1", true),
         ] {
-            let out = format!("termihub_shell_probe %OS% {version} termihub_shell_probe_end\n");
+            let out = format!("termihub_shell_probe %OS% {version} termihub_shell_probe_os termihub_shell_probe_end\n");
             assert_eq!(
                 classify_shell_probe(&out),
                 RemoteShell::Fish {
@@ -907,15 +962,15 @@ mod tests {
     fn the_fish_probe_token_does_not_change_the_other_shells() {
         // bash / zsh / sh / dash expand `$FISH_VERSION` to nothing.
         assert_eq!(
-            classify_shell_probe("termihub_shell_probe %OS% termihub_shell_probe_end\n"),
+            classify_shell_probe("termihub_shell_probe %OS% termihub_shell_probe_os linux-gnu termihub_shell_probe_end\n"),
             RemoteShell::Posix
         );
         // PowerShell expands it to nothing too; its home is never a number.
         let linux = "termihub_shell_probe\n%OS%\n/opt/microsoft/powershell/7\n\
-                     termihub_shell_probe_end\n";
+                     termihub_shell_probe_os\ntermihub_shell_probe_end\n";
         assert_eq!(classify_shell_probe(linux), RemoteShell::UnixPowerShell);
         let win = "termihub_shell_probe\n%OS%\nC:\\Program Files\\PowerShell\\7\n\
-                   termihub_shell_probe_end\n";
+                   termihub_shell_probe_os\ntermihub_shell_probe_end\n";
         assert_eq!(classify_shell_probe(win), RemoteShell::PowerShell);
         assert!(SHELL_PROBE_COMMAND.contains("$FISH_VERSION"));
     }
@@ -986,10 +1041,148 @@ mod tests {
         );
     }
 
+    // ── POSIX shell on a Windows host (#5015) ───────────────────────────
+
+    fn probe_answer(family: &str, host_os: &str) -> String {
+        format!("termihub_shell_probe {family} termihub_shell_probe_os {host_os} termihub_shell_probe_end\n")
+    }
+
+    /// #5015: a Win32-OpenSSH host whose `DefaultShell` is Git Bash, an MSYS2
+    /// shell or Cygwin's answered like a Linux bash and got its setup echo
+    /// filtered. `$OSTYPE` / `$MSYSTEM` now tell it apart.
+    #[test]
+    fn classifies_a_posix_shell_on_windows_by_ostype_or_msystem() {
+        for host_os in [
+            "msys MINGW64", // Git Bash (Git for Windows' bin\bash.exe)
+            "msys",         // Git Bash's usr\bin\bash.exe, no MSYSTEM
+            "msys UCRT64",  // MSYS2 bash / zsh
+            "MINGW32",      // MSYS2 dash / sh: no $OSTYPE
+            "MSYS",
+            "CLANG64",
+            "cygwin", // Cygwin bash / zsh
+        ] {
+            assert_eq!(
+                classify_shell_probe(&probe_answer("%OS%", host_os)),
+                RemoteShell::WindowsPosix,
+                "{host_os:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_unix_ostype_stays_posix() {
+        for host_os in [
+            "",
+            "linux-gnu",
+            "linux-musl",
+            "linux-android",
+            "darwin23.0",
+            "freebsd14.0",
+            "openbsd7.5",
+            "solaris2.11",
+        ] {
+            assert_eq!(
+                classify_shell_probe(&probe_answer("%OS%", host_os)),
+                RemoteShell::Posix,
+                "{host_os:?}"
+            );
+        }
+    }
+
+    /// The host-OS words never change fish, PowerShell or cmd.exe: only the
+    /// words before the separator name the shell family.
+    #[test]
+    fn the_host_os_words_do_not_change_the_other_shells() {
+        for host_os in ["", "linux-gnu", "msys MINGW64", "cygwin"] {
+            assert_eq!(
+                classify_shell_probe(&probe_answer("%OS% 3.7.1", host_os)),
+                FISH3,
+                "{host_os:?}"
+            );
+            assert_eq!(
+                classify_shell_probe(&probe_answer("%OS% 4.0.2", host_os)),
+                FISH4,
+                "{host_os:?}"
+            );
+            assert_eq!(
+                classify_shell_probe(&probe_answer("%OS% /opt/microsoft/powershell/7", host_os)),
+                RemoteShell::UnixPowerShell,
+                "{host_os:?}"
+            );
+            assert_eq!(
+                classify_shell_probe(&probe_answer(
+                    "%OS% C:\\Program Files\\PowerShell\\7",
+                    host_os
+                )),
+                RemoteShell::PowerShell,
+                "{host_os:?}"
+            );
+        }
+        // cmd.exe leaves every `$` word literal.
+        assert_eq!(
+            classify_shell_probe(&probe_answer(
+                "Windows_NT $PSHOME $FISH_VERSION",
+                "$OSTYPE $MSYSTEM"
+            )),
+            RemoteShell::Cmd
+        );
+        // A csh error ("PSHOME: Undefined variable.") still has no markers.
+        assert_eq!(
+            classify_shell_probe("PSHOME: Undefined variable.\n"),
+            RemoteShell::Unknown
+        );
+        assert!(SHELL_PROBE_COMMAND.contains("$OSTYPE $MSYSTEM"));
+    }
+
+    /// The probe's words between the markers are in the order the classifier
+    /// splits them at: the shell family first, the host OS after the separator.
+    #[test]
+    fn the_probe_command_puts_the_host_os_after_the_separator() {
+        let words: Vec<&str> = SHELL_PROBE_COMMAND.split_whitespace().collect();
+        assert_eq!(
+            words,
+            [
+                "echo",
+                SHELL_PROBE_START,
+                "%OS%",
+                "$PSHOME",
+                "$FISH_VERSION",
+                SHELL_PROBE_OS,
+                "$OSTYPE",
+                "$MSYSTEM",
+                SHELL_PROBE_END,
+            ]
+        );
+    }
+
+    /// #5015: a POSIX shell on Windows is typed exactly the POSIX setup, but
+    /// never has its echo hidden or its setup held for a prompt: ConPTY
+    /// renders it, so showing the setup is the safe fallback.
+    #[test]
+    fn a_posix_shell_on_windows_gets_the_posix_setup_and_never_hides_it() {
+        let w = RemoteShell::WindowsPosix;
+        let p = RemoteShell::Posix;
+        assert_eq!(integration_setup_line(w), integration_setup_line(p));
+        assert!(integration_setup_line(w).is_some());
+        assert_eq!(line_ending(w), Some("\n"));
+        let e = env(&[("A", "it's")]);
+        assert_eq!(env_setup_line(w, &e), env_setup_line(p, &e));
+        assert_eq!(
+            x11_setup_lines(w, 10, Some("abc123")),
+            x11_setup_lines(p, 10, Some("abc123"))
+        );
+        for flag in [false, true] {
+            assert!(!hides_setup_echo(w, flag), "has_integration={flag}");
+            assert!(!defers_setup_until_prompt(w, flag), "has_setup={flag}");
+        }
+        // The Linux/macOS twin still hides it (#5009).
+        assert!(hides_setup_echo(p, true));
+    }
+
     #[test]
     fn ignores_noise_around_the_markers() {
         let out = "Welcome to host!\nlast login: today\n\
-                   termihub_shell_probe %OS% termihub_shell_probe_end\nbye\n";
+                   termihub_shell_probe %OS% termihub_shell_probe_os linux-gnu termihub_shell_probe_end\nbye\n";
         assert_eq!(classify_shell_probe(out), RemoteShell::Posix);
     }
 
@@ -1003,6 +1196,10 @@ mod tests {
             "termihub_shell_probe termihub_shell_probe_end",
             "termihub_shell_probe Linux $PSHOME termihub_shell_probe_end",
             "termihub_shell_probe Windows_NT termihub_shell_probe_end",
+            // An answer without the host-OS separator is not the current
+            // probe's (#5015).
+            "termihub_shell_probe %OS% termihub_shell_probe_end",
+            "termihub_shell_probe %OS% msys termihub_shell_probe_end",
         ] {
             assert_eq!(classify_shell_probe(out), RemoteShell::Unknown, "{out:?}");
         }
@@ -1011,7 +1208,7 @@ mod tests {
     // ── Probe timing (#4670) ────────────────────────────────────────────
 
     const WINDOWS_POWERSHELL_PROBE: &str = "termihub_shell_probe\r\n%OS%\r\n\
-        C:\\Windows\\System32\\WindowsPowerShell\\v1.0\r\ntermihub_shell_probe_end\r\n";
+        C:\\Windows\\System32\\WindowsPowerShell\\v1.0\r\ntermihub_shell_probe_os\r\ntermihub_shell_probe_end\r\n";
 
     /// A probe whose answer arrives `after` — a shell that starts that slowly.
     async fn probe_answering_after(after: Duration) -> Result<SshExecOutput, CoreError> {
@@ -1074,6 +1271,7 @@ mod tests {
         }
         assert!(SHELL_PROBE_COMMAND.contains(SHELL_PROBE_START));
         assert!(SHELL_PROBE_COMMAND.contains(SHELL_PROBE_END));
+        assert!(SHELL_PROBE_COMMAND.contains(SHELL_PROBE_OS));
     }
 
     #[test]
@@ -1122,8 +1320,9 @@ mod tests {
         native_integration: true,
     };
 
-    const ALL_SHELLS: [RemoteShell; 7] = [
+    const ALL_SHELLS: [RemoteShell; 8] = [
         RemoteShell::Posix,
+        RemoteShell::WindowsPosix,
         FISH3,
         FISH4,
         RemoteShell::PowerShell,
@@ -1347,7 +1546,7 @@ mod tests {
             assert!(!body.contains(['\r', '\n']), "{shell:?}: {line:?}");
             // No POSIX syntax may reach a non-POSIX shell, nor an LF one
             // that submits with CR.
-            if shell != RemoteShell::Posix {
+            if !matches!(shell, RemoteShell::Posix | RemoteShell::WindowsPosix) {
                 assert!(!line.contains("export"), "{shell:?}: {line:?}");
             }
             if eol == "\r" {
@@ -1449,6 +1648,10 @@ mod tests {
         // POSIX hosts stay unchanged (#4610): their setup is typed at once.
         for has_setup in [false, true] {
             assert!(!defers_setup_until_prompt(RemoteShell::Posix, has_setup));
+            assert!(!defers_setup_until_prompt(
+                RemoteShell::WindowsPosix,
+                has_setup
+            ));
             assert!(!defers_setup_until_prompt(RemoteShell::Unknown, has_setup));
         }
     }

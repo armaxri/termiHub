@@ -485,7 +485,8 @@ impl SshConnector for RusshSshConnector {
             setup.push(("shell integration", line));
         }
         // A POSIX host with integration types its setup as one line at the
-        // first prompt and hides that line's echo (#5009).
+        // first prompt and hides that line's echo (#5009) — not a POSIX
+        // shell on Windows, whose ConPTY must see every byte (#5015).
         let hide_echo = remote_shell::hides_setup_echo(remote_shell, integration_typed);
         if hide_echo {
             let lines: Vec<String> = setup.drain(..).map(|(_, line)| line).collect();
