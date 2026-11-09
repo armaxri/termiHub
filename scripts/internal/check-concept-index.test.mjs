@@ -42,7 +42,11 @@ describe("checkIndex", () => {
   });
 
   it("flags a concept with no row", () => {
-    const problems = checkIndex(README, ["implemented/a.html", "backlog/b.html", "future/c.html"], exists);
+    const problems = checkIndex(
+      README,
+      ["implemented/a.html", "backlog/b.html", "future/c.html"],
+      exists
+    );
     expect(problems).toEqual([
       "docs/concepts/README.md: concept `future/c.html` is not linked — add a row to its `## future/` table",
     ]);
