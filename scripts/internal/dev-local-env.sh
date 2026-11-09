@@ -7,6 +7,13 @@
 # SOURCE this file — do not execute it:
 #     source "$(git rev-parse --show-toplevel)/scripts/internal/dev-local-env.sh"
 #
+# It works when sourced from bash AND zsh (the macOS default shell), so it sticks
+# to POSIX-sh constructs: no `${!var}` indirection, no `[[ =~ ]]`, no arrays, no
+# `${BASH_SOURCE}`. zsh used to abort on `${!var}` with "bad substitution" after
+# the offset/project were set but before any port was, leaving dev0's ports in
+# place (#5144). scripts/internal/dev-local-env.test.mjs sources it under both
+# shells against a temp dev.local.json and pins the resolved values.
+#
 # This is the shell mirror of termihub_harness/dev_local.py; both read the same
 # dev.local.json keys (compose_project, test_port_offset) and apply the same
 # defaults. Precedence per value: an already-set environment variable wins, then
@@ -32,7 +39,9 @@ _thdl_read() {
 # Port offset and Compose project (env > file > default).
 if [ -z "${TERMIHUB_TEST_PORT_OFFSET:-}" ]; then
     _thdl_off="$(_thdl_read test_port_offset)"
-    [[ "$_thdl_off" =~ ^[0-9]+$ ]] || _thdl_off=0
+    case "$_thdl_off" in
+        '' | *[!0-9]*) _thdl_off=0 ;;
+    esac
     export TERMIHUB_TEST_PORT_OFFSET="$_thdl_off"
 fi
 if [ -z "${TERMIHUB_TEST_PROJECT:-}" ]; then
@@ -46,9 +55,19 @@ fi
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$TERMIHUB_TEST_PROJECT}"
 
 # Each published/looked-up container port = base + offset, unless already set.
+# Portable indirection (bash `${!var}` is a zsh "bad substitution"): `var` is
+# always one of the literal names below, checked to be a plain identifier before
+# it reaches eval.
 _thdl_port() {
-    local var="$1" base="$2"
-    [ -z "${!var:-}" ] && export "$var"="$((base + TERMIHUB_TEST_PORT_OFFSET))"
+    local var="$1" base="$2" cur
+    case "$var" in
+        '' | [0-9]* | *[!A-Za-z0-9_]*)
+            echo "dev-local-env.sh: invalid variable name '$var'" >&2
+            return 1
+            ;;
+    esac
+    eval "cur=\${$var:-}"
+    [ -n "$cur" ] || export "$var=$((base + TERMIHUB_TEST_PORT_OFFSET))"
 }
 _thdl_port TERMIHUB_TEST_SSH_PASSWORD_PORT   2201
 _thdl_port TERMIHUB_TEST_SSH_SUDO_PORT       2212
@@ -109,3 +128,4 @@ unset _thdl_slot
 export TERMIHUB_TAURI_DRIVER_PORT="${TERMIHUB_TAURI_DRIVER_PORT:-$((4444 + TERMIHUB_TEST_PORT_OFFSET))}"
 
 unset _thdl_root _thdl_file _thdl_off _thdl_proj
+unset -f _thdl_read _thdl_port
