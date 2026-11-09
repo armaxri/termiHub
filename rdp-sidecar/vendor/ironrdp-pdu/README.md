@@ -1,4 +1,72 @@
-# IronRDP PDU
+# IronRDP PDU (termiHub vendored fork)
+
+## termiHub vendored fork
+
+This is a vendored fork of `ironrdp-pdu` **0.11.0** for termiHub's RDP sidecar. It was
+first forked from 0.9.0 for [`termiHub#3611`](https://github.com/armaxri/termiHub/issues/3611)
+and re-based onto 0.11.0 for [`termiHub#5117`](https://github.com/armaxri/termiHub/issues/5117).
+It is patched into the workspace-excluded `rdp-sidecar` crate via `[patch.crates-io]`, like
+`rdp-sidecar/vendor/ironrdp-rdpsnd` and `rdp-sidecar/vendor/ironrdp-rdpdr`.
+
+**Fork base:** upstream tag `ironrdp-pdu-v0.11.0`, commit
+[`b13befa0db86f48f523a0b2b007e399f9811e0ec`](https://github.com/Devolutions/IronRDP/commit/b13befa0db86f48f523a0b2b007e399f9811e0ec)
+of [IronRDP](https://github.com/Devolutions/IronRDP), copied from the crates.io package
+(without its registry-only `.cargo_vcs_info.json`, `Cargo.lock` and `Cargo.toml.orig`). The
+fork is registered in [`vendor/vendored-forks.json`](../../../vendor/vendored-forks.json), and
+a weekly CI job reports upstream releases, commits and advisories that the fork does not have
+yet. See `docs/supply-chain.md` → "Vendored forks". Update both when re-basing or reviewing
+upstream again.
+
+### The one change: licensing secrets withheld from `Debug` ([#4923])
+
+A port of upstream
+[`5c4dcfa7`](https://github.com/Devolutions/IronRDP/commit/5c4dcfa7b1160a64ec0578f71c947b3bce5982ef)
+("fix(pdu): withhold licensing secrets from Debug output", IronRDP#2344), which landed on
+master after the 0.11.0 release and is not released yet. The sidecar's client runs the
+license exchange against whatever server it connects to, and a debug or trace sidecar log must
+be shareable: the premaster secret, MAC salt and license keys, the client and server randoms,
+the encrypted HWID, the platform challenge and its response, the license blob, the client's
+user and machine names and the certificate material now print as `<N bytes withheld>`
+(`src/rdp/server_license/`). The `crates/ironrdp-pdu` part of the commit is applied as is,
+without its test file (`src/rdp/server_license/tests.rs`, which needs dev-dependencies the
+sidecar lockfile does not carry); the `ironrdp-connector` logging part is not needed. Marked
+`termiHub fork (#5117)` at the `Withheld` helper. Test:
+`licensing_secrets_are_withheld_from_debug` in the sidecar's `src/pdu_fork_tests.rs`.
+
+Drop the fork once an `ironrdp-pdu` release containing `5c4dcfa7` is adopted.
+
+### Re-base onto 0.11.0 ([#5117])
+
+The deltas the 0.9.0 fork carried are all in 0.11.0, so the re-base dropped them: the 6-byte
+Share Control Header (`d4b728a1d40b`, [#3611]), the robustness fixes ported in [#4461]
+(`33506e61`, `9b04c90c`, `e496b7b8`, `629a8024`, `e8a75797`, `9af99317`, `d2bb7376`,
+`d0948faa`) and the licensing RSA modulus check (`c3386173`, [#4923]). The sidecar's
+`src/pdu_fork_tests.rs` keeps guarding all of them, now as regression tests of upstream
+behaviour.
+
+### Upstream review
+
+Reviewed upstream `crates/ironrdp-pdu` up to IronRDP
+[`d5e70f02`](https://github.com/Devolutions/IronRDP/commit/d5e70f02b670dbe79ad7ef47203bfa82d32c16f4)
+(2026-11-09). Besides `5c4dcfa7`, the commits after 0.11.0 are not ported:
+
+- `0f4f0026` (write the Client License Information's EncryptedHWID as `BB_DATA_BLOB`): only a
+  client sending a stored license writes that PDU, and the sidecar configures no license cache,
+  so it always sends a Client New License Request instead.
+- `26f7e4c0` (size `TS_LOGON_INFO` names in UTF-16 bytes): an encoder fix; servers send that
+  structure and the sidecar only decodes it.
+- `43d75cd4` (Progressive DWT variant): only reached through `ironrdp-egfx`, which the sidecar
+  does not register.
+
+Everything else is byte-for-byte upstream 0.11.0.
+
+[#3611]: https://github.com/armaxri/termiHub/issues/3611
+[#4461]: https://github.com/armaxri/termiHub/issues/4461
+[#4923]: https://github.com/armaxri/termiHub/issues/4923
+[#5117]: https://github.com/armaxri/termiHub/issues/5117
+
+---
+
 
 RDP PDU encoding and decoding library.
 

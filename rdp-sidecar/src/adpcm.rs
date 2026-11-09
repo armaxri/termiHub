@@ -6,9 +6,9 @@
 //! plain PCM. Unlike PCM they cannot be advertised by structural equality — the
 //! server picks the block layout (`n_block_align`, `wSamplesPerBlock`, and, for
 //! MS-ADPCM, the coefficient table in the format's extra `data`) and the client
-//! cannot predict it. The vendored `ironrdp-rdpsnd` fork therefore lets the
-//! handler *accept a server format by codec* ([`can_decode`]) and echoes that
-//! exact [`AudioFormat`] back, so [`decode`] here receives the server's concrete
+//! cannot predict it. The rdpsnd handler therefore *accepts a server format by
+//! codec* ([`can_decode`], through `RdpsndClientHandler::choose_formats` in
+//! `audio.rs`) and echoes that exact [`AudioFormat`] back, so [`decode`] here receives the server's concrete
 //! block parameters.
 //!
 //! ## Decoder

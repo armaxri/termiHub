@@ -94,37 +94,20 @@
       "upstream_repo": "https://github.com/Devolutions/IronRDP",
       "upstream_branch": "master",
       "upstream_path": "crates/ironrdp-rdpsnd",
-      "base_version": "0.9.0",
-      "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
-      "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.9.0",
+      "base_version": "0.11.0",
+      "base_commit": "b13befa0db86f48f523a0b2b007e399f9811e0ec",
+      "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.11.0 (re-based from 0.9.0 for #5117)",
       "reviewed_version": "0.11.0",
-      "reviewed_commit": "f86e3c49f349127b7e7f3c737ca10de49cc20f8d",
+      "reviewed_commit": "d5e70f02b670dbe79ad7ef47203bfa82d32c16f4",
       "deltas": [
         {
-          "summary": "RdpsndClientHandler::wave receives the concrete negotiated AudioFormat instead of an index",
-          "refs": ["https://github.com/armaxri/termiHub/issues/1773"]
-        },
-        {
-          "summary": "accepts_format hook: echo server-chosen compressed formats (ADPCM/Opus) verbatim, deterministic order",
-          "refs": ["https://github.com/armaxri/termiHub/issues/1812"]
-        },
-        {
-          "summary": "Upstream fixes ported after 0.9.0: malformed server PDUs (incl. encrypted waves) are dropped instead of ending the session, CryptKey/WaveEncrypt keep the channel alive, get_format indexes the client list",
-          "refs": [
-            "https://github.com/armaxri/termiHub/issues/3499",
-            "https://github.com/armaxri/termiHub/pull/3512"
-          ]
-        },
-        {
-          "summary": "Pre-v8 SNDC_WAVE playback ported from upstream 2d9a9bf1: WaveInfo + bare Wave reassembled via an ExpectingWave state and confirmed (short payload / bad wFormatNo confirmed unplayed); WavePdu is WaveInfo-only plus a new WaveDataPdu",
-          "refs": ["https://github.com/armaxri/termiHub/issues/3510"]
-        },
-        {
-          "summary": "Training Confirm echoes the server's wPackSize (whole PDU size) instead of the data length, so GNOME Remote Desktop sends audio; port of unreleased upstream f86e3c49 (IronRDP#2294)",
+          "summary": "Training Confirm echoes the server's wPackSize (whole PDU size) instead of the data length, so GNOME Remote Desktop sends audio; port of unreleased upstream f86e3c49 (IronRDP#2294). The 0.9.0 fork's other deltas (concrete AudioFormat in wave, server-chosen compressed formats, malformed-PDU tolerance, pre-v8 Wave playback) are upstream since 0.10.0; the sidecar handler uses upstream's choose_formats",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/armaxri/termiHub/issues/5117",
             "https://github.com/Devolutions/IronRDP/commit/f86e3c49f349127b7e7f3c737ca10de49cc20f8d"
-          ]
+          ],
+          "upstream_status": "Fixed on upstream master (f86e3c49, 2026-10-29), unreleased; the fork retires on the next ironrdp-rdpsnd release"
         }
       ],
       "watch": {
@@ -141,30 +124,20 @@
       "upstream_repo": "https://github.com/Devolutions/IronRDP",
       "upstream_branch": "master",
       "upstream_path": "crates/ironrdp-pdu",
-      "base_version": "0.9.0",
-      "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
-      "base_commit_note": "upstream tag ironrdp-pdu-v0.9.0",
+      "base_version": "0.11.0",
+      "base_commit": "b13befa0db86f48f523a0b2b007e399f9811e0ec",
+      "base_commit_note": "upstream tag ironrdp-pdu-v0.11.0 (re-based from 0.9.0 for #5117)",
       "reviewed_version": "0.11.0",
-      "reviewed_commit": "5c4dcfa7b1160a64ec0578f71c947b3bce5982ef",
+      "reviewed_commit": "d5e70f02b670dbe79ad7ef47203bfa82d32c16f4",
       "deltas": [
         {
-          "summary": "Accept the 6-byte Share Control Header (shareId optional) so xrdp's header-only Deactivate All PDU no longer ends the session; port of unreleased upstream d4b728a1d40b (IronRDP#1719)",
-          "refs": [
-            "https://github.com/armaxri/termiHub/issues/3611",
-            "https://github.com/Devolutions/IronRDP/commit/d4b728a1d40b"
-          ]
-        },
-        {
-          "summary": "Upstream robustness fixes ported after 0.9.0 (reviewed up to 62246b36): undersized TPKT/Fast-Path frame lengths refused (33506e61), zero-length empty Update/Pointer PDUs and VRDP's under-declared Server Font Map accepted while other under-declared Data PDUs stay refused (33506e61, 9b04c90c, e496b7b8), unknown server GCC user-data blocks skipped (629a8024), unknown multitransport flag and echoed protocol bits retained (e8a75797, 9af99317), ERRINFO_SERVER_SHUTDOWN/REBOOT decoded (d2bb7376), auto-reconnect random redacted from Debug (d0948faa)",
-          "refs": ["https://github.com/armaxri/termiHub/issues/4461"]
-        },
-        {
-          "summary": "Licensing hardening ported after 0.11.0 (reviewed up to 5c4dcfa7): RSA moduli below 512 bits refused instead of a modpow panic on a hostile server's zero modulus (c3386173, IronRDP#2225); licensing secrets, client user/machine names and certificate material withheld from Debug (5c4dcfa7, IronRDP#2344)",
+          "summary": "Licensing secrets, client user/machine names and certificate material withheld from Debug, so a debug/trace sidecar log can be shared; port of unreleased upstream 5c4dcfa7 (IronRDP#2344). The 0.9.0 fork's other deltas (6-byte Share Control Header, #4461 robustness fixes, licensing RSA modulus check) are all in 0.11.0",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4923",
-            "https://github.com/Devolutions/IronRDP/commit/c33861736a9bf6080ba4f840a772f4133700b1d5",
+            "https://github.com/armaxri/termiHub/issues/5117",
             "https://github.com/Devolutions/IronRDP/commit/5c4dcfa7b1160a64ec0578f71c947b3bce5982ef"
-          ]
+          ],
+          "upstream_status": "Fixed on upstream master (5c4dcfa7, 2026-11-01), unreleased; the fork retires on the next ironrdp-pdu release"
         }
       ],
       "watch": {
@@ -181,46 +154,29 @@
       "upstream_repo": "https://github.com/Devolutions/IronRDP",
       "upstream_branch": "master",
       "upstream_path": "crates/ironrdp-rdpdr",
-      "base_version": "0.7.0",
-      "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
-      "base_commit_note": "upstream tag ironrdp-rdpdr-v0.7.0",
+      "base_version": "0.9.0",
+      "base_commit": "b13befa0db86f48f523a0b2b007e399f9811e0ec",
+      "base_commit_note": "upstream tag ironrdp-rdpdr-v0.9.0 (re-based from 0.7.0 for #5117)",
       "reviewed_version": "0.9.0",
-      "reviewed_commit": "4cd9d45060df01c731f5d814537ecd86d425190d",
+      "reviewed_commit": "d5e70f02b670dbe79ad7ef47203bfa82d32c16f4",
       "deltas": [
         {
-          "summary": "Drive Device Announce carries the drive name (first 7 valid ASCII characters, DRIVE fallback) in PreferredDosName instead of the literal \"ignored\", so xrdp mounts drives under their names; port of the unreleased upstream PreferredDosName::for_drive from 161409e18dd1 (IronRDP#1566), keeping 0.7.0's UTF-8 DeviceData (see IronRDP#2075)",
-          "refs": [
-            "https://github.com/armaxri/termiHub/issues/4125",
-            "https://github.com/Devolutions/IronRDP/commit/161409e18dd185de9bb30730303e56f5e8d28941",
-            "https://github.com/Devolutions/IronRDP/issues/2075",
-            "https://github.com/Devolutions/IronRDP/issues/2075#issuecomment-6011424177"
-          ],
-          "upstream_status": "Fixed on upstream master (161409e), unreleased; xrdp data point and release request posted on IronRDP#2075 on 2026-10-06"
-        },
-        {
-          "summary": "Drive Device Announce DeviceData as null-terminated 8-bit characters with the characters Windows refuses (MS-RDPEFS 2.2.1.3), NUL and non-ASCII replaced by _, instead of raw UTF-8; port of unreleased upstream 4cd9d4506 (IronRDP#2342), which closed IronRDP#2075",
+          "summary": "Drive Device Announce DeviceData as null-terminated 8-bit characters with the characters Windows refuses (MS-RDPEFS 2.2.1.3), NUL and non-ASCII replaced by _, instead of 0.9.0's UTF-16LE, which Windows shows as the first letter only; port of unreleased upstream 4cd9d4506 (IronRDP#2342), which closed IronRDP#2075",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/armaxri/termiHub/issues/5117",
             "https://github.com/Devolutions/IronRDP/commit/4cd9d45060df01c731f5d814537ecd86d425190d",
             "https://github.com/Devolutions/IronRDP/issues/2075"
           ],
-          "upstream_status": "Fixed on upstream master (4cd9d4506, 2026-11-03), unreleased; with it master has both deltas, so the fork retires on the next ironrdp-rdpdr release"
+          "upstream_status": "Fixed on upstream master (4cd9d4506, 2026-11-03), unreleased"
         },
         {
-          "summary": "Drive I/O requests the crate does not implement (IRP_MJ_SET_VOLUME_INFORMATION, an unsupported information class in Set Information / Query Volume Information / Query Directory, an undescribed IRP_MJ_DIRECTORY_CONTROL minor function) are completed with STATUS_NOT_SUPPORTED (Length echoed) or STATUS_UNSUCCESSFUL instead of a decode error that ends the RDP session; port of upstream 0f9154d2 (IronRDP#2174) adapted to 0.7.0",
-          "refs": [
-            "https://github.com/armaxri/termiHub/issues/5118",
-            "https://github.com/Devolutions/IronRDP/commit/0f9154d2128f8c65f4d51f6b7eb7cb1d66a12329"
-          ],
-          "upstream_status": "Released upstream in ironrdp-rdpdr 0.9.0 (0f9154d2 predates the release); goes away with the IronRDP upgrade (#5117)"
-        },
-        {
-          "summary": "Device I/O requests with a MajorFunction 0.7.0 does not know are completed instead of a decode error that ends the RDP session: IRP_MJ_FLUSH_BUFFERS (0x09) reaches the backend (the sidecar fsyncs), IRP_MJ_QUERY_SECURITY / IRP_MJ_SET_SECURITY (0x14 / 0x15) are completed with STATUS_NOT_SUPPORTED in master's response layouts, any other MajorFunction with a header-only STATUS_UNSUCCESSFUL (MS-RDPEFS 3.1.5.2); the three MajorFunction variants, DeviceFlushBuffersRequest/Response and RdpdrPdu::DeviceFlushBuffersResponse are ported from upstream d1c63ecd7b (IronRDP#1590)",
+          "summary": "Device I/O Requests with a MajorFunction the crate does not know are completed with a header-only STATUS_UNSUCCESSFUL (MS-RDPEFS 3.1.5.2) for an announced, unrejected device, and ignored otherwise, instead of a decode error that ends the RDP session. The 0.7.0 fork's for_drive, unsupported-IRP (0f9154d2) and flush/security MajorFunction (d1c63ecd7b) deltas are in 0.9.0",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/5124",
-            "https://github.com/Devolutions/IronRDP/commit/d1c63ecd7bd13c9ae3d88f3ae84176f214f41f61"
+            "https://github.com/armaxri/termiHub/issues/5117"
           ],
-          "upstream_status": "Flush and security MajorFunctions released upstream in ironrdp-rdpdr 0.9.0 (d1c63ecd7b); upstream still fails to decode any other unknown MajorFunction (fork-only, not submitted); flush/security part goes away with the IronRDP upgrade (#5117)"
+          "upstream_status": "Fork-only: upstream master still fails to decode an unknown MajorFunction; not submitted. Re-check before retiring the fork (UPSTREAM.md)"
         }
       ],
       "watch": {

@@ -1,8 +1,9 @@
-//! Regression tests for the upstream IronRDP fixes ported into the vendored
-//! `ironrdp-pdu` fork (#4461, #4923). The vendored crate's own unit tests need
-//! dev-dependencies the excluded sidecar graph does not lock, so the ported
-//! behaviour is exercised here through the `ironrdp_pdu` re-export the sidecar
-//! actually links.
+//! Regression tests for the upstream IronRDP fixes the vendored `ironrdp-pdu`
+//! fork carried on 0.9.0 (#4461, #4923) and that are upstream since 0.11.0, plus
+//! the one delta the 0.11.0 fork still carries (licensing secrets withheld from
+//! `Debug`, #4923 / #5117). The vendored crate's own unit tests need
+//! dev-dependencies the excluded sidecar graph does not lock, so the behaviour
+//! is exercised here through the `ironrdp_pdu` crate the sidecar actually links.
 
 use ironrdp_core::{decode, encode_vec};
 use ironrdp_pdu::gcc::{

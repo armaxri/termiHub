@@ -1824,8 +1824,9 @@ mod tests {
     }
 
     /// xrdp names a redirected drive only from the announce's PreferredDosName;
-    /// the vendored ironrdp-rdpdr fork fills it with the (truncated) drive name
-    /// instead of upstream 0.7.0's literal "ignored".
+    /// ironrdp-rdpdr fills it with the (truncated) drive name since 0.9.0
+    /// (`PreferredDosName::for_drive`; 0.7.0 sent the literal "ignored" and the
+    /// vendored fork carried the fix, #4125).
     #[test]
     fn drive_announce_carries_the_drive_name_in_preferred_dos_name() {
         assert_eq!(&announced_dos_name("share"), b"share\0\0\0");
@@ -1929,9 +1930,9 @@ mod tests {
     }
 
     /// A Windows host changing the shared folder's volume label sends
-    /// IRP_MJ_SET_VOLUME_INFORMATION, which neither the vendored ironrdp-rdpdr fork nor
-    /// the drive backend implements. It used to be a decode error that ended the whole
-    /// session; now the sidecar's drive channel answers STATUS_NOT_SUPPORTED and the
+    /// IRP_MJ_SET_VOLUME_INFORMATION, which neither ironrdp-rdpdr nor the drive
+    /// backend implements. It used to be a decode error that ended the whole session
+    /// (#5118); now the sidecar's drive channel answers STATUS_NOT_SUPPORTED and the
     /// next request is still served by the real drive backend.
     #[test]
     fn unsupported_drive_irp_is_completed_and_the_channel_keeps_serving() {
@@ -1972,8 +1973,9 @@ mod tests {
     /// ACL on the shared folder sends IRP_MJ_FLUSH_BUFFERS / IRP_MJ_QUERY_SECURITY /
     /// IRP_MJ_SET_SECURITY, which ironrdp-rdpdr 0.7.0 did not know: the request failed
     /// to decode and ended the whole session (#5124). Now flush reaches the drive
-    /// backend, the security requests are answered STATUS_NOT_SUPPORTED, any other
-    /// MajorFunction STATUS_UNSUCCESSFUL, and the channel keeps serving.
+    /// backend, the drive backend answers the security requests STATUS_NOT_SUPPORTED,
+    /// and the vendored fork answers any other MajorFunction STATUS_UNSUCCESSFUL
+    /// (upstream 0.9.0 still fails to decode it), and the channel keeps serving.
     #[test]
     fn unknown_major_function_irp_is_completed_and_the_channel_keeps_serving() {
         use ironrdp_rdpdr::pdu::efs::NtStatus;
@@ -2450,8 +2452,9 @@ mod tests {
 
     #[test]
     fn short_deactivate_all_header_decodes_with_share_id_zero() {
-        // Upstream ironrdp-pdu 0.9.0 fails this with
-        // `NotEnoughBytes { received: 6, expected: 10 }` — the vendored fork's fix.
+        // ironrdp-pdu 0.9.0 failed this with
+        // `NotEnoughBytes { received: 6, expected: 10 }`; fixed upstream in 0.10.0
+        // (`d4b728a1d40b`), which the vendored 0.9.0 fork carried (#3611).
         let header: ShareControlHeader =
             ironrdp_core::decode(&XRDP_SHORT_DEACTIVATE_ALL).expect("xrdp's 6-byte PDU");
         assert!(matches!(
