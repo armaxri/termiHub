@@ -20,8 +20,9 @@
 //!   which follow from the first prompt's column (read from the output,
 //!   [`cursor_column`]), the line's length and the terminal's width.
 //!
-//! The rest of the line leaves no state behind: the erase runs in a `for /f`
-//! with no variable set, `(call )` puts `ERRORLEVEL` back to 0, and the only
+//! The rest of the line leaves no state behind: the erase is drawn by a child
+//! cmd.exe started with `/d` (no AutoRun), `(call )` puts `ERRORLEVEL` back
+//! to 0, and the only
 //! lasting change is the one intended — `PROMPT` gains the OSC 133 / OSC 7
 //! marks around the user's own prompt.
 
@@ -54,24 +55,24 @@ pub fn cmd_hook_line() -> String {
 
 /// The statement that erases the typed line's echo, `rows` rows of it.
 ///
-/// After Enter the cursor is at the start of the row below the echo. It moves
-/// up `rows` rows to the row the echo began on (the first prompt's row),
-/// erases from there down, and moves up one more: cmd.exe starts each prompt
-/// with a line break, so the next prompt lands where the first one was.
+/// cmd.exe has no escape for ESC on its command line, but its prompt has
+/// (`$E`). So a child cmd.exe draws the erase as its prompt: `/k` runs the
+/// `prompt` command and then shows the prompt — a line break, then the
+/// codes — and reads its input, which is `nul`, so it exits at once. Its
+/// prompt moves up over the line break and the echo's `rows` rows to the row
+/// the echo began on (the first prompt's row), erases from there down, and
+/// moves up one more: the session shell starts its next prompt with a line
+/// break, so that prompt lands where the first one was.
 ///
-/// cmd.exe has no escape for ESC on its command line, so a child cmd prints
-/// one: its prompt `#TH#<ESC>#` is printed when `echo on` echoes its `rem`,
-/// and `for /f` splits it at `#`. Any other line of the child's output (an
-/// AutoRun's, say) fails the `TH` check and prints nothing; `@` keeps the
-/// loop's own command from being echoed. `set /p` with no variable writes the
-/// text without a line break and sets nothing.
+/// The child leaves nothing behind (#5109): `/d` skips the user's AutoRun,
+/// it reads no console input (no history), it sets nothing in the session
+/// shell, and it is started by its full path, so no `cmd` on the `PATH` or in
+/// the current directory stands in for it. `(call )` puts `ERRORLEVEL` back
+/// to 0.
 pub fn cmd_erase_echo(rows: usize) -> String {
     format!(
-        concat!(
-            r#"for /f "tokens=1,2 delims=#" %a in ('"prompt #TH#$E#&echo on&for %b in (1) do rem"')"#,
-            r#" do @if "%a"=="TH" (<nul set /p "=%b[{rows}A%b[J%b[A")&(call )"#,
-        ),
-        rows = rows
+        r#""%SystemRoot%\System32\cmd.exe" /d /k prompt $E[{up}A$E[J$E[A<nul&(call )"#,
+        up = rows + 1
     )
 }
 
@@ -202,16 +203,20 @@ mod tests {
     #[test]
     fn the_erase_moves_up_the_echo_rows_and_one_more() {
         let e = cmd_erase_echo(3);
-        assert!(e.contains(r#"%b[3A%b[J%b[A"#), "{e}");
-        assert!(e.contains(r#"@if "%a"=="TH""#), "{e}");
+        // Up over the child's line break and the 3 echo rows, then one more.
+        assert!(e.contains("prompt $E[4A$E[J$E[A<nul"), "{e}");
+        // No AutoRun, no `cmd` lookup, no `for /f` (whose child runs AutoRun).
+        assert!(
+            e.starts_with(r#""%SystemRoot%\System32\cmd.exe" /d /k "#),
+            "{e}"
+        );
+        assert!(!e.contains("for /f"), "{e}");
         assert!(e.ends_with("&(call )"), "{e}");
-        // No variable is set: `set /p` has an empty name.
-        assert!(e.contains(r#"set /p "=%b"#), "{e}");
     }
 
     /// The row count in the line matches the line's own length.
     fn rows_in(line: &str) -> usize {
-        let at = line.find("%b[").expect("erase") + 3;
+        let at = line.find("prompt $E[").expect("erase") + 10;
         line[at..]
             .chars()
             .take_while(char::is_ascii_digit)
@@ -226,12 +231,12 @@ mod tests {
         let line = join_cmd_setup(&lines, 21, 80);
         let (body, tail) = line.split_once('\r').unwrap();
         assert_eq!(tail, CMD_CLEAR_HISTORY);
-        assert!(body.starts_with("set \"A=1\"&for /f "), "{body}");
+        assert!(body.starts_with("set \"A=1\"&\"%SystemRoot%"), "{body}");
         assert!(body.trim_end().ends_with(cmd_hook_statement()), "{body}");
         // The hook statement appears once, even when passed in.
         assert_eq!(body.matches("set \"PROMPT=").count(), 1, "{body}");
         let len = body.chars().count();
-        assert_eq!(rows_in(&line), (21 + len).div_ceil(80));
+        assert_eq!(rows_in(&line), (21 + len).div_ceil(80) + 1);
         assert_ne!((21 + len) % 80, 0);
     }
 
@@ -243,7 +248,11 @@ mod tests {
                 let body = line.split('\r').next().unwrap();
                 let len = body.chars().count();
                 let col = col.min(cols);
-                assert_eq!(rows_in(&line), (col + len).div_ceil(cols), "{cols} {col}");
+                assert_eq!(
+                    rows_in(&line),
+                    (col + len).div_ceil(cols) + 1,
+                    "{cols} {col}"
+                );
                 assert_ne!((col + len) % cols, 0, "{cols} {col}");
             }
         }

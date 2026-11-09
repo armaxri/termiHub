@@ -1680,9 +1680,12 @@ mod tests {
         let line = String::from_utf8(typed[0].clone()).unwrap();
         let (body, tail) = line.split_once('\r').unwrap();
         assert_eq!(tail, CMD_CLEAR_HISTORY);
-        assert!(body.starts_with("set \"V=x\"&for /f "), "{body}");
-        let rows = (20 + body.chars().count()).div_ceil(40);
-        assert!(body.contains(&format!("%b[{rows}A%b[J%b[A")), "{body}");
+        assert!(body.starts_with("set \"V=x\"&\"%SystemRoot%"), "{body}");
+        let up = (20 + body.chars().count()).div_ceil(40) + 1;
+        assert!(
+            body.contains(&format!("prompt $E[{up}A$E[J$E[A<nul")),
+            "{body}"
+        );
         // The user's input waits for the hook's prompt mark.
         assert!(gate.poll(t0 + SETUP_GATE_SETTLE).is_empty());
         gate.on_output(t0 + SETUP_GATE_SETTLE, b"\x1b]133;A\x1b\\C:\\>");
