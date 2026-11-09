@@ -459,10 +459,15 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
         );
     }
     if matches!(shell, RemoteShell::Fish { .. }) {
-        // #5016: fish gets its own syntax — never a parse error. (Its echo
-        // is not hidden: fish redraws typed input cell by cell.)
+        // #5016: fish gets its own syntax — never a parse error.
         for error in ["fish: ", "Unsupported use of", "Expected a command"] {
             assert!(!seen.contains(error), "fish reported {error:?}: {seen:?}");
+        }
+        // #5094: and the typed setup stays hidden although fish redraws its
+        // input cell by cell — in the terminal, in the window title (OSC 0)
+        // and in fish 4's own command mark (`OSC 133;C;cmdline_url=`).
+        for leak in ["set -gx", "TH_4147_VAR%20", "6973;", "__termihub"] {
+            assert!(!seen.contains(leak), "setup text {leak:?} shown: {seen:?}");
         }
     }
 

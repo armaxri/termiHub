@@ -486,23 +486,35 @@ impl SshConnector for RusshSshConnector {
         }
         // A POSIX host with integration types its setup as one line at the
         // first prompt and hides that line's echo (#5009) — not a POSIX
-        // shell on Windows, whose ConPTY must see every byte (#5015).
-        let hide_echo = remote_shell::hides_setup_echo(remote_shell, integration_typed);
+        // shell on Windows, whose ConPTY must see every byte (#5015). A fish
+        // host does so for any setup (#5094): its line carries the done mark.
+        let is_fish = matches!(remote_shell, RemoteShell::Fish { .. });
+        let hide_echo =
+            remote_shell::hides_setup_echo(remote_shell, integration_typed, !setup.is_empty());
         if hide_echo {
             let lines: Vec<String> = setup.drain(..).map(|(_, line)| line).collect();
-            setup.push(("session setup", remote_shell::join_posix_setup(&lines)));
+            let joined = if is_fish {
+                remote_shell::join_fish_setup(&lines)
+            } else {
+                remote_shell::join_posix_setup(&lines)
+            };
+            setup.push(("session setup", joined));
         }
         let hidden_setup: Option<Vec<u8>> = hide_echo
             .then(|| setup.first().map(|(_, line)| line.clone().into_bytes()))
             .flatten();
         let mut echo_filter = SetupEchoFilter::new();
         echo_filter.set_width(config.cols);
+        // fish redraws its input cell by cell (#5094).
+        echo_filter.set_cell_redraw(is_fish);
         // A cmd.exe host is held only when it has something to set up (#4610).
         let mut gate = SetupGate::new(
             remote_shell::defers_setup_until_prompt(remote_shell, !setup.is_empty()) || hide_echo,
             setup_done,
             shell_requested_at,
         );
+        // fish 4 waits for the terminal's answer to its queries (#5094).
+        gate.pass_terminal_replies(is_fish);
         for (what, line) in setup {
             if let Some(data) = gate.setup(line.into_bytes()) {
                 remote_shell::setup_trace(shell_requested_at, "send (ungated setup)", &data);
