@@ -71,6 +71,19 @@ jobs:
         id: detect
         uses: ./.github/actions/detect-changes
 
+      # Security-claim trigger (MKT2-001, #4924): when a plugin ADR in
+      # docs/architecture.md or a SECURITY.md plugin section changes without a
+      # README.md change, annotate the PR so the author re-reads README.md's
+      # plugin trust warning. Advisory only: the script always exits 0, and
+      # continue-on-error keeps a surprise from failing this job (whose outputs
+      # gate every other job).
+      - name: Prompt a README review on plugin security changes (advisory)
+        if: github.event_name == 'pull_request'
+        # advisory: a prompt for a human review, not a defect; forcing function is
+        # the PR annotation itself (#4924).
+        continue-on-error: true
+        run: node scripts/internal/check-security-claim-trigger.mjs
+
   # Rust Backend Quality Checks
   rust-quality:
     name: Rust Code Quality
@@ -468,6 +481,18 @@ jobs:
 
       - name: Check formatting with Prettier
         run: pnpm run format:check
+
+      # Docs consistency (#4924): every concept is linked from
+      # docs/concepts/README.md (MKT2-008); README.md's Activity Bar views, SSH
+      # auth methods and default-shortcut table match the code (MKT2-002/-004/
+      # -005); every docs/marketing draft carries one "Last verified" stamp
+      # (MKT2-003). Their vitest suites run the same checks, but this job also
+      # runs on docs-only PRs, where the test lane skips.
+      - name: Check docs consistency (concept index, README parity, marketing stamps)
+        run: |
+          node scripts/internal/check-concept-index.mjs
+          node scripts/internal/check-readme-parity.mjs
+          node scripts/internal/check-marketing-drafts.mjs
 
       - name: Lint Markdown
         run: pnpm run markdownlint

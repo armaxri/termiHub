@@ -641,7 +641,8 @@ impl ConnectionType for Ssh {
                                 "host which login shell it runs, then types a small hook into it ",
                                 "once the prompt is up and keeps it off the screen, but the hook ",
                                 "stays in the shell: it is in the shell's history, its functions ",
-                                "show up in `set`, and PROMPT_COMMAND / precmd and PS1 are extended. ",
+                                "show up in `set`, and PROMPT_COMMAND / precmd and PS1 are extended ",
+                                "(bash also gets `shopt -s checkwinsize`). ",
                                 "On a Windows PowerShell host the hook's echo cannot be filtered ",
                                 "out, so the screen is cleared once after it, which also clears ",
                                 "the login banner.\n\n",
@@ -2625,6 +2626,30 @@ mod tests {
         let (writes, _) = writes_for_shell(remote_shell::RemoteShell::UnixPowerShell).await;
         let (windows, _) = writes_for_shell(remote_shell::RemoteShell::PowerShell).await;
         assert_eq!(writes, windows);
+    }
+
+    #[tokio::test]
+    async fn fish_host_never_gets_the_bash_setup() {
+        // #5016: a fish login shell was typed the bash hook — a parse error
+        // at session start. fish 3.x gets its own hook; fish 4.0+ emits OSC 7
+        // and OSC 133 itself and gets nothing.
+        let (writes, _) = writes_for_shell(remote_shell::RemoteShell::Fish {
+            native_integration: false,
+        })
+        .await;
+        assert_eq!(
+            writes,
+            vec![format!("{}\n", crate::session::shell::fish_typed_setup_command()).into_bytes()]
+        );
+        let line = String::from_utf8(writes[0].clone()).unwrap();
+        assert!(!line.contains("PROMPT_COMMAND"), "bash setup on fish");
+
+        let (writes, detected) = writes_for_shell(remote_shell::RemoteShell::Fish {
+            native_integration: true,
+        })
+        .await;
+        assert_eq!(detected, Some(true));
+        assert!(writes.is_empty(), "fish 4 must get nothing: {writes:?}");
     }
 
     #[tokio::test]

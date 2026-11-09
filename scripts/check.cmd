@@ -96,6 +96,24 @@ node scripts\internal\check-doc-symbols.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === Concept index ===
+REM Every concept HTML under docs\concepts is linked from docs\concepts\README.md (#4924).
+node scripts\internal\check-concept-index.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
+echo === README / app parity ===
+REM README.md's Activity Bar views, SSH auth methods and shortcut table match the code (#4924).
+node scripts\internal\check-readme-parity.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
+echo === Marketing draft stamps ===
+REM Every docs\marketing draft carries one "Last verified" stamp (#4924).
+node scripts\internal\check-marketing-drafts.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === ADR-14 projection region list ===
 REM Every registered projection region is named in ADR-14's status paragraph (#4586).
 node scripts\internal\check-adr14-regions.mjs
