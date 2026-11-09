@@ -9,6 +9,16 @@ be retired (termiHub #4125).
   is not opened (only needed if #2075 is closed or the comment gets no answer); no backport pull
   request yet (only if maintainers ask for one).
 
+- **Update 2026-11-09 (#4923): fixed upstream, unreleased.** IronRDP#2075 was closed by
+  [`4cd9d4506`](https://github.com/Devolutions/IronRDP/commit/4cd9d45060df01c731f5d814537ecd86d425190d)
+  ("fix(rdpdr): announce drive names as 8-bit characters", IronRDP#2342, 2026-11-03): master
+  now has `for_drive` for `PreferredDosName` **and** an 8-bit `DeviceData` that Windows
+  accepts. Neither is in a release yet (`ironrdp-rdpdr` 0.9.0, 2026-10-27, predates
+  `4cd9d4506`). The fork took the `DeviceData` encoding as its change 2, so it now matches
+  master for drive announces. Nothing is left to submit: retire the fork when the next
+  `ironrdp-rdpdr` release is adopted (that is part of the IronRDP upgrade, not a 0.7.x
+  backport). The text below is kept for the record.
+
 - **Base:** upstream `ironrdp-rdpdr` `0.7.0`, tag `ironrdp-rdpdr-v0.7.0`, commit
   `11a0810cfbbabd8b8023875a05e3041216d4b01b`.
 - **Upstream state (checked 2026-10-06, master `38b074e4befe`):** the bug is already fixed on

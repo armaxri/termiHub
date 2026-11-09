@@ -49,5 +49,14 @@ The delta is small and upstream-compatible; upstreaming it would let the fork be
 retired. The ready-to-submit patch, pull-request text and retirement steps are in
 [`UPSTREAM.md`](UPSTREAM.md) (#3704).
 
+Upstream was reviewed again up to `0.2.39` (commit
+[`ae370aad`](https://github.com/de-vri-es/serial2-rs/commit/ae370aada44d925f32050df91b511f12c033ea6b),
+2026-11-09, #4923): it adds a consuming `SerialPort::close()` that reports the OS close
+error (`586a3ffe`, `c0c218a0`; termiHub drops its ports and never needs the error) and
+makes `set_break` report `Unsupported` on Emscripten (`b9bc9029`; not a termiHub target),
+plus CI, test and release commits. Nothing affects termiHub and none touches the
+`IOSSIOSPEED` path, so nothing was ported and the base stays `0.2.38`; the fallback is
+still not upstream.
+
 Everything else is upstream `0.2.38`, under the original BSD-2-Clause /
 Apache-2.0 licenses (`LICENSE-BSD`, `LICENSE-APACHE`).

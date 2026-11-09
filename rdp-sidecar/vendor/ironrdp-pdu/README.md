@@ -88,10 +88,39 @@ and toolchain commits. The fork's unit tests run in an upstream 0.9.0 workspace
 (the crate's dev-dependencies are not in the sidecar lockfile); the sidecar's
 `src/pdu_fork_tests.rs` covers the ported behaviour through `ironrdp::pdu`.
 
+### Change 3: licensing hardening ported from upstream after 0.9.0 ([#4923])
+
+Reviewed upstream `crates/ironrdp-pdu` again up to IronRDP
+[`5c4dcfa7`](https://github.com/Devolutions/IronRDP/commit/5c4dcfa7b1160a64ec0578f71c947b3bce5982ef)
+(2026-11-09), covering the 0.10.0 and 0.11.0 releases. Ported, because the sidecar's
+client runs the license exchange against whatever server it connects to:
+
+- **Licensing RSA moduli below 512 bits are refused** (`c3386173`, IronRDP#2225):
+  `encrypt_with_public_key` returns `InvalidData` instead of letting `modpow` panic on a
+  hostile server's all-zero modulus (`src/crypto/rsa.rs`).
+- **Licensing secrets are withheld from `Debug`** (`5c4dcfa7`, IronRDP#2344): the
+  premaster secret, MAC salt and license keys, client/server randoms, encrypted HWID,
+  platform challenge and response, the license blob, the client's user and machine names
+  and the certificate material print as `<N bytes withheld>`
+  (`src/rdp/server_license/`), so a debug/trace sidecar log can be shared.
+
+Tests: `licensing_rejects_moduli_below_512_bits` and
+`licensing_secrets_are_withheld_from_debug` in the sidecar's `src/pdu_fork_tests.rs`.
+
+Not ported: `b69cda22` / `7fc80c4d` (`read_padding!` bounds; the pdu sites are the
+server-side Conference Create Request and Client Core Data decoders), `43d75cd4`
+(Progressive DWT variant; only reached through `ironrdp-egfx`, not in the sidecar graph),
+`98413f16` (ActiveX; its NTSTATUS logon-error decode only fires once logon has already
+failed and needs a breaking enum change that the registry `ironrdp-session` consumes),
+`f5ec9435` / `2bc793ef` (RemoteApp window orders; 0.9.0 has no window-order decoder),
+`485657a6` (server redirection) and `c790e6d4` (Entra AAD), which are features, and the
+release commits (`e899a826`, `b13befa0`). The 0.11 upgrade is tracked as a follow-up.
+
 Everything else is byte-for-byte upstream 0.9.0.
 
 [#3611]: https://github.com/armaxri/termiHub/issues/3611
 [#4461]: https://github.com/armaxri/termiHub/issues/4461
+[#4923]: https://github.com/armaxri/termiHub/issues/4923
 
 ---
 

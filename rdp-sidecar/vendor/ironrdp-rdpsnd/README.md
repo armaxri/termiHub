@@ -96,8 +96,22 @@ Reviewed again up to IronRDP
 the channel negotiates) and `966a842f` (server-side logging), touch only
 `server.rs`, which the sidecar does not use, so nothing was ported.
 
+Reviewed again up to IronRDP
+[`f86e3c49`](https://github.com/Devolutions/IronRDP/commit/f86e3c49f349127b7e7f3c737ca10de49cc20f8d)
+(2026-11-09, [#4923]):
+
+- **Training Confirm echoes the server's wPackSize** (upstream `f86e3c49`,
+  IronRDP#2294): the confirm carried the Training data length, 8 bytes short of
+  the whole PDU size that MS-RDPEA 2.2.3.2 requires, and GNOME Remote Desktop
+  rejects it and sends no audio. `TrainingPdu::pack_size()` now computes the value
+  for both the encoder and `training_confirm`; regression test
+  `training_confirm_echoes_the_servers_pack_size`.
+- Not ported: `45b67591` (compressed audio over AUDIO_PLAYBACK_DVC — codecs, DVC
+  processor, jitter buffer; a breaking 0.10 feature) and the two release commits
+  (`e899a826`, `b13befa0`). The 0.11 upgrade is tracked as a follow-up.
+
 `lib.rs` is byte-for-byte upstream 0.9.0; `pdu/mod.rs` and `server.rs` differ
-only by the #3510 Wave split. The intended
+only by the #3510 Wave split (and `pdu/mod.rs` by the #4923 `pack_size` port). The intended
 upstream contribution is changes 1 and 2. Sibling `ironrdp-*` deps
 remain registry versions so nothing else forks.
 
@@ -106,5 +120,6 @@ remain registry versions so nothing else forks.
 [#3499]: https://github.com/armaxri/termiHub/issues/3499
 [#4461]: https://github.com/armaxri/termiHub/issues/4461
 [#3510]: https://github.com/armaxri/termiHub/issues/3510
+[#4923]: https://github.com/armaxri/termiHub/issues/4923
 [IronRDP]: https://github.com/Devolutions/IronRDP
 [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b

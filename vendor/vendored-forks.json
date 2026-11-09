@@ -28,7 +28,7 @@
       "base_commit": "f8ac0ee4915e8e1e1adb8880a0716761b91281f6",
       "base_commit_note": "upstream publishes no git tags; this is the commit that bumped Cargo.toml to 0.5.3",
       "reviewed_version": "0.6.0",
-      "reviewed_commit": "99ed1a28553c7594212adf30b9517d57fe46558d",
+      "reviewed_commit": "45f6d3688ec77ec7f4976dc313ce28ed82a375a5",
       "deltas": [
         {
           "summary": "VeNCrypt 0.2 (RFB security type 19) negotiation over rustls behind the vencrypt feature",
@@ -97,8 +97,8 @@
       "base_version": "0.9.0",
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.9.0",
-      "reviewed_version": "0.9.0",
-      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
+      "reviewed_version": "0.11.0",
+      "reviewed_commit": "f86e3c49f349127b7e7f3c737ca10de49cc20f8d",
       "deltas": [
         {
           "summary": "RdpsndClientHandler::wave receives the concrete negotiated AudioFormat instead of an index",
@@ -118,6 +118,13 @@
         {
           "summary": "Pre-v8 SNDC_WAVE playback ported from upstream 2d9a9bf1: WaveInfo + bare Wave reassembled via an ExpectingWave state and confirmed (short payload / bad wFormatNo confirmed unplayed); WavePdu is WaveInfo-only plus a new WaveDataPdu",
           "refs": ["https://github.com/armaxri/termiHub/issues/3510"]
+        },
+        {
+          "summary": "Training Confirm echoes the server's wPackSize (whole PDU size) instead of the data length, so GNOME Remote Desktop sends audio; port of unreleased upstream f86e3c49 (IronRDP#2294)",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/Devolutions/IronRDP/commit/f86e3c49f349127b7e7f3c737ca10de49cc20f8d"
+          ]
         }
       ],
       "watch": {
@@ -137,8 +144,8 @@
       "base_version": "0.9.0",
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-pdu-v0.9.0",
-      "reviewed_version": "0.9.0",
-      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
+      "reviewed_version": "0.11.0",
+      "reviewed_commit": "5c4dcfa7b1160a64ec0578f71c947b3bce5982ef",
       "deltas": [
         {
           "summary": "Accept the 6-byte Share Control Header (shareId optional) so xrdp's header-only Deactivate All PDU no longer ends the session; port of unreleased upstream d4b728a1d40b (IronRDP#1719)",
@@ -150,6 +157,14 @@
         {
           "summary": "Upstream robustness fixes ported after 0.9.0 (reviewed up to 62246b36): undersized TPKT/Fast-Path frame lengths refused (33506e61), zero-length empty Update/Pointer PDUs and VRDP's under-declared Server Font Map accepted while other under-declared Data PDUs stay refused (33506e61, 9b04c90c, e496b7b8), unknown server GCC user-data blocks skipped (629a8024), unknown multitransport flag and echoed protocol bits retained (e8a75797, 9af99317), ERRINFO_SERVER_SHUTDOWN/REBOOT decoded (d2bb7376), auto-reconnect random redacted from Debug (d0948faa)",
           "refs": ["https://github.com/armaxri/termiHub/issues/4461"]
+        },
+        {
+          "summary": "Licensing hardening ported after 0.11.0 (reviewed up to 5c4dcfa7): RSA moduli below 512 bits refused instead of a modpow panic on a hostile server's zero modulus (c3386173, IronRDP#2225); licensing secrets, client user/machine names and certificate material withheld from Debug (5c4dcfa7, IronRDP#2344)",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/Devolutions/IronRDP/commit/c33861736a9bf6080ba4f840a772f4133700b1d5",
+            "https://github.com/Devolutions/IronRDP/commit/5c4dcfa7b1160a64ec0578f71c947b3bce5982ef"
+          ]
         }
       ],
       "watch": {
@@ -169,8 +184,8 @@
       "base_version": "0.7.0",
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-rdpdr-v0.7.0",
-      "reviewed_version": "0.7.0",
-      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
+      "reviewed_version": "0.9.0",
+      "reviewed_commit": "4cd9d45060df01c731f5d814537ecd86d425190d",
       "deltas": [
         {
           "summary": "Drive Device Announce carries the drive name (first 7 valid ASCII characters, DRIVE fallback) in PreferredDosName instead of the literal \"ignored\", so xrdp mounts drives under their names; port of the unreleased upstream PreferredDosName::for_drive from 161409e18dd1 (IronRDP#1566), keeping 0.7.0's UTF-8 DeviceData (see IronRDP#2075)",
@@ -181,6 +196,15 @@
             "https://github.com/Devolutions/IronRDP/issues/2075#issuecomment-6011424177"
           ],
           "upstream_status": "Fixed on upstream master (161409e), unreleased; xrdp data point and release request posted on IronRDP#2075 on 2026-10-06"
+        },
+        {
+          "summary": "Drive Device Announce DeviceData as null-terminated 8-bit characters with the characters Windows refuses (MS-RDPEFS 2.2.1.3), NUL and non-ASCII replaced by _, instead of raw UTF-8; port of unreleased upstream 4cd9d4506 (IronRDP#2342), which closed IronRDP#2075",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/Devolutions/IronRDP/commit/4cd9d45060df01c731f5d814537ecd86d425190d",
+            "https://github.com/Devolutions/IronRDP/issues/2075"
+          ],
+          "upstream_status": "Fixed on upstream master (4cd9d4506, 2026-11-03), unreleased; with it master has both deltas, so the fork retires on the next ironrdp-rdpdr release"
         }
       ],
       "watch": {
@@ -200,8 +224,8 @@
       "base_version": "0.2.38",
       "base_commit": "448a20ece5e6e37236d247ed957042420672029b",
       "base_commit_note": "upstream tag v0.2.38",
-      "reviewed_version": "0.2.38",
-      "reviewed_commit": "448a20ece5e6e37236d247ed957042420672029b",
+      "reviewed_version": "0.2.39",
+      "reviewed_commit": "ae370aada44d925f32050df91b511f12c033ea6b",
       "deltas": [
         {
           "summary": "macOS/iOS: fall back to a termios speed when the IOSSIOSPEED ioctl is rejected (ENOTTY/ENOTSUP/EOPNOTSUPP) for a standard rate, so pseudo-terminals and drivers without custom-speed support can be opened",
@@ -219,18 +243,18 @@
       "crate": "libunftp",
       "consumed_by": "Cargo.toml [patch.crates-io] (excluded from the workspace)",
       "parses": "PROXY protocol v1 headers and FTP control/data traffic on the embedded FTP server's per-session loopback listeners (relay-opened connections only, #4100)",
-      "upstream_repo": "https://github.com/bolcom/libunftp",
+      "upstream_repo": "https://github.com/Cloudinvoke/libunftp",
       "upstream_branch": "master",
       "upstream_path": "",
       "base_version": "0.23.1",
       "base_commit": "8d3f28c20c53acdd3c9a939957e4727e18e18af0",
       "base_commit_note": "upstream tag libunftp-0.23.1 (also the tip of master on 2026-10-06)",
-      "reviewed_version": "0.23.1",
-      "reviewed_commit": "8d3f28c20c53acdd3c9a939957e4727e18e18af0",
+      "reviewed_version": "0.24.0",
+      "reviewed_commit": "e9230bf129ab16290e858782711d035c9c1e13bb",
       "deltas": [
         {
           "summary": "read_proxy_header returns UnexpectedEof when peek yields Ok(0), instead of spinning forever (one CPU core per connection) on a connection closed before its PROXY header",
-          "upstream_status": "Submitted 2026-10-06: reported as libunftp#580, fix proposed in libunftp#582 (open)",
+          "upstream_status": "Merged upstream as 24e7e10a (libunftp#582) and released in libunftp 0.24.0; dropped when the fork re-bases on 0.24",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4099",
             "https://github.com/bolcom/libunftp/issues/580",
@@ -239,10 +263,18 @@
         },
         {
           "summary": "Server::listen_with_listener (serve on a caller-bound TcpListener, all listener modes) and ServerBuilder::proxy_protocol_peer_filter (PROXY-mode accept filter on the peer address, applied before the header is read), so termiHub's relay is the only process its loopback listener serves",
-          "upstream_status": "Proposed 2026-10-06 as libunftp#581; the pull request (patch in vendor/libunftp/UPSTREAM.md) waits for maintainer feedback on the direction",
+          "upstream_status": "Proposed 2026-10-06 as libunftp#581 (still open 2026-11-09); the pull request (patch in vendor/libunftp/UPSTREAM.md) waits for maintainer feedback on the direction",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4100",
             "https://github.com/bolcom/libunftp/issues/581"
+          ]
+        },
+        {
+          "summary": "LIST keeps the whole pathname after the leading options (spaces and other whitespace included, RFC 3659 2.2) instead of cutting it at the first space; port of upstream 7142d6c4 (#530) and 60ede984, released in 0.24.0",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/Cloudinvoke/libunftp/commit/7142d6c4bae4c7d762977c209b5ffa00f0823d71",
+            "https://github.com/Cloudinvoke/libunftp/commit/60ede9849e7d9382dbdb2e86ff12b001b7f0c640"
           ]
         }
       ],

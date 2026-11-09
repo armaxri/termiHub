@@ -128,6 +128,16 @@ parsers), version/author/CI bumps and merge commits. Regression tests are in
 `src/client/upstream_060_tests.rs`, `hostile_server_tests.rs`,
 `connection.rs`, `config.rs` and `codec/mod.rs`.
 
+Reviewed again up to
+[`45f6d36`](https://github.com/HsuJv/vnc-rs/commit/45f6d3688ec77ec7f4976dc313ce28ed82a375a5)
+(2026-11-09, #4923; no release after 0.6.0). The one fix, `bfd802b` ("accept server
+layout announcements before pixels"), repairs upstream's own unreleased
+ExtendedDesktopSize batching, which rejected a server layout followed by pixels in the
+same update (wayvnc does this). The fork's own ExtendedDesktopSize handling (#3463)
+applies each layout in wire order before the next rectangle is checked, so the bug never
+existed here: `an_accepted_layout_resizes_the_framebuffer_for_later_rects`
+(`desktop_size_tests.rs`) covers that order. Nothing was ported.
+
 ## Spec-conformant TRLE decoder (#3478)
 
 Upstream decoded TRLE (encoding 15) as ZRLE without the zlib layer: it read a
