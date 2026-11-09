@@ -478,3 +478,58 @@ fn strip_non_marks_keeps_only_osc_133() {
         "\r\x1b]133;C\x071\r\n\x1b]133;D;0\x07"
     );
 }
+
+/// A resize that arrives while a command runs must be picked up at the next
+/// prompt (#5035). readline only catches `SIGWINCH` while it reads a line, and
+/// bash 3.2 (macOS's `/bin/bash`) re-reads the size after a command only with
+/// `checkwinsize`, which bash 5 turns on by default and the hook turns on for
+/// bash 3. Without it, readline keeps the old width and a long command line
+/// wraps at the wrong column.
+async fn assert_resize_during_command_reaches_next_prompt(shell_name: &str) {
+    if !installed(shell_name) {
+        eprintln!("{shell_name} not installed — skipping");
+        return;
+    }
+    let mut session = Session::start(shell_name).await;
+    session.wait_for_input_start().await;
+    let start = session.output.len();
+    // The marker comes from the child `sh`, so it is out only once bash has
+    // handed the terminal to the command's process group. A resize before
+    // that reaches bash itself, which then sees it even without
+    // `checkwinsize`.
+    session
+        .shell
+        .write(b"sh -c 'echo TH_RUN_$((40+2)); sleep 1'\r")
+        .expect("write failed");
+    session
+        .read_until("the running command", |out| {
+            out[start..].contains("TH_RUN_42")
+        })
+        .await;
+    session.shell.resize(85, 24).expect("resize failed");
+    let a = mark("A");
+    session
+        .read_until("the prompt after the command", |out| {
+            out[start..].contains(&a)
+        })
+        .await;
+    let cols = session.run(r#"echo "TH_COLS=[$COLUMNS]""#).await;
+    assert!(
+        cols.contains("TH_COLS=[85]"),
+        "{shell_name}: the resize during the command must reach the next prompt: {cols:?}"
+    );
+    session.close().await;
+}
+
+/// `/bin/bash` is bash 3.2 on macOS — the shell #5035 is about.
+#[tokio::test]
+#[serial(local_pty)]
+async fn system_bash_sees_a_resize_made_during_a_command() {
+    assert_resize_during_command_reaches_next_prompt("/bin/bash").await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn bash_sees_a_resize_made_during_a_command() {
+    assert_resize_during_command_reaches_next_prompt("bash").await;
+}

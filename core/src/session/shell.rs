@@ -624,6 +624,15 @@ pub fn detect_available_shells() -> Vec<String> {
 /// `$_`, which it would otherwise clobber (`mkdir d && cd $_`). A bash that
 /// already has a `DEBUG` trap (bash-preexec) keeps it and gets `B` instead.
 ///
+/// # Window size (#5035)
+///
+/// bash also gets `shopt -s checkwinsize`, so it re-reads the terminal size
+/// after every command. readline only catches `SIGWINCH` while it reads a
+/// line, so without it bash 3.2 keeps a size that changed while a command ran
+/// and wraps the next long line at the old width. bash 5 has it on by default,
+/// and macOS's `/etc/bashrc` turns it on for login shells; it is set once,
+/// inside the registration guard, and prints nothing.
+///
 /// # Length
 ///
 /// The snippet is typed, and readline clears the screen once a line plus its
@@ -666,13 +675,13 @@ macro_rules! osc7_bash_prompt_hook {
             r#"__termihub_osc7(){ local __th_s=$?;"#,
             r#"printf '\e]133;D;%s\a\e]7;file://%s\a\e]133;A\a' "$__th_s" "$PWD";"#,
             r#"return $__th_s;};"#,
-            r#"__termihub_osc133_c(){ printf '\e]133;C\a'; };"#,
+            r#"__termihub_c(){ printf '\e]133;C\a'; };"#,
             r#"if [ -z "$__termihub_si" ]; then __termihub_si=1;"#,
             r#"if [ -n "$ZSH_VERSION" ]; then "#,
             r#"precmd_functions=(__termihub_osc7 $precmd_functions);"#,
-            r#"preexec_functions+=(__termihub_osc133_c);"#,
+            r#"preexec_functions+=(__termihub_c);"#,
             r#"PS1="$PS1"$'%{\e]133;B\a%}';"#,
-            r#"else "#,
+            r#"else shopt -s checkwinsize 2>/dev/null;"#,
             r#"case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "#,
             r#""declare -a"*) PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}");;"#,
             r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";;"#,
@@ -680,9 +689,9 @@ macro_rules! osc7_bash_prompt_hook {
             r#"if ((BASH_VERSINFO<4))&&[ -z "$(trap -p DEBUG)" ];then "#,
             r#"PS1+='${__th_e[__th_c=1]}';"#,
             r#"trap '__th_u=$_;case $__th_c$BASH_COMMAND in 1__termihub_osc7);;"#,
-            r#"1*)__termihub_osc133_c;esac;__th_c=;: "$__th_u"' DEBUG;else "#,
-            r#"PS0="$PS0"'\e]133;C\a';"#,
-            r#"PS1="$PS1"'\[\e]133;B\a\]';"#,
+            r#"1*)__termihub_c;esac;__th_c=;: "$__th_u"' DEBUG;else "#,
+            r#"PS0+='\e]133;C\a';"#,
+            r#"PS1+='\[\e]133;B\a\]';"#,
             r#"fi;"#,
             r#"fi;"#,
             r#"fi"#,
@@ -2084,17 +2093,17 @@ mod tests {
             let setup = osc7_setup_command(shell).expect("expected Some");
             // bash: C via PS0, B appended to PS1 inside \[ \] (zero-width).
             assert!(
-                setup.contains(r#"PS0="$PS0"'\e]133;C\a'"#),
+                setup.contains(r#"PS0+='\e]133;C\a'"#),
                 "{shell}: bash must emit C via PS0: {setup}"
             );
             assert!(
-                setup.contains(r#"PS1="$PS1"'\[\e]133;B\a\]'"#),
+                setup.contains(r#"PS1+='\[\e]133;B\a\]'"#),
                 "{shell}: bash must append a zero-width B mark to PS1: {setup}"
             );
             // zsh: C via preexec, B appended to PS1 inside %{ %} (zero-width).
             assert!(
-                setup.contains("__termihub_osc133_c(){ printf '\\e]133;C\\a'; }")
-                    && setup.contains("preexec_functions+=(__termihub_osc133_c)"),
+                setup.contains("__termihub_c(){ printf '\\e]133;C\\a'; }")
+                    && setup.contains("preexec_functions+=(__termihub_c)"),
                 "{shell}: zsh must emit C from a preexec hook: {setup}"
             );
             assert!(
@@ -2117,7 +2126,7 @@ mod tests {
             let bash3 = &setup[branch..setup[branch..].find(";else ").unwrap() + branch];
             assert!(
                 bash3.contains("PS1+='${__th_e[__th_c=1]}'")
-                    && bash3.contains("1__termihub_osc7);;1*)__termihub_osc133_c;")
+                    && bash3.contains("1__termihub_osc7);;1*)__termihub_c;")
                     && bash3.contains(r#"__th_u=$_;"#)
                     && bash3.contains(r#": "$__th_u"' DEBUG"#),
                 "{shell}: bash 3 must emit C from an armed DEBUG trap: {bash3}"
@@ -2127,10 +2136,27 @@ mod tests {
                 "{shell}: bash 3 must not get B: {bash3}"
             );
             assert!(
-                setup[branch..].contains(r#"PS1="$PS1"'\[\e]133;B\a\]'"#),
+                setup[branch..].contains(r#"PS1+='\[\e]133;B\a\]'"#),
                 "{shell}: bash >= 4 keeps B: {setup}"
             );
         }
+    }
+
+    /// bash re-reads the terminal size after every command (#5035): bash 3.2
+    /// keeps a size that changed while a command ran otherwise. `shopt` is
+    /// bash-only, so it sits in the bash branch, never in zsh's.
+    #[test]
+    fn bash_hook_turns_on_checkwinsize_in_the_bash_branch_only() {
+        for shell in ["bash", "ssh", "wsl:Ubuntu"] {
+            let setup = osc7_setup_command(shell).expect("a setup");
+            let else_pos = setup.find("else").expect("an else branch");
+            let shopt = setup
+                .find("shopt -s checkwinsize 2>/dev/null;")
+                .unwrap_or_else(|| panic!("{shell}: no checkwinsize: {setup}"));
+            assert!(shopt > else_pos, "{shell}: shopt is for bash only: {setup}");
+            assert_eq!(setup.matches("shopt").count(), 1, "{shell}: {setup}");
+        }
+        assert!(bash_env_setup_script().contains("shopt -s checkwinsize"));
     }
 
     /// The typed setup must fit a small pane with a long prompt: readline
@@ -2158,8 +2184,10 @@ mod tests {
                 "precmd_functions=",
                 "preexec_functions+=",
                 "PROMPT_COMMAND=",
-                "PS0=",
+                "PS0+=",
                 "PS1=",
+                "PS1+=",
+                "shopt -s checkwinsize",
             ] {
                 let pos = setup
                     .find(registration)

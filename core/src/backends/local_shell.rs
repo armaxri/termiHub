@@ -526,7 +526,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             "bash or zsh once the prompt is up and keeps it off the screen, but ",
                             "the hook stays in the shell: it is in the shell's history, its ",
                             "functions show up in `set`, and PROMPT_COMMAND / precmd and PS1 are ",
-                            "extended. fish, cmd and PowerShell get it as a startup option ",
+                            "extended (bash also gets `shopt -s checkwinsize`). fish, cmd and PowerShell get it as a startup option ",
                             "instead, and Git Bash on Windows through its environment (typed ",
                             "only if your profile replaces PROMPT_COMMAND), so nothing is typed.\n\n",
                             "PowerShell: the file browser follows PowerShell's current directory ",
