@@ -35,6 +35,33 @@ describe("classifyWindowCloseSessions (#1903)", () => {
     expect(rows.find((r) => r.tabId === "t2")?.outcome).toBe("terminate");
   });
 
+  it("lists a tab whose connection is still starting as a starting terminate row (#5112)", () => {
+    const rows = classifyWindowCloseSessions(
+      [tab({ id: "t1", sessionId: null, title: "db-1", connectionType: "ssh" })],
+      new Set(["t1"])
+    );
+    expect(rows).toEqual([
+      {
+        tabId: "t1",
+        sessionId: null,
+        title: "db-1",
+        connectionType: "ssh",
+        contentType: "terminal",
+        starting: true,
+        outcome: "terminate",
+      },
+    ]);
+    expect(windowCloseWouldLoseData(rows)).toBe(true);
+  });
+
+  it("still ignores a tab with no session that is not starting (#5112)", () => {
+    const rows = classifyWindowCloseSessions(
+      [tab({ id: "t1", sessionId: null }), tab({ id: "t2", sessionId: null })],
+      new Set(["t2"])
+    );
+    expect(rows.map((r) => r.tabId)).toEqual(["t2"]);
+  });
+
   it("carries display fields (title, connection type, content type) for each row", () => {
     const [row] = classifyWindowCloseSessions([
       tab({ id: "t1", sessionId: "s1", title: "server-1", connectionType: "ssh" }),

@@ -1980,9 +1980,18 @@ mod tests {
     #[test]
     fn late_session_is_closed_only_after_its_window_or_the_app_is_gone() {
         assert_eq!(late_session_reason(true, false), None);
-        assert_eq!(late_session_reason(false, false), Some("its window was closed"));
-        assert_eq!(late_session_reason(true, true), Some("termiHub is quitting"));
-        assert_eq!(late_session_reason(false, true), Some("termiHub is quitting"));
+        assert_eq!(
+            late_session_reason(false, false),
+            Some("its window was closed")
+        );
+        assert_eq!(
+            late_session_reason(true, true),
+            Some("termiHub is quitting")
+        );
+        assert_eq!(
+            late_session_reason(false, true),
+            Some("termiHub is quitting")
+        );
     }
 
     #[test]
