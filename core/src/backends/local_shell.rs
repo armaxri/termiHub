@@ -193,6 +193,13 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         let shell_pid = child.process_id();
         #[cfg(unix)]
         let foreground: Option<Arc<std::os::fd::OwnedFd>>;
+        // Set once the session ends, so a waiting resize catch-up gives up.
+        #[cfg(unix)]
+        let pty_closed = Arc::new(AtomicBool::new(false));
+        #[cfg(unix)]
+        let resize_catch_up: Option<Box<dyn Fn() + Send + Sync>>;
+        #[cfg(not(unix))]
+        let resize_catch_up: Option<Box<dyn Fn() + Send + Sync>> = None;
         #[cfg(unix)]
         let (writer, reader) = {
             use super::pty_unix_io::{nonblocking_poll_fd, InterruptibleWriter, PollingReader};
@@ -206,6 +213,14 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 super::pty_unix_io::line_editor_reading(&probe_fd)
             }));
             foreground = Some(poll_fd.clone());
+            resize_catch_up = shell_pid.map(|pid| {
+                let catch_up = super::pty_unix_winch::ResizeCatchUp::new(
+                    poll_fd.clone(),
+                    pid,
+                    pty_closed.clone(),
+                );
+                Box::new(move || catch_up.after_resize()) as Box<dyn Fn() + Send + Sync>
+            });
             (
                 InterruptibleWriter {
                     inner: writer,
@@ -232,6 +247,8 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
 
         let master_for_resize = master.clone();
         let master_for_close = master.clone();
+        #[cfg(unix)]
+        let closed_on_kill = pty_closed.clone();
 
         Ok(SpawnedShell {
             writer: Box::new(writer),
@@ -257,7 +274,10 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 // Fail a write parked on the PTY before (and regardless of
                 // whether) the kill wakes it (#4394).
                 #[cfg(unix)]
-                interrupt.interrupt();
+                {
+                    interrupt.interrupt();
+                    closed_on_kill.store(true, Ordering::SeqCst);
+                }
                 if let Ok(mut k) = killer.lock() {
                     let _ = k.kill();
                 }
@@ -267,6 +287,8 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 let _ = child.wait();
             }),
             close_pty: Box::new(move || {
+                #[cfg(unix)]
+                pty_closed.store(true, Ordering::SeqCst);
                 if let Ok(mut guard) = master_for_close.lock() {
                     // Dropping the master closes the pseudoterminal (ConPTY on
                     // Windows), making the reader thread drain and hit EOF.
@@ -274,6 +296,7 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 }
             }),
             line_editor_reading,
+            resize_catch_up,
             cwd_probe: Some(Box::new(move || {
                 #[cfg(unix)]
                 if let Some(pgid) = foreground
@@ -311,6 +334,9 @@ struct ConnectedState {
     setup: Option<Arc<TypedSetup>>,
     /// The line-editor probe offered for the initial command (#5029).
     prompt_probe: Option<PromptProbe>,
+    /// Re-sends a resize a running command got to bash at its next prompt
+    /// (#5096); only for bash without the shell hook.
+    resize_catch_up: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl Drop for ConnectedState {
@@ -810,9 +836,18 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let prompt_probe =
             line_editor.filter(|_| setup.is_none() && has_line_editor(&effective_shell));
 
+        // bash 3.2 re-reads the size after a command only with `checkwinsize`,
+        // which the hook turns on (#5035). Without the hook, termiHub re-sends
+        // a resize the command got (#5096). Other shells already handle it,
+        // and zsh redraws a multi-line prompt badly on a needless SIGWINCH.
+        let resize_catch_up = spawned
+            .resize_catch_up
+            .filter(|_| !shell_integration && shell_kind(&effective_shell) == "bash");
+
         self.state = Some(ConnectedState {
             writer,
             resize: spawned.resize,
+            resize_catch_up,
             kill: spawned.kill,
             alive,
             disconnected: false,
@@ -917,7 +952,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         if let Some(setup) = &state.setup {
             setup.set_width(cols);
         }
-        (state.resize)(cols, rows)
+        (state.resize)(cols, rows)?;
+        if let Some(catch_up) = &state.resize_catch_up {
+            catch_up();
+        }
+        Ok(())
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
@@ -1319,6 +1358,7 @@ mod tests {
                 }),
                 line_editor_reading: None,
                 cwd_probe: None,
+                resize_catch_up: None,
             })
         }
     }

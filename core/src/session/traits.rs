@@ -135,6 +135,12 @@ pub struct SpawnedShell {
     /// The local backend reports it as OSC 7, so the file browser follows the
     /// shell without anything being typed into it.
     pub cwd_probe: Option<Box<dyn Fn() -> Option<String> + Send + Sync>>,
+    /// Called right after a resize. Where the resize reached a running
+    /// command instead of the shell's line editor, re-sends `SIGWINCH` to
+    /// the shell once it reads at its prompt again (#5096), so bash 3.2
+    /// without `checkwinsize` picks up the new size. `None` where that is
+    /// not possible (Windows ConPTY, test doubles).
+    pub resize_catch_up: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// PTY / process spawn abstraction for the local shell backend.

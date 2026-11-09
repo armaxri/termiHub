@@ -94,6 +94,11 @@ struct Session {
 
 impl Session {
     async fn start(shell_name: &str) -> Session {
+        Session::start_with(shell_name, true).await
+    }
+
+    /// Start `shell_name` with the shell hook on or off.
+    async fn start_with(shell_name: &str, shell_integration: bool) -> Session {
         let home = tempfile::tempdir().expect("temp HOME");
         // An empty `.zshrc` keeps zsh from starting its interactive
         // `zsh-newuser-install` menu in a home without startup files (Linux).
@@ -102,7 +107,7 @@ impl Session {
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({
             "shell": shell_name,
-            "shellIntegration": true,
+            "shellIntegration": shell_integration,
             "envVars": [
                 { "key": "HOME", "value": home_str },
                 { "key": "ZDOTDIR", "value": home_str },
@@ -532,4 +537,107 @@ async fn system_bash_sees_a_resize_made_during_a_command() {
 #[serial(local_pty)]
 async fn bash_sees_a_resize_made_during_a_command() {
     assert_resize_during_command_reaches_next_prompt("bash").await;
+}
+
+/// Without the shell hook, bash 3.2 keeps `checkwinsize` off, so a resize made
+/// while a command runs reaches only the command. termiHub re-sends the
+/// resize to bash once its line editor reads again, typing nothing (#5096).
+#[tokio::test]
+#[serial(local_pty)]
+async fn system_bash_without_the_hook_sees_a_resize_made_during_a_command() {
+    let shell_name = "/bin/bash";
+    if !Path::new(shell_name).exists() {
+        eprintln!("{shell_name} not installed — skipping");
+        return;
+    }
+    let mut session = Session::start_with(shell_name, false).await;
+    // No marks without the hook: the prompt's own text (`bash-3.2$ ` /
+    // `bash-5.2$ ` in the empty `HOME`) says readline has drawn it.
+    let at_prompt = |out: &str| out.trim_end_matches(' ').ends_with('$');
+    session.read_until("the first prompt", at_prompt).await;
+    let start = session.output.len();
+    session
+        .shell
+        .write(b"sh -c 'echo TH_RUN_$((40+2)); sleep 1'\r")
+        .expect("write failed");
+    session
+        .read_until("the running command", |out| {
+            out[start..].contains("TH_RUN_42")
+        })
+        .await;
+    session.shell.resize(85, 24).expect("resize failed");
+    let after_run = session.output.len();
+    session
+        .read_until("the prompt after the command", |out| {
+            at_prompt(&out[after_run..])
+        })
+        .await;
+    // The re-sent resize lands shortly after the prompt; ask a few times.
+    let mut last = String::new();
+    for attempt in 0..20 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let from = session.output.len();
+        let tag = format!("TH_COLS{attempt}=");
+        session
+            .shell
+            .write(format!("echo \"{tag}[$COLUMNS]\"\r").as_bytes())
+            .expect("write failed");
+        session
+            .read_until("the column count", |out| {
+                let out = &out[from..];
+                out.find(&format!("{tag}["))
+                    .is_some_and(|pos| at_prompt(&out[pos..]))
+            })
+            .await;
+        last = session.output[from..].to_string();
+        if last.contains(&format!("{tag}[85]")) {
+            session.close().await;
+            return;
+        }
+    }
+    panic!("{shell_name} without the hook must see the resize made during a command: {last:?}");
+}
+
+/// The re-sent resize goes to bash only once it reads again: a program that
+/// still owns the terminal (a full-screen editor, say) gets the kernel's one
+/// `SIGWINCH` and nothing more from termiHub (#5096).
+#[tokio::test]
+#[serial(local_pty)]
+async fn a_running_command_gets_one_sigwinch_per_resize_without_the_hook() {
+    let shell_name = "/bin/bash";
+    if !Path::new(shell_name).exists() {
+        eprintln!("{shell_name} not installed — skipping");
+        return;
+    }
+    let mut session = Session::start_with(shell_name, false).await;
+    let at_prompt = |out: &str| out.trim_end_matches(' ').ends_with('$');
+    session.read_until("the first prompt", at_prompt).await;
+    let start = session.output.len();
+    // `sleep` in the background so `wait` returns to run the trap at once.
+    session
+        .shell
+        .write(
+            b"sh -c 'trap \"echo TH_W\" WINCH; echo TH_RUN_$((40+2)); \
+              for i in 1 2 3 4 5 6 7 8; do sleep 0.25 & wait $!; done; echo TH_DONE_$((1+1))'\r",
+        )
+        .expect("write failed");
+    session
+        .read_until("the running command", |out| {
+            out[start..].contains("TH_RUN_42")
+        })
+        .await;
+    session.shell.resize(85, 24).expect("resize failed");
+    session
+        .read_until("the end of the command", |out| {
+            out[start..].contains("TH_DONE_2")
+        })
+        .await;
+    let seen = session.output[start..].matches("TH_W\r\n").count();
+    assert_eq!(
+        seen,
+        1,
+        "one resize, one SIGWINCH: {:?}",
+        &session.output[start..]
+    );
+    session.close().await;
 }

@@ -20,6 +20,9 @@ mod local_shell_setup;
 mod local_shell_setup_watch;
 #[cfg(all(feature = "local-shell", unix))]
 mod pty_unix_io;
+// Re-sends a resize a running command got instead of the shell (#5096).
+#[cfg(all(feature = "local-shell", unix))]
+mod pty_unix_winch;
 
 #[cfg(feature = "serial")]
 pub mod serial;
