@@ -702,7 +702,7 @@ fn settled_task_count(rt: &tokio::runtime::Handle) -> usize {
 /// A connection to a session's loopback libunftp port that closes before
 /// sending a PROXY header must not leave a task behind: libunftp 0.23.1's
 /// header reader looped forever on `peek` returning `Ok(0)` at EOF, burning
-/// CPU until the server stopped (#4099, fixed in the vendored fork). Since
+/// CPU until the server stopped (#4099, fixed upstream in 0.24.0). Since
 /// #4100 only relay-opened connections reach the header reader, so the probes
 /// are opened the relay's way. The header task has to end, and the backend
 /// still stops promptly.

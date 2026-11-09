@@ -3,12 +3,12 @@
 Upstream submissions for [bolcom/libunftp](https://github.com/bolcom/libunftp) (moved to
 [Cloudinvoke/libunftp](https://github.com/Cloudinvoke/libunftp) on 2026-10-30), so the fork can
 be retired. Both deltas were submitted on 2026-10-06 (maintainer-approved). The two deltas are
-independent.
+independent. Since the re-base on 0.24.0 (2026-11-09, #5119) the fork carries only the second.
 
 1. [PROXY header EOF fix](#1-proxy-header-eof-fix-4099) (#4099): a bug fix. **Merged and
    released:** pull request [libunftp#582](https://github.com/bolcom/libunftp/pull/582) landed as
-   `24e7e10a` and shipped in libunftp 0.24.0 (2026-10-28); the delta drops when the fork re-bases
-   on 0.24 (checked 2026-11-09, #4923).
+   `24e7e10a` and shipped in libunftp 0.24.0 (2026-10-28); the fork dropped the delta when it
+   re-based on 0.24.0 (#5119). Kept below as history.
 2. [Prebound listener and PROXY peer filter](#2-prebound-listener-and-proxy-peer-filter-4100)
    (#4100): an API proposal. **Submitted 2026-10-06:** issue
    [libunftp#581](https://github.com/bolcom/libunftp/issues/581); the pull request waits for the
@@ -20,11 +20,11 @@ independent.
 Bug report and patch for [bolcom/libunftp](https://github.com/bolcom/libunftp), so the fork can
 be retired (#4099).
 
-- **Status: submitted 2026-10-06.** Issue
+- **Status: done.** Issue
   [libunftp#580](https://github.com/bolcom/libunftp/issues/580) (the text below) and pull request
   [libunftp#582](https://github.com/bolcom/libunftp/pull/582) (the patch below, applied to
-  `master` at `8d3f28c`). Next: follow up on review comments; once a release contains the fix,
-  [retire the fork](#retiring-the-fork).
+  `master` at `8d3f28c`), merged as `24e7e10a` and released in libunftp 0.24.0. The fork re-based
+  on 0.24.0 and no longer carries this delta (#5119); nothing is left to do for it.
 
 - **Base:** upstream `0.23.1`, tag `libunftp-0.23.1`, commit
   `8d3f28c20c53acdd3c9a939957e4727e18e18af0` (also the tip of upstream `master` when this was
@@ -210,13 +210,17 @@ each session's loopback libunftp server only serves connections termiHub's relay
   request is not opened yet: it waits for a maintainer to welcome the direction (step 1 of
   [How to submit](#how-to-submit-1)).
 
-- **Base:** upstream `0.23.1`, commit `8d3f28c20c53acdd3c9a939957e4727e18e18af0` (tip of
-  `master` on 2026-10-06).
+- **Base:** prepared against upstream `0.23.1`, commit
+  `8d3f28c20c53acdd3c9a939957e4727e18e18af0` (tip of `master` on 2026-10-06). The fork now sits
+  on `0.24.0` (`4714769`, #5119); the listener files the patch touches are unchanged between
+  the two releases.
 - **Upstream search:** no issue or pull request proposes a pre-bound listener or an accept
   filter. Related: #208 and #429 (PROXY header handling in the accept loop).
 - **Verified:** the patch below applies cleanly to `libunftp-0.23.1` (`git apply --check`),
   passes `cargo clippy --lib -- -D warnings` and `cargo fmt --check` with upstream's
-  `rustfmt.toml`, and `cargo test --lib` passes (71 tests, including the two new ones).
+  `rustfmt.toml`, and `cargo test --lib` passes (71 tests, including the two new ones). On
+  2026-11-09 (#5119) it also applies cleanly to `libunftp-0.24.0` and to `master` at `e9230bf`
+  (`git apply --check`), and the re-based fork's `cargo test --lib` passes (74 tests).
 
 ### Suggested issue
 
@@ -291,7 +295,8 @@ bool + Send + Sync>>` and passed to the proxy listener. Right after `accept`, a 
 
 ### The patch
 
-Against `libunftp-0.23.1`. It is the fork's code delta for #4100 without the termiHub-specific
+Against `libunftp-0.23.1` (applies unchanged to `libunftp-0.24.0` and to `master` at `e9230bf`).
+It is the fork's code delta for #4100 without the termiHub-specific
 `termiHub fork delta (armaxri/termiHub#4100).` marker lines.
 
 <details>
@@ -664,7 +669,7 @@ my listener" and "refuse peers I did not open".
 
 ## Retiring the fork
 
-Once a `libunftp` release contains both deltas (or equivalents):
+Once a `libunftp` release contains the #4100 delta (or an equivalent; #4099 is already in 0.24.0):
 
 1. Remove the `[patch.crates-io]` entry for `libunftp` and `vendor/libunftp` from the `exclude`
    list in the root `Cargo.toml`, bump the `core/Cargo.toml` `libunftp` requirement to that

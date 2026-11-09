@@ -1,6 +1,6 @@
 //! Front relay for the embedded FTP server (#3996).
 //!
-//! libunftp 0.23 buffers a control-channel line without any bound, and it
+//! libunftp (0.24) buffers a control-channel line without any bound, and it
 //! offers no hook to cap it: `Server::service` takes a concrete `TcpStream` and
 //! its `FtpCodec` has no length limit. So termiHub owns the public control
 //! socket and relays to libunftp, which listens on loopback in its PROXY

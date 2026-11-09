@@ -1,15 +1,15 @@
 # libunftp (termiHub vendored fork)
 
-Vendored fork of [`libunftp`](https://github.com/Cloudinvoke/libunftp) `0.23.1`, the
+Vendored fork of [`libunftp`](https://github.com/Cloudinvoke/libunftp) `0.24.0`, the
 FTP server library behind termiHub's embedded FTP server. The upstream README is
 kept as `README.upstream.md`. Upstream moved from `bolcom/libunftp` to
 `https://github.com/Cloudinvoke/libunftp` on 2026-10-30 (libunftp#602); the old
 `bolcom` links redirect.
 
-**Fork base:** upstream `0.23.1`, commit
-[`8d3f28c20c53acdd3c9a939957e4727e18e18af0`](https://github.com/bolcom/libunftp/commit/8d3f28c20c53acdd3c9a939957e4727e18e18af0)
-(tag `libunftp-0.23.1`, also the tip of upstream `master` when the fork was
-taken, 2026-10-06). The fork is registered in
+**Fork base:** upstream `0.24.0`, commit
+[`4714769978f17a17231ae1fae02cca8d8c918cfd`](https://github.com/Cloudinvoke/libunftp/commit/4714769978f17a17231ae1fae02cca8d8c918cfd)
+(tag `libunftp-0.24.0`, the crates.io release; re-based from `0.23.1` on
+2026-11-09, #5119). The fork is registered in
 [`vendor/vendored-forks.json`](../vendored-forks.json), and a weekly CI job
 reports upstream releases, commits and advisories that the fork does not have
 yet. See `docs/supply-chain.md` → "Vendored forks". Update both when re-basing
@@ -22,31 +22,24 @@ table and its sources stay comparable with upstream.
 ## Why this is vendored
 
 termiHub runs one libunftp server per FTP session on a loopback port in PROXY
-protocol mode, behind its own front relay (#3996). In 0.23.1 the PROXY v1 header
-reader (`read_proxy_header` in `src/server/proxy_protocol.rs`) never ends when a
-connection closes before its header is complete: at EOF `peek` returns `Ok(0)`,
-no newline is found, and the zero-length `read` returns `Ok(0)` too, so the task
-loops and burns a CPU core until the server stops. The relay always writes the
-full header, so remote clients cannot trigger it, but any local process that
-connects to a session's loopback port and closes can.
-
-See [armaxri/termiHub#4099](https://github.com/armaxri/termiHub/issues/4099).
-
-The same listener trusts the PROXY header of any connection, so a local
-process could connect to it directly and claim any client IP (access log,
-passive-data switchboard key) and skip the relay's control-line cap. 0.23.1 has
-no way to restrict who the listener serves, and it always binds the address
-itself. The fork adds both, so the relay binds the listener and libunftp only
-serves connections the relay opened. See
+protocol mode, behind its own front relay (#3996). That listener trusts the
+PROXY header of any connection, so a local process could connect to it directly
+and claim any client IP (access log, passive-data switchboard key) and skip the
+relay's control-line cap. libunftp has no way to restrict who the listener
+serves, and it always binds the address itself. The fork adds both, so the relay
+binds the listener and libunftp only serves connections the relay opened. See
 [armaxri/termiHub#4100](https://github.com/armaxri/termiHub/issues/4100).
+
+Earlier deltas that are now upstream, and so dropped at the 0.24.0 re-base:
+
+- The PROXY v1 header reader no longer spins on a connection closed before its
+  header (#4099): merged upstream as `24e7e10a` (libunftp#582), released in
+  0.24.0.
+- `LIST` keeps the whole pathname, spaces included (#4923): upstream `7142d6c4`
+  (#530) and `60ede984`, released in 0.24.0.
 
 ## What this fork changes
 
-- `src/server/proxy_protocol.rs` `read_proxy_header`: when `peek` returns
-  `Ok(0)` (EOF), return `ProxyError::ReadError` with
-  `io::ErrorKind::UnexpectedEof`, so the header task logs the error and ends.
-- `src/server/proxy_protocol.rs` tests: EOF before any header byte, and EOF
-  after a partial header, both return that error within a timeout.
 - `Server::listen_with_listener(tokio::net::TcpListener)` (#4100): runs the
   server like `listen`, on a listener the caller already bound. `listen` and it
   share one body (`listen_on`); every listener mode (legacy, pooled, proxy)
@@ -59,12 +52,8 @@ serves connections the relay opened. See
 - `src/server/ftpserver.rs` tests: a prebound proxy-mode server answers a
   peer the filter allows and closes one it refuses without a byte.
 
-- `src/server/controlchan/line_parser/parser.rs` `LIST` (#4923): the pathname after
-  the leading options is kept whole, spaces and other whitespace included (RFC 3659
-  section 2.2), instead of being cut at the first space, so `LIST my folder` lists
-  `my folder`. A port of upstream `7142d6c4` (#530) and `60ede984`, released in
-  libunftp 0.24.0, with their parser tests (`parse_list`,
-  `parse_list_preserves_pathname_whitespace`).
+The delta touches only `src/server/ftpserver.rs` and `src/server/ftpserver/`;
+every other file under `src/` is byte-identical to the 0.24.0 release.
 
 All fork changes are marked `termiHub fork delta (armaxri/termiHub#…)`.
 
@@ -72,21 +61,19 @@ All fork changes are marked `termiHub fork delta (armaxri/termiHub#…)`.
 
 Reviewed upstream up to
 [`e9230bf1`](https://github.com/Cloudinvoke/libunftp/commit/e9230bf129ab16290e858782711d035c9c1e13bb)
-(2026-11-08, #4923), covering libunftp 0.24.0:
+(2026-11-08, #4923, re-checked at the re-base #5119). Everything up to the 0.24.0
+release is in the base. Of the commits after it, none is ported:
 
-- `24e7e10a` (#582) is the fork's #4099 delta, merged and released in 0.24.0
-  unchanged; the fork keeps it until it re-bases. The #4100 delta is still only
-  proposed (libunftp#581, open).
-- Ported: the `LIST` pathname fix above.
-- Not ported: `745f7bd6` (RUSTSEC-2026-0382) only raises the `rustls-webpki` floor;
-  termiHub's lockfiles already pin the patched 0.103.16. `ed7c634a` (start TLS right
-  after the `AUTH TLS` reply) needs FTPS, which termiHub's server does not enable.
-  `9cbe7219` / `60652e4e` (full paths in `DataEvent`, breaking) and `3c02106c`
-  (`SiteCommandContext` session context, breaking) change APIs termiHub only counts
-  bytes with or does not use. The rest are release, dependency, metadata, docs and
-  backend-crate commits outside the forked crate's code.
+- `3c02106c` (`SiteCommandContext` gets session context and becomes
+  `#[non_exhaustive]`, breaking, unreleased): termiHub registers no SITE commands.
+- `ed7c634a` / `f19fbc11` (start TLS right after the `AUTH TLS` reply): needs
+  FTPS, which termiHub's server does not enable.
+- The rest are release, project-move, author-metadata, docs and backend-crate
+  commits outside the forked crate's code.
 
-Re-basing on 0.24.0 (dropping the #4099 delta) is tracked as a follow-up.
+The 0.24.0 breaking change `9cbe7219` / `60652e4e` (`DataEvent::Got` / `Put`
+paths now include the working directory) does not affect termiHub: its
+`StatsTracker` only counts `bytes`.
 
 Packaging differences from the crates.io release (not code deltas):
 `Cargo.toml` is the crates.io-normalised manifest with a fork note, without the
@@ -95,9 +82,11 @@ and with the `unftp-sbe-fs` dev-dependency restored from crates.io (the
 normalisation strips upstream's path dependency), plus a
 `[package.metadata.cargo-machete]` ignore for `tracing` (used only through the
 `#[tracing_attributes::instrument]` expansion). Upstream's `CHANGELOG.md`,
-`AGENTS.md`, `examples/`, `logo.png`, `Makefile` and CI files are not vendored.
+`AGENTS.md`, `CONTRIBUTING.md`, `RELEASE-CHECKLIST.md`, `examples/`, `logo.png`,
+`Makefile` and CI files are not vendored.
 
-Tests: the unit tests above; termiHub's
+Tests: the unit tests above (plus upstream's own, including the PROXY header
+EOF tests that came with `24e7e10a`); termiHub's
 `core/src/embedded_servers/ftp_server/relay_tests.rs`:
 `backend_header_reader_ends_when_a_connection_closes_without_a_header`
 connects to a real session backend, closes without a header and checks that no
@@ -107,10 +96,9 @@ direct loopback connections with forged headers are refused and logged while
 relay-opened control and data connections work. Run the fork's own tests with `cargo test --lib` inside
 this directory.
 
-Both deltas are small and upstream-compatible (additive API, no behaviour
-change for existing callers). The ready-to-submit bug report and patch (#4099),
-the API proposal and patch (#4100), and the retirement steps are in
-[`UPSTREAM.md`](UPSTREAM.md).
+The delta is small and upstream-compatible (additive API, no behaviour change
+for existing callers). The API proposal and patch (#4100), the history of the
+merged #4099 fix, and the retirement steps are in [`UPSTREAM.md`](UPSTREAM.md).
 
-Everything else is upstream `0.23.1`, under the original Apache-2.0 license
+Everything else is upstream `0.24.0`, under the original Apache-2.0 license
 (`LICENSE`, `COPYRIGHT`).
