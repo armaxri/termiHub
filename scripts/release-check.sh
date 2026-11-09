@@ -373,6 +373,21 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== Marketing Drafts Re-verified ==="
+
+# docs/marketing/*.md drafts get folded into README.md / CHANGELOG.md at release
+# time; each names the commit it was last verified against (MKT2-003, #4924). A
+# WARNING, like the fragment check above: re-verify the drafts before folding
+# them in (docs/contributing.md → Pre-Release Checklist).
+if MARKETING_OUTPUT=$(node scripts/internal/check-marketing-drafts.mjs --release 2>&1); then
+    pass "$MARKETING_OUTPUT"
+else
+    echo "$MARKETING_OUTPUT" | sed 's/^/    /'
+    warn "Marketing drafts not re-verified against this commit — re-check them before folding them in"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== Tests ==="
 
 if pnpm test 2>&1; then
