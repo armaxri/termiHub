@@ -27,6 +27,8 @@ Feature highlights:
 * 42 Supported FTP commands (see [commands directory](./src/server/controlchan/commands)) and growing
 * Ability to implement own storage back-ends
 * Ability to implement own authentication back-ends
+* Ability to implement own `SITE` commands
+  (see [`ServerBuilder::site_command`](https://docs.rs/libunftp/latest/libunftp/struct.ServerBuilder.html#method.site_command))
 * Explicit FTPS (TLS)
 * Mutual TLS (Client certificates)
 * TLS session resumption
@@ -60,6 +62,11 @@ Known authentication back-ends:
   via [PAM](https://en.wikipedia.org/wiki/Linux_PAM).
 * [unftp-auth-rest](https://crates.io/crates/unftp-auth-rest) - Consumes an HTTP API to authenticate.
 
+Known `SITE` command extensions:
+
+* [unftp-site-hash](https://crates.io/crates/unftp-site-hash) - Adds a `SITE HASH` command, supporting SHA-256, SHA-1,
+  MD5 and CRC32 file hashing.
+
 ## Cryptographic Providers
 
 These two feature flags can be used to select the cryptographic provider:
@@ -71,9 +78,9 @@ To use a specific provider, enable the corresponding feature in your `Cargo.toml
 
 ```toml
 [dependencies]
-libunftp = { version = "0.23.1", features = ["ring"] }  # Use ring
+libunftp = { version = "0.24.0", features = ["ring"] }  # Use ring
 # or
-libunftp = { version = "0.23.1", features = ["aws_lc_rs"] }  # Use aws-lc-rs (default)
+libunftp = { version = "0.24.0", features = ["aws_lc_rs"] }  # Use aws-lc-rs (default)
 ```
 
 The default provider is `aws-lc-rs` for backward compatibility. Choose the provider that best fits your needs:
@@ -97,14 +104,14 @@ need:
 
 ```toml
 [dependencies]
-libunftp = { version = "0.23.1", default-features = false, features = ["aws_lc_rs"] }
+libunftp = { version = "0.24.0", default-features = false, features = ["aws_lc_rs"] }
 ```
 
 Or enable all features explicitly:
 
 ```toml
 [dependencies]
-libunftp = { version = "0.23.1", features = ["all"] }
+libunftp = { version = "0.24.0", features = ["all"] }
 ```
 
 ## Prerequisites
@@ -125,7 +132,7 @@ add. Here we choose the [file system back-end](https://crates.io/crates/unftp-sb
 
 ```toml
 [dependencies]
-libunftp = "0.23.1"
+libunftp = "0.24.0"
 unftp-sbe-fs = "0.4.0"
 tokio = { version = "1", features = ["full"] }
 ```

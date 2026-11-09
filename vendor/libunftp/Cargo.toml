@@ -9,18 +9,18 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 
-# termiHub vendored fork of libunftp 0.23.1 (upstream tag libunftp-0.23.1).
+# termiHub vendored fork of libunftp 0.24.0 (upstream tag libunftp-0.24.0).
 #
-# This is the crates.io-normalized manifest of the 0.23.1 release. The upstream
+# This is the crates.io-normalized manifest of the 0.24.0 release. The upstream
 # integration tests (tests/*.rs) are not vendored, so their [[test]] targets are
-# removed; the unit tests under src/ are kept. Delta: the PROXY v1 header reader
-# ends on EOF instead of spinning (src/server/proxy_protocol.rs), see
-# https://github.com/armaxri/termiHub/issues/4099 and vendor/vendored-forks.json.
+# removed; the unit tests under src/ are kept. Delta: Server::listen_with_listener
+# and ServerBuilder::proxy_protocol_peer_filter (src/server/ftpserver*), see
+# https://github.com/armaxri/termiHub/issues/4100 and vendor/vendored-forks.json.
 
 [package]
 edition = "2024"
 name = "libunftp"
-version = "0.23.1"
+version = "0.24.0"
 authors = [
     "Agoston Horvath <ahorvath@bol.com>",
     "Dávid Kosztka <dkosztka@bol.com>",
@@ -52,9 +52,11 @@ repository = "https://github.com/bolcom/libunftp"
 # see `tracing` used, because no source names it: the 67
 # `#[tracing_attributes::instrument]` attributes expand to `::tracing::...`
 # paths, so the crate is required at compile time. Ignore-list it rather than
-# drop it.
+# drop it. `rustls-webpki` is never named in source either: upstream declares it
+# only as the minimum patched verifier for RUSTSEC-2026-0382 (its workspace
+# manifest says so), so the floor reaches downstream lockfiles. `rustls` uses it.
 [package.metadata.cargo-machete]
-ignored = ["tracing"]
+ignored = ["tracing", "rustls-webpki"]
 
 [features]
 all = [
@@ -123,7 +125,7 @@ default-features = false
 version = "0.4.3"
 
 [dependencies.lazy_static]
-version = "1.5.0"
+version = "1.5.1"
 
 [dependencies.moka]
 version = "0.12.16"
@@ -131,7 +133,7 @@ features = ["sync"]
 default-features = false
 
 [dependencies.nix]
-version = "0.30.1"
+version = "0.31.3"
 features = ["fs"]
 default-features = false
 
@@ -145,7 +147,11 @@ version = "0.5.0"
 optional = true
 
 [dependencies.rustls]
-version = "0.23.45"
+version = "0.23.46"
+default-features = false
+
+[dependencies.rustls-webpki]
+version = "0.103.16"
 default-features = false
 
 [dependencies.slog]
@@ -162,7 +168,7 @@ version = "4.1.1"
 version = "2.0.21"
 
 [dependencies.tokio]
-version = "1.53.1"
+version = "1.54.1"
 features = [
     "macros",
     "rt",
@@ -174,11 +180,11 @@ features = [
 ]
 
 [dependencies.tokio-rustls]
-version = "0.26.5"
+version = "0.26.6"
 default-features = false
 
 [dependencies.tokio-util]
-version = "0.7.19"
+version = "0.7.20"
 features = ["codec"]
 
 [dependencies.tracing]
@@ -192,7 +198,7 @@ version = "0.1.31"
 version = "0.1.0"
 
 [dependencies.uuid]
-version = "1.26.1"
+version = "1.29.0"
 features = ["v4"]
 
 [dev-dependencies.pretty_assertions]
@@ -202,10 +208,10 @@ version = "1.4.1"
 # normalisation strips; the src/ unit tests need it, so it is restored here from
 # crates.io (0.4 builds on unftp-core, not on libunftp).
 [dev-dependencies.unftp-sbe-fs]
-version = "0.4.0"
+version = "0.4.1"
 
 [dev-dependencies.tokio]
-version = "1.53.1"
+version = "1.54.1"
 features = [
     "macros",
     "rt-multi-thread",

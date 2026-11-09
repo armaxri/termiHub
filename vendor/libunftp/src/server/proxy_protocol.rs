@@ -54,9 +54,9 @@ async fn read_proxy_header(tcp_stream: &mut tokio::net::TcpStream) -> Result<Pro
         // Peek at the next data in the stream and map the error to a `ProxyError`
         let n = tcp_stream.peek(&mut pbuf).await.map_err(ProxyError::ReadError)?;
 
-        // termiHub fork delta (armaxri/termiHub#4099): `peek` returns `Ok(0)` only at EOF. Without
-        // this check no newline is ever found and the zero-length `read` below also returns
-        // `Ok(0)`, so the loop would spin forever on a connection closed before its header.
+        // `peek` returns `Ok(0)` only at EOF. Without this check no newline is ever found and the
+        // zero-length `read` below also returns `Ok(0)`, so the loop would spin forever on a
+        // connection that is closed before its header is complete.
         if n == 0 {
             return Err(ProxyError::ReadError(std::io::ErrorKind::UnexpectedEof.into()));
         }
@@ -188,7 +188,6 @@ mod tests {
         );
     }
 
-    // termiHub fork delta (armaxri/termiHub#4099).
     #[tokio::test]
     async fn eof_before_header_returns_error() {
         let (mut s, c) = get_connected_tcp_streams().await;
@@ -201,7 +200,6 @@ mod tests {
         assert!(matches!(res, Err(ProxyError::ReadError(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof));
     }
 
-    // termiHub fork delta (armaxri/termiHub#4099).
     #[tokio::test]
     async fn eof_after_partial_header_returns_error() {
         let (mut s, mut c) = get_connected_tcp_streams().await;

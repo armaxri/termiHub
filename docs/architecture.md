@@ -2713,7 +2713,7 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
 
 The embedded FTP server (`core/src/embedded_servers/ftp_server.rs`) is built on
 [`libunftp`](https://crates.io/crates/libunftp), but libunftp does not face the network.
-libunftp 0.23 buffers a control-channel line without any bound, and it has no hook to cap it:
+libunftp (0.24) buffers a control-channel line without any bound, and it has no hook to cap it:
 `Server::service` takes a concrete `TcpStream`, and its `FtpCodec` has no length limit. A
 pre-auth client could grow that buffer until memory ran out (#3996). So termiHub's **front relay**
 (`core/src/embedded_servers/ftp_relay.rs`) owns the public sockets, and libunftp runs on loopback
@@ -2806,9 +2806,10 @@ fresh TLS) to libunftp on loopback. Passing TLS through to libunftp would lose t
   could in principle bind the same address in the microseconds between the relay's bind and its
   connect. It would also have to connect first, and it needs code execution on the host (as the
   same user, under Windows' default socket security). Each recorded address is allowed once.
-- libunftp 0.23.1's PROXY header reader spins on a connection that closes before a newline. The
-  vendored fork ends it at EOF (#4099). Since #4100, only relay-opened connections reach the
-  header reader at all.
+- libunftp 0.23.1's PROXY header reader spun on a connection that closes before a newline. The
+  vendored fork ended it at EOF (#4099), and upstream released the same fix in 0.24.0, which
+  the fork is now based on (#5119). Since #4100, only relay-opened connections reach the header
+  reader at all.
 
 ---
 
