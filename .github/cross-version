@@ -1,0 +1,7 @@
+# The ONE cross-rs release CI and the system-test agent build install (#4360).
+# Read by .github/actions/setup-cross and scripts/internal/build-system-test-agent.sh;
+# scripts/internal/check-cross-version.mjs fails on any other copy.
+# sha256 is the cross-x86_64-unknown-linux-gnu.tar.gz asset of that release.
+# Bump procedure: docs/contributing.md -> "cross-rs version".
+version=0.2.5
+sha256=642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad
