@@ -1053,10 +1053,11 @@ mod tests {
     #[test]
     fn classifies_a_posix_shell_on_windows_by_ostype_or_msystem() {
         for host_os in [
-            "msys MINGW64", // Git Bash (Git for Windows' bin\bash.exe)
-            "msys",         // Git Bash's usr\bin\bash.exe, no MSYSTEM
-            "msys UCRT64",  // MSYS2 bash / zsh
-            "MINGW32",      // MSYS2 dash / sh: no $OSTYPE
+            "msys MINGW64",  // Git Bash (Git for Windows' bin\bash.exe)
+            "cygwin UCRT64", // Git for Windows 2.56 on the CI runner (seen live)
+            "msys",          // Git Bash's usr\bin\bash.exe, no MSYSTEM
+            "msys UCRT64",   // MSYS2 bash / zsh
+            "MINGW32",       // MSYS2 dash / sh: no $OSTYPE
             "MSYS",
             "CLANG64",
             "cygwin", // Cygwin bash / zsh
