@@ -11,6 +11,12 @@
 #    agent (MT-AGENT-26), with the default key and with the Windows ssh-agent
 #    service (MT-AGENT-27), and the Docker engine over its named pipe
 #    (MT-AGENT-28) -- agent/tests/native_sshd_agent_backends.rs.
+# 3. `bash` instead (#5015): with Git Bash as the DefaultShell, the core SSH
+#    backend's shell probe must classify the host as a POSIX shell on Windows,
+#    and a terminal session's first command and configured env var must work
+#    with shell integration on -- native_05b/05c/05d of core/tests/ssh_native.rs
+#    (TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash). No agent is deployed: the
+#    agent's deploy path supports only a cmd.exe / PowerShell DefaultShell.
 #
 # Steps: build the agent, set HKLM\SOFTWARE\OpenSSH\DefaultShell, bring up the
 # native sshd fixture (native-sshd-fixture.sh, which hands over to its
@@ -27,12 +33,12 @@
 # lives here so a scheduled run (main's copy of the workflow) runs develop's.
 #
 # Usage:
-#   scripts/internal/run-windows-ssh-host-suite.sh <cmd|powershell> [extra cargo test args...]
+#   scripts/internal/run-windows-ssh-host-suite.sh <cmd|powershell|bash> [extra cargo test args...]
 
 set -euo pipefail
 
 usage() {
-  sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -40,13 +46,13 @@ case "${1:-}" in
     usage
     exit 0
     ;;
-  cmd | powershell)
+  cmd | powershell | bash)
     DEFAULT_SHELL="$1"
     shift
     ;;
   *)
     usage >&2
-    echo "error: expected the DefaultShell to test: cmd or powershell (got '${1:-}')" >&2
+    echo "error: expected the DefaultShell to test: cmd, powershell or bash (got '${1:-}')" >&2
     exit 2
     ;;
 esac
@@ -71,6 +77,13 @@ AGENT_TESTS=(
   ssh_session_through_agent_authenticates_with_the_ssh_agent
 )
 DOCKER_TEST="docker_engine_is_reached_over_its_named_pipe"
+# The Git Bash DefaultShell leg's core SSH tests (#5015).
+CORE_SUITE="ssh_native"
+CORE_TESTS=(
+  native_05b_remote_shell_probe_detects_the_login_shell
+  native_05c_first_command_runs_with_shell_integration_on
+  native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
+)
 OPENSSH_KEY='HKLM:\SOFTWARE\OpenSSH'
 cd "$REPO_ROOT"
 
@@ -88,8 +101,8 @@ run_pwsh() {
 }
 
 set_default_shell() {
-  # $1: `powershell`, `cmd` / empty (OpenSSH's default, cmd.exe), or an
-  # executable path (the value being restored).
+  # $1: `powershell`, `bash` (Git Bash), `cmd` / empty (OpenSSH's default,
+  # cmd.exe), or an executable path (the value being restored).
   local value
   case "$1" in
     "" | cmd)
@@ -101,10 +114,23 @@ set_default_shell() {
       return
       ;;
     powershell) value="(Join-Path \$env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe')" ;;
+    bash) value="'$(git_bash_exe)'" ;;
     *) value="'$1'" ;;
   esac
   run_pwsh "New-Item -Path '$OPENSSH_KEY' -Force | Out-Null
     New-ItemProperty -Path '$OPENSSH_KEY' -Name DefaultShell -Value $value -PropertyType String -Force | Out-Null"
+}
+
+# Git for Windows' `bin\bash.exe` (it sets MSYSTEM, like the Git Bash
+# launcher), as a Windows path: the Git install this Git Bash runs from.
+git_bash_exe() {
+  local exe
+  exe="$(cygpath -w /)\\bin\\bash.exe"
+  [ -f "$(cygpath -u "$exe")" ] || {
+    echo "error: Git Bash not found at $exe" >&2
+    return 1
+  }
+  printf '%s' "$exe"
 }
 
 show_default_shell() {
@@ -206,6 +232,26 @@ die() {
 }
 
 PREVIOUS_SHELL="$(show_default_shell)" || die "could not read the OpenSSH DefaultShell (HKLM)"
+
+# ---- Git Bash DefaultShell (#5015): core SSH tests only, no agent ----
+if [ "$DEFAULT_SHELL" = bash ]; then
+  bash_exe="$(git_bash_exe)" || die "could not locate Git Bash"
+  trap teardown EXIT
+  set_default_shell bash || die "could not set the OpenSSH DefaultShell to $bash_exe"
+  current_shell="$(show_default_shell)" || die "could not read back the OpenSSH DefaultShell"
+  echo "OpenSSH DefaultShell: $current_shell"
+  exports="$("$FIXTURE" up)" || die "native sshd fixture failed to come up (its log is above)"
+  eval "$exports"
+  export TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash
+  # Print the probe's answer and every setup byte (#4670) on a failure.
+  export TERMIHUB_TEST_SSH_TRACE=1
+  core_log="$(mktemp)"
+  cargo test -p termihub-core --features ssh --test "$CORE_SUITE" -- --test-threads=1 \
+    --show-output "${CORE_TESTS[@]}" "$@" 2>&1 | tee "$core_log"
+  require_passed "$core_log" "${CORE_TESTS[@]}"
+  exit 0
+fi
+
 # The deployed agent links the VC runtime statically, like the released one
 # (#4175, release.yml / build-agents.*). The explicit --target keeps those
 # RUSTFLAGS off build scripts and proc macros and gives the build its own

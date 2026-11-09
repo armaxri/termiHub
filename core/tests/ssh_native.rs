@@ -249,11 +249,18 @@ async fn native_05_interactive_shell_session_round_trips() {
 /// was set up with a PowerShell login shell (#4148; a local check, e.g. an
 /// sshd whose `ForceCommand` wraps `pwsh -l` — run only `native_05b..05d`),
 /// or `fish` / `fish3` likewise for a fish 4+ / fish 3.x login shell (#5016).
+/// On Windows, `TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash` says the lane set
+/// the OpenSSH `DefaultShell` to Git Bash (#5015; the Windows SSH Host lane's
+/// `bash` leg, `scripts/internal/run-windows-ssh-host-suite.sh bash`).
 fn fixture_shell() -> RemoteShell {
+    let login_shell = std::env::var("TERMIHUB_NATIVE_SSHD_LOGIN_SHELL");
     if cfg!(windows) {
-        return RemoteShell::Cmd;
+        return match login_shell.as_deref() {
+            Ok("gitbash") => RemoteShell::WindowsPosix,
+            _ => RemoteShell::Cmd,
+        };
     }
-    match std::env::var("TERMIHUB_NATIVE_SSHD_LOGIN_SHELL").as_deref() {
+    match login_shell.as_deref() {
         Ok("pwsh") => RemoteShell::UnixPowerShell,
         Ok("fish") => RemoteShell::Fish {
             native_integration: true,
@@ -274,6 +281,8 @@ fn first_command(shell: RemoteShell) -> (&'static str, &'static str) {
         ),
         // fish has no `$((...))`; a POSIX line would be a parse error there.
         RemoteShell::Fish { .. } => ("echo native-(math 40+2)-ok\n", "native-42-ok"),
+        // A POSIX shell on Windows (#5015): `SHELL_LINE` is cmd.exe's there.
+        RemoteShell::WindowsPosix => ("echo native-$((40+2))-ok\n", "native-42-ok"),
         _ => (SHELL_LINE, SHELL_EXPECT),
     }
 }
@@ -348,7 +357,14 @@ async fn native_05c_first_command_runs_with_shell_integration_on() {
         done,
         "the first command did not run (or no OSC 7 followed); output so far: {seen:?}"
     );
-    if !matches!(shell, RemoteShell::Posix | RemoteShell::Fish { .. }) {
+    if shell == RemoteShell::WindowsPosix {
+        // #5015: a POSIX shell on Windows gets the POSIX setup, but its echo
+        // is deliberately not filtered (ConPTY renders the session), so it
+        // may show. Only a PowerShell / cmd.exe setup would be wrong there.
+        for wrong in ["$env:", "ParserError"] {
+            assert!(!seen.contains(wrong), "{wrong:?} sent to bash: {seen:?}");
+        }
+    } else if !matches!(shell, RemoteShell::Posix | RemoteShell::Fish { .. }) {
         assert!(
             !seen.contains("PROMPT_COMMAND"),
             "{shell:?} must not be sent the POSIX setup; output: {seen:?}"
@@ -425,7 +441,9 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
         "{shell:?}: the env var did not reach the shell (or the command did not run); \
          output so far: {seen:?}"
     );
-    if shell != RemoteShell::Posix {
+    if shell == RemoteShell::WindowsPosix {
+        // #5015: typed as a POSIX `export`, whose echo is not filtered there.
+    } else if shell != RemoteShell::Posix {
         assert!(
             !seen.contains("export "),
             "{shell:?} got the POSIX export: {seen:?}"

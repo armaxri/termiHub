@@ -13,6 +13,10 @@ name: Windows SSH Host
 # host: what a Windows-hosted agent opens from there -- an SSH session with I/O,
 # resize and a clean close (MT-AGENT-26), default-key and ssh-agent-service auth
 # (MT-AGENT-27), and the Docker engine over its named pipe (MT-AGENT-28).
+# The `bash` leg (#5015) sets Git Bash as the DefaultShell instead and runs the
+# core SSH backend's shell-probe / shell-integration tests of
+# core/tests/ssh_native.rs against it: the host must classify as a POSIX shell
+# on Windows, whose setup echo is never filtered (no agent deploy there).
 #
 # The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
 # Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd
@@ -64,6 +68,8 @@ on:
       - "agent/tests/common/**"
       - "agent/src/daemon/**"
       - "agent/src/session/**"
+      - "core/tests/ssh_native.rs"
+      - "core/tests/common/**"
       - "scripts/internal/run-windows-ssh-host-suite.sh"
       - "scripts/internal/native-sshd-fixture.*"
       - ".github/workflows/windows-ssh-host.yml"
@@ -84,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        default_shell: [cmd, powershell]
+        default_shell: [cmd, powershell, bash]
 
     steps:
       - name: Checkout code

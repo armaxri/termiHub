@@ -364,6 +364,9 @@ describe("live lane path filters (#4618)", () => {
       "agent/src/session/**",
       "agent/tests/native_sshd_agent_backends.rs",
       "agent/tests/common/**",
+      // The Git Bash DefaultShell leg (#5015).
+      "core/tests/ssh_native.rs",
+      "core/tests/common/**",
       // The recipe and fixture.
       "scripts/internal/run-windows-ssh-host-suite.sh",
       "scripts/internal/native-sshd-fixture.*",
