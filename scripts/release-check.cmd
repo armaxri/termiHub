@@ -254,6 +254,21 @@ if %errorlevel%==0 (
     echo   PASS: No unconsolidated change fragments under docs\changes\
 )
 
+REM === Marketing Drafts Re-verified ===
+echo.
+echo === Marketing Drafts Re-verified ===
+
+REM docs\marketing\*.md drafts get folded into README.md / CHANGELOG.md at release time;
+REM each names the commit it was last verified against (MKT2-003, #4924). A WARNING,
+REM like the fragment check above: re-verify the drafts before folding them in.
+node scripts\internal\check-marketing-drafts.mjs --release
+if errorlevel 1 (
+    echo   WARN: Marketing drafts not re-verified against this commit - re-check them before folding them in
+    set /a WARNINGS+=1
+) else (
+    echo   PASS: Marketing drafts verified against this commit
+)
+
 REM === Tests ===
 echo.
 echo === Tests ===

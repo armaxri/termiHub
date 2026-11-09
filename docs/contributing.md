@@ -1418,6 +1418,11 @@ Before creating a release, run the quality scripts and verify:
       (see [Required checks per branch](#required-checks-per-branch))
 - [ ] The [agent update signing key](#agent-update-signing-key) is configured (the release workflow refuses to run otherwise)
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
+- [ ] Every `docs/marketing/*.md` draft you fold into `README.md` / `CHANGELOG.md` was
+      re-verified against the app on the release commit first, and its
+      "Last verified against `<branch>` at `<sha>` (YYYY-MM-DD)" stamp updated.
+      `release-check` warns while a draft's stamp is behind `HEAD`
+      (`scripts/internal/check-marketing-drafts.mjs --release`)
 - [ ] No known release-blocking issues remain
 - [ ] The [release integration gate](#release-integration-gate) is satisfied on the exact
       commit you will tag: a green **Release Candidate: Full Integration** run and green
@@ -1440,6 +1445,7 @@ a warning:
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Versions                      | All seven version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                            |
 | Changelog                     | A dated `## [X.Y.Z] - YYYY-MM-DD` section; stale `[Unreleased]` items and leftover `docs/changes/` fragments are warnings                                                                                                                                                                                                      |
+| Marketing drafts              | A warning when a `docs/marketing/*.md` draft's "Last verified" commit is behind `HEAD` (commits that touch only `docs/marketing/` do not count): re-verify it before folding it into `README.md` / `CHANGELOG.md`                                                                                                              |
 | Unit tests, coverage, quality | `pnpm test`, `cargo test --workspace`, the [coverage ratchet](testing.md#coverage-ratchet) and `scripts/check.sh`                                                                                                                                                                                                              |
 | Git state                     | A clean tree on `main` or `release/*`                                                                                                                                                                                                                                                                                          |
 | Integration / system tests    | The [release integration gate](#release-integration-gate), run locally: green Release Candidate, Code Quality, Dev Build and Security Audit runs on `HEAD`. Needs `gh`, logged in, and `HEAD` pushed. On failure it prints the exact `gh workflow run release-candidate.yml --ref …` command                                   |
