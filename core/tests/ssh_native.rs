@@ -700,6 +700,154 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
+/// #5109 measurement probe (temporary): how a typed cmd.exe `prompt` line
+/// lands in the console's command history (`doskey /history`) over SSH, and
+/// which deliveries avoid it. Prints its findings; asserts nothing.
+#[tokio::test]
+async fn native_05z_cmd_history_probe() {
+    let sshd = require_native_sshd!();
+    if !cfg!(windows) || fixture_shell() != RemoteShell::Cmd {
+        eprintln!("this probe is for a cmd.exe Windows SSH host; skipping");
+        return;
+    }
+    let (cols, rows) = (200usize, 80usize);
+    async fn open(sshd: &common::NativeSshd, cols: usize, rows: usize) -> Ssh {
+        let mut ssh = Ssh::new();
+        let mut settings = sshd.key_settings();
+        settings["cols"] = serde_json::json!(cols);
+        settings["rows"] = serde_json::json!(rows);
+        ssh.connect(settings).await.expect("connect");
+        let (ok, seen) = type_and_wait(&mut ssh, "echo th5109-%OS%-ready\r", |s| {
+            s.contains("th5109-Windows_NT-ready")
+        })
+        .await;
+        assert!(ok, "cmd did not answer: {seen:?}");
+        ssh
+    }
+    async fn step(ssh: &mut Ssh, all: &mut String, input: &str, n: u32) {
+        let mut line = input.to_string();
+        line.push_str(&format!("echo th5109-%OS%-m{n}\r"));
+        let want = format!("th5109-Windows_NT-m{n}");
+        let (ok, seen) = type_and_wait(ssh, &line, |s| s.contains(&want)).await;
+        all.push_str(&seen);
+        // Let the prompt after it render.
+        let mut rx = ssh.subscribe_output();
+        let _ = tokio::time::timeout(Duration::from_millis(700), async {
+            while let Some(chunk) = rx.recv().await {
+                all.push_str(&String::from_utf8_lossy(&chunk));
+            }
+        })
+        .await;
+        eprintln!(
+            "[5109] step {n} {}: {input:?}",
+            if ok { "ok" } else { "TIMEOUT" }
+        );
+    }
+    let report = |name: &str, all: &str| {
+        let text = screen::render(all.as_bytes(), cols, rows);
+        let osc: Vec<&str> = all
+            .match_indices("]9;9;")
+            .map(|(i, _)| &all[i..(i + 40).min(all.len())])
+            .collect();
+        eprintln!("==== [5109] {name} ====\nraw: {all:?}\nosc9;9: {osc:?}\n---- screen ----\n{text}\n================");
+    };
+
+    // E1: the plain typed hook line, then a cd.
+    {
+        let mut ssh = open(&sshd, cols, rows).await;
+        let mut all = String::new();
+        step(&mut ssh, &mut all, "prompt $e]9;9;$P$e\\$P$G\r", 1).await;
+        step(&mut ssh, &mut all, "cd \\\r", 2).await;
+        step(&mut ssh, &mut all, "doskey /history\r", 3).await;
+        report("E1 plain prompt line + cd + doskey /history", &all);
+        ssh.disconnect().await.ok();
+    }
+    // E2: a leading space.
+    {
+        let mut ssh = open(&sshd, cols, rows).await;
+        let mut all = String::new();
+        step(&mut ssh, &mut all, " prompt $P$G\r", 1).await;
+        step(&mut ssh, &mut all, "doskey /history\r", 2).await;
+        report("E2 leading space", &all);
+        ssh.disconnect().await.ok();
+    }
+    // E3/E4: Alt+F7 (conhost: clear command history) after the line, as a
+    // VT key and as a win32-input-mode key; a macro defined first must stay.
+    for (name, alt_f7) in [
+        ("E3 Alt+F7 as VT CSI 18;3~", "\x1b[18;3~"),
+        (
+            "E4 Alt+F7 as win32-input-mode",
+            "\x1b[118;65;0;1;2;1_\x1b[118;65;0;0;2;1_",
+        ),
+    ] {
+        let mut ssh = open(&sshd, cols, rows).await;
+        let mut all = String::new();
+        step(
+            &mut ssh,
+            &mut all,
+            "doskey th5109m=echo th5109-macro-%OS%\r",
+            1,
+        )
+        .await;
+        step(&mut ssh, &mut all, "prompt $P$G\r", 2).await;
+        step(&mut ssh, &mut all, alt_f7, 3).await;
+        step(&mut ssh, &mut all, "doskey /history\r", 4).await;
+        step(&mut ssh, &mut all, "th5109m\r", 5).await;
+        report(name, &all);
+        ssh.disconnect().await.ok();
+    }
+    // E5: the hook line erasing its own echo (ESC from a `prompt $E` child)
+    // and resetting ERRORLEVEL, then Alt+F7; then a cd and the history.
+    {
+        let mut ssh = open(&sshd, cols, rows).await;
+        let mut all = String::new();
+        let hook = concat!(
+            "prompt $e]9;9;$P$e\\$P$G& for /f \"tokens=2 delims=#\" %a in ",
+            "('\"prompt #$E# & echo on & for %b in (1) do rem\"') do ",
+            "(<nul set /p \"=%a[A%a[J%a[A\")& (call )\r",
+            "\x1b[18;3~",
+        );
+        step(&mut ssh, &mut all, hook, 1).await;
+        step(&mut ssh, &mut all, "echo th5109-el=%errorlevel%\r", 2).await;
+        step(&mut ssh, &mut all, "cd \\\r", 3).await;
+        step(&mut ssh, &mut all, "doskey /history\r", 4).await;
+        report("E5 self-erasing line + Alt+F7", &all);
+        ssh.disconnect().await.ok();
+    }
+    // E6: PROMPT as an SSH env request (AcceptEnv), with a reply.
+    {
+        let (session, _) = connect_and_authenticate(&sshd.key_config())
+            .await
+            .expect("auth");
+        let mut ch = session.channel_open_session().await.expect("channel");
+        ch.set_env(true, "PROMPT", "th5109env$G")
+            .await
+            .expect("env");
+        let reply = tokio::time::timeout(Duration::from_secs(5), ch.wait()).await;
+        eprintln!("[5109] E6 env request reply: {reply:?}");
+        ch.request_pty(false, "xterm-256color", 120, 40, 0, 0, &[])
+            .await
+            .expect("pty");
+        ch.request_shell(false).await.expect("shell");
+        let mut out = String::new();
+        let _ = tokio::time::timeout(Duration::from_secs(8), async {
+            while let Some(msg) = ch.wait().await {
+                if let russh::ChannelMsg::Data { data } = msg {
+                    out.push_str(&String::from_utf8_lossy(&data));
+                    if out.contains("th5109env>") {
+                        break;
+                    }
+                }
+            }
+        })
+        .await;
+        eprintln!(
+            "[5109] E6 PROMPT via env request applied: {} — {out:?}",
+            out.contains("th5109env>")
+        );
+    }
+}
+
 /// A minimal terminal model to grade what a raw stream leaves on screen
 /// (#5044): printable text, CR / LF / BS / TAB, autowrap, scrolling (into
 /// a scrollback that is kept), and the CSI cursor / erase / insert / delete

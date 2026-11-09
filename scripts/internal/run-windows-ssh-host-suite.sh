@@ -97,6 +97,10 @@ PS_CORE_TESTS=(
   native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
   native_05h_powershell_hook_keeps_the_login_banner
 )
+# The cmd.exe DefaultShell leg's core SSH tests (#5109).
+CMD_CORE_TESTS=(
+  native_05z_cmd_history_probe
+)
 OPENSSH_KEY='HKLM:\SOFTWARE\OpenSSH'
 cd "$REPO_ROOT"
 
@@ -316,6 +320,14 @@ if [ "$DEFAULT_SHELL" = powershell ]; then
   else
     echo "::warning::no pwsh.exe on this runner; PowerShell 7 not graded (#5044)"
   fi
+fi
+
+# ---- cmd.exe DefaultShell (#5109): core SSH tests ----
+if [ "$DEFAULT_SHELL" = cmd ]; then
+  cmd_log="$(mktemp)"
+  TERMIHUB_TEST_SSH_TRACE=1 cargo test -p termihub-core --features ssh --test "$CORE_SUITE" -- \
+    --test-threads=1 --show-output "${CMD_CORE_TESTS[@]}" "$@" 2>&1 | tee "$cmd_log"
+  require_passed "$cmd_log" "${CMD_CORE_TESTS[@]}"
 fi
 
 export TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL="$DEFAULT_SHELL"
