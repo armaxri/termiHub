@@ -633,6 +633,11 @@ async fn a_running_command_gets_one_sigwinch_per_resize_without_the_hook() {
         })
         .await;
     let seen = session.output[start..].matches("TH_W\r\n").count();
-    assert_eq!(seen, 1, "one resize, one SIGWINCH: {:?}", &session.output[start..]);
+    assert_eq!(
+        seen,
+        1,
+        "one resize, one SIGWINCH: {:?}",
+        &session.output[start..]
+    );
     session.close().await;
 }
