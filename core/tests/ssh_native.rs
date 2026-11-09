@@ -700,152 +700,118 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
-/// #5109 measurement probe (temporary): how a typed cmd.exe `prompt` line
-/// lands in the console's command history (`doskey /history`) over SSH, and
-/// which deliveries avoid it. Prints its findings; asserts nothing.
+/// #5109: with the opt-in hook on, a cmd.exe DefaultShell is followed: a
+/// `cd` reports the new directory (OSC 7). The typed setup leaves nothing
+/// behind: no setup text on screen (the raw stream replayed through the
+/// terminal model), no entry in the console's command history (`doskey
+/// /history`, Alt+F7 cleared it), `ERRORLEVEL` still 0 for the first command.
+/// The `cmd` leg of the Windows SSH Host lane runs it.
 #[tokio::test]
-async fn native_05z_cmd_history_probe() {
+async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
     let sshd = require_native_sshd!();
     if !cfg!(windows) || fixture_shell() != RemoteShell::Cmd {
-        eprintln!("this probe is for a cmd.exe Windows SSH host; skipping");
+        eprintln!("this grade is for a cmd.exe Windows SSH host; skipping");
         return;
     }
-    let (cols, rows) = (200usize, 80usize);
-    async fn open(sshd: &common::NativeSshd, cols: usize, rows: usize) -> Ssh {
-        let mut ssh = Ssh::new();
-        let mut settings = sshd.key_settings();
-        settings["cols"] = serde_json::json!(cols);
-        settings["rows"] = serde_json::json!(rows);
-        ssh.connect(settings).await.expect("connect");
-        let (ok, seen) = type_and_wait(&mut ssh, "echo th5109-%OS%-ready\r", |s| {
-            s.contains("th5109-Windows_NT-ready")
-        })
-        .await;
-        assert!(ok, "cmd did not answer: {seen:?}");
-        ssh
-    }
-    async fn step(ssh: &mut Ssh, all: &mut String, input: &str, n: u32) {
-        let mut line = input.to_string();
-        line.push_str(&format!("echo th5109-%OS%-m{n}\r"));
-        let want = format!("th5109-Windows_NT-m{n}");
-        let (ok, seen) = type_and_wait(ssh, &line, |s| s.contains(&want)).await;
-        all.push_str(&seen);
-        // Let the prompt after it render.
-        let mut rx = ssh.subscribe_output();
-        let _ = tokio::time::timeout(Duration::from_millis(700), async {
-            while let Some(chunk) = rx.recv().await {
-                all.push_str(&String::from_utf8_lossy(&chunk));
-            }
-        })
-        .await;
-        eprintln!(
-            "[5109] step {n} {}: {input:?}",
-            if ok { "ok" } else { "TIMEOUT" }
-        );
-    }
-    let report = |name: &str, all: &str| {
-        let text = screen::render(all.as_bytes(), cols, rows);
-        let osc: Vec<&str> = all
-            .match_indices("]9;9;")
-            .map(|(i, _)| &all[i..(i + 40).min(all.len())])
-            .collect();
-        eprintln!("==== [5109] {name} ====\nraw: {all:?}\nosc9;9: {osc:?}\n---- screen ----\n{text}\n================");
-    };
+    let (cols, rows) = (100usize, 60usize);
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    settings["cols"] = serde_json::json!(cols);
+    settings["rows"] = serde_json::json!(rows);
+    // A configured env var is typed with the hook and joined into its line.
+    settings["env"] = serde_json::json!({ "TH_5109_VAR": "th5109value" });
+    ssh.connect(settings).await.expect("shell session connects");
 
-    // E1: the plain typed hook line, then a cd.
-    {
-        let mut ssh = open(&sshd, cols, rows).await;
-        let mut all = String::new();
-        step(&mut ssh, &mut all, "prompt $e]9;9;$P$e\\$P$G\r", 1).await;
-        step(&mut ssh, &mut all, "cd \\\r", 2).await;
-        step(&mut ssh, &mut all, "doskey /history\r", 3).await;
-        report("E1 plain prompt line + cd + doskey /history", &all);
-        ssh.disconnect().await.ok();
-    }
-    // E2: a leading space.
-    {
-        let mut ssh = open(&sshd, cols, rows).await;
-        let mut all = String::new();
-        step(&mut ssh, &mut all, " prompt $P$G\r", 1).await;
-        step(&mut ssh, &mut all, "doskey /history\r", 2).await;
-        report("E2 leading space", &all);
-        ssh.disconnect().await.ok();
-    }
-    // E3/E4: Alt+F7 (conhost: clear command history) after the line, as a
-    // VT key and as a win32-input-mode key; a macro defined first must stay.
-    for (name, alt_f7) in [
-        ("E3 Alt+F7 as VT CSI 18;3~", "\x1b[18;3~"),
-        (
-            "E4 Alt+F7 as win32-input-mode",
-            "\x1b[118;65;0;1;2;1_\x1b[118;65;0;0;2;1_",
-        ),
-    ] {
-        let mut ssh = open(&sshd, cols, rows).await;
-        let mut all = String::new();
-        step(
-            &mut ssh,
-            &mut all,
-            "doskey th5109m=echo th5109-macro-%OS%\r",
-            1,
-        )
-        .await;
-        step(&mut ssh, &mut all, "prompt $P$G\r", 2).await;
-        step(&mut ssh, &mut all, alt_f7, 3).await;
-        step(&mut ssh, &mut all, "doskey /history\r", 4).await;
-        step(&mut ssh, &mut all, "th5109m\r", 5).await;
-        report(name, &all);
-        ssh.disconnect().await.ok();
-    }
-    // E5: the hook line erasing its own echo (ESC from a `prompt $E` child)
-    // and resetting ERRORLEVEL, then Alt+F7; then a cd and the history.
-    {
-        let mut ssh = open(&sshd, cols, rows).await;
-        let mut all = String::new();
-        let hook = concat!(
-            "prompt $e]9;9;$P$e\\$P$G& for /f \"tokens=2 delims=#\" %a in ",
-            "('\"prompt #$E# & echo on & for %b in (1) do rem\"') do ",
-            "(<nul set /p \"=%a[A%a[J%a[A\")& (call )\r",
-            "\x1b[18;3~",
-        );
-        step(&mut ssh, &mut all, hook, 1).await;
-        step(&mut ssh, &mut all, "echo th5109-el=%errorlevel%\r", 2).await;
-        step(&mut ssh, &mut all, "cd \\\r", 3).await;
-        step(&mut ssh, &mut all, "doskey /history\r", 4).await;
-        report("E5 self-erasing line + Alt+F7", &all);
-        ssh.disconnect().await.ok();
-    }
-    // E6: PROMPT as an SSH env request (AcceptEnv), with a reply.
-    {
-        let (session, _) = connect_and_authenticate(&sshd.key_config())
-            .await
-            .expect("auth");
-        let mut ch = session.channel_open_session().await.expect("channel");
-        ch.set_env(true, "PROMPT", "th5109env$G")
-            .await
-            .expect("env");
-        let reply = tokio::time::timeout(Duration::from_secs(5), ch.wait()).await;
-        eprintln!("[5109] E6 env request reply: {reply:?}");
-        ch.request_pty(false, "xterm-256color", 120, 40, 0, 0, &[])
-            .await
-            .expect("pty");
-        ch.request_shell(false).await.expect("shell");
-        let mut out = String::new();
-        let _ = tokio::time::timeout(Duration::from_secs(8), async {
-            while let Some(msg) = ch.wait().await {
-                if let russh::ChannelMsg::Data { data } = msg {
-                    out.push_str(&String::from_utf8_lossy(&data));
-                    if out.contains("th5109env>") {
-                        break;
-                    }
-                }
-            }
+    let (done, mut all) =
+        type_and_wait(&mut ssh, "echo [%TH_5109_VAR%-%OS%-%ERRORLEVEL%]\r", |s| {
+            s.contains("[th5109value-Windows_NT-0]") && s.contains("\x1b]7;file://")
         })
         .await;
-        eprintln!(
-            "[5109] E6 PROMPT via env request applied: {} — {out:?}",
-            out.contains("th5109env>")
+    assert!(done, "the first command did not run with the hook: {all:?}");
+
+    let (done, seen) = type_and_wait(&mut ssh, "cd \\\recho th5109-cd-%OS%\r", |s| {
+        s.contains("th5109-cd-Windows_NT")
+    })
+    .await;
+    all.push_str(&seen);
+    assert!(done, "the cd did not run: {seen:?}");
+    assert!(
+        seen.contains("/C:\\\x1b\\"),
+        "no OSC 7 report of C:\\ after the cd: {seen:?}"
+    );
+
+    let (done, history) = type_and_wait(&mut ssh, "doskey /history\recho th5109-%OS%-end\r", |s| {
+        s.contains("th5109-Windows_NT-end")
+    })
+    .await;
+    all.push_str(&history);
+    assert!(done, "doskey /history did not run: {history:?}");
+    eprintln!("---- doskey /history ----\n{history:?}");
+    assert!(
+        history.contains("cd \\"),
+        "the user's own commands are in the history: {history:?}"
+    );
+    for leak in ["PROMPT", "for /f", "TH_5109_VAR=", "18;3~"] {
+        assert!(
+            !history.contains(leak),
+            "the setup {leak:?} is in the command history: {history:?}"
         );
     }
+
+    // Let the prompt after it render.
+    let mut rx = ssh.subscribe_output();
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(chunk) = rx.recv().await {
+            all.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    })
+    .await;
+    let text = screen::render(all.as_bytes(), cols, rows);
+    eprintln!("---- rendered terminal ----\n{text}\n---------------------------");
+    if all.contains("Microsoft Windows") {
+        assert!(
+            text.contains("Microsoft Windows"),
+            "the banner is gone: {text}"
+        );
+    }
+    for clear in ["\x1b[3J", "\x1bc"] {
+        assert!(
+            !all.contains(clear),
+            "{clear:?} cleared the screen: {all:?}"
+        );
+    }
+    for leak in [
+        "for /f",
+        "set /p",
+        "PROMPT=",
+        "TH_5109_VAR=",
+        "133;",
+        "#TH#",
+        "rem",
+    ] {
+        assert!(
+            !text.contains(leak),
+            "setup text {leak:?} left on screen: {text}"
+        );
+    }
+    // Only the user's own first command line shows, once, after a prompt
+    // (the history listing shows it a second time, without one).
+    assert_eq!(text.matches(">echo [%TH_5109_VAR%").count(), 1, "{text}");
+    ssh.disconnect().await.expect("disconnect cleanly");
+
+    // Measurement (#5109): does an interactive cmd.exe define PROMPT itself
+    // when it is unset? The hook expands `%PROMPT%`.
+    let mut ssh = Ssh::new();
+    ssh.connect(sshd.key_settings()).await.expect("connect");
+    let (_, seen) = type_and_wait(
+        &mut ssh,
+        "set \"PROMPT=\"\rcmd /d\rset PROMPT\rexit\recho th5109-%OS%-probe\r",
+        |s| s.contains("th5109-Windows_NT-probe"),
+    )
+    .await;
+    eprintln!("[5109] PROMPT in a fresh cmd with PROMPT unset: {seen:?}");
+    ssh.disconnect().await.ok();
 }
 
 /// A minimal terminal model to grade what a raw stream leaves on screen

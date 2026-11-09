@@ -21,6 +21,9 @@
 #    first (#5044): with the opt-in hook on, the login banner stays and no
 #    setup text is left on screen -- under Windows PowerShell 5.1, then under
 #    PowerShell 7 (DefaultShell switched to pwsh.exe and back).
+# 5. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
+#    (#5109): with the opt-in hook on, a cd is reported, no setup text is
+#    left on screen and nothing of it is in the console's command history.
 #
 # Steps: build the agent, set HKLM\SOFTWARE\OpenSSH\DefaultShell, bring up the
 # native sshd fixture (native-sshd-fixture.sh, which hands over to its
@@ -42,7 +45,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -99,7 +102,8 @@ PS_CORE_TESTS=(
 )
 # The cmd.exe DefaultShell leg's core SSH tests (#5109).
 CMD_CORE_TESTS=(
-  native_05z_cmd_history_probe
+  native_05b_remote_shell_probe_detects_the_login_shell
+  native_05i_cmd_hook_follows_cd_and_leaves_no_history
 )
 OPENSSH_KEY='HKLM:\SOFTWARE\OpenSSH'
 cd "$REPO_ROOT"
