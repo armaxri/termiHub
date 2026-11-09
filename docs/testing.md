@@ -970,7 +970,14 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
   runs [`scripts/internal/run-native-sshd-suites.sh`](../scripts/internal/run-native-sshd-suites.sh)
   (fixture up → suite → sshd log on failure → teardown) on `ubuntu-latest`,
   `macos-latest` and `windows-latest`. It also runs on manual dispatch and in the
-  release gate, but not on the path-filtered PR runs. The Windows agent
+  release gate, but not on the path-filtered PR runs. Its ubuntu leg then grades
+  the hidden fish setup on a real **fish 3.x** login shell too:
+  [`run-native-sshd-fish3-suite.sh`](../scripts/internal/run-native-sshd-fish3-suite.sh)
+  installs Debian bookworm's fish 3.6 (checksum-pinned), makes it the fixture
+  user's login shell, runs `native_05b..05d` with
+  `TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=fish3` and restores the shell. The test
+  output, with every setup byte, is uploaded as the `fish3-ssh-trace` artifact
+  (#5115). The Windows agent
   reconnect grade uses the same fixture (see
   [the agent reconnect grade](#backend-driven-agent-reconnect-across-a-prolonged-transport-drop-24762512)). Scheduled runs use
   `main`'s copy of the workflow, so these jobs start running nightly once this

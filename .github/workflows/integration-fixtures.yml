@@ -576,6 +576,27 @@ jobs:
         shell: bash
         run: scripts/internal/run-native-sshd-suites.sh
 
+      - name: Hidden fish setup on a real fish 3.x login shell
+        # #5115: native_05b..05d with the fixture user's login shell switched to
+        # Debian bookworm's fish 3.6 (Ubuntu ships fish 4, which takes another
+        # path: its own command marks). The recipe (checksum-pinned install,
+        # login shell swap + restore, pass check) is the script; the test
+        # output with every setup byte (TERMIHUB_TEST_SSH_TRACE) is kept.
+        if: ${{ runner.os == 'Linux' && !cancelled() }}
+        shell: bash
+        run: >-
+          scripts/internal/run-native-sshd-fish3-suite.sh --install-debian-fish3
+          --log "$RUNNER_TEMP/fish3-ssh-trace.log"
+
+      - name: Upload the fish 3 setup trace
+        if: ${{ runner.os == 'Linux' && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fish3-ssh-trace
+          path: ${{ runner.temp }}/fish3-ssh-trace.log
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Local Windows shells keep the profile's startup output
         # core/src/backends/local_shell.rs::windows_shell_start_keeps_profile_output_and_follows_cd
         # (#5017): a real ConPTY start of powershell.exe, pwsh and cmd, with

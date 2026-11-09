@@ -328,7 +328,12 @@ impl SetupEchoFilter {
             let cols = if self.resized { 0 } else { self.cols };
             (self.cell_redraw && is_only_redrawn_echo(&self.recent, pre, &line, cols)).then_some(0)
         };
-        match echo_start(pre, &typed).or_else(redrawn) {
+        // The cell-redraw check first (#5115): it passes only when ALL the
+        // held output is the editor drawing the line. fish 3 draws a long
+        // line word by word, then repaints it whole, in colour, on Enter;
+        // the text match finds that repaint and would show the word-by-word
+        // drawing before it as output of its own.
+        match redrawn().or_else(|| echo_start(pre, &typed)) {
             Some(echo) => {
                 self.outcome = Some(HideOutcome::Hidden);
                 self.phase = Phase::Reprompt {
