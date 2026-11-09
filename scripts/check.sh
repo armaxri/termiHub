@@ -146,6 +146,33 @@ else
 fi
 
 echo ""
+echo "=== Concept index ==="
+# Every docs/concepts/<status>/*.html is linked from docs/concepts/README.md (#4924).
+if node scripts/internal/check-concept-index.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
+echo "=== README / app parity ==="
+# README.md's Activity Bar views, SSH auth methods and shortcut table match the code (#4924).
+if node scripts/internal/check-readme-parity.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
+echo "=== Marketing draft stamps ==="
+# Every docs/marketing draft carries one "Last verified" stamp (#4924).
+if node scripts/internal/check-marketing-drafts.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== ADR-14 projection region list ==="
 # Every registered projection region is named in ADR-14's status paragraph (#4586).
 if node scripts/internal/check-adr14-regions.mjs; then
