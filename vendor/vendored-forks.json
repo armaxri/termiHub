@@ -205,6 +205,14 @@
             "https://github.com/Devolutions/IronRDP/issues/2075"
           ],
           "upstream_status": "Fixed on upstream master (4cd9d4506, 2026-11-03), unreleased; with it master has both deltas, so the fork retires on the next ironrdp-rdpdr release"
+        },
+        {
+          "summary": "Drive I/O requests the crate does not implement (IRP_MJ_SET_VOLUME_INFORMATION, an unsupported information class in Set Information / Query Volume Information / Query Directory, an undescribed IRP_MJ_DIRECTORY_CONTROL minor function) are completed with STATUS_NOT_SUPPORTED (Length echoed) or STATUS_UNSUCCESSFUL instead of a decode error that ends the RDP session; port of upstream 0f9154d2 (IronRDP#2174) adapted to 0.7.0",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/5118",
+            "https://github.com/Devolutions/IronRDP/commit/0f9154d2128f8c65f4d51f6b7eb7cb1d66a12329"
+          ],
+          "upstream_status": "Released upstream in ironrdp-rdpdr 0.9.0 (0f9154d2 predates the release); goes away with the IronRDP upgrade (#5117)"
         }
       ],
       "watch": {

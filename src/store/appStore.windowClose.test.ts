@@ -27,6 +27,7 @@ const openWindow = vi.fn();
 const sendHandoffToWindow = vi.fn();
 const closeTerminal = vi.fn();
 const detachPersistentTab = vi.fn();
+const cancelConnecting = vi.fn();
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/services/api", () => ({
   sendHandoffToWindow: (...args: unknown[]) => sendHandoffToWindow(...args),
   closeTerminal: (...args: unknown[]) => closeTerminal(...args),
   detachPersistentTab: (...args: unknown[]) => detachPersistentTab(...args),
+  cancelConnecting: (...args: unknown[]) => cancelConnecting(...args),
 }));
 
 const frontendError = vi.fn();
@@ -47,6 +49,7 @@ vi.mock("@/utils/frontendLog", async (importOriginal) => {
 });
 
 import { useAppStore } from "./appStore";
+import { STARTING_CONNECT_SETTLE_MS } from "./slices/windowManagementSlice";
 import type { WindowInfo } from "@/types/window";
 
 /** Seed a live tab (with a backend session) and return its tab id. */
@@ -71,6 +74,7 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
     sendHandoffToWindow.mockReset().mockResolvedValue(undefined);
     closeTerminal.mockReset().mockResolvedValue(undefined);
     detachPersistentTab.mockReset().mockResolvedValue(undefined);
+    cancelConnecting.mockReset().mockResolvedValue(true);
     frontendError.mockReset();
   });
 
@@ -203,6 +207,91 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
         "workspace",
         expect.stringContaining("Failed to tear down session s2 on window close")
       );
+    });
+  });
+
+  describe("a connection still starting (#5112)", () => {
+    /** Seed a tab with no session yet whose create is in flight. */
+    function seedStartingTab(title: string): string {
+      const tabId = useAppStore.getState().addTab(title, "ssh", undefined, { sessionId: null });
+      useAppStore.getState().setConnectStarting(tabId, `${tabId}:0`);
+      return tabId;
+    }
+
+    it("prompts a window close and lists the tab as starting", async () => {
+      const tabId = seedStartingTab("db-1");
+
+      const decision = await useAppStore.getState().prepareWindowClose(OTHERS);
+
+      expect(decision).toBe("prompt");
+      const pending = useAppStore.getState().pendingWindowClose;
+      expect(pending?.sessions).toEqual([
+        expect.objectContaining({ tabId, sessionId: null, starting: true, outcome: "terminate" }),
+      ]);
+      // Listed once, as a session, not again as an other tab.
+      expect(pending?.otherTabs ?? []).toEqual([]);
+    });
+
+    it("prompts an app quit and lists the tab as starting", () => {
+      const tabId = seedStartingTab("db-1");
+
+      expect(useAppStore.getState().prepareAppQuit()).toBe("prompt");
+
+      const pending = useAppStore.getState().pendingWindowClose;
+      expect(pending?.mode).toBe("quit");
+      expect(pending?.sessions).toEqual([
+        expect.objectContaining({ tabId, starting: true, outcome: "terminate" }),
+      ]);
+    });
+
+    it("still lets a quit and a close through for a tab with no connection", async () => {
+      useAppStore.getState().addTab("idle", "ssh", undefined, { sessionId: null });
+
+      expect(useAppStore.getState().prepareAppQuit()).toBe("ready");
+      expect(await useAppStore.getState().prepareWindowClose(OTHERS)).toBe("proceed");
+    });
+
+    it("cancels the starting connect and waits for it to settle when ending", async () => {
+      const tabId = seedStartingTab("db-1");
+      seedLiveTab({ title: "build", connectionType: "local", sessionId: "s2" });
+      setTimeout(() => useAppStore.getState().setConnectStarting(tabId, null), 120);
+
+      let done = false;
+      const ending = useAppStore
+        .getState()
+        .endWindowSessions()
+        .then(() => {
+          done = true;
+        });
+      expect(useAppStore.getState().windowSessionsEnding).toBe(true);
+      expect(cancelConnecting).toHaveBeenCalledWith(`${tabId}:0`);
+      expect(closeTerminal).toHaveBeenCalledWith("s2");
+
+      await new Promise((r) => setTimeout(r, 60));
+      expect(done).toBe(false);
+      await ending;
+      expect(useAppStore.getState().startingConnects).toEqual({});
+    });
+
+    it("stops waiting for a starting connect after the settle bound", async () => {
+      vi.useFakeTimers();
+      try {
+        seedStartingTab("db-1");
+        let done = false;
+        const ending = useAppStore
+          .getState()
+          .endStartingConnects()
+          .then(() => {
+            done = true;
+          });
+        await vi.advanceTimersByTimeAsync(STARTING_CONNECT_SETTLE_MS - 100);
+        expect(done).toBe(false);
+        await vi.advanceTimersByTimeAsync(200);
+        await ending;
+        expect(done).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
