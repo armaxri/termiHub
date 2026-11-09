@@ -26,7 +26,7 @@
 //! maintained decoders link the native `libopus` C library, a cross-platform CI
 //! cost deferred to a follow-up.
 
-use ironrdp::rdpsnd::pdu::{AudioFormat, WaveFormat};
+use ironrdp_rdpsnd::pdu::{AudioFormat, WaveFormat};
 use symphonia_codec_adpcm::AdpcmDecoder;
 use symphonia_core::audio::{Channels, SampleBuffer};
 use symphonia_core::codecs::{

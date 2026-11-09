@@ -10,9 +10,9 @@
 //! extended flag. These functions are pure so the mapping is unit-testable
 //! without a live session.
 
-use ironrdp::pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
-use ironrdp::pdu::input::mouse::PointerFlags;
-use ironrdp::pdu::input::MousePdu;
+use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
+use ironrdp_pdu::input::mouse::PointerFlags;
+use ironrdp_pdu::input::MousePdu;
 
 use termihub_core::connection::InputEvent;
 

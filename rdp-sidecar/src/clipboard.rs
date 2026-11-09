@@ -1,9 +1,9 @@
 //! CLIPRDR (MS-RDPECLIP) clipboard bridging for the RDP sidecar (#1756).
 //!
-//! IronRDP's clipboard channel ([`ironrdp::cliprdr::Cliprdr`]) is a static
+//! IronRDP's clipboard channel ([`ironrdp_cliprdr::Cliprdr`]) is a static
 //! virtual channel driven by a [`CliprdrBackend`] the integrator supplies. The
 //! backend's methods are called **synchronously** from inside
-//! [`ActiveStage::process`](ironrdp::session::ActiveStage) while a server
+//! [`ActiveStage::process`](ironrdp_session::ActiveStage) while a server
 //! CLIPRDR PDU is being decoded — at which point the [`Cliprdr`] channel is
 //! mutably borrowed, so the backend cannot call back into it (initiate a paste,
 //! submit data). Instead the backend records what needs to happen as a
@@ -85,22 +85,22 @@
 //! for now (Windows `CF_HDROP` / Linux `text/uri-list` are sequenced follow-ups);
 //! other platforms fall back to the shared-folder offer.
 //!
-//! [`Cliprdr`]: ironrdp::cliprdr::Cliprdr
-//! [`CliprdrBackend`]: ironrdp::cliprdr::backend::CliprdrBackend
+//! [`Cliprdr`]: ironrdp_cliprdr::Cliprdr
+//! [`CliprdrBackend`]: ironrdp_cliprdr::backend::CliprdrBackend
 //! [`RdpConfig::clipboard_download_dir`]: termihub_core::backends::rdp_sidecar::config::RdpConfig::clipboard_download_dir
 
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
-use ironrdp::cliprdr::backend::CliprdrBackend;
-use ironrdp::cliprdr::is_windows_device_name;
-use ironrdp::cliprdr::pdu::{
+use ironrdp_cliprdr::backend::CliprdrBackend;
+use ironrdp_cliprdr::is_windows_device_name;
+use ironrdp_cliprdr::pdu::{
     ClipboardFileAttributes, ClipboardFormat, ClipboardFormatId, ClipboardFormatName,
     ClipboardGeneralCapabilityFlags, FileContentsFlags, FileContentsRequest, FileContentsResponse,
     FileDescriptor, FormatDataRequest, FormatDataResponse, LockDataId,
 };
-use ironrdp::core::AsAny;
+use ironrdp_core::AsAny;
 use termihub_core::connection::{ClipboardImage, RemoteClipboardFile};
 use tracing::{debug, trace, warn};
 
@@ -116,7 +116,7 @@ use crate::host_clipboard::read_host_clipboard_files;
 const CLIPBOARD_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 
 /// An action the CLIPRDR backend needs the driver loop to perform on the
-/// [`Cliprdr`](ironrdp::cliprdr::Cliprdr) channel once it owns `&mut ActiveStage`
+/// [`Cliprdr`](ironrdp_cliprdr::Cliprdr) channel once it owns `&mut ActiveStage`
 /// again (the backend is called while that channel is borrowed and cannot call
 /// back into it).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,15 +137,15 @@ pub enum ClipboardEvent {
     ProvideData(ClipboardFormatId),
     /// Ask the server for a chunk (size or byte range) of a file the remote
     /// copied, as part of downloading it into the shared folder (#1765). The
-    /// driver calls [`Cliprdr::request_file_contents`](ironrdp::cliprdr::Cliprdr::request_file_contents).
+    /// driver calls [`Cliprdr::request_file_contents`](ironrdp_cliprdr::Cliprdr::request_file_contents).
     RequestFileContents(FileContentsRequest),
     /// Advertise a local file list (the sandboxed shared folder's contents) so
     /// the remote can paste our files (#1778). The driver calls
-    /// [`Cliprdr::initiate_file_copy`](ironrdp::cliprdr::Cliprdr::initiate_file_copy).
+    /// [`Cliprdr::initiate_file_copy`](ironrdp_cliprdr::Cliprdr::initiate_file_copy).
     AdvertiseFiles(Vec<FileDescriptor>),
     /// Serve a size or byte range of a locally offered file the remote requested
     /// while pasting (#1778). The driver calls
-    /// [`Cliprdr::submit_file_contents`](ironrdp::cliprdr::Cliprdr::submit_file_contents).
+    /// [`Cliprdr::submit_file_contents`](ironrdp_cliprdr::Cliprdr::submit_file_contents).
     ProvideFileContents(FileContentsResponse<'static>),
     /// The remote copied files and delayed rendering is on: surface the sanitized
     /// file **list** to the host (over IPC) so it can offer them for a local paste
@@ -484,7 +484,7 @@ impl SidecarClipboardBackend {
     /// the (already sandboxed, canonical) shared folder received files land in
     /// and local files are served from, or `None` to keep the bridge text-only.
     /// `view_only` suppresses advertising/serving local files (#1778). The
-    /// backend is handed to [`Cliprdr::new`](ironrdp::cliprdr::Cliprdr::new); the
+    /// backend is handed to [`Cliprdr::new`](ironrdp_cliprdr::Cliprdr::new); the
     /// receiver stays with the driver loop.
     pub fn new(
         download_dir: Option<PathBuf>,

@@ -35,37 +35,37 @@ name = "termihub-rdp-helper"
 path = "src/main.rs"
 
 [dependencies]
-# Pure-Rust RDP (Microsoft/Devolutions-maintained). The meta crate re-exports the
-# sub-crates behind features; IronRDP decodes on the wire into the shared
-# protocol-agnostic frame stream. Versions verified to resolve + compile in this
-# excluded graph (#1747 / #1725 spike): IronRDP 0.17, ironrdp-tokio 0.10,
-# ironrdp-tls 0.2.
-ironrdp = { version = "0.17", default-features = false, features = [
-    "connector",
-    "session",
-    "graphics",
-    "pdu",
-    "core",
-    # Display Control Virtual Channel (MS-RDPEDISP) for dynamic resize (#1755):
-    # `dvc` provides the drdynvc static channel that carries DVCs, and
-    # `displaycontrol` the monitor-layout resize processor that rides it.
-    "dvc",
-    "displaycontrol",
-    # Clipboard redirection static channel (MS-RDPECLIP) for bidirectional
-    # text clipboard bridging (#1756): `cliprdr` provides the CLIPRDR SVC
-    # processor plus its `CliprdrBackend` integration seam.
-    "cliprdr",
-    # Device redirection static channel (MS-RDPEFS) for drive redirection
-    # (#1757): `rdpdr` provides the RDPDR SVC processor plus its `RdpdrBackend`
-    # filesystem-IRP integration seam. MS-RDPEFS requires the `rdpsnd` channel
-    # to be co-advertised for the server to talk back to rdpdr, so `rdpsnd` is
-    # registered alongside it (audio playback itself is a sequenced follow-up).
-    "rdpdr",
-    "rdpsnd",
-    # `svc` re-exports `ironrdp-svc`, whose `SvcMessage` is the return type of the
-    # `RdpdrBackend` filesystem-IRP handlers (#1757).
-    "svc",
-] }
+# Pure-Rust RDP (Microsoft/Devolutions-maintained). IronRDP decodes on the wire
+# into the shared protocol-agnostic frame stream. The sidecar depends on the
+# IronRDP sub-crates directly rather than on the `ironrdp` facade (#5117): the
+# facade only re-exports them, and upstream releases the sub-crates without
+# always cutting a new facade, so naming them is what lets the sidecar track
+# their releases. Versions verified to resolve + compile in this excluded graph
+# (#1747 / #1725 spike).
+ironrdp-connector = "0.10"
+ironrdp-session = "0.11"
+ironrdp-graphics = "0.9"
+ironrdp-pdu = "0.9"
+ironrdp-core = "0.2"
+# Display Control Virtual Channel (MS-RDPEDISP) for dynamic resize (#1755):
+# `ironrdp-dvc` provides the drdynvc static channel that carries DVCs, and
+# `ironrdp-displaycontrol` the monitor-layout resize processor that rides it.
+ironrdp-dvc = "0.8"
+ironrdp-displaycontrol = "0.8"
+# Clipboard redirection static channel (MS-RDPECLIP) for bidirectional text
+# clipboard bridging (#1756): the CLIPRDR SVC processor plus its
+# `CliprdrBackend` integration seam.
+ironrdp-cliprdr = "0.7"
+# Device redirection static channel (MS-RDPEFS) for drive redirection (#1757):
+# the RDPDR SVC processor plus its `RdpdrBackend` filesystem-IRP integration
+# seam. MS-RDPEFS requires the `rdpsnd` channel to be co-advertised for the
+# server to talk back to rdpdr, so `ironrdp-rdpsnd` is registered alongside it
+# (and plays audio, #1764).
+ironrdp-rdpdr = "0.7"
+ironrdp-rdpsnd = "0.9"
+# `ironrdp-svc`'s `SvcMessage` is the return type of the `RdpdrBackend`
+# filesystem-IRP handlers (#1757).
+ironrdp-svc = "0.8"
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", default-features = false, features = [
     "rustls-ring",
@@ -235,10 +235,10 @@ tempfile = "3"
 # format cannot map a played buffer back to its negotiated rate (risking
 # "chipmunk" audio). The fork remembers the exact list it sent and passes the
 # concrete `AudioFormat` to `wave`, which is what makes multi-format rdpsnd
-# negotiation sound. `ironrdp` (the meta crate) depends on `ironrdp-rdpsnd = "0.9"`
-# and re-exports it as `ironrdp::rdpsnd`, so patching crates-io redirects that
-# re-export to the fork. This lives in the workspace-EXCLUDED sidecar graph with
-# its own Cargo.lock, so it never touches the desktop app's dependency graph.
+# negotiation sound. Patching crates-io redirects the sidecar's direct
+# `ironrdp-rdpsnd` dependency to the fork. This lives in the workspace-EXCLUDED
+# sidecar graph with its own Cargo.lock, so it never touches the desktop app's
+# dependency graph.
 # See `vendor/ironrdp-rdpsnd/README.md` for exactly what changed vs upstream.
 [patch.crates-io]
 ironrdp-rdpsnd = { path = "vendor/ironrdp-rdpsnd" }
@@ -256,7 +256,6 @@ ironrdp-pdu = { path = "vendor/ironrdp-pdu" }
 # ASCII characters) instead of the literal "ignored". xrdp's devredir reads only
 # that field, so every drive was mounted as `~/thinclient_drives/ignored`. A port
 # of the unreleased upstream `PreferredDosName::for_drive` (Devolutions/IronRDP
-# 161409e18dd1, #1566); drop it once a released ironrdp-rdpdr carries it. `ironrdp`
-# re-exports the crate as `ironrdp::rdpdr`, so this patch redirects that re-export.
+# 161409e18dd1, #1566); drop it once a released ironrdp-rdpdr carries it.
 # See `vendor/ironrdp-rdpdr/README.md`.
 ironrdp-rdpdr = { path = "vendor/ironrdp-rdpdr" }

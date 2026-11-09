@@ -14,27 +14,27 @@
 //! active stage, `select!`-ing between server PDUs and host input events.
 
 use anyhow::{anyhow, Context, Result};
-use ironrdp::cliprdr::{Client as CliprdrRole, CliprdrClient, CliprdrSvcMessages};
-use ironrdp::connector::connection_activation::{
+use ironrdp_cliprdr::{Client as CliprdrRole, CliprdrClient, CliprdrSvcMessages};
+use ironrdp_connector::connection_activation::{
     ConnectionActivationSequence, ConnectionActivationState,
 };
-use ironrdp::connector::{
+use ironrdp_connector::{
     BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
     DesktopSize, Sequence as _, ServerName,
 };
-use ironrdp::core::WriteBuf;
-use ironrdp::displaycontrol::client::DisplayControlClient;
-use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
-use ironrdp::dvc::DrdynvcClient;
-use ironrdp::graphics::image_processing::PixelFormat;
-use ironrdp::pdu::gcc::KeyboardType;
-use ironrdp::pdu::input::fast_path::FastPathInputEvent;
-use ironrdp::pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
-use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
-use ironrdp::rdpdr::Rdpdr;
-use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
-use ironrdp::session::image::DecodedImage;
-use ironrdp::session::{
+use ironrdp_core::WriteBuf;
+use ironrdp_displaycontrol::client::DisplayControlClient;
+use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
+use ironrdp_dvc::DrdynvcClient;
+use ironrdp_graphics::image_processing::PixelFormat;
+use ironrdp_pdu::gcc::KeyboardType;
+use ironrdp_pdu::input::fast_path::FastPathInputEvent;
+use ironrdp_pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
+use ironrdp_pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+use ironrdp_rdpdr::Rdpdr;
+use ironrdp_rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
+use ironrdp_session::image::DecodedImage;
+use ironrdp_session::{
     ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason,
 };
 use ironrdp_tokio::reqwest::ReqwestNetworkClient;
@@ -974,7 +974,7 @@ where
                 // xrdp crashes on a frame ack that lands while it applies a
                 // layout: hold them until its reactivation (#4845). Fast-path
                 // processing answers with nothing but frame acks.
-                let outputs = if gate.in_flight() && action == ironrdp::pdu::Action::FastPath {
+                let outputs = if gate.in_flight() && action == ironrdp_pdu::Action::FastPath {
                     outputs
                         .into_iter()
                         .filter_map(|output| match output {
@@ -1308,7 +1308,7 @@ where
             // no compression), so the decompressor stays absent.
             stage.set_share_id(share_id);
             stage.set_fastpath_processor(
-                ironrdp::session::fast_path::ProcessorBuilder {
+                ironrdp_session::fast_path::ProcessorBuilder {
                     io_channel_id,
                     user_channel_id,
                     share_id,
@@ -1333,9 +1333,9 @@ where
 /// Whether a PDU read during a reactivation belongs to the sequence: an X.224
 /// Send Data Indication on the I/O channel. Fast-path output and the virtual
 /// channels' traffic do not.
-fn is_io_channel_pdu(action: ironrdp::pdu::Action, frame: &[u8], io_channel_id: u16) -> bool {
-    action == ironrdp::pdu::Action::X224
-        && ironrdp::pdu::mcs::decode_send_data_indication(frame)
+fn is_io_channel_pdu(action: ironrdp_pdu::Action, frame: &[u8], io_channel_id: u16) -> bool {
+    action == ironrdp_pdu::Action::X224
+        && ironrdp_pdu::mcs::decode_send_data_indication(frame)
             .is_ok_and(|ctx| ctx.channel_id == io_channel_id)
 }
 
@@ -1347,11 +1347,11 @@ fn is_io_channel_pdu(action: ironrdp::pdu::Action, frame: &[u8], io_channel_id: 
 async fn route_interleaved_pdu<T: FramedWrite>(
     stage: &mut ActiveStage,
     image: &mut DecodedImage,
-    action: ironrdp::pdu::Action,
+    action: ironrdp_pdu::Action,
     frame: &[u8],
     transport: &mut T,
 ) -> Result<()> {
-    if action == ironrdp::pdu::Action::FastPath {
+    if action == ironrdp_pdu::Action::FastPath {
         debug!("dropping fast-path output received during reactivation");
         return Ok(());
     }
@@ -1591,13 +1591,13 @@ where
 /// logoff here (#3612) — nor from an xrdp service restart (#4529, evidence on
 /// [`failure::SERVER_CLOSE_ERROR_INFO`]) — and reports a plain server close.
 fn disconnect_ultimatum_reason(
-    action: ironrdp::pdu::Action,
+    action: ironrdp_pdu::Action,
     frame: &[u8],
-) -> Option<ironrdp::pdu::mcs::DisconnectReason> {
-    if action != ironrdp::pdu::Action::X224 {
+) -> Option<ironrdp_pdu::mcs::DisconnectReason> {
+    if action != ironrdp_pdu::Action::X224 {
         return None;
     }
-    ironrdp::core::decode::<ironrdp::pdu::x224::X224<ironrdp::pdu::mcs::DisconnectProviderUltimatum>>(
+    ironrdp_core::decode::<ironrdp_pdu::x224::X224<ironrdp_pdu::mcs::DisconnectProviderUltimatum>>(
         frame,
     )
     .ok()
@@ -1607,7 +1607,7 @@ fn disconnect_ultimatum_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ironrdp::pdu::rdp::headers::{ShareControlHeader, ShareControlPdu, ShareDataPdu};
+    use ironrdp_pdu::rdp::headers::{ShareControlHeader, ShareControlPdu, ShareDataPdu};
 
     // ── Drive announce PreferredDosName (#4125) ─────────────────────────
 
@@ -1615,13 +1615,13 @@ mod tests {
     /// for a drive named `name` (DeviceCount 4 | DeviceType 4 | DeviceId 4 | name 8).
     fn announced_dos_name(name: &str) -> [u8; 8] {
         let mut rdpdr = Rdpdr::new(
-            Box::new(ironrdp::rdpdr::NoopRdpdrBackend),
+            Box::new(ironrdp_rdpdr::NoopRdpdrBackend),
             CLIENT_NAME.to_string(),
         );
         let announce = rdpdr.add_drive(DRIVE_DEVICE_ID, name.to_string());
         let mut buf = vec![0u8; announce.size()];
         announce
-            .encode(&mut ironrdp::core::WriteCursor::new(&mut buf))
+            .encode(&mut ironrdp_core::WriteCursor::new(&mut buf))
             .expect("encode the device list announce");
         buf[12..20].try_into().expect("8-byte PreferredDosName")
     }
@@ -1646,13 +1646,13 @@ mod tests {
     /// A drive Device I/O Request (MS-RDPEFS 2.2.1.4) laid out as FsInformationClass,
     /// Length, Padding (24 bytes), Buffer, for the sidecar's redirected drive.
     fn drive_information_request(
-        major: ironrdp::rdpdr::pdu::efs::MajorFunction,
+        major: ironrdp_rdpdr::pdu::efs::MajorFunction,
         class: u32,
         buffer: &[u8],
     ) -> Vec<u8> {
-        use ironrdp::rdpdr::pdu::efs::{DeviceIoRequest, MinorFunction};
-        use ironrdp::rdpdr::pdu::RdpdrPdu;
-        let mut encoded = ironrdp::core::encode_vec(&RdpdrPdu::DeviceIoRequest(DeviceIoRequest {
+        use ironrdp_rdpdr::pdu::efs::{DeviceIoRequest, MinorFunction};
+        use ironrdp_rdpdr::pdu::RdpdrPdu;
+        let mut encoded = ironrdp_core::encode_vec(&RdpdrPdu::DeviceIoRequest(DeviceIoRequest {
             device_id: DRIVE_DEVICE_ID,
             file_id: 0,
             completion_id: 9,
@@ -1668,7 +1668,7 @@ mod tests {
     }
 
     /// (DeviceId, CompletionId, IoStatus) of an encoded DR_DEVICE_IOCOMPLETION.
-    fn completion_header(message: &ironrdp::svc::SvcMessage) -> (Vec<u8>, u32, u32, u32) {
+    fn completion_header(message: &ironrdp_svc::SvcMessage) -> (Vec<u8>, u32, u32, u32) {
         let encoded = message
             .encode_unframed_pdu()
             .expect("encode the completion");
@@ -1689,8 +1689,8 @@ mod tests {
     /// next request is still served by the real drive backend.
     #[test]
     fn unsupported_drive_irp_is_completed_and_the_channel_keeps_serving() {
-        use ironrdp::rdpdr::pdu::efs::{MajorFunction, NtStatus};
-        use ironrdp::svc::SvcProcessor;
+        use ironrdp_rdpdr::pdu::efs::{MajorFunction, NtStatus};
+        use ironrdp_svc::SvcProcessor;
 
         let dir = tempfile::tempdir().expect("temp dir");
         let root = std::fs::canonicalize(dir.path()).expect("canonical root");
@@ -1735,8 +1735,8 @@ mod tests {
     /// MajorFunction STATUS_UNSUCCESSFUL, and the channel keeps serving.
     #[test]
     fn unknown_major_function_irp_is_completed_and_the_channel_keeps_serving() {
-        use ironrdp::rdpdr::pdu::efs::NtStatus;
-        use ironrdp::svc::SvcProcessor;
+        use ironrdp_rdpdr::pdu::efs::NtStatus;
+        use ironrdp_svc::SvcProcessor;
 
         let raw_request = |major: u32, body: &[u8]| {
             let mut encoded = vec![0x72, 0x44, 0x52, 0x49]; // DEVICE_IOREQUEST
@@ -1790,7 +1790,7 @@ mod tests {
 
         // FileFsSizeInformation is supported and reaches DriveRedirectBackend.
         let request = drive_information_request(
-            ironrdp::rdpdr::pdu::efs::MajorFunction::QueryVolumeInformation,
+            ironrdp_rdpdr::pdu::efs::MajorFunction::QueryVolumeInformation,
             3,
             &[],
         );
@@ -1806,11 +1806,11 @@ mod tests {
     fn xrdp_disconnect_ultimatum_is_recognised() {
         let frame = [0x03, 0x00, 0x00, 0x09, 0x02, 0xf0, 0x80, 0x21, 0x80];
         assert_eq!(
-            disconnect_ultimatum_reason(ironrdp::pdu::Action::X224, &frame),
-            Some(ironrdp::pdu::mcs::DisconnectReason::UserRequested)
+            disconnect_ultimatum_reason(ironrdp_pdu::Action::X224, &frame),
+            Some(ironrdp_pdu::mcs::DisconnectReason::UserRequested)
         );
         assert_eq!(
-            disconnect_ultimatum_reason(ironrdp::pdu::Action::FastPath, &frame),
+            disconnect_ultimatum_reason(ironrdp_pdu::Action::FastPath, &frame),
             None
         );
     }
@@ -1822,11 +1822,11 @@ mod tests {
             0x03, 0x00, 0x00, 0x0c, 0x02, 0xf0, 0x80, 0x68, 0x00, 0x01, 0x03, 0xeb,
         ];
         assert_eq!(
-            disconnect_ultimatum_reason(ironrdp::pdu::Action::X224, &sdi),
+            disconnect_ultimatum_reason(ironrdp_pdu::Action::X224, &sdi),
             None
         );
         assert_eq!(
-            disconnect_ultimatum_reason(ironrdp::pdu::Action::X224, &[0x03]),
+            disconnect_ultimatum_reason(ironrdp_pdu::Action::X224, &[0x03]),
             None
         );
     }
@@ -2152,9 +2152,9 @@ mod tests {
     /// Wrap `user_data` (a Share Control PDU) the way a server sends it on the
     /// IO channel: TPKT + X.224 Data + MCS Send Data Indication.
     fn server_io_frame(user_data: Vec<u8>) -> Vec<u8> {
-        use ironrdp::pdu::mcs::SendDataIndication;
-        use ironrdp::pdu::x224::X224;
-        ironrdp::core::encode_vec(&X224(SendDataIndication {
+        use ironrdp_pdu::mcs::SendDataIndication;
+        use ironrdp_pdu::x224::X224;
+        ironrdp_core::encode_vec(&X224(SendDataIndication {
             initiator_id: TEST_SERVER_CHANNEL,
             channel_id: TEST_IO_CHANNEL,
             user_data: std::borrow::Cow::Owned(user_data),
@@ -2164,7 +2164,7 @@ mod tests {
 
     fn server_share_control(share_id: u32, pdu: ShareControlPdu) -> Vec<u8> {
         server_io_frame(
-            ironrdp::core::encode_vec(&ShareControlHeader {
+            ironrdp_core::encode_vec(&ShareControlHeader {
                 share_control_pdu: pdu,
                 pdu_source: TEST_SERVER_CHANNEL,
                 share_id,
@@ -2174,8 +2174,8 @@ mod tests {
     }
 
     fn server_share_data(share_id: u32, pdu: ShareDataPdu) -> Vec<u8> {
-        use ironrdp::pdu::rdp::client_info::CompressionType;
-        use ironrdp::pdu::rdp::headers::{CompressionFlags, ShareDataHeader, StreamPriority};
+        use ironrdp_pdu::rdp::client_info::CompressionType;
+        use ironrdp_pdu::rdp::headers::{CompressionFlags, ShareDataHeader, StreamPriority};
         server_share_control(
             share_id,
             ShareControlPdu::Data(ShareDataHeader {
@@ -2189,7 +2189,7 @@ mod tests {
 
     fn test_active_stage(share_id: u32) -> ActiveStage {
         ActiveStageBuilder {
-            static_channels: ironrdp::svc::StaticChannelSet::new(),
+            static_channels: ironrdp_svc::StaticChannelSet::new(),
             user_channel_id: TEST_USER_CHANNEL,
             io_channel_id: TEST_IO_CHANNEL,
             message_channel_id: None,
@@ -2217,7 +2217,7 @@ mod tests {
         // Upstream ironrdp-pdu 0.9.0 fails this with
         // `NotEnoughBytes { received: 6, expected: 10 }` — the vendored fork's fix.
         let header: ShareControlHeader =
-            ironrdp::core::decode(&XRDP_SHORT_DEACTIVATE_ALL).expect("xrdp's 6-byte PDU");
+            ironrdp_core::decode(&XRDP_SHORT_DEACTIVATE_ALL).expect("xrdp's 6-byte PDU");
         assert!(matches!(
             header.share_control_pdu,
             ShareControlPdu::ServerDeactivateAll(_)
@@ -2229,7 +2229,7 @@ mod tests {
     #[test]
     fn full_deactivate_all_header_decodes_with_its_share_id() {
         let header: ShareControlHeader =
-            ironrdp::core::decode(&FULL_DEACTIVATE_ALL).expect("full-form PDU");
+            ironrdp_core::decode(&FULL_DEACTIVATE_ALL).expect("full-form PDU");
         assert!(matches!(
             header.share_control_pdu,
             ShareControlPdu::ServerDeactivateAll(_)
@@ -2241,7 +2241,7 @@ mod tests {
     fn deactivate_all_with_share_id_but_no_source_descriptor_decodes() {
         // shareID present, the optional length/descriptor pair absent.
         let header: ShareControlHeader =
-            ironrdp::core::decode(&FULL_DEACTIVATE_ALL[..10]).expect("10-byte PDU");
+            ironrdp_core::decode(&FULL_DEACTIVATE_ALL[..10]).expect("10-byte PDU");
         assert!(matches!(
             header.share_control_pdu,
             ShareControlPdu::ServerDeactivateAll(_)
@@ -2253,7 +2253,7 @@ mod tests {
     fn truncated_share_control_header_is_still_rejected() {
         for len in 0..6 {
             assert!(
-                ironrdp::core::decode::<ShareControlHeader>(&XRDP_SHORT_DEACTIVATE_ALL[..len])
+                ironrdp_core::decode::<ShareControlHeader>(&XRDP_SHORT_DEACTIVATE_ALL[..len])
                     .is_err(),
                 "a {len}-byte Share Control Header must not decode"
             );
@@ -2268,7 +2268,7 @@ mod tests {
             let outputs = stage
                 .process(
                     &mut image,
-                    ironrdp::pdu::Action::X224,
+                    ironrdp_pdu::Action::X224,
                     &server_io_frame(pdu.to_vec()),
                 )
                 .expect("a Deactivate All PDU must not be a session error");
@@ -2300,10 +2300,10 @@ mod tests {
         height: u16,
         interleaved: &[u8],
     ) -> Vec<u8> {
-        use ironrdp::pdu::rdp::capability_sets::{
+        use ironrdp_pdu::rdp::capability_sets::{
             Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, ServerDemandActive,
         };
-        use ironrdp::pdu::rdp::finalization_messages::{
+        use ironrdp_pdu::rdp::finalization_messages::{
             ControlAction, ControlPdu, FontPdu, SynchronizePdu,
         };
 
@@ -2376,11 +2376,11 @@ mod tests {
         // under the server's new share id, advertising the new desktop size.
         drop(framed);
         let sent = server_task.await.unwrap();
-        let first_len = ironrdp::pdu::find_size(&sent).unwrap().unwrap().length;
-        let request: ironrdp::pdu::x224::X224<ironrdp::pdu::mcs::SendDataRequest<'_>> =
-            ironrdp::core::decode(&sent[..first_len]).unwrap();
+        let first_len = ironrdp_pdu::find_size(&sent).unwrap().unwrap().length;
+        let request: ironrdp_pdu::x224::X224<ironrdp_pdu::mcs::SendDataRequest<'_>> =
+            ironrdp_core::decode(&sent[..first_len]).unwrap();
         assert_eq!(request.0.channel_id, TEST_IO_CHANNEL);
-        let header: ShareControlHeader = ironrdp::core::decode(&request.0.user_data).unwrap();
+        let header: ShareControlHeader = ironrdp_core::decode(&request.0.user_data).unwrap();
         assert_eq!(header.share_id, 0x0002_03EA);
         let ShareControlPdu::ClientConfirmActive(confirm) = header.share_control_pdu else {
             panic!("expected a Client Confirm Active PDU");
@@ -2390,7 +2390,7 @@ mod tests {
             .capability_sets
             .iter()
             .find_map(|c| match c {
-                ironrdp::pdu::rdp::capability_sets::CapabilitySet::Bitmap(b) => Some(b),
+                ironrdp_pdu::rdp::capability_sets::CapabilitySet::Bitmap(b) => Some(b),
                 _ => None,
             })
             .expect("Confirm Active carries a Bitmap capability set");
@@ -2401,7 +2401,7 @@ mod tests {
         let outputs = stage
             .process(
                 &mut image,
-                ironrdp::pdu::Action::X224,
+                ironrdp_pdu::Action::X224,
                 &server_io_frame(XRDP_SHORT_DEACTIVATE_ALL.to_vec()),
             )
             .unwrap();
@@ -2416,11 +2416,11 @@ mod tests {
     /// session with "invalid pdu type" (#4845).
     #[tokio::test]
     async fn reactivation_tolerates_interleaved_channel_and_fast_path_pdus() {
-        use ironrdp::pdu::mcs::SendDataIndication;
-        use ironrdp::pdu::x224::X224;
+        use ironrdp_pdu::mcs::SendDataIndication;
+        use ironrdp_pdu::x224::X224;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let mut interleaved = ironrdp::core::encode_vec(&X224(SendDataIndication {
+        let mut interleaved = ironrdp_core::encode_vec(&X224(SendDataIndication {
             initiator_id: TEST_SERVER_CHANNEL,
             channel_id: TEST_IO_CHANNEL + 1,
             user_data: std::borrow::Cow::Owned(vec![0x07, 0x00, 0x00, 0x00, 0x00, 0x00]),

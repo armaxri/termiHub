@@ -86,7 +86,7 @@ ActiveX settings, server-side auto-detect / RemoteFX tables), input constants
 batches events), the crypto dependency bump (`e1725e8c`), refactors, test-only
 and toolchain commits. The fork's unit tests run in an upstream 0.9.0 workspace
 (the crate's dev-dependencies are not in the sidecar lockfile); the sidecar's
-`src/pdu_fork_tests.rs` covers the ported behaviour through `ironrdp::pdu`.
+`src/pdu_fork_tests.rs` covers the ported behaviour through `ironrdp_pdu`.
 
 ### Change 3: licensing hardening ported from upstream after 0.9.0 ([#4923])
 

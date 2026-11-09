@@ -1,9 +1,9 @@
 //! Audio output redirection (MS-RDPEAUDIO / `rdpsnd`) for the RDP sidecar
 //! (#1764, multi-format negotiation #1773).
 //!
-//! IronRDP's [`Rdpsnd`](ironrdp::rdpsnd::client::Rdpsnd) static virtual channel
+//! IronRDP's [`Rdpsnd`](ironrdp_rdpsnd::client::Rdpsnd) static virtual channel
 //! decodes the server's audio stream and drives an
-//! [`RdpsndClientHandler`](ironrdp::rdpsnd::client::RdpsndClientHandler): the
+//! [`RdpsndClientHandler`](ironrdp_rdpsnd::client::RdpsndClientHandler): the
 //! handler advertises the [`AudioFormat`]s it can play via
 //! [`get_formats`](RdpsndClientHandler::get_formats), and the channel calls
 //! [`wave`](RdpsndClientHandler::wave) with each decoded audio buffer, handing us
@@ -60,8 +60,8 @@ use std::collections::VecDeque;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::time::{Duration, Instant};
 
-use ironrdp::rdpsnd::client::RdpsndClientHandler;
-use ironrdp::rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
+use ironrdp_rdpsnd::client::RdpsndClientHandler;
+use ironrdp_rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
 
 /// Bit depth of the PCM formats the handler advertises (16-bit signed LE). Every
 /// advertised format is 16-bit; [`decode_wave`] rejects anything else, so a

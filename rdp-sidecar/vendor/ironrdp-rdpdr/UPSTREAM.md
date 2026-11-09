@@ -181,7 +181,7 @@ Once an `ironrdp-rdpdr` release contains `for_drive`:
    fixed, Windows hosts would see the drive under its first letter only: keep the fork (re-based,
    with a `DeviceData` delta instead) until it is.
 2. Otherwise remove the `ironrdp-rdpdr` entry from `[patch.crates-io]` in `rdp-sidecar/Cargo.toml`,
-   bump `ironrdp` if that release needs a newer meta crate, and run
+   bump the sidecar's other `ironrdp-*` dependencies if that release needs newer siblings, and run
    `cargo update -p ironrdp-rdpdr` in `rdp-sidecar/`.
 3. Delete `rdp-sidecar/vendor/ironrdp-rdpdr/`, its entry in `vendor/vendored-forks.json`, its rows
    in the "Vendored forks" and "Upstreaming status" tables of `docs/supply-chain.md`, and update

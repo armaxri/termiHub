@@ -2,7 +2,7 @@
 //!
 //! Exposes a single, user-selected local folder to the remote session as a
 //! mapped drive. IronRDP's device-redirection channel
-//! ([`ironrdp::rdpdr::Rdpdr`]) is a static virtual channel driven by an
+//! ([`ironrdp_rdpdr::Rdpdr`]) is a static virtual channel driven by an
 //! [`RdpdrBackend`] the integrator supplies; the channel decodes the wire
 //! protocol and dispatches filesystem I/O requests (IRPs) to the backend, which
 //! serves them against the shared folder.
@@ -40,10 +40,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ironrdp::core::impl_as_any;
-use ironrdp::pdu::PduResult;
-use ironrdp::rdpdr::backend::RdpdrBackend;
-use ironrdp::rdpdr::pdu::efs::{
+use ironrdp_core::impl_as_any;
+use ironrdp_pdu::PduResult;
+use ironrdp_rdpdr::backend::RdpdrBackend;
+use ironrdp_rdpdr::pdu::efs::{
     AnyIoCtlCode, Boolean, Characteristics, ClientDriveQueryDirectoryResponse,
     ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse,
     ClientDriveSetInformationResponse, CreateDisposition, CreateOptions, DesiredAccess,
@@ -60,9 +60,9 @@ use ironrdp::rdpdr::pdu::efs::{
     ServerDriveQueryInformationRequest, ServerDriveQueryVolumeInformationRequest,
     ServerDriveSetInformationRequest,
 };
-use ironrdp::rdpdr::pdu::esc::{ScardCall, ScardIoCtlCode};
-use ironrdp::rdpdr::pdu::RdpdrPdu;
-use ironrdp::svc::SvcMessage;
+use ironrdp_rdpdr::pdu::esc::{ScardCall, ScardIoCtlCode};
+use ironrdp_rdpdr::pdu::RdpdrPdu;
+use ironrdp_svc::SvcMessage;
 use tracing::{debug, warn};
 
 /// Difference in seconds between the Windows FILETIME epoch (1601-01-01) and the
@@ -969,7 +969,7 @@ fn query_directory_error(io: DeviceIoRequest, status: NtStatus) -> RdpdrPdu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ironrdp::rdpdr::pdu::efs::{
+    use ironrdp_rdpdr::pdu::efs::{
         FileRenameInformation, MajorFunction, MinorFunction, SharedAccess,
     };
 

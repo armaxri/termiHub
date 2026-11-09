@@ -40,10 +40,10 @@
 
 use std::fmt;
 
-use ironrdp::connector::sspi;
-use ironrdp::connector::{ConnectorError, ConnectorErrorKind};
-use ironrdp::pdu::rdp::server_error_info::ProtocolIndependentCode;
-use ironrdp::session::GracefulDisconnectReason;
+use ironrdp_connector::sspi;
+use ironrdp_connector::{ConnectorError, ConnectorErrorKind};
+use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
+use ironrdp_session::GracefulDisconnectReason;
 use termihub_core::backends::rdp_sidecar::protocol::SidecarFailureKind;
 use termihub_core::connection::GraphicalState;
 
@@ -775,11 +775,11 @@ mod tests {
     /// ordinary drop the desktop auto-reconnects from.
     #[test]
     fn an_xrdp_logoff_ultimatum_carries_no_reason_and_stays_an_ordinary_drop() {
-        use ironrdp::pdu::mcs::{DisconnectProviderUltimatum, DisconnectReason};
-        use ironrdp::pdu::x224::X224;
+        use ironrdp_pdu::mcs::{DisconnectProviderUltimatum, DisconnectReason};
+        use ironrdp_pdu::x224::X224;
 
         let pdu =
-            ironrdp::core::decode::<X224<DisconnectProviderUltimatum>>(&XRDP_DISCONNECT_ULTIMATUM)
+            ironrdp_core::decode::<X224<DisconnectProviderUltimatum>>(&XRDP_DISCONNECT_ULTIMATUM)
                 .expect("the captured frame is an MCS Disconnect Provider Ultimatum");
         // The only field the ultimatum has, and it is the generic one xrdp uses
         // for every end of session.
