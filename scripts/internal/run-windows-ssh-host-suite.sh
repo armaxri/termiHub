@@ -125,7 +125,10 @@ set_default_shell() {
 # launcher), as a Windows path: the Git install this Git Bash runs from.
 git_bash_exe() {
   local exe
-  exe="$(cygpath -w /)\\bin\\bash.exe"
+  local root
+  root="$(cygpath -w /)"
+  # `cygpath -w /` may end with a backslash (`C:\Program Files\Git\`).
+  exe="${root%\\}\\bin\\bash.exe"
   [ -f "$(cygpath -u "$exe")" ] || {
     echo "error: Git Bash not found at $exe" >&2
     return 1
