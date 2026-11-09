@@ -124,11 +124,31 @@ where
         }
         "LIST" => {
             let line = parse_to_eol(cmd_params)?;
-            let path = line
-                .split(|&b| b == b' ')
-                .filter(|s| !line.is_empty() && !s.starts_with(b"-"))
-                .map(|s| String::from_utf8_lossy(s).to_string())
-                .next();
+            let line_str = String::from_utf8_lossy(&line);
+            // termiHub fork delta (armaxri/termiHub#4923): port of upstream 7142d6c4 (#530) and
+            // 60ede984 (libunftp 0.24.0): keep the whole pathname, spaces included, after the
+            // leading options instead of truncating it at the first space.
+            // RFC 3659 section 2.2: "Any additional spaces form part
+            // of the pathname." split_token_params already consumed the
+            // command separator. Consume only one separator per option too.
+            // https://www.rfc-editor.org/rfc/rfc3659#section-2.2
+            let mut remaining = line_str.as_ref();
+            while remaining.starts_with('-') {
+                if remaining == "--" {
+                    remaining = "";
+                    break;
+                }
+                if let Some(rest) = remaining.strip_prefix("-- ") {
+                    remaining = rest;
+                    break;
+                }
+                if let Some(pos) = remaining.find(' ') {
+                    remaining = &remaining[pos + 1..];
+                } else {
+                    remaining = "";
+                }
+            }
+            let path = if remaining.is_empty() { None } else { Some(remaining.to_string()) };
             // Note that currently we just throw arguments away.
             Command::List { options: None, path }
         }

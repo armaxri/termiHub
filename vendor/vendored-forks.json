@@ -243,18 +243,18 @@
       "crate": "libunftp",
       "consumed_by": "Cargo.toml [patch.crates-io] (excluded from the workspace)",
       "parses": "PROXY protocol v1 headers and FTP control/data traffic on the embedded FTP server's per-session loopback listeners (relay-opened connections only, #4100)",
-      "upstream_repo": "https://github.com/bolcom/libunftp",
+      "upstream_repo": "https://github.com/Cloudinvoke/libunftp",
       "upstream_branch": "master",
       "upstream_path": "",
       "base_version": "0.23.1",
       "base_commit": "8d3f28c20c53acdd3c9a939957e4727e18e18af0",
       "base_commit_note": "upstream tag libunftp-0.23.1 (also the tip of master on 2026-10-06)",
-      "reviewed_version": "0.23.1",
-      "reviewed_commit": "8d3f28c20c53acdd3c9a939957e4727e18e18af0",
+      "reviewed_version": "0.24.0",
+      "reviewed_commit": "e9230bf129ab16290e858782711d035c9c1e13bb",
       "deltas": [
         {
           "summary": "read_proxy_header returns UnexpectedEof when peek yields Ok(0), instead of spinning forever (one CPU core per connection) on a connection closed before its PROXY header",
-          "upstream_status": "Submitted 2026-10-06: reported as libunftp#580, fix proposed in libunftp#582 (open)",
+          "upstream_status": "Merged upstream as 24e7e10a (libunftp#582) and released in libunftp 0.24.0; dropped when the fork re-bases on 0.24",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4099",
             "https://github.com/bolcom/libunftp/issues/580",
@@ -263,10 +263,18 @@
         },
         {
           "summary": "Server::listen_with_listener (serve on a caller-bound TcpListener, all listener modes) and ServerBuilder::proxy_protocol_peer_filter (PROXY-mode accept filter on the peer address, applied before the header is read), so termiHub's relay is the only process its loopback listener serves",
-          "upstream_status": "Proposed 2026-10-06 as libunftp#581; the pull request (patch in vendor/libunftp/UPSTREAM.md) waits for maintainer feedback on the direction",
+          "upstream_status": "Proposed 2026-10-06 as libunftp#581 (still open 2026-11-09); the pull request (patch in vendor/libunftp/UPSTREAM.md) waits for maintainer feedback on the direction",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/4100",
             "https://github.com/bolcom/libunftp/issues/581"
+          ]
+        },
+        {
+          "summary": "LIST keeps the whole pathname after the leading options (spaces and other whitespace included, RFC 3659 2.2) instead of cutting it at the first space; port of upstream 7142d6c4 (#530) and 60ede984, released in 0.24.0",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/Cloudinvoke/libunftp/commit/7142d6c4bae4c7d762977c209b5ffa00f0823d71",
+            "https://github.com/Cloudinvoke/libunftp/commit/60ede9849e7d9382dbdb2e86ff12b001b7f0c640"
           ]
         }
       ],

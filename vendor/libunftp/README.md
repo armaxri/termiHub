@@ -1,8 +1,10 @@
 # libunftp (termiHub vendored fork)
 
-Vendored fork of [`libunftp`](https://github.com/bolcom/libunftp) `0.23.1`, the
+Vendored fork of [`libunftp`](https://github.com/Cloudinvoke/libunftp) `0.23.1`, the
 FTP server library behind termiHub's embedded FTP server. The upstream README is
-kept as `README.upstream.md`.
+kept as `README.upstream.md`. Upstream moved from `bolcom/libunftp` to
+`https://github.com/Cloudinvoke/libunftp` on 2026-10-30 (libunftp#602); the old
+`bolcom` links redirect.
 
 **Fork base:** upstream `0.23.1`, commit
 [`8d3f28c20c53acdd3c9a939957e4727e18e18af0`](https://github.com/bolcom/libunftp/commit/8d3f28c20c53acdd3c9a939957e4727e18e18af0)
@@ -57,7 +59,34 @@ serves connections the relay opened. See
 - `src/server/ftpserver.rs` tests: a prebound proxy-mode server answers a
   peer the filter allows and closes one it refuses without a byte.
 
+- `src/server/controlchan/line_parser/parser.rs` `LIST` (#4923): the pathname after
+  the leading options is kept whole, spaces and other whitespace included (RFC 3659
+  section 2.2), instead of being cut at the first space, so `LIST my folder` lists
+  `my folder`. A port of upstream `7142d6c4` (#530) and `60ede984`, released in
+  libunftp 0.24.0, with their parser tests (`parse_list`,
+  `parse_list_preserves_pathname_whitespace`).
+
 All fork changes are marked `termiHub fork delta (armaxri/termiHub#…)`.
+
+## Upstream review
+
+Reviewed upstream up to
+[`e9230bf1`](https://github.com/Cloudinvoke/libunftp/commit/e9230bf129ab16290e858782711d035c9c1e13bb)
+(2026-11-08, #4923), covering libunftp 0.24.0:
+
+- `24e7e10a` (#582) is the fork's #4099 delta, merged and released in 0.24.0
+  unchanged; the fork keeps it until it re-bases. The #4100 delta is still only
+  proposed (libunftp#581, open).
+- Ported: the `LIST` pathname fix above.
+- Not ported: `745f7bd6` (RUSTSEC-2026-0382) only raises the `rustls-webpki` floor;
+  termiHub's lockfiles already pin the patched 0.103.16. `ed7c634a` (start TLS right
+  after the `AUTH TLS` reply) needs FTPS, which termiHub's server does not enable.
+  `9cbe7219` / `60652e4e` (full paths in `DataEvent`, breaking) and `3c02106c`
+  (`SiteCommandContext` session context, breaking) change APIs termiHub only counts
+  bytes with or does not use. The rest are release, dependency, metadata, docs and
+  backend-crate commits outside the forked crate's code.
+
+Re-basing on 0.24.0 (dropping the #4099 delta) is tracked as a follow-up.
 
 Packaging differences from the crates.io release (not code deltas):
 `Cargo.toml` is the crates.io-normalised manifest with a fork note, without the

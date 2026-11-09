@@ -1,16 +1,19 @@
 # Upstreaming the fork deltas
 
-Upstream submissions for [bolcom/libunftp](https://github.com/bolcom/libunftp), so the fork can
+Upstream submissions for [bolcom/libunftp](https://github.com/bolcom/libunftp) (moved to
+[Cloudinvoke/libunftp](https://github.com/Cloudinvoke/libunftp) on 2026-10-30), so the fork can
 be retired. Both deltas were submitted on 2026-10-06 (maintainer-approved). The two deltas are
 independent.
 
-1. [PROXY header EOF fix](#1-proxy-header-eof-fix-4099) (#4099): a bug fix. **Submitted
-   2026-10-06:** issue [libunftp#580](https://github.com/bolcom/libunftp/issues/580), pull request
-   [libunftp#582](https://github.com/bolcom/libunftp/pull/582).
+1. [PROXY header EOF fix](#1-proxy-header-eof-fix-4099) (#4099): a bug fix. **Merged and
+   released:** pull request [libunftp#582](https://github.com/bolcom/libunftp/pull/582) landed as
+   `24e7e10a` and shipped in libunftp 0.24.0 (2026-10-28); the delta drops when the fork re-bases
+   on 0.24 (checked 2026-11-09, #4923).
 2. [Prebound listener and PROXY peer filter](#2-prebound-listener-and-proxy-peer-filter-4100)
    (#4100): an API proposal. **Submitted 2026-10-06:** issue
    [libunftp#581](https://github.com/bolcom/libunftp/issues/581); the pull request waits for the
-   maintainers to welcome the direction.
+   maintainers to welcome the direction. Still open on 2026-11-09 (#4923); the fork cannot retire
+   before it lands.
 
 ## 1. PROXY header EOF fix (#4099)
 
