@@ -100,7 +100,7 @@ install_cross_tarball() {
     tmp="$(mktemp -d)"
     url="$CROSS_GIT_URL/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
     echo "  Downloading cross-rs v$CROSS_VERSION (SHA256-verified) into $bin_dir"
-    curl -fsSL --retry 3 "$url" -o "$tmp/cross.tar.gz"
+    curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --retry-delay 5 "$url" -o "$tmp/cross.tar.gz"
     if ! echo "${CROSS_SHA256}  $tmp/cross.tar.gz" | sha256sum -c - >/dev/null; then
         rm -rf "$tmp"
         echo "  ERROR: SHA256 mismatch for $url" >&2

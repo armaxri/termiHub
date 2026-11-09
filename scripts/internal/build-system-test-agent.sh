@@ -144,7 +144,7 @@ install_cross() {
     tmp="$(mktemp -d)"
     url="https://github.com/cross-rs/cross/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
     echo "Installing cross-rs v$CROSS_VERSION into $bin_dir"
-    curl -fsSL --retry 3 "$url" -o "$tmp/cross.tar.gz"
+    curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --retry-delay 5 "$url" -o "$tmp/cross.tar.gz"
     echo "${CROSS_SHA256}  $tmp/cross.tar.gz" | sha256sum -c - >/dev/null
     tar xzf "$tmp/cross.tar.gz" -C "$bin_dir"
     rm -rf "$tmp"

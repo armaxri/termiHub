@@ -879,12 +879,12 @@ jobs:
           bin="$RUNNER_TEMP/lint-bin"
           mkdir -p "$bin"
           al="$RUNNER_TEMP/actionlint.tar.gz"
-          curl -fsSL -o "$al" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --retry-delay 5 -o "$al" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           echo "${ACTIONLINT_SHA256}  $al" | sha256sum -c -
           tar xzf "$al" -C "$bin" actionlint
           sc="$RUNNER_TEMP/shellcheck.tar.xz"
-          curl -fsSL -o "$sc" \
+          curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --retry-delay 5 -o "$sc" \
             "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
           echo "${SHELLCHECK_SHA256}  $sc" | sha256sum -c -
           tar xJf "$sc" -C "$bin" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"

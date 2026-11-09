@@ -117,7 +117,8 @@ trap 'rm -rf "$WORK"' EXIT
 URL="https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/${CONPTY_VERSION}/microsoft.windows.console.conpty.${CONPTY_VERSION}.nupkg"
 echo "  downloading $URL"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-    --retry 3 --retry-delay 5 -o "$WORK/conpty.nupkg" "$URL"
+    --retry 5 --retry-all-errors --retry-connrefused --retry-delay 5 \
+    -o "$WORK/conpty.nupkg" "$URL"
 verify "$WORK/conpty.nupkg" "$CONPTY_NUPKG_SHA256" "Microsoft.Windows.Console.ConPTY ${CONPTY_VERSION}.nupkg"
 
 # extract ENTRY OUT: one file out of the package (a zip). Tries unzip, then a
