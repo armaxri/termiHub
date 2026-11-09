@@ -49,7 +49,7 @@ removed from `Cargo.toml` so they run: `cargo test -p ironrdp-rdpdr` from
 `rdp-sidecar/`. The sidecar's own
 `rdp::tests::drive_announce_carries_the_drive_name_in_preferred_dos_name` and the
 live xrdp test RDP-15 (`core/tests/rdp.rs`) cover the fix from outside.
-Apart from changes 1 and 2, everything is byte-for-byte upstream 0.7.0, without the registry-only
+Apart from changes 1 to 3, everything is byte-for-byte upstream 0.7.0, without the registry-only
 `Cargo.lock`, `Cargo.toml.orig` and VCS metadata.
 
 ### Change 2: drive DeviceData as sanitised 8-bit characters ([#4923])
@@ -65,6 +65,38 @@ mojibake. `DeviceAnnounceHeader::new_drive` now writes each such character, a NU
 every non-ASCII character as `_` (a trailing colon stays), exactly as upstream does;
 `PreferredDosName` (change 1) is unchanged. Marked `termiHub fork delta (#4923)`; test
 `device_data_replaces_forbidden_characters`.
+
+### Change 3: complete unsupported drive IRPs instead of ending the session ([#5118])
+
+A port of upstream
+[`0f9154d2`](https://github.com/Devolutions/IronRDP/commit/0f9154d2128f8c65f4d51f6b7eb7cb1d66a12329)
+("fix(rdpdr): complete unsupported drive IRPs instead of failing", IronRDP#2174), which is in
+the 0.9.0 release. In 0.7.0 a well-formed drive I/O request that the crate does not implement
+is a decode error, and `ironrdp-session` turns that into the end of the whole RDP session. This
+hit `IRP_MJ_SET_VOLUME_INFORMATION` (for example a volume-label change in Windows Explorer on
+the shared folder), Set Information / Query Volume Information / Query Directory requests with
+an information class outside the accepted lists, and `IRP_MJ_DIRECTORY_CONTROL` with another
+minor function.
+
+`ServerDriveIoRequest::decode_or_unsupported` (`src/pdu/efs.rs`) returns such a request as an
+`UnsupportedDriveIoRequest` after consuming its whole body, and
+`Rdpdr::unsupported_drive_io_response` (`src/lib.rs`) completes it without asking the backend:
+`STATUS_NOT_SUPPORTED`, echoing `Length` in the Set Volume Information and Set Information
+responses as MS-RDPEFS 2.2.3.4.7 / 2.2.3.4.9 require, or `STATUS_UNSUCCESSFUL` in a
+header-only completion for an undescribed minor function (MS-RDPEFS 3.1.5.2). A malformed
+request (a buffer shorter than its declared length) is still a decode error, and the public
+`ServerDriveIoRequest::decode` still rejects the unsupported ones.
+
+Adapted rather than applied: 0.7.0 has no `ServerDriveSetVolumeInformationRequest` or
+`ClientDriveSetVolumeInformationResponse`, so the fork reads the request frame with
+`decode_set_volume_information_frame` and encodes the response as a crate-private
+`pdu::DeviceIoCompletion` (as upstream does for the header-only reply). 0.7.0 has no
+trailing-data check in the processor, so none was added; the master-only `MajorFunction`s
+(`FlushBuffers`, `QuerySecurity`, `SetSecurity`) are not part of this change. The private
+`decode` of the Query Directory and Set Information requests became `decode_class`, and
+`ClientDriveSetInformationResponse`'s fields are crate-visible, as upstream. Marked
+`termiHub fork delta (#5118)`; tests in `src/lib.rs` (`termihub_fork_tests`) and the
+sidecar's `rdp::tests::unsupported_drive_irp_is_completed_and_the_channel_keeps_serving`.
 
 ### Upstream review
 
@@ -83,12 +115,8 @@ strictness.
 Reviewed again up to IronRDP
 [`4cd9d4506`](https://github.com/Devolutions/IronRDP/commit/4cd9d45060df01c731f5d814537ecd86d425190d)
 (2026-11-09, [#4923]), covering the 0.8.0 and 0.9.0 releases. Ported: `4cd9d4506`
-(change 2). Not ported:
+(change 2) and, as the follow-up [#5118], `0f9154d2` (change 3). Not ported:
 
-- `0f9154d2` (complete unsupported drive IRPs, e.g. `IRP_MJ_SET_VOLUME_INFORMATION` or an
-  unknown information class, instead of a decode error that ends the session): it does
-  reach the sidecar's drive path, but it is built on master's reworked processor and
-  response types; tracked as its own follow-up port.
 - `29fc63da` (serve IRPs for devices awaiting their announce response) and `e88e3c51`
   (defer a User Logged On that arrives before the Client ID Confirm): both fix state
   checks master added after 0.7.0; 0.7.0 serves every listed device and has no such
@@ -100,12 +128,13 @@ Reviewed again up to IronRDP
   parallel ports) and the release commits (`e899a826`, `b13befa0`).
 
 Retire the fork once an `ironrdp-rdpdr` release contains `for_drive` and `4cd9d4506`
-(the next release after 0.9.0 should have both). The status, prepared upstream
+(the next release after 0.9.0 should have both; `0f9154d2` is already in 0.9.0). The status, prepared upstream
 text and retirement steps are in [`UPSTREAM.md`](UPSTREAM.md).
 
 [#4125]: https://github.com/armaxri/termiHub/issues/4125
 [#4461]: https://github.com/armaxri/termiHub/issues/4461
 [#4923]: https://github.com/armaxri/termiHub/issues/4923
+[#5118]: https://github.com/armaxri/termiHub/issues/5118
 
 ---
 
