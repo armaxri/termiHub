@@ -469,45 +469,64 @@ mod tests {
         panic!("spawn of pinned helper kept failing with ETXTBSY");
     }
 
-    /// An echo-like helper for the spawn tests. Linux execs by fd, which needs a
-    /// real ELF (a `#!` script's interpreter cannot reopen the O_CLOEXEC
-    /// `/proc/self/fd/<n>`), so it copies `/bin/echo`. macOS SIGKILLs copies of
-    /// platform binaries, so there it is a shell script (spawned by path).
+    /// A POSIX-shell helper for the spawn tests, driven as `helper -c <script>`
+    /// (see [`sh_echo`]).
+    ///
+    /// Linux execs by fd, which needs a real ELF (a `#!` script's interpreter
+    /// cannot reopen the O_CLOEXEC `/proc/self/fd/<n>`), so it copies the system
+    /// `/bin/sh`. It must NOT copy a coreutils program such as `/bin/echo`: a
+    /// multicall coreutils (uutils, now shipped on Ubuntu runners; also BusyBox)
+    /// dispatches on `argv[0]`, and the helper's `argv[0]` is its own name, so a
+    /// renamed copy dies with "unknown program 'termihub-rdp-helper'" (#5098).
+    /// A shell ignores `argv[0]` when given `-c`. macOS SIGKILLs copies of
+    /// platform binaries, so there it is a script that execs `/bin/sh` (spawned
+    /// by path).
     #[cfg(unix)]
-    fn echo_helper() -> (tempfile::TempDir, PathBuf, String) {
+    fn sh_helper() -> (tempfile::TempDir, PathBuf, String) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            copy_real_executable(Path::new("/bin/echo"))
+            copy_real_executable(Path::new("/bin/sh"))
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let script = tempfile::tempdir().unwrap();
-            let src = script.path().join("echo.sh");
-            std::fs::write(&src, b"#!/bin/sh\necho \"$@\"\n").unwrap();
+            let src = script.path().join("sh.sh");
+            std::fs::write(&src, b"#!/bin/sh\nexec /bin/sh \"$@\"\n").unwrap();
             copy_real_executable(&src)
         }
+    }
+
+    /// The [`sh_helper`] arguments that make it print `word`.
+    #[cfg(unix)]
+    fn sh_echo(word: &str) -> [String; 2] {
+        ["-c".to_string(), format!("echo {word}")]
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn pinned_helper_spawns_the_verified_binary() {
-        let (_dir, path, digest) = echo_helper();
+        let (_dir, path, digest) = sh_helper();
         let pinned = verify_helper_integrity(&path, false, Some(&digest)).unwrap();
-        let out = run_pinned(&pinned, &["pinned-ok"]).await;
+        let args = sh_echo("pinned-ok");
+        let out = run_pinned(&pinned, &[&args[0], &args[1]]).await;
         assert!(out.status.success(), "helper failed: {out:?}");
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "pinned-ok");
         assert!(pinned.confirm_after_spawn().is_ok());
     }
 
     /// Linux: the child execs the hashed inode via `/proc/self/fd/<n>`, so
-    /// replacing the path after the check still runs the verified binary.
+    /// replacing the path after the check still runs the verified binary. Had
+    /// the spawn gone through the path, the kernel would run the swapped-in
+    /// script as `/bin/sh <path> -c ...`, which prints "swapped" instead.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[tokio::test]
     async fn linux_exec_by_fd_runs_the_verified_inode_after_a_path_swap() {
-        let (dir, path, digest) = echo_helper();
+        let (dir, path, digest) = sh_helper();
         let pinned = verify_helper_integrity(&path, false, Some(&digest)).unwrap();
         swap_path(dir.path(), &path, b"#!/bin/sh\necho swapped\n");
-        let out = run_pinned(&pinned, &["verified"]).await;
+        let args = sh_echo("verified");
+        let out = run_pinned(&pinned, &[&args[0], &args[1]]).await;
+        assert!(out.status.success(), "helper failed: {out:?}");
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "verified");
         assert!(pinned.confirm_after_spawn().is_ok());
     }
