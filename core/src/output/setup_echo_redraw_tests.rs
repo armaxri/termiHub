@@ -204,3 +204,119 @@ mod filter {
         assert!(String::from_utf8_lossy(&out).contains("set -gx"));
     }
 }
+
+mod fish3 {
+    //! Real fish 3.6 sessions (#5115), captured on CI with the native sshd
+    //! fixture (`scripts/internal/run-native-sshd-fish3-suite.sh`,
+    //! `TERMIHUB_TEST_SSH_TRACE=1`) and replayed through the filter as the
+    //! SSH connector drives it. fish 3 redraws a long typed line word by
+    //! word, stepping up a row and back down before each word.
+    use crate::output::setup_echo::{HideOutcome, SetupEchoFilter, REPROMPT_CAP};
+    use std::time::{Duration, Instant};
+
+    /// The connector's default width, which the captures ran at.
+    const COLS: u16 = 80;
+
+    /// One trace line: ms since the shell request, sent (not received), bytes.
+    fn parse(line: &str) -> (u64, bool, Vec<u8>) {
+        let rest = line
+            .strip_prefix("[ssh-setup-trace +")
+            .expect("a trace line");
+        let (ms, rest) = rest.split_once("ms] ").expect("a timestamp");
+        let (head, data) = rest.split_once(" B): ").expect("a length");
+        let (event, len) = head.rsplit_once(" (").expect("an event");
+        let bytes = unescape(data);
+        assert_eq!(bytes.len(), len.parse::<usize>().unwrap(), "{line}");
+        (ms.trim().parse().unwrap(), event.starts_with("send"), bytes)
+    }
+
+    /// Undo `<[u8]>::escape_ascii`.
+    fn unescape(s: &str) -> Vec<u8> {
+        let b = s.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] != b'\\' {
+                out.push(b[i]);
+                i += 1;
+                continue;
+            }
+            let (byte, step) = match b[i + 1] {
+                b'x' => {
+                    let hex = std::str::from_utf8(&b[i + 2..i + 4]).unwrap();
+                    (u8::from_str_radix(hex, 16).unwrap(), 4)
+                }
+                b'r' => (b'\r', 2),
+                b'n' => (b'\n', 2),
+                b't' => (b'\t', 2),
+                other => (other, 2),
+            };
+            out.push(byte);
+            i += step;
+        }
+        out
+    }
+
+    /// Replay `trace`: the first sent line is the hidden setup (armed), the
+    /// rest is what the user types; returns what the terminal was shown.
+    fn replay(trace: &str) -> (String, SetupEchoFilter) {
+        let t0 = Instant::now();
+        let mut f = SetupEchoFilter::new();
+        f.set_width(COLS);
+        f.set_cell_redraw(true);
+        let (mut shown, mut armed, mut last) = (Vec::new(), false, t0);
+        for line in trace.lines() {
+            let (ms, sent, data) = parse(line);
+            let now = t0 + Duration::from_millis(ms);
+            last = now;
+            if sent {
+                if !armed {
+                    f.arm(&data, now);
+                    armed = true;
+                }
+            } else {
+                shown.extend(f.feed(&data, now));
+            }
+            shown.extend(f.poll(now));
+        }
+        assert!(armed, "the trace has no typed setup");
+        shown.extend(f.poll(last + REPROMPT_CAP));
+        (String::from_utf8_lossy(&shown).into_owned(), f)
+    }
+
+    fn assert_hidden(trace: &str, output: &str) {
+        let (shown, f) = replay(trace);
+        assert_eq!(f.outcome(), Some(HideOutcome::Hidden), "{shown:?}");
+        // Also covers the window title (OSC 0), which names the command.
+        for leak in ["__termihub", "set -gx", "6973;", "--on-event"] {
+            assert!(
+                !shown.contains(leak),
+                "setup text {leak:?} shown: {shown:?}"
+            );
+        }
+        assert!(shown.contains("Welcome to fish"), "{shown:?}");
+        assert!(
+            shown.contains(output),
+            "the command's output is missing: {shown:?}"
+        );
+    }
+
+    /// native_05c: the shell-integration setup, then `echo native-(math 40+2)-ok`.
+    #[test]
+    fn fish3_shell_integration_setup_is_hidden() {
+        assert_hidden(
+            include_str!("testdata/fish3_first_command.trace"),
+            "native-42-ok",
+        );
+    }
+
+    /// native_05d: an env var joined in front of it — a longer line, so more
+    /// rows of fish 3's word-by-word redraw.
+    #[test]
+    fn fish3_env_and_integration_setup_is_hidden() {
+        assert_hidden(
+            include_str!("testdata/fish3_env_setup.trace"),
+            "[it's a $HOME value]",
+        );
+    }
+}

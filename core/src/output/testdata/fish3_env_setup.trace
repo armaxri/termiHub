@@ -1,0 +1,94 @@
+[ssh-setup-trace +    13ms] recv (107 B): Welcome to fish, the friendly interactive shell\r\nType \x1b[32mhelp\x1b(B\x1b[m for instructions on how to use fish\r\n
+[ssh-setup-trace +    16ms] recv (8 B): \x1b[?2004h
+[ssh-setup-trace +    27ms] recv (30 B): \x1b]0;[runnervmwu] ~\x07\x1b[30m\x1b(B\x1b[m
+[ssh-setup-trace +    27ms] recv (1 B): \r
+[ssh-setup-trace +    27ms] recv (72 B): \x1b[92mrunner\x1b(B\x1b[m@\x1b[33mrunnervmwuk1x\x1b(B\x1b[m \x1b[32m~\x1b(B\x1b[m\x1b(B\x1b[m> \x1b[K\r\x1b[24C
+[ssh-setup-trace +   328ms] send (gate burst) (523 B):  set -gx TH_4147_VAR \'it\\\'s a $HOME value\'; if not set -q __termihub_si; and string match -qr \'^[0-3]\\.\' -- $version; set -g __termihub_si 1; function __termihub_osc7 --on-event fish_prompt; printf \'\\e]7;file://%s\\a\' $PWD; end; function __termihub_osc133_a --on-event fish_prompt; printf \'\\e]133;A\\a\'; end; function __termihub_osc133_c --on-event fish_preexec; printf \'\\e]133;C\\a\'; end; function __termihub_osc133_d --on-event fish_postexec; printf \'\\e]133;D;%s\\a\' $status; end; end; printf \'\\e]6973;termihub-setup-done\\a\'\n
+[ssh-setup-trace +   330ms] recv (7 B):  \r\x1b[25C
+[ssh-setup-trace +   330ms] recv (137 B): set \r\x1b[29C-gx \r\x1b[33CTH_4147_VAR \r\x1b[45C\'it\\\'s \r\x1b[52Ca \r\x1b[54C$HOME \r\x1b[60Cvalue\';\r\x1b[67C \r\x1b[68Cif \r\x1b[71Cnot \r\x1b[75Cset \r\x1b[79C\x08 -q \x1b[A\r\r\n\x1b[C\x1b[C
+[ssh-setup-trace +   331ms] recv (37 B): __termihub_si;\x1b[A\r\r\n\x1b[16C \x1b[A\r\r\n\x1b[17C
+[ssh-setup-trace +   331ms] recv (15 B): and \x1b[A\r\r\n\x1b[21C
+[ssh-setup-trace +   331ms] recv (18 B): string \x1b[A\r\r\n\x1b[28C
+[ssh-setup-trace +   331ms] recv (17 B): match \x1b[A\r\r\n\x1b[34C
+[ssh-setup-trace +   331ms] recv (15 B): -qr \x1b[A\r\r\n\x1b[38C
+[ssh-setup-trace +   332ms] recv (22 B): \'^[0-3]\\.\' \x1b[A\r\r\n\x1b[49C
+[ssh-setup-trace +   332ms] recv (14 B): -- \x1b[A\r\r\n\x1b[52C
+[ssh-setup-trace +   332ms] recv (20 B): $version;\x1b[A\r\r\n\x1b[61C
+[ssh-setup-trace +   332ms] recv (12 B):  \x1b[A\r\r\n\x1b[62C
+[ssh-setup-trace +   332ms] recv (15 B): set \x1b[A\r\r\n\x1b[66C
+[ssh-setup-trace +   333ms] recv (14 B): -g \x1b[A\r\r\n\x1b[69C
+[ssh-setup-trace +   333ms] recv (29 B): __termihub_si \x1b[A\x1b[A\r\r\n\r\n\x1b[3C
+[ssh-setup-trace +   333ms] recv (17 B): 1;\x1b[A\x1b[A\r\r\n\r\n\x1b[5C
+[ssh-setup-trace +   333ms] recv (16 B):  \x1b[A\x1b[A\r\r\n\r\n\x1b[6C
+[ssh-setup-trace +   333ms] recv (25 B): function \x1b[A\x1b[A\r\r\n\r\n\x1b[15C
+[ssh-setup-trace +   334ms] recv (32 B): __termihub_osc7 \x1b[A\x1b[A\r\r\n\r\n\x1b[31C
+[ssh-setup-trace +   334ms] recv (27 B): --on-event \x1b[A\x1b[A\r\r\n\r\n\x1b[42C
+[ssh-setup-trace +   334ms] recv (28 B): fish_prompt;\x1b[A\x1b[A\r\r\n\r\n\x1b[54C
+[ssh-setup-trace +   334ms] recv (17 B):  \x1b[A\x1b[A\r\r\n\r\n\x1b[55C
+[ssh-setup-trace +   335ms] recv (23 B): printf \x1b[A\x1b[A\r\r\n\r\n\x1b[62C
+[ssh-setup-trace +   335ms] recv (22 B): \'\\e]7;\x1b[A\x1b[A\r\r\n\r\n\x1b[68C
+[ssh-setup-trace +   335ms] recv (32 B): file://%s\\a\' \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[C
+[ssh-setup-trace +   335ms] recv (25 B): $PWD;\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[6C
+[ssh-setup-trace +   336ms] recv (21 B):  \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[7C
+[ssh-setup-trace +   336ms] recv (25 B): end;\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[11C
+[ssh-setup-trace +   336ms] recv (22 B):  \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[12C
+[ssh-setup-trace +   336ms] recv (30 B): function \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[21C
+[ssh-setup-trace +   337ms] recv (41 B): __termihub_osc133_a \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[41C
+[ssh-setup-trace +   337ms] recv (32 B): --on-event \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[52C
+[ssh-setup-trace +   337ms] recv (33 B): fish_prompt;\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[64C
+[ssh-setup-trace +   338ms] recv (22 B):  \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[65C
+[ssh-setup-trace +   338ms] recv (28 B): printf \x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\x1b[72C
+[ssh-setup-trace +   338ms] recv (26 B): \'\\e]133;\r\x1b[A\x1b[A\x1b[A\r\n\r\n\r\n\r\n
+[ssh-setup-trace +   338ms] recv (40 B): \x1b[A\x1b[78C3;A\\a\';\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[5C
+[ssh-setup-trace +   339ms] recv (26 B):  \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[6C
+[ssh-setup-trace +   339ms] recv (30 B): end;\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[10C
+[ssh-setup-trace +   339ms] recv (27 B):  \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[11C
+[ssh-setup-trace +   340ms] recv (35 B): function \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[20C
+[ssh-setup-trace +   340ms] recv (46 B): __termihub_osc133_c \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[40C
+[ssh-setup-trace +   340ms] recv (37 B): --on-event \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[51C
+[ssh-setup-trace +   341ms] recv (39 B): fish_preexec;\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[64C
+[ssh-setup-trace +   341ms] recv (27 B):  \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[65C
+[ssh-setup-trace +   342ms] recv (33 B): printf \x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\x1b[72C
+[ssh-setup-trace +   342ms] recv (31 B): \'\\e]133;\r\x1b[A\x1b[A\x1b[A\x1b[A\r\n\r\n\r\n\r\n\r\n
+[ssh-setup-trace +   342ms] recv (45 B): \x1b[A\x1b[78C3;C\\a\';\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[5C
+[ssh-setup-trace +   342ms] recv (31 B):  \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[6C
+[ssh-setup-trace +   343ms] recv (35 B): end;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[10C
+[ssh-setup-trace +   343ms] recv (32 B):  \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[11C
+[ssh-setup-trace +   344ms] recv (40 B): function \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[20C
+[ssh-setup-trace +   344ms] recv (93 B): __termihub_osc133_d \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[40C--on-event \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[51C
+[ssh-setup-trace +   345ms] recv (45 B): fish_postexec;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[65C
+[ssh-setup-trace +   345ms] recv (32 B):  \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[66C
+[ssh-setup-trace +   345ms] recv (38 B): printf \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\x1b[73C
+[ssh-setup-trace +   346ms] recv (42 B): \'\\e]133;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[C
+[ssh-setup-trace +   346ms] recv (37 B): D;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[3C
+[ssh-setup-trace +   346ms] recv (41 B): %s\\a\' \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[9C
+[ssh-setup-trace +   347ms] recv (44 B): $status;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[17C
+[ssh-setup-trace +   347ms] recv (37 B):  \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[18C
+[ssh-setup-trace +   348ms] recv (40 B): end;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[22C
+[ssh-setup-trace +   348ms] recv (37 B):  \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[23C
+[ssh-setup-trace +   348ms] recv (40 B): end;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[27C
+[ssh-setup-trace +   349ms] recv (37 B):  \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[28C
+[ssh-setup-trace +   349ms] recv (43 B): printf \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[35C
+[ssh-setup-trace +   350ms] recv (45 B): \'\\e]6973;\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[44C
+[ssh-setup-trace +   350ms] recv (58 B): termihub-setup-done\\a\'\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[66C
+[ssh-setup-trace +   350ms] recv (1518 B): \x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[41D\x1b[34mset\x1b[30m\x1b(B\x1b[m \x1b[36m-gx\x1b[30m\x1b(B\x1b[m \x1b[36mTH_4147_VAR\x1b[30m\x1b(B\x1b[m \x1b[33m\'it\x1b[96m\\\'\x1b[33ms a $HOME value\'\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mif\x1b[30m\x1b(B\x1b[m \x1b[96mnot\x1b[30m\x1b(B\x1b[m \x1b[34mset\x1b[30m\x1b(B\x1b[m \x1b[36m-q\x1b[30m\x1b(B\x1b[m \x1b[36m__termihub_si\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[96mand\x1b[30m\x1b(B\x1b[m \x1b[34mstring\x1b[30m\x1b(B\x1b[m \x1b[36mmatch\x1b[30m\x1b(B\x1b[m \x1b[36m-qr\x1b[30m\x1b(B\x1b[m \x1b[33m\'^[0-3]\\.\'\x1b[30m\x1b(B\x1b[m \x1b[36m--\x1b[30m\x1b(B\x1b[m \x1b[96m$version\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mset\x1b[30m\x1b(B\x1b[m \x1b[36m-g\x1b[30m\x1b(B\x1b[m \x1b[36m__termihub_si\x1b[30m\x1b(B\x1b[m \x1b[36m1\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mfunction\x1b[30m\x1b(B\x1b[m \x1b[36m__termihub_osc7\x1b[30m\x1b(B\x1b[m \x1b[36m--on-event\x1b[30m\x1b(B\x1b[m \x1b[36mfish_prompt\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mprintf\x1b[30m\x1b(B\x1b[m \x1b[33m\'\\e]7;file://%s\\a\'\r\n\x1b[C\x1b[96m$PWD\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mend\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mfunction\x1b[30m\x1b(B\x1b[m \x1b[36m__termihub_osc133_a\x1b[30m\x1b(B\x1b[m \x1b[36m--on-event\x1b[30m\x1b(B\x1b[m \x1b[36mfish_prompt\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mprintf\x1b[30m\x1b(B\x1b[m \x1b[33m\'\\e]133;A\\a\'\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mend\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mfunction\x1b[30m\x1b(B\x1b[m \x1b[36m__termihub_osc133_c\x1b[30m\x1b(B\x1b[m \x1b[36m--on-event\x1b[30m\x1b(B\x1b[m \x1b[36mfish_preexec\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mprintf\x1b[30m\x1b(B\x1b[m \x1b[33m\'\\e]133;C\\a\'\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mend\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mfunction\x1b[30m\x1b(B\x1b[m \x1b[36m__termihub_osc133_d\x1b[30m\x1b(B\x1b[m \x1b[36m--on-event\x1b[30m\x1b(B\x1b[m \x1b[36mfish_postexec\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mprintf\x1b[30m\x1b(B\x1b[m \x1b[33m\'\\e]133;D;%s\\a\'\x1b[30m\x1b(B\x1b[m \x1b[96m$status\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mend\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mend\x1b[32m;\x1b[30m\x1b(B\x1b[m \x1b[34mprintf\x1b[30m\x1b(B\x1b[m \x1b[33m\'\\e]6973;termihub-setup-done\\a\'\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A\r\r\n\r\n\r\n\r\n\r\n\r\n\x1b[66C\x1b[30m\x1b(B\x1b[m\r\n
+[ssh-setup-trace +   351ms] recv (11 B): \x1b[30m\x1b(B\x1b[m
+[ssh-setup-trace +   351ms] recv (8 B): \x1b[?2004l
+[ssh-setup-trace +   352ms] recv (52 B): \x1b]0;[runnervmwu]  set -gx TH_4147_VAR ~\x07\x1b[30m\x1b(B\x1b[m\r
+[ssh-setup-trace +   352ms] recv (27 B): \x1b]6973;termihub-setup-done\x07
+[ssh-setup-trace +   353ms] recv (10 B): \x1b]133;D;0\x07
+[ssh-setup-trace +   353ms] recv (101 B): \x1b[2m\xe2\x8f\x8e\x1b(B\x1b[m                                                                               \r\xe2\x8f\x8e \r\x1b[K
+[ssh-setup-trace +   353ms] recv (8 B): \x1b[?2004h
+[ssh-setup-trace +   353ms] recv (24 B): \x1b]7;file:///home/runner\x07
+[ssh-setup-trace +   353ms] recv (8 B): \x1b]133;A\x07
+[ssh-setup-trace +   353ms] send (gate burst) (22 B): echo \"[$TH_4147_VAR]\"\n
+[ssh-setup-trace +   357ms] recv (30 B): \x1b]0;[runnervmwu] ~\x07\x1b[30m\x1b(B\x1b[m
+[ssh-setup-trace +   357ms] recv (72 B): \x1b[92mrunner\x1b(B\x1b[m@\x1b[33mrunnervmwuk1x\x1b(B\x1b[m \x1b[32m~\x1b(B\x1b[m\x1b(B\x1b[m> \x1b[K\r\x1b[24C
+[ssh-setup-trace +   357ms] recv (11 B): echo \r\x1b[29C
+[ssh-setup-trace +   357ms] recv (22 B): \"[$TH_4147_VAR]\"\r\x1b[45C
+[ssh-setup-trace +   357ms] recv (87 B): \x1b[21D\x1b[34mecho\x1b[30m\x1b(B\x1b[m \x1b[33m\"[\x1b[96m$TH_4147_VAR\x1b[33m]\"\r\x1b[45C\x1b[30m\x1b(B\x1b[m\r\n\x1b[30m\x1b(B\x1b[m
+[ssh-setup-trace +   357ms] recv (8 B): \x1b[?2004l
+[ssh-setup-trace +   357ms] recv (8 B): \x1b]133;C\x07
+[ssh-setup-trace +   359ms] recv (52 B): \x1b]0;[runnervmwu] echo \"[$TH_4147_VAR] ~\x07\x1b[30m\x1b(B\x1b[m\r
+[ssh-setup-trace +   359ms] recv (22 B): [it\'s a $HOME value]\r\n
+[ssh-setup-trace +   359ms] recv (151 B): \x1b]133;D;0\x07\x1b[2m\xe2\x8f\x8e\x1b(B\x1b[m                                                                               \r\xe2\x8f\x8e \r\x1b[K\x1b[?2004h\x1b]7;file:///home/runner\x07\x1b]133;A\x07
