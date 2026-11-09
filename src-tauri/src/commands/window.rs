@@ -346,6 +346,14 @@ pub fn quit_window_ready(app: AppHandle, window: WebviewWindow, quit: State<'_, 
     finish_if_ready(&app, outcome);
 }
 
+/// The **calling** window has registered its app-quit listener (#5106).
+/// Returns whether a quit is already waiting on its answer: the request was
+/// emitted before the listener existed, so the window must answer it now.
+#[tauri::command]
+pub fn quit_window_listening(window: WebviewWindow, quit: State<'_, QuitCoordinator>) -> bool {
+    quit.window_listening(window.label())
+}
+
 /// The **calling** window is showing the quit decision dialog (#4296), so the
 /// quit waits for the user there instead of timing the window out.
 #[tauri::command]

@@ -641,6 +641,15 @@ export async function quitWindowPrompting(): Promise<void> {
   await invoke("quit_window_prompting");
 }
 
+/**
+ * Tell the backend the *calling* window's app-quit listener is registered
+ * (#5106). Resolves `true` when a quit is already waiting on this window: its
+ * request was emitted before the listener existed, so the window answers now.
+ */
+export async function quitWindowListening(): Promise<boolean> {
+  return await invoke<boolean>("quit_window_listening");
+}
+
 /** Cancel a pending app quit (#4296); every window drops its quit dialog. */
 export async function cancelQuit(): Promise<void> {
   await invoke("cancel_quit");

@@ -37,6 +37,16 @@
 //!   hung or crashed webview) stops blocking the quit when the timeout fires
 //!   ([`QuitCoordinator::ack_timeout`]), so Cmd+Q never becomes a no-op. A window
 //!   that *is* showing the dialog waits for the user, however long that takes.
+//! * **Window still loading (#5106).** [`QUIT_REQUESTED_EVENT`] reaches only
+//!   listeners that already exist; Tauri does not buffer an event for a webview
+//!   that has not subscribed yet. Each window therefore reports
+//!   `quit_window_listening` once its listener is registered, and that call
+//!   answers whether a quit is already waiting on the window, so a window
+//!   opened just before Cmd+Q still answers. A window that was not listening
+//!   when the quit began is not dropped at [`QUIT_ACK_TIMEOUT`]: it has until
+//!   [`QUIT_LISTENER_TIMEOUT`] ([`QuitCoordinator::listener_timeout`]), so a
+//!   slow-loading window that holds a live session (a torn-off tab) is still
+//!   asked, while a webview that never loads cannot hang the quit.
 //! * **OS shutdown / logout.** These never wait on this flow. On macOS they
 //!   arrive as `-[NSApp terminate:]` driven by a quit Apple Event that carries a
 //!   `kAEQuitReason`; `decide_should_terminate` lets them terminate at once
@@ -77,6 +87,11 @@ pub const QUIT_CANCELLED_EVENT: &str = "app-quit-cancelled";
 /// How long a window has to acknowledge a quit request (ready or prompting)
 /// before it is treated as unresponsive and stops blocking the quit.
 pub const QUIT_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a window that was not yet listening when the quit began (it was
+/// still loading) has to register its listener and acknowledge, before it too
+/// stops blocking the quit (#5106). Measured from the start of the quit.
+pub const QUIT_LISTENER_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Where an explicit quit stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +237,13 @@ struct QuitState {
     /// Windows that have not acknowledged at all yet (neither ready nor
     /// prompting); dropped from `pending` if the acknowledgement times out.
     unacked: HashSet<String>,
+    /// Windows that have registered their [`QUIT_REQUESTED_EVENT`] listener.
+    /// Kept across quit attempts; a destroyed window is removed.
+    listening: HashSet<String>,
+    /// Windows of the current quit that were not listening yet when it began:
+    /// they may never have received the request, so only
+    /// [`QuitCoordinator::listener_timeout`] drops them (#5106).
+    late: HashSet<String>,
     /// Bumped on every new quit attempt so a stale timeout cannot touch a
     /// later attempt.
     generation: u64,
@@ -232,12 +254,14 @@ impl QuitState {
         self.phase = QuitPhase::Idle;
         self.pending.clear();
         self.unacked.clear();
+        self.late.clear();
     }
 
     fn settle(&mut self) -> ReadyOutcome {
         if self.pending.is_empty() {
             self.phase = QuitPhase::Confirmed;
             self.unacked.clear();
+            self.late.clear();
             ReadyOutcome::ExitNow
         } else {
             ReadyOutcome::Waiting
@@ -265,6 +289,8 @@ impl QuitCoordinator {
                 phase: QuitPhase::Idle,
                 pending: HashSet::new(),
                 unacked: HashSet::new(),
+                listening: HashSet::new(),
+                late: HashSet::new(),
                 generation: 0,
             }),
             teardown_done: AtomicBool::new(false),
@@ -294,11 +320,22 @@ impl QuitCoordinator {
         }
         state.generation += 1;
         state.phase = QuitPhase::Prompting;
+        state.late = pending.difference(&state.listening).cloned().collect();
         state.unacked = pending.clone();
         state.pending = pending;
         BeginOutcome::Started {
             generation: state.generation,
         }
+    }
+
+    /// The window `label` has registered its [`QUIT_REQUESTED_EVENT`] listener
+    /// (#5106). Returns whether a quit is waiting on this window's answer: a
+    /// request emitted before the listener existed never reached it, so the
+    /// window must answer it now. Answering twice is harmless.
+    pub fn window_listening(&self, label: &str) -> bool {
+        let mut state = recover(self.state.lock());
+        state.listening.insert(label.to_string());
+        state.phase == QuitPhase::Prompting && state.pending.contains(label)
     }
 
     /// The window `label` is showing the quit dialog; it no longer counts as
@@ -325,18 +362,38 @@ impl QuitCoordinator {
     /// The window `label` was destroyed while a quit was pending: it can no
     /// longer answer, and whatever it held is already gone.
     pub fn window_gone(&self, label: &str) -> ReadyOutcome {
+        recover(self.state.lock()).listening.remove(label);
         self.window_ready(label)
     }
 
-    /// The acknowledgement window of quit attempt `generation` elapsed: every
-    /// window that never answered stops blocking the quit.
+    /// [`QUIT_ACK_TIMEOUT`] of quit attempt `generation` elapsed: every window
+    /// that was listening when the quit began and never answered stops blocking
+    /// the quit. A window that was still loading keeps waiting for
+    /// [`Self::listener_timeout`] (#5106).
     pub fn ack_timeout(&self, generation: u64) -> ReadyOutcome {
+        self.drop_unacked(generation, false)
+    }
+
+    /// [`QUIT_LISTENER_TIMEOUT`] of quit attempt `generation` elapsed: every
+    /// window that still has not answered, loading or not, stops blocking the
+    /// quit, so a webview that never loads cannot hang it (#5106).
+    pub fn listener_timeout(&self, generation: u64) -> ReadyOutcome {
+        self.drop_unacked(generation, true)
+    }
+
+    fn drop_unacked(&self, generation: u64, include_late: bool) -> ReadyOutcome {
         let mut state = recover(self.state.lock());
         if state.phase != QuitPhase::Prompting || state.generation != generation {
             return ReadyOutcome::NotQuitting;
         }
-        let unresponsive: Vec<String> = state.unacked.drain().collect();
+        let unresponsive: Vec<String> = state
+            .unacked
+            .iter()
+            .filter(|label| include_late || !state.late.contains(*label))
+            .cloned()
+            .collect();
         for label in &unresponsive {
+            state.unacked.remove(label);
             state.pending.remove(label);
         }
         state.settle()
@@ -360,6 +417,7 @@ impl QuitCoordinator {
         state.phase = QuitPhase::Confirmed;
         state.pending.clear();
         state.unacked.clear();
+        state.late.clear();
     }
 
     /// Claim the one-time app teardown. Returns `true` exactly once, so the
@@ -418,6 +476,21 @@ pub fn start_quit_flow(app: &tauri::AppHandle) {
                 if outcome == Some(ReadyOutcome::ExitNow) {
                     tracing::warn!(
                         "Windows did not answer the quit request in time; exiting (#4296)"
+                    );
+                    handle.exit(0);
+                    return;
+                }
+                if outcome != Some(ReadyOutcome::Waiting) {
+                    return;
+                }
+                // A window still loading when the quit began gets longer (#5106).
+                tokio::time::sleep(QUIT_LISTENER_TIMEOUT.saturating_sub(QUIT_ACK_TIMEOUT)).await;
+                let outcome = handle
+                    .try_state::<QuitCoordinator>()
+                    .map(|c| c.listener_timeout(generation));
+                if outcome == Some(ReadyOutcome::ExitNow) {
+                    tracing::warn!(
+                        "A loading window never answered the quit request; exiting (#5106)"
                     );
                     handle.exit(0);
                 }
@@ -687,11 +760,14 @@ mod tests {
     #[test]
     fn ack_timeout_drops_only_unresponsive_windows() {
         let q = QuitCoordinator::new();
+        // main shows the dialog; win-1 never answers; win-2 is ready.
+        for label in ["main", "win-1", "win-2"] {
+            q.window_listening(label);
+        }
         let BeginOutcome::Started { generation } = q.begin(labels(&["main", "win-1", "win-2"]))
         else {
             panic!("expected a started quit");
         };
-        // main shows the dialog; win-1 never answers; win-2 is ready.
         q.ack_prompting("main");
         q.window_ready("win-2");
         assert_eq!(q.ack_timeout(generation), ReadyOutcome::Waiting);
@@ -703,6 +779,7 @@ mod tests {
     #[test]
     fn ack_timeout_exits_when_no_window_answered() {
         let q = QuitCoordinator::new();
+        q.window_listening("main");
         let BeginOutcome::Started { generation } = q.begin(labels(&["main"])) else {
             panic!("expected a started quit");
         };
@@ -718,6 +795,90 @@ mod tests {
         q.cancel();
         q.begin(labels(&["main"]));
         assert_eq!(q.ack_timeout(first), ReadyOutcome::NotQuitting);
+        assert_eq!(q.phase(), QuitPhase::Prompting);
+    }
+
+    // ── a window still loading when the quit begins (#5106) ──────────────
+
+    #[test]
+    fn window_listening_reports_a_quit_that_waits_on_it() {
+        let q = QuitCoordinator::new();
+        assert!(!q.window_listening("main"), "no quit in progress");
+        q.begin(labels(&["main", "win-1"]));
+        // win-1 opened just before Cmd+Q: the request was emitted before its
+        // listener existed, so registering must tell it to answer now.
+        assert!(q.window_listening("win-1"));
+        // Re-registering (a StrictMode remount, a reload) asks again; harmless.
+        assert!(q.window_listening("win-1"));
+        q.window_ready("win-1");
+        assert!(!q.window_listening("win-1"), "it already answered");
+    }
+
+    #[test]
+    fn ack_timeout_keeps_waiting_for_a_window_that_was_still_loading() {
+        let q = QuitCoordinator::new();
+        q.window_listening("main");
+        let BeginOutcome::Started { generation } = q.begin(labels(&["main", "win-1"])) else {
+            panic!("expected a started quit");
+        };
+        assert_eq!(q.window_ready("main"), ReadyOutcome::Waiting);
+        // Before #5106 the ack timeout dropped win-1 here and the app exited,
+        // ending win-1's sessions without ever asking it.
+        assert_eq!(q.ack_timeout(generation), ReadyOutcome::Waiting);
+        assert_eq!(q.phase(), QuitPhase::Prompting);
+        // It finishes loading, learns of the quit, and shows its dialog.
+        assert!(q.window_listening("win-1"));
+        q.ack_prompting("win-1");
+        assert_eq!(q.listener_timeout(generation), ReadyOutcome::Waiting);
+        assert_eq!(q.window_ready("win-1"), ReadyOutcome::ExitNow);
+    }
+
+    #[test]
+    fn listener_timeout_drops_a_window_that_never_loads() {
+        let q = QuitCoordinator::new();
+        q.window_listening("main");
+        let BeginOutcome::Started { generation } = q.begin(labels(&["main", "win-1"])) else {
+            panic!("expected a started quit");
+        };
+        q.window_ready("main");
+        assert_eq!(q.ack_timeout(generation), ReadyOutcome::Waiting);
+        assert_eq!(q.listener_timeout(generation), ReadyOutcome::ExitNow);
+    }
+
+    #[test]
+    fn listener_timeout_still_waits_on_an_open_dialog() {
+        let q = QuitCoordinator::new();
+        let BeginOutcome::Started { generation } = q.begin(labels(&["main"])) else {
+            panic!("expected a started quit");
+        };
+        q.window_listening("main");
+        q.ack_prompting("main");
+        assert_eq!(q.ack_timeout(generation), ReadyOutcome::Waiting);
+        assert_eq!(q.listener_timeout(generation), ReadyOutcome::Waiting);
+        assert_eq!(q.window_ready("main"), ReadyOutcome::ExitNow);
+    }
+
+    #[test]
+    fn a_destroyed_window_counts_as_loading_again_if_its_label_returns() {
+        let q = QuitCoordinator::new();
+        q.window_listening("win-1");
+        q.window_gone("win-1");
+        let BeginOutcome::Started { generation } = q.begin(labels(&["win-1"])) else {
+            panic!("expected a started quit");
+        };
+        assert_eq!(q.ack_timeout(generation), ReadyOutcome::Waiting);
+        assert_eq!(q.listener_timeout(generation), ReadyOutcome::ExitNow);
+    }
+
+    #[test]
+    fn stale_listener_timeout_does_not_touch_a_later_quit() {
+        let q = QuitCoordinator::new();
+        let BeginOutcome::Started { generation: first } = q.begin(labels(&["main"])) else {
+            panic!("expected a started quit");
+        };
+        q.cancel();
+        q.begin(labels(&["main"]));
+        assert_eq!(q.listener_timeout(first), ReadyOutcome::NotQuitting);
         assert_eq!(q.phase(), QuitPhase::Prompting);
     }
 
