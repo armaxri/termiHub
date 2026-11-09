@@ -291,7 +291,15 @@ class OsInput:
                 # macOS counts multi-clicks from a field on the event itself.
                 self.click_state = index
                 self.pointer_button(True, button=button, pid=pid)
-                self.pointer_button(False, button=button, pid=pid)
+                try:
+                    self.pointer_button(False, button=button, pid=pid)
+                except GlobalInjectionRefused:
+                    # The press made another window frontmost (it lay over the
+                    # point): still release, or the held button turns every
+                    # later pointer move into a drag and the rest of the
+                    # session misses its calibration (#5086). Then fail.
+                    self._pointer_button(self._check_target(pid), button, False)
+                    raise
                 time.sleep(0.05)
         finally:
             self.click_state = 1
