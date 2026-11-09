@@ -47,6 +47,15 @@
 //! no markers) is [`RemoteShell::Unknown`], and nothing is injected for it: a
 //! missing CWD hook is a degradation, a corrupted first command is a bug.
 //!
+//! A Win32-OpenSSH host is asked differently (#5134). Its exec channel runs
+//! the probe as `cmd.exe /c <probe>` when cmd.exe is the DefaultShell, and
+//! cmd.exe runs the user's AutoRun before it: an AutoRun with side effects
+//! (a log line, a file) would run once more per session. So there the
+//! connector reads the session shell's own first output for cmd.exe's banner
+//! ([`cmd_banner_verdict`]) and runs the exec probe only when the banner does
+//! not show: a PowerShell, Git Bash or fish DefaultShell, whose `-c` runs no
+//! cmd AutoRun.
+//!
 //! `%OS%` stays literal under PowerShell on every OS, so it cannot tell a
 //! Windows host from a Unix one there; `$PSHOME` can: it is an absolute POSIX
 //! path (`/opt/microsoft/powershell/7`) only on Linux/macOS, giving
@@ -2491,5 +2500,77 @@ mod tests {
         let mut gate = SetupGate::new(hold, SetupDone::OutputSettled, Instant::now());
         assert!(!gate.is_holding());
         assert_eq!(gate.write(b"dir\r".to_vec()), Some(b"dir\r".to_vec()));
+    }
+    // ── Win32-OpenSSH: cmd.exe told by its banner (#5134) ─────────────
+
+    /// A Win32-OpenSSH cmd.exe session's first output as measured on the
+    /// Windows SSH Host lane (run 42722303666), one chunk per message, with
+    /// a test AutoRun that prints a line.
+    const CMD_SESSION_START: [&[u8]; 3] = [
+        b"\x1b[?9001h\x1b[?1004h",
+        b"\x1b[?25l\x1b[2J\x1b[m\x1b[H\r\n\r\n\r\n\x1b[H\x1b]0;C:\\Windows\\system32\\conhost.exe\x07\x1b[?25h",
+        b"\x1b[?25lMicrosoft Windows [Version 10.0.26100.33674]\r\n(c) Microsoft Corporation. \
+          All rights reserved.\r\nth5134-autorun-visible\x1b[5;1Htermihubssh@runner \
+          C:\\Users\\termihubssh>\x1b[?25h",
+    ];
+
+    #[test]
+    fn win32_openssh_is_told_by_its_server_id() {
+        assert!(is_win32_openssh("SSH-2.0-OpenSSH_for_Windows_9.5"));
+        assert!(!is_win32_openssh(
+            "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5"
+        ));
+        assert!(!is_win32_openssh("SSH-2.0-dropbear_2022.83"));
+    }
+
+    #[test]
+    fn cmd_banner_decides_only_once_the_banner_text_comes() {
+        let mut seen = Vec::new();
+        for chunk in &CMD_SESSION_START[..2] {
+            seen.extend_from_slice(chunk);
+            // Escapes, blank lines and the window title only.
+            assert_eq!(cmd_banner_verdict(&seen), BannerVerdict::Undecided);
+        }
+        seen.extend_from_slice(CMD_SESSION_START[2]);
+        assert_eq!(cmd_banner_verdict(&seen), BannerVerdict::Cmd);
+    }
+
+    #[test]
+    fn cmd_banner_split_across_chunks_waits_for_the_rest() {
+        assert_eq!(
+            cmd_banner_verdict(b"\x1b[?25lMicrosoft Win"),
+            BannerVerdict::Undecided
+        );
+        // ConPTY may render a space as a cursor move.
+        assert_eq!(
+            cmd_banner_verdict(b"Microsoft\x1b[1CWindows\x1b[1C[Versi\xc3\xb3n 10.0.19045]"),
+            BannerVerdict::Cmd
+        );
+    }
+
+    #[test]
+    fn other_windows_shells_are_not_cmd() {
+        for start in [
+            &b"\x1b[?25l\x1b[2J\x1b[HWindows PowerShell\r\nCopyright (C) Microsoft"[..],
+            b"\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07PowerShell 7.4.6\r\n",
+            b"\x1b[2J\x1b[H\x1b]0;MINGW64:/c/Users/u\x07\r\nu@host MINGW64 ~\r\n$ ",
+            b"PS C:\\Users\\u> ",
+        ] {
+            assert_eq!(
+                cmd_banner_verdict(start),
+                BannerVerdict::NotCmd,
+                "{:?}",
+                String::from_utf8_lossy(start)
+            );
+        }
+    }
+
+    #[test]
+    fn no_output_yet_is_undecided() {
+        assert_eq!(cmd_banner_verdict(b""), BannerVerdict::Undecided);
+        assert_eq!(
+            cmd_banner_verdict(b"\x1b[?9001h\x1b[?1004h\r\n"),
+            BannerVerdict::Undecided
+        );
     }
 }
