@@ -11,11 +11,16 @@
 //!
 //! The probe is a single `echo` whose output differs per shell family:
 //!
-//! | Shell | `%OS%` | `$PSHOME` | Output between the markers |
-//! | --- | --- | --- | --- |
-//! | POSIX (bash, zsh, sh, fish) | literal | unset → nothing | `%OS%` |
-//! | PowerShell (5 or 7, any OS) | literal | PowerShell's home | `%OS%` + a path |
-//! | cmd.exe | `Windows_NT` | literal | `Windows_NT $PSHOME` |
+//! | Shell | `%OS%` | `$PSHOME` | `$FISH_VERSION` | Output between the markers |
+//! | --- | --- | --- | --- | --- |
+//! | POSIX (bash, zsh, sh, dash) | literal | nothing | nothing | `%OS%` |
+//! | fish (#5016) | literal | nothing | fish's version | `%OS%` + a version |
+//! | PowerShell (5 or 7, any OS) | literal | PowerShell's home | nothing | `%OS%` + a path |
+//! | cmd.exe | `Windows_NT` | literal | literal | `Windows_NT $PSHOME $FISH_VERSION` |
+//!
+//! fish has to be told apart from the POSIX shells (#5016): the bash/zsh hook
+//! is a parse error in fish, so it gets setup lines in its own syntax. A fish
+//! version starts with a digit, which no `$PSHOME` path does.
 //!
 //! The probe uses no quotes and no shell metacharacters on purpose:
 //! Win32-OpenSSH hands the command line to `powershell.exe -c`, which strips
@@ -60,7 +65,7 @@ use super::exec::{ssh_exec_with_stdin, SshExecOutput};
 use super::handler::SshSession;
 use crate::errors::CoreError;
 use crate::output::prompt_mark::PromptMarkDetector;
-use crate::session::shell::osc7_setup_command;
+use crate::session::shell::{fish_typed_setup_command, osc7_setup_command};
 
 /// Opening marker of the probe's output.
 pub const SHELL_PROBE_START: &str = "termihub_shell_probe";
@@ -69,7 +74,7 @@ pub const SHELL_PROBE_END: &str = "termihub_shell_probe_end";
 
 /// The probe command run over an exec channel (see the module docs).
 pub const SHELL_PROBE_COMMAND: &str =
-    "echo termihub_shell_probe %OS% $PSHOME termihub_shell_probe_end";
+    "echo termihub_shell_probe %OS% $PSHOME $FISH_VERSION termihub_shell_probe_end";
 
 /// Upper bound on the probe (#4670).
 ///
@@ -90,8 +95,15 @@ pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 /// The flavour of the remote login shell, as far as shell integration cares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RemoteShell {
-    /// A POSIX-style shell (bash, zsh, sh, dash, fish, ...).
+    /// A POSIX-style shell (bash, zsh, sh, dash, ...).
     Posix,
+    /// fish (#5016): not POSIX, so it gets setup lines in its own syntax.
+    Fish {
+        /// fish 4.0+, which reports its directory (OSC 7) and marks its
+        /// prompts and commands (OSC 133) by itself, so it is typed no
+        /// shell-integration line at all.
+        native_integration: bool,
+    },
     /// Windows PowerShell 5 or PowerShell 7 (`pwsh`) on a Windows host.
     PowerShell,
     /// PowerShell 7 (`pwsh`) as the login shell of a Linux/macOS host (#4148).
@@ -124,6 +136,13 @@ pub fn classify_shell_probe(stdout: &str) -> RemoteShell {
     match between {
         // `%OS%` untouched and `$PSHOME` expanded to nothing: a POSIX shell.
         ["%OS%"] => RemoteShell::Posix,
+        // `$FISH_VERSION` expanded to a version (`3.7.1`, `4.0.2`): fish
+        // (#5016). Checked before PowerShell, whose home is never a number.
+        ["%OS%", version] if version.starts_with(|c: char| c.is_ascii_digit()) => {
+            RemoteShell::Fish {
+                native_integration: fish_has_native_integration(version),
+            }
+        }
         // `%OS%` untouched and `$PSHOME` expanded to PowerShell's home: an
         // absolute POSIX path on Linux/macOS (#4148) ...
         ["%OS%", home, ..] if home.starts_with('/') => RemoteShell::UnixPowerShell,
@@ -131,9 +150,18 @@ pub fn classify_shell_probe(stdout: &str) -> RemoteShell {
         // `C:\Program Files\PowerShell\7`).
         ["%OS%", _, ..] => RemoteShell::PowerShell,
         // `%OS%` expanded (to `Windows_NT`) and `$PSHOME` left literal: cmd.exe.
-        [os, "$PSHOME"] if os.eq_ignore_ascii_case("Windows_NT") => RemoteShell::Cmd,
+        [os, "$PSHOME", "$FISH_VERSION"] if os.eq_ignore_ascii_case("Windows_NT") => {
+            RemoteShell::Cmd
+        }
         _ => RemoteShell::Unknown,
     }
+}
+
+/// Whether the fish `version` (`$FISH_VERSION`, e.g. `3.7.1`, `4.0b1`) is
+/// 4.0 or later: the first release that emits OSC 7 and OSC 133 by itself.
+fn fish_has_native_integration(version: &str) -> bool {
+    let major: String = version.chars().take_while(char::is_ascii_digit).collect();
+    major.parse::<u32>().is_ok_and(|major| major >= 4)
 }
 
 /// Probe the remote login shell over an exec channel on `session`.
@@ -219,10 +247,22 @@ pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
 ///   connector holds it back until the first prompt ([`SetupGate`]), so a
 ///   Unix tty no longer maps that CR to LF and a starting Windows shell
 ///   cannot drop it.
+/// - fish 3.x: the fish hook built to be typed (`fish_typed_setup_command`
+///   in the shell module), ended with LF (#5016). The bash hook would be a
+///   parse error there.
+/// - fish 4.0+: nothing. It emits OSC 7 and OSC 133 itself, and a typed line
+///   would show: its editor redraws typed input cell by cell (which the echo
+///   filter cannot match) and puts the command line into the window title.
 /// - cmd.exe and unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
         RemoteShell::Posix => osc7_setup_command("bash").map(|s| format!("{s}\n")),
+        RemoteShell::Fish {
+            native_integration: false,
+        } => Some(format!("{}\n", fish_typed_setup_command())),
+        RemoteShell::Fish {
+            native_integration: true,
+        } => None,
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
             osc7_setup_command("powershell").map(|s| format!("{s}{TYPED_POWERSHELL_CLEAR}\r"))
         }
@@ -235,7 +275,7 @@ pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
 /// cmd.exe. `None` for an undetected shell, which gets no typed setup at all.
 pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
     match shell {
-        RemoteShell::Posix => Some("\n"),
+        RemoteShell::Posix | RemoteShell::Fish { .. } => Some("\n"),
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell | RemoteShell::Cmd => Some("\r"),
         RemoteShell::Unknown => None,
     }
@@ -260,12 +300,12 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
     match shell {
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell => true,
         RemoteShell::Cmd => has_setup,
-        RemoteShell::Posix | RemoteShell::Unknown => false,
+        RemoteShell::Posix | RemoteShell::Fish { .. } | RemoteShell::Unknown => false,
     }
 }
 
 /// Whether the typed setup's echo is hidden for `shell` (#5009): only on a
-/// POSIX login shell, and only when the shell-integration line is typed —
+/// POSIX or fish (#5016) login shell, and only when the shell-integration line is typed —
 /// its setup-done mark is what ends the hidden region (see
 /// [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)). Such a
 /// host is then also held until its first prompt, so the setup reaches the
@@ -275,12 +315,13 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// screen model must see every byte (its typed PowerShell setup ends with
 /// [`TYPED_POWERSHELL_CLEAR`] instead).
 pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
-    shell == RemoteShell::Posix && has_integration
+    matches!(shell, RemoteShell::Posix | RemoteShell::Fish { .. }) && has_integration
 }
 
-/// Join POSIX setup lines (each LF-ended) into one typed line, so their echo
-/// is one contiguous region the filter can remove — separate lines would put
-/// a prompt between the echoes (#5009).
+/// Join POSIX (or fish) setup lines (each LF-ended) into one typed line, so
+/// their echo is one contiguous region the filter can remove — separate lines
+/// would put a prompt between the echoes (#5009). `; ` separates statements
+/// in both syntaxes.
 pub fn join_posix_setup(lines: &[String]) -> String {
     let statements: Vec<&str> = lines
         .iter()
@@ -288,7 +329,7 @@ pub fn join_posix_setup(lines: &[String]) -> String {
         .filter(|l| !l.is_empty())
         .collect();
     // A leading space keeps the line (env values included) out of history
-    // under `HISTCONTROL=ignorespace` / `HIST_IGNORE_SPACE`.
+    // under `HISTCONTROL=ignorespace` / `HIST_IGNORE_SPACE`, and always in fish.
     format!(" {}\n", statements.join("; "))
 }
 
@@ -314,6 +355,13 @@ fn is_typeable_value(value: &str) -> bool {
 /// `value` as a POSIX single-quoted word: `'` becomes `'\''`.
 fn posix_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// `value` as a fish single-quoted word (#5016). Inside fish's `'...'` a
+/// backslash escapes `\` and `'` (unlike POSIX, where it is literal), so both
+/// get one: `it's` becomes `'it\'s'`, `a\b` becomes `'a\\b'`.
+fn fish_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 /// `value` as a PowerShell single-quoted (verbatim) string. PowerShell also
@@ -363,6 +411,9 @@ fn cmd_set(name: &str, value: &str) -> Option<String> {
 ///
 /// - POSIX: `export A='1' B='it'\''s'` + LF — single quotes keep every
 ///   character literal.
+/// - fish: ` set -gx A '1'; set -gx B 'it\'s'` + LF (#5016) — fish's own
+///   single quotes, in which `\` and `'` are backslash-escaped; the leading
+///   space keeps the line out of fish's history.
 /// - PowerShell: `$env:A='1'; $env:B='it''s'` + CR — verbatim strings.
 /// - cmd.exe: `set "A=1" & set "B=2"` + CR; a value cmd.exe cannot take
 ///   literally (`"`, `%`, `!`) is skipped with a warning.
@@ -398,6 +449,7 @@ pub fn env_setup_line(shell: RemoteShell, env: &HashMap<String, String>) -> Opti
         }
         let statement = match shell {
             RemoteShell::Posix => Some(format!("{name}={}", posix_quote(value))),
+            RemoteShell::Fish { .. } => Some(format!("set -gx {name} {}", fish_quote(value))),
             RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
                 Some(format!("$env:{name}={}", powershell_quote(value)))
             }
@@ -418,6 +470,8 @@ pub fn env_setup_line(shell: RemoteShell, env: &HashMap<String, String>) -> Opti
     let line = match shell {
         RemoteShell::Posix => format!("export {}", statements.join(" ")),
         RemoteShell::Cmd => statements.join(" & "),
+        // A leading space: fish never saves such a line to its history.
+        RemoteShell::Fish { .. } => format!(" {}", statements.join("; ")),
         _ => statements.join("; "),
     };
     Some(format!("{line}{eol}"))
@@ -428,6 +482,8 @@ pub fn env_setup_line(shell: RemoteShell, env: &HashMap<String, String>) -> Opti
 /// ended with the shell's [`line_ending`].
 ///
 /// - POSIX: `export DISPLAY=...` + `xauth add ... 2>/dev/null` — unchanged.
+/// - fish: ` set -gx DISPLAY ...` + the same `xauth add` line, each with a
+///   leading space that keeps it out of fish's history (#5016).
 /// - PowerShell on Linux/macOS: `$env:DISPLAY='...'` + the `xauth add`, only
 ///   when `xauth` is on the `PATH` (it is a native command there too).
 /// - PowerShell / cmd.exe on Windows: the `DISPLAY` assignment only. Windows
@@ -461,6 +517,15 @@ pub fn x11_setup_lines(shell: RemoteShell, display_num: u32, cookie: Option<&str
             if let Some(cookie) = cookie {
                 lines.push(format!(
                     "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null{eol}"
+                ));
+            }
+        }
+        RemoteShell::Fish { .. } => {
+            // Leading spaces keep both lines out of fish's history.
+            lines.push(format!(" set -gx DISPLAY localhost:{display_num}.0{eol}"));
+            if let Some(cookie) = cookie {
+                lines.push(format!(
+                    " xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null{eol}"
                 ));
             }
         }
@@ -807,9 +872,117 @@ mod tests {
     fn classifies_cmd_output() {
         assert_eq!(
             classify_shell_probe(
-                "termihub_shell_probe Windows_NT $PSHOME termihub_shell_probe_end\r\n"
+                "termihub_shell_probe Windows_NT $PSHOME $FISH_VERSION termihub_shell_probe_end\r\n"
             ),
             RemoteShell::Cmd
+        );
+    }
+
+    // ── fish (#5016) ────────────────────────────────────────────────────
+
+    /// #5016: fish answered the probe like bash, so it was typed the bash
+    /// hook — a parse error. `$FISH_VERSION` now tells it apart.
+    #[test]
+    fn classifies_fish_by_its_version() {
+        for (version, native) in [
+            ("3.0.0", false),
+            ("3.7.1", false),
+            ("4.0.2", true),
+            ("4.0b1", true),
+            ("4.6.0", true),
+            ("10.1", true),
+        ] {
+            let out = format!("termihub_shell_probe %OS% {version} termihub_shell_probe_end\n");
+            assert_eq!(
+                classify_shell_probe(&out),
+                RemoteShell::Fish {
+                    native_integration: native
+                },
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fish_probe_token_does_not_change_the_other_shells() {
+        // bash / zsh / sh / dash expand `$FISH_VERSION` to nothing.
+        assert_eq!(
+            classify_shell_probe("termihub_shell_probe %OS% termihub_shell_probe_end\n"),
+            RemoteShell::Posix
+        );
+        // PowerShell expands it to nothing too; its home is never a number.
+        let linux = "termihub_shell_probe\n%OS%\n/opt/microsoft/powershell/7\n\
+                     termihub_shell_probe_end\n";
+        assert_eq!(classify_shell_probe(linux), RemoteShell::UnixPowerShell);
+        let win = "termihub_shell_probe\n%OS%\nC:\\Program Files\\PowerShell\\7\n\
+                   termihub_shell_probe_end\n";
+        assert_eq!(classify_shell_probe(win), RemoteShell::PowerShell);
+        assert!(SHELL_PROBE_COMMAND.contains("$FISH_VERSION"));
+    }
+
+    #[test]
+    fn fish3_gets_the_typed_fish_hook_never_the_bash_one() {
+        let line = integration_setup_line(FISH3).expect("fish 3 setup");
+        assert_eq!(line, format!("{}\n", fish_typed_setup_command()));
+        // A leading space keeps it out of fish's history.
+        assert!(line.starts_with(' '), "{line:?}");
+        // One line, ending with the setup-done mark so its echo is hidden.
+        assert_eq!(line.matches('\n').count(), 1, "{line:?}");
+        assert!(
+            line.trim_end()
+                .ends_with(crate::output::setup_echo::SETUP_DONE_PRINTF),
+            "{line:?}"
+        );
+        // bash/zsh syntax is a parse error in fish.
+        for bash in ["(){", "PROMPT_COMMAND", "[ -z", "fi;", "$'", "local "] {
+            assert!(!line.contains(bash), "{bash:?} in {line:?}");
+        }
+        assert!(line.contains("]7;file://"), "no OSC 7: {line:?}");
+        assert!(line.contains("]133;A"), "no OSC 133: {line:?}");
+    }
+
+    #[test]
+    fn fish4_gets_no_integration_line() {
+        // fish 4.0+ emits OSC 7 and OSC 133 itself; a typed line would show.
+        assert_eq!(integration_setup_line(FISH4), None);
+    }
+
+    #[test]
+    fn fish_submits_with_lf_and_is_never_deferred() {
+        for fish in [FISH3, FISH4] {
+            assert_eq!(line_ending(fish), Some("\n"));
+            for has_setup in [false, true] {
+                assert!(!defers_setup_until_prompt(fish, has_setup));
+            }
+        }
+    }
+
+    #[test]
+    fn fish_env_line_uses_set_gx_and_fish_quoting() {
+        for fish in [FISH3, FISH4] {
+            let e = env(&[("ZED", "1"), ("ALPHA", "two words")]);
+            assert_eq!(
+                env_setup_line(fish, &e).as_deref(),
+                Some(" set -gx ALPHA 'two words'; set -gx ZED '1'\n")
+            );
+            // In fish's '...' a backslash escapes `'` and `\`; `$`, `(`,
+            // `;` and backticks stay literal.
+            let e = env(&[("MSG", "it's $HOME (id); `x` a\\b")]);
+            assert_eq!(
+                env_setup_line(fish, &e).as_deref(),
+                Some(" set -gx MSG 'it\\'s $HOME (id); `x` a\\\\b'\n")
+            );
+        }
+    }
+
+    #[test]
+    fn fish_x11_lines_use_set_gx() {
+        assert_eq!(
+            x11_setup_lines(FISH3, 10, Some("abc123")),
+            vec![
+                " set -gx DISPLAY localhost:10.0\n".to_string(),
+                " xauth add localhost:10 MIT-MAGIC-COOKIE-1 abc123 2>/dev/null\n".to_string(),
+            ]
         );
     }
 
@@ -942,8 +1115,17 @@ mod tests {
             .collect()
     }
 
-    const ALL_SHELLS: [RemoteShell; 5] = [
+    const FISH3: RemoteShell = RemoteShell::Fish {
+        native_integration: false,
+    };
+    const FISH4: RemoteShell = RemoteShell::Fish {
+        native_integration: true,
+    };
+
+    const ALL_SHELLS: [RemoteShell; 7] = [
         RemoteShell::Posix,
+        FISH3,
+        FISH4,
         RemoteShell::PowerShell,
         RemoteShell::UnixPowerShell,
         RemoteShell::Cmd,
@@ -1163,9 +1345,12 @@ mod tests {
             assert!(line.ends_with(eol), "{shell:?}: {line:?}");
             let body = &line[..line.len() - eol.len()];
             assert!(!body.contains(['\r', '\n']), "{shell:?}: {line:?}");
-            // No POSIX syntax (nor its LF) may reach a non-POSIX shell.
+            // No POSIX syntax may reach a non-POSIX shell, nor an LF one
+            // that submits with CR.
             if shell != RemoteShell::Posix {
                 assert!(!line.contains("export"), "{shell:?}: {line:?}");
+            }
+            if eol == "\r" {
                 assert!(!line.contains('\n'), "{shell:?}: {line:?}");
             }
         }
@@ -1268,16 +1453,17 @@ mod tests {
         }
     }
 
-    /// #5009: a POSIX host with shell integration is held until its first
-    /// prompt, so the setup is typed at the line editor and its echo can be
-    /// hidden; without integration it stays ungated.
+    /// #5009: a POSIX (or fish, #5016) host with shell integration is held
+    /// until its first prompt, so the setup is typed at the line editor and
+    /// its echo can be hidden; without integration it stays ungated.
     #[test]
-    fn only_posix_with_integration_hides_its_setup_echo() {
+    fn only_posix_and_fish_with_integration_hide_their_setup_echo() {
         for shell in ALL_SHELLS {
             for has_integration in [false, true] {
                 assert_eq!(
                     hides_setup_echo(shell, has_integration),
-                    shell == RemoteShell::Posix && has_integration,
+                    matches!(shell, RemoteShell::Posix | RemoteShell::Fish { .. })
+                        && has_integration,
                     "{shell:?} has_integration={has_integration}"
                 );
             }

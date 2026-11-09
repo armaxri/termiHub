@@ -850,6 +850,40 @@ fn fish_shell_integration_command() -> &'static str {
     )
 }
 
+/// Shell-integration setup for a fish login shell reached over SSH, built to
+/// be *typed* into the shell and hidden (#5016).
+///
+/// A remote fish cannot be given an `--init-command`, so unlike
+/// `fish_shell_integration_command` this line is typed, like the bash hook,
+/// and is built to be hidden the same way (#5009): it prints nothing of its
+/// own, starts with a space (fish never saves such a line to its history),
+/// and ends by printing the setup-done mark
+/// ([`SETUP_DONE_MARK`](crate::output::setup_echo::SETUP_DONE_MARK)).
+///
+/// It registers handlers only on fish 3.x (guarded by `__termihub_si`, so a
+/// second copy registers nothing): the OSC 133 marks of
+/// `fish_shell_integration_command` plus an **OSC 7** CWD report on
+/// `fish_prompt`, which fish 3.x sends only to a few terminals it recognises
+/// by `$TERM` / `$TERM_PROGRAM` — over SSH usually none. fish 4.0+ sends both
+/// OSC 7 and OSC 133 itself and is typed no line at all (the SSH backend
+/// reads the version from its shell probe); should one reach it anyway, the
+/// version guard makes it register nothing and only print the mark. Nothing
+/// touches the user's `fish_prompt` function or any rc file.
+#[must_use]
+pub fn fish_typed_setup_command() -> &'static str {
+    concat!(
+        " ",
+        r#"if not set -q __termihub_si; and string match -qr '^[0-3]\.' -- $version; "#,
+        r#"set -g __termihub_si 1; "#,
+        r#"function __termihub_osc7 --on-event fish_prompt; printf '\e]7;file://%s\a' $PWD; end; "#,
+        r#"function __termihub_osc133_a --on-event fish_prompt; printf '\e]133;A\a'; end; "#,
+        r#"function __termihub_osc133_c --on-event fish_preexec; printf '\e]133;C\a'; end; "#,
+        r#"function __termihub_osc133_d --on-event fish_postexec; printf '\e]133;D;%s\a' $status; end; "#,
+        r#"end; "#,
+        r"printf '\e]6973;termihub-setup-done\a'",
+    )
+}
+
 /// OSC 9;9 setup command for cmd.exe.
 ///
 /// Sets the `PROMPT` variable to embed an OSC 9;9 CWD sequence before each

@@ -247,13 +247,20 @@ async fn native_05_interactive_shell_session_round_trips() {
 /// Windows (the lane leaves `DefaultShell` unset), a POSIX shell elsewhere —
 /// or `pwsh` when `TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=pwsh` says the fixture
 /// was set up with a PowerShell login shell (#4148; a local check, e.g. an
-/// sshd whose `ForceCommand` wraps `pwsh -l` — run only `native_05b..05d`).
+/// sshd whose `ForceCommand` wraps `pwsh -l` — run only `native_05b..05d`),
+/// or `fish` / `fish3` likewise for a fish 4+ / fish 3.x login shell (#5016).
 fn fixture_shell() -> RemoteShell {
     if cfg!(windows) {
         return RemoteShell::Cmd;
     }
     match std::env::var("TERMIHUB_NATIVE_SSHD_LOGIN_SHELL").as_deref() {
         Ok("pwsh") => RemoteShell::UnixPowerShell,
+        Ok("fish") => RemoteShell::Fish {
+            native_integration: true,
+        },
+        Ok("fish3") => RemoteShell::Fish {
+            native_integration: false,
+        },
         _ => RemoteShell::Posix,
     }
 }
@@ -265,6 +272,8 @@ fn first_command(shell: RemoteShell) -> (&'static str, &'static str) {
             "Write-Output ('native-' + (40+2) + '-ok')\r",
             "native-42-ok",
         ),
+        // fish has no `$((...))`; a POSIX line would be a parse error there.
+        RemoteShell::Fish { .. } => ("echo native-(math 40+2)-ok\n", "native-42-ok"),
         _ => (SHELL_LINE, SHELL_EXPECT),
     }
 }
@@ -282,9 +291,11 @@ async fn native_05b_remote_shell_probe_detects_the_login_shell() {
 /// Type `line` into `ssh` and collect its output until `done` holds for it
 /// (or 30 s pass); returns whether it did, and the output.
 ///
-/// Plays the terminal's part for cursor-position queries (`ESC [6n`), as the
-/// app's xterm does: PSReadLine on Unix sends them and waits for the reply,
-/// so a pwsh login shell stalls without one. bash / zsh / cmd.exe never ask.
+/// Plays the terminal's part for cursor-position queries (`ESC [6n`) and
+/// device-attribute queries (`ESC [0c`), as the app's xterm does: PSReadLine
+/// on Unix sends the former and fish 4 the latter, and each waits for the
+/// reply, so a pwsh or fish login shell stalls without one. bash / zsh /
+/// cmd.exe never ask.
 async fn type_and_wait(ssh: &mut Ssh, line: &str, done: impl Fn(&str) -> bool) -> (bool, String) {
     let mut rx = ssh.subscribe_output();
     ssh.write(line.as_bytes()).expect("write to the shell");
@@ -294,6 +305,11 @@ async fn type_and_wait(ssh: &mut Ssh, line: &str, done: impl Fn(&str) -> bool) -
             let text = String::from_utf8_lossy(&chunk);
             for _ in 0..text.matches("\x1b[6n").count() {
                 let _ = ssh.write(b"\x1b[1;1R");
+            }
+            // fish 4 waits up to 10 s for the Primary Device Attributes
+            // reply before its first prompt (#5016); xterm.js answers it.
+            for _ in 0..text.matches("\x1b[0c").count() {
+                let _ = ssh.write(b"\x1b[?62;22c");
             }
             seen.push_str(&text);
             if done(&seen) {
@@ -332,16 +348,28 @@ async fn native_05c_first_command_runs_with_shell_integration_on() {
         done,
         "the first command did not run (or no OSC 7 followed); output so far: {seen:?}"
     );
-    if shell != RemoteShell::Posix {
+    if !matches!(shell, RemoteShell::Posix | RemoteShell::Fish { .. }) {
         assert!(
             !seen.contains("PROMPT_COMMAND"),
             "{shell:?} must not be sent the POSIX setup; output: {seen:?}"
         );
     } else {
-        // #5009: the POSIX setup is typed at the first prompt and its echo
-        // never reaches the terminal.
-        for leak in ["__termihub", "PROMPT_COMMAND", "precmd_functions", "6973;"] {
+        // #5009 / #5016: the POSIX or fish setup is typed at the first prompt
+        // and its echo never reaches the terminal.
+        for leak in [
+            "__termihub",
+            "PROMPT_COMMAND",
+            "precmd_functions",
+            "6973;",
+            "--on-event",
+        ] {
             assert!(!seen.contains(leak), "setup text {leak:?} shown: {seen:?}");
+        }
+    }
+    if matches!(shell, RemoteShell::Fish { .. }) {
+        // #5016: fish was once typed the bash hook — a parse error.
+        for error in ["fish: ", "Unsupported use of", "Expected a command"] {
+            assert!(!seen.contains(error), "fish reported {error:?}: {seen:?}");
         }
     }
     if shell == RemoteShell::Cmd {
@@ -409,6 +437,13 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
             !seen.contains("TH_4147_VAR=") && !seen.contains("__termihub"),
             "the typed env setup was shown: {seen:?}"
         );
+    }
+    if matches!(shell, RemoteShell::Fish { .. }) {
+        // #5016: fish gets its own syntax — never a parse error. (Its echo
+        // is not hidden: fish redraws typed input cell by cell.)
+        for error in ["fish: ", "Unsupported use of", "Expected a command"] {
+            assert!(!seen.contains(error), "fish reported {error:?}: {seen:?}");
+        }
     }
 
     ssh.disconnect().await.expect("disconnect cleanly");
