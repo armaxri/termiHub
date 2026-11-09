@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Iterable, Mapping, Optional, Sequence, Union
 
 from . import dev_local
 
@@ -878,17 +878,24 @@ class ComposeFixture:
         except subprocess.TimeoutExpired as exc:
             raise _fixture_timeout(
                 f"`compose {action}` timed out after {timeout}s for {services}:"
-                f"\n{_tail(exc.stderr)}"
+                f"\n{_tail(exc.stderr or exc.stdout)}"
             ) from exc
 
 
-def _tail(output: Optional[str], lines: int = 15) -> str:
+def _tail(output: Union[str, bytes, None], lines: int = 15) -> str:
     """The last ``lines`` non-empty lines of captured subprocess output.
 
     Surfacing the real compose error (e.g. "additional_contexts is not allowed"
     from an outdated Compose) makes the skip reason actionable instead of a bare
     exit code.
+
+    ``output`` may be ``bytes`` even when the call used ``text=True``:
+    :class:`subprocess.TimeoutExpired` carries the raw, undecoded output (a
+    CPython quirk), so bytes are decoded leniently rather than crashing the
+    timeout handler and masking the real error (#5103).
     """
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
     text = (output or "").strip()
     if not text:
         return "(no output captured)"
