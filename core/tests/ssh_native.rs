@@ -707,7 +707,8 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
 /// /history`, Alt+F7 cleared it), `ERRORLEVEL` still 0 for the first command.
 /// It also runs no extra AutoRun: with an AutoRun on the test user that
 /// appends to a marker file, a hooked session runs it exactly as often as a
-/// hook-free one (once, the session shell itself). The AutoRun is removed
+/// hook-free one that also probes the login shell (the session shell, and the
+/// probe's exec channel). The AutoRun is removed
 /// afterwards, also when the grade fails.
 /// The `cmd` leg of the Windows SSH Host lane runs it.
 #[tokio::test]
@@ -851,8 +852,13 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
     // The hook expands `%PROMPT%`, so it relies on an interactive cmd.exe
     // defining PROMPT itself (as `$P$G`) when it starts with none (#5109):
     // otherwise `%PROMPT%` would stay literal in the prompt.
+    // A configured env var makes this hook-free session ask the host for its
+    // login shell too, on an exec channel (`cmd.exe /c`, which runs the
+    // AutoRun), as the hooked session did: so the two compare like for like.
     let mut ssh = Ssh::new();
-    ssh.connect(sshd.key_settings()).await.expect("connect");
+    let mut settings = sshd.key_settings();
+    settings["env"] = serde_json::json!({ "TH_5109_VAR": "th5109value" });
+    ssh.connect(settings).await.expect("connect");
     let (done, seen) = type_and_wait(
         &mut ssh,
         "set \"PROMPT=\"\rcmd /d\rset PROMPT\rexit\recho th5109-%OS%-probe\r",
@@ -864,8 +870,10 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
         seen.contains("PROMPT=$P$G"),
         "a cmd.exe started without PROMPT did not define it: {seen:?}"
     );
-    // This hook-free session ran the AutoRun once more (its own shell; the
-    // `cmd /d` above skips it). The hooked session must have run it as often.
+    // This hook-free session ran the AutoRun as often as a session does
+    // (its shell and the shell probe; the `cmd /d` above skips it). The
+    // hooked session must have run it exactly as often: its echo erase's
+    // child cmd.exe (`/d`) adds nothing.
     let all_runs = autorun_runs(&mut ssh).await;
     eprintln!("[5109] AutoRun runs: hooked session {hooked_runs}, both sessions {all_runs}");
     assert!(hooked_runs >= 1, "the test AutoRun never ran");
