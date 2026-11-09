@@ -4,15 +4,16 @@
 //!
 //! - **At connect** — the GCC Conference Create Request's client monitor data
 //!   (MS-RDPBCGR `TS_UD_CS_MONITOR`, plus `TS_UD_CS_MONITOR_EX` when a monitor
-//!   is scaled). IronRDP 0.10's connector always sends `monitor: None`, so
-//!   [`send_basic_settings`] drives that one connector step itself: it lets the
+//!   is scaled). IronRDP's connector left it out until 0.11 (`Config::monitor_layout`,
+//!   which the sidecar leaves `None`), so [`send_basic_settings`] drives that
+//!   one connector step itself: it lets the
 //!   connector build its Connect Initial as usual, adds the monitor blocks, and
 //!   sends the re-encoded PDU. The connector keeps the patched PDU in its state,
 //!   so the rest of the sequence sees exactly what went on the wire. No vendored
 //!   fork of `ironrdp-connector` is needed.
 //! - **At runtime** — one Display Control monitor-layout PDU (MS-RDPEDISP) with
-//!   every monitor ([`encode_layout`]); IronRDP only offers a single-monitor
-//!   helper, so the multi-monitor PDU is built here from its public types.
+//!   every monitor ([`encode_layout`]), built here from the layout and encoded
+//!   by `ActiveStage::encode_monitor_layout`.
 //!
 //! The layout arriving here is already normalized by
 //! [`MonitorLayout::normalize`] (primary at the origin, sizes in range, at most
@@ -24,9 +25,8 @@ use ironrdp_connector::{
     ConnectorErrorExt as _, ConnectorResult, Sequence as _,
 };
 use ironrdp_core::WriteBuf;
-use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::{
-    DeviceScaleFactor, DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry,
+    DeviceScaleFactor, DisplayControlMonitorLayout, MonitorLayoutEntry,
     MonitorOrientation as DisplayOrientation,
 };
 use ironrdp_pdu::gcc::{
@@ -34,7 +34,6 @@ use ironrdp_pdu::gcc::{
     Monitor, MonitorFlags, MonitorOrientation,
 };
 use ironrdp_session::ActiveStage;
-use ironrdp_svc::ChannelFlags;
 use termihub_core::connection::{MonitorLayout, MonitorRect};
 
 /// Unscaled, in percent.
@@ -161,24 +160,21 @@ pub fn layout_entries(monitors: &[MonitorRect]) -> Result<Vec<MonitorLayoutEntry
 
 /// Encode a Display Control monitor-layout PDU carrying every monitor, ready
 /// to write to the server. `None` while the Display Control channel is not
-/// open yet (same contract as `ActiveStage::encode_resize`).
+/// open yet or the server has not sent its capabilities (same contract as
+/// `ActiveStage::encode_resize`). IronRDP fits the layout to the server's
+/// capabilities (`DisplayControlMonitorLayout::fit_to_capabilities`: at most
+/// its `MaxNumMonitors`, within its area) before encoding it (#5117).
 pub fn encode_layout(stage: &mut ActiveStage, monitors: &[MonitorRect]) -> Option<Result<Vec<u8>>> {
-    let channel_id = stage.get_dvc::<DisplayControlClient>()?.channel_id()?;
-    Some((|| {
-        let entries = layout_entries(monitors)?;
-        let pdu: DisplayControlPdu = DisplayControlMonitorLayout::new(&entries)
-            .map_err(|e| anyhow!("invalid monitor layout: {e}"))?
-            .into();
-        let messages = ironrdp_dvc::encode_dvc_messages(
-            channel_id,
-            vec![Box::new(pdu)],
-            ChannelFlags::empty(),
-        )
-        .map_err(|e| anyhow!("encode monitor layout: {e}"))?;
-        stage
-            .encode_dvc_messages(messages)
-            .map_err(|e| anyhow!("encode monitor layout: {e}"))
-    })())
+    let layout = match layout_entries(monitors).and_then(|entries| {
+        DisplayControlMonitorLayout::new(&entries)
+            .map_err(|e| anyhow!("invalid monitor layout: {e}"))
+    }) {
+        Ok(layout) => layout,
+        Err(e) => return Some(Err(e)),
+    };
+    stage
+        .encode_monitor_layout(&layout)
+        .map(|encoded| encoded.map_err(|e| anyhow!("encode monitor layout: {e}")))
 }
 
 #[cfg(test)]

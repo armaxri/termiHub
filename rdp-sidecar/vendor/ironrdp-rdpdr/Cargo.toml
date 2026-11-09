@@ -1,31 +1,29 @@
-# termiHub vendored fork of ironrdp-rdpdr 0.7.0 (#4125).
+# termiHub vendored fork of ironrdp-rdpdr 0.9.0 (#5117; first forked for #4125).
 #
-# WHAT WAS CHANGED vs upstream (see README.md): a drive's Device Announce Header
-# (MS-RDPEFS 2.2.1.3) carries the drive name, truncated to the 7 valid ASCII
-# characters the 8-byte PreferredDosName field allows, instead of the literal
-# "ignored". xrdp's devredir reads only PreferredDosName, so every redirected
-# drive was mounted as ~/thinclient_drives/ignored. Also (#4923, upstream
-# 4cd9d4506): DeviceData as sanitised 8-bit characters. Also (#5118, upstream
-# 0f9154d2): drive IRPs the crate does not implement are completed with
-# STATUS_NOT_SUPPORTED / STATUS_UNSUCCESSFUL instead of ending the session.
-# `[lib] test = false` was removed so the fork's own unit tests run.
+# WHAT WAS CHANGED vs upstream (see README.md):
+# 1. (#4923, upstream 4cd9d4506) a drive's Device Announce DeviceData carries its name as
+#    null-terminated 8-bit characters, with the characters Windows refuses (MS-RDPEFS
+#    2.2.1.3), a NUL and non-ASCII replaced by `_`, instead of UTF-16LE, which Windows
+#    hosts read as the first letter only.
+# 2. (#5124, fork-only) a Device I/O Request whose MajorFunction the crate does not know is
+#    completed with a header-only STATUS_UNSUCCESSFUL (MS-RDPEFS 3.1.5.2) instead of a
+#    decode error that ends the RDP session.
 #
-# UPSTREAM CHANGE THIS REPRESENTS: the `PreferredDosName::for_drive` part of
-# Devolutions/IronRDP 161409e18dd1, "feat(rdpdr): add filesystem PDU foundation
-# (#1566)", merged to master after the 0.7.0 release and not yet published. Drop
-# this fork when an ironrdp-rdpdr release that contains it is adopted.
-# Everything else is byte-for-byte the crates.io 0.7.0 package (this manifest is
-# the registry-normalized one, with this header added).
+# UPSTREAM CHANGE THIS REPRESENTS: change 1 is Devolutions/IronRDP 4cd9d4506, "fix(rdpdr):
+# announce drive names as 8-bit characters (#2342)", merged to master after the 0.9.0
+# release and not yet published. Change 2 is not upstream. Everything else is
+# byte-for-byte the crates.io 0.9.0 package (this manifest is the registry-normalized
+# one, with this header added).
 #
 # Wired into the workspace-EXCLUDED sidecar graph via `[patch.crates-io]` in
-# `rdp-sidecar/Cargo.toml`, exactly like `vendor/ironrdp-pdu`. The sidecar has
-# its own Cargo.lock, so this fork never touches the desktop app's dependency graph.
+# `rdp-sidecar/Cargo.toml`. The sidecar has its own Cargo.lock, so this fork never
+# touches the desktop app's dependency graph.
 
 [package]
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.94"
 name = "ironrdp-rdpdr"
-version = "0.7.0"
+version = "0.9.0"
 authors = [
     "Devolutions Inc. <infos@devolutions.net>",
     "Teleport <goteleport.com>",
@@ -36,7 +34,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "RDPDR channel implementation (termiHub vendored fork naming drives in PreferredDosName)"
+description = "RDPDR channel implementation (termiHub vendored fork: 8-bit drive names, unknown MajorFunctions completed)"
 homepage = "https://github.com/Devolutions/IronRDP"
 readme = "README.md"
 keywords = [
@@ -59,17 +57,21 @@ doctest = false
 [dependencies.bitflags]
 version = "2.11"
 
+[dependencies.getrandom]
+version = "0.3"
+features = ["std"]
+
 [dependencies.ironrdp-core]
-version = "0.2"
+version = "0.3"
 
 [dependencies.ironrdp-error]
 version = "0.2"
 
 [dependencies.ironrdp-pdu]
-version = "0.9"
+version = "0.11"
 
 [dependencies.ironrdp-svc]
-version = "0.8"
+version = "0.10"
 
 [dependencies.tracing]
 version = "0.1"

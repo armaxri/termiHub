@@ -29,7 +29,7 @@ pub(crate) mod ber;
 pub(crate) mod crypto;
 pub(crate) mod per;
 
-pub use crate::basic_output::{bitmap, fast_path, pointer, slow_path, surface_commands};
+pub use crate::basic_output::{bitmap, fast_path, pointer, slow_path, surface_commands, window};
 
 pub type PduResult<T> = Result<T, PduError>;
 
@@ -130,7 +130,8 @@ pub fn find_size(bytes: &[u8]) -> DecodeResult<Option<PduInfo>> {
     let fp_output_header = bytes[0];
 
     let action = Action::from_fp_output_header(fp_output_header)
-        .map_err(|unknown_action| unexpected_message_type_err("fpOutputHeader", unknown_action))?;
+        // No cursor here: `find_size` reads the raw slice, and fpOutputHeader is byte 0.
+        .map_err(|unknown_action| unexpected_message_type_err("fpOutputHeader", unknown_action, Some(0)))?;
 
     match action {
         Action::X224 => {
@@ -155,12 +156,13 @@ pub fn find_size(bytes: &[u8]) -> DecodeResult<Option<PduInfo>> {
                 (u16::from(a), 2)
             };
 
-            // termiHub fork (#4461): ported from upstream IronRDP 33506e61 (#1515).
-            // A frame shorter than its own header would never advance the framed reader.
             if usize::from(fast_path_length) < header_length {
                 return Err(invalid_field_err!(
                     "fastPathLength",
-                    "length is smaller than the Fast-Path header"
+                    "length is smaller than the Fast-Path header",
+                    // No cursor here: `find_size` reads the raw slice, and the
+                    // length field starts at byte 1 of the Fast-Path header.
+                    at: 1
                 ));
             }
 
@@ -178,19 +180,6 @@ pub trait PduHint: Send + Sync + fmt::Debug + 'static {
     /// Returns `Some((hint_matching, size))` if the size is known.
     /// Returns `None` if the size cannot be determined yet.
     fn find_size(&self, bytes: &[u8]) -> DecodeResult<Option<(bool, usize)>>;
-}
-
-#[cfg(test)]
-mod find_size_tests {
-    use super::*;
-
-    // termiHub fork (#4461): ported from upstream IronRDP 33506e61 (#1515).
-    #[test]
-    fn find_size_rejects_undersized_frames() {
-        assert!(find_size(&[0x00, 0x01]).is_err());
-        assert!(find_size(&[0x00, 0x80, 0x02]).is_err());
-        assert!(find_size(&[0x03, 0x00, 0x00, 0x06]).is_err());
-    }
 }
 
 // Matches both X224 and FastPath pdus
@@ -281,3 +270,15 @@ macro_rules! custom_err {
 #[doc(hidden)]
 #[deprecated(since = "0.1.0", note = "use ironrdp_core::other_err")]
 pub use crate::pdu_other_err as other_err;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_size_rejects_undersized_frames() {
+        assert!(find_size(&[0x00, 0x01]).is_err());
+        assert!(find_size(&[0x00, 0x80, 0x02]).is_err());
+        assert!(find_size(&[0x03, 0x00, 0x00, 0x06]).is_err());
+    }
+}

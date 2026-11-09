@@ -24,8 +24,8 @@ const SNDC_CLOSE: u8 = 0x01;
 const SNDC_WAVE2: u8 = 0x0D;
 const SNDC_VOLUME: u8 = 0x03;
 const SNDC_PITCH: u8 = 0x04;
-
-// TODO: UDP PDUs
+const SNDC_UDPWAVE: u8 = 0x0A;
+const SNDC_UDPWAVELAST: u8 = 0x0B;
 
 #[repr(u16)]
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq)]
@@ -234,6 +234,55 @@ impl AudioFormat {
         + 2 /* nBlockAlign */
         + 2 /* wBitsPerSample */
         + 2 /* cbSize */;
+
+    /// Compare two audio formats for negotiation.
+    ///
+    /// WAVEFORMATEX identity fields — wave format tag, channel count, sample rate,
+    /// bit depth — must match, and so must the codec-specific extra-data blob (`data`).
+    ///
+    /// For PCM, `n_avg_bytes_per_sec` and `n_block_align` are derived from the other
+    /// fields and may legitimately differ between peers, so they are ignored.
+    /// For compressed formats those fields are codec-specific (bitrate / block layout)
+    /// and must match. Extra-format bytes (`data`) always compare: ignoring them could
+    /// match incompatible codec configurations (for example AAC HEAACWAVEINFO).
+    pub fn matches_for_negotiation(&self, other: &Self) -> bool {
+        let identity = self.format == other.format
+            && self.n_channels == other.n_channels
+            && self.n_samples_per_sec == other.n_samples_per_sec
+            && self.bits_per_sample == other.bits_per_sample
+            && self.data == other.data;
+
+        if !identity {
+            return false;
+        }
+
+        if self.format == WaveFormat::PCM {
+            true
+        } else {
+            self.n_avg_bytes_per_sec == other.n_avg_bytes_per_sec && self.n_block_align == other.n_block_align
+        }
+    }
+}
+
+/// Keeps the `chosen` formats that match one of the `server` formats, in `chosen` order.
+///
+/// Only formats the server offered may be advertised ([MS-RDPEA] 2.2.2.2). Matching uses
+/// [`AudioFormat::matches_for_negotiation`].
+///
+/// [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b
+pub fn retain_offered(chosen: Vec<AudioFormat>, server: &[AudioFormat]) -> Vec<AudioFormat> {
+    chosen
+        .into_iter()
+        .filter(|chosen| {
+            let offered = server
+                .iter()
+                .any(|server_format| chosen.matches_for_negotiation(server_format));
+            if !offered {
+                tracing::debug!(format = ?chosen, "Not advertising a format the server did not offer");
+            }
+            offered
+        })
+        .collect()
 }
 
 impl Encode for AudioFormat {
@@ -247,7 +296,7 @@ impl Encode for AudioFormat {
         dst.write_u16(self.n_block_align);
         dst.write_u16(self.bits_per_sample);
         let len = self.data.as_ref().map_or(0, |d| d.len());
-        dst.write_u16(cast_length!("AudioFormat::cbSize", len)?);
+        dst.write_u16(cast_length!("AudioFormat::cbSize", len, in: dst)?);
         if let Some(data) = &self.data {
             dst.write_slice(data);
         }
@@ -276,7 +325,7 @@ impl<'de> Decode<'de> for AudioFormat {
         let n_avg_bytes_per_sec = src.read_u32();
         let n_block_align = src.read_u16();
         let bits_per_sample = src.read_u16();
-        let cb_size = cast_length!("cbSize", src.read_u16())?;
+        let cb_size = cast_length!("cbSize", src.read_u16(), in: src)?;
 
         ensure_size!(in: src, size: cb_size);
         let data = if cb_size > 0 {
@@ -325,7 +374,7 @@ impl Encode for ServerAudioFormatPdu {
         write_padding!(dst, 4); /* volume */
         write_padding!(dst, 4); /* pitch */
         write_padding!(dst, 2); /* DGramPort */
-        dst.write_u16(cast_length!("AudioFormatPdu::n_formats", self.formats.len())?);
+        dst.write_u16(cast_length!("AudioFormatPdu::n_formats", self.formats.len(), in: dst)?);
         write_padding!(dst, 1); /* blockNo */
         dst.write_u16(self.version.into());
         write_padding!(dst, 1);
@@ -419,7 +468,7 @@ impl Encode for ClientAudioFormatPdu {
         dst.write_u32(volume);
         dst.write_u32(self.pitch);
         dst.write_u16_be(self.dgram_port);
-        dst.write_u16(cast_length!("AudioFormatPdu::n_formats", self.formats.len())?);
+        dst.write_u16(cast_length!("AudioFormatPdu::n_formats", self.formats.len(), in: dst)?);
         dst.write_u8(0); /* blockNo */
         dst.write_u16(self.version.into());
         write_padding!(dst, 1);
@@ -600,11 +649,10 @@ impl TrainingPdu {
         2 /* wTimeStamp */
         + 2 /* wPackSize */;
 
+    // termiHub fork (#5117): ported from upstream IronRDP f86e3c49 (#2294).
     /// The PDU's wPackSize: the size of the whole PDU, RDPSND header included,
     /// when it carries data, and 0 when it doesn't ([MS-RDPEA] 2.2.3.1). The
     /// client's Training Confirm echoes it ([MS-RDPEA] 2.2.3.2).
-    ///
-    /// termiHub fork (#4923): ported from upstream `f86e3c49` (IronRDP#2294).
     pub fn pack_size(&self) -> usize {
         if self.data.is_empty() {
             0
@@ -619,7 +667,7 @@ impl Encode for TrainingPdu {
         ensure_size!(in: dst, size: self.size());
 
         dst.write_u16(self.timestamp);
-        dst.write_u16(cast_length!("TrainingPdu::wPackSize", self.pack_size())?);
+        dst.write_u16(cast_length!("TrainingPdu::wPackSize", self.pack_size(), in: dst)?);
         dst.write_slice(&self.data);
 
         Ok(())
@@ -644,7 +692,7 @@ impl<'de> Decode<'de> for TrainingPdu {
         let len = usize::from(src.read_u16());
         let data = if len != 0 {
             if len < Self::FIXED_PART_SIZE + ServerAudioOutputPdu::FIXED_PART_SIZE {
-                return Err(invalid_field_err!("TrainingPdu::wPackSize", "too small"));
+                return Err(invalid_field_err!("TrainingPdu::wPackSize", "too small", in: src));
             }
             let len = len - Self::FIXED_PART_SIZE - ServerAudioOutputPdu::FIXED_PART_SIZE;
             ensure_size!(in: src, size: len);
@@ -761,11 +809,6 @@ impl<'de> Decode<'de> for WaveInfoPdu {
     }
 }
 
-// termiHub vendored-fork change (#3510, upstream `2d9a9bf1`): the pre-v8
-// `SNDC_WAVE` transfer is two SVC messages, so 0.9.0's combined `WavePdu<'a>`
-// (which decoded WaveInfo and the sample as one PDU) became the WaveInfo-only
-// `WavePdu` plus the header-less `WaveDataPdu` below.
-
 /// Pre-v8 WaveInfo PDU body (`SNDC_WAVE`).
 ///
 /// MS-RDPEA §2.2.3.3 / §2.2.3.4: servers send WaveInfo first, then a *separate*
@@ -779,21 +822,22 @@ pub struct WavePdu {
     pub block_no: u8,
     /// First four bytes of the audio sample (WaveInfo `Data` field).
     pub data_prefix: [u8; 4],
-    /// Total audio sample length including [`Self::data_prefix`] (MS-RDPEA `n`).
+    /// Total audio sample length including [`Self::data_prefix`].
     pub audio_length: u16,
 }
 
 impl WavePdu {
     const NAME: &'static str = "WavePdu";
 
-    /// Minimum audio length: the WaveInfo `Data` field always carries four bytes.
+    /// Minimum audio length: the WaveInfo Data field always carries four bytes.
     pub const MIN_AUDIO_LENGTH: u16 = 4;
 
-    /// Maximum audio length so `BodySize = 8 + n` still fits the 16-bit header field.
+    /// Maximum audio length so `BodySize = 8 + n` still fits in the 16-bit header field.
     pub const MAX_AUDIO_LENGTH: u16 = u16::MAX - 8;
 
     fn body_size(&self) -> usize {
-        // MS-RDPEA §2.2.3.3: BodySize = 8 + n, where n is the full sample length.
+        // MS-RDPEA §2.2.3.3: BodySize = 8 + n, where n is the full audio sample length.
+        // INVARIANT: audio_length <= MAX_AUDIO_LENGTH, so this fits in u16.
         8usize
             .checked_add(usize::from(self.audio_length))
             .expect("never overflow")
@@ -803,11 +847,12 @@ impl WavePdu {
         let info = WaveInfoPdu::decode(src)?;
         let audio_length = body_size
             .checked_sub(8)
-            .ok_or_else(|| invalid_field_err!("BodySize", "WaveInfo body_size is too small"))?;
+            .ok_or_else(|| invalid_field_err!("BodySize", "WaveInfo body_size is too small", in: src))?;
         if audio_length < Self::MIN_AUDIO_LENGTH {
             return Err(invalid_field_err!(
                 "BodySize",
-                "WaveInfo audio length is smaller than the Data prefix"
+                "WaveInfo audio length is smaller than the Data prefix",
+                in: src
             ));
         }
 
@@ -827,10 +872,7 @@ impl Encode for WavePdu {
             return Err(other_err!("WavePdu", "audio_length must be at least 4"));
         }
         if self.audio_length > Self::MAX_AUDIO_LENGTH {
-            return Err(other_err!(
-                "WavePdu",
-                "audio_length leaves BodySize outside the u16 range"
-            ));
+            return Err(other_err!("WavePdu", "audio_length leaves BodySize outside u16 range"));
         }
 
         WaveInfoPdu {
@@ -847,15 +889,15 @@ impl Encode for WavePdu {
     }
 
     fn size(&self) -> usize {
-        // Only the WaveInfo structure is encoded in this message.
+        // Only the WaveInfo body is encoded in this message.
         WaveInfoPdu::FIXED_PART_SIZE
     }
 }
 
-/// Bare Wave payload that follows a pre-v8 [`WavePdu`] (WaveInfo) message.
+/// Bare Wave payload that follows a pre-v8 [`WavePdu`] / WaveInfo message.
 ///
-/// MS-RDPEA §2.2.3.4: no RDPSND header — four `bPad` bytes, then the audio
-/// bytes after the WaveInfo `Data` prefix. Its total wire length equals the
+/// MS-RDPEA §2.2.3.4: no RDPSND header — four-byte `bPad` then the remaining
+/// audio bytes after the WaveInfo Data prefix. Total wire length equals the
 /// WaveInfo `audio_length`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaveDataPdu {
@@ -1173,6 +1215,218 @@ impl<'de> Decode<'de> for PitchPdu {
     }
 }
 
+/// UDP Wave PDU (`SNDUDPWAVE`): one fragment of an audio sample sent over UDP.
+///
+/// [MS-RDPEA] 2.2.3.6: fragments carry pieces of an `AUDIO_FRAGDATA` structure (an 8-byte
+/// signature followed by the audio data); a [`UdpWaveLastPdu`] carries the final piece.
+///
+/// [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b
+#[derive(Clone, PartialEq, Eq)]
+pub struct UdpWavePdu<'a> {
+    pub block_no: u8,
+    /// Position of this fragment in the sample, from 0.
+    ///
+    /// INVARIANT: `frag_no <= UdpWavePdu::MAX_FRAG_NO`.
+    pub frag_no: u16,
+    pub data: Cow<'a, [u8]>,
+}
+
+impl fmt::Debug for UdpWavePdu<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UdpWavePdu")
+            .field("block_no", &self.block_no)
+            .field("frag_no", &self.frag_no)
+            .field("data_len", &self.data.len())
+            .finish()
+    }
+}
+
+impl UdpWavePdu<'_> {
+    const NAME: &'static str = "SNDUDPWAVE";
+
+    /// Largest fragment number the 15-bit `cFragNo` encoding can carry.
+    pub const MAX_FRAG_NO: u16 = 0x7FFF;
+
+    const FIXED_PART_SIZE: usize = 1 /* Type */ + 1 /* cBlockNo */ + 1 /* cFragNo (short form) */;
+
+    fn frag_no_size(&self) -> usize {
+        if self.frag_no < 0x80 { 1 } else { 2 }
+    }
+}
+
+impl Encode for UdpWavePdu<'_> {
+    fn encode(&self, dst: &mut WriteCursor<'_>) -> EncodeResult<()> {
+        if Self::MAX_FRAG_NO < self.frag_no {
+            return Err(other_err!("UdpWavePdu", "cFragNo does not fit in 15 bits"));
+        }
+        ensure_size!(in: dst, size: self.size());
+
+        dst.write_u8(SNDC_UDPWAVE);
+        dst.write_u8(self.block_no);
+        let [high, low] = self.frag_no.to_be_bytes();
+        if self.frag_no < 0x80 {
+            dst.write_u8(low);
+        } else {
+            dst.write_u8(high | 0x80);
+            dst.write_u8(low);
+        }
+        dst.write_slice(&self.data);
+
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        Self::NAME
+    }
+
+    fn size(&self) -> usize {
+        (1 /* Type */ + 1 /* cBlockNo */ + self.frag_no_size())
+            .checked_add(self.data.len())
+            .expect("never overflow")
+    }
+}
+
+impl<'de> Decode<'de> for UdpWavePdu<'de> {
+    fn decode(src: &mut ReadCursor<'de>) -> DecodeResult<Self> {
+        ensure_fixed_part_size!(in: src);
+
+        let msg_type = src.read_u8();
+        if msg_type != SNDC_UDPWAVE {
+            return Err(invalid_field_err!("Type", "not a UDP Wave PDU", in: src));
+        }
+        let block_no = src.read_u8();
+        let first = src.read_u8();
+        let frag_no = if first < 0x80 {
+            u16::from(first)
+        } else {
+            ensure_size!(in: src, size: 1);
+            u16::from_be_bytes([first & 0x7F, src.read_u8()])
+        };
+        let data = Cow::Borrowed(src.read_slice(src.len()));
+
+        Ok(Self {
+            block_no,
+            frag_no,
+            data,
+        })
+    }
+}
+
+/// UDP Wave Last PDU (`SNDUDPWAVELAST`): the final fragment of an audio sample sent over UDP.
+///
+/// [MS-RDPEA] 2.2.3.7.
+///
+/// [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b
+#[derive(Clone, PartialEq, Eq)]
+pub struct UdpWaveLastPdu<'a> {
+    /// Size of the whole `AUDIO_FRAGDATA` structure, summed over every fragment.
+    pub total_size: u16,
+    pub timestamp: u16,
+    pub format_no: u16,
+    pub block_no: u8,
+    pub data: Cow<'a, [u8]>,
+}
+
+impl fmt::Debug for UdpWaveLastPdu<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UdpWaveLastPdu")
+            .field("total_size", &self.total_size)
+            .field("timestamp", &self.timestamp)
+            .field("format_no", &self.format_no)
+            .field("block_no", &self.block_no)
+            .field("data_len", &self.data.len())
+            .finish()
+    }
+}
+
+impl UdpWaveLastPdu<'_> {
+    const NAME: &'static str = "SNDUDPWAVELAST";
+
+    const FIXED_PART_SIZE: usize = 1 /* Type */
+        + 2 /* wTotalSize */
+        + 2 /* wTimeStamp */
+        + 2 /* wFormatNo */
+        + 1 /* cBlockNo */
+        + 3 /* bPad */;
+}
+
+impl Encode for UdpWaveLastPdu<'_> {
+    fn encode(&self, dst: &mut WriteCursor<'_>) -> EncodeResult<()> {
+        ensure_size!(in: dst, size: self.size());
+
+        dst.write_u8(SNDC_UDPWAVELAST);
+        dst.write_u16(self.total_size);
+        dst.write_u16(self.timestamp);
+        dst.write_u16(self.format_no);
+        dst.write_u8(self.block_no);
+        write_padding!(dst, 3);
+        dst.write_slice(&self.data);
+
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        Self::NAME
+    }
+
+    fn size(&self) -> usize {
+        Self::FIXED_PART_SIZE
+            .checked_add(self.data.len())
+            .expect("never overflow")
+    }
+}
+
+impl<'de> Decode<'de> for UdpWaveLastPdu<'de> {
+    fn decode(src: &mut ReadCursor<'de>) -> DecodeResult<Self> {
+        ensure_fixed_part_size!(in: src);
+
+        let msg_type = src.read_u8();
+        if msg_type != SNDC_UDPWAVELAST {
+            return Err(invalid_field_err!("Type", "not a UDP Wave Last PDU", in: src));
+        }
+        let total_size = src.read_u16();
+        let timestamp = src.read_u16();
+        let format_no = src.read_u16();
+        let block_no = src.read_u8();
+        read_padding!(src, 3);
+        let data = Cow::Borrowed(src.read_slice(src.len()));
+
+        Ok(Self {
+            total_size,
+            timestamp,
+            format_no,
+            block_no,
+            data,
+        })
+    }
+}
+
+/// Audio output message received over the UDP port advertised in `wDGramPort`.
+///
+/// [MS-RDPEA] 2.1: the server can send the Training, Wave Encrypt, UDP Wave and UDP Wave Last PDUs
+/// over UDP. The UDP Wave PDUs have no `SNDPROLOG` header; the others do.
+///
+/// [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerAudioDatagram<'a> {
+    UdpWave(UdpWavePdu<'a>),
+    UdpWaveLast(UdpWaveLastPdu<'a>),
+    /// A PDU with an `SNDPROLOG` header.
+    Prolog(ServerAudioOutputPdu<'a>),
+}
+
+impl<'de> Decode<'de> for ServerAudioDatagram<'de> {
+    fn decode(src: &mut ReadCursor<'de>) -> DecodeResult<Self> {
+        ensure_size!(ctx: "ServerAudioDatagram", in: src, size: 1);
+
+        match src.peek_u8() {
+            SNDC_UDPWAVE => Ok(Self::UdpWave(UdpWavePdu::decode(src)?)),
+            SNDC_UDPWAVELAST => Ok(Self::UdpWaveLast(UdpWaveLastPdu::decode(src)?)),
+            _ => Ok(Self::Prolog(ServerAudioOutputPdu::decode(src)?)),
+        }
+    }
+}
+
 /// Server Audio Output Channel message (PDU prefixed with `SNDPROLOG`)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerAudioOutputPdu<'a> {
@@ -1211,7 +1465,7 @@ impl Encode for ServerAudioOutputPdu<'_> {
 
         dst.write_u8(msg_type);
         write_padding!(dst, 1);
-        dst.write_u16(cast_length!("ServerAudioOutputPdu::bodySize", pdu_size)?);
+        dst.write_u16(cast_length!("ServerAudioOutputPdu::bodySize", pdu_size, in: dst)?);
 
         match self {
             Self::AudioFormat(pdu) => pdu.encode(dst),
@@ -1292,10 +1546,8 @@ impl<'de> Decode<'de> for ServerAudioOutputPdu<'_> {
                 let pdu = PitchPdu::decode(src)?;
                 Ok(Self::Pitch(pdu))
             }
-            _ => Err(invalid_field_err!(
-                "ServerAudioOutputPdu::msgType",
-                "Unknown audio output PDU type"
-            )),
+            _ => Err(invalid_field_err!( "ServerAudioOutputPdu::msgType",
+                "Unknown audio output PDU type", in: src)),
         }
     }
 }
@@ -1330,7 +1582,7 @@ impl Encode for ClientAudioOutputPdu {
 
         dst.write_u8(msg_type);
         write_padding!(dst, 1);
-        dst.write_u16(cast_length!("ClientAudioOutputPdu::bodySize", body_size)?);
+        dst.write_u16(cast_length!("ClientAudioOutputPdu::bodySize", body_size, in: dst)?);
 
         match self {
             Self::AudioFormat(pdu) => pdu.encode(dst),
@@ -1383,12 +1635,12 @@ impl<'de> Decode<'de> for ClientAudioOutputPdu {
                 let pdu = WaveConfirmPdu::decode(src)?;
                 Ok(Self::WaveConfirm(pdu))
             }
-            _ => Err(invalid_field_err!(
-                "ClientAudioOutputPdu::msgType",
-                "Unknown audio output PDU type"
-            )),
+            _ => Err(invalid_field_err!( "ClientAudioOutputPdu::msgType",
+                "Unknown audio output PDU type", in: src)),
         }
     }
 }
 
 impl SvcEncode for ClientAudioOutputPdu {}
+
+impl ironrdp_dvc::DvcEncode for ClientAudioOutputPdu {}

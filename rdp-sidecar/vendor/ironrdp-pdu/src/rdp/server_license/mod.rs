@@ -9,6 +9,7 @@ use ironrdp_core::{
 use md5::Digest as _;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive as _;
+use sha1::Digest as _;
 
 use crate::PduError;
 use crate::rdp::headers::{BASIC_SECURITY_HEADER_SIZE, BasicSecurityHeader, BasicSecurityHeaderFlags};
@@ -25,10 +26,9 @@ mod server_license_request;
 mod server_platform_challenge;
 mod server_upgrade_license;
 
+// termiHub fork (#5117): ported from upstream IronRDP 5c4dcfa7 (#2344), with the
+// `Debug` implementations that use it.
 /// Bytes that stay out of `Debug` output, shown as their length only.
-///
-/// termiHub fork (#4923): ported from upstream `5c4dcfa7` (IronRDP#2344), with the
-/// hand-written `Debug` impls of the licensing PDUs that use it.
 ///
 /// Keying material, encrypted blobs, the license itself and the user and machine names stay out so that a log at any
 /// level can be handed over.
@@ -126,23 +126,21 @@ impl<'de> Decode<'de> for LicenseHeader {
         let security_header = BasicSecurityHeader::decode(src)?;
 
         if !security_header.flags.contains(BasicSecurityHeaderFlags::LICENSE_PKT) {
-            return Err(invalid_field_err!(
-                "securityHeaderFlags",
-                "invalid security header flags"
-            ));
+            return Err(invalid_field_err!( "securityHeaderFlags",
+                "invalid security header flags", in: src));
         }
 
         let preamble_message_type = PreambleType::from_u8(src.read_u8())
-            .ok_or_else(|| invalid_field_err!("preambleType", "invalid license type"))?;
+            .ok_or_else(|| invalid_field_err!("preambleType", "invalid license type", in: src))?;
 
         let flags_with_version = src.read_u8();
         let preamble_message_size = src.read_u16();
 
         let preamble_flags = PreambleFlags::from_bits(flags_with_version & !PROTOCOL_VERSION_MASK)
-            .ok_or_else(|| invalid_field_err!("preambleFlags", "Got invalid flags field"))?;
+            .ok_or_else(|| invalid_field_err!("preambleFlags", "Got invalid flags field", in: src))?;
 
         let preamble_version = PreambleVersion::from_u8(flags_with_version & PROTOCOL_VERSION_MASK)
-            .ok_or_else(|| invalid_field_err!("preambleVersion", "Got invalid version in the flags filed"))?;
+            .ok_or_else(|| invalid_field_err!("preambleVersion", "Got invalid version in the flags filed", in: src))?;
 
         Ok(Self {
             security_header,
@@ -429,7 +427,7 @@ impl Encode for BlobHeader {
         ensure_fixed_part_size!(in: dst);
 
         dst.write_u16(self.blob_type.0);
-        dst.write_u16(cast_length!("len", self.length)?);
+        dst.write_u16(cast_length!("len", self.length, in: dst)?);
 
         Ok(())
     }
@@ -448,7 +446,7 @@ impl<'de> Decode<'de> for BlobHeader {
         ensure_fixed_part_size!(in: src);
 
         let blob_type = BlobType(src.read_u16());
-        let length = cast_length!("len", src.read_u16())?;
+        let length = cast_length!("len", src.read_u16(), in: src)?;
 
         Ok(Self { blob_type, length })
     }
@@ -503,10 +501,8 @@ impl<'de> Decode<'de> for LicensePdu {
             PreambleType::NewLicense | PreambleType::UpgradeLicense => {
                 Ok(ServerUpgradeLicense::decode(license_header, src)?.into())
             }
-            PreambleType::LicenseInfo => Err(unsupported_value_err!(
-                "LicensePdu::LicenseInfo",
-                "LicenseInfo is not supported".to_owned()
-            )),
+            PreambleType::LicenseInfo => Err(unsupported_value_err!( "LicensePdu::LicenseInfo",
+                "LicenseInfo is not supported".to_owned(), in: src)),
             PreambleType::NewLicenseRequest => Ok(ClientNewLicenseRequest::decode(license_header, src)?.into()),
             PreambleType::PlatformChallengeResponse => {
                 Ok(ClientPlatformChallengeResponse::decode(license_header, src)?.into())

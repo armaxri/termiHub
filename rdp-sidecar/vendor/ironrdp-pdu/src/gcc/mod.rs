@@ -26,7 +26,7 @@ pub use self::core_data::client::{
 pub use self::core_data::server::{ServerCoreData, ServerCoreOptionalData, ServerEarlyCapabilityFlags};
 pub use self::message_channel_data::{ClientMessageChannelData, ServerMessageChannelData};
 pub use self::monitor_data::{
-    ClientMonitorData, MONITOR_COUNT_SIZE, MONITOR_FLAGS_SIZE, MONITOR_SIZE, Monitor, MonitorFlags,
+    ClientMonitorData, MONITOR_COUNT_MAX, MONITOR_COUNT_SIZE, MONITOR_FLAGS_SIZE, MONITOR_SIZE, Monitor, MonitorFlags,
 };
 pub use self::monitor_extended_data::{ClientMonitorExtendedData, ExtendedMonitorInfo, MonitorOrientation};
 pub use self::multi_transport_channel_data::{MultiTransportChannelData, MultiTransportFlags};
@@ -164,8 +164,9 @@ impl<'de> Decode<'de> for ClientGccBlocks {
         }
 
         Ok(Self {
-            core: core.ok_or_else(|| invalid_field_err!("core", "required GCC core is absent"))?,
-            security: security.ok_or_else(|| invalid_field_err!("security", "required GCC security is absent"))?,
+            core: core.ok_or_else(|| invalid_field_err!("core", "required GCC core is absent", in: src))?,
+            security: security
+                .ok_or_else(|| invalid_field_err!("security", "required GCC security is absent", in: src))?,
             network,
             cluster,
             monitor,
@@ -243,7 +244,6 @@ impl<'de> Decode<'de> for ServerGccBlocks {
         let mut message_channel = None;
         let mut multi_transport_channel = None;
 
-        // termiHub fork (#4461): ported from upstream IronRDP 629a8024 (#1489).
         while !src.is_empty() {
             let (raw_ty, cur) = UserDataHeader::decode_raw(src)?;
             let Some(ty) = ServerGccType::from_u16(raw_ty) else {
@@ -263,9 +263,10 @@ impl<'de> Decode<'de> for ServerGccBlocks {
         }
 
         Ok(Self {
-            core: core.ok_or_else(|| invalid_field_err!("core", "required GCC core is absent"))?,
-            network: network.ok_or_else(|| invalid_field_err!("network", "required GCC network is absent"))?,
-            security: security.ok_or_else(|| invalid_field_err!("security", "required GCC security is absent"))?,
+            core: core.ok_or_else(|| invalid_field_err!("core", "required GCC core is absent", in: src))?,
+            network: network.ok_or_else(|| invalid_field_err!("network", "required GCC network is absent", in: src))?,
+            security: security
+                .ok_or_else(|| invalid_field_err!("security", "required GCC security is absent", in: src))?,
             message_channel,
             multi_transport_channel,
         })
@@ -332,7 +333,7 @@ impl UserDataHeader {
         ensure_fixed_part_size!(in: dst);
 
         dst.write_u16(block_type.into());
-        dst.write_u16(cast_length!("blockLen", block.size() + USER_DATA_HEADER_SIZE)?);
+        dst.write_u16(cast_length!("blockLen", block.size() + USER_DATA_HEADER_SIZE, in: dst)?);
         block.encode(dst)?;
 
         Ok(())
@@ -348,10 +349,10 @@ impl UserDataHeader {
         ensure_fixed_part_size!(in: src);
 
         let block_type = src.read_u16();
-        let block_length: usize = cast_length!("blockLen", src.read_u16())?;
+        let block_length: usize = cast_length!("blockLen", src.read_u16(), in: src)?;
 
         if block_length <= USER_DATA_HEADER_SIZE {
-            return Err(invalid_field_err!("blockLen", "invalid UserDataHeader length"));
+            return Err(invalid_field_err!("blockLen", "invalid UserDataHeader length", in: src));
         }
 
         let len = block_length - USER_DATA_HEADER_SIZE;
@@ -365,41 +366,9 @@ impl UserDataHeader {
         T: FromPrimitive,
     {
         let (raw_type, body) = Self::decode_raw(src)?;
-        let block_type = T::from_u16(raw_type).ok_or_else(|| invalid_field_err!("blockType", "invalid GCC type"))?;
+        let block_type =
+            T::from_u16(raw_type).ok_or_else(|| invalid_field_err!("blockType", "invalid GCC type", in: src))?;
 
         Ok((block_type, body))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ironrdp_core::encode_vec;
-
-    use super::*;
-
-    // termiHub fork (#4461): ported from upstream IronRDP 629a8024 (#1489).
-    #[test]
-    fn unknown_server_user_data_block_is_skipped() {
-        let blocks = ServerGccBlocks {
-            core: ServerCoreData {
-                version: RdpVersion::V5_PLUS,
-                optional_data: ServerCoreOptionalData::default(),
-            },
-            network: ServerNetworkData {
-                channel_ids: vec![1004],
-                io_channel: 1003,
-            },
-            security: ServerSecurityData::no_security(),
-            message_channel: None,
-            multi_transport_channel: None,
-        };
-
-        let mut encoded = encode_vec(&blocks).unwrap();
-        // A block type IronRDP does not model (0xC0FF), 8 bytes including its header.
-        encoded.extend_from_slice(&[0xFF, 0xC0, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04]);
-
-        let decoded: ServerGccBlocks = decode(&encoded).expect("unknown block is skipped");
-
-        assert_eq!(decoded, blocks);
     }
 }

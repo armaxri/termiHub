@@ -110,9 +110,9 @@ fn frames_per_block(format: &AudioFormat) -> Option<usize> {
 
 /// Whether [`decode`] can turn this server-advertised compressed format into PCM.
 ///
-/// The vendored `ironrdp-rdpsnd` fork calls this (via
-/// `RdpsndClientHandler::accepts_format`) to decide whether to advertise the
-/// server's ADPCM format back to it. Advertising is therefore gated on real
+/// The rdpsnd handler calls this (via `RdpsndClientHandler::choose_formats`,
+/// `audio.rs`) to decide whether to advertise the server's ADPCM format back to
+/// it. Advertising is therefore gated on real
 /// decodability: a supported codec tag, mono/stereo, a non-zero sample rate, and a
 /// resolvable, sane block size — so we never advertise a format we would then drop.
 pub fn can_decode(format: &AudioFormat) -> bool {

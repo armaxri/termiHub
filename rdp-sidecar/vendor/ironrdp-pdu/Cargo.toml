@@ -1,28 +1,26 @@
-# termiHub vendored fork of ironrdp-pdu 0.9.0 (#3611).
+# termiHub vendored fork of ironrdp-pdu 0.11.0 (#5117; first forked for #3611).
 #
-# WHAT WAS CHANGED vs upstream (see README.md): `ShareControlHeader::decode` in
-# `src/rdp/headers.rs` gates on the 6-byte on-the-wire Share Control Header
-# (MS-RDPBCGR 2.2.8.1.1.1.1: totalLength, pduType, pduSource) instead of 10 bytes,
-# and reads `shareId` only when 4 more bytes remain (else 0). xrdp sends a
-# header-only, 6-byte Server Deactivate All PDU when it resizes the desktop, which
-# upstream 0.9.0 rejects (`NotEnoughBytes { received: 6, expected: 10 }`), ending
-# every dynamic-resize session against an xrdp host.
+# WHAT WAS CHANGED vs upstream (see README.md): the licensing PDUs withhold their
+# secrets from `Debug` (premaster secret, MAC salt and license keys, client/server
+# randoms, encrypted HWID, platform challenge and response, the license blob, the
+# client's user and machine names) and print the server certificate material as
+# its length, so a debug/trace sidecar log can be shared (#4923).
 #
-# UPSTREAM CHANGE THIS REPRESENTS: Devolutions/IronRDP d4b728a1d40b, "fix(pdu):
-# accept a 6-byte Share Control Header (#1719)", merged to master after the 0.9.0
+# UPSTREAM CHANGE THIS REPRESENTS: Devolutions/IronRDP 5c4dcfa7, "fix(pdu): withhold
+# licensing secrets from Debug output (#2344)", merged to master after the 0.11.0
 # release and not yet published. Drop this fork when an ironrdp-pdu release that
-# contains it is adopted. Everything else is byte-for-byte the crates.io 0.9.0
+# contains it is adopted. Everything else is byte-for-byte the crates.io 0.11.0
 # package (this manifest is the registry-normalized one, with this header added).
 #
 # Wired into the workspace-EXCLUDED sidecar graph via `[patch.crates-io]` in
-# `rdp-sidecar/Cargo.toml`, exactly like `vendor/ironrdp-rdpsnd`. The sidecar has
-# its own Cargo.lock, so this fork never touches the desktop app's dependency graph.
+# `rdp-sidecar/Cargo.toml`. The sidecar has its own Cargo.lock, so this fork never
+# touches the desktop app's dependency graph.
 
 [package]
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.94"
 name = "ironrdp-pdu"
-version = "0.9.0"
+version = "0.11.0"
 authors = [
     "Devolutions Inc. <infos@devolutions.net>",
     "Teleport <goteleport.com>",
@@ -33,7 +31,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "RDP PDU encoding and decoding (termiHub vendored fork accepting the 6-byte Share Control Header)"
+description = "RDP PDU encoding and decoding (termiHub vendored fork withholding licensing secrets from Debug)"
 homepage = "https://github.com/Devolutions/IronRDP"
 readme = "README.md"
 keywords = [
@@ -89,8 +87,12 @@ version = "1.5"
 [dependencies.der-parser]
 version = "10.0"
 
+[dependencies.hmac]
+version = "0.12"
+default-features = false
+
 [dependencies.ironrdp-core]
-version = "0.2"
+version = "0.3"
 features = ["std"]
 
 [dependencies.ironrdp-error]
@@ -104,7 +106,7 @@ package = "md-5"
 version = "0.4"
 
 [dependencies.num-derive]
-version = "0.4"
+version = "0.5"
 
 [dependencies.num-integer]
 version = "0.1"
@@ -114,15 +116,16 @@ version = "0.2"
 
 [dependencies.pkcs1]
 version = "0.7"
+features = ["std"]
 
 [dependencies.sha1]
-version = "0.10"
+version = "0.11"
 
 [dependencies.tap]
 version = "1"
 
 [dependencies.x509-cert]
-version = "0.2"
+version = "0.3"
 features = ["std"]
 default-features = false
 

@@ -45,8 +45,9 @@ use ironrdp_pdu::PduResult;
 use ironrdp_rdpdr::backend::RdpdrBackend;
 use ironrdp_rdpdr::pdu::efs::{
     AnyIoCtlCode, Boolean, Characteristics, ClientDriveQueryDirectoryResponse,
-    ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse,
-    ClientDriveSetInformationResponse, CreateDisposition, CreateOptions, DesiredAccess,
+    ClientDriveQueryInformationResponse, ClientDriveQuerySecurityResponse,
+    ClientDriveQueryVolumeInformationResponse, ClientDriveSetInformationResponse,
+    ClientDriveSetSecurityResponse, CreateDisposition, CreateOptions, DesiredAccess,
     DeviceCloseRequest, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse,
     DeviceCreateRequest, DeviceCreateResponse, DeviceFlushBuffersRequest,
     DeviceFlushBuffersResponse, DeviceIoRequest, DeviceIoResponse, DeviceReadRequest,
@@ -193,6 +194,32 @@ impl DriveRedirectBackend {
                 self.handle_set_information(req)
             }
             ServerDriveIoRequest::DeviceControlRequest(req) => Self::handle_device_control(req),
+            // Windows ACLs are not mapped onto the host filesystem, and the
+            // backend does not advertise drive-security support
+            // (`supports_drive_security` stays `false`), so both are completed
+            // as not supported, which is what a Windows file system without
+            // security support answers (#5124). Before ironrdp-rdpdr 0.9 the
+            // vendored fork completed them itself, in these layouts.
+            ServerDriveIoRequest::ServerDriveQuerySecurityRequest(req) => {
+                RdpdrPdu::ClientDriveQuerySecurityResponse(ClientDriveQuerySecurityResponse {
+                    device_io_response: DeviceIoResponse::new(
+                        req.device_io_request,
+                        NtStatus::NOT_SUPPORTED,
+                    ),
+                    security_descriptor: None,
+                })
+            }
+            ServerDriveIoRequest::ServerDriveSetSecurityRequest(req) => {
+                RdpdrPdu::ClientDriveSetSecurityResponse(ClientDriveSetSecurityResponse {
+                    // Length echoes the request, as for Set Information; it was
+                    // decoded from a 32-bit field, so it always fits.
+                    length: u32::try_from(req.security_descriptor.len()).unwrap_or(u32::MAX),
+                    device_io_response: DeviceIoResponse::new(
+                        req.device_io_request,
+                        NtStatus::NOT_SUPPORTED,
+                    ),
+                })
+            }
             // We never register for directory-change notifications, so the
             // server's watch simply never fires — no response is owed.
             ServerDriveIoRequest::ServerDriveNotifyChangeDirectoryRequest(_) => return Vec::new(),
@@ -671,11 +698,12 @@ impl RdpdrBackend for DriveRedirectBackend {
         &mut self,
         _req: DeviceControlRequest<ScardIoCtlCode>,
         _call: ScardCall,
-    ) -> PduResult<()> {
-        // No smartcard device is announced, so a conforming server never calls
-        // this; treat it as a no-op rather than an error.
+    ) -> PduResult<Vec<SvcMessage>> {
+        // No smartcard device is announced, so the channel never routes a
+        // smartcard call here (it ignores IRPs for unannounced devices); treat
+        // one as a no-op rather than an error.
         warn!("rdpdr smartcard call received but no smartcard is redirected");
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn handle_drive_io_request(&mut self, req: ServerDriveIoRequest) -> PduResult<Vec<SvcMessage>> {

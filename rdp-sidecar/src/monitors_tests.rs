@@ -2,6 +2,7 @@
 
 use super::*;
 use ironrdp_core::{decode, encode_vec};
+use ironrdp_displaycontrol::pdu::DisplayControlPdu;
 use ironrdp_pdu::mcs::ConnectInitial;
 use ironrdp_pdu::nego::SecurityProtocol;
 use ironrdp_pdu::x224::{X224Data, X224};

@@ -32,8 +32,8 @@ use x509_cert::Certificate;
 /// decision keys on — so an empty distinguished name yields `None` rather than an
 /// empty string, and the caller never fails the connect over a missing value.
 pub fn subject_and_issuer(cert: &Certificate) -> (Option<String>, Option<String>) {
-    let subject = non_empty(cert.tbs_certificate.subject.to_string());
-    let issuer = non_empty(cert.tbs_certificate.issuer.to_string());
+    let subject = non_empty(cert.tbs_certificate().subject().to_string());
+    let issuer = non_empty(cert.tbs_certificate().issuer().to_string());
     (subject, issuer)
 }
 
