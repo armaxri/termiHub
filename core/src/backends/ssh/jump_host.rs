@@ -20,7 +20,8 @@ use crate::config::{JumpHostConfig, SshConfig, SshProxyConfig};
 use crate::errors::{ConnectFailureKind, SessionError};
 
 use super::auth::{
-    connect_and_authenticate_cancellable, connect_and_authenticate_over_channel_with_liveness,
+    connect_and_authenticate_cancellable, connect_and_authenticate_cancellable_with_liveness,
+    connect_and_authenticate_over_channel_with_liveness,
 };
 use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use super::prompt_clock::timeout_excluding_prompts;
@@ -566,14 +567,34 @@ pub async fn connect_target(
     target: &SshConfig,
     cancel: Option<&CancellationToken>,
 ) -> Result<(SshSession, ForwardedChannelRegistry, Option<GatewayHold>), SessionError> {
+    let (session, registry, gateway, _liveness) =
+        connect_target_with_liveness(target, cancel).await?;
+    Ok((session, registry, gateway))
+}
+
+/// Like [`connect_target`], but also returns the target session's
+/// [`LivenessWatch`], which carries the server's SSH identification line
+/// (#5134): the shell connector reads it to tell a Win32-OpenSSH host.
+pub async fn connect_target_with_liveness(
+    target: &SshConfig,
+    cancel: Option<&CancellationToken>,
+) -> Result<
+    (
+        SshSession,
+        ForwardedChannelRegistry,
+        Option<GatewayHold>,
+        LivenessWatch,
+    ),
+    SessionError,
+> {
     if target.proxy_jump.is_empty() {
-        let (session, registry) =
-            connect_and_authenticate_cancellable(target, cancel.cloned()).await?;
-        Ok((session, registry, None))
+        let (session, registry, liveness) =
+            connect_and_authenticate_cancellable_with_liveness(target, cancel.cloned()).await?;
+        Ok((session, registry, None, liveness))
     } else {
-        let (session, registry, gateway) =
-            connect_target_through_pooled_gateway(target, cancel).await?;
-        Ok((session, registry, Some(gateway)))
+        let (session, registry, gateway, liveness) =
+            connect_target_through_pooled_gateway_with_liveness(target, cancel).await?;
+        Ok((session, registry, Some(gateway), liveness))
     }
 }
 

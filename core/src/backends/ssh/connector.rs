@@ -129,6 +129,98 @@ fn capture_early_output(early: &mut Vec<u8>, data: &[u8]) {
     early.extend_from_slice(&data[..data.len().min(room)]);
 }
 
+/// Ask the host for its login shell over an exec channel (#4143), abortable
+/// by the connect's cancel token.
+async fn probe_remote_shell(
+    session: &super::handler::SshSession,
+    cancel: Option<&CancellationToken>,
+) -> Result<RemoteShell, SessionError> {
+    // Bounded generously (a cold PowerShell start is slow, #4670), so keep
+    // the wait abortable by the connect's cancel token.
+    let probe = remote_shell::detect_remote_shell(session);
+    match cancel {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(SessionError::SpawnFailed(
+                "SSH connection cancelled while detecting the remote shell".to_string(),
+            )),
+            shell = probe => Ok(shell),
+        },
+        None => Ok(probe.await),
+    }
+}
+
+/// Read a just-started Win32-OpenSSH shell's first output until it shows
+/// whether it is cmd.exe (#5134): `Some(Cmd)` when cmd.exe's banner came,
+/// `None` when the output rules it out, the channel ended, or nothing told
+/// within [`remote_shell::CMD_BANNER_WAIT`]. Every message read is returned,
+/// in order, for the channel task to handle.
+async fn read_cmd_banner(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    cancel: Option<&CancellationToken>,
+) -> Result<
+    (
+        Option<RemoteShell>,
+        std::collections::VecDeque<russh::ChannelMsg>,
+    ),
+    SessionError,
+> {
+    use remote_shell::BannerVerdict;
+    use russh::ChannelMsg;
+
+    let started = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + remote_shell::CMD_BANNER_WAIT;
+    let mut msgs = std::collections::VecDeque::new();
+    let mut output: Vec<u8> = Vec::new();
+    let never = CancellationToken::new();
+    let token = cancel.unwrap_or(&never);
+    let verdict = loop {
+        let msg = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(SessionError::SpawnFailed(
+                    "SSH connection cancelled while detecting the remote shell".to_string(),
+                ));
+            }
+            msg = tokio::time::timeout_at(deadline, channel.wait()) => msg,
+        };
+        let Ok(Some(msg)) = msg else {
+            break BannerVerdict::NotCmd;
+        };
+        let ended = matches!(msg, ChannelMsg::Eof | ChannelMsg::Close);
+        if let ChannelMsg::Data { ref data } = msg {
+            output.extend_from_slice(data);
+        }
+        msgs.push_back(msg);
+        if ended {
+            break BannerVerdict::NotCmd;
+        }
+        match remote_shell::cmd_banner_verdict(&output) {
+            BannerVerdict::Undecided => {}
+            verdict => break verdict,
+        }
+    };
+    tracing::debug!(
+        ?verdict,
+        elapsed_ms = started.elapsed().as_millis(),
+        "Win32-OpenSSH shell banner"
+    );
+    let shell = (verdict == BannerVerdict::Cmd).then_some(RemoteShell::Cmd);
+    Ok((shell, msgs))
+}
+
+/// The next message for the channel task: one read early (#5134) first, then
+/// the channel's own.
+async fn next_channel_msg(
+    early: &mut std::collections::VecDeque<russh::ChannelMsg>,
+    channel: &mut russh::Channel<russh::client::Msg>,
+) -> Option<russh::ChannelMsg> {
+    match early.pop_front() {
+        Some(msg) => Some(msg),
+        None => channel.wait().await,
+    }
+}
+
 // ── SshConnector trait ─────────────────────────────────────────────
 
 /// SSH connection + shell-channel factory.
@@ -288,7 +380,7 @@ impl SshConnector for RusshSshConnector {
         cancel: Option<&CancellationToken>,
         detect_remote_shell: bool,
     ) -> Result<SshShellHandle, SessionError> {
-        use super::jump_host::connect_target;
+        use super::jump_host::connect_target_with_liveness;
         use super::x11::X11Forwarder;
         use russh::ChannelMsg;
 
@@ -297,7 +389,8 @@ impl SshConnector for RusshSshConnector {
 
         // Connect directly, or through a ProxyJump chain when one is configured —
         // abortable via `cancel` so a Stop while connecting interrupts promptly.
-        let (mut session, registry, gateway_ref) = connect_target(config, cancel).await?;
+        let (mut session, registry, gateway_ref, liveness) =
+            connect_target_with_liveness(config, cancel).await?;
         if let Some(gateway_ref) = gateway_ref {
             // Hold the pooled gateway reference for the session lifetime. It keeps
             // the shared bastion session (and its direct-tcpip channel carrying
@@ -312,23 +405,17 @@ impl SshConnector for RusshSshConnector {
         // setup line will be typed: shell integration (the caller asks), the
         // env-var fallback and the X11 lines (#4147).
         let types_setup = !config.env.is_empty() || config.enable_x11_forwarding;
-        let remote_shell = if detect_remote_shell || types_setup {
-            // Bounded generously (a cold PowerShell start is slow, #4670), so
-            // keep the wait abortable by the connect's cancel token.
-            let probe = super::remote_shell::detect_remote_shell(&session);
-            match cancel {
-                Some(token) => tokio::select! {
-                    biased;
-                    _ = token.cancelled() => {
-                        return Err(SessionError::SpawnFailed(
-                            "SSH connection cancelled while detecting the remote shell"
-                                .to_string(),
-                        ));
-                    }
-                    shell = probe => shell,
-                },
-                None => probe.await,
-            }
+        // On a Win32-OpenSSH host the exec channel runs as `cmd.exe /c` when
+        // cmd.exe is the DefaultShell, which runs the user's cmd AutoRun once
+        // more (#5134). There the session shell's own first output is read
+        // instead (cmd.exe's banner), and the exec probe only runs when that
+        // banner does not show.
+        let win32_openssh = liveness
+            .server_id()
+            .is_some_and(remote_shell::is_win32_openssh);
+        let needs_shell = detect_remote_shell || types_setup;
+        let mut remote_shell = if needs_shell && !win32_openssh {
+            probe_remote_shell(&session, cancel).await?
         } else {
             RemoteShell::Unknown
         };
@@ -449,6 +536,26 @@ impl SshConnector for RusshSshConnector {
             .map_err(|e| SessionError::SpawnFailed(format!("Shell request failed: {e}")))?;
         let shell_requested_at = std::time::Instant::now();
         let shell_refused = Arc::new(AtomicBool::new(false));
+
+        // Win32-OpenSSH (#5134): tell cmd.exe by its banner, and keep what was
+        // read for the channel task below, which handles it as if it had just
+        // arrived.
+        let mut early_msgs = std::collections::VecDeque::new();
+        if needs_shell && win32_openssh {
+            let (banner, msgs) = read_cmd_banner(&mut channel, cancel).await?;
+            early_msgs = msgs;
+            remote_shell = match banner {
+                Some(shell) => {
+                    remote_shell::setup_trace(
+                        shell_requested_at,
+                        &format!("shell told by its banner: {shell:?}"),
+                        &[],
+                    );
+                    shell
+                }
+                None => probe_remote_shell(&session, cancel).await?,
+            };
+        }
 
         // Type the setup lines into the shell, in its own syntax and line
         // ending (#4147): the env-var fallback — covering names the server's
@@ -678,8 +785,9 @@ impl SshConnector for RusshSshConnector {
                             }
                         }
                     }
-                    // Incoming data from the server.
-                    msg = channel.wait() => {
+                    // Incoming data from the server (first what was read
+                    // while telling the shell, #5134).
+                    msg = next_channel_msg(&mut early_msgs, &mut channel) => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
                                 remote_shell::setup_trace(shell_requested_at, "recv", data);

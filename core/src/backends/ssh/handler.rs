@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
@@ -29,9 +29,14 @@ pub type SshSession = russh::client::Handle<TermiHubHandler>;
 /// backstop. Either way the tunnel supervisor observes true session death without
 /// polling a throwaway channel every ~20 s. `Clone` fans one shared pooled session
 /// out to every tunnel supervising it.
+///
+/// It also carries the server's SSH identification string (#5134), which the
+/// same handler records when the first key exchange completes: the connector
+/// reads it to tell a Win32-OpenSSH host before it asks for the login shell.
 #[derive(Clone)]
 pub struct LivenessWatch {
     rx: watch::Receiver<bool>,
+    server_id: Arc<OnceLock<String>>,
 }
 
 impl LivenessWatch {
@@ -53,6 +58,12 @@ impl LivenessWatch {
     /// dead cached session instead of handing it out (#1315).
     pub fn is_dead(&self) -> bool {
         *self.rx.borrow() || self.rx.has_changed().is_err()
+    }
+
+    /// The server's SSH identification line (`SSH-2.0-OpenSSH_for_Windows_9.5`,
+    /// say), once the first key exchange has completed; `None` before (#5134).
+    pub fn server_id(&self) -> Option<&str> {
+        self.server_id.get().map(String::as_str)
     }
 }
 
@@ -100,6 +111,9 @@ pub struct TermiHubHandler {
     /// error. The check runs on russh's session task, which cannot see the
     /// connecting task's unattended scope, so the handler carries the mode.
     unattended_host_key_refused: Option<Arc<AtomicBool>>,
+    /// The server's SSH identification line, set at the first key exchange
+    /// and shared with the [`LivenessWatch`] (#5134).
+    server_id: Arc<OnceLock<String>>,
 }
 
 impl TermiHubHandler {
@@ -123,6 +137,7 @@ impl TermiHubHandler {
     ) -> (Self, ForwardedChannelRegistry, LivenessWatch) {
         let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
         let (liveness_tx, liveness_rx) = watch::channel(false);
+        let server_id = Arc::new(OnceLock::new());
         let handler = Self {
             forwarded_channel_registry: registry.clone(),
             liveness_tx,
@@ -130,8 +145,13 @@ impl TermiHubHandler {
             host,
             port,
             unattended_host_key_refused: None,
+            server_id: server_id.clone(),
         };
-        (handler, registry, LivenessWatch { rx: liveness_rx })
+        let liveness = LivenessWatch {
+            rx: liveness_rx,
+            server_id,
+        };
+        (handler, registry, liveness)
     }
 
     /// Make this an **unattended** connect's handler (#3527): the host key is
@@ -150,6 +170,21 @@ impl Default for TermiHubHandler {
 
 impl russh::client::Handler for TermiHubHandler {
     type Error = russh::Error;
+
+    /// Record the server's SSH identification line (#5134). russh calls this
+    /// after every key exchange, the first one before the connect returns.
+    async fn kex_done(
+        &mut self,
+        _shared_secret: Option<&[u8]>,
+        _names: &russh::Names,
+        session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        let id = String::from_utf8_lossy(session.remote_sshid())
+            .trim()
+            .to_string();
+        let _ = self.server_id.set(id);
+        Ok(())
+    }
 
     /// Fire the session-liveness watch on session death, then preserve russh's
     /// default disconnect semantics (#1297).

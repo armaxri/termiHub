@@ -220,6 +220,103 @@ fn fish_has_native_integration(version: &str) -> bool {
     major.parse::<u32>().is_ok_and(|major| major >= 4)
 }
 
+/// Whether the server's SSH identification line (`SSH-2.0-OpenSSH_for_Windows_9.5`)
+/// names Win32-OpenSSH (#5134). Its exec channel runs the command as
+/// `cmd.exe /c <command>` when cmd.exe is the DefaultShell, and cmd.exe then
+/// runs the user's AutoRun (HKCU / HKLM `Software\Microsoft\Command
+/// Processor`) first: no option of the command line can skip it.
+pub fn is_win32_openssh(server_id: &str) -> bool {
+    server_id.contains("OpenSSH_for_Windows")
+}
+
+/// How long a Win32-OpenSSH session's first output is read for cmd.exe's
+/// banner before the exec probe runs instead (#5134). cmd.exe prints it as
+/// soon as it starts; a host this slow still gets the right answer, from the
+/// probe.
+pub const CMD_BANNER_WAIT: Duration = Duration::from_secs(10);
+
+/// What a Win32-OpenSSH shell's first output says (#5134): see
+/// [`cmd_banner_verdict`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BannerVerdict {
+    /// cmd.exe's banner (`Microsoft Windows [Version 10.0...]`) is there.
+    Cmd,
+    /// The output rules cmd.exe out: the exec probe tells the shell.
+    NotCmd,
+    /// Not enough output yet.
+    Undecided,
+}
+
+/// The banner an interactive cmd.exe prints first, `Microsoft Windows
+/// [Version 10.0.20348.2849]` (`[Versión ...` and the like when localised).
+const CMD_BANNER: &str = "Microsoft Windows [";
+
+/// Tell cmd.exe from a Win32-OpenSSH session's first raw output (#5134),
+/// without running anything on the host.
+///
+/// ConPTY renders the console, so the text comes with escape sequences
+/// around it, and a run of spaces may be a cursor move: every escape
+/// sequence counts as a space and runs of white space as one.
+pub fn cmd_banner_verdict(output: &[u8]) -> BannerVerdict {
+    let text = visible_text(output);
+    if text.contains(CMD_BANNER) {
+        return BannerVerdict::Cmd;
+    }
+    let text = text.trim_start();
+    if text.is_empty() || CMD_BANNER.starts_with(text) {
+        return BannerVerdict::Undecided;
+    }
+    BannerVerdict::NotCmd
+}
+
+/// `output` without its escape sequences (CSI, OSC, two-byte ESC), each
+/// replaced by a space, with every run of white space as one space.
+fn visible_text(output: &[u8]) -> String {
+    let raw = String::from_utf8_lossy(output);
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    let push = |out: &mut String, c: char| {
+        if c.is_whitespace() || c.is_control() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+        }
+    };
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            push(&mut out, c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters and intermediates up to a final byte.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: up to BEL or ST (ESC \\).
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next_if_eq(&'\\');
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+        push(&mut out, ' ');
+    }
+    out
+}
+
 /// Probe the remote login shell over an exec channel on `session`.
 ///
 /// Never fails: any error or timeout is reported as [`RemoteShell::Unknown`].
