@@ -705,6 +705,10 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
 /// behind: no setup text on screen (the raw stream replayed through the
 /// terminal model), no entry in the console's command history (`doskey
 /// /history`, Alt+F7 cleared it), `ERRORLEVEL` still 0 for the first command.
+/// It also runs no extra AutoRun: with an AutoRun on the test user that
+/// appends to a marker file, a hooked session runs it exactly as often as a
+/// hook-free one (once, the session shell itself). The AutoRun is removed
+/// afterwards, also when the grade fails.
 /// The `cmd` leg of the Windows SSH Host lane runs it.
 #[tokio::test]
 async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
@@ -713,6 +717,50 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
         eprintln!("this grade is for a cmd.exe Windows SSH host; skipping");
         return;
     }
+    let (session, _) = connect_and_authenticate(&sshd.key_config())
+        .await
+        .expect("key auth");
+    // The value is expanded by this exec's cmd.exe, so it names the path.
+    ssh_exec(
+        &session,
+        &format!(
+            "del /q {AUTORUN_MARKER} 2>nul & reg add \"{AUTORUN_KEY}\" /v AutoRun /t REG_SZ \
+             /d \"echo th5109-autorun>>{AUTORUN_MARKER}\" /f"
+        ),
+    )
+    .await
+    .expect("set the test AutoRun");
+    // Run the grade as its own task so a failure still reaches the cleanup.
+    let grade = tokio::spawn(cmd_hook_grade(sshd)).await;
+    let cleanup = ssh_exec(
+        &session,
+        &format!("reg delete \"{AUTORUN_KEY}\" /v AutoRun /f & del /q {AUTORUN_MARKER}"),
+    )
+    .await;
+    if let Err(e) = grade {
+        std::panic::resume_unwind(e.into_panic());
+    }
+    cleanup.expect("remove the test AutoRun");
+}
+
+/// The test AutoRun's registry key and marker file (#5109).
+const AUTORUN_KEY: &str = r"HKCU\Software\Microsoft\Command Processor";
+const AUTORUN_MARKER: &str = r"%USERPROFILE%\th5109-autorun.log";
+
+/// How often the test AutoRun has run so far, read in `ssh`'s shell with the
+/// `type` builtin (no child process, so no AutoRun of its own).
+async fn autorun_runs(ssh: &mut Ssh) -> usize {
+    let (done, seen) = type_and_wait(
+        ssh,
+        &format!("type {AUTORUN_MARKER}\recho th5109-%OS%-counted\r"),
+        |s| s.contains("th5109-Windows_NT-counted"),
+    )
+    .await;
+    assert!(done, "could not read the AutoRun marker: {seen:?}");
+    seen.matches("th5109-autorun").count() - seen.matches("th5109-autorun.log").count()
+}
+
+async fn cmd_hook_grade(sshd: common::NativeSshd) {
     let (cols, rows) = (100usize, 60usize);
     let mut ssh = Ssh::new();
     let mut settings = sshd.key_settings();
@@ -752,7 +800,7 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
         history.contains("cd \\"),
         "the user's own commands are in the history: {history:?}"
     );
-    for leak in ["PROMPT", "for /f", "TH_5109_VAR=", "18;3~"] {
+    for leak in ["PROMPT", "/d /k", "TH_5109_VAR=", "18;3~"] {
         assert!(
             !history.contains(leak),
             "the setup {leak:?} is in the command history: {history:?}"
@@ -769,6 +817,7 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
     .await;
     let text = screen::render(all.as_bytes(), cols, rows);
     eprintln!("---- rendered terminal ----\n{text}\n---------------------------");
+    let hooked_runs = autorun_runs(&mut ssh).await;
     if all.contains("Microsoft Windows") {
         assert!(
             text.contains("Microsoft Windows"),
@@ -782,13 +831,12 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
         );
     }
     for leak in [
-        "for /f",
-        "set /p",
+        "System32\\cmd.exe",
+        "/d /k",
+        "$E[",
         "PROMPT=",
         "TH_5109_VAR=",
         "133;",
-        "#TH#",
-        "rem",
     ] {
         assert!(
             !text.contains(leak),
@@ -815,6 +863,16 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
     assert!(
         seen.contains("PROMPT=$P$G"),
         "a cmd.exe started without PROMPT did not define it: {seen:?}"
+    );
+    // This hook-free session ran the AutoRun once more (its own shell; the
+    // `cmd /d` above skips it). The hooked session must have run it as often.
+    let all_runs = autorun_runs(&mut ssh).await;
+    eprintln!("[5109] AutoRun runs: hooked session {hooked_runs}, both sessions {all_runs}");
+    assert!(hooked_runs >= 1, "the test AutoRun never ran");
+    assert_eq!(
+        all_runs,
+        2 * hooked_runs,
+        "the hooked session ran the AutoRun more often than a hook-free one"
     );
     ssh.disconnect().await.ok();
 }
