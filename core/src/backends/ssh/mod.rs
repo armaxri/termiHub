@@ -2679,6 +2679,7 @@ mod tests {
         // and OSC 133 itself and gets nothing.
         let (writes, _) = writes_for_shell(remote_shell::RemoteShell::Fish {
             native_integration: false,
+            windows: false,
         })
         .await;
         assert_eq!(
@@ -2690,6 +2691,7 @@ mod tests {
 
         let (writes, detected) = writes_for_shell(remote_shell::RemoteShell::Fish {
             native_integration: true,
+            windows: false,
         })
         .await;
         assert_eq!(detected, Some(true));

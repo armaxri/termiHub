@@ -169,6 +169,13 @@ WA-CI-005).
   kills the worker's child processes and exits it: xdist reports "worker crashed
   while running <test>" and a replacement worker finishes the lane (#4017).
   `TERMIHUB_TEST_HANG_GUARD=1` forces it on in a serial run, `0` turns it off.
+- **Leaked-app reaper.** Every app the harness launches (and every CLI run) carries
+  `TERMIHUB_HARNESS_OWNER=<pytest pid>`. After each test, a process of the app
+  binary with this session's tag that no live `AppInstance` tracks (by PID or by
+  its bridge port) is killed with its tree and listed under "termihub apps left
+  running by a test" in the summary. Such a stray app stayed pinned on top into
+  the separate OS-input step and broke its grades (#5086). Only the tag in the
+  process's own environment selects it, never the app name.
 
 #### Display-backed runner (frontend-dependent live E2E, macOS)
 

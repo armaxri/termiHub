@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from termihub_harness import hang_guard, skip_guard, timing
+from termihub_harness import app_leaks, hang_guard, skip_guard, timing
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     record_failed_attempt,
@@ -226,6 +226,25 @@ def pytest_runtest_call(item):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
     yield from _guarded_phase("teardown", item)
+    # After every fixture this test ended has stopped its app: an app of this
+    # session still running untracked would sit (pinned on top) over every
+    # later test's windows, into the next pytest session too (#5086).
+    _LEAKS.extend(app_leaks.reap_leaks(item.nodeid))
+
+
+# ── Leaked test apps (#5086) ─────────────────────────────────────────────────
+#: Report lines for apps a test left running (reaped already); xdist workers
+#: hand theirs to the controller, which prints them in the terminal summary.
+_LEAKS = []
+_LEAKS_KEY = "termihub_leaked_apps"
+
+
+def _report_leaks(terminalreporter):
+    if not _LEAKS:
+        return
+    terminalreporter.section("termihub apps left running by a test (#5086)")
+    for line in _LEAKS:
+        terminalreporter.write_line(line)
 
 
 # ── Skip report + skip guard (#4315) ─────────────────────────────────────────
@@ -329,9 +348,11 @@ _TIMING_KEY = "termihub_timing"
 @pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node, error):
     """xdist controller: fold a finished worker's timing samples into this process."""
-    samples = getattr(node, "workeroutput", {}).get(_TIMING_KEY)
+    output = getattr(node, "workeroutput", {})
+    samples = output.get(_TIMING_KEY)
     if samples:
         timing.merge(samples)
+    _LEAKS.extend(output.get(_LEAKS_KEY) or [])
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
@@ -343,6 +364,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if hasattr(config, "workerinput"):
         return
     _report_skips(terminalreporter, config)
+    _report_leaks(terminalreporter)
     if not timing.enabled():
         return
     lines = timing.format_lines(timing.summarize(timing.os_name()))
@@ -357,10 +379,12 @@ def pytest_sessionfinish(session, exitstatus):
     """Enforce the skip guard; hand timing samples to the xdist controller;
     flush the guided-manual report."""
     hang_guard.close()
+    _LEAKS.extend(app_leaks.reap_leaks("the session"))
     _enforce_skip_guard(session)
     config = session.config
     if hasattr(config, "workeroutput"):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()
+        config.workeroutput[_LEAKS_KEY] = list(_LEAKS)
     collector = getattr(config, "_manual_session", None)
     if collector is None or not collector.records:
         return

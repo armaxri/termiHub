@@ -36,15 +36,35 @@ runs:
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
 
+    # Cache the verified tarball (#5105) so most runs skip the release-host
+    # download that 504'd three PR legs on 2026-11-09. Keyed on the pinned
+    # version + sha256 from .github/cross-version, so a bump misses the cache.
+    # The tarball is re-verified against the pin below even on a cache hit.
+    - name: Restore cached cross-rs tarball
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/termihub-cross/cross.tar.gz
+        key: cross-rs-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
+
     - name: Install cross-rs ${{ steps.pin.outputs.version }}
       shell: bash
       env:
         CROSS_VERSION: ${{ steps.pin.outputs.version }}
         CROSS_SHA256: ${{ steps.pin.outputs.sha256 }}
+        # Authenticate the release download (#5105): an anonymous one shares
+        # GitHub's anonymous pool, which 504'd for hours on 2026-11-09.
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        url="https://github.com/cross-rs/cross/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
-        curl -fsSL "$url" -o /tmp/cross.tar.gz
-        echo "${CROSS_SHA256}  /tmp/cross.tar.gz" | sha256sum -c -
-        sudo tar xz -f /tmp/cross.tar.gz -C /usr/local/bin
-        rm -f /tmp/cross.tar.gz
+        tarball="$HOME/.cache/termihub-cross/cross.tar.gz"
+        mkdir -p "$(dirname "$tarball")"
+        if [[ -f "$tarball" ]] && echo "${CROSS_SHA256}  $tarball" | sha256sum -c --status -; then
+          echo "Using cached cross-rs v${CROSS_VERSION} tarball (sha256 verified)"
+        else
+          rm -f "$tarball"
+          # Retries every error, HTTP 5xx included, and uses GH_TOKEN (#5105).
+          "$GITHUB_ACTION_PATH/../../../scripts/internal/fetch-github-release-asset.sh" \
+            cross-rs/cross "v${CROSS_VERSION}" cross-x86_64-unknown-linux-gnu.tar.gz "$tarball"
+        fi
+        echo "${CROSS_SHA256}  $tarball" | sha256sum -c -
+        sudo tar xz -f "$tarball" -C /usr/local/bin

@@ -28,6 +28,7 @@ from typing import Callable, IO, Mapping, Optional, Sequence
 
 import psutil
 
+from . import app_leaks
 from . import coverage
 from . import known_hosts
 from . import portable as portable_staging
@@ -486,6 +487,8 @@ class AppInstance:
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
         env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        # A CLI run that falls through to a full launch is found as a leak (#5086).
+        env[app_leaks.OWNER_ENV] = app_leaks.launch_tag()
         env.update(self._profile_overrides())
         env.update(known_hosts.app_env())
         env.update(self._extra_env)
@@ -543,6 +546,16 @@ class AppInstance:
         if self._relaunched is not None:
             return self._relaunched.pid
         return self._process.pid if self._process is not None else None
+
+    def tracked_bridge_port(self) -> Optional[int]:
+        """The bridge port of the app this instance runs, or ``None`` once stopped.
+
+        A process carrying it is this instance's (e.g. a self-relaunch not yet
+        adopted), never a leak (:mod:`termihub_harness.app_leaks`).
+        """
+        if self._process is None and self._relaunched is None:
+            return None
+        return self._bridge_port
 
     def read_log(self) -> str:
         """The captured app log so far (empty string if nothing was captured)."""
@@ -604,6 +617,10 @@ class AppInstance:
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        # Tag the app (and any relaunch, which inherits it) with this pytest
+        # process, so one it outlives its instance is found and reaped (#5086).
+        env[app_leaks.OWNER_ENV] = app_leaks.launch_tag()
+        app_leaks.register(self)
         # Pin WebView2 to a per-instance user-data folder so teardown can reap
         # only this instance's msedgewebview2.exe hosts (issue #1022). The app
         # (Tauri) sets no data_directory, so WebView2 honours this env var.
@@ -767,15 +784,27 @@ class AppInstance:
         if self._process is None or self._bridge_port is None:
             raise RuntimeError("app was never started")
         deadline = time.monotonic() + timeout
-        old_pid = self._process.pid
-        if not self.wait_exited(timeout):
+        # The process restarting itself is the tracked relaunch once the app has
+        # restarted itself before (a second backup restore in one suite): wait
+        # for *it*, and take only a newer process, or the second adopt re-adopts
+        # the relaunch that is about to exit and its successor outlives the
+        # suite (#5086).
+        current = self._relaunched
+        old_pid = self._process.pid if current is None else current.pid
+        not_before = self._started_at
+        if current is None:
+            exited = self.wait_exited(timeout)
+        else:
+            exited = self._wait_relaunched_exited(current, timeout)
+            not_before = max(not_before, self._create_time(current))
+        if not exited:
             raise AssertionError(f"the app (pid {old_pid}) did not exit to restart itself")
         while True:
             found = find_relaunched_app(
                 self._binary,
                 self._bridge_port,
                 exclude_pid=old_pid,
-                not_before=self._started_at,
+                not_before=not_before,
             )
             if found is not None:
                 self._relaunched = found
@@ -789,6 +818,25 @@ class AppInstance:
                     + ("; ".join(seen) if seen else "none")
                 )
             time.sleep(0.2)
+
+    @staticmethod
+    def _wait_relaunched_exited(proc: psutil.Process, timeout: float) -> bool:
+        """Wait up to ``timeout`` for a tracked relaunch to exit; True if it did."""
+        try:
+            proc.wait(timeout=timeout)
+        except psutil.TimeoutExpired:
+            return False
+        except psutil.NoSuchProcess:
+            pass
+        return True
+
+    @staticmethod
+    def _create_time(proc: psutil.Process) -> float:
+        """``proc``'s start time (psutil caches it, so it survives the exit)."""
+        try:
+            return proc.create_time()
+        except psutil.Error:
+            return 0.0
 
     def _terminate_relaunched(self) -> None:
         """Kill the self-relaunched app and its process tree (see ``adopt_self_restart``)."""

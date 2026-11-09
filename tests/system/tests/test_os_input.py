@@ -179,6 +179,27 @@ def test_drag_releases_the_button_even_when_a_move_is_refused():
     assert fake.calls[-1] == ("button", "left", False)
 
 
+def test_click_releases_the_button_when_the_press_moved_the_foreground():
+    """A press that lands on a foreign window over the point makes it frontmost;
+    the release is still sent (and the click fails), never left held (#5086)."""
+    fake = FakeInput(100, env=CI)
+    original = fake._pointer_button
+
+    def press_steals_focus(pid: int, button: str, down: bool) -> None:
+        original(pid, button, down)
+        if down:
+            fake.front = 999
+
+    fake._pointer_button = press_steals_focus  # type: ignore[method-assign]
+    with pytest.raises(GlobalInjectionRefused, match="999"):
+        fake.click(10, 20, button="right")
+    assert [c for c in fake.calls if c[0] == "button"] == [
+        ("button", "right", True),
+        ("button", "right", False),
+    ]
+    assert fake.click_state == 1
+
+
 def test_drag_moves_in_steps_to_the_end():
     fake = FakeInput(100, env=CI)
     fake.drag((0, 0), (100, 50), steps=4, hold=0)
@@ -563,3 +584,33 @@ def test_for_window_shifts_the_offset_by_the_frame_delta():
     assert other.offset == (screen.offset[0] + 40, screen.offset[1] + 40)
     assert other.window.handle == 2
 
+
+
+class _RelaunchingSuite:
+    """Stands in for ``SystemTest``: a relaunch gives the app a new PID."""
+
+    def __init__(self) -> None:
+        self.app = type("App", (), {"pid": 100})()
+        self.reacquired = 0
+
+    def _reacquire_driver(self) -> None:
+        self.reacquired += 1
+
+
+def test_a_held_backend_follows_a_relaunch_to_the_new_pid():
+    """A test that took ``osi`` before ``restart_app`` keys the new app, not the
+    dead PID (Cmd+Q to a gone PID is dropped silently on macOS, #5086)."""
+    from termihub_harness.ui.os_input_ui import OsInputUi  # noqa: PLC0415
+
+    class Suite(OsInputUi, _RelaunchingSuite):
+        pass
+
+    suite = Suite()
+    fake = FakeInput(100, env=CI)
+    Suite._osi = fake
+    suite.app.pid = 200
+    suite._reacquire_driver()
+    assert suite.reacquired == 1
+    fake.front = 200
+    fake.key("cmd+q")
+    assert fake.calls[-1] == ("key", 200, ("cmd",), "q")
