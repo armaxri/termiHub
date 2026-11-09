@@ -1,28 +1,28 @@
 //! Regression tests for the upstream IronRDP fixes ported into the vendored
 //! `ironrdp-pdu` fork (#4461, #4923). The vendored crate's own unit tests need
 //! dev-dependencies the excluded sidecar graph does not lock, so the ported
-//! behaviour is exercised here through the `ironrdp::pdu` re-export the sidecar
+//! behaviour is exercised here through the `ironrdp_pdu` re-export the sidecar
 //! actually links.
 
-use ironrdp::core::{decode, encode_vec};
-use ironrdp::pdu::gcc::{
+use ironrdp_core::{decode, encode_vec};
+use ironrdp_pdu::gcc::{
     ServerCoreData, ServerCoreOptionalData, ServerGccBlocks, ServerNetworkData, ServerSecurityData,
 };
-use ironrdp::pdu::rdp::headers::{BasicSecurityHeader, BasicSecurityHeaderFlags};
-use ironrdp::pdu::rdp::headers::{
+use ironrdp_pdu::rdp::headers::{BasicSecurityHeader, BasicSecurityHeaderFlags};
+use ironrdp_pdu::rdp::headers::{
     ShareControlHeader, ShareControlPdu, ShareDataHeader, ShareDataPdu,
 };
-use ironrdp::pdu::rdp::server_error_info::{
+use ironrdp_pdu::rdp::server_error_info::{
     ErrorInfo, ProtocolIndependentCode, ServerSetErrorInfoPdu,
 };
-use ironrdp::pdu::rdp::server_license::cert::{
+use ironrdp_pdu::rdp::server_license::cert::{
     CertificateType, ProprietaryCertificate, RsaPublicKey,
 };
-use ironrdp::pdu::rdp::server_license::{
+use ironrdp_pdu::rdp::server_license::{
     ClientLicenseInfo, ClientNewLicenseRequest, LicenseHeader, PreambleFlags, PreambleType,
     PreambleVersion, ProductInfo, ServerCertificate, ServerLicenseRequest,
 };
-use ironrdp::pdu::rdp::session_info::ServerAutoReconnect;
+use ironrdp_pdu::rdp::session_info::ServerAutoReconnect;
 
 /// A Data PDU (Share Control + Share Data headers, 18 bytes) with the given
 /// `pduType2` and a zero `totalLength`, which the tests then patch.
@@ -45,19 +45,19 @@ fn data_pdu(pdu_type2: u8) -> [u8; 18] {
 #[test]
 fn find_size_rejects_undersized_frames() {
     assert!(
-        ironrdp::pdu::find_size(&[0x00, 0x01]).is_err(),
+        ironrdp_pdu::find_size(&[0x00, 0x01]).is_err(),
         "fast-path, 1 byte"
     );
     assert!(
-        ironrdp::pdu::find_size(&[0x00, 0x80, 0x02]).is_err(),
+        ironrdp_pdu::find_size(&[0x00, 0x80, 0x02]).is_err(),
         "fast-path, long form"
     );
     assert!(
-        ironrdp::pdu::find_size(&[0x03, 0x00, 0x00, 0x06]).is_err(),
+        ironrdp_pdu::find_size(&[0x03, 0x00, 0x00, 0x06]).is_err(),
         "TPKT under 7"
     );
     // A well-formed minimal TPKT still sizes.
-    let info = ironrdp::pdu::find_size(&[0x03, 0x00, 0x00, 0x07])
+    let info = ironrdp_pdu::find_size(&[0x03, 0x00, 0x00, 0x07])
         .unwrap()
         .unwrap();
     assert_eq!(info.length, 7);
@@ -124,7 +124,7 @@ fn other_under_declared_data_pdus_are_refused() {
 fn unknown_server_gcc_block_is_skipped() {
     let blocks = ServerGccBlocks {
         core: ServerCoreData {
-            version: ironrdp::pdu::gcc::RdpVersion::V5_PLUS,
+            version: ironrdp_pdu::gcc::RdpVersion::V5_PLUS,
             optional_data: ServerCoreOptionalData::default(),
         },
         network: ServerNetworkData {

@@ -19,22 +19,22 @@
 //! 16 monitors), so this module only converts it.
 
 use anyhow::{anyhow, Result};
-use ironrdp::connector::{
+use ironrdp_connector::{
     encode_x224_packet, ClientConnector, ClientConnectorState, ConnectorError,
     ConnectorErrorExt as _, ConnectorResult, Sequence as _,
 };
-use ironrdp::core::WriteBuf;
-use ironrdp::displaycontrol::client::DisplayControlClient;
-use ironrdp::displaycontrol::pdu::{
+use ironrdp_core::WriteBuf;
+use ironrdp_displaycontrol::client::DisplayControlClient;
+use ironrdp_displaycontrol::pdu::{
     DeviceScaleFactor, DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry,
     MonitorOrientation as DisplayOrientation,
 };
-use ironrdp::pdu::gcc::{
+use ironrdp_pdu::gcc::{
     ClientMonitorData, ClientMonitorExtendedData, ConferenceCreateRequest, ExtendedMonitorInfo,
     Monitor, MonitorFlags, MonitorOrientation,
 };
-use ironrdp::session::ActiveStage;
-use ironrdp::svc::ChannelFlags;
+use ironrdp_session::ActiveStage;
+use ironrdp_svc::ChannelFlags;
 use termihub_core::connection::{MonitorLayout, MonitorRect};
 
 /// Unscaled, in percent.
@@ -169,7 +169,7 @@ pub fn encode_layout(stage: &mut ActiveStage, monitors: &[MonitorRect]) -> Optio
         let pdu: DisplayControlPdu = DisplayControlMonitorLayout::new(&entries)
             .map_err(|e| anyhow!("invalid monitor layout: {e}"))?
             .into();
-        let messages = ironrdp::dvc::encode_dvc_messages(
+        let messages = ironrdp_dvc::encode_dvc_messages(
             channel_id,
             vec![Box::new(pdu)],
             ChannelFlags::empty(),

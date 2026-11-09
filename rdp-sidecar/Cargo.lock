@@ -1681,25 +1681,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ironrdp"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f910b8dc8e7b8e001c61fd742be442e8604fb2499ded713cadf911e7645ade4"
-dependencies = [
- "ironrdp-cliprdr",
- "ironrdp-connector",
- "ironrdp-core",
- "ironrdp-displaycontrol",
- "ironrdp-dvc",
- "ironrdp-graphics",
- "ironrdp-pdu",
- "ironrdp-rdpdr",
- "ironrdp-rdpsnd",
- "ironrdp-session",
- "ironrdp-svc",
-]
-
-[[package]]
 name = "ironrdp-async"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3995,7 +3976,17 @@ dependencies = [
  "anyhow",
  "clipboard-win",
  "hex",
- "ironrdp",
+ "ironrdp-cliprdr",
+ "ironrdp-connector",
+ "ironrdp-core",
+ "ironrdp-displaycontrol",
+ "ironrdp-dvc",
+ "ironrdp-graphics",
+ "ironrdp-pdu",
+ "ironrdp-rdpdr",
+ "ironrdp-rdpsnd",
+ "ironrdp-session",
+ "ironrdp-svc",
  "ironrdp-tls",
  "ironrdp-tokio",
  "notify",

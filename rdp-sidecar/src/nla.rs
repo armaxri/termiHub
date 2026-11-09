@@ -24,14 +24,14 @@
 //! adds the client monitor layout IronRDP's connector leaves out (#3696).
 
 use anyhow::Result;
-use ironrdp::connector::credssp::{CredsspProcessGenerator, CredsspSequence};
-use ironrdp::connector::sspi::credssp::ClientState;
-use ironrdp::connector::sspi::generator::GeneratorState;
-use ironrdp::connector::{
+use ironrdp_connector::credssp::{CredsspProcessGenerator, CredsspSequence};
+use ironrdp_connector::sspi::credssp::ClientState;
+use ironrdp_connector::sspi::generator::GeneratorState;
+use ironrdp_connector::{
     ClientConnector, ClientConnectorState, ConnectionResult, ConnectorError, ConnectorErrorKind,
     ConnectorResult, ServerName, State as _,
 };
-use ironrdp::core::WriteBuf;
+use ironrdp_core::WriteBuf;
 use ironrdp_tokio::{
     single_sequence_step, Framed, FramedRead, FramedWrite, NetworkClient, Upgraded,
 };
@@ -82,7 +82,7 @@ where
                 framed
                     .write_all(&buf.filled()[..written])
                     .await
-                    .map_err(|e| ironrdp::connector::custom_err!("write all", e))?;
+                    .map_err(|e| ironrdp_connector::custom_err!("write all", e))?;
             }
             _ => single_sequence_step(framed, &mut connector, &mut buf).await?,
         }
@@ -148,7 +148,7 @@ where
             framed
                 .write_all(response)
                 .await
-                .map_err(|e| ironrdp::connector::custom_err!("write all", e))?;
+                .map_err(|e| ironrdp_connector::custom_err!("write all", e))?;
         }
 
         let Some(next_pdu_hint) = sequence.next_pdu_hint() else {
@@ -164,7 +164,7 @@ where
         let pdu = framed
             .read_by_hint(next_pdu_hint)
             .await
-            .map_err(|e| ironrdp::connector::custom_err!("read frame by hint", e))?;
+            .map_err(|e| ironrdp_connector::custom_err!("read frame by hint", e))?;
 
         trace!(length = pdu.len(), "PDU received");
 
@@ -222,7 +222,7 @@ async fn resolve_generator(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ironrdp::connector::sspi;
+    use ironrdp_connector::sspi;
 
     fn server_error(status: u32) -> ConnectorError {
         ConnectorError::new(

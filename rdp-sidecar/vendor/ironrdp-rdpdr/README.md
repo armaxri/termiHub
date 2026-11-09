@@ -5,8 +5,8 @@
 This is a vendored fork of `ironrdp-rdpdr` **0.7.0** for termiHub's RDP sidecar
 (see [`termiHub#4125`](https://github.com/armaxri/termiHub/issues/4125)). It is
 patched into the workspace-excluded `rdp-sidecar` crate via `[patch.crates-io]`,
-exactly like `rdp-sidecar/vendor/ironrdp-pdu`. `ironrdp` re-exports the crate as
-`ironrdp::rdpdr`, so the patch redirects that re-export too.
+exactly like `rdp-sidecar/vendor/ironrdp-pdu`. The sidecar depends on
+`ironrdp-rdpdr` directly (#5117), so the patch redirects that dependency.
 
 **Fork base:** upstream tag `ironrdp-rdpdr-v0.7.0`, commit
 [`11a0810cfbbabd8b8023875a05e3041216d4b01b`](https://github.com/Devolutions/IronRDP/commit/11a0810cfbbabd8b8023875a05e3041216d4b01b)

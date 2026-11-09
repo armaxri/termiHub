@@ -1,10 +1,10 @@
 //! Tests for the multi-monitor PDU encoding (#3696).
 
 use super::*;
-use ironrdp::core::{decode, encode_vec};
-use ironrdp::pdu::mcs::ConnectInitial;
-use ironrdp::pdu::nego::SecurityProtocol;
-use ironrdp::pdu::x224::{X224Data, X224};
+use ironrdp_core::{decode, encode_vec};
+use ironrdp_pdu::mcs::ConnectInitial;
+use ironrdp_pdu::nego::SecurityProtocol;
+use ironrdp_pdu::x224::{X224Data, X224};
 use termihub_core::backends::rdp_sidecar::config::RdpConfig;
 
 /// A primary 1920x1080 with a 1280x1024 monitor to its left, 56 px higher.

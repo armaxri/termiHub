@@ -1,18 +1,18 @@
 //! Regression tests for the fixes ported into the vendored `ironrdp-rdpsnd`
 //! fork from upstream IronRDP after 0.9.0 (#3499). The vendored crate is built
 //! with `test = false`, so its behaviour is exercised here through the public
-//! `ironrdp::rdpsnd` re-export the sidecar actually links.
+//! `ironrdp_rdpsnd` re-export the sidecar actually links.
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
-use ironrdp::core::{decode, encode_vec};
-use ironrdp::rdpsnd::client::{Rdpsnd, RdpsndClientHandler};
-use ironrdp::rdpsnd::pdu::{
+use ironrdp_core::{decode, encode_vec};
+use ironrdp_rdpsnd::client::{Rdpsnd, RdpsndClientHandler};
+use ironrdp_rdpsnd::pdu::{
     self, AudioFormat, ClientAudioOutputPdu, PitchPdu, ServerAudioFormatPdu, ServerAudioOutputPdu,
     TrainingPdu, VolumePdu, Wave2Pdu, WaveDataPdu, WaveFormat, WavePdu,
 };
-use ironrdp::svc::{SvcMessage, SvcProcessor};
+use ironrdp_svc::{SvcMessage, SvcProcessor};
 
 fn pcm(channels: u16, rate: u32) -> AudioFormat {
     AudioFormat {
