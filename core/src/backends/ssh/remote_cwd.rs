@@ -100,13 +100,17 @@ exit 1
 "#;
 
 /// Whether a session whose login shell was detected as `shell` can be
-/// followed by [`read_remote_cwd`]: not on a Windows host, and not for a
+/// followed by [`read_remote_cwd`]: not on a Windows host (a fish there
+/// included, #5101), and not for a
 /// PowerShell login shell anywhere (see the module docs). An undetected
 /// shell ([`RemoteShell::Unknown`]) is tried.
 pub fn follows_without_hook(shell: RemoteShell) -> bool {
     match shell {
-        RemoteShell::Posix | RemoteShell::Fish { .. } | RemoteShell::Unknown => true,
-        RemoteShell::WindowsPosix
+        RemoteShell::Posix | RemoteShell::Fish { windows: false, .. } | RemoteShell::Unknown => {
+            true
+        }
+        RemoteShell::Fish { windows: true, .. }
+        | RemoteShell::WindowsPosix
         | RemoteShell::Cmd
         | RemoteShell::PowerShell
         | RemoteShell::UnixPowerShell => false,
@@ -154,11 +158,17 @@ mod tests {
     fn windows_hosts_and_powershell_are_not_read() {
         assert!(follows_without_hook(RemoteShell::Posix));
         assert!(follows_without_hook(RemoteShell::Fish {
-            native_integration: false
+            native_integration: false,
+            windows: false,
         }));
         assert!(follows_without_hook(RemoteShell::Unknown));
         for shell in [
             RemoteShell::WindowsPosix,
+            // An MSYS2 / Cygwin fish (#5101).
+            RemoteShell::Fish {
+                native_integration: false,
+                windows: true,
+            },
             RemoteShell::Cmd,
             RemoteShell::PowerShell,
             RemoteShell::UnixPowerShell,
