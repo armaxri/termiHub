@@ -1034,9 +1034,28 @@ impl DeviceAnnounceHeader {
         // termiHub fork delta (#4125): derive the PreferredDosName before `name` is consumed below.
         let preferred_dos_name = PreferredDosName::for_drive(&name);
 
-        // The spec says Unicode but empirically this wants null terminated UTF-8.
-        let mut device_data = name.into_bytes();
-        device_data.push(0u8);
+        // termiHub fork delta (#4923): port of upstream 4cd9d4506 (IronRDP#2342, fixes
+        // IronRDP#2075). MS-RDPEFS 2.2.3.1 asks for the name in DeviceData as a Unicode string with
+        // DRIVE_CAPABILITY_VERSION_02, but Windows 11 and Windows Server 2022 and 2025 read the field
+        // as 8-bit characters (a UTF-16 name shows as its first letter), as FreeRDP's client writes it.
+        // 0.7.0 sent the raw UTF-8 bytes; Windows refuses an 8-bit name with a character MS-RDPEFS
+        // 2.2.1.3 forbids in a device name, so those, a NUL (which would end the name early) and
+        // every non-ASCII character become `_`. A trailing colon stays (`C:` is `\\tsclient\C`).
+        let device_data = {
+            let char_count = name.chars().count();
+            let mut out: Vec<u8> = name
+                .chars()
+                .enumerate()
+                .map(|(i, c)| match c {
+                    '<' | '>' | '"' | '/' | '\\' | '|' | '\0' => b'_',
+                    ':' if i + 1 != char_count => b'_',
+                    // A character outside ASCII has no 8-bit form here.
+                    _ => u8::try_from(c).ok().filter(u8::is_ascii).unwrap_or(b'_'),
+                })
+                .collect();
+            out.push(0 /* NUL terminator */);
+            out
+        };
 
         Self {
             device_type: DeviceType::Filesystem,
@@ -3881,7 +3900,20 @@ mod termihub_fork_tests {
     fn non_ascii_ends_the_name() {
         let (dos_name, data) = encoded_drive_announce("Donn\u{e9}es");
         assert_eq!(&dos_name, b"Donn\0\0\0\0");
-        assert_eq!(data, "Donn\u{e9}es\0".as_bytes(), "DeviceData keeps the UTF-8 name");
+        // termiHub fork delta (#4923, upstream 4cd9d4506): 8-bit DeviceData, non-ASCII as `_`.
+        assert_eq!(data, b"Donn_es\0", "DeviceData keeps the name as 8-bit characters");
+    }
+
+    // termiHub fork delta (#4923, upstream 4cd9d4506): Windows refuses an 8-bit device name with
+    // a character MS-RDPEFS 2.2.1.3 forbids, so those and a NUL go as `_`; a trailing colon stays.
+    #[test]
+    fn device_data_replaces_forbidden_characters() {
+        assert_eq!(encoded_drive_announce("a<b>c\"d").1, b"a_b_c_d\0");
+        assert_eq!(encoded_drive_announce("my/dir\\x|y").1, b"my_dir_x_y\0");
+        assert_eq!(encoded_drive_announce("a\0b").1, b"a_b\0");
+        assert_eq!(encoded_drive_announce("C:").1, b"C:\0", "a trailing colon stays");
+        assert_eq!(encoded_drive_announce("C:x").1, b"C_x\0", "a colon before the end does not");
+        assert_eq!(encoded_drive_announce("\u{424}\u{430}").1, b"__\0");
     }
 
     #[test]

@@ -17,7 +17,7 @@ job reports upstream releases, commits and advisories that the fork does not hav
 yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing or
 reviewing upstream again.
 
-### The one change: name redirected drives in PreferredDosName ([#4125])
+### Change 1: name redirected drives in PreferredDosName ([#4125])
 
 A Device Announce Header (MS-RDPEFS 2.2.1.3) has an 8-byte ASCII
 `PreferredDosName` field (at most 7 characters plus a null terminator) and a
@@ -35,22 +35,38 @@ valid characters (ASCII alphanumerics, space, `_`, `-`, `.`, and `:` only as the
 last character), at most 7 of them, and falls back to `DRIVE` when nothing valid
 is left. Any other character, including every non-ASCII one, ends the name. So
 `termiHub` is sent as `termiHu`, `share` as `share`, `Données` as `Donn`.
-`DeviceData` is unchanged: the full name as null-terminated UTF-8, as in 0.7.0.
+`DeviceData` carries the full name as null-terminated 8-bit characters (change 2).
 
 `for_drive` is a straight port of the function upstream added in
 [`161409e18dd1`](https://github.com/Devolutions/IronRDP/commit/161409e18dd185de9bb30730303e56f5e8d28941)
 ("feat(rdpdr): add filesystem PDU foundation", IronRDP#1566), which landed on
 master after 0.7.0 and is not yet released. That upstream commit also switched
 `DeviceData` to UTF-16LE; the fork does **not** take that part, because Windows
-hosts then expose the drive under its first letter only (IronRDP#2075, open). The
+hosts then expose the drive under its first letter only (IronRDP#2075). The
 code changes are marked `termiHub fork delta (#4125)`, and `src/pdu/efs.rs` ends
 with the fork's unit tests (`termihub_fork_tests`). `[lib] test = false` was
 removed from `Cargo.toml` so they run: `cargo test -p ironrdp-rdpdr` from
 `rdp-sidecar/`. The sidecar's own
 `rdp::tests::drive_announce_carries_the_drive_name_in_preferred_dos_name` and the
 live xrdp test RDP-15 (`core/tests/rdp.rs`) cover the fix from outside.
-Everything else is byte-for-byte upstream 0.7.0, without the registry-only
+Apart from changes 1 and 2, everything is byte-for-byte upstream 0.7.0, without the registry-only
 `Cargo.lock`, `Cargo.toml.orig` and VCS metadata.
+
+### Change 2: drive DeviceData as sanitised 8-bit characters ([#4923])
+
+A port of upstream
+[`4cd9d4506`](https://github.com/Devolutions/IronRDP/commit/4cd9d45060df01c731f5d814537ecd86d425190d)
+("fix(rdpdr): announce drive names as 8-bit characters", IronRDP#2342), which fixed
+IronRDP#2075 on master after the 0.9.0 release (unreleased). Windows reads the drive
+`DeviceData` as 8-bit characters, and refuses a name containing a character MS-RDPEFS
+2.2.1.3 forbids. 0.7.0 sent the raw UTF-8 bytes, so a drive label with `<`, `>`, `"`,
+`/`, `\`, `|` or a colon before its end was refused, and a non-ASCII label arrived as
+mojibake. `DeviceAnnounceHeader::new_drive` now writes each such character, a NUL and
+every non-ASCII character as `_` (a trailing colon stays), exactly as upstream does;
+`PreferredDosName` (change 1) is unchanged. Marked `termiHub fork delta (#4923)`; test
+`device_data_replaces_forbidden_characters`.
+
+### Upstream review
 
 Upstream `crates/ironrdp-rdpdr` was reviewed up to IronRDP
 [`62246b36`](https://github.com/Devolutions/IronRDP/commit/62246b364a0282bab85087f658a81fe4207b6b31)
@@ -64,12 +80,32 @@ PDUs from one cursor; in 0.7.0 the request is decoded from its own channel
 message and the trailing bytes are never read, so porting it would only add
 strictness.
 
-Retire the fork once an `ironrdp-rdpdr` release contains `for_drive` and keeps a
-`DeviceData` encoding that works on Windows and xrdp. The status, prepared upstream
+Reviewed again up to IronRDP
+[`4cd9d4506`](https://github.com/Devolutions/IronRDP/commit/4cd9d45060df01c731f5d814537ecd86d425190d)
+(2026-11-09, [#4923]), covering the 0.8.0 and 0.9.0 releases. Ported: `4cd9d4506`
+(change 2). Not ported:
+
+- `0f9154d2` (complete unsupported drive IRPs, e.g. `IRP_MJ_SET_VOLUME_INFORMATION` or an
+  unknown information class, instead of a decode error that ends the session): it does
+  reach the sidecar's drive path, but it is built on master's reworked processor and
+  response types; tracked as its own follow-up port.
+- `29fc63da` (serve IRPs for devices awaiting their announce response) and `e88e3c51`
+  (defer a User Logged On that arrives before the Client ID Confirm): both fix state
+  checks master added after 0.7.0; 0.7.0 serves every listed device and has no such
+  check, so neither bug exists here.
+- `b69cda22` / `7fc80c4d` (`read_padding!` bounds): the rdpdr sites are the server-side
+  Query Directory response decoder and the smartcard `AccessStartedEvent` call; the
+  sidecar decodes neither (it announces only a drive).
+- Features (`8575afc3` printers, `b735d190` WinSCard smartcards, `850839f4` serial and
+  parallel ports) and the release commits (`e899a826`, `b13befa0`).
+
+Retire the fork once an `ironrdp-rdpdr` release contains `for_drive` and `4cd9d4506`
+(the next release after 0.9.0 should have both). The status, prepared upstream
 text and retirement steps are in [`UPSTREAM.md`](UPSTREAM.md).
 
 [#4125]: https://github.com/armaxri/termiHub/issues/4125
 [#4461]: https://github.com/armaxri/termiHub/issues/4461
+[#4923]: https://github.com/armaxri/termiHub/issues/4923
 
 ---
 
