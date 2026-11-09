@@ -17,6 +17,10 @@
 #    with shell integration on -- native_05b/05c/05d of core/tests/ssh_native.rs
 #    (TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash). No agent is deployed: the
 #    agent's deploy path supports only a cmd.exe / PowerShell DefaultShell.
+# 4. `powershell` also runs native_05b/05c/05d/05h of core/tests/ssh_native.rs
+#    first (#5044): with the opt-in hook on, the login banner stays and no
+#    setup text is left on screen -- under Windows PowerShell 5.1, then under
+#    PowerShell 7 (DefaultShell switched to pwsh.exe and back).
 #
 # Steps: build the agent, set HKLM\SOFTWARE\OpenSSH\DefaultShell, bring up the
 # native sshd fixture (native-sshd-fixture.sh, which hands over to its
@@ -38,7 +42,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -84,6 +88,14 @@ CORE_TESTS=(
   native_05c_first_command_runs_with_shell_integration_on
   native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
   native_05g_windows_host_is_not_followed_without_the_hook
+)
+# The PowerShell DefaultShell leg's core SSH tests (#5044), run under Windows
+# PowerShell 5.1 and then, when the runner has it, PowerShell 7.
+PS_CORE_TESTS=(
+  native_05b_remote_shell_probe_detects_the_login_shell
+  native_05c_first_command_runs_with_shell_integration_on
+  native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
+  native_05h_powershell_hook_keeps_the_login_banner
 )
 OPENSSH_KEY='HKLM:\SOFTWARE\OpenSSH'
 cd "$REPO_ROOT"
@@ -276,6 +288,35 @@ echo "OpenSSH DefaultShell: ${current_shell:-<unset> (cmd.exe)}"
 exports="$("$FIXTURE" up --agent-binary "$AGENT_BIN")" ||
   die "native sshd fixture failed to come up (its log is above)"
 eval "$exports"
+
+# ---- PowerShell DefaultShell (#5044): the opt-in hook keeps the banner ----
+# Core SSH tests with shell integration on, as Windows PowerShell 5.1 and as
+# PowerShell 7 (sshd reads the DefaultShell per session); the DefaultShell is
+# set back to Windows PowerShell for the desktop test after.
+run_powershell_core_tests() {
+  # $1: the TERMIHUB_NATIVE_SSHD_LOGIN_SHELL value, `powershell` or `pwsh`;
+  # the rest: the script's extra cargo test args.
+  local login_shell="$1" ps_log
+  shift
+  ps_log="$(mktemp)"
+  TERMIHUB_NATIVE_SSHD_LOGIN_SHELL="$login_shell" TERMIHUB_TEST_SSH_TRACE=1 \
+    cargo test -p termihub-core --features ssh --test "$CORE_SUITE" -- --test-threads=1 \
+    --show-output "${PS_CORE_TESTS[@]}" "$@" 2>&1 | tee "$ps_log"
+  require_passed "$ps_log" "${PS_CORE_TESTS[@]}"
+}
+if [ "$DEFAULT_SHELL" = powershell ]; then
+  run_powershell_core_tests powershell "$@"
+  pwsh_exe="$(run_pwsh "(Get-Command pwsh.exe -ErrorAction Stop).Source")" || pwsh_exe=""
+  pwsh_exe="${pwsh_exe//[$'\r\n']/}"
+  if [ -n "$pwsh_exe" ]; then
+    set_default_shell "$pwsh_exe" || die "could not set the OpenSSH DefaultShell to $pwsh_exe"
+    echo "OpenSSH DefaultShell: $(show_default_shell)"
+    run_powershell_core_tests pwsh "$@"
+    set_default_shell powershell || die "could not set the OpenSSH DefaultShell back to powershell"
+  else
+    echo "::warning::no pwsh.exe on this runner; PowerShell 7 not graded (#5044)"
+  fi
+fi
 
 export TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL="$DEFAULT_SHELL"
 export TERMIHUB_REQUIRE_WINDOWS_SSH=1
