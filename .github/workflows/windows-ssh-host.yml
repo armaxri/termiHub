@@ -20,6 +20,9 @@ name: Windows SSH Host
 # The `powershell` leg (#5044) also runs those core tests with Windows
 # PowerShell 5.1 and PowerShell 7 as the DefaultShell: with the opt-in hook on,
 # the login banner must stay and no setup text may be left on screen.
+# The `cmd` leg (#5109) runs the core cmd.exe hook grade first: with the hook
+# on, a `cd` is reported and the setup leaves nothing on screen or in
+# `doskey /history`.
 #
 # The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
 # Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd

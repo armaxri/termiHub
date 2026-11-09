@@ -6,6 +6,7 @@
 
 pub mod agent_forward;
 pub mod auth;
+pub mod cmd_hook;
 pub mod connector;
 pub mod exec;
 mod file_browser;
@@ -637,12 +638,14 @@ impl ConnectionType for Ssh {
                                 "same SSH connection, and nothing is typed into your shell. That ",
                                 "needs a Unix host with /proc (Linux) or lsof (macOS, BSD) and a ",
                                 "login shell other than PowerShell.\n\n",
-                                "On a Windows host whose OpenSSH default shell is PowerShell or ",
-                                "Git Bash, and with a PowerShell login shell on any host, the file ",
+                                "On a Windows host (OpenSSH default shell cmd.exe, PowerShell or ",
+                                "Git Bash), and with a PowerShell login shell on any host, the file ",
                                 "browser follows cd only with this turned on: PowerShell's location ",
                                 "(Set-Location) is not the directory the operating system sees, and ",
                                 "Windows offers no safe way to read another shell's directory from ",
-                                "outside it. A cmd.exe default shell is not followed over SSH.\n\n",
+                                "outside it. For cmd.exe the hook adds the marks to your PROMPT; ",
+                                "termiHub erases the typed line from the screen and clears it from ",
+                                "the console's command history (Alt+F7), so nothing else changes.\n\n",
                                 "Turn this on for command marks — jumping between prompts, ",
                                 "selecting or copying a command's output, and the success/failure ",
                                 "marker next to each finished command. termiHub first asks the ",
@@ -792,9 +795,15 @@ impl ConnectionType for Ssh {
 
         // Inject the shell-integration (OSC 7 CWD tracking) setup when enabled,
         // in the detected shell's own syntax and line ending — nothing for
-        // cmd.exe or an undetected shell (#4143). Skipped when the connector
-        // already typed it, sequenced with its other setup (#4604).
-        if shell_integration && !handle.integration_typed {
+        // an undetected shell (#4143). Skipped when the connector
+        // already typed it, sequenced with its other setup (#4604). Never for
+        // cmd.exe: its hook must be joined at the first prompt so it erases
+        // its echo and leaves no history entry, which only the connector's
+        // gate does (#5109).
+        if shell_integration
+            && !handle.integration_typed
+            && handle.remote_shell != remote_shell::RemoteShell::Cmd
+        {
             match remote_shell::integration_setup_line(handle.remote_shell) {
                 Some(cmd) => {
                     if let Err(e) = (handle.write)(cmd.as_bytes()) {
@@ -1423,7 +1432,8 @@ mod tests {
             "On a Windows host",
             "PowerShell login shell",
             "Set-Location",
-            "cmd.exe default shell is not followed",
+            "cmd.exe, PowerShell or",
+            "command history (Alt+F7)",
         ] {
             assert!(help.contains(needle), "{needle:?} missing from {help:?}");
         }
