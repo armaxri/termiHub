@@ -81,7 +81,9 @@ Packaging differences from the crates.io release (not code deltas):
 and with the `unftp-sbe-fs` dev-dependency restored from crates.io (the
 normalisation strips upstream's path dependency), plus a
 `[package.metadata.cargo-machete]` ignore for `tracing` (used only through the
-`#[tracing_attributes::instrument]` expansion). Upstream's `CHANGELOG.md`,
+`#[tracing_attributes::instrument]` expansion) and `rustls-webpki` (never named
+in source; upstream declares it as the minimum patched verifier for
+RUSTSEC-2026-0382, and `rustls` uses it). Upstream's `CHANGELOG.md`,
 `AGENTS.md`, `CONTRIBUTING.md`, `RELEASE-CHECKLIST.md`, `examples/`, `logo.png`,
 `Makefile` and CI files are not vendored.
 
