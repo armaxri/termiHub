@@ -597,3 +597,42 @@ async fn system_bash_without_the_hook_sees_a_resize_made_during_a_command() {
     }
     panic!("{shell_name} without the hook must see the resize made during a command: {last:?}");
 }
+
+/// The re-sent resize goes to bash only once it reads again: a program that
+/// still owns the terminal (a full-screen editor, say) gets the kernel's one
+/// `SIGWINCH` and nothing more from termiHub (#5096).
+#[tokio::test]
+#[serial(local_pty)]
+async fn a_running_command_gets_one_sigwinch_per_resize_without_the_hook() {
+    let shell_name = "/bin/bash";
+    if !Path::new(shell_name).exists() {
+        eprintln!("{shell_name} not installed — skipping");
+        return;
+    }
+    let mut session = Session::start_with(shell_name, false).await;
+    let at_prompt = |out: &str| out.trim_end_matches(' ').ends_with('$');
+    session.read_until("the first prompt", at_prompt).await;
+    let start = session.output.len();
+    // `sleep` in the background so `wait` returns to run the trap at once.
+    session
+        .shell
+        .write(
+            b"sh -c 'trap \"echo TH_W\" WINCH; echo TH_RUN_$((40+2)); \
+              for i in 1 2 3 4 5 6 7 8; do sleep 0.25 & wait $!; done; echo TH_DONE_$((1+1))'\r",
+        )
+        .expect("write failed");
+    session
+        .read_until("the running command", |out| {
+            out[start..].contains("TH_RUN_42")
+        })
+        .await;
+    session.shell.resize(85, 24).expect("resize failed");
+    session
+        .read_until("the end of the command", |out| {
+            out[start..].contains("TH_DONE_2")
+        })
+        .await;
+    let seen = session.output[start..].matches("TH_W\r\n").count();
+    assert_eq!(seen, 1, "one resize, one SIGWINCH: {:?}", &session.output[start..]);
+    session.close().await;
+}
