@@ -65,6 +65,12 @@ _LONG_LINES = (
 )
 
 
+def _layout(m: dict[str, Any]) -> dict[str, Any]:
+    """The geometry part of a measurement, for a readable failure message."""
+    keys = ("grid", "proposed", "cell", "charCell", "container", "paint", "screenRect", "page")
+    return {k: m.get(k) for k in keys}
+
+
 class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, SystemTest):
     def reset_before_rerun(self) -> None:
         self.dismiss_modals("rename-dialog-cancel", "zoom-overlay")
@@ -168,7 +174,7 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
         self.run_command(_LONG_LINES)
         self.wait_for_output("x" * 60)
         self._settled(tab)
-        m = self._with_thumb(tab)
+        before = m = self._with_thumb(tab)
         bar, paint = m["scrollbar"], m["paint"]
         assert bar["thumbLeft"] >= paint["textRight"] - 0.5, f"thumb over text: {bar} {paint}"
         self._set_hscroll(tab, True)
@@ -187,7 +193,9 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
             # the engine lays it out (classic: it shrinks the client area) or
             # overlays it (GTK overlay scrollbars: client area unchanged).
             strip = paint["viewportClientBottom"] + paint["hscrollBarHeight"] - paint["rowsBottom"]
-            assert strip >= HSCROLL_BAR_PX - 0.5, f"the horizontal bar covers the last row: {paint}"
+            assert strip >= HSCROLL_BAR_PX - 0.5, (
+                f"the horizontal bar covers the last row: {_layout(m)}; before: {_layout(before)}"
+            )
         finally:
             self._set_hscroll(tab, False)
         self.open_file_browser()
