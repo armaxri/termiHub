@@ -131,7 +131,7 @@ install_cross() {
             "install cross by hand (scripts/setup-agent-cross.sh)" >&2
         return 1
     fi
-    local bin_dir tmp url CROSS_VERSION CROSS_SHA256
+    local bin_dir tmp CROSS_VERSION CROSS_SHA256
     CROSS_VERSION="$(sed -n 's/^version=//p' "$CROSS_PIN_FILE" | tr -d '[:space:]')"
     CROSS_SHA256="$(sed -n 's/^sha256=//p' "$CROSS_PIN_FILE" | tr -d '[:space:]')"
     if ! [[ "$CROSS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
@@ -142,9 +142,10 @@ install_cross() {
     bin_dir="${CARGO_HOME:-$HOME/.cargo}/bin"
     mkdir -p "$bin_dir"
     tmp="$(mktemp -d)"
-    url="https://github.com/cross-rs/cross/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
     echo "Installing cross-rs v$CROSS_VERSION into $bin_dir"
-    curl -fsSL --retry 3 "$url" -o "$tmp/cross.tar.gz"
+    # Authenticated when GH_TOKEN/GITHUB_TOKEN is set, anonymous otherwise (#5105).
+    "$REPO_ROOT/scripts/internal/fetch-github-release-asset.sh" cross-rs/cross \
+        "v${CROSS_VERSION}" cross-x86_64-unknown-linux-gnu.tar.gz "$tmp/cross.tar.gz"
     echo "${CROSS_SHA256}  $tmp/cross.tar.gz" | sha256sum -c - >/dev/null
     tar xzf "$tmp/cross.tar.gz" -C "$bin_dir"
     rm -rf "$tmp"

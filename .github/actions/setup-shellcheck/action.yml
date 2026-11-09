@@ -1,0 +1,40 @@
+name: "Setup shellcheck (pinned version)"
+description: >-
+  Install the ONE shellcheck release CI lints with: the Shell Script Quality job
+  and actionlint's embedded shellcheck both use it, so the two never disagree.
+  The version and the SHA256 of its x86_64 Linux tarball are pinned below and
+  the download is verified before it is extracted (CI-004). The download goes
+  through scripts/internal/fetch-github-release-asset.sh with the job token, so
+  it does not depend on GitHub's anonymous download pool (#5105). Needs a
+  checkout of this repo and an x86_64 Linux runner. Bump version and sha256
+  together, deliberately, as a chore (a new release can add warnings).
+
+outputs:
+  path:
+    description: "Absolute path of the verified shellcheck binary"
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install pinned shellcheck
+      id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SHELLCHECK_VERSION: "0.11.0"
+        SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+      run: |
+        set -euo pipefail
+        bin="$RUNNER_TEMP/shellcheck-bin"
+        mkdir -p "$bin"
+        sc="$RUNNER_TEMP/shellcheck.tar.xz"
+        asset="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+        "$GITHUB_ACTION_PATH/../../../scripts/internal/fetch-github-release-asset.sh" \
+          koalaman/shellcheck "v${SHELLCHECK_VERSION}" "$asset" "$sc"
+        echo "${SHELLCHECK_SHA256}  $sc" | sha256sum -c -
+        tar xJf "$sc" -C "$bin" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+        rm -f "$sc"
+        "$bin/shellcheck" --version
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "path=$bin/shellcheck" >> "$GITHUB_OUTPUT"

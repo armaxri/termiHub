@@ -94,16 +94,17 @@ installed_cross_version() {
 }
 
 install_cross_tarball() {
-    local bin_dir tmp url
+    local bin_dir tmp
     bin_dir="${CARGO_HOME:-$HOME/.cargo}/bin"
     mkdir -p "$bin_dir"
     tmp="$(mktemp -d)"
-    url="$CROSS_GIT_URL/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
     echo "  Downloading cross-rs v$CROSS_VERSION (SHA256-verified) into $bin_dir"
-    curl -fsSL --retry 3 "$url" -o "$tmp/cross.tar.gz"
+    # Authenticated when GH_TOKEN/GITHUB_TOKEN is set, anonymous otherwise (#5105).
+    "$REPO_ROOT/scripts/internal/fetch-github-release-asset.sh" cross-rs/cross \
+        "v${CROSS_VERSION}" cross-x86_64-unknown-linux-gnu.tar.gz "$tmp/cross.tar.gz"
     if ! echo "${CROSS_SHA256}  $tmp/cross.tar.gz" | sha256sum -c - >/dev/null; then
         rm -rf "$tmp"
-        echo "  ERROR: SHA256 mismatch for $url" >&2
+        echo "  ERROR: SHA256 mismatch for cross-rs v$CROSS_VERSION" >&2
         exit 1
     fi
     tar xzf "$tmp/cross.tar.gz" -C "$bin_dir"

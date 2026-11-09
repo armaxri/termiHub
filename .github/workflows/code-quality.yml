@@ -815,12 +815,44 @@ jobs:
         with:
           persist-credentials: false
 
+      # Pinned, SHA256-verified, token-authenticated install (#5105). This job
+      # used ludeeus/action-shellcheck, whose anonymous `curl -Lso` download has
+      # no retry and no auth, so GitHub's anonymous-pool 504s fed tar an error
+      # page. The same composite action feeds actionlint's shellcheck below.
+      - name: Install pinned shellcheck
+        uses: ./.github/actions/setup-shellcheck
+
+      # The same file set ludeeus/action-shellcheck 2.0.0 scanned (scandir ".",
+      # ignore_paths node_modules target graft): shell files by name, plus
+      # extension-less executables with an sh/bash/ksh shebang. Each file is
+      # checked separately at severity warning, gcc format; any finding fails.
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
-        with:
-          severity: warning
-          version: v0.11.0
-          ignore_paths: node_modules target graft
+        run: |
+          set -euo pipefail
+          excludes=(! -path '*./.git/*' ! -path '*.go' ! -path '*/mvnw')
+          for p in node_modules target graft; do
+            excludes+=(! -path "*./$p/*" ! -path "*/$p/*" ! -path "$p")
+          done
+          names=(-name '*.bash' -o -name '.bashrc' -o -name 'bashrc' -o -name '.bash_aliases'
+            -o -name '.bash_completion' -o -name '.bash_login' -o -name '.bash_logout'
+            -o -name '.bash_profile' -o -name 'bash_profile' -o -name '*.ksh'
+            -o -name 'suid_profile' -o -name '*.zsh' -o -name '.zlogin' -o -name 'zlogin'
+            -o -name '.zlogout' -o -name 'zlogout' -o -name '.zprofile' -o -name 'zprofile'
+            -o -name '.zsenv' -o -name 'zsenv' -o -name '.zshrc' -o -name 'zshrc'
+            -o -name '*.sh' -o -path '*/.profile' -o -path '*/profile' -o -name '*.shlib')
+          files=()
+          while IFS= read -r -d '' f; do
+            files+=("$f")
+          done < <(find . "${excludes[@]}" -type f '(' "${names[@]}" ')' -print0)
+          while IFS= read -r -d '' f; do
+            head -n1 "$f" | grep -Eqs '^#! */[^ ]*/(env *)?[abk]*sh' && files+=("$f")
+          done < <(find . "${excludes[@]}" -type f ! -name '*.*' -perm /111 -print0)
+          status=0
+          for f in "${files[@]}"; do
+            shellcheck -S warning --format=gcc "$f" || status=$?
+          done
+          echo "shellcheck: checked ${#files[@]} files"
+          exit "$status"
 
       # Cross-platform script-parity gate (TOOL-012 / WA-CI-029). ShellCheck
       # only sees the .sh half; nothing enforced that each user-facing
@@ -854,7 +886,8 @@ jobs:
   # Both binaries are pinned and SHA256-verified (same rationale as the
   # shellcheck pin above and the cross-rs pin in .github/cross-version, CI-004): a floating
   # version would let a new release add a finding that reds every workflow PR.
-  # shellcheck matches the Shell Script Quality job's v0.11.0. Fix findings; an
+  # shellcheck comes from .github/actions/setup-shellcheck, the same pin the
+  # Shell Script Quality job uses. Fix findings; an
   # inline `# shellcheck disable=` needs a written reason next to it.
   actionlint:
     name: Workflow Lint (actionlint)
@@ -868,36 +901,37 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned actionlint and shellcheck
+      - name: Install pinned shellcheck
+        id: shellcheck
+        uses: ./.github/actions/setup-shellcheck
+
+      - name: Install pinned actionlint
         env:
+          # Authenticated release download (#5105): the anonymous pool 504'd.
+          GH_TOKEN: ${{ github.token }}
           ACTIONLINT_VERSION: "1.7.12"
           ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-          SHELLCHECK_VERSION: "0.11.0"
-          SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
         run: |
           set -euo pipefail
           bin="$RUNNER_TEMP/lint-bin"
           mkdir -p "$bin"
           al="$RUNNER_TEMP/actionlint.tar.gz"
-          curl -fsSL -o "$al" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          ./scripts/internal/fetch-github-release-asset.sh rhysd/actionlint "v${ACTIONLINT_VERSION}" \
+            "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" "$al"
           echo "${ACTIONLINT_SHA256}  $al" | sha256sum -c -
           tar xzf "$al" -C "$bin" actionlint
-          sc="$RUNNER_TEMP/shellcheck.tar.xz"
-          curl -fsSL -o "$sc" \
-            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          echo "${SHELLCHECK_SHA256}  $sc" | sha256sum -c -
-          tar xJf "$sc" -C "$bin" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           echo "$bin" >> "$GITHUB_PATH"
 
       - name: Run actionlint
+        env:
+          SHELLCHECK_BIN: ${{ steps.shellcheck.outputs.path }}
         run: |
           set -euo pipefail
           shellcheck --version
           actionlint -version
           # -shellcheck pins the binary we verified above rather than whatever
           # the runner image has on PATH first.
-          actionlint -color -shellcheck "$RUNNER_TEMP/lint-bin/shellcheck"
+          actionlint -color -shellcheck "$SHELLCHECK_BIN"
 
       # Fails if .github/cross-version is malformed or a workflow / composite
       # action / script pins or downloads cross-rs itself instead of reading it
