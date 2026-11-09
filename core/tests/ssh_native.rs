@@ -251,12 +251,16 @@ async fn native_05_interactive_shell_session_round_trips() {
 /// or `fish` / `fish3` likewise for a fish 4+ / fish 3.x login shell (#5016).
 /// On Windows, `TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash` says the lane set
 /// the OpenSSH `DefaultShell` to Git Bash (#5015; the Windows SSH Host lane's
-/// `bash` leg, `scripts/internal/run-windows-ssh-host-suite.sh bash`).
+/// `bash` leg, `scripts/internal/run-windows-ssh-host-suite.sh bash`), and
+/// `powershell` / `pwsh` that it set Windows PowerShell 5.1 / PowerShell 7
+/// (the `powershell` leg, #5044).
 fn fixture_shell() -> RemoteShell {
     let login_shell = std::env::var("TERMIHUB_NATIVE_SSHD_LOGIN_SHELL");
     if cfg!(windows) {
         return match login_shell.as_deref() {
             Ok("gitbash") => RemoteShell::WindowsPosix,
+            // #5044: Windows PowerShell 5.1 or PowerShell 7 as DefaultShell.
+            Ok("powershell" | "pwsh") => RemoteShell::PowerShell,
             _ => RemoteShell::Cmd,
         };
     }
@@ -277,7 +281,7 @@ fn fixture_shell() -> RemoteShell {
 /// [`SHELL_LINE`] / [`SHELL_EXPECT`] in the fixture login shell's syntax.
 fn first_command(shell: RemoteShell) -> (&'static str, &'static str) {
     match shell {
-        RemoteShell::UnixPowerShell => (
+        RemoteShell::UnixPowerShell | RemoteShell::PowerShell => (
             "Write-Output ('native-' + (40+2) + '-ok')\r",
             "native-42-ok",
         ),
@@ -432,7 +436,9 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
 
     let line = match shell {
         RemoteShell::Cmd => "echo [%TH_4147_VAR%]\r",
-        RemoteShell::UnixPowerShell => "Write-Output ('[' + $env:TH_4147_VAR + ']')\r",
+        RemoteShell::UnixPowerShell | RemoteShell::PowerShell => {
+            "Write-Output ('[' + $env:TH_4147_VAR + ']')\r"
+        }
         _ => "echo \"[$TH_4147_VAR]\"\n",
     };
     // Neither the setup line's echo nor the command's echo contains this.
@@ -615,6 +621,303 @@ async fn native_05g_windows_host_is_not_followed_without_the_hook() {
         );
     }
     ssh.disconnect().await.expect("disconnect cleanly");
+}
+
+/// #5044: with the opt-in hook on, a Windows PowerShell host's login banner
+/// stays and none of the typed setup is left on screen. The setup used to end
+/// with `Clear-Host`; it now erases only its own echo rows. ConPTY streams
+/// the echo before the erase, so the screen is graded — the raw stream
+/// replayed through a small terminal model — plus the raw stream for any
+/// screen clear after the banner. The `powershell` leg of the Windows SSH
+/// Host lane runs it under Windows PowerShell 5.1 and PowerShell 7.
+#[tokio::test]
+async fn native_05h_powershell_hook_keeps_the_login_banner() {
+    let sshd = require_native_sshd!();
+    let banner = match std::env::var("TERMIHUB_NATIVE_SSHD_LOGIN_SHELL").as_deref() {
+        Ok("powershell") if cfg!(windows) => "Windows PowerShell",
+        Ok("pwsh") if cfg!(windows) => "PowerShell 7",
+        _ => {
+            eprintln!("this grade is for a Windows PowerShell SSH host; skipping");
+            return;
+        }
+    };
+    let (cols, rows) = (100usize, 60usize);
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    settings["cols"] = serde_json::json!(cols);
+    settings["rows"] = serde_json::json!(rows);
+    // A configured env var is typed with the hook (#4147) and must not stay
+    // on screen either.
+    settings["env"] = serde_json::json!({ "TH_5044_VAR": "th5044value" });
+    ssh.connect(settings).await.expect("shell session connects");
+
+    let line = "Write-Output ('[' + $env:TH_5044_VAR + '-' + (40+2) + ']')\r";
+    let (done, mut seen) = type_and_wait(&mut ssh, line, |seen| {
+        seen.contains("[th5044value-42]") && seen.contains("\x1b]7;file://")
+    })
+    .await;
+    assert!(done, "the first command did not run: {seen:?}");
+    // Let the prompt after it render.
+    let mut rx = ssh.subscribe_output();
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(chunk) = rx.recv().await {
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    })
+    .await;
+
+    let at = seen
+        .find(banner)
+        .unwrap_or_else(|| panic!("no {banner:?} banner in the stream: {seen:?}"));
+    for clear in ["\x1b[2J", "\x1b[3J", "\x1bc"] {
+        assert!(
+            !seen[at..].contains(clear),
+            "{clear:?} cleared the screen after the banner: {seen:?}"
+        );
+    }
+    let text = screen::render(seen.as_bytes(), cols, rows);
+    eprintln!("---- rendered terminal ----\n{text}\n---------------------------");
+    assert!(text.contains(banner), "the banner is gone: {text}");
+    assert!(
+        text.contains("[th5044value-42]"),
+        "no command output: {text}"
+    );
+    for leak in [
+        "__th_",
+        "th5044value'",
+        "TH_5044_VAR=",
+        "PSConsoleReadLine",
+        "133;",
+    ] {
+        assert!(
+            !text.contains(leak),
+            "setup text {leak:?} left on screen: {text}"
+        );
+    }
+    // Only the user's own command line shows, once.
+    assert_eq!(text.matches("Write-Output").count(), 1, "{text}");
+    ssh.disconnect().await.expect("disconnect cleanly");
+}
+
+/// A minimal terminal model to grade what a raw stream leaves on screen
+/// (#5044): printable text, CR / LF / BS / TAB, autowrap, scrolling (into
+/// a scrollback that is kept), and the CSI cursor / erase / insert / delete
+/// sequences ConPTY emits. OSC strings and other escapes are skipped.
+mod screen {
+    struct Term {
+        cols: usize,
+        rows: usize,
+        grid: Vec<Vec<char>>,
+        scrollback: Vec<Vec<char>>,
+        x: usize,
+        y: usize,
+        wrap_pending: bool,
+        saved: (usize, usize),
+    }
+
+    impl Term {
+        fn line_feed(&mut self) {
+            if self.y + 1 == self.rows {
+                let top = self.grid.remove(0);
+                self.scrollback.push(top);
+                self.grid.push(vec![' '; self.cols]);
+            } else {
+                self.y += 1;
+            }
+        }
+
+        fn put(&mut self, c: char) {
+            if self.wrap_pending {
+                self.x = 0;
+                self.line_feed();
+                self.wrap_pending = false;
+            }
+            self.grid[self.y][self.x] = c;
+            if self.x + 1 == self.cols {
+                self.wrap_pending = true;
+            } else {
+                self.x += 1;
+            }
+        }
+
+        fn csi(&mut self, params: &str, fin: char) {
+            let private = params.starts_with(['?', '>', '=']);
+            let nums: Vec<usize> = params
+                .trim_start_matches(['?', '>', '='])
+                .split(';')
+                .map(|p| p.parse().unwrap_or(0))
+                .collect();
+            let n = |i: usize| nums.get(i).copied().filter(|&v| v > 0).unwrap_or(1);
+            let raw = |i: usize| nums.get(i).copied().unwrap_or(0);
+            if private {
+                return;
+            }
+            let (cols, rows) = (self.cols, self.rows);
+            self.wrap_pending = false;
+            match fin {
+                'A' => self.y = self.y.saturating_sub(n(0)),
+                'B' | 'e' => self.y = (self.y + n(0)).min(rows - 1),
+                'C' | 'a' => self.x = (self.x + n(0)).min(cols - 1),
+                'D' => self.x = self.x.saturating_sub(n(0)),
+                'E' => (self.x, self.y) = (0, (self.y + n(0)).min(rows - 1)),
+                'F' => (self.x, self.y) = (0, self.y.saturating_sub(n(0))),
+                'G' | '`' => self.x = (n(0) - 1).min(cols - 1),
+                'd' => self.y = (n(0) - 1).min(rows - 1),
+                'H' | 'f' => {
+                    self.y = (n(0) - 1).min(rows - 1);
+                    self.x = (n(1) - 1).min(cols - 1);
+                }
+                'J' => {
+                    let (x, y) = (self.x, self.y);
+                    let rows_to_clear: Vec<usize> = match raw(0) {
+                        0 => {
+                            self.grid[y][x..].fill(' ');
+                            (y + 1..rows).collect()
+                        }
+                        1 => {
+                            self.grid[y][..=x].fill(' ');
+                            (0..y).collect()
+                        }
+                        _ => (0..rows).collect(),
+                    };
+                    for r in rows_to_clear {
+                        self.grid[r].fill(' ');
+                    }
+                }
+                'K' => {
+                    let (x, row) = (self.x, &mut self.grid[self.y]);
+                    match raw(0) {
+                        0 => row[x..].fill(' '),
+                        1 => row[..=x].fill(' '),
+                        _ => row.fill(' '),
+                    }
+                }
+                'X' => {
+                    let end = (self.x + n(0)).min(cols);
+                    self.grid[self.y][self.x..end].fill(' ');
+                }
+                '@' => {
+                    let row = &mut self.grid[self.y];
+                    for _ in 0..n(0).min(cols - self.x) {
+                        row.insert(self.x, ' ');
+                        row.pop();
+                    }
+                }
+                'P' => {
+                    let row = &mut self.grid[self.y];
+                    for _ in 0..n(0).min(cols - self.x) {
+                        row.remove(self.x);
+                        row.push(' ');
+                    }
+                }
+                'L' => {
+                    for _ in 0..n(0).min(rows - self.y) {
+                        self.grid.insert(self.y, vec![' '; cols]);
+                        self.grid.pop();
+                    }
+                }
+                'M' => {
+                    for _ in 0..n(0).min(rows - self.y) {
+                        self.grid.remove(self.y);
+                        self.grid.push(vec![' '; cols]);
+                    }
+                }
+                'S' => {
+                    for _ in 0..n(0) {
+                        let top = self.grid.remove(0);
+                        self.scrollback.push(top);
+                        self.grid.push(vec![' '; cols]);
+                    }
+                }
+                's' => self.saved = (self.x, self.y),
+                'u' => (self.x, self.y) = self.saved,
+                _ => {} // SGR, modes, margins, reports: no visible text.
+            }
+        }
+    }
+
+    /// Replay `data` on a `cols` x `rows` terminal; the scrollback and the
+    /// screen as text, one line per row, trailing blanks trimmed.
+    pub fn render(data: &[u8], cols: usize, rows: usize) -> String {
+        let mut t = Term {
+            cols,
+            rows,
+            grid: vec![vec![' '; cols]; rows],
+            scrollback: Vec::new(),
+            x: 0,
+            y: 0,
+            wrap_pending: false,
+            saved: (0, 0),
+        };
+        let text = String::from_utf8_lossy(data);
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\x1b' => match chars.next() {
+                    Some('[') => {
+                        let mut params = String::new();
+                        while let Some(&p) = chars.peek() {
+                            if ('\x20'..='\x3f').contains(&p) {
+                                params.push(p);
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        if let Some(fin) = chars.next() {
+                            t.csi(&params, fin);
+                        }
+                    }
+                    Some(']' | 'P' | '_' | '^') => {
+                        // A string, ended by BEL or ST (ESC \).
+                        while let Some(s) = chars.next() {
+                            if s == '\x07' || (s == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                                break;
+                            }
+                        }
+                    }
+                    Some('7') => t.saved = (t.x, t.y),
+                    Some('8') => (t.x, t.y) = t.saved,
+                    Some('(' | ')' | '#') => {
+                        chars.next();
+                    }
+                    _ => {}
+                },
+                '\r' => {
+                    t.x = 0;
+                    t.wrap_pending = false;
+                }
+                '\n' | '\x0b' | '\x0c' => {
+                    t.wrap_pending = false;
+                    t.line_feed();
+                }
+                '\x08' => {
+                    t.wrap_pending = false;
+                    t.x = t.x.saturating_sub(1);
+                }
+                '\t' => {
+                    t.x = ((t.x / 8 + 1) * 8).min(cols - 1);
+                }
+                c if c < ' ' || c == '\x7f' => {}
+                c => t.put(c),
+            }
+        }
+        t.scrollback
+            .iter()
+            .chain(t.grid.iter())
+            .map(|r| r.iter().collect::<String>().trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn model_follows_wrap_cursor_moves_and_erases() {
+        let out = render(b"banner\r\nPS> abcdefgh\r\nnext\x1b[2A\r\x1b[J$ ", 8, 5);
+        assert_eq!(out.trim_end(), "banner\n$");
+        assert_eq!(render(b"ab\x1b[1;1Hx\x1b[K", 4, 2).trim_end(), "x");
+        assert_eq!(render(b"a\x1b]0;title\x07b", 4, 1), "ab");
+    }
 }
 
 /// The initial command's hook-free cue on a real sshd (#5029): a default

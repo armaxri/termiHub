@@ -500,6 +500,19 @@ impl SshConnector for RusshSshConnector {
             };
             setup.push(("session setup", joined));
         }
+        // A PowerShell host with the (opt-in) hook types its setup as one
+        // line too, which ends by erasing its own echo (#5044): ConPTY must
+        // see every byte, so the shell takes the echo off the screen itself,
+        // leaving the rows above (the login banner) alone.
+        if remote_shell::erases_setup_echo(remote_shell, integration_typed) {
+            let mut lines: Vec<String> = setup
+                .drain(..)
+                .filter(|(what, _)| *what != "shell integration")
+                .map(|(_, line)| line)
+                .collect();
+            lines.extend(remote_shell::powershell_hook_line());
+            setup.push(("session setup", remote_shell::join_powershell_setup(&lines)));
+        }
         let hidden_setup: Option<Vec<u8>> = hide_echo
             .then(|| setup.first().map(|(_, line)| line.clone().into_bytes()))
             .flatten();

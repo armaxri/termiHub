@@ -17,6 +17,9 @@ name: Windows SSH Host
 # core SSH backend's shell-probe / shell-integration tests of
 # core/tests/ssh_native.rs against it: the host must classify as a POSIX shell
 # on Windows, whose setup echo is never filtered (no agent deploy there).
+# The `powershell` leg (#5044) also runs those core tests with Windows
+# PowerShell 5.1 and PowerShell 7 as the DefaultShell: with the opt-in hook on,
+# the login banner must stay and no setup text may be left on screen.
 #
 # The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
 # Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd
