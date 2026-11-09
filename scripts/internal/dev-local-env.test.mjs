@@ -18,7 +18,7 @@ const BASES = Object.fromEntries(
   [...readFileSync(SCRIPT, "utf8").matchAll(/^_thdl_port (\w+)\s+(\d+)/gm)].map((m) => [
     m[1],
     Number(m[2]),
-  ]),
+  ])
 );
 
 const hasShell = (shell) => spawnSync(shell, ["-c", "exit 0"], { stdio: "ignore" }).status === 0;
@@ -29,8 +29,16 @@ const hasShell = (shell) => spawnSync(shell, ["-c", "exit 0"], { stdio: "ignore"
  * whose path handling makes this harness unreliable, so it is skipped there.
  */
 const SHELLS = [
-  { name: "bash", argv: ["bash", "-c"], available: process.platform !== "win32" && hasShell("bash") },
-  { name: "zsh", argv: ["zsh", "-f", "-c"], available: process.platform !== "win32" && hasShell("zsh") },
+  {
+    name: "bash",
+    argv: ["bash", "-c"],
+    available: process.platform !== "win32" && hasShell("bash"),
+  },
+  {
+    name: "zsh",
+    argv: ["zsh", "-f", "-c"],
+    available: process.platform !== "win32" && hasShell("zsh"),
+  },
 ];
 
 /** A clean env: nothing the resolver reads may leak in from the test runner. */
@@ -53,7 +61,7 @@ function source(shell, cwd, extraEnv) {
     "env",
     "echo __THDL_LEFTOVERS__",
     // `typeset -f`/`declare -F` differ per shell; `type` works in both.
-    "for n in _thdl_read _thdl_port; do type \"$n\" >/dev/null 2>&1 && echo \"fn:$n\"; done",
+    'for n in _thdl_read _thdl_port; do type "$n" >/dev/null 2>&1 && echo "fn:$n"; done',
     "set | grep -E '^_thdl_[a-z_]+=' || true",
   ].join("\n");
   const res = spawnSync(shell.argv[0], [...shell.argv.slice(1), probe, "probe", SCRIPT], {
@@ -91,8 +99,7 @@ function expected(offset, project) {
 }
 
 /** The subset of `env` the resolver owns. */
-const resolved = (env) =>
-  Object.fromEntries(Object.keys(expected(0, "x")).map((k) => [k, env[k]]));
+const resolved = (env) => Object.fromEntries(Object.keys(expected(0, "x")).map((k) => [k, env[k]]));
 
 let tmp;
 
@@ -103,7 +110,7 @@ function checkout(name, devLocal) {
   if (devLocal !== undefined) {
     writeFileSync(
       path.join(dir, "dev.local.json"),
-      typeof devLocal === "string" ? devLocal : JSON.stringify(devLocal, null, 2),
+      typeof devLocal === "string" ? devLocal : JSON.stringify(devLocal, null, 2)
     );
   }
   return dir;
