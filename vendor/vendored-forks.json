@@ -28,7 +28,7 @@
       "base_commit": "f8ac0ee4915e8e1e1adb8880a0716761b91281f6",
       "base_commit_note": "upstream publishes no git tags; this is the commit that bumped Cargo.toml to 0.5.3",
       "reviewed_version": "0.6.0",
-      "reviewed_commit": "99ed1a28553c7594212adf30b9517d57fe46558d",
+      "reviewed_commit": "45f6d3688ec77ec7f4976dc313ce28ed82a375a5",
       "deltas": [
         {
           "summary": "VeNCrypt 0.2 (RFB security type 19) negotiation over rustls behind the vencrypt feature",
