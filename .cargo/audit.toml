@@ -5,7 +5,7 @@
 # docs/supply-chain.md -> "Accepted risks (Rust advisories and pre-release crates)".
 # Real vulnerabilities and yanked crates that are not listed here still fail the
 # Security Audit gate. Keep this list in sync with that section and with the
-# `[advisories] ignore` list in deny.toml. Last revisited 2026-10-06.
+# `[advisories] ignore` list in deny.toml. Last revisited 2026-11-09.
 #
 # Removing an entry: when the crate leaves Cargo.lock (or upstream ships a fix
 # and we take it), delete the ID here and its row in docs/supply-chain.md.
@@ -31,4 +31,15 @@ ignore = [
     # Tauri/wry's Linux GTK3 stack; the fix is glib 0.20+. termiHub never calls
     # the affected glib::VariantStrIter API, so the unsound path is not reached.
     "RUSTSEC-2024-0429",
+    # zvariant / zbus_names / zvariant_derive (RUSTSEC-2026-0370, -0371, -0372,
+    # unmaintained; added 2026-11-09, #5098): the crates were folded into zbus
+    # 6.0 as its `wire` module, so they get no further standalone releases. Both
+    # lines in the tree are pinned upstream: zbus 5 by tauri-plugin-opener and
+    # tauri-plugin-single-instance (plus our own Linux polkit/logind calls),
+    # zbus 4 by keyring 3 -> secret-service 4. No in-semver upgrade exits them;
+    # they leave when those crates (and our zbus dep) move to zbus 6. Not a
+    # vulnerability: no unpatched flaw is reported, only end of maintenance.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
