@@ -2598,6 +2598,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn posix_shell_on_windows_gets_the_posix_setup() {
+        // #5015: a Git Bash / MSYS2 / Cygwin `DefaultShell` is typed the same
+        // POSIX hook as a Linux host (only its echo is never filtered).
+        let (writes, detected) = writes_for_shell(remote_shell::RemoteShell::WindowsPosix).await;
+        let (posix, _) = writes_for_shell(remote_shell::RemoteShell::Posix).await;
+        assert_eq!(detected, Some(true));
+        assert_eq!(writes, posix);
+    }
+
+    #[tokio::test]
     async fn powershell_host_gets_the_powershell_setup_ended_with_cr() {
         // #4143: the POSIX line (LF-ended) left PSReadLine in a continuation
         // and swallowed the user's first command.

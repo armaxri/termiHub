@@ -417,7 +417,9 @@ function Test-Fixture([int]$TcpPort) {
         '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=NUL', '-o', 'LogLevel=ERROR',
         '-o', 'ConnectTimeout=15')
     $who = (& $ssh -p $TcpPort @opts "$TestUser@127.0.0.1" whoami | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $who -notlike "*\$TestUser") {
+    # cmd.exe / PowerShell print `HOST\user`; a Git Bash / MSYS2 DefaultShell's
+    # `whoami` prints the bare user name (#5015).
+    if ($LASTEXITCODE -ne 0 -or ($who -notlike "*\$TestUser" -and $who -ne $TestUser)) {
         Show-SshdDiagnostic
         throw "ssh login as $TestUser on 127.0.0.1:$TcpPort failed (exit $LASTEXITCODE, whoami '$who'); log: $LogFile"
     }
