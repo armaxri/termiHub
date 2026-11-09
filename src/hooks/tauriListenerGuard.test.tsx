@@ -31,6 +31,7 @@ vi.mock("@/services/events", () => ({
   onCredentialStoreUnlockNeeded: vi.fn(() => deferredRegistration()),
   onXServerConsentNeeded: vi.fn(() => deferredRegistration()),
   onXServerProgress: vi.fn(() => deferredRegistration()),
+  onXServerConnectFailed: vi.fn(() => deferredRegistration()),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({

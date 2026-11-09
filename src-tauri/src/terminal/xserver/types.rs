@@ -426,6 +426,14 @@ pub struct XServerConsentRequest {
 /// The Tauri event name for a connect-time X server download-consent prompt.
 pub const X_SERVER_CONSENT_NEEDED_EVENT: &str = "x-server-consent-needed";
 
+/// Emitted when an X11-forwarding SSH connect could not get a usable local X
+/// server (#5079). The payload is the typed [`XServerError`] itself, so the UI
+/// can show the actionable guidance (e.g. "install XWayland" on a Wayland-only
+/// Linux session) at connect time. The connect itself continues without
+/// forwarding; this is emitted once per affected connect and never for a
+/// connect the user aborted.
+pub const X_SERVER_CONNECT_FAILED_EVENT: &str = "x-server-connect-failed";
+
 #[cfg(test)]
 mod tests {
     use super::*;

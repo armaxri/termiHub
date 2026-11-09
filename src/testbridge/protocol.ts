@@ -919,6 +919,16 @@ export interface TerminalMeasurement {
    * `null` when the DOM renderer has no rows mounted (WebGL is live).
    */
   domTextRight: number | null;
+  /**
+   * The font's character cell (#5082): `measured` is what xterm last measured
+   * and fits with; `current` is what the same measurement gives now. They
+   * differ when a web font loaded after xterm measured the fallback font.
+   * `current` is `null` where xterm cannot measure with canvas text metrics.
+   */
+  charCell: {
+    measured: { width: number; height: number } | null;
+    current: { width: number; height: number } | null;
+  };
   /** The page's size and device pixel ratio (#4937). */
   page: PageMetrics;
   /** Scroll position, as `getTerminalViewport` reports it. */

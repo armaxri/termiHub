@@ -53,6 +53,8 @@ X11_SOCKET_DIR = Path("/tmp/.X11-unix")
 #: The typed Linux Wayland-gap error (types.rs ``linux_xwayland_missing``).
 XWAYLAND_MESSAGE = "Wayland session without XWayland"
 XWAYLAND_HINT = "XWayland package"
+#: The connect-time "X11 forwarding unavailable" toast (#5079).
+CONNECT_FAILED_TOAST = "x-server-connect-failed-toast"
 
 
 class Weston(NamedTuple):
@@ -183,7 +185,8 @@ class TestWaylandOnlyX11Hint(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi
         The app runs on a headless weston without XWayland. An X11-forwarding
         SSH connect still opens a working shell — no setup prompt, no error
         dialog — with no forwarded ``$DISPLAY``, and the connect logs the typed
-        XWayland gap. The X server setup flow then shows the XWayland message,
+        XWayland gap and shows it at once in a toast with the package hint and
+        an Install XWayland action (#5079). The X server setup flow then shows the XWayland message,
         the package hint and an Install XWayland action, not the generic
         "no X server" error.
         """
@@ -212,6 +215,22 @@ class TestWaylandOnlyX11Hint(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi
         )
         assert "failed to acquire X server session" not in self._app_log_text(), (
             "the connect reported a generic lease failure instead of the gap"
+        )
+
+        # #5079: the connect itself shows the hint — a toast carrying the
+        # XWayland message, the package hint and the install action, with no
+        # dialog opened and without the user visiting the X server setup.
+        self.wait(
+            lambda: self.driver.exists(CONNECT_FAILED_TOAST),
+            timeout=30.0,
+            what="the connect-time X11 forwarding toast",
+        )
+        toast = self.driver.get_text(CONNECT_FAILED_TOAST)
+        assert XWAYLAND_MESSAGE in toast, f"toast lacks the XWayland gap: {toast!r}"
+        assert XWAYLAND_HINT in toast, f"toast lacks the install hint: {toast!r}"
+        assert "Install XWayland" in toast, f"toast lacks the install action: {toast!r}"
+        assert not self.driver.exists("x-server-connect-consent-dialog"), (
+            "the connect-time hint must not open a dialog by itself"
         )
 
         # The X server setup flow shows the actionable XWayland hint.

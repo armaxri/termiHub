@@ -44,5 +44,6 @@ export const TAURI_EVENT = {
   spawnRequest: "spawn-request",
   spawnPickerRequested: "spawn-picker-requested",
   xServerConsentNeeded: "x-server-consent-needed",
+  xServerConnectFailed: "x-server-connect-failed",
   agentStateChange: "agent-state-change",
 } as const;

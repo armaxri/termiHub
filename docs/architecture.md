@@ -2554,6 +2554,10 @@ sequenceDiagram
     end
 ```
 
+#### Connect-time failure surface
+
+A provisioning failure never fails the SSH connect: the session opens without forwarding. So the user still learns why, the provisioner also emits `x-server-connect-failed` carrying the typed `XServerError` (kind, message, dependency, install hint/mode) once per affected connect — never for a connect the user aborted (#5079). The app-root `XServerConnectConsent` turns it into one persistent toast ("X11 forwarding unavailable", the message plus any install hint, e.g. installing XWayland on a Wayland-only Linux session) whose action opens the shared X server error screen with its Install / Retry recovery. When the consent dialog is already driving that connect's provisioning, the typed error goes into its error screen instead of a toast.
+
 ### FTP Client Sessions and the Transfer Queue
 
 termiHub ships a first-class **FTP/FTPS client** connection type (epic #1331, concept
