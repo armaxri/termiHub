@@ -1450,15 +1450,16 @@ impl DeviceIoRequest {
     }
 
     pub fn decode(src: &mut ReadCursor<'_>) -> DecodeResult<Self> {
-        Self::decode_or_unknown(src)?
-            .map_err(|_| invalid_field_err!("try_from", "MajorFunction", "unsupported value"))
+        Self::decode_or_unknown(src)?.map_err(|_| invalid_field_err!("try_from", "MajorFunction", "unsupported value"))
     }
 
     /// termiHub fork delta (#5124): decodes the header like [`Self::decode`], but returns a
     /// well-formed header whose MajorFunction this crate does not know as an
     /// [`UnknownMajorFunctionRequest`] instead of an error, so that the processor can complete
     /// it instead of ending the session. A header cut short is still a decode error.
-    pub(crate) fn decode_or_unknown(src: &mut ReadCursor<'_>) -> DecodeResult<Result<Self, UnknownMajorFunctionRequest>> {
+    pub(crate) fn decode_or_unknown(
+        src: &mut ReadCursor<'_>,
+    ) -> DecodeResult<Result<Self, UnknownMajorFunctionRequest>> {
         ensure_size!(ctx: Self::NAME, in: src, size: Self::FIXED_PART_SIZE);
         let device_id = src.read_u32();
         let file_id = src.read_u32();

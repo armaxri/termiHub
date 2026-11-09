@@ -10,8 +10,8 @@ use self::efs::{
     ClientDeviceListAnnounce, ClientDeviceListRemove, ClientDriveQueryDirectoryResponse,
     ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse, ClientDriveSetInformationResponse,
     ClientNameRequest, CoreCapability, CoreCapabilityKind, DeviceCloseResponse, DeviceControlResponse,
-    DeviceCreateResponse, DeviceFlushBuffersResponse, DeviceIoRequest, DeviceReadResponse, DeviceWriteResponse, ServerDeviceAnnounceResponse,
-    VersionAndIdPdu, VersionAndIdPduKind,
+    DeviceCreateResponse, DeviceFlushBuffersResponse, DeviceIoRequest, DeviceReadResponse, DeviceWriteResponse,
+    ServerDeviceAnnounceResponse, VersionAndIdPdu, VersionAndIdPduKind,
 };
 
 pub mod efs;
@@ -259,8 +259,14 @@ impl Encode for DeviceIoCompletion {
         .encode(dst)?;
         match self {
             Self::Bare(response) => response.encode(dst),
-            Self::SetVolumeInformation { device_io_reply, length }
-            | Self::SetSecurity { device_io_reply, length } => {
+            Self::SetVolumeInformation {
+                device_io_reply,
+                length,
+            }
+            | Self::SetSecurity {
+                device_io_reply,
+                length,
+            } => {
                 device_io_reply.encode(dst)?;
                 dst.write_u32(*length);
                 Ok(())
@@ -286,9 +292,10 @@ impl Encode for DeviceIoCompletion {
         SharedHeader::SIZE
             + match self {
                 Self::Bare(response) => response.size(),
+                // Each has a Length field after the reply header.
                 Self::SetVolumeInformation { device_io_reply, .. }
                 | Self::SetSecurity { device_io_reply, .. }
-                | Self::QuerySecurity(device_io_reply) => device_io_reply.size() + 4 /* Length */,
+                | Self::QuerySecurity(device_io_reply) => device_io_reply.size() + 4,
             }
     }
 }

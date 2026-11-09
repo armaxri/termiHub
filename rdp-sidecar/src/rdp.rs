@@ -1727,6 +1727,79 @@ mod tests {
         assert_eq!(NtStatus::from(io_status), NtStatus::SUCCESS);
     }
 
+    /// A Windows host flushing a file (`FlushFileBuffers`) or reading or writing its
+    /// ACL on the shared folder sends IRP_MJ_FLUSH_BUFFERS / IRP_MJ_QUERY_SECURITY /
+    /// IRP_MJ_SET_SECURITY, which ironrdp-rdpdr 0.7.0 did not know: the request failed
+    /// to decode and ended the whole session (#5124). Now flush reaches the drive
+    /// backend, the security requests are answered STATUS_NOT_SUPPORTED, any other
+    /// MajorFunction STATUS_UNSUCCESSFUL, and the channel keeps serving.
+    #[test]
+    fn unknown_major_function_irp_is_completed_and_the_channel_keeps_serving() {
+        use ironrdp::rdpdr::pdu::efs::NtStatus;
+        use ironrdp::svc::SvcProcessor;
+
+        let raw_request = |major: u32, body: &[u8]| {
+            let mut encoded = vec![0x72, 0x44, 0x52, 0x49]; // DEVICE_IOREQUEST
+            for field in [DRIVE_DEVICE_ID, 0, 9, major, 0] {
+                encoded.extend_from_slice(&field.to_le_bytes());
+            }
+            encoded.extend_from_slice(body);
+            encoded
+        };
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        let mut rdpdr = Rdpdr::new(
+            Box::new(DriveRedirectBackend::new(root)),
+            CLIENT_NAME.to_string(),
+        )
+        .with_drives(Some(vec![(DRIVE_DEVICE_ID, "share".to_string())]));
+
+        let mut set_security = Vec::new();
+        set_security.extend_from_slice(&4u32.to_le_bytes()); // DACL
+        set_security.extend_from_slice(&8u32.to_le_bytes()); // Length
+        set_security.extend_from_slice(&[0; 24]);
+        set_security.extend_from_slice(&[1; 8]);
+        let cases: [(u32, Vec<u8>, NtStatus, usize); 4] = [
+            // Flush of a handle the backend never opened: the backend answers.
+            (0x09, Vec::new(), NtStatus::UNSUCCESSFUL, 16),
+            (
+                0x14,
+                7u32.to_le_bytes().to_vec(),
+                NtStatus::NOT_SUPPORTED,
+                20,
+            ),
+            (0x15, set_security, NtStatus::NOT_SUPPORTED, 20),
+            (0x42, Vec::new(), NtStatus::UNSUCCESSFUL, 16),
+        ];
+        for (major, body, status, len) in cases {
+            let responses = rdpdr
+                .process(&raw_request(major, &body))
+                .unwrap_or_else(|e| panic!("MajorFunction {major:#x} ended the session: {e}"));
+            assert_eq!(responses.len(), 1, "MajorFunction {major:#x}");
+            let (encoded, device_id, completion_id, io_status) = completion_header(&responses[0]);
+            assert_eq!(device_id, DRIVE_DEVICE_ID);
+            assert_eq!(completion_id, 9);
+            assert_eq!(
+                NtStatus::from(io_status),
+                status,
+                "MajorFunction {major:#x}"
+            );
+            assert_eq!(encoded.len(), len, "MajorFunction {major:#x}");
+        }
+
+        // FileFsSizeInformation is supported and reaches DriveRedirectBackend.
+        let request = drive_information_request(
+            ironrdp::rdpdr::pdu::efs::MajorFunction::QueryVolumeInformation,
+            3,
+            &[],
+        );
+        let responses = rdpdr.process(&request).expect("the channel still serves");
+        assert_eq!(responses.len(), 1);
+        let (_, _, _, io_status) = completion_header(&responses[0]);
+        assert_eq!(NtStatus::from(io_status), NtStatus::SUCCESS);
+    }
+
     /// The exact frame xrdp 0.10 sends after `require_credentials` rejects a
     /// wrong password (captured against the `rdp-server` fixture, #3612).
     #[test]

@@ -49,15 +49,14 @@ use ironrdp::rdpdr::pdu::efs::{
     ClientDriveSetInformationResponse, CreateDisposition, CreateOptions, DesiredAccess,
     DeviceCloseRequest, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse,
     DeviceCreateRequest, DeviceCreateResponse, DeviceFlushBuffersRequest,
-    DeviceFlushBuffersResponse, DeviceIoRequest, DeviceIoResponse,
-    DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse,
-    FileAttributeTagInformation, FileAttributes, FileBasicInformation,
-    FileBothDirectoryInformation, FileDirectoryInformation, FileFsAttributeInformation,
-    FileFsDeviceInformation, FileFsFullSizeInformation, FileFsSizeInformation,
-    FileFsVolumeInformation, FileFullDirectoryInformation, FileInformationClass,
-    FileInformationClassLevel, FileNamesInformation, FileStandardInformation, FileSystemAttributes,
-    FileSystemInformationClass, FileSystemInformationClassLevel, Information, NtStatus,
-    ServerDeviceAnnounceResponse, ServerDriveIoRequest, ServerDriveQueryDirectoryRequest,
+    DeviceFlushBuffersResponse, DeviceIoRequest, DeviceIoResponse, DeviceReadRequest,
+    DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse, FileAttributeTagInformation,
+    FileAttributes, FileBasicInformation, FileBothDirectoryInformation, FileDirectoryInformation,
+    FileFsAttributeInformation, FileFsDeviceInformation, FileFsFullSizeInformation,
+    FileFsSizeInformation, FileFsVolumeInformation, FileFullDirectoryInformation,
+    FileInformationClass, FileInformationClassLevel, FileNamesInformation, FileStandardInformation,
+    FileSystemAttributes, FileSystemInformationClass, FileSystemInformationClassLevel, Information,
+    NtStatus, ServerDeviceAnnounceResponse, ServerDriveIoRequest, ServerDriveQueryDirectoryRequest,
     ServerDriveQueryInformationRequest, ServerDriveQueryVolumeInformationRequest,
     ServerDriveSetInformationRequest,
 };
@@ -1067,6 +1066,46 @@ mod tests {
         assert!(wildcard_match("file?.dat", "file1.dat"));
         assert!(!wildcard_match("file?.dat", "file12.dat"));
         assert!(wildcard_match("READ*", "readme")); // case-insensitive
+    }
+
+    fn flush_status(backend: &mut DriveRedirectBackend, file_id: u32) -> NtStatus {
+        match backend.handle_flush(DeviceFlushBuffersRequest {
+            device_io_request: io_request(file_id, MajorFunction::FlushBuffers),
+        }) {
+            RdpdrPdu::DeviceFlushBuffersResponse(r) => r.device_io_response.io_status,
+            other => panic!("expected DeviceFlushBuffersResponse, got {other:?}"),
+        }
+    }
+
+    /// IRP_MJ_FLUSH_BUFFERS (#5124): an open file is flushed, a directory has
+    /// nothing to flush, and an unknown handle fails like the other handlers.
+    #[test]
+    fn flush_buffers_flushes_open_files() {
+        let (mut backend, dir) = backend_with_root();
+        let file_id = create_ok_id(
+            &mut backend,
+            "flush.txt",
+            CreateDisposition::FILE_OVERWRITE_IF,
+            CreateOptions::empty(),
+        );
+        backend.handle_write(DeviceWriteRequest {
+            device_io_request: io_request(file_id, MajorFunction::Write),
+            offset: 0,
+            write_data: b"durable".to_vec(),
+        });
+        assert_eq!(flush_status(&mut backend, file_id), NtStatus::SUCCESS);
+        assert_eq!(fs::read(dir.path().join("flush.txt")).unwrap(), b"durable");
+
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        let dir_id = create_ok_id(
+            &mut backend,
+            "sub",
+            CreateDisposition::FILE_OPEN,
+            CreateOptions::FILE_DIRECTORY_FILE,
+        );
+        assert_eq!(flush_status(&mut backend, dir_id), NtStatus::SUCCESS);
+
+        assert_eq!(flush_status(&mut backend, 0xffff), NtStatus::UNSUCCESSFUL);
     }
 
     #[test]
