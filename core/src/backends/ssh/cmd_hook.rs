@@ -101,7 +101,7 @@ pub fn join_cmd_setup(lines: &[String], prompt_col: usize, cols: usize) -> Strin
         all.push(cmd_hook_statement());
         let mut body = all.join("&");
         let mut len = body.chars().count();
-        if (prompt_col + len) % cols == 0 {
+        if (prompt_col + len).is_multiple_of(cols) {
             body.push(' ');
             len += 1;
         }
