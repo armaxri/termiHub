@@ -284,12 +284,82 @@ where
     }
 }
 
-/// Appended to the PowerShell hook when it is *typed* over SSH (the opt-in
-/// command-mark hook only): a Windows host renders through ConPTY, so the
-/// line's echo cannot be filtered out of the stream the way a POSIX host's
-/// is, and clearing the screen is what keeps the ~1 KB line off it. The
-/// local startup-argument setup is never typed and never clears (#5017).
-pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
+/// The PowerShell shell-integration hook as one typed statement, ended with
+/// CR — without the echo erase that [`join_powershell_setup`] appends.
+pub fn powershell_hook_line() -> Option<String> {
+    osc7_setup_command("powershell").map(|s| format!("{s}\r"))
+}
+
+/// The statement ending a typed PowerShell setup (#5044): erases the rows the
+/// first prompt and the setup's own echo occupy, `echo_len` characters in all.
+///
+/// A Windows host renders through ConPTY, so the echo cannot be filtered out
+/// of the stream the way a POSIX host's is ([`hides_setup_echo`]); the shell
+/// takes it off the screen itself instead. It used to `Clear-Host`, which
+/// also wiped the login banner. This erases only from the prompt's row down:
+///
+/// - The prompt's column comes from PSReadLine's `_initialX` (where it began
+///   reading the line), 0 when that cannot be read.
+/// - The rows follow from it, the line's length and
+///   `$Host.UI.RawUI.BufferSize.Width`.
+/// - On Windows it moves the console cursor back and overwrites the rows with
+///   blanks through the console API, so the console's own screen model — the
+///   one ConPTY renders from — is what changes; nothing bypasses it. Elsewhere
+///   (pwsh on Linux/macOS) it writes `CSI <n> A`, `CR`, `CSI J`.
+///
+/// Its own variables live in a script block's scope, and every error is
+/// caught, so it leaves no state behind and `$?` stays true for the prompt.
+pub fn powershell_erase_echo(echo_len: usize) -> String {
+    format!(
+        concat!(
+            r#";&{{try{{$w=$Host.UI.RawUI.BufferSize.Width;$x=0;"#,
+            r#"try{{$r='Microsoft.PowerShell.PSConsoleReadLine' -as [type];"#,
+            r#"$x=[int]$r.GetField('_initialX','NonPublic,Instance').GetValue("#,
+            r#"$r.GetField('_singleton','NonPublic,Static').GetValue($null))}}catch{{}};"#,
+            r#"$n=[int][Math]::Floor(($x+{len}-1)/$w)+1;"#,
+            r#"if($env:OS -eq 'Windows_NT'){{$y=[Console]::CursorTop;$n=[Math]::Min($n,$y);"#,
+            r#"$t=$y-$n;[Console]::SetCursorPosition(0,$t);[Console]::Write(' '*($w*$n));"#,
+            r#"[Console]::SetCursorPosition(0,$t)}}"#,
+            r#"else{{[Console]::Write([char]27+'['+$n+'A'+[char]13+[char]27+'[J')}}"#,
+            r#"}}catch{{}}}}"#,
+        ),
+        len = echo_len
+    )
+}
+
+/// Join PowerShell setup lines (each CR-ended: the env fallback, X11, the
+/// hook) into one typed line that ends with [`powershell_erase_echo`]
+/// (#5044), so the one echo is erased — separate lines would leave the
+/// earlier ones, env values included, on screen above a fresh prompt.
+///
+/// The erase needs the whole line's length, its own included, so that is
+/// solved as a fixed point (the digits can only grow a few times).
+pub fn join_powershell_setup(lines: &[String]) -> String {
+    let body = lines
+        .iter()
+        .map(|l| l.trim_end_matches(['\r', '\n']).trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(";");
+    let body_len = body.chars().count();
+    let mut len = body_len + powershell_erase_echo(0).chars().count();
+    loop {
+        let erase = powershell_erase_echo(len);
+        let total = body_len + erase.chars().count();
+        if total == len {
+            return format!("{body}{erase}\r");
+        }
+        len = total;
+    }
+}
+
+/// Whether a typed PowerShell setup ends by erasing its own echo (#5044):
+/// whenever the hook is typed into a PowerShell login shell (the opt-in
+/// command-mark hook). Then every setup line is joined into one
+/// ([`join_powershell_setup`]).
+pub fn erases_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
+    has_integration && matches!(shell, RemoteShell::PowerShell | RemoteShell::UnixPowerShell)
+}
 
 /// The shell-integration line to type into a session whose login shell is
 /// `shell`, including its line terminator, or `None` to inject nothing.
@@ -297,8 +367,10 @@ pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
 /// - POSIX (on Linux/macOS or, #5015, Windows): the bash/zsh OSC 7 hook,
 ///   ended with LF — unchanged from before detection existed.
 /// - PowerShell (Windows or Unix): the PowerShell OSC 7 / OSC 133 prompt
-///   override plus [`TYPED_POWERSHELL_CLEAR`], ended with CR, which is Enter for PSReadLine (an LF would leave
-///   the line unsubmitted and merge it with the user's first command). The
+///   override, joined with [`join_powershell_setup`] so it ends by erasing
+///   its own echo (#5044), ended with CR, which is Enter for PSReadLine (an
+///   LF would leave the line unsubmitted and merge it with the user's first
+///   command). The
 ///   connector holds it back until the first prompt ([`SetupGate`]), so a
 ///   Unix tty no longer maps that CR to LF and a starting Windows shell
 ///   cannot drop it.
@@ -324,7 +396,7 @@ pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
             ..
         } => None,
         RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
-            osc7_setup_command("powershell").map(|s| format!("{s}{TYPED_POWERSHELL_CLEAR}\r"))
+            powershell_hook_line().map(|l| join_powershell_setup(&[l]))
         }
         RemoteShell::Cmd | RemoteShell::Unknown => None,
     }
@@ -390,8 +462,8 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// ([`RemoteShell::WindowsPosix`], #5015) or a fish there (#5101): a
 /// Windows host renders through
 /// ConPTY, whose screen model must see every byte, so there the setup is
-/// shown rather than risk desynchronising it (a typed PowerShell setup ends
-/// with [`TYPED_POWERSHELL_CLEAR`] instead).
+/// shown rather than risk desynchronising it (a typed PowerShell setup
+/// erases its own echo instead, [`powershell_erase_echo`]).
 pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool, has_setup: bool) -> bool {
     match shell {
         RemoteShell::Posix => has_integration,
@@ -1428,17 +1500,104 @@ mod tests {
     #[test]
     fn powershell_setup_is_the_powershell_hook_ended_with_cr() {
         let line = integration_setup_line(RemoteShell::PowerShell).expect("powershell setup");
+        let hook = osc7_setup_command("powershell").unwrap();
+        assert!(line.starts_with(hook), "{line:?}");
         assert_eq!(
             line,
-            format!(
-                "{}{TYPED_POWERSHELL_CLEAR}\r",
-                osc7_setup_command("powershell").unwrap()
-            )
+            join_powershell_setup(&[powershell_hook_line().unwrap()])
         );
         assert!(line.ends_with('\r'));
         // One line: an embedded LF would be a PSReadLine continuation.
         assert!(!line.contains('\n'));
         assert!(line.contains("]7;file://"));
+    }
+
+    /// The echo length the erase statement of `line` was built with.
+    fn erase_len(line: &str) -> usize {
+        let at = line
+            .find("$n=[int][Math]::Floor(($x+")
+            .expect("erase statement")
+            + 26;
+        line[at..line[at..].find('-').unwrap() + at]
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn typed_powershell_setup_erases_only_its_echo_rows() {
+        // #5044: the typed hook cleared the whole screen, banner included.
+        let line = integration_setup_line(RemoteShell::PowerShell).unwrap();
+        for clear in ["Clear-Host", "cls", "[2J", "[3J", "[H", "Clear()"] {
+            assert!(!line.contains(clear), "{clear:?} in {line:?}");
+        }
+        // It erases from the prompt's row down, by the rows it computed...
+        assert!(line.contains("$Host.UI.RawUI.BufferSize.Width"));
+        assert!(line.contains("'_initialX'"));
+        assert!(line.contains("'['+$n+'A'+[char]13+[char]27+'[J'"));
+        // ...through the console itself on Windows, so ConPTY renders it.
+        assert!(line.contains("[Console]::SetCursorPosition(0,$t)"));
+        // The length it erases is the echo's: the whole line but the CR.
+        assert_eq!(erase_len(&line), line.chars().count() - 1);
+        // In a child scope, with every error caught: no variables left, no
+        // red text, `$?` true for the next prompt's exit mark.
+        let erase = &line[line.find(";&{try{").unwrap()..];
+        assert!(erase.ends_with("}catch{}}\r"), "{erase:?}");
+        assert!(!erase.contains("$global:"), "{erase:?}");
+    }
+
+    #[test]
+    fn erase_length_is_a_fixed_point_across_digit_counts() {
+        // Bodies whose total length crosses a power of ten still count right.
+        for n in [0, 1, 50, 400, 500, 600, 9000] {
+            let lines = vec![format!("$env:A='{}'\r", "x".repeat(n))];
+            let line = join_powershell_setup(&lines);
+            assert_eq!(erase_len(&line), line.chars().count() - 1, "n={n}");
+        }
+    }
+
+    #[test]
+    fn powershell_setup_lines_join_into_one_erased_line() {
+        let env = env_setup_line(
+            RemoteShell::PowerShell,
+            &env(&[("FOO", "b a"), ("BAR", "x")]),
+        )
+        .unwrap();
+        let x11 = x11_setup_lines(RemoteShell::PowerShell, 10, Some("abc"));
+        let hook = powershell_hook_line().unwrap();
+        let mut lines = vec![env];
+        lines.extend(x11);
+        lines.push(hook.clone());
+        let joined = join_powershell_setup(&lines);
+        assert_eq!(joined.matches('\r').count(), 1, "one line: {joined:?}");
+        assert!(!joined.contains('\n'));
+        assert!(
+            joined.starts_with("$env:BAR='x'; $env:FOO='b a';$env:DISPLAY="),
+            "{joined:?}"
+        );
+        assert!(joined.contains(hook.trim_end_matches('\r')));
+        assert_eq!(erase_len(&joined), joined.chars().count() - 1);
+        // A lone hook is the integration line itself.
+        assert_eq!(
+            join_powershell_setup(std::slice::from_ref(&hook)),
+            integration_setup_line(RemoteShell::PowerShell).unwrap()
+        );
+    }
+
+    #[test]
+    fn only_a_typed_powershell_hook_erases_its_echo() {
+        for shell in [RemoteShell::PowerShell, RemoteShell::UnixPowerShell] {
+            assert!(erases_setup_echo(shell, true));
+            assert!(!erases_setup_echo(shell, false));
+        }
+        for shell in [
+            RemoteShell::Posix,
+            RemoteShell::WindowsPosix,
+            RemoteShell::Cmd,
+            RemoteShell::Unknown,
+            FISH3,
+        ] {
+            assert!(!erases_setup_echo(shell, true), "{shell:?}");
+        }
     }
 
     #[test]

@@ -798,9 +798,9 @@ pub fn bash_env_setup_script() -> &'static str {
 /// is not its process directory, so without it the file browser does not
 /// follow PowerShell. Injected locally via `-NoExit -Command` startup args, so it is never
 /// echoed, and it prints nothing and clears nothing: whatever the user's
-/// profile printed at startup stays on screen (#5017). Only the copy typed
-/// over SSH (the opt-in hook) clears the screen afterwards, to take its own
-/// echo off it (see `remote_shell::TYPED_POWERSHELL_CLEAR`).
+/// profile printed at startup stays on screen (#5017). The copy typed over
+/// SSH (the opt-in hook) erases its own echo rows afterwards, and only those
+/// (see `remote_shell::powershell_erase_echo`, #5044).
 fn powershell_osc7_command() -> &'static str {
     concat!(
         r#"if(-not $global:__th_si){$global:__th_si=1;"#,

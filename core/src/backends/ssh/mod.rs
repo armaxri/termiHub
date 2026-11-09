@@ -2651,12 +2651,10 @@ mod tests {
         let line = String::from_utf8(writes[0].clone()).unwrap();
         assert_eq!(
             line,
-            format!(
-                "{}{}\r",
-                crate::session::shell::osc7_setup_command("powershell").unwrap(),
-                remote_shell::TYPED_POWERSHELL_CLEAR
-            )
+            remote_shell::integration_setup_line(remote_shell::RemoteShell::PowerShell).unwrap()
         );
+        // #5044: it erases only its own echo, never the whole screen.
+        assert!(!line.contains("Clear-Host"), "{line:?}");
         assert!(!line.contains('\n'), "no LF may reach PSReadLine");
         assert!(
             !line.contains("PROMPT_COMMAND"),
