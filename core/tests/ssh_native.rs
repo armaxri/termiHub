@@ -800,17 +800,22 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
     assert_eq!(text.matches(">echo [%TH_5109_VAR%").count(), 1, "{text}");
     ssh.disconnect().await.expect("disconnect cleanly");
 
-    // Measurement (#5109): does an interactive cmd.exe define PROMPT itself
-    // when it is unset? The hook expands `%PROMPT%`.
+    // The hook expands `%PROMPT%`, so it relies on an interactive cmd.exe
+    // defining PROMPT itself (as `$P$G`) when it starts with none (#5109):
+    // otherwise `%PROMPT%` would stay literal in the prompt.
     let mut ssh = Ssh::new();
     ssh.connect(sshd.key_settings()).await.expect("connect");
-    let (_, seen) = type_and_wait(
+    let (done, seen) = type_and_wait(
         &mut ssh,
         "set \"PROMPT=\"\rcmd /d\rset PROMPT\rexit\recho th5109-%OS%-probe\r",
         |s| s.contains("th5109-Windows_NT-probe"),
     )
     .await;
-    eprintln!("[5109] PROMPT in a fresh cmd with PROMPT unset: {seen:?}");
+    assert!(done, "the PROMPT check did not run: {seen:?}");
+    assert!(
+        seen.contains("PROMPT=$P$G"),
+        "a cmd.exe started without PROMPT did not define it: {seen:?}"
+    );
     ssh.disconnect().await.ok();
 }
 
