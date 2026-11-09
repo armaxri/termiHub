@@ -97,8 +97,8 @@
       "base_version": "0.9.0",
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.9.0",
-      "reviewed_version": "0.9.0",
-      "reviewed_commit": "62246b364a0282bab85087f658a81fe4207b6b31",
+      "reviewed_version": "0.11.0",
+      "reviewed_commit": "f86e3c49f349127b7e7f3c737ca10de49cc20f8d",
       "deltas": [
         {
           "summary": "RdpsndClientHandler::wave receives the concrete negotiated AudioFormat instead of an index",
@@ -118,6 +118,13 @@
         {
           "summary": "Pre-v8 SNDC_WAVE playback ported from upstream 2d9a9bf1: WaveInfo + bare Wave reassembled via an ExpectingWave state and confirmed (short payload / bad wFormatNo confirmed unplayed); WavePdu is WaveInfo-only plus a new WaveDataPdu",
           "refs": ["https://github.com/armaxri/termiHub/issues/3510"]
+        },
+        {
+          "summary": "Training Confirm echoes the server's wPackSize (whole PDU size) instead of the data length, so GNOME Remote Desktop sends audio; port of unreleased upstream f86e3c49 (IronRDP#2294)",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/4923",
+            "https://github.com/Devolutions/IronRDP/commit/f86e3c49f349127b7e7f3c737ca10de49cc20f8d"
+          ]
         }
       ],
       "watch": {

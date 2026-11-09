@@ -191,7 +191,10 @@ impl Rdpsnd {
     }
 
     pub fn training_confirm(&mut self, pdu: &TrainingPdu) -> PduResult<RdpsndSvcMessages> {
-        let pack_size: EncodeResult<_> = cast_length!("wPackSize", pdu.data.len());
+        // termiHub fork (#4923, upstream f86e3c49): echo the server's wPackSize
+        // (the whole Training PDU's size), not the data length — GNOME Remote
+        // Desktop rejects the short value and sends no audio.
+        let pack_size: EncodeResult<_> = cast_length!("wPackSize", pdu.pack_size());
         let pack_size = pack_size.map_err(|e| encode_err!(e))?;
         let pdu = pdu::TrainingConfirmPdu {
             timestamp: pdu.timestamp,

@@ -350,3 +350,45 @@ fn encoded_wave_info_and_wave_data_round_trip_through_the_client() {
     });
     assert!(encode_vec(&too_short).is_err());
 }
+
+/// Upstream `f86e3c49` (IronRDP#2294, #4923): the Training Confirm echoes the
+/// Training PDU's wPackSize — the size of the whole PDU including the RDPSND
+/// header — not the length of its data. GNOME Remote Desktop rejects the
+/// 8-byte-short value and then sends no audio.
+#[test]
+fn training_confirm_echoes_the_servers_pack_size() {
+    let mut client = Rdpsnd::new(Box::new(Recorder {
+        formats: vec![pcm(2, 44100)],
+        waves: Waves::default(),
+    }));
+    let formats = ServerAudioOutputPdu::AudioFormat(ServerAudioFormatPdu {
+        version: pdu::Version::V8,
+        formats: vec![pcm(2, 44100)],
+    });
+    client.process(&server_pdu(&formats)).unwrap();
+
+    let training = TrainingPdu {
+        timestamp: 9,
+        data: vec![0xAA; 16],
+    };
+    // SNDPROLOG (4) + wTimeStamp (2) + wPackSize (2) + 16 data bytes.
+    assert_eq!(training.pack_size(), 24);
+    let bytes = server_pdu(&ServerAudioOutputPdu::Training(training));
+    assert_eq!(bytes.len(), 24);
+    assert_eq!(u16::from_le_bytes([bytes[6], bytes[7]]), 24);
+
+    match single_response(&client.process(&bytes).unwrap()) {
+        ClientAudioOutputPdu::TrainingConfirm(confirm) => {
+            assert_eq!(confirm.timestamp, 9);
+            assert_eq!(confirm.pack_size, 24);
+        }
+        other => panic!("expected a Training Confirm, got {other:?}"),
+    }
+
+    // A data-less Training PDU carries (and is confirmed with) wPackSize 0.
+    let empty = TrainingPdu {
+        timestamp: 1,
+        data: vec![],
+    };
+    assert_eq!(empty.pack_size(), 0);
+}
