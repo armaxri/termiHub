@@ -49,7 +49,7 @@ removed from `Cargo.toml` so they run: `cargo test -p ironrdp-rdpdr` from
 `rdp-sidecar/`. The sidecar's own
 `rdp::tests::drive_announce_carries_the_drive_name_in_preferred_dos_name` and the
 live xrdp test RDP-15 (`core/tests/rdp.rs`) cover the fix from outside.
-Apart from changes 1 to 3, everything is byte-for-byte upstream 0.7.0, without the registry-only
+Apart from changes 1 to 4, everything is byte-for-byte upstream 0.7.0, without the registry-only
 `Cargo.lock`, `Cargo.toml.orig` and VCS metadata.
 
 ### Change 2: drive DeviceData as sanitised 8-bit characters ([#4923])
@@ -91,12 +91,48 @@ Adapted rather than applied: 0.7.0 has no `ServerDriveSetVolumeInformationReques
 `ClientDriveSetVolumeInformationResponse`, so the fork reads the request frame with
 `decode_set_volume_information_frame` and encodes the response as a crate-private
 `pdu::DeviceIoCompletion` (as upstream does for the header-only reply). 0.7.0 has no
-trailing-data check in the processor, so none was added; the master-only `MajorFunction`s
-(`FlushBuffers`, `QuerySecurity`, `SetSecurity`) are not part of this change. The private
+trailing-data check in the processor, so none was added; the `MajorFunction`s 0.7.0 does not
+know (`FlushBuffers`, `QuerySecurity`, `SetSecurity`) are change 4. The private
 `decode` of the Query Directory and Set Information requests became `decode_class`, and
 `ClientDriveSetInformationResponse`'s fields are crate-visible, as upstream. Marked
 `termiHub fork delta (#5118)`; tests in `src/lib.rs` (`termihub_fork_tests`) and the
 sidecar's `rdp::tests::unsupported_drive_irp_is_completed_and_the_channel_keeps_serving`.
+
+### Change 4: complete IRPs with an unknown MajorFunction instead of ending the session ([#5124])
+
+The same class of bug one layer earlier. 0.7.0's `DeviceIoRequest::decode` fails on any
+MajorFunction outside its list, before the device is even looked up, so `ironrdp-session` ended
+the whole RDP session. Windows hosts send three such functions on a redirected drive:
+`IRP_MJ_FLUSH_BUFFERS` (0x09, `FlushFileBuffers` on a file in the shared folder),
+`IRP_MJ_QUERY_SECURITY` (0x14) and `IRP_MJ_SET_SECURITY` (0x15, reading or changing its ACL).
+None of them is in the MS-RDPEFS 2.2.1.4 table.
+
+- `MajorFunction` gains `FlushBuffers`, `QuerySecurity` and `SetSecurity`, and the crate gains
+  `DeviceFlushBuffersRequest`, `DeviceFlushBuffersResponse`,
+  `ServerDriveIoRequest::DeviceFlushBuffersRequest` and `RdpdrPdu::DeviceFlushBuffersResponse`,
+  ported from upstream
+  [`d1c63ecd7b`](https://github.com/Devolutions/IronRDP/commit/d1c63ecd7bd13c9ae3d88f3ae84176f214f41f61)
+  ("feat(rdpdr): add advanced Windows filesystem semantics", IronRDP#1590, in the 0.9.0
+  release) with the same names, so the upgrade is source-compatible.
+- A drive flush goes to the backend like any supported request. The sidecar's
+  `DriveRedirectBackend` answers it with an fsync of the file (`rdp-sidecar/src/drive.rs`).
+- Query and set security are completed by `Rdpdr::unsupported_drive_io_response` with
+  `STATUS_NOT_SUPPORTED`, in the response layouts master uses
+  (`ClientDriveQuerySecurityResponse` with a zero Length and no descriptor,
+  `ClientDriveSetSecurityResponse` echoing the request's Length), encoded as crate-private
+  `DeviceIoCompletion` variants. The client has no Windows ACLs to report or apply. Their bodies
+  are still checked for framing (`decode_query_security_frame` / `decode_set_security_frame`).
+- Any other MajorFunction is completed with a header-only `STATUS_UNSUCCESSFUL`, as MS-RDPEFS
+  3.1.5.2 says for an undescribed MajorFunction (`Rdpdr::handle_unknown_major_function`, fed by
+  the crate-private `DeviceIoRequest::decode_or_unknown`), or ignored when its DeviceId was never
+  announced. **This part is fork-only:** upstream master still fails to decode such a request.
+
+A header cut short and a security request shorter than its frame are still decode errors. The
+public `DeviceIoRequest::decode` still rejects an unknown MajorFunction, and the public
+`ServerDriveIoRequest::decode` still rejects the security requests. Marked
+`termiHub fork delta (#5124)`; tests in `src/lib.rs` (`termihub_fork_tests`), the sidecar's
+`rdp::tests::unknown_major_function_irp_is_completed_and_the_channel_keeps_serving` and
+`drive::tests::flush_buffers_flushes_open_files`.
 
 ### Upstream review
 
@@ -128,13 +164,16 @@ Reviewed again up to IronRDP
   parallel ports) and the release commits (`e899a826`, `b13befa0`).
 
 Retire the fork once an `ironrdp-rdpdr` release contains `for_drive` and `4cd9d4506`
-(the next release after 0.9.0 should have both; `0f9154d2` is already in 0.9.0). The status, prepared upstream
+(the next release after 0.9.0 should have both; `0f9154d2` and `d1c63ecd7b` are already in 0.9.0).
+Change 4's unknown-MajorFunction fallback is not upstream: check the release still fails such a
+request before retiring, and keep the sidecar test as the guard. The status, prepared upstream
 text and retirement steps are in [`UPSTREAM.md`](UPSTREAM.md).
 
 [#4125]: https://github.com/armaxri/termiHub/issues/4125
 [#4461]: https://github.com/armaxri/termiHub/issues/4461
 [#4923]: https://github.com/armaxri/termiHub/issues/4923
 [#5118]: https://github.com/armaxri/termiHub/issues/5118
+[#5124]: https://github.com/armaxri/termiHub/issues/5124
 
 ---
 

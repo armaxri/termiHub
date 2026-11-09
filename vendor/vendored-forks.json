@@ -213,6 +213,14 @@
             "https://github.com/Devolutions/IronRDP/commit/0f9154d2128f8c65f4d51f6b7eb7cb1d66a12329"
           ],
           "upstream_status": "Released upstream in ironrdp-rdpdr 0.9.0 (0f9154d2 predates the release); goes away with the IronRDP upgrade (#5117)"
+        },
+        {
+          "summary": "Device I/O requests with a MajorFunction 0.7.0 does not know are completed instead of a decode error that ends the RDP session: IRP_MJ_FLUSH_BUFFERS (0x09) reaches the backend (the sidecar fsyncs), IRP_MJ_QUERY_SECURITY / IRP_MJ_SET_SECURITY (0x14 / 0x15) are completed with STATUS_NOT_SUPPORTED in master's response layouts, any other MajorFunction with a header-only STATUS_UNSUCCESSFUL (MS-RDPEFS 3.1.5.2); the three MajorFunction variants, DeviceFlushBuffersRequest/Response and RdpdrPdu::DeviceFlushBuffersResponse are ported from upstream d1c63ecd7b (IronRDP#1590)",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/5124",
+            "https://github.com/Devolutions/IronRDP/commit/d1c63ecd7bd13c9ae3d88f3ae84176f214f41f61"
+          ],
+          "upstream_status": "Flush and security MajorFunctions released upstream in ironrdp-rdpdr 0.9.0 (d1c63ecd7b); upstream still fails to decode any other unknown MajorFunction (fork-only, not submitted); flush/security part goes away with the IronRDP upgrade (#5117)"
         }
       ],
       "watch": {
