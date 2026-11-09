@@ -37,7 +37,7 @@ members = [
 # unstable options and its `doc-cfg` feature needs nightly, so it cannot sit
 # under the workspace-wide `cargo fmt --all` / `clippy --all-features` gates.
 #
-# `vendor/libunftp` is a [patch.crates-io] fork too (#4099), excluded for the
+# `vendor/libunftp` is a [patch.crates-io] fork too (#4100), excluded for the
 # same reason: it keeps upstream's own rustfmt.toml and lint table, so its
 # sources stay byte-comparable with upstream.
 exclude = ["rdp-sidecar", "vendor/serial2", "vendor/libunftp", "plugin-runner/fuzz"]
@@ -160,10 +160,10 @@ zip = { version = "9.0.3", default-features = false, features = [
 # Delta: on macOS, fall back to a termios speed when the IOSSIOSPEED ioctl is
 # rejected (pseudo-terminals, drivers without custom-speed support), #3701.
 #
-# In-tree fork of `libunftp` (same register). Delta: the PROXY v1 header reader
-# returns an error at EOF instead of spinning on a connection closed before its
-# header (#4099). Retire once an upstream release carries the fix, see
-# vendor/libunftp/UPSTREAM.md.
+# In-tree fork of `libunftp` 0.24.0 (same register). Delta: serve on a
+# caller-bound listener and filter PROXY-mode peers, so only termiHub's relay
+# reaches the loopback listener (#4100). Retire once an upstream release carries
+# it, see vendor/libunftp/UPSTREAM.md.
 [patch.crates-io]
 serial2 = { path = "vendor/serial2" }
 libunftp = { path = "vendor/libunftp" }
