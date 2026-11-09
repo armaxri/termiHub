@@ -106,6 +106,7 @@ SCRIPTS=(
   "scripts/internal/release-smoke-app-lifecycle.sh"
   "scripts/internal/release-smoke-bundle-icon.sh"
   "scripts/internal/release-smoke-gatekeeper.sh"
+  "scripts/internal/run-native-sshd-fish3-suite.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
   "scripts/internal/setup-plugin-index-signing-key.sh"
