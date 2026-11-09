@@ -2628,6 +2628,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fish_host_never_gets_the_bash_setup() {
+        // #5016: a fish login shell was typed the bash hook — a parse error
+        // at session start. fish 3.x gets its own hook; fish 4.0+ emits OSC 7
+        // and OSC 133 itself and gets nothing.
+        let (writes, _) = writes_for_shell(remote_shell::RemoteShell::Fish {
+            native_integration: false,
+        })
+        .await;
+        assert_eq!(
+            writes,
+            vec![format!("{}\n", crate::session::shell::fish_typed_setup_command()).into_bytes()]
+        );
+        let line = String::from_utf8(writes[0].clone()).unwrap();
+        assert!(!line.contains("PROMPT_COMMAND"), "bash setup on fish");
+
+        let (writes, detected) = writes_for_shell(remote_shell::RemoteShell::Fish {
+            native_integration: true,
+        })
+        .await;
+        assert_eq!(detected, Some(true));
+        assert!(writes.is_empty(), "fish 4 must get nothing: {writes:?}");
+    }
+
+    #[tokio::test]
     async fn integration_line_typed_by_the_connector_is_not_typed_again() {
         // #4604: the russh connector types the line itself, sequenced behind
         // the shell's first prompt and ahead of the user's input; the backend
