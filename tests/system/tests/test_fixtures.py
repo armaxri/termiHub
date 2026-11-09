@@ -809,3 +809,51 @@ def test_real_swap_container_is_recreated_per_test_attempt(request):
     )
     assert defs, "conftest must define remote_agent_update_swap_fixtures"
     assert defs[-1].scope == "function"
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("first\nsecond\n", "first\nsecond"),
+        (b" Image termihub-ssh-x11 Building \n", "Image termihub-ssh-x11 Building"),
+        (b"bad \xff byte\n", "bad � byte"),
+        (None, "(no output captured)"),
+        (b"", "(no output captured)"),
+        ("   \n", "(no output captured)"),
+    ],
+    ids=["str", "bytes", "undecodable-bytes", "none", "empty-bytes", "blank-str"],
+)
+def test_tail_accepts_str_bytes_and_none(output, expected):
+    """#5103: TimeoutExpired carries bytes even under ``text=True``."""
+    assert fx._tail(output) == expected
+
+
+def test_tail_keeps_only_the_last_lines():
+    output = b"\n".join(f"line {i}".encode() for i in range(30))
+    assert fx._tail(output, lines=3) == "line 27\nline 28\nline 29"
+
+
+def test_compose_timeout_with_bytes_output_reports_the_timeout(monkeypatch):
+    """#5103 regression: a compose timeout raised TypeError from ``_tail``."""
+    monkeypatch.setenv("CI", "true")
+
+    def run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd, kwargs["timeout"], output=b"", stderr=b" Image termihub-ssh-x11 Building \n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(fx.ComposeFixtureFailed, match="timed out after 5.0s") as excinfo:
+        _run_compose()
+    assert "Image termihub-ssh-x11 Building" in str(excinfo.value)
+
+
+def test_compose_timeout_without_output_reports_the_timeout(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+
+    def run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(fx.ComposeFixtureFailed, match="no output captured"):
+        _run_compose()
