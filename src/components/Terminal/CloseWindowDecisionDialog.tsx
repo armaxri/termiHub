@@ -5,6 +5,7 @@ import {
   Ban,
   FileWarning,
   KeyRound,
+  LoaderCircle,
   Network,
   Plug,
   Power,
@@ -73,6 +74,7 @@ export function CloseWindowDecisionDialog() {
   const request = useAppStore((s) => s.pendingWindowClose);
   const setRequest = useAppStore((s) => s.setPendingWindowClose);
   const endWindowSessions = useAppStore((s) => s.endWindowSessions);
+  const endStartingConnects = useAppStore((s) => s.endStartingConnects);
   const moveWindowSessionsToWindow = useAppStore((s) => s.moveWindowSessionsToWindow);
   const [targetLabel, setTargetLabel] = useState<string | undefined>(undefined);
 
@@ -111,6 +113,9 @@ export function CloseWindowDecisionDialog() {
   };
 
   const count = request.sessions.length;
+  // Connections still starting (#5112) are listed apart from the live sessions.
+  const startingCount = request.sessions.filter((session) => session.starting).length;
+  const liveCount = count - startingCount;
   const dirtyEditors = request.dirtyEditors ?? [];
   const dirtyCount = dirtyEditors.length;
   const movableCount = dirtyEditors.filter((editor) => editor.movable).length;
@@ -136,6 +141,9 @@ export function CloseWindowDecisionDialog() {
       toast.error(`Could not move the tabs: ${errorMessage(err)}`);
       return;
     }
+    // A connection still starting does not move: end it before the window goes
+    // so it is not left running once it finishes starting (#5112).
+    await endStartingConnects();
     setRequest(null);
     await getCurrentWindow().destroy();
   };
@@ -228,8 +236,8 @@ export function CloseWindowDecisionDialog() {
         <p>
           {count > 0 && (
             <>
-              This window owns {count} open session{count === 1 ? "" : "s"}. Choose what happens to{" "}
-              {count === 1 ? "it" : "them"} before {isQuit ? "termiHub quits" : "it closes"}.
+              This window owns {sessionCountPhrase(liveCount, startingCount)}. Choose what happens
+              to {count === 1 ? "it" : "them"} before {isQuit ? "termiHub quits" : "it closes"}.
             </>
           )}
           {count > 0 && dirtyCount > 0 && " "}
@@ -336,6 +344,23 @@ export function CloseWindowDecisionDialog() {
   );
 }
 
+/**
+ * `2 open sessions`, `1 connection that is still starting`, or both joined:
+ * what the window owns, for the lead sentence (#5112).
+ */
+function sessionCountPhrase(liveCount: number, startingCount: number): string {
+  const parts: string[] = [];
+  if (liveCount > 0) parts.push(`${liveCount} open session${liveCount === 1 ? "" : "s"}`);
+  if (startingCount > 0) {
+    parts.push(
+      startingCount === 1
+        ? "1 connection that is still starting"
+        : `${startingCount} connections that are still starting`
+    );
+  }
+  return joinWords(parts);
+}
+
 /** `A`, `A and B`, `A, B and C`: a list of words for prose. */
 function joinWords(words: ReadonlyArray<string>): string {
   if (words.length <= 1) return words.join("");
@@ -425,7 +450,11 @@ function locateTab(tabId: string): { groupId: string; panelId: string } | null {
   return null;
 }
 
-/** One per-session row: icon, name, connection type, and the outcome pill. */
+/**
+ * One per-session row: icon, name, connection type, and the outcome pill. A
+ * connection still starting (#5112) says so: it is ended, and closed at once if
+ * it finishes starting afterwards.
+ */
 function SessionRow({ session }: { session: WindowCloseSessionRow }) {
   const Icon = session.connectionType === "ssh" ? Network : Terminal;
   return (
@@ -433,7 +462,14 @@ function SessionRow({ session }: { session: WindowCloseSessionRow }) {
       <Icon className="li close-window-decision__row-icon" aria-hidden="true" />
       <span className="close-window-decision__row-name">{session.title}</span>
       <span className="close-window-decision__row-type">{session.connectionType}</span>
-      {session.outcome === "detach" ? (
+      {session.starting ? (
+        <span
+          className="close-window-decision__pill close-window-decision__pill--terminate"
+          data-testid="close-window-decision-outcome-starting"
+        >
+          <LoaderCircle className="li" aria-hidden="true" /> Still starting — will be ended
+        </span>
+      ) : session.outcome === "detach" ? (
         <span
           className="close-window-decision__pill close-window-decision__pill--detach"
           data-testid="close-window-decision-outcome-detach"

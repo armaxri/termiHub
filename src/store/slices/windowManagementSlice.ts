@@ -16,6 +16,7 @@ import { collectWindowTabs, getComposedLayout, withComposedLayout } from "../lay
 import { dirtyEditorTabs } from "@/utils/tabLiveSession";
 import { LAST_SESSION_SAVE_DEBOUNCE_MS } from "../restoreHelpers";
 import {
+  cancelConnecting as apiCancelConnecting,
   closeTerminal as apiCloseTerminal,
   detachPersistentTab as apiDetachPersistentTab,
   openWindow,
@@ -158,6 +159,21 @@ export interface WindowManagementSlice {
   /** Set or clear the pending close-with-live-tabs decision (#1903). */
   setPendingWindowClose: (request: WindowCloseRequest | null) => void;
   /**
+   * Tabs whose connection is still starting (#5112): tab id → the connect id of
+   * its in-flight `create_connection`. Set and cleared by the {@link Terminal}
+   * around each create. The close and quit decisions list these tabs as
+   * starting connections that will be ended.
+   */
+  startingConnects: Record<string, string>;
+  /** Record (`connectId`) or clear (`null`) a tab's in-flight create (#5112). */
+  setConnectStarting: (tabId: string, connectId: string | null) => void;
+  /**
+   * Set once this window's sessions are being ended for a confirmed window
+   * close (#5112). A create that resolves from then on is closed at once by the
+   * {@link Terminal} instead of becoming a live session nobody owns.
+   */
+  windowSessionsEnding: boolean;
+  /**
    * Assess this window's owned live sessions when the OS requests its close
    * (#1903) and pick the next step:
    *
@@ -184,8 +200,17 @@ export interface WindowManagementSlice {
    */
   prepareAppQuit: () => "ready" | "prompt";
   /**
+   * End this window's connections that are still starting (#5112), for a
+   * window that is about to close: from now on a create that resolves is closed
+   * at once, every in-flight create is cancelled, and this waits (bounded by
+   * {@link STARTING_CONNECT_SETTLE_MS}) until they have settled. The backend
+   * closes one that finishes only after the window is gone.
+   */
+  endStartingConnects: () => Promise<void>;
+  /**
    * Destructive close outcome (#1903): detach every persistent/agent session
-   * and terminate every non-persistent one owned by this window.
+   * and terminate every non-persistent one owned by this window. Connections
+   * still starting are ended through {@link endStartingConnects} (#5112).
    */
   endWindowSessions: () => Promise<void>;
   /**
@@ -270,6 +295,30 @@ function otherTabsField(
 ): Pick<WindowCloseRequest, "otherTabs"> {
   const otherTabs = otherTabRows(tabs, editorDirty);
   return otherTabs.length > 0 ? { otherTabs } : {};
+}
+
+/**
+ * How long a window close waits for its still-starting connections to settle
+ * after cancelling them (#5112). The backend closes a session that finishes
+ * starting after its window is gone, so this bound only keeps the window open
+ * long enough for the clean, frontend-side close.
+ */
+export const STARTING_CONNECT_SETTLE_MS = 3000;
+
+/** This window's tabs whose connection is still starting (#5112). */
+function startingTabIds(state: AppState): Set<string> {
+  return new Set(Object.keys(state.startingConnects));
+}
+
+/**
+ * Resolve once no create is in flight any more, or after `timeoutMs` (#5112).
+ * Polls the store: a create settles when its {@link Terminal} clears it.
+ */
+async function waitForStartingConnects(get: () => AppState, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Object.keys(get().startingConnects).length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowManagementSlice> = (
@@ -397,14 +446,30 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
   // ── Close-with-live-tabs decision surface (#1903) ────────────────────
   pendingWindowClose: null,
   setPendingWindowClose: (request) => set({ pendingWindowClose: request }),
+  startingConnects: {},
+  setConnectStarting: (tabId, connectId) =>
+    set((state) => {
+      if (connectId !== null) {
+        return { startingConnects: { ...state.startingConnects, [tabId]: connectId } };
+      }
+      if (!(tabId in state.startingConnects)) return {};
+      const { [tabId]: _settled, ...rest } = state.startingConnects;
+      return { startingConnects: rest };
+    }),
+  windowSessionsEnding: false,
 
   prepareWindowClose: async (otherWindows) => {
     const tabs = collectWindowTabs(get());
-    const sessions = classifyWindowCloseSessions(tabs);
+    const starting = startingTabIds(get());
+    const sessions = classifyWindowCloseSessions(tabs, starting);
     // Unsaved editors carry no session, so the session classification never
     // sees them; a dirty editor alone must still stop the close (UX2-003).
     const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
-    const otherTabs = otherTabsField(tabs, get().editorDirtyTabs);
+    // A starting connection is already a session row (#5112), not an other tab.
+    const otherTabs = otherTabsField(
+      tabs.filter((tab) => !starting.has(tab.id)),
+      get().editorDirtyTabs
+    );
     if (dirtyEditors.length > 0) {
       set({ pendingWindowClose: { sessions, otherWindows, dirtyEditors, ...otherTabs } });
       return "prompt";
@@ -431,7 +496,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
 
   prepareAppQuit: () => {
     const tabs = collectWindowTabs(get());
-    const sessions = classifyWindowCloseSessions(tabs);
+    const sessions = classifyWindowCloseSessions(tabs, startingTabIds(get()));
     const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
     if (dirtyEditors.length === 0 && !windowCloseWouldLoseData(sessions)) return "ready";
     set({
@@ -445,7 +510,25 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     return "prompt";
   },
 
+  endStartingConnects: async () => {
+    // From here on a create that resolves is closed at once (#5112).
+    set({ windowSessionsEnding: true });
+    const starting = Object.entries(get().startingConnects);
+    if (starting.length === 0) return;
+    for (const [tabId, connectId] of starting) {
+      frontendLog("multi_window", `Ending the connection still starting in tab ${tabId}`);
+      apiCancelConnecting(connectId).catch((err: unknown) => {
+        frontendWarn(
+          "multi_window",
+          `Cancelling the starting connect ${connectId} failed: ${errorMessage(err)}`
+        );
+      });
+    }
+    await waitForStartingConnects(get, STARTING_CONNECT_SETTLE_MS);
+  },
+
   endWindowSessions: async () => {
+    const settled = get().endStartingConnects();
     const tabs = collectWindowTabs(get()).filter((tab) => tab.sessionId);
     await Promise.all(
       tabs.map((tab) => {
@@ -463,6 +546,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
         });
       })
     );
+    await settled;
   },
 
   moveWindowSessionsToWindow: async (target) => {

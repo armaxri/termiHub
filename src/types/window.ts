@@ -178,8 +178,17 @@ export type WindowCloseOutcome = "detach" | "terminate";
 export interface WindowCloseSessionRow {
   /** Owning tab id (used to detach/move the exact tab). */
   tabId: string;
-  /** The live backend session id. */
-  sessionId: string;
+  /**
+   * The live backend session id, or `null` while the tab's connection is still
+   * starting (#5112).
+   */
+  sessionId: string | null;
+  /**
+   * Set when the tab's connection is still starting (`create_connection` in
+   * flight, #5112): the close ends it, and a connection that finishes starting
+   * after the close was confirmed is closed at once.
+   */
+  starting?: boolean;
   /** Tab title, for display. */
   title: string;
   /** Connection type (`local`, `ssh`, `serial`, …), for display/icon. */
