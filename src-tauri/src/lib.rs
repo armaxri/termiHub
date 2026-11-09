@@ -884,6 +884,7 @@ pub fn run() -> anyhow::Result<()> {
             // Explicit-quit handshake (#4296)
             commands::window::quit_window_ready,
             commands::window::quit_window_prompting,
+            commands::window::quit_window_listening,
             commands::window::cancel_quit,
             // Test-bridge-only (SEC-005, #3657): a normal quit so an
             // LLVM-instrumented test build writes its coverage profile.

@@ -26,6 +26,7 @@ vi.mock("@/services/storage", () => ({
 
 const quitWindowReady = vi.fn();
 const quitWindowPrompting = vi.fn();
+const quitWindowListening = vi.fn();
 const cancelQuit = vi.fn();
 const closeTerminal = vi.fn();
 const detachPersistentTab = vi.fn();
@@ -38,6 +39,7 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   quitWindowReady: (...args: unknown[]) => quitWindowReady(...args),
   quitWindowPrompting: (...args: unknown[]) => quitWindowPrompting(...args),
+  quitWindowListening: (...args: unknown[]) => quitWindowListening(...args),
   cancelQuit: (...args: unknown[]) => cancelQuit(...args),
   closeTerminal: (...args: unknown[]) => closeTerminal(...args),
   detachPersistentTab: (...args: unknown[]) => detachPersistentTab(...args),
@@ -48,9 +50,15 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ destroy, label: "main" }),
 }));
 
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { CloseWindowDecisionDialog } from "@/components/Terminal/CloseWindowDecisionDialog";
-import { handleAppQuitCancelled, handleAppQuitRequested } from "./useAppQuitRequests";
+import {
+  APP_QUIT_REQUESTED_EVENT,
+  handleAppQuitCancelled,
+  handleAppQuitRequested,
+  useAppQuitRequests,
+} from "./useAppQuitRequests";
 
 function seedLiveTab(sessionId: string, persistentConnectionId?: string): string {
   return useAppStore.getState().addTab("build", "local", undefined, {
@@ -73,6 +81,7 @@ describe("app quit request (#4296)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     quitWindowReady.mockReset().mockResolvedValue(undefined);
     quitWindowPrompting.mockReset().mockResolvedValue(undefined);
+    quitWindowListening.mockReset().mockResolvedValue(false);
     cancelQuit.mockReset().mockResolvedValue(undefined);
     closeTerminal.mockReset().mockResolvedValue(undefined);
     detachPersistentTab.mockReset().mockResolvedValue(undefined);
@@ -181,5 +190,66 @@ describe("app quit request (#4296)", () => {
     useAppStore.getState().setPendingWindowClose({ sessions: [], otherWindows: [] });
     handleAppQuitCancelled();
     expect(useAppStore.getState().pendingWindowClose).not.toBeNull();
+  });
+
+  describe("a window that was still loading when the quit began (#5106)", () => {
+    function QuitListener() {
+      useAppQuitRequests();
+      return null;
+    }
+
+    /** Hold the quit-request listener's registration until `register()`. */
+    function deferQuitListener() {
+      let register = () => {};
+      vi.mocked(listen).mockImplementation((event) => {
+        if (event !== APP_QUIT_REQUESTED_EVENT) return Promise.resolve(() => {});
+        return new Promise((resolve) => {
+          register = () => resolve(() => {});
+        });
+      });
+      return () => register();
+    }
+
+    afterEach(() => {
+      vi.mocked(listen).mockImplementation(() => Promise.resolve(() => {}));
+    });
+
+    it("answers a quit that was requested before its listener existed", async () => {
+      seedLiveTab("s1");
+      const register = deferQuitListener();
+      quitWindowListening.mockResolvedValue(true);
+
+      await act(async () => root.render(<QuitListener />));
+      // Not registered yet: the backend cannot have been told it listens.
+      expect(quitWindowListening).not.toHaveBeenCalled();
+
+      await act(async () => register());
+
+      expect(quitWindowListening).toHaveBeenCalledTimes(1);
+      expect(quitWindowPrompting).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().pendingWindowClose?.mode).toBe("quit");
+    });
+
+    it("does nothing more when no quit is waiting on it", async () => {
+      seedLiveTab("s1");
+      await act(async () => root.render(<QuitListener />));
+
+      expect(quitWindowListening).toHaveBeenCalledTimes(1);
+      expect(quitWindowPrompting).not.toHaveBeenCalled();
+      expect(quitWindowReady).not.toHaveBeenCalled();
+      expect(useAppStore.getState().pendingWindowClose).toBeNull();
+    });
+
+    it("skips the catch-up when it unmounted before the listener registered", async () => {
+      const register = deferQuitListener();
+      quitWindowListening.mockResolvedValue(true);
+
+      await act(async () => root.render(<QuitListener />));
+      act(() => root.render(<></>));
+      await act(async () => register());
+
+      expect(quitWindowListening).not.toHaveBeenCalled();
+      expect(quitWindowReady).not.toHaveBeenCalled();
+    });
   });
 });

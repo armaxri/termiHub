@@ -106,7 +106,14 @@ class TestOsMacAppLifecycle(
         self.ensure_terminal()
         second = self.open_new_window()
         second.click(NEW_TERMINAL)
-        self.wait(lambda: window_tabs(second), what="window B's shell")
+        # Wait for the shell's *session*, not just its tab (#5106): a quit asks a
+        # window about the sessions it holds, and the tab exists before its
+        # backend session does. Cmd+Q in that gap rightly finds nothing to lose
+        # in window B, so B never shows the dialog this grade waits for.
+        self.wait(
+            lambda: any(tab.get("sessionId") for tab in window_tabs(second)),
+            what="window B's live shell",
+        )
         osi.key("cmd+q")
         # Each window that would lose a live session answers for itself.
         for driver in (second, self.driver):

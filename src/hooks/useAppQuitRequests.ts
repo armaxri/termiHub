@@ -1,8 +1,10 @@
+import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
-import { quitWindowPrompting, quitWindowReady } from "@/services/api";
+import { quitWindowListening, quitWindowPrompting, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendError } from "@/utils/frontendLog";
-import { useTauriListener } from "./useTauriListener";
+import { subscribeGuarded, useTauriListener } from "./useTauriListener";
 
 /** Backend event: an explicit app quit (Cmd+Q / menu Quit) needs this window's answer. */
 export const APP_QUIT_REQUESTED_EVENT = "app-quit-requested";
@@ -33,6 +35,20 @@ export async function handleAppQuitRequested(): Promise<void> {
   }
 }
 
+/**
+ * Report that this window's quit listener is registered, and answer a quit that
+ * is already waiting on it (#5106). Tauri delivers an event only to listeners
+ * that exist when it is emitted, so a window that was still loading when Cmd+Q
+ * fanned out never saw the request; without this it would be skipped.
+ */
+export async function catchUpOnPendingQuit(): Promise<void> {
+  try {
+    if (await quitWindowListening()) await handleAppQuitRequested();
+  } catch (err) {
+    frontendError("multi_window", `Checking for a pending app quit failed: ${errorMessage(err)}`);
+  }
+}
+
 /** Drop this window's quit dialog after the quit was cancelled elsewhere (#4296). */
 export function handleAppQuitCancelled(): void {
   const store = useAppStore.getState();
@@ -42,9 +58,29 @@ export function handleAppQuitCancelled(): void {
 /**
  * Route explicit app quits (Cmd+Q, the app menu's Quit) through the same
  * detach-vs-terminate decision a window close uses (#4296). The backend holds
- * the exit until every window agreed.
+ * the exit until every window agreed, including one that was still loading
+ * when the quit began (#5106).
  */
 export function useAppQuitRequests(): void {
-  useTauriListener<void>(APP_QUIT_REQUESTED_EVENT, () => void handleAppQuitRequested(), "app_quit");
+  useEffect(() => {
+    let active = true;
+    const dispose = subscribeGuarded(
+      async () => {
+        const unlisten = await listen<void>(APP_QUIT_REQUESTED_EVENT, () => {
+          if (active) void handleAppQuitRequested();
+        });
+        // Only once the listener exists: a request emitted from here on reaches
+        // it, and one emitted before is answered by the catch-up (#5106).
+        if (active) void catchUpOnPendingQuit();
+        return unlisten;
+      },
+      "app_quit",
+      `"${APP_QUIT_REQUESTED_EVENT}"`
+    );
+    return () => {
+      active = false;
+      dispose();
+    };
+  }, []);
   useTauriListener<void>(APP_QUIT_CANCELLED_EVENT, handleAppQuitCancelled, "app_quit");
 }
