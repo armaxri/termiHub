@@ -16,20 +16,23 @@
 # --allow-login-shell-change is given. Linux only (usermod / getent).
 #
 # The nightly `native-sshd` job in integration-fixtures.yml runs this on its
-# ubuntu leg, after apt-installing fish (Ubuntu 24.04 ships fish 3.7).
+# ubuntu leg with --install-debian-fish3: Ubuntu itself ships fish 4 now, so
+# Debian bookworm's fish 3.6 packages are fetched, checked against pinned
+# SHA-256 sums and installed (apt pulls their few library deps).
 #
 # Usage:
 #   scripts/internal/run-native-sshd-fish3-suite.sh [--log PATH]
-#       [--fish PATH] [--allow-login-shell-change]
+#       [--fish PATH] [--install-debian-fish3] [--allow-login-shell-change]
 #
-#   --log PATH   where the test output + setup trace go
-#                (default: $RUNNER_TEMP or $TMPDIR, fish3-ssh-trace.log)
-#   --fish PATH  the fish 3 binary (default: `fish` on PATH)
+#   --log PATH               where the test output + setup trace go
+#                            (default: $RUNNER_TEMP or $TMPDIR, fish3-ssh-trace.log)
+#   --fish PATH              the fish 3 binary (default: `fish` on PATH)
+#   --install-debian-fish3   first install bookworm's fish 3.6 (apt, sudo)
 
 set -euo pipefail
 
 usage() {
-  sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -50,6 +53,30 @@ LOG="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 LOG="${LOG%/}/fish3-ssh-trace.log"
 FISH=""
 ALLOW=0
+INSTALL=0
+
+# Debian bookworm's fish 3.6 (deb.debian.org pool; bump both sums with the
+# version if a bookworm point release replaces it).
+DEBIAN_POOL="https://deb.debian.org/debian/pool/main/f/fish"
+FISH3_DEBS=(
+  "fish-common_3.6.0-3.1+deb12u1_all.deb 7386d9ae1851784c9ab3818f18389dbe33f4961f48617393509e2cc99ac6b6e1"
+  "fish_3.6.0-3.1+deb12u1_amd64.deb ffe12d263ef84a49554205e7c6607d81bc4f78f350194aab303a9a7a7888bbab"
+)
+
+install_debian_fish3() {
+  local dir entry name sum paths=()
+  dir="$(mktemp -d)"
+  for entry in "${FISH3_DEBS[@]}"; do
+    name="${entry% *}"
+    sum="${entry#* }"
+    curl -fsSL --retry 3 -o "$dir/$name" "$DEBIAN_POOL/$name" || die "could not download $name"
+    echo "$sum  $dir/$name" | sha256sum -c --quiet - || die "$name does not match its pinned SHA-256"
+    paths+=("$dir/$name")
+  done
+  sudo apt-get update -q
+  sudo apt-get install -y -q --no-install-recommends --allow-downgrades "${paths[@]}"
+  rm -rf "$dir"
+}
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help)
@@ -70,6 +97,10 @@ while [ $# -gt 0 ]; do
       ALLOW=1
       shift
       ;;
+    --install-debian-fish3)
+      INSTALL=1
+      shift
+      ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
 done
@@ -79,6 +110,7 @@ if [ "$ALLOW" -ne 1 ] && [ "${GITHUB_ACTIONS:-}" != true ]; then
   die "this changes your login shell for the run; pass --allow-login-shell-change"
 fi
 
+[ "$INSTALL" -eq 0 ] || install_debian_fish3
 if [ -z "$FISH" ]; then
   FISH="$(command -v fish)" || die "no fish on PATH (apt-get install fish, or pass --fish)"
 fi
