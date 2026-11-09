@@ -4,7 +4,10 @@
 # (MS-RDPEFS 2.2.1.3) carries the drive name, truncated to the 7 valid ASCII
 # characters the 8-byte PreferredDosName field allows, instead of the literal
 # "ignored". xrdp's devredir reads only PreferredDosName, so every redirected
-# drive was mounted as ~/thinclient_drives/ignored. DeviceData is unchanged.
+# drive was mounted as ~/thinclient_drives/ignored. Also (#4923, upstream
+# 4cd9d4506): DeviceData as sanitised 8-bit characters. Also (#5118, upstream
+# 0f9154d2): drive IRPs the crate does not implement are completed with
+# STATUS_NOT_SUPPORTED / STATUS_UNSUCCESSFUL instead of ending the session.
 # `[lib] test = false` was removed so the fork's own unit tests run.
 #
 # UPSTREAM CHANGE THIS REPRESENTS: the `PreferredDosName::for_drive` part of
