@@ -1758,9 +1758,9 @@ mod tests {
     }
 
     /// #5009: a POSIX (or fish, #5016) Linux/macOS host with shell
-    /// integration is held
-    /// until its first prompt, so the setup is typed at the line editor and
-    /// its echo can be hidden; without integration it stays ungated.
+    /// integration is held until its first prompt, so the setup is typed at
+    /// the line editor and its echo can be hidden; without integration it
+    /// stays ungated. A Windows host never hides it (#5015, #5101).
     #[test]
     fn only_posix_and_fish_with_integration_hide_their_setup_echo() {
         for shell in ALL_SHELLS {
