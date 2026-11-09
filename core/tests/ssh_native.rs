@@ -264,9 +264,11 @@ fn fixture_shell() -> RemoteShell {
         Ok("pwsh") => RemoteShell::UnixPowerShell,
         Ok("fish") => RemoteShell::Fish {
             native_integration: true,
+            windows: false,
         },
         Ok("fish3") => RemoteShell::Fish {
             native_integration: false,
+            windows: false,
         },
         _ => RemoteShell::Posix,
     }
