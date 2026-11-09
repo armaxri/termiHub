@@ -1641,6 +1641,92 @@ mod tests {
         assert_ne!(&announced_dos_name("termiHub"), b"ignored\0");
     }
 
+    // ── Unsupported drive IRPs are completed, not fatal (#5118) ─────────
+
+    /// A drive Device I/O Request (MS-RDPEFS 2.2.1.4) laid out as FsInformationClass,
+    /// Length, Padding (24 bytes), Buffer, for the sidecar's redirected drive.
+    fn drive_information_request(
+        major: ironrdp::rdpdr::pdu::efs::MajorFunction,
+        class: u32,
+        buffer: &[u8],
+    ) -> Vec<u8> {
+        use ironrdp::rdpdr::pdu::efs::{DeviceIoRequest, MinorFunction};
+        use ironrdp::rdpdr::pdu::RdpdrPdu;
+        let mut encoded = ironrdp::core::encode_vec(&RdpdrPdu::DeviceIoRequest(DeviceIoRequest {
+            device_id: DRIVE_DEVICE_ID,
+            file_id: 0,
+            completion_id: 9,
+            major_function: major,
+            minor_function: MinorFunction::from(0u32),
+        }))
+        .expect("encode the device I/O request");
+        encoded.extend_from_slice(&class.to_le_bytes());
+        encoded.extend_from_slice(&u32::try_from(buffer.len()).expect("fits").to_le_bytes());
+        encoded.extend_from_slice(&[0; 24]);
+        encoded.extend_from_slice(buffer);
+        encoded
+    }
+
+    /// (DeviceId, CompletionId, IoStatus) of an encoded DR_DEVICE_IOCOMPLETION.
+    fn completion_header(message: &ironrdp::svc::SvcMessage) -> (Vec<u8>, u32, u32, u32) {
+        let encoded = message
+            .encode_unframed_pdu()
+            .expect("encode the completion");
+        let word = |at: usize| u32::from_le_bytes(encoded[at..at + 4].try_into().expect("u32"));
+        assert_eq!(
+            &encoded[..4],
+            &[0x72, 0x44, 0x43, 0x49],
+            "DEVICE_IOCOMPLETION"
+        );
+        let (device_id, completion_id, io_status) = (word(4), word(8), word(12));
+        (encoded, device_id, completion_id, io_status)
+    }
+
+    /// A Windows host changing the shared folder's volume label sends
+    /// IRP_MJ_SET_VOLUME_INFORMATION, which neither the vendored ironrdp-rdpdr fork nor
+    /// the drive backend implements. It used to be a decode error that ended the whole
+    /// session; now the sidecar's drive channel answers STATUS_NOT_SUPPORTED and the
+    /// next request is still served by the real drive backend.
+    #[test]
+    fn unsupported_drive_irp_is_completed_and_the_channel_keeps_serving() {
+        use ironrdp::rdpdr::pdu::efs::{MajorFunction, NtStatus};
+        use ironrdp::svc::SvcProcessor;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
+        let mut rdpdr = Rdpdr::new(
+            Box::new(DriveRedirectBackend::new(root)),
+            CLIENT_NAME.to_string(),
+        )
+        .with_drives(Some(vec![(DRIVE_DEVICE_ID, "share".to_string())]));
+
+        // FileFsLabelInformation: VolumeLabelLength 4, VolumeLabel "LB"
+        let label = [4, 0, 0, 0, b'L', 0, b'B', 0];
+        let request = drive_information_request(MajorFunction::SetVolumeInformation, 2, &label);
+        let responses = rdpdr
+            .process(&request)
+            .expect("a set volume information request does not end the session");
+        assert_eq!(responses.len(), 1);
+        let (encoded, device_id, completion_id, io_status) = completion_header(&responses[0]);
+        assert_eq!(device_id, DRIVE_DEVICE_ID);
+        assert_eq!(completion_id, 9);
+        assert_eq!(NtStatus::from(io_status), NtStatus::NOT_SUPPORTED);
+        assert_eq!(encoded.len(), 20);
+        assert_eq!(
+            &encoded[16..20],
+            &8u32.to_le_bytes(),
+            "Length echoes the request"
+        );
+
+        // FileFsSizeInformation is supported and reaches DriveRedirectBackend.
+        let request = drive_information_request(MajorFunction::QueryVolumeInformation, 3, &[]);
+        let responses = rdpdr.process(&request).expect("the channel still serves");
+        assert_eq!(responses.len(), 1);
+        let (_, device_id, _, io_status) = completion_header(&responses[0]);
+        assert_eq!(device_id, DRIVE_DEVICE_ID);
+        assert_eq!(NtStatus::from(io_status), NtStatus::SUCCESS);
+    }
+
     /// The exact frame xrdp 0.10 sends after `require_credentials` rejects a
     /// wrong password (captured against the `rdp-server` fixture, #3612).
     #[test]
