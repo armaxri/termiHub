@@ -48,7 +48,8 @@ use ironrdp::rdpdr::pdu::efs::{
     ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse,
     ClientDriveSetInformationResponse, CreateDisposition, CreateOptions, DesiredAccess,
     DeviceCloseRequest, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse,
-    DeviceCreateRequest, DeviceCreateResponse, DeviceIoRequest, DeviceIoResponse,
+    DeviceCreateRequest, DeviceCreateResponse, DeviceFlushBuffersRequest,
+    DeviceFlushBuffersResponse, DeviceIoRequest, DeviceIoResponse,
     DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse,
     FileAttributeTagInformation, FileAttributes, FileBasicInformation,
     FileBothDirectoryInformation, FileDirectoryInformation, FileFsAttributeInformation,
@@ -179,6 +180,7 @@ impl DriveRedirectBackend {
             ServerDriveIoRequest::DeviceCloseRequest(req) => self.handle_close(req),
             ServerDriveIoRequest::DeviceReadRequest(req) => self.handle_read(req),
             ServerDriveIoRequest::DeviceWriteRequest(req) => self.handle_write(req),
+            ServerDriveIoRequest::DeviceFlushBuffersRequest(req) => self.handle_flush(req),
             ServerDriveIoRequest::ServerDriveQueryInformationRequest(req) => {
                 self.handle_query_information(req)
             }
@@ -415,6 +417,25 @@ impl DriveRedirectBackend {
             }),
             Err(e) => write_error(io, io_error_to_nt_status(&e)),
         }
+    }
+
+    /// IRP_MJ_FLUSH_BUFFERS (a Windows `FlushFileBuffers` on the shared folder, #5124).
+    /// Every write already reaches the OS before it is acknowledged (see [`write_at`]),
+    /// so a flush asks the OS to make the file durable. A directory handle has
+    /// nothing to flush.
+    fn handle_flush(&mut self, req: DeviceFlushBuffersRequest) -> RdpdrPdu {
+        let io = req.device_io_request;
+        let status = match self.open_files.get(&io.file_id) {
+            None => NtStatus::UNSUCCESSFUL,
+            Some(open) if open.is_dir => NtStatus::SUCCESS,
+            Some(open) => match flush_file(&open.path) {
+                Ok(()) => NtStatus::SUCCESS,
+                Err(e) => io_error_to_nt_status(&e),
+            },
+        };
+        RdpdrPdu::DeviceFlushBuffersResponse(DeviceFlushBuffersResponse {
+            device_io_response: DeviceIoResponse::new(io, status),
+        })
     }
 
     fn handle_query_information(&mut self, req: ServerDriveQueryInformationRequest) -> RdpdrPdu {
@@ -875,6 +896,11 @@ fn write_at(path: &PathBuf, offset: u64, data: &[u8]) -> std::io::Result<u32> {
     file.seek(SeekFrom::Start(offset))?;
     file.write_all(data)?;
     Ok(u32::try_from(data.len()).unwrap_or(u32::MAX))
+}
+
+/// Ask the OS to write `path`'s data to its storage device (fsync).
+fn flush_file(path: &PathBuf) -> std::io::Result<()> {
+    OpenOptions::new().write(true).open(path)?.sync_all()
 }
 
 /// Truncate or extend a file to `len` bytes (used by end-of-file / allocation

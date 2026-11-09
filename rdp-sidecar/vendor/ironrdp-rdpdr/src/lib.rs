@@ -12,7 +12,7 @@ use pdu::efs::{
     ClientNameRequestUnicodeFlag, CoreCapability, CoreCapabilityKind, DEFAULT_PRINTER_DRIVER_NAME,
     DeviceAnnounceHeader, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse, DeviceIoRequest,
     DeviceIoResponse, DeviceType, Devices, MajorFunction, NtStatus, PrinterIoRequest, ServerDeviceAnnounceResponse,
-    UnsupportedDriveIoRequest, VERSION_MINOR_RDP51, VersionAndIdPdu, VersionAndIdPduKind,
+    UnknownMajorFunctionRequest, UnsupportedDriveIoRequest, VERSION_MINOR_RDP51, VersionAndIdPdu, VersionAndIdPduKind,
 };
 use pdu::esc::{ScardCall, ScardIoCtlCode};
 use pdu::{DeviceIoCompletion, PacketId, RdpdrPdu, SharedHeader};
@@ -362,10 +362,51 @@ impl Rdpdr {
             UnsupportedDriveIoRequest::DirectoryControl(device_io_request) => SvcMessage::from(
                 DeviceIoCompletion::Bare(DeviceIoResponse::new(device_io_request, NtStatus::UNSUCCESSFUL)),
             ),
+            // termiHub fork delta (#5124): MS-RDPEFS does not describe the security functions, but
+            // Windows clients implement them with these response layouts (upstream master's
+            // `ClientDriveQuerySecurityResponse` / `ClientDriveSetSecurityResponse`). This client
+            // has no Windows ACLs to report or apply, so they are completed as not supported,
+            // which is what a Windows file system without security support answers.
+            UnsupportedDriveIoRequest::QuerySecurity(device_io_request) => {
+                SvcMessage::from(DeviceIoCompletion::QuerySecurity(not_supported(device_io_request)))
+            }
+            UnsupportedDriveIoRequest::SetSecurity {
+                device_io_request,
+                length,
+            } => SvcMessage::from(DeviceIoCompletion::SetSecurity {
+                device_io_reply: not_supported(device_io_request),
+                length,
+            }),
         };
         debug!(?message, "Completing unsupported filesystem IRP");
 
         message
+    }
+
+    /// termiHub fork delta (#5124): completes a Device I/O Request whose MajorFunction this crate
+    /// does not know, for a device the client announced. Ignored like any other request when the
+    /// device was not announced (MS-RDPEFS 3.1.5.2).
+    ///
+    /// > If the request contains MajorFunction or MinorFunction fields that are not described by this
+    /// > protocol, the request SHOULD be completed with a Device I/O Response message that has the
+    /// > IoStatus field set to STATUS_UNSUCCESSFUL.
+    /// source: <https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpefs/9925f2e4-8d5a-4777-a41a-7ba6ef6e8bff>
+    fn handle_unknown_major_function(&self, req: UnknownMajorFunctionRequest) -> Vec<SvcMessage> {
+        if self.device_list.for_device_type(req.device_id).is_err() {
+            return Vec::new();
+        }
+        debug!(
+            device_id = req.device_id,
+            completion_id = req.completion_id,
+            major = format_args!("{:#010x}", req.major_function),
+            "Completing IRP with an unknown MajorFunction"
+        );
+
+        vec![SvcMessage::from(DeviceIoCompletion::Bare(DeviceIoResponse {
+            device_id: req.device_id,
+            completion_id: req.completion_id,
+            io_status: NtStatus::UNSUCCESSFUL,
+        }))]
     }
 
     fn unsupported_printer_io_response(device_io_request: DeviceIoRequest) -> SvcMessage {
@@ -393,6 +434,16 @@ impl SvcProcessor for Rdpdr {
                 "Ignoring unhandled RDPDR printer-cache PDU"
             );
             return Ok(vec![]);
+        }
+
+        // termiHub fork delta (#5124): a Device I/O Request with a MajorFunction this crate does not
+        // know is completed instead of failing to decode, which would end the whole session.
+        if header.packet_id == PacketId::CoreDeviceIoRequest {
+            let req = DeviceIoRequest::decode_or_unknown(&mut src).map_err(|e| decode_err!(e))?;
+            return match req {
+                Ok(req) => self.handle_device_io_request(req, &mut src),
+                Err(unknown) => Ok(self.handle_unknown_major_function(unknown)),
+            };
         }
 
         let pdu = RdpdrPdu::decode_body(header, &mut src).map_err(|e| decode_err!(e))?;
@@ -427,6 +478,7 @@ impl SvcProcessor for Rdpdr {
             | RdpdrPdu::DeviceReadResponse(_)
             | RdpdrPdu::DeviceWriteResponse(_)
             | RdpdrPdu::ClientDriveSetInformationResponse(_)
+            | RdpdrPdu::DeviceFlushBuffersResponse(_)
             | RdpdrPdu::EmptyResponse => Err(pdu_other_err!("Rdpdr", "received unexpected packet")),
         }
     }

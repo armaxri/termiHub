@@ -1450,25 +1450,51 @@ impl DeviceIoRequest {
     }
 
     pub fn decode(src: &mut ReadCursor<'_>) -> DecodeResult<Self> {
+        Self::decode_or_unknown(src)?
+            .map_err(|_| invalid_field_err!("try_from", "MajorFunction", "unsupported value"))
+    }
+
+    /// termiHub fork delta (#5124): decodes the header like [`Self::decode`], but returns a
+    /// well-formed header whose MajorFunction this crate does not know as an
+    /// [`UnknownMajorFunctionRequest`] instead of an error, so that the processor can complete
+    /// it instead of ending the session. A header cut short is still a decode error.
+    pub(crate) fn decode_or_unknown(src: &mut ReadCursor<'_>) -> DecodeResult<Result<Self, UnknownMajorFunctionRequest>> {
         ensure_size!(ctx: Self::NAME, in: src, size: Self::FIXED_PART_SIZE);
         let device_id = src.read_u32();
         let file_id = src.read_u32();
         let completion_id = src.read_u32();
-        let major_function = MajorFunction::try_from(src.read_u32())?;
+        let major_function = src.read_u32();
         let minor_function = MinorFunction::from(src.read_u32());
 
-        Ok(Self {
+        let Ok(major_function) = MajorFunction::try_from(major_function) else {
+            return Ok(Err(UnknownMajorFunctionRequest {
+                device_id,
+                completion_id,
+                major_function,
+            }));
+        };
+
+        Ok(Ok(Self {
             device_id,
             file_id,
             completion_id,
             major_function,
             minor_function,
-        })
+        }))
     }
 
     pub fn size(&self) -> usize {
         Self::FIXED_PART_SIZE
     }
+}
+
+/// termiHub fork delta (#5124): a Device I/O Request header whose MajorFunction is neither in
+/// MS-RDPEFS 2.2.1.4 nor one of the extensions this crate knows (see [`MajorFunction`]).
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub(crate) struct UnknownMajorFunctionRequest {
+    pub(crate) device_id: u32,
+    pub(crate) completion_id: u32,
+    pub(crate) major_function: u32,
 }
 
 /// See [`DeviceIoRequest`].
@@ -1497,6 +1523,15 @@ pub enum MajorFunction {
     DirectoryControl = 0x0000_000c,
     /// IRP_MJ_LOCK_CONTROL
     LockControl = 0x0000_0011,
+    // termiHub fork delta (#5124): the three functions below are not in the MS-RDPEFS 2.2.1.4
+    // table, but Windows hosts send them on redirected drives. Upstream master has the same
+    // variants (with `DeviceFlushBuffersRequest` and the security request types).
+    /// IRP_MJ_FLUSH_BUFFERS
+    FlushBuffers = 0x0000_0009,
+    /// IRP_MJ_QUERY_SECURITY
+    QuerySecurity = 0x0000_0014,
+    /// IRP_MJ_SET_SECURITY
+    SetSecurity = 0x0000_0015,
 }
 
 impl TryFrom<u32> for MajorFunction {
@@ -1515,6 +1550,10 @@ impl TryFrom<u32> for MajorFunction {
             0x0000_0006 => Ok(MajorFunction::SetInformation),
             0x0000_000c => Ok(MajorFunction::DirectoryControl),
             0x0000_0011 => Ok(MajorFunction::LockControl),
+            // termiHub fork delta (#5124)
+            0x0000_0009 => Ok(MajorFunction::FlushBuffers),
+            0x0000_0014 => Ok(MajorFunction::QuerySecurity),
+            0x0000_0015 => Ok(MajorFunction::SetSecurity),
             _ => Err(invalid_field_err!("try_from", "MajorFunction", "unsupported value")),
         }
     }
@@ -1756,6 +1795,9 @@ pub enum ServerDriveIoRequest {
     DeviceWriteRequest(DeviceWriteRequest),
     ServerDriveSetInformationRequest(ServerDriveSetInformationRequest),
     ServerDriveLockControlRequest(ServerDriveLockControlRequest),
+    /// termiHub fork delta (#5124): IRP_MJ_FLUSH_BUFFERS, as on upstream master. Answer it with
+    /// [`DeviceFlushBuffersResponse`].
+    DeviceFlushBuffersRequest(DeviceFlushBuffersRequest),
 }
 
 // termiHub fork delta (#5118): port of upstream 0f9154d2 (IronRDP#2174). A well-formed drive request
@@ -1805,6 +1847,14 @@ pub(crate) enum UnsupportedDriveIoRequest {
     QueryDirectory(DeviceIoRequest),
     /// IRP_MJ_DIRECTORY_CONTROL with a MinorFunction MS-RDPEFS does not describe.
     DirectoryControl(DeviceIoRequest),
+    /// termiHub fork delta (#5124): IRP_MJ_QUERY_SECURITY, which this crate never performs.
+    QuerySecurity(DeviceIoRequest),
+    /// termiHub fork delta (#5124): IRP_MJ_SET_SECURITY, which this crate never performs.
+    SetSecurity {
+        device_io_request: DeviceIoRequest,
+        /// The request's Length field, which the response echoes.
+        length: u32,
+    },
 }
 
 impl ServerDriveIoRequest {
@@ -1816,6 +1866,17 @@ impl ServerDriveIoRequest {
                 "MajorFunction",
                 "SetVolumeInformation".to_owned()
             )), // FreeRDP doesn't implement this
+            // termiHub fork delta (#5124)
+            Err(UnsupportedDriveIoRequest::QuerySecurity(_)) => Err(unsupported_value_err!(
+                "ServerDriveIoRequest::decode",
+                "MajorFunction",
+                "QuerySecurity".to_owned()
+            )),
+            Err(UnsupportedDriveIoRequest::SetSecurity { .. }) => Err(unsupported_value_err!(
+                "ServerDriveIoRequest::decode",
+                "MajorFunction",
+                "SetSecurity".to_owned()
+            )),
             // If MajorFunction is set to IRP_MJ_DIRECTORY_CONTROL and MinorFunction is set to any other value, we've encountered a server bug.
             Err(UnsupportedDriveIoRequest::DirectoryControl(_)) => Err(invalid_field_err!(
                 "ServerDriveIoRequest::decode",
@@ -1898,6 +1959,20 @@ impl ServerDriveIoRequest {
                 }
             },
             MajorFunction::LockControl => ServerDriveLockControlRequest::decode(dev_io_req, src)?.into(),
+            // termiHub fork delta (#5124): flush has no body and goes to the backend; the security
+            // requests are never performed, so their bodies only need to be well-framed.
+            MajorFunction::FlushBuffers => DeviceFlushBuffersRequest::decode(dev_io_req).into(),
+            MajorFunction::QuerySecurity => {
+                decode_query_security_frame(src)?;
+                return Ok(Err(UnsupportedDriveIoRequest::QuerySecurity(dev_io_req)));
+            }
+            MajorFunction::SetSecurity => {
+                let length = decode_set_security_frame(src)?;
+                return Ok(Err(UnsupportedDriveIoRequest::SetSecurity {
+                    device_io_request: dev_io_req,
+                    length,
+                }));
+            }
         };
 
         Ok(Ok(req))
@@ -1925,6 +2000,39 @@ fn decode_set_volume_information_frame(src: &mut ReadCursor<'_>) -> DecodeResult
     read_padding!(src, length); // SetVolumeBuffer
 
     Ok(length_field)
+}
+
+/// termiHub fork delta (#5124): reads the Query Security request body after its DeviceIoRequest
+/// header (SecurityInformation). As upstream master's `ServerDriveQuerySecurityRequest::decode`,
+/// trailing bytes are ignored: the native Windows client reads only this mask.
+fn decode_query_security_frame(src: &mut ReadCursor<'_>) -> DecodeResult<()> {
+    ensure_size!(ctx: "ServerDriveQuerySecurityRequest", in: src, size: 4 /* SecurityInformation */);
+    let _security_information = src.read_u32();
+    Ok(())
+}
+
+/// termiHub fork delta (#5124): reads the Set Security request body after its DeviceIoRequest
+/// header (SecurityInformation, Length, Padding and the SecurityDescriptor that Length declares)
+/// and returns its Length field. Same layout as upstream master's
+/// `ServerDriveSetSecurityRequest::decode`.
+fn decode_set_security_frame(src: &mut ReadCursor<'_>) -> DecodeResult<u32> {
+    const FIXED_PART_SIZE: usize = 4 /* SecurityInformation */ + 4 /* Length */ + 24 /* Padding */;
+
+    ensure_size!(ctx: "ServerDriveSetSecurityRequest", in: src, size: FIXED_PART_SIZE);
+    let _security_information = src.read_u32();
+    let length_field = src.read_u32();
+    read_padding!(src, 24); // Padding
+    let length = cast_length!("ServerDriveSetSecurityRequest", "length", length_field)?;
+    ensure_size!(ctx: "ServerDriveSetSecurityRequest", in: src, size: length);
+    read_padding!(src, length); // SecurityDescriptor
+
+    Ok(length_field)
+}
+
+impl From<DeviceFlushBuffersRequest> for ServerDriveIoRequest {
+    fn from(req: DeviceFlushBuffersRequest) -> Self {
+        Self::DeviceFlushBuffersRequest(req)
+    }
 }
 
 impl From<DeviceCreateRequest> for ServerDriveIoRequest {
@@ -3071,6 +3179,62 @@ impl DeviceCloseRequest {
         Self {
             device_io_request: dev_io_req,
         }
+    }
+}
+
+/// termiHub fork delta (#5124, from upstream master): [2.2.1.4] Device I/O Request
+/// (DR_DEVICE_IOREQUEST) for an `IRP_MJ_FLUSH_BUFFERS` operation.
+///
+/// Flush requests have no operation-specific payload beyond the shared Device I/O Request header.
+///
+/// [2.2.1.4]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpefs/a087ffa8-d0d5-4874-ac7b-0494f63e2d5d
+#[derive(Debug, PartialEq, Clone)]
+pub struct DeviceFlushBuffersRequest {
+    pub device_io_request: DeviceIoRequest,
+}
+
+impl DeviceFlushBuffersRequest {
+    pub fn decode(device_io_request: DeviceIoRequest) -> Self {
+        Self { device_io_request }
+    }
+
+    pub fn encode(&self, dst: &mut WriteCursor<'_>) -> EncodeResult<()> {
+        self.device_io_request.encode(dst)
+    }
+
+    pub fn size(&self) -> usize {
+        self.device_io_request.size()
+    }
+}
+
+/// termiHub fork delta (#5124, from upstream master): [2.2.1.5] Device I/O Response
+/// (DR_DEVICE_IOCOMPLETION) for an `IRP_MJ_FLUSH_BUFFERS` operation.
+///
+/// Flush responses have no operation-specific payload beyond the shared Device I/O Response header.
+///
+/// [2.2.1.5]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpefs/1c412a84-0776-4984-b35c-3f0445fcae65
+#[derive(Debug, PartialEq, Clone)]
+pub struct DeviceFlushBuffersResponse {
+    pub device_io_response: DeviceIoResponse,
+}
+
+impl DeviceFlushBuffersResponse {
+    const NAME: &'static str = "DR_FLUSH_BUFFERS_RSP";
+
+    pub fn name(&self) -> &'static str {
+        Self::NAME
+    }
+
+    pub fn encode(&self, dst: &mut WriteCursor<'_>) -> EncodeResult<()> {
+        self.device_io_response.encode(dst)
+    }
+
+    pub fn decode(device_io_response: DeviceIoResponse) -> Self {
+        Self { device_io_response }
+    }
+
+    pub fn size(&self) -> usize {
+        self.device_io_response.size()
     }
 }
 
