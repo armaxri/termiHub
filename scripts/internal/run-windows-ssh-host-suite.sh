@@ -83,6 +83,7 @@ CORE_TESTS=(
   native_05b_remote_shell_probe_detects_the_login_shell
   native_05c_first_command_runs_with_shell_integration_on
   native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
+  native_05g_windows_host_is_not_followed_without_the_hook
 )
 OPENSSH_KEY='HKLM:\SOFTWARE\OpenSSH'
 cd "$REPO_ROOT"

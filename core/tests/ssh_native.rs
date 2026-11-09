@@ -544,6 +544,72 @@ async fn native_05e_default_session_follows_cwd_without_touching_the_shell() {
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
+/// #5028: a Windows SSH host is NOT followed without the hook. With default
+/// settings (no Command Marks) nothing is typed into the shell AND no OSC 7
+/// is synthesised for it either — so a `cd` on the Git Bash host of the
+/// `bash` leg moves the shell with no `file://` report. The documented
+/// behaviour (Windows needs the hook) is pinned here; cwd following on
+/// Windows is only reachable through the opt-in setting.
+#[tokio::test]
+async fn native_05g_windows_host_is_not_followed_without_the_hook() {
+    let sshd = require_native_sshd!();
+    if fixture_shell() != RemoteShell::WindowsPosix {
+        eprintln!("this grade is for a Windows SSH host (the bash leg); skipping");
+        return;
+    }
+    let mut ssh = Ssh::new();
+    ssh.connect(sshd.key_settings()).await.expect("connect");
+    let mut rx = ssh.subscribe_output();
+    let mut seen = String::new();
+    let mut read_until = async |seen: &mut String, what: &str, done: &dyn Fn(&str) -> bool| {
+        let ok = tokio::time::timeout(Duration::from_secs(30), async {
+            while !done(seen) {
+                match rx.recv().await {
+                    Some(chunk) => seen.push_str(&String::from_utf8_lossy(&chunk)),
+                    None => return false,
+                }
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "timed out waiting for {what}: {seen:?}");
+    };
+
+    // `cd /` moves the shell, then a marker proves the shell processed input
+    // past the cd. A hook-free Windows session must show no OSC 7 directory
+    // report at any point.
+    ssh.write(
+        b"cd /
+",
+    )
+    .expect("write");
+    ssh.write(
+        b"echo th-5028-$((20+8))-done
+",
+    )
+    .expect("write");
+    read_until(&mut seen, "the marker", &|s| s.contains("th-5028-28-done")).await;
+    // A little more output, so a late report would have arrived.
+    ssh.write(
+        b"echo th-5028-tail
+",
+    )
+    .expect("write");
+    read_until(&mut seen, "the tail", &|s| s.contains("th-5028-tail")).await;
+    assert!(
+        !seen.contains("\x1b]7;file://") && !seen.contains("]7;file://"),
+        "a Windows host was followed without the hook: {seen:?}"
+    );
+    for leak in ["__termihub", "[termiHub]", "6973;", "\x1b]133;"] {
+        assert!(
+            !seen.contains(leak),
+            "{leak:?} reached the terminal: {seen:?}"
+        );
+    }
+    ssh.disconnect().await.expect("disconnect cleanly");
+}
+
 /// The initial command's hook-free cue on a real sshd (#5029): a default
 /// session's prompt probe recognises the fixture login shell's prompt (zsh or
 /// bash, cmd.exe on Windows) well before the cap, and a line typed then runs

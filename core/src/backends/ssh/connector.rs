@@ -539,10 +539,16 @@ impl SshConnector for RusshSshConnector {
         // Follow the interactive shell's directory over side exec channels on
         // this connection, reported as OSC 7 — nothing is typed into the shell
         // (#5009). Off for good once the shell reports it itself, or after a
-        // few reads the host cannot answer (Windows, no exec, no /proc+lsof).
+        // few reads the host cannot answer (no exec, no /proc+lsof, no
+        // powershell.exe, a PowerShell login shell; #5028).
         let session = Arc::new(session);
         let mut cwd_follow = CwdFollower::new(REMOTE_CWD_MIN_INTERVAL);
-        let mut cwd_failures = 0u32;
+        // A shell known not to be readable this way starts off (#5028).
+        let mut cwd_failures = if remote_cwd::follows_without_hook(remote_shell) {
+            0u32
+        } else {
+            REMOTE_CWD_MAX_FAILURES
+        };
         let (cwd_tx, mut cwd_rx) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
 
         let alive_task = alive.clone();

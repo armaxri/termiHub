@@ -14,11 +14,42 @@
 //! It answers nothing — and the session simply has no cwd following — on a
 //! host without `sh`, without `/proc` or `lsof`, that refuses exec channels
 //! (`ForceCommand`, SFTP-only accounts), or on Windows.
+//!
+//! # Windows hosts need the shell hook (#5028)
+//!
+//! A Win32-OpenSSH host is followed only through the opt-in Command Marks
+//! (Shell Hook) setting, which has a PowerShell and a Git Bash form but no
+//! cmd.exe form over SSH yet. Per `DefaultShell`:
+//!
+//! - **PowerShell** (Windows PowerShell 5 or `pwsh`, and `pwsh` as a Unix
+//!   login shell too): impossible without the hook. `Set-Location` moves
+//!   PowerShell's own location, not the process directory the operating
+//!   system knows, so no outside reader can see a `cd`.
+//! - **cmd.exe**: its `cd` does change the process directory, but Windows
+//!   has no supported API that reports *another* process's current
+//!   directory. Reading it means inspecting undocumented internal structures
+//!   of the user's shell process with debugger-level access, from a
+//!   PowerShell started (and compiling helper code) for every read. That was
+//!   judged neither robust (undocumented layout, endpoint-security tools flag
+//!   exactly this access pattern) nor free of side effects on the host, so
+//!   it is not done.
+//! - **Git Bash / MSYS2 / Cygwin**: MSYS has a `/proc`, but this script
+//!   cannot use it there. The exec channel's `sh` is a child of the native
+//!   `sshd`, which the MSYS runtime reports as parent pid 1, so the walk up
+//!   never finds the connection. Its paths are also POSIX paths
+//!   (`/c/Users/me`) that the host's SFTP server does not open
+//!   (`/C:/Users/me`).
+//!
+//! So when the shell probe has classified the host (the hook, environment
+//! variables or X11 are on), [`follows_without_hook`] keeps such a session
+//! from opening exec channels that can only fail. A session that was not
+//! probed tries the script and stops after a few unanswered reads, as before.
 
 use std::time::Duration;
 
 use super::exec::ssh_exec_with_stdin_timeout;
 use super::handler::SshSession;
+use super::remote_shell::RemoteShell;
 
 /// Upper bound on one read; a slower host just reports later.
 pub const REMOTE_CWD_TIMEOUT: Duration = Duration::from_secs(3);
@@ -68,6 +99,20 @@ done
 exit 1
 "#;
 
+/// Whether a session whose login shell was detected as `shell` can be
+/// followed by [`read_remote_cwd`]: not on a Windows host, and not for a
+/// PowerShell login shell anywhere (see the module docs). An undetected
+/// shell ([`RemoteShell::Unknown`]) is tried.
+pub fn follows_without_hook(shell: RemoteShell) -> bool {
+    match shell {
+        RemoteShell::Posix | RemoteShell::Fish { .. } | RemoteShell::Unknown => true,
+        RemoteShell::WindowsPosix
+        | RemoteShell::Cmd
+        | RemoteShell::PowerShell
+        | RemoteShell::UnixPowerShell => false,
+    }
+}
+
 /// The directory in the script's `stdout`, if it printed one.
 pub fn parse_remote_cwd(stdout: &str) -> Option<String> {
     stdout
@@ -103,6 +148,23 @@ mod tests {
         );
         assert_eq!(parse_remote_cwd(""), None);
         assert_eq!(parse_remote_cwd("TH_CWD:relative"), None);
+    }
+
+    #[test]
+    fn windows_hosts_and_powershell_are_not_read() {
+        assert!(follows_without_hook(RemoteShell::Posix));
+        assert!(follows_without_hook(RemoteShell::Fish {
+            native_integration: false
+        }));
+        assert!(follows_without_hook(RemoteShell::Unknown));
+        for shell in [
+            RemoteShell::WindowsPosix,
+            RemoteShell::Cmd,
+            RemoteShell::PowerShell,
+            RemoteShell::UnixPowerShell,
+        ] {
+            assert!(!follows_without_hook(shell), "{shell:?}");
+        }
     }
 
     #[test]

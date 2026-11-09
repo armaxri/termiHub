@@ -634,7 +634,14 @@ impl ConnectionType for Ssh {
                                 "The file browser follows the remote shell's current directory ",
                                 "without this: termiHub reads it over a separate channel of the ",
                                 "same SSH connection, and nothing is typed into your shell. That ",
-                                "needs a Unix host with /proc (Linux) or lsof (macOS, BSD).\n\n",
+                                "needs a Unix host with /proc (Linux) or lsof (macOS, BSD) and a ",
+                                "login shell other than PowerShell.\n\n",
+                                "On a Windows host whose OpenSSH default shell is PowerShell or ",
+                                "Git Bash, and with a PowerShell login shell on any host, the file ",
+                                "browser follows cd only with this turned on: PowerShell's location ",
+                                "(Set-Location) is not the directory the operating system sees, and ",
+                                "Windows offers no safe way to read another shell's directory from ",
+                                "outside it. A cmd.exe default shell is not followed over SSH.\n\n",
                                 "Turn this on for command marks — jumping between prompts, ",
                                 "selecting or copying a command's output, and the success/failure ",
                                 "marker next to each finished command. termiHub first asks the ",
@@ -1392,6 +1399,29 @@ mod tests {
             keys,
             vec!["authMethod", "password", "keyPath", "savePassword"]
         );
+    }
+
+    /// #5028: the hook's help says which hosts are followed without it, and
+    /// that a PowerShell login shell is not.
+    #[test]
+    fn shell_hook_help_explains_which_hosts_need_it_for_cwd_following() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .find(|f| f.key == "shellIntegration")
+            .expect("the shell hook field");
+        let help = field.help_text.as_deref().expect("help text");
+        for needle in [
+            "On a Windows host",
+            "PowerShell login shell",
+            "Set-Location",
+            "cmd.exe default shell is not followed",
+        ] {
+            assert!(help.contains(needle), "{needle:?} missing from {help:?}");
+        }
     }
 
     #[test]
