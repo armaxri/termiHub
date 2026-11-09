@@ -1059,7 +1059,8 @@ where
                 };
                 // The arrival time answers the server's continuous bandwidth
                 // measurements (MS-RDPBCGR 2.2.14, ironrdp-session 0.12).
-                let outputs = match stage.process(&mut image, action, &payload, reader.last_read_at()) {
+                let received_at = reader.last_read_at();
+                let outputs = match stage.process(&mut image, action, &payload, received_at) {
                     Ok(o) => o,
                     Err(e) => {
                         // IronRDP's active stage has no case for a server's MCS
@@ -1123,7 +1124,9 @@ where
                 } else {
                     outputs
                 };
-                match handle_outputs(outputs, &stage, &image, &mut writer, ipc_out, &mut cursor).await {
+                let flow =
+                    handle_outputs(outputs, &stage, &image, &mut writer, ipc_out, &mut cursor).await;
+                match flow {
                     Flow::Continue => {
                         // The PDU may have opened the Display Control channel
                         // a waiting layout needs.
