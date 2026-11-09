@@ -50,6 +50,20 @@ class OsInputUi(HarnessMixin):
             self._osi.retarget(pid)
         return self._osi  # type: ignore[return-value]
 
+    def _reacquire_driver(self) -> None:
+        """After a relaunch, also re-aim a backend a test already holds.
+
+        A test that took ``osi = self.os_input()`` and *then* relaunched the app
+        (``restart_app``, an adopted self-restart) would otherwise keep posting
+        to the dead PID: macOS drops a ``CGEventPostToPid`` key to a gone
+        process silently, so Cmd+Q never arrived and every retry failed the
+        same way (#5086).
+        """
+        super()._reacquire_driver()  # type: ignore[misc]
+        pid = self.app.pid
+        if self._osi is not None and pid is not None and self._osi.pid != pid:
+            self._osi.retarget(pid)
+
     def screen(self, driver: Optional[Driver] = None) -> ScreenMapper:
         """Calibrate the window behind ``driver`` (default: the main window)."""
         return ScreenMapper.calibrate(self.os_input(), driver or self.driver)
