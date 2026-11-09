@@ -44,13 +44,17 @@
 //!
 //! Only on Unix pseudo-terminals with a POSIX line editor (readline, ZLE):
 //! the local bash/zsh backend and SSH sessions to a POSIX login shell, on the
-//! desktop and on the agent alike. It is **not** used behind a Windows
+//! desktop and on the agent alike — and SSH sessions to a fish login shell
+//! (#5094), whose editor redraws typed input cell by cell; there the echo is
+//! also recognised with a screen model
+//! ([`set_cell_redraw`](SetupEchoFilter::set_cell_redraw)). It is **not** used behind a Windows
 //! ConPTY (local Git Bash, WSL, SSH to a Windows host): ConPTY repaints from
 //! its own screen model, and dropping part of its output would desynchronise
 //! that model from the terminal.
 
 use std::time::{Duration, Instant};
 
+use super::setup_echo_redraw::is_only_redrawn_echo;
 use super::setup_echo_rows::rows_above_prompt;
 
 /// The mark the setup snippet prints as its very last statement:
@@ -107,6 +111,9 @@ enum Phase {
     Hold {
         /// The typed text, whitespace and control characters removed.
         typed: Vec<u8>,
+        /// The first line typed, as typed: what a cell-by-cell redraw
+        /// must paint (#5094).
+        line: Vec<u8>,
         buf: Vec<u8>,
         deadline: Instant,
     },
@@ -141,6 +148,10 @@ pub struct SetupEchoFilter {
     /// (xterm.js leaves that one to the shell's redraw), so its wrapped rows
     /// are no longer above the cursor.
     resized: bool,
+    /// Whether the line editor redraws typed input cell by cell (fish,
+    /// #5094), so an echo the text match misses is checked against a
+    /// screen model too.
+    cell_redraw: bool,
 }
 
 impl Default for SetupEchoFilter {
@@ -160,7 +171,18 @@ impl SetupEchoFilter {
             finished: false,
             cols: 0,
             resized: false,
+            cell_redraw: false,
         }
+    }
+
+    /// Say whether the line editor redraws typed input cell by cell, as
+    /// fish's does (#5094): it addresses each cell, re-prints cells around a
+    /// wrap and redraws the line on Enter. The echo is then also recognised
+    /// by replaying the held output at the terminal's width
+    /// ([`set_width`](Self::set_width)) and checking that every character
+    /// lands on the cell the typed line has it on.
+    pub fn set_cell_redraw(&mut self, on: bool) {
+        self.cell_redraw = on;
     }
 
     /// The terminal's width in columns (0: unknown). Set at spawn and on
@@ -182,6 +204,7 @@ impl SetupEchoFilter {
             Phase::Pass if self.outcome.is_none() => {
                 self.phase = Phase::Hold {
                     typed: significant(typed),
+                    line: typed.to_vec(),
                     buf: Vec::new(),
                     deadline: now + SETUP_HIDE_CAP,
                 };
@@ -287,7 +310,10 @@ impl SetupEchoFilter {
     /// The end mark is in the held output: find the echo (then measure the
     /// next prompt) or show it all.
     fn on_done(&mut self, now: Instant) -> Vec<u8> {
-        let Phase::Hold { typed, buf, .. } = std::mem::replace(&mut self.phase, Phase::Pass) else {
+        let Phase::Hold {
+            typed, line, buf, ..
+        } = std::mem::replace(&mut self.phase, Phase::Pass)
+        else {
             return Vec::new();
         };
         self.finished = true;
@@ -297,7 +323,12 @@ impl SetupEchoFilter {
             return buf;
         };
         let (pre, post) = (&buf[..idx], &buf[idx + SETUP_DONE_MARK.len()..]);
-        match echo_start(pre, &typed) {
+        let redrawn = || {
+            // A width changed while hiding no longer says where cells were.
+            let cols = if self.resized { 0 } else { self.cols };
+            (self.cell_redraw && is_only_redrawn_echo(&self.recent, pre, &line, cols)).then_some(0)
+        };
+        match echo_start(pre, &typed).or_else(redrawn) {
             Some(echo) => {
                 self.outcome = Some(HideOutcome::Hidden);
                 self.phase = Phase::Reprompt {

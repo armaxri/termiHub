@@ -30,6 +30,7 @@ pub mod remote_shell;
 pub mod session_pool;
 pub mod sftp;
 pub mod sftp_ops;
+mod terminal_reply;
 pub mod unattended;
 pub mod x11;
 

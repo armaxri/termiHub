@@ -82,6 +82,7 @@ use super::exec::{ssh_exec_with_stdin, SshExecOutput};
 use super::handler::SshSession;
 use crate::errors::CoreError;
 use crate::output::prompt_mark::PromptMarkDetector;
+use crate::output::setup_echo::SETUP_DONE_PRINTF;
 use crate::session::shell::{fish_typed_setup_command, osc7_setup_command};
 
 /// Opening marker of the probe's output.
@@ -304,9 +305,10 @@ pub const TYPED_POWERSHELL_CLEAR: &str = ";Clear-Host";
 /// - fish 3.x: the fish hook built to be typed (`fish_typed_setup_command`
 ///   in the shell module), ended with LF (#5016). The bash hook would be a
 ///   parse error there.
-/// - fish 4.0+: nothing. It emits OSC 7 and OSC 133 itself, and a typed line
-///   would show: its editor redraws typed input cell by cell (which the echo
-///   filter cannot match) and puts the command line into the window title.
+/// - fish 4.0+: nothing. It emits OSC 7 and OSC 133 itself. Its env and X11
+///   lines are still typed — joined into one line that ends with the done
+///   mark, so their echo is hidden like the rest ([`join_fish_setup`],
+///   #5094).
 /// - cmd.exe and unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
@@ -366,12 +368,23 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
     }
 }
 
-/// Whether the typed setup's echo is hidden for `shell` (#5009): only on a
-/// POSIX or fish (#5016) login shell, and only when the shell-integration line is typed —
-/// its setup-done mark is what ends the hidden region (see
-/// [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)). Such a
-/// host is then also held until its first prompt, so the setup reaches the
-/// line editor rather than the cooked tty, whose own echo would come first.
+/// Whether the typed setup's echo is hidden for `shell` (#5009).
+/// `has_integration` says whether the shell-integration line is typed,
+/// `has_setup` whether any setup line (env fallback, X11, integration) is.
+///
+/// - A POSIX login shell: only with the integration line, whose setup-done
+///   mark is what ends the hidden region (see
+///   [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)).
+/// - A fish login shell (#5016, #5094): whenever anything is typed. The
+///   joined fish line always ends with the setup-done mark
+///   ([`join_fish_setup`]), so a fish 4 — which is typed no integration
+///   line — gets its env and X11 lines hidden too. fish redraws its input
+///   cell by cell, which the filter follows with a screen model
+///   ([`SetupEchoFilter::set_cell_redraw`](crate::output::setup_echo::SetupEchoFilter::set_cell_redraw)).
+///
+/// Such a host is then also held until its first prompt, so the setup
+/// reaches the line editor rather than the cooked tty, whose own echo would
+/// come first.
 ///
 /// Not PowerShell, cmd.exe, a POSIX shell on Windows
 /// ([`RemoteShell::WindowsPosix`], #5015) or a fish there (#5101): a
@@ -379,11 +392,12 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// ConPTY, whose screen model must see every byte, so there the setup is
 /// shown rather than risk desynchronising it (a typed PowerShell setup ends
 /// with [`TYPED_POWERSHELL_CLEAR`] instead).
-pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
-    matches!(
-        shell,
-        RemoteShell::Posix | RemoteShell::Fish { windows: false, .. }
-    ) && has_integration
+pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool, has_setup: bool) -> bool {
+    match shell {
+        RemoteShell::Posix => has_integration,
+        RemoteShell::Fish { windows: false, .. } => has_setup || has_integration,
+        _ => false,
+    }
 }
 
 /// Join POSIX (or fish) setup lines (each LF-ended) into one typed line, so
@@ -399,6 +413,23 @@ pub fn join_posix_setup(lines: &[String]) -> String {
     // A leading space keeps the line (env values included) out of history
     // under `HISTCONTROL=ignorespace` / `HIST_IGNORE_SPACE`, and always in fish.
     format!(" {}\n", statements.join("; "))
+}
+
+/// Join fish setup lines into one typed line, as [`join_posix_setup`] does,
+/// that always ends by printing the setup-done mark (#5094): the mark is
+/// what ends the hidden region, and a fish 4 is typed no integration line
+/// (which carries it otherwise). fish's builtin `printf` takes the same
+/// `\e` / `\a` escapes as POSIX `printf`.
+pub fn join_fish_setup(lines: &[String]) -> String {
+    let joined = join_posix_setup(lines);
+    let line = joined.trim_end_matches('\n');
+    if line.ends_with(SETUP_DONE_PRINTF) {
+        joined
+    } else if line.trim().is_empty() {
+        format!(" {SETUP_DONE_PRINTF}\n")
+    } else {
+        format!("{line}; {SETUP_DONE_PRINTF}\n")
+    }
 }
 
 /// Whether `name` is safe to type as an environment variable name in every
@@ -744,6 +775,9 @@ pub struct SetupGate {
     held: Vec<Vec<u8>>,
     /// When the gate was created (the shell request), for the trace.
     started: Instant,
+    /// Whether the terminal's answers to the shell's queries pass while
+    /// holding ([`pass_terminal_replies`](Self::pass_terminal_replies)).
+    pass_replies: bool,
 }
 
 impl SetupGate {
@@ -765,7 +799,18 @@ impl SetupGate {
             setup: Vec::new(),
             held: Vec::new(),
             started: now,
+            pass_replies: false,
         }
+    }
+
+    /// Let the terminal's answers to the shell's own queries through while
+    /// holding (#5094). fish 4 asks for the Primary Device Attributes before
+    /// its first prompt and reads nothing else until the answer comes;
+    /// held, the answer and the setup waited for each other. Only a write
+    /// that is nothing but such answers passes (see the `terminal_reply`
+    /// module); the user's input stays held.
+    pub fn pass_terminal_replies(&mut self, on: bool) {
+        self.pass_replies = on;
     }
 
     /// Whether anything is still being held back.
@@ -790,6 +835,10 @@ impl SetupGate {
     pub fn write(&mut self, data: Vec<u8>) -> Option<Vec<u8>> {
         match self.phase {
             Phase::Open => Some(data),
+            _ if self.pass_replies && super::terminal_reply::is_terminal_reply(&data) => {
+                setup_trace(self.started, "gate: terminal reply passed", &[]);
+                Some(data)
+            }
             _ => {
                 self.held.push(data);
                 None
@@ -1206,11 +1255,11 @@ mod tests {
             x11_setup_lines(p, 10, Some("abc123"))
         );
         for flag in [false, true] {
-            assert!(!hides_setup_echo(w, flag), "has_integration={flag}");
+            assert!(!hides_setup_echo(w, flag, flag), "has_integration={flag}");
             assert!(!defers_setup_until_prompt(w, flag), "has_setup={flag}");
         }
         // The Linux/macOS twin still hides it (#5009).
-        assert!(hides_setup_echo(p, true));
+        assert!(hides_setup_echo(p, true, true));
     }
 
     /// #5101: an MSYS2 or Cygwin fish as the `DefaultShell` of a Windows
@@ -1260,17 +1309,17 @@ mod tests {
             x11_setup_lines(FISH3, 10, Some("abc123"))
         );
         for flag in [false, true] {
-            assert!(!hides_setup_echo(w, flag), "has_integration={flag}");
+            assert!(!hides_setup_echo(w, flag, flag), "has_integration={flag}");
             assert!(!defers_setup_until_prompt(w, flag), "has_setup={flag}");
         }
         // The Linux/macOS twin still hides it.
-        assert!(hides_setup_echo(FISH3, true));
+        assert!(hides_setup_echo(FISH3, true, true));
         let win4 = RemoteShell::Fish {
             native_integration: true,
             windows: true,
         };
         assert_eq!(integration_setup_line(win4), None);
-        assert!(!hides_setup_echo(win4, true));
+        assert!(!hides_setup_echo(win4, false, true));
     }
 
     #[test]
@@ -1757,24 +1806,56 @@ mod tests {
         }
     }
 
-    /// #5009: a POSIX (or fish, #5016) Linux/macOS host with shell
-    /// integration is held until its first prompt, so the setup is typed at
-    /// the line editor and its echo can be hidden; without integration it
-    /// stays ungated. A Windows host never hides it (#5015, #5101).
+    /// #5009: a POSIX Linux/macOS host with shell integration is held until
+    /// its first prompt, so the setup is typed at the line editor and its
+    /// echo can be hidden; without integration it stays ungated. A fish there
+    /// hides any setup at all (#5094): its joined line carries the done mark
+    /// itself. A Windows host never hides it (#5015, #5101).
     #[test]
-    fn only_posix_and_fish_with_integration_hide_their_setup_echo() {
+    fn posix_with_integration_and_fish_with_any_setup_hide_their_setup_echo() {
         for shell in ALL_SHELLS {
             for has_integration in [false, true] {
-                assert_eq!(
-                    hides_setup_echo(shell, has_integration),
-                    matches!(
-                        shell,
-                        RemoteShell::Posix | RemoteShell::Fish { windows: false, .. }
-                    ) && has_integration,
-                    "{shell:?} has_integration={has_integration}"
-                );
+                for has_setup in [false, true] {
+                    let has_setup = has_setup || has_integration;
+                    let want = match shell {
+                        RemoteShell::Posix => has_integration,
+                        RemoteShell::Fish { windows: false, .. } => has_setup,
+                        _ => false,
+                    };
+                    assert_eq!(
+                        hides_setup_echo(shell, has_integration, has_setup),
+                        want,
+                        "{shell:?} has_integration={has_integration} has_setup={has_setup}"
+                    );
+                }
             }
         }
+    }
+
+    /// #5094: a fish 4 is typed only env / X11 lines; their joined line
+    /// ends with the done mark that ends the hidden region. A fish 3 line,
+    /// whose integration hook already prints it, gets no second one.
+    #[test]
+    fn fish_setup_joins_into_one_line_ending_in_the_done_mark() {
+        let env = env_setup_line(FISH4, &env(&[("FOO", "b a'r")])).unwrap();
+        let x11 = x11_setup_lines(FISH4, 10, Some("abcd"));
+        let joined = join_fish_setup(&[env.clone(), x11[0].clone(), x11[1].clone()]);
+        assert_eq!(joined.matches('\n').count(), 1, "one line: {joined:?}");
+        assert!(joined.ends_with('\n'), "{joined:?}");
+        assert_eq!(
+            joined,
+            format!(
+                " set -gx FOO 'b a\\'r'; set -gx DISPLAY localhost:10.0; \
+                 xauth add localhost:10 MIT-MAGIC-COOKIE-1 abcd 2>/dev/null; {SETUP_DONE_PRINTF}\n"
+            )
+        );
+        assert_eq!(joined.matches("6973;").count(), 1);
+
+        let hook = integration_setup_line(FISH3).unwrap();
+        let joined = join_fish_setup(&[env, hook.clone()]);
+        assert_eq!(joined.matches("6973;").count(), 1, "{joined:?}");
+        assert!(joined.ends_with(&format!("{SETUP_DONE_PRINTF}\n")));
+        assert_eq!(join_fish_setup(std::slice::from_ref(&hook)), hook);
     }
 
     #[test]
@@ -1866,6 +1947,32 @@ mod tests {
         );
         assert!(!gate.is_holding());
         assert_eq!(gate.write(b"pwd\r".to_vec()), Some(b"pwd\r".to_vec()));
+    }
+
+    /// #5094: fish 4 waits for the terminal's Device Attributes answer
+    /// before its first prompt. A fish gate lets such answers through while
+    /// the user's own input stays held; any other gate holds them.
+    #[test]
+    fn a_fish_gate_passes_terminal_replies_but_holds_the_users_input() {
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(true, SetupDone::OutputSettled, t0);
+        gate.pass_terminal_replies(true);
+        gate.setup(b" set -gx A 1\n".to_vec());
+        assert_eq!(
+            gate.write(b"\x1b[?62;22c".to_vec()),
+            Some(b"\x1b[?62;22c".to_vec())
+        );
+        assert_eq!(gate.write(b"ls\n".to_vec()), None);
+        assert_eq!(
+            gate.write(b"\x1b[1;1R".to_vec()),
+            None,
+            "a CPR may be a key"
+        );
+        assert!(gate.is_holding());
+
+        let mut other = SetupGate::new(true, SetupDone::PromptMark, t0);
+        other.setup(b"setup\r".to_vec());
+        assert_eq!(other.write(b"\x1b[?62;22c".to_vec()), None);
     }
 
     #[test]
