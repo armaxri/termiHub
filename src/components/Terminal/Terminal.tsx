@@ -736,6 +736,8 @@ export function Terminal({
           let resolved: string | null = null;
 
           while (!isCanceled()) {
+            // A closing window starts no new attempt (#5112).
+            if (useAppStore.getState().windowSessionsEnding) return;
             useAppStore.getState().setTerminalConnecting(tabId, true);
 
             try {
@@ -753,6 +755,9 @@ export function Terminal({
               // id. If it did, the old effect's cleanup would cancel the fresh
               // attempt's token instead of its own (#1125).
               connectInFlightRef.current.add(connectId);
+              // Mark the connection as starting so a window close or app quit in
+              // this gap lists it, and ends it, instead of skipping it (#5112).
+              useAppStore.getState().setConnectStarting(tabId, connectId);
               // A fresh attempt starts its stepper from the first stage (#5068)
               // and ignores late reports from an earlier attempt (#5081).
               beginConnectAttempt(tabId, connectId);
@@ -777,9 +782,24 @@ export function Terminal({
               }
 
               if (isCanceled()) {
+                useAppStore.getState().setConnectStarting(tabId, null);
                 closeTerminal(resolved);
                 return;
               }
+              if (useAppStore.getState().windowSessionsEnding) {
+                // The window close was confirmed while this connection was still
+                // starting: end it now instead of leaving it running (#5112).
+                frontendLog("terminal", `Closing session ${resolved} that started after close`);
+                await closeTerminal(resolved).catch((closeErr: unknown) => {
+                  frontendLog(
+                    "terminal",
+                    `Failed to close late session ${resolved}: ${errorMessage(closeErr)}`
+                  );
+                });
+                useAppStore.getState().setConnectStarting(tabId, null);
+                return;
+              }
+              useAppStore.getState().setConnectStarting(tabId, null);
               // Success — clear all pre-connect overlay state and give the user
               // a brief, non-intrusive confirmation that the session is live so
               // the connect does not resolve silently (#1127).
@@ -789,6 +809,7 @@ export function Terminal({
               toast.success("Connected", { description: resolveTabTitle(tabId) });
               break;
             } catch (err) {
+              useAppStore.getState().setConnectStarting(tabId, null);
               if (isCanceled()) return;
               useAppStore.getState().setTerminalConnecting(tabId, false);
 

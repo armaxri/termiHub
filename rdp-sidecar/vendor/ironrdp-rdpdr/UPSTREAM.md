@@ -19,6 +19,12 @@ be retired (termiHub #4125).
   `ironrdp-rdpdr` release is adopted (that is part of the IronRDP upgrade, not a 0.7.x
   backport). The text below is kept for the record.
 
+- **Update 2026-11-09 (#5118): released fix ported.** The fork also carries upstream
+  [`0f9154d2`](https://github.com/Devolutions/IronRDP/commit/0f9154d2128f8c65f4d51f6b7eb7cb1d66a12329)
+  (complete unsupported drive IRPs instead of ending the session, IronRDP#2174) as change 3
+  (see `README.md`). It is already in the `ironrdp-rdpdr` 0.9.0 release, so there is nothing
+  to submit and it does not change when the fork can retire.
+
 - **Base:** upstream `ironrdp-rdpdr` `0.7.0`, tag `ironrdp-rdpdr-v0.7.0`, commit
   `11a0810cfbbabd8b8023875a05e3041216d4b01b`.
 - **Upstream state (checked 2026-10-06, master `38b074e4befe`):** the bug is already fixed on

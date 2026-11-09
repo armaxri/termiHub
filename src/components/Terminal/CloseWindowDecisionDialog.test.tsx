@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 const endWindowSessions = vi.fn(() => Promise.resolve());
 const moveWindowSessionsToWindow = vi.fn(() => Promise.resolve());
+const endStartingConnects = vi.fn(() => Promise.resolve());
 
 let container: HTMLDivElement;
 let root: Root;
@@ -53,7 +54,7 @@ function request(overrides: Partial<WindowCloseRequest> = {}): WindowCloseReques
 describe("CloseWindowDecisionDialog (#1903)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ endWindowSessions, moveWindowSessionsToWindow });
+    useAppStore.setState({ endWindowSessions, moveWindowSessionsToWindow, endStartingConnects });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -133,6 +134,70 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     expect(destroy).not.toHaveBeenCalled();
     expect(endWindowSessions).not.toHaveBeenCalled();
     expect(useAppStore.getState().pendingWindowClose).toBeNull();
+  });
+
+  describe("a connection still starting (#5112)", () => {
+    const startingRow = {
+      tabId: "t3",
+      sessionId: null,
+      title: "db-1",
+      connectionType: "ssh",
+      contentType: "terminal" as const,
+      starting: true,
+      outcome: "terminate" as const,
+    };
+
+    it("lists the tab as still starting and to be ended", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(request({ sessions: [startingRow], otherWindows: [] }))
+      );
+
+      expect(qa("close-window-decision-row")).toHaveLength(1);
+      const pill = q("close-window-decision-outcome-starting");
+      expect(pill.textContent).toContain("Still starting — will be ended");
+      expect(q("close-window-decision-outcome-terminate")).toBeNull();
+      expect(q("close-window-decision-dialog").textContent).toContain(
+        "This window owns 1 connection that is still starting."
+      );
+      expect(q("close-window-decision-end").textContent).toContain("Close & end sessions");
+    });
+
+    it("names live sessions and starting connections apart in the lead", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(
+            request({ sessions: [...request().sessions, startingRow], mode: "quit" })
+          )
+      );
+
+      expect(qa("close-window-decision-row")).toHaveLength(3);
+      expect(q("close-window-decision-dialog").textContent).toContain(
+        "This window owns 2 open sessions and 1 connection that is still starting."
+      );
+      expect(q("close-window-decision-end").textContent).toContain("Quit & end sessions");
+    });
+
+    it("Move tabs ends the starting connections before the window goes", async () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(request({ sessions: [...request().sessions, startingRow] }))
+      );
+
+      await act(async () => {
+        q("close-window-decision-move").click();
+      });
+
+      expect(moveWindowSessionsToWindow).toHaveBeenCalledTimes(1);
+      expect(endStartingConnects).toHaveBeenCalledTimes(1);
+      expect(destroy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("unsaved editors (UX2-003)", () => {

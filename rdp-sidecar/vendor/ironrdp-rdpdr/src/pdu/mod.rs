@@ -213,6 +213,62 @@ impl Encode for RdpdrPdu {
 
 impl SvcEncode for RdpdrPdu {}
 
+/// termiHub fork delta (#5118, upstream 0f9154d2): Device I/O completions the client sends that
+/// [`RdpdrPdu`] has no variant for. Used to complete drive requests this crate does not implement.
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) enum DeviceIoCompletion {
+    /// A [2.2.1.5] Device I/O Response (DR_DEVICE_IOCOMPLETION) with no reply body after the
+    /// header, for requests with no response layout of their own, such as one whose MajorFunction
+    /// or MinorFunction is not described by MS-RDPEFS.
+    ///
+    /// [2.2.1.5]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpefs/1c412a84-0776-4984-b35c-3f0445fcae65
+    Bare(efs::DeviceIoResponse),
+    /// A 2.2.3.4.7 Client Drive Set Volume Information Response
+    /// (DR_DRIVE_SET_VOLUME_INFORMATION_RSP): the reply header and a Length that MUST equal the
+    /// request's Length. 0.7.0 has no type for it (upstream master has
+    /// `ClientDriveSetVolumeInformationResponse`).
+    SetVolumeInformation {
+        device_io_reply: efs::DeviceIoResponse,
+        length: u32,
+    },
+}
+
+impl Encode for DeviceIoCompletion {
+    fn encode(&self, dst: &mut WriteCursor<'_>) -> EncodeResult<()> {
+        ensure_size!(in: dst, size: self.size());
+        SharedHeader {
+            component: Component::RdpdrCtypCore,
+            packet_id: PacketId::CoreDeviceIoCompletion,
+        }
+        .encode(dst)?;
+        match self {
+            Self::Bare(response) => response.encode(dst),
+            Self::SetVolumeInformation { device_io_reply, length } => {
+                device_io_reply.encode(dst)?;
+                dst.write_u32(*length);
+                Ok(())
+            }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Bare(_) => "DR_DEVICE_IOCOMPLETION",
+            Self::SetVolumeInformation { .. } => "DR_DRIVE_SET_VOLUME_INFORMATION_RSP",
+        }
+    }
+
+    fn size(&self) -> usize {
+        SharedHeader::SIZE
+            + match self {
+                Self::Bare(response) => response.size(),
+                Self::SetVolumeInformation { device_io_reply, .. } => device_io_reply.size() + 4 /* Length */,
+            }
+    }
+}
+
+impl SvcEncode for DeviceIoCompletion {}
+
 impl fmt::Debug for RdpdrPdu {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -81,6 +81,7 @@ pub async fn create_connection(
     resilient_reconnect: Option<bool>,
     unattended: Option<bool>,
     saved_connection_id: Option<String>,
+    window: tauri::WebviewWindow,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
@@ -157,6 +158,28 @@ pub async fn create_connection(
         connect.await
     };
 
+    // A session that finished starting after its window closed or the app quit
+    // was confirmed has no one left to use it: the user already agreed to end
+    // it (#5112). Close it at once rather than leave it running unowned.
+    if let Ok(session_id) = &result {
+        let window_open = app_handle.get_webview_window(window.label()).is_some();
+        let quit_confirmed = app_handle
+            .try_state::<crate::window::quit::QuitCoordinator>()
+            .is_some_and(|quit| quit.phase() == crate::window::quit::QuitPhase::Confirmed);
+        if let Some(reason) = late_session_reason(window_open, quit_confirmed) {
+            info!(
+                session_id = %session_id,
+                window = window.label(),
+                reason,
+                "Closing a session that finished starting after it was ended (#5112)"
+            );
+            if let Err(e) = manager.close_session(session_id).await {
+                tracing::warn!(session_id = %session_id, "Failed to close late session: {e}");
+            }
+            return Err(TerminalError::ConnectionFailed(reason.to_string()));
+        }
+    }
+
     if let (Some(tab_id), Ok(session_id)) = (&initial_tab_id, &result) {
         // Also propagate the backend session id into the shared region (#2457):
         // the region is keyed by tab id, so carrying the current backend session
@@ -178,6 +201,19 @@ pub async fn create_connection(
         manager.on_session_opened(session_id, &origin).await;
     }
     result
+}
+
+/// Why a session that just finished starting must be closed at once (#5112):
+/// its window was closed, or the app quit was confirmed, while the connection
+/// was still starting. `None` keeps the session.
+fn late_session_reason(window_open: bool, quit_confirmed: bool) -> Option<&'static str> {
+    if quit_confirmed {
+        Some("termiHub is quitting")
+    } else if !window_open {
+        Some("its window was closed")
+    } else {
+        None
+    }
 }
 
 /// The frontend `tab_id` to fold an *initial*-connect lifecycle edge for, parsed
@@ -1799,7 +1835,8 @@ pub async fn get_agent_session_buffer(
 mod tests {
     use super::{
         container_list_error, decode_file_bytes, encode_file_bytes, initial_connect_tab_id,
-        killed_disconnect_tab_id, parse_container_runtime, prepare_persistent_settings,
+        killed_disconnect_tab_id, late_session_reason, parse_container_runtime,
+        prepare_persistent_settings,
     };
     use termihub_core::config::ContainerRuntime;
     use termihub_core::errors::SessionError;
@@ -1938,6 +1975,23 @@ mod tests {
                 .expect("valid JSON envelope");
         assert_eq!(value["code"], "session_not_found");
         assert_eq!(value["message"], "Session not found: sess-42");
+    }
+
+    #[test]
+    fn late_session_is_closed_only_after_its_window_or_the_app_is_gone() {
+        assert_eq!(late_session_reason(true, false), None);
+        assert_eq!(
+            late_session_reason(false, false),
+            Some("its window was closed")
+        );
+        assert_eq!(
+            late_session_reason(true, true),
+            Some("termiHub is quitting")
+        );
+        assert_eq!(
+            late_session_reason(false, true),
+            Some("termiHub is quitting")
+        );
     }
 
     #[test]
