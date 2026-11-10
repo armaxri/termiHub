@@ -151,6 +151,10 @@ gate_rdp_sidecar() {
   (cd rdp-sidecar && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings &&
     cargo test --locked)
 }
+# The sidecar's intra-doc link gate (#5140): workspace-excluded, so `gate_rustdoc` misses it.
+gate_rdp_sidecar_rustdoc() {
+  (cd rdp-sidecar && RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items)
+}
 gate_rdp_sidecar_deny() { (cd rdp-sidecar && cargo deny check advisories bans licenses sources); }
 
 gate_versions() { ./scripts/release-check.sh --versions-only; }
@@ -263,6 +267,7 @@ if [ "$MODE" = "full" ]; then
 
   # RDP Sidecar Quality.
   run_gate "RDP sidecar: fmt + clippy + tests" gate_rdp_sidecar
+  run_gate "RDP sidecar: rustdoc (-D warnings)" gate_rdp_sidecar_rustdoc
 
   # Frontend Code Quality (lint/prettier/markdownlint/IPC contract in check.sh).
   run_gate "Version sources + Tauri drift" gate_versions

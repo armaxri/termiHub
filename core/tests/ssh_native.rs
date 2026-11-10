@@ -706,10 +706,11 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
 /// terminal model), no entry in the console's command history (`doskey
 /// /history`, Alt+F7 cleared it), `ERRORLEVEL` still 0 for the first command.
 /// It also runs no extra AutoRun: with an AutoRun on the test user that
-/// appends to a marker file, a hooked session runs it exactly as often as a
-/// hook-free one that also probes the login shell (the session shell, and the
-/// probe's exec channel). The AutoRun is removed
-/// afterwards, also when the grade fails.
+/// appends to a marker file, a hooked session runs it exactly once, for its
+/// own shell, and so does a hook-free one with an env var configured. Both
+/// need the login shell, and on a Win32-OpenSSH host it is told from cmd.exe's
+/// banner, not from an exec channel that would run as `cmd.exe /c` (#5134).
+/// The AutoRun is removed afterwards, also when the grade fails.
 /// The `cmd` leg of the Windows SSH Host lane runs it.
 #[tokio::test]
 async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
@@ -852,9 +853,8 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
     // The hook expands `%PROMPT%`, so it relies on an interactive cmd.exe
     // defining PROMPT itself (as `$P$G`) when it starts with none (#5109):
     // otherwise `%PROMPT%` would stay literal in the prompt.
-    // A configured env var makes this hook-free session ask the host for its
-    // login shell too, on an exec channel (`cmd.exe /c`, which runs the
-    // AutoRun), as the hooked session did: so the two compare like for like.
+    // A configured env var makes this hook-free session need the host's login
+    // shell too (#5134): it must not ask over an exec channel either.
     let mut ssh = Ssh::new();
     let mut settings = sshd.key_settings();
     settings["env"] = serde_json::json!({ "TH_5109_VAR": "th5109value" });
@@ -870,17 +870,18 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
         seen.contains("PROMPT=$P$G"),
         "a cmd.exe started without PROMPT did not define it: {seen:?}"
     );
-    // This hook-free session ran the AutoRun as often as a session does
-    // (its shell and the shell probe; the `cmd /d` above skips it). The
-    // hooked session must have run it exactly as often: its echo erase's
-    // child cmd.exe (`/d`) adds nothing.
+    // Each session ran the AutoRun once, for its own shell (#5134): no
+    // login-shell probe on an exec channel, and the hooked session's echo
+    // erase runs its child cmd.exe with `/d` (the `cmd /d` above skips it too).
     let all_runs = autorun_runs(&mut ssh).await;
-    eprintln!("[5109] AutoRun runs: hooked session {hooked_runs}, both sessions {all_runs}");
-    assert!(hooked_runs >= 1, "the test AutoRun never ran");
+    eprintln!("[5134] AutoRun runs: hooked session {hooked_runs}, both sessions {all_runs}");
     assert_eq!(
-        all_runs,
-        2 * hooked_runs,
-        "the hooked session ran the AutoRun more often than a hook-free one"
+        hooked_runs, 1,
+        "the hooked session ran the AutoRun other than once, for its shell"
+    );
+    assert_eq!(
+        all_runs, 2,
+        "the hook-free session with an env var ran the AutoRun other than once"
     );
     ssh.disconnect().await.ok();
 }

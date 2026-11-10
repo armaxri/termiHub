@@ -4,13 +4,13 @@
 //!
 //! - **At connect** — the GCC Conference Create Request's client monitor data
 //!   (MS-RDPBCGR `TS_UD_CS_MONITOR`, plus `TS_UD_CS_MONITOR_EX` when a monitor
-//!   is scaled). IronRDP's connector left it out until 0.11 (`Config::monitor_layout`,
-//!   which the sidecar leaves `None`), so [`send_basic_settings`] drives that
-//!   one connector step itself: it lets the
-//!   connector build its Connect Initial as usual, adds the monitor blocks, and
-//!   sends the re-encoded PDU. The connector keeps the patched PDU in its state,
-//!   so the rest of the sequence sees exactly what went on the wire. No vendored
-//!   fork of `ironrdp-connector` is needed.
+//!   is scaled). [`connector_layout`] converts the layout into the blocks, and
+//!   the sidecar hands them to IronRDP's connector as `Config::monitor_layout` /
+//!   `Config::monitor_extended_layout` (ironrdp-connector 0.11+, #5141). The
+//!   connector sends them only when the server set `EXTENDED_CLIENT_DATA_SUPPORTED`
+//!   in its RDP Negotiation Response, as MS-RDPBCGR 2.2.1.3 requires for
+//!   extended client data blocks. Until #5141 the sidecar drove that connector
+//!   step itself and added the blocks unconditionally (#3696).
 //! - **At runtime** — one Display Control monitor-layout PDU (MS-RDPEDISP) with
 //!   every monitor ([`encode_layout`]), built here from the layout and encoded
 //!   by `ActiveStage::encode_monitor_layout`.
@@ -20,18 +20,13 @@
 //! 16 monitors), so this module only converts it.
 
 use anyhow::{anyhow, Result};
-use ironrdp_connector::{
-    encode_x224_packet, ClientConnector, ClientConnectorState, ConnectorError,
-    ConnectorErrorExt as _, ConnectorResult, Sequence as _,
-};
-use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::pdu::{
     DeviceScaleFactor, DisplayControlMonitorLayout, MonitorLayoutEntry,
     MonitorOrientation as DisplayOrientation,
 };
 use ironrdp_pdu::gcc::{
-    ClientMonitorData, ClientMonitorExtendedData, ConferenceCreateRequest, ExtendedMonitorInfo,
-    Monitor, MonitorFlags, MonitorOrientation,
+    ClientMonitorData, ClientMonitorExtendedData, ExtendedMonitorInfo, Monitor, MonitorFlags,
+    MonitorOrientation,
 };
 use ironrdp_session::ActiveStage;
 use termihub_core::connection::{MonitorLayout, MonitorRect};
@@ -92,37 +87,20 @@ pub fn gcc_blocks(
     (data, extended)
 }
 
-/// Perform the connector's Basic Settings Exchange send step with the client
-/// monitor blocks for `layout` added to the GCC Conference Create Request.
-///
-/// Call it only in [`ClientConnectorState::BasicSettingsExchangeSendInitial`];
-/// `buf` receives the X.224-framed Connect Initial to write to the server.
-/// Returns the number of bytes written.
-pub fn send_basic_settings(
-    connector: &mut ClientConnector,
-    buf: &mut WriteBuf,
-    layout: &MonitorLayout,
-) -> ConnectorResult<usize> {
-    buf.clear();
-    // Let the connector build its Connect Initial (and advance its state).
-    connector.step_no_input(buf)?;
-    let ClientConnectorState::BasicSettingsExchangeWaitResponse { connect_initial } =
-        &mut connector.state
-    else {
-        // Not the step this was meant for: send what the connector produced.
-        return Ok(buf.filled().len());
-    };
-    let mut blocks = connect_initial
-        .conference_create_request
-        .gcc_blocks()
-        .clone();
-    let (monitor, monitor_extended) = gcc_blocks(layout.monitors());
-    blocks.monitor = Some(monitor);
-    blocks.monitor_extended = monitor_extended;
-    connect_initial.conference_create_request =
-        ConferenceCreateRequest::new(blocks).map_err(ConnectorError::decode)?;
-    buf.clear();
-    encode_x224_packet(&*connect_initial, buf)
+/// The connector's `Config::monitor_layout` / `Config::monitor_extended_layout`
+/// for a session: the GCC blocks of `layout` ([`gcc_blocks`]), or neither for a
+/// single-monitor session (`None`), which keeps its Connect Initial free of
+/// monitor blocks.
+pub fn connector_layout(
+    layout: Option<&MonitorLayout>,
+) -> (Option<ClientMonitorData>, Option<ClientMonitorExtendedData>) {
+    match layout {
+        Some(layout) => {
+            let (data, extended) = gcc_blocks(layout.monitors());
+            (Some(data), extended)
+        }
+        None => (None, None),
+    }
 }
 
 /// Build the Display Control monitor-layout entries for `monitors`.

@@ -94,6 +94,11 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
     let color_depth = cfg.color_depth_bpp();
     // The fixed size (PROD-026) or the dynamic default; see `desktop_size`.
     let (width, height) = cfg.desktop_size();
+    // A multi-monitor session advertises its layout in the Connect Initial's
+    // GCC client monitor blocks (#3696, #5141); `desktop_size` above is then
+    // the layout's bounding box, as the connector requires.
+    let (monitor_layout, monitor_extended_layout) =
+        crate::monitors::connector_layout(cfg.multi_monitor_layout().as_ref());
     let codecs = client_codecs_capabilities(&[])
         .map_err(|help| anyhow!("RDP codec setup failed: {help}"))?;
 
@@ -118,11 +123,8 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
         ime_file_name: String::new(),
         dig_product_id: String::new(),
         desktop_size: DesktopSize { width, height },
-        // A multi-monitor session adds its monitor blocks to the Connect Initial
-        // itself (`monitors::send_basic_settings`, #3696), so the connector's
-        // own monitor layout stays off.
-        monitor_layout: None,
-        monitor_extended_layout: None,
+        monitor_layout,
+        monitor_extended_layout,
         desktop_scale_factor: 0,
         // The wire values the connector sent before these were configurable
         // (#5117): zero physical size, orientation from the desktop size and the
@@ -174,7 +176,7 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
 
 /// Run the IronRDP connect sequence to an active session: TCP → X.224 → TLS →
 /// CredSSP/NLA → capability exchange. Returns the negotiated result, the framed
-/// transport for the driver to take over, the connector [`Config`] (needed
+/// transport for the driver to take over, the connector [`Config`](ConnectorConfig) (needed
 /// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
 /// #1755), and the receiver on which the registered CLIPRDR backend surfaces
 /// clipboard events for the driver (#1756).
@@ -218,6 +220,14 @@ where
     let client_addr = tcp.local_addr().context("RDP local address failed")?;
 
     let connector_config = build_connector_config(cfg)?;
+    if let Some(layout) = &connector_config.monitor_layout {
+        // The connector sends it only to a server that supports extended
+        // client data blocks (#5141).
+        debug!(
+            monitors = layout.monitors.len(),
+            "advertising the client monitor layout (TS_UD_CS_MONITOR)"
+        );
+    }
     // Register the CLIPRDR static channel (MS-RDPECLIP) so the session can bridge
     // text clipboard both ways (#1756) and, when opted in, download files the
     // remote copies into the shared folder (#1765). The backend translates server
@@ -337,7 +347,6 @@ where
             &mut network_client,
             ServerName::new(server_name),
             server_public_key,
-            cfg.multi_monitor_layout().as_ref(),
         ),
     )
     .await?

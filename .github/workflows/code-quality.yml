@@ -346,9 +346,10 @@ jobs:
   # so it SHIPS to users — yet the workspace `rust-quality` / `security-audit`
   # jobs above never see it (they operate on the workspace lockfile). This job
   # closes that gap: it gates the sidecar's own lockfile with the same checks the
-  # workspace gets — fmt, clippy (`-D warnings`), tests, and the cargo-deny
-  # supply-chain gate (advisories/bans/licenses/sources against rdp-sidecar's own
-  # Cargo.lock + rdp-sidecar/deny.toml). All steps run in rdp-sidecar/.
+  # workspace gets — fmt, clippy (`-D warnings`), tests, rustdoc (`-D warnings`,
+  # #5140), and the cargo-deny supply-chain gate (advisories/bans/licenses/sources
+  # against rdp-sidecar's own Cargo.lock + rdp-sidecar/deny.toml). All steps run
+  # in rdp-sidecar/.
   #
   # PR lane: when rdp-sidecar/** changes (#3325), or what the sidecar compiles
   # from outside it — core/**, win-security/** and the root Cargo.toml (#4357).
@@ -419,6 +420,15 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked
+
+      # Intra-doc link gate for the sidecar (#5140). The workspace Rustdoc job
+      # never sees rdp-sidecar (it is workspace-excluded), so broken links here
+      # accumulated silently. `--document-private-items` because the sidecar is a
+      # binary crate: every doc comment in it is on a crate-private item.
+      - name: Build docs with -D warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --document-private-items
 
       # Prebuilt binary download (~seconds) instead of compiling from source.
       - name: Install cargo-deny
