@@ -1,7 +1,9 @@
-//! Regression tests for the fixes ported into the vendored `ironrdp-rdpsnd`
-//! fork from upstream IronRDP after 0.9.0 (#3499). The vendored crate is built
-//! with `test = false`, so its behaviour is exercised here through the public
-//! `ironrdp_rdpsnd` re-export the sidecar actually links.
+//! Regression tests for the upstream IronRDP fixes the vendored `ironrdp-rdpsnd`
+//! fork carried on 0.9.0 (#3499, #3510) and that are upstream since 0.10.0, plus
+//! the one delta the 0.11.0 fork still carries (the Training Confirm's
+//! wPackSize, #4923 / #5117). The vendored crate is built with `test = false`, so
+//! its behaviour is exercised here through the `ironrdp_rdpsnd` crate the
+//! sidecar actually links.
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};

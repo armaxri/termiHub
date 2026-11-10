@@ -13,7 +13,7 @@
 //! so the session stays an actor: one task owns the transport, decoded image and
 //! active stage, `select!`-ing between server PDUs and host input events.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use ironrdp_cliprdr::{Client as CliprdrRole, CliprdrClient, CliprdrSvcMessages};
 use ironrdp_connector::connection_activation::{
     ConnectionActivationSequence, ConnectionActivationState,
@@ -22,15 +22,18 @@ use ironrdp_connector::{
     BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
     DesktopSize, Sequence as _, ServerName,
 };
-use ironrdp_core::WriteBuf;
+use ironrdp_core::{MonotonicInstant, WriteBuf};
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp_dvc::DrdynvcClient;
 use ironrdp_graphics::image_processing::PixelFormat;
-use ironrdp_pdu::gcc::KeyboardType;
+use ironrdp_pdu::gcc::{ConnectionType, KeyboardType};
 use ironrdp_pdu::input::fast_path::FastPathInputEvent;
-use ironrdp_pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
+use ironrdp_pdu::rdp::capability_sets::{
+    client_codecs_capabilities, MajorPlatformType, RailSupportLevel,
+};
 use ironrdp_pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+use ironrdp_pdu::rdp::multitransport::MultitransportResponsePdu;
 use ironrdp_rdpdr::Rdpdr;
 use ironrdp_rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use ironrdp_session::image::DecodedImage;
@@ -102,14 +105,33 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
         domain: (!cfg.domain.is_empty()).then(|| cfg.domain.clone()),
         enable_tls,
         enable_credssp,
-        keyboard_type: KeyboardType::IbmEnhanced,
+        // IronRDP supports only the unencrypted variant of Standard RDP
+        // Security, meant for local named pipes; never over TCP.
+        enable_standard_rdp_security: false,
+        keyboard_type: KeyboardType::IBM_ENHANCED,
         keyboard_subtype: 0,
         keyboard_layout: 0,
         keyboard_functional_keys_count: 12,
+        // What IronRDP's connector hardcoded before it became configurable
+        // (ironrdp-connector 0.11, #5117).
+        connection_type: ConnectionType::Lan,
         ime_file_name: String::new(),
         dig_product_id: String::new(),
         desktop_size: DesktopSize { width, height },
+        // A multi-monitor session adds its monitor blocks to the Connect Initial
+        // itself (`monitors::send_basic_settings`, #3696), so the connector's
+        // own monitor layout stays off.
+        monitor_layout: None,
+        monitor_extended_layout: None,
         desktop_scale_factor: 0,
+        // The wire values the connector sent before these were configurable
+        // (#5117): zero physical size, orientation from the desktop size and the
+        // default device scale factor.
+        desktop_physical_size: None,
+        desktop_orientation: None,
+        device_scale_factor: None,
+        // The sidecar sends absolute pointer positions only.
+        relative_mouse_input: false,
         bitmap: Some(BitmapConfig {
             color_depth,
             lossy_compression: true,
@@ -139,6 +161,14 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
         timezone_info: TimezoneInfo::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
+        // A full desktop session: no RemoteApp (RAIL) windows.
+        remote_application_mode: false,
+        rail_support_level: RailSupportLevel::empty(),
+        // Audio output only; the sidecar has no microphone redirection.
+        enable_audio_capture: false,
+        // No EGFX processor is registered, so the Graphics Pipeline must not be
+        // advertised (a server would route graphics to an unhandled channel).
+        support_dyn_vc_gfx_protocol: false,
     })
 }
 
@@ -471,6 +501,9 @@ enum Flow {
     /// The server sent a Deactivate All PDU (typically after a Display Control
     /// resize): the driver must run the Deactivation-Reactivation Sequence.
     Reactivate,
+    /// The server sent a Server Redirection PDU mid-session (#5117): it wants
+    /// the client on another server, which the sidecar does not follow.
+    Redirected(failure::ServerRedirected),
 }
 
 /// Handle the outputs of one `process` / `process_fastpath_input` call: write
@@ -479,6 +512,7 @@ enum Flow {
 /// cursor-shape update can be positioned.
 async fn handle_outputs<T, W>(
     outputs: Vec<ActiveStageOutput>,
+    stage: &ActiveStage,
     image: &DecodedImage,
     transport: &mut T,
     ipc_out: &mut W,
@@ -555,8 +589,91 @@ where
                 debug!("rdp server sent deactivate-all; reactivating");
                 return Flow::Reactivate;
             }
-            other => {
-                debug!(?other, "rdp output ignored");
+            ActiveStageOutput::ServerRedirection(redirection) => {
+                // A connection broker moving the session to another server. The
+                // PDU's `Debug` withholds its password cookie; log the target only.
+                let redirected = failure::ServerRedirected::from_pdu(&redirection);
+                warn!(
+                    session_id = redirection.session_id,
+                    target = ?redirected.target,
+                    "rdp server redirected the session"
+                );
+                return Flow::Redirected(redirected);
+            }
+            ActiveStageOutput::MultitransportRequest(request) => {
+                // The sidecar advertises no multitransport (UDP) support
+                // (`multitransport_flags: None`), so a server should not ask; if
+                // one does, decline with E_ABORT so it keeps the session on TCP,
+                // as IronRDP's connector does during the connection sequence.
+                debug!(
+                    request_id = request.request_id,
+                    requested_protocol = ?request.requested_protocol,
+                    "declining an rdp multitransport request"
+                );
+                let declined = ironrdp_connector::MultitransportResult::Failure(
+                    MultitransportResponsePdu::E_ABORT,
+                );
+                if let Some(response) = declined.response_pdu(request.request_id, false) {
+                    match stage.encode_multitransport_response(&response) {
+                        Ok(frame) => {
+                            if transport.write_all(&frame).await.is_err() {
+                                return Flow::Stop;
+                            }
+                        }
+                        Err(e) => warn!(error = %e, "failed to encode the multitransport decline"),
+                    }
+                }
+            }
+            // Informational: nothing for the sidecar to do. Logged at debug
+            // without their contents where those can be sensitive.
+            ActiveStageOutput::SaveSessionInfo { logon_complete } => {
+                debug!(logon_complete, "rdp save session info");
+            }
+            ActiveStageOutput::SessionId(session_id) => {
+                debug!(session_id, "rdp remote session id");
+            }
+            ActiveStageOutput::LogonErrors(errors) => {
+                // A logon error or warning notification (MS-RDPBCGR
+                // 2.2.10.1.1.4.1.1). A logon the server refuses also ends the
+                // session with a Set Error Info, which is what `failure` types.
+                info!(?errors, "rdp server reported a logon notification");
+            }
+            ActiveStageOutput::AutoReconnectCookie(_) => {
+                // The sidecar reconnects with a fresh logon, never with the
+                // cookie, so it is dropped unread (it is a reconnect credential).
+                debug!("rdp auto-reconnect cookie received (unused)");
+            }
+            ActiveStageOutput::AutoReconnectFailed => {
+                // Only answers a reconnect attempt with a cookie, which the
+                // sidecar never makes.
+                warn!("rdp server reported an auto-reconnect failure the sidecar did not request");
+            }
+            ActiveStageOutput::AutoDetect(request) => {
+                debug!(?request, "rdp network characteristics reported");
+            }
+            ActiveStageOutput::MonitorLayout(monitors) => {
+                // The server's view of the monitor layout; the sidecar drives the
+                // layout itself and the frame stream carries the desktop size.
+                debug!(
+                    monitors = monitors.len(),
+                    "rdp server reported its monitor layout"
+                );
+            }
+            // RemoteApp (RAIL) output: the sidecar runs full desktop sessions,
+            // negotiates no Window List support and registers no EGFX channel,
+            // so neither is produced. Dropped with a warning if a server sends
+            // them anyway.
+            ActiveStageOutput::WindowingOrders(orders) => {
+                warn!(
+                    orders = orders.len(),
+                    "rdp windowing orders ignored (no RemoteApp support)"
+                );
+            }
+            ActiveStageOutput::WindowSurfaceUpdates(updates) => {
+                warn!(
+                    updates = updates.len(),
+                    "rdp window surface updates ignored (no RemoteApp support)"
+                );
             }
         }
     }
@@ -759,6 +876,12 @@ where
     // Deactivation-Reactivation Sequence, so they seed a fresh reactivation.
     let io_channel_id = result.io_channel_id;
     let user_channel_id = result.user_channel_id;
+    // Which PDUs the server allows for a full redraw; renegotiated by every
+    // reactivation.
+    let mut redraw = RedrawSupport {
+        refresh_rect: result.refresh_rect_support,
+        suppress_output: result.suppress_output_support,
+    };
     let mut image = DecodedImage::new(PixelFormat::RgbA32, size.width, size.height);
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
@@ -934,7 +1057,10 @@ where
                         break;
                     }
                 };
-                let outputs = match stage.process(&mut image, action, &payload) {
+                // The arrival time answers the server's continuous bandwidth
+                // measurements (MS-RDPBCGR 2.2.14, ironrdp-session 0.12).
+                let received_at = reader.last_read_at();
+                let outputs = match stage.process(&mut image, action, &payload, received_at) {
                     Ok(o) => o,
                     Err(e) => {
                         // IronRDP's active stage has no case for a server's MCS
@@ -956,6 +1082,16 @@ where
                         break;
                     }
                 };
+                // IronRDP discards a malformed bitmap or pointer update instead of
+                // ending the session (ironrdp-session 0.12) and flags it; ask the
+                // server to repaint so the dropped area does not stay stale. While
+                // a layout is in flight the reactivation repaints everything.
+                if stage.take_bitmap_recovery_request()
+                    && !gate.in_flight()
+                    && !request_redraw(&stage, &image, redraw, &mut writer).await
+                {
+                    break;
+                }
                 // Processing the PDU may have run CLIPRDR backend callbacks, which
                 // queue clipboard actions. Now that the active stage is ours again,
                 // drain them (#1756) before handling the graphics outputs.
@@ -988,7 +1124,9 @@ where
                 } else {
                     outputs
                 };
-                match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
+                let flow =
+                    handle_outputs(outputs, &stage, &image, &mut writer, ipc_out, &mut cursor).await;
+                match flow {
                     Flow::Continue => {
                         // The PDU may have opened the Display Control channel
                         // a waiting layout needs.
@@ -999,6 +1137,10 @@ where
                     Flow::Stop => break,
                     Flow::Terminate(reason) => {
                         end = failure::SessionEnd::Server(reason);
+                        break;
+                    }
+                    Flow::Redirected(redirected) => {
+                        end = failure::redirected_end(&redirected);
                         break;
                     }
                     Flow::Reactivate => {
@@ -1016,7 +1158,8 @@ where
                         )
                         .await
                         {
-                            Ok(new_framed) => {
+                            Ok((new_framed, new_redraw)) => {
+                                redraw = new_redraw;
                                 let (r, w) = ironrdp_tokio::split_tokio_framed(new_framed);
                                 reader = r;
                                 writer = w;
@@ -1238,11 +1381,7 @@ async fn send_pending_layout<T: FramedWrite>(
 /// Whether the Display Control channel is open and the server has sent its
 /// capabilities, so a monitor layout may be sent.
 fn display_control_ready(stage: &mut ActiveStage) -> bool {
-    stage
-        .get_dvc::<DisplayControlClient>()
-        .filter(|dvc| dvc.channel_id().is_some())
-        .and_then(|dvc| dvc.channel_processor_downcast_ref::<DisplayControlClient>())
-        .is_some_and(DisplayControlClient::ready)
+    stage.display_control_ready() == Some(true)
 }
 
 /// Run the [Deactivation-Reactivation Sequence] after a server Deactivate All
@@ -1261,7 +1400,7 @@ async fn reactivate<S>(
     image: &mut DecodedImage,
     io_channel_id: u16,
     user_channel_id: u16,
-) -> Result<TokioFramed<S>>
+) -> Result<(TokioFramed<S>, RedrawSupport)>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
 {
@@ -1278,10 +1417,11 @@ where
             if !is_io_channel_pdu(action, &pdu, io_channel_id) {
                 // The server's virtual channels and fast-path output keep
                 // flowing during the sequence (#4845); they are not part of it.
-                route_interleaved_pdu(stage, image, action, &pdu, &mut framed).await?;
+                let received_at = framed.last_read_at();
+                route_interleaved_pdu(stage, image, action, &pdu, received_at, &mut framed).await?;
                 continue;
             }
-            activation.step(&pdu, &mut buf)
+            activation.step(&pdu, framed.last_read_at(), &mut buf)
         } else {
             activation.step_no_input(&mut buf)
         }
@@ -1292,42 +1432,101 @@ where
                 .await
                 .context("RDP reactivation write failed")?;
         }
-        if let ConnectionActivationState::Finalized {
-            desktop_size,
-            share_id,
-            enable_server_pointer,
-            pointer_software_rendering,
-        } = activation.connection_activation_state()
-        {
-            check_desktop_size(desktop_size.width, desktop_size.height)?;
-            *image =
-                DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
-            // The server may reassign the share id and pointer settings; rebuild
-            // the fast-path processor and re-sync the x224 processor to match.
-            // Bulk stream compression is never negotiated (connector config sets
-            // no compression), so the decompressor stays absent.
-            stage.set_share_id(share_id);
-            stage.set_fastpath_processor(
-                ironrdp_session::fast_path::ProcessorBuilder {
+        match activation.connection_activation_state() {
+            ConnectionActivationState::Finalized {
+                desktop_size,
+                share_id,
+                enable_server_pointer,
+                pointer_software_rendering,
+                static_channel_chunk_size,
+                refresh_rect_support,
+                suppress_output_support,
+                // The sidecar keeps sending fast-path input; a desktop session
+                // negotiates no Window List support.
+                input_flags: _,
+                window_support_level: _,
+            } => {
+                check_desktop_size(desktop_size.width, desktop_size.height)?;
+                // The server may reassign the share id, the pointer settings and
+                // the static channel chunk size; `reactivate` rebuilds the
+                // fast-path processor and re-syncs the x224 processor to match,
+                // keeping the bulk decompression history (none is negotiated).
+                if !stage.reactivate(
                     io_channel_id,
                     user_channel_id,
                     share_id,
                     enable_server_pointer,
                     pointer_software_rendering,
-                    bulk_decompressor: None,
+                    static_channel_chunk_size,
+                ) {
+                    bail!(
+                        "RDP reactivation negotiated an invalid static channel chunk size \
+                         ({static_channel_chunk_size})"
+                    );
                 }
-                .build(),
-            );
-            stage.set_enable_server_pointer(enable_server_pointer);
-            debug!(
-                width = desktop_size.width,
-                height = desktop_size.height,
-                "rdp reactivation complete"
-            );
-            break;
+                *image =
+                    DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
+                debug!(
+                    width = desktop_size.width,
+                    height = desktop_size.height,
+                    "rdp reactivation complete"
+                );
+                return Ok((
+                    framed,
+                    RedrawSupport {
+                        refresh_rect: refresh_rect_support,
+                        suppress_output: suppress_output_support,
+                    },
+                ));
+            }
+            ConnectionActivationState::Redirected { redirection } => {
+                return Err(anyhow::Error::new(failure::ServerRedirected::from_pdu(
+                    &redirection,
+                )));
+            }
+            ConnectionActivationState::Consumed
+            | ConnectionActivationState::CapabilitiesExchange
+            | ConnectionActivationState::ConnectionFinalization { .. } => {}
         }
     }
-    Ok(framed)
+}
+
+/// Which PDUs the server's General Capability Set allows the client to send to
+/// ask for a full redraw (MS-RDPBCGR 2.2.7.1.1).
+#[derive(Debug, Clone, Copy)]
+struct RedrawSupport {
+    refresh_rect: bool,
+    suppress_output: bool,
+}
+
+/// Ask the server to repaint the whole desktop, with the PDUs it allows (none
+/// when it allows neither). Returns `false` when the transport failed.
+async fn request_redraw<T: FramedWrite>(
+    stage: &ActiveStage,
+    image: &DecodedImage,
+    redraw: RedrawSupport,
+    transport: &mut T,
+) -> bool {
+    match stage.request_full_redraw(
+        image.width(),
+        image.height(),
+        redraw.refresh_rect,
+        redraw.suppress_output,
+    ) {
+        Ok(frames) => {
+            debug!(
+                frames = frames.len(),
+                "requesting a full redraw after a dropped update"
+            );
+            for frame in frames {
+                if transport.write_all(&frame).await.is_err() {
+                    return false;
+                }
+            }
+        }
+        Err(e) => warn!(error = %e, "failed to encode a full-redraw request"),
+    }
+    true
 }
 
 /// Whether a PDU read during a reactivation belongs to the sequence: an X.224
@@ -1349,13 +1548,14 @@ async fn route_interleaved_pdu<T: FramedWrite>(
     image: &mut DecodedImage,
     action: ironrdp_pdu::Action,
     frame: &[u8],
+    received_at: Option<MonotonicInstant>,
     transport: &mut T,
 ) -> Result<()> {
     if action == ironrdp_pdu::Action::FastPath {
         debug!("dropping fast-path output received during reactivation");
         return Ok(());
     }
-    let outputs = match stage.process(image, action, frame) {
+    let outputs = match stage.process(image, action, frame, received_at) {
         Ok(outputs) => outputs,
         Err(e) => {
             debug!(error = %e, "skipping a channel PDU received during reactivation");
@@ -1627,8 +1827,9 @@ mod tests {
     }
 
     /// xrdp names a redirected drive only from the announce's PreferredDosName;
-    /// the vendored ironrdp-rdpdr fork fills it with the (truncated) drive name
-    /// instead of upstream 0.7.0's literal "ignored".
+    /// ironrdp-rdpdr fills it with the (truncated) drive name since 0.9.0
+    /// (`PreferredDosName::for_drive`; 0.7.0 sent the literal "ignored" and the
+    /// vendored fork carried the fix, #4125).
     #[test]
     fn drive_announce_carries_the_drive_name_in_preferred_dos_name() {
         assert_eq!(&announced_dos_name("share"), b"share\0\0\0");
@@ -1667,6 +1868,55 @@ mod tests {
         encoded
     }
 
+    /// The sidecar's drive channel over a [`DriveRedirectBackend`] serving `dir`,
+    /// taken through the RDPDR initialization a server runs (Server Announce,
+    /// Client ID Confirm, User Logged On, then the Device Announce Response
+    /// accepting the drive). ironrdp-rdpdr 0.9 ignores a drive IRP for a device it
+    /// has not announced yet (MS-RDPEFS 3.1.5.2), so the drive tests start here.
+    fn announced_drive_rdpdr(dir: &std::path::Path) -> Rdpdr {
+        use ironrdp_rdpdr::pdu::efs::{
+            NtStatus, ServerDeviceAnnounceResponse, VersionAndIdPdu, VersionAndIdPduKind,
+            VERSION_MINOR_12,
+        };
+        use ironrdp_rdpdr::pdu::RdpdrPdu;
+        use ironrdp_svc::SvcProcessor;
+
+        let root = std::fs::canonicalize(dir).expect("canonical root");
+        let mut rdpdr = Rdpdr::new(
+            Box::new(DriveRedirectBackend::new(root)),
+            CLIENT_NAME.to_string(),
+        )
+        .with_drives(Some(vec![(DRIVE_DEVICE_ID, "share".to_string())]));
+        let version = |kind| {
+            ironrdp_core::encode_vec(&RdpdrPdu::VersionAndIdPdu(VersionAndIdPdu {
+                version_major: 1,
+                version_minor: VERSION_MINOR_12,
+                client_id: 0x1234,
+                kind,
+            }))
+            .expect("encode the version PDU")
+        };
+        rdpdr
+            .process(&version(VersionAndIdPduKind::ServerAnnounceRequest))
+            .expect("server announce");
+        rdpdr
+            .process(&version(VersionAndIdPduKind::ServerClientIdConfirm))
+            .expect("client ID confirm");
+        let announced = rdpdr
+            .process(&ironrdp_core::encode_vec(&RdpdrPdu::UserLoggedon).expect("encode"))
+            .expect("user logged on");
+        assert_eq!(announced.len(), 1, "the drive is announced after the logon");
+        let accepted = ironrdp_core::encode_vec(&RdpdrPdu::ServerDeviceAnnounceResponse(
+            ServerDeviceAnnounceResponse {
+                device_id: DRIVE_DEVICE_ID,
+                result_code: NtStatus::SUCCESS,
+            },
+        ))
+        .expect("encode the device announce response");
+        rdpdr.process(&accepted).expect("device announce response");
+        rdpdr
+    }
+
     /// (DeviceId, CompletionId, IoStatus) of an encoded DR_DEVICE_IOCOMPLETION.
     fn completion_header(message: &ironrdp_svc::SvcMessage) -> (Vec<u8>, u32, u32, u32) {
         let encoded = message
@@ -1683,9 +1933,9 @@ mod tests {
     }
 
     /// A Windows host changing the shared folder's volume label sends
-    /// IRP_MJ_SET_VOLUME_INFORMATION, which neither the vendored ironrdp-rdpdr fork nor
-    /// the drive backend implements. It used to be a decode error that ended the whole
-    /// session; now the sidecar's drive channel answers STATUS_NOT_SUPPORTED and the
+    /// IRP_MJ_SET_VOLUME_INFORMATION, which neither ironrdp-rdpdr nor the drive
+    /// backend implements. It used to be a decode error that ended the whole session
+    /// (#5118); now the sidecar's drive channel answers STATUS_NOT_SUPPORTED and the
     /// next request is still served by the real drive backend.
     #[test]
     fn unsupported_drive_irp_is_completed_and_the_channel_keeps_serving() {
@@ -1693,12 +1943,7 @@ mod tests {
         use ironrdp_svc::SvcProcessor;
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
-        let mut rdpdr = Rdpdr::new(
-            Box::new(DriveRedirectBackend::new(root)),
-            CLIENT_NAME.to_string(),
-        )
-        .with_drives(Some(vec![(DRIVE_DEVICE_ID, "share".to_string())]));
+        let mut rdpdr = announced_drive_rdpdr(dir.path());
 
         // FileFsLabelInformation: VolumeLabelLength 4, VolumeLabel "LB"
         let label = [4, 0, 0, 0, b'L', 0, b'B', 0];
@@ -1731,8 +1976,9 @@ mod tests {
     /// ACL on the shared folder sends IRP_MJ_FLUSH_BUFFERS / IRP_MJ_QUERY_SECURITY /
     /// IRP_MJ_SET_SECURITY, which ironrdp-rdpdr 0.7.0 did not know: the request failed
     /// to decode and ended the whole session (#5124). Now flush reaches the drive
-    /// backend, the security requests are answered STATUS_NOT_SUPPORTED, any other
-    /// MajorFunction STATUS_UNSUCCESSFUL, and the channel keeps serving.
+    /// backend, the drive backend answers the security requests STATUS_NOT_SUPPORTED,
+    /// and the vendored fork answers any other MajorFunction STATUS_UNSUCCESSFUL
+    /// (upstream 0.9.0 still fails to decode it), and the channel keeps serving.
     #[test]
     fn unknown_major_function_irp_is_completed_and_the_channel_keeps_serving() {
         use ironrdp_rdpdr::pdu::efs::NtStatus;
@@ -1748,12 +1994,7 @@ mod tests {
         };
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let root = std::fs::canonicalize(dir.path()).expect("canonical root");
-        let mut rdpdr = Rdpdr::new(
-            Box::new(DriveRedirectBackend::new(root)),
-            CLIENT_NAME.to_string(),
-        )
-        .with_drives(Some(vec![(DRIVE_DEVICE_ID, "share".to_string())]));
+        let mut rdpdr = announced_drive_rdpdr(dir.path());
 
         let mut set_security = Vec::new();
         set_security.extend_from_slice(&4u32.to_le_bytes()); // DACL
@@ -2214,8 +2455,9 @@ mod tests {
 
     #[test]
     fn short_deactivate_all_header_decodes_with_share_id_zero() {
-        // Upstream ironrdp-pdu 0.9.0 fails this with
-        // `NotEnoughBytes { received: 6, expected: 10 }` — the vendored fork's fix.
+        // ironrdp-pdu 0.9.0 failed this with
+        // `NotEnoughBytes { received: 6, expected: 10 }`; fixed upstream in 0.10.0
+        // (`d4b728a1d40b`), which the vendored 0.9.0 fork carried (#3611).
         let header: ShareControlHeader =
             ironrdp_core::decode(&XRDP_SHORT_DEACTIVATE_ALL).expect("xrdp's 6-byte PDU");
         assert!(matches!(
@@ -2270,6 +2512,7 @@ mod tests {
                     &mut image,
                     ironrdp_pdu::Action::X224,
                     &server_io_frame(pdu.to_vec()),
+                    None,
                 )
                 .expect("a Deactivate All PDU must not be a session error");
             assert!(
@@ -2283,10 +2526,133 @@ mod tests {
             let mut transport = TokioFramed::new(transport);
             let mut ipc_out = Vec::new();
             let mut cursor = (0, 0);
-            let flow =
-                handle_outputs(outputs, &image, &mut transport, &mut ipc_out, &mut cursor).await;
+            let flow = handle_outputs(
+                outputs,
+                &stage,
+                &image,
+                &mut transport,
+                &mut ipc_out,
+                &mut cursor,
+            )
+            .await;
             assert!(matches!(flow, Flow::Reactivate));
         }
+    }
+
+    /// The ironrdp-session 0.12/0.13 outputs (#5117) are each handled on purpose:
+    /// a mid-session Server Redirection ends the session with a typed failure, a
+    /// multitransport request is declined on the wire, and the informational
+    /// ones (including the auto-reconnect cookie, a credential) are consumed
+    /// without ending the session.
+    #[tokio::test]
+    async fn new_session_outputs_are_handled_explicitly() {
+        use ironrdp_pdu::rdp::headers::{BasicSecurityHeader, BasicSecurityHeaderFlags};
+        use ironrdp_pdu::rdp::multitransport::{MultitransportRequestPdu, RequestedProtocol};
+        use ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu;
+        use ironrdp_pdu::rdp::session_info::ServerAutoReconnect;
+        use tokio::io::AsyncReadExt as _;
+
+        // A multitransport request arrives on the MCS message channel, so the
+        // session negotiated one.
+        let stage = ActiveStageBuilder {
+            static_channels: ironrdp_svc::StaticChannelSet::new(),
+            user_channel_id: TEST_USER_CHANNEL,
+            io_channel_id: TEST_IO_CHANNEL,
+            message_channel_id: Some(TEST_IO_CHANNEL + 1),
+            share_id: 0x0001_03EA,
+            compression_type: None,
+            enable_server_pointer: true,
+            pointer_software_rendering: true,
+        }
+        .build();
+        let image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+        let (transport, mut peer) = tokio::io::duplex(4096);
+        let mut transport = TokioFramed::new(transport);
+        let mut ipc_out = Vec::new();
+        let mut cursor = (0, 0);
+
+        let informational = vec![
+            ActiveStageOutput::SaveSessionInfo {
+                logon_complete: true,
+            },
+            ActiveStageOutput::SessionId(3),
+            ActiveStageOutput::AutoReconnectCookie(ServerAutoReconnect {
+                logon_id: 3,
+                random_bits: [0x5A; 16],
+            }),
+            ActiveStageOutput::AutoReconnectFailed,
+            ActiveStageOutput::MonitorLayout(Vec::new()),
+            ActiveStageOutput::WindowingOrders(Vec::new()),
+            ActiveStageOutput::WindowSurfaceUpdates(Vec::new()),
+        ];
+        let flow = handle_outputs(
+            informational,
+            &stage,
+            &image,
+            &mut transport,
+            &mut ipc_out,
+            &mut cursor,
+        )
+        .await;
+        assert!(matches!(flow, Flow::Continue));
+        assert!(ipc_out.is_empty(), "nothing reaches the desktop");
+
+        let request = ActiveStageOutput::MultitransportRequest(MultitransportRequestPdu {
+            security_header: BasicSecurityHeader {
+                flags: BasicSecurityHeaderFlags::TRANSPORT_REQ,
+            },
+            request_id: 0x77,
+            requested_protocol: RequestedProtocol::UdpFecR,
+            security_cookie: [0x11; 16],
+        });
+        let flow = handle_outputs(
+            vec![request],
+            &stage,
+            &image,
+            &mut transport,
+            &mut ipc_out,
+            &mut cursor,
+        )
+        .await;
+        assert!(matches!(flow, Flow::Continue));
+        let mut decline = vec![0; 4096];
+        let len = tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut decline))
+            .await
+            .expect("the decline is written")
+            .expect("read the decline");
+        let decline = &decline[..len];
+        // ... | requestId (u32) | hrResponse (u32): E_ABORT = 0x80004004
+        assert!(len > 8, "an X.224 frame carrying the response");
+        assert_eq!(
+            &decline[len - 8..len - 4],
+            &0x77u32.to_le_bytes(),
+            "requestId"
+        );
+        assert_eq!(
+            &decline[len - 4..],
+            &0x8000_4004u32.to_le_bytes(),
+            "E_ABORT"
+        );
+
+        let redirection = ActiveStageOutput::ServerRedirection(Box::new(ServerRedirectionPdu {
+            session_id: 9,
+            target_fqdn: Some("rdsh2.example.com".to_owned()),
+            password: Some(b"cookie".to_vec()),
+            ..ServerRedirectionPdu::default()
+        }));
+        let flow = handle_outputs(
+            vec![redirection],
+            &stage,
+            &image,
+            &mut transport,
+            &mut ipc_out,
+            &mut cursor,
+        )
+        .await;
+        let Flow::Redirected(redirected) = flow else {
+            panic!("a Server Redirection must end the session");
+        };
+        assert_eq!(redirected.target.as_deref(), Some("rdsh2.example.com"));
     }
 
     /// Script the server half of a Deactivation-Reactivation Sequence: a Demand
@@ -2403,6 +2769,7 @@ mod tests {
                 &mut image,
                 ironrdp_pdu::Action::X224,
                 &server_io_frame(XRDP_SHORT_DEACTIVATE_ALL.to_vec()),
+                None,
             )
             .unwrap();
         assert!(outputs

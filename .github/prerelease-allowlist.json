@@ -38,33 +38,15 @@
       "tracker": "#3734"
     },
     {
-      "name": "curve25519-dalek",
-      "version": "5.0.0-rc.1",
-      "reason": "Dalek pre-release pulled alongside the pre-release RustCrypto line by the rdp-sidecar IronRDP/picky stack",
-      "tracker": "#3734"
-    },
-    {
       "name": "ecdsa",
       "version": "0.17.0-rc.18",
       "reason": "pre-release RustCrypto 0.7/0.10 line pulled by russh 0.61 (SSH); accepted release risk (#2074)",
       "tracker": "#3734"
     },
     {
-      "name": "ecdsa",
-      "version": "0.17.0-rc.22",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
       "name": "ed25519-dalek",
       "version": "3.0.0-pre.7",
       "reason": "Dalek pre-release pulled alongside the pre-release RustCrypto line by russh 0.61 (SSH)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "ed25519-dalek",
-      "version": "3.0.0-rc.1",
-      "reason": "Dalek pre-release pulled alongside the pre-release RustCrypto line by the rdp-sidecar IronRDP/picky stack",
       "tracker": "#3734"
     },
     {
@@ -75,32 +57,14 @@
     },
     {
       "name": "p256",
-      "version": "0.14.0-rc.14",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "p256",
       "version": "0.14.0-rc.9",
       "reason": "pre-release RustCrypto 0.7/0.10 line pulled by russh 0.61 (SSH); accepted release risk (#2074)",
       "tracker": "#3734"
     },
     {
       "name": "p384",
-      "version": "0.14.0-rc.14",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "p384",
       "version": "0.14.0-rc.9",
       "reason": "pre-release RustCrypto 0.7/0.10 line pulled by russh 0.61 (SSH); accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "p521",
-      "version": "0.14.0-rc.14",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
       "tracker": "#3734"
     },
     {
@@ -111,7 +75,7 @@
     },
     {
       "name": "picky",
-      "version": "7.0.0-rc.25",
+      "version": "7.0.0-rc.26",
       "reason": "IronRDP CredSSP/NLA pulls the picky 7.0 release candidate (rdp-sidecar only)",
       "tracker": "#3734"
     },
@@ -129,20 +93,8 @@
     },
     {
       "name": "primeorder",
-      "version": "0.14.0-rc.14",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "primeorder",
       "version": "0.14.0-rc.9",
       "reason": "pre-release RustCrypto 0.7/0.10 line pulled by russh 0.61 (SSH); accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "rfc6979",
-      "version": "0.6.0-pre.0",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
       "tracker": "#3734"
     },
     {
@@ -155,12 +107,6 @@
       "name": "rustcrypto-ff",
       "version": "0.14.0-rc.1",
       "reason": "pre-release RustCrypto 0.7/0.10 line pulled by russh 0.61 (SSH) and the rdp-sidecar IronRDP stack; accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "rustcrypto-ff_derive",
-      "version": "0.14.0-rc.0",
-      "reason": "pre-release RustCrypto 0.7/0.10 line pulled by the rdp-sidecar IronRDP/picky stack; accepted release risk (#2074)",
       "tracker": "#3734"
     },
     {
@@ -185,12 +131,6 @@
       "name": "ssh-key",
       "version": "0.7.0-rc.10",
       "reason": "pre-release RustCrypto 0.7/0.10 line pulled by russh 0.61 (SSH); accepted release risk (#2074)",
-      "tracker": "#3734"
-    },
-    {
-      "name": "x25519-dalek",
-      "version": "3.0.0-rc.1",
-      "reason": "Dalek pre-release pulled alongside the pre-release RustCrypto line by the rdp-sidecar IronRDP/picky stack",
       "tracker": "#3734"
     }
   ]

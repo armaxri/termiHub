@@ -6,9 +6,9 @@
 //! plain PCM. Unlike PCM they cannot be advertised by structural equality — the
 //! server picks the block layout (`n_block_align`, `wSamplesPerBlock`, and, for
 //! MS-ADPCM, the coefficient table in the format's extra `data`) and the client
-//! cannot predict it. The vendored `ironrdp-rdpsnd` fork therefore lets the
-//! handler *accept a server format by codec* ([`can_decode`]) and echoes that
-//! exact [`AudioFormat`] back, so [`decode`] here receives the server's concrete
+//! cannot predict it. The rdpsnd handler therefore *accepts a server format by
+//! codec* ([`can_decode`], through `RdpsndClientHandler::choose_formats` in
+//! `audio.rs`) and echoes that exact [`AudioFormat`] back, so [`decode`] here receives the server's concrete
 //! block parameters.
 //!
 //! ## Decoder
@@ -110,9 +110,9 @@ fn frames_per_block(format: &AudioFormat) -> Option<usize> {
 
 /// Whether [`decode`] can turn this server-advertised compressed format into PCM.
 ///
-/// The vendored `ironrdp-rdpsnd` fork calls this (via
-/// `RdpsndClientHandler::accepts_format`) to decide whether to advertise the
-/// server's ADPCM format back to it. Advertising is therefore gated on real
+/// The rdpsnd handler calls this (via `RdpsndClientHandler::choose_formats`,
+/// `audio.rs`) to decide whether to advertise the server's ADPCM format back to
+/// it. Advertising is therefore gated on real
 /// decodability: a supported codec tag, mono/stereo, a non-zero sample rate, and a
 /// resolvable, sane block size — so we never advertise a format we would then drop.
 pub fn can_decode(format: &AudioFormat) -> bool {

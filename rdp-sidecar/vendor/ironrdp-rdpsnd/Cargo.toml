@@ -1,70 +1,201 @@
-# termiHub vendored fork of ironrdp-rdpsnd 0.9.0.
+# termiHub vendored fork of ironrdp-rdpsnd 0.11.0 (#5117; first forked for #1773).
 #
-# WHAT WAS CHANGED vs upstream (see `src/client.rs` and README.md; README also
-# lists the upstream post-0.9.0 fixes ported under #3499 and #3510 — the latter,
-# pre-v8 WaveInfo + bare Wave playback, also splits `WavePdu` / `WaveDataPdu` in
-# `src/pdu/mod.rs` and adapts `src/server.rs`'s pre-v8 send):
-# the client `wave` callback now receives the *concrete negotiated* `AudioFormat`
-# instead of a bare `format_no` index. Upstream 0.9.0 built the Client Audio
-# Formats list in `Rdpsnd::client_formats()` from a `HashSet` intersection (so its
-# order is a non-deterministic per-process `RandomState`) and then discarded it,
-# handing the client handler only `wave(format_no, ..)` — an index into a list the
-# handler can neither see nor order. With more than one advertised format that
-# index is therefore unresolvable, so a client that advertised several PCM rates
-# could not tell which rate a given `wave` buffer was in and risked playing e.g.
-# 22.05 kHz data at 44.1 kHz ("chipmunk" audio). The fork makes `Rdpsnd` remember
-# the exact `Vec<AudioFormat>` it sent (`negotiated_formats`) and changes the
-# `RdpsndClientHandler::wave` signature to `wave(&mut self, format: &AudioFormat,
-# ts, data)`, so the handler always maps a buffer to its true format. This
-# unblocks multi-format `rdpsnd` negotiation in the sidecar (#1773) without
-# waiting on an upstream release.
+# WHAT WAS CHANGED vs upstream (see README.md): the client's Training Confirm echoes
+# the server's wPackSize (the size of the whole Training PDU, MS-RDPEA 2.2.3.2)
+# instead of the data length, 8 bytes short, which GNOME Remote Desktop rejects and
+# then sends no audio (#4923). `TrainingPdu::pack_size()` in `src/pdu/mod.rs` computes
+# the value for both the encoder and `training_confirm` in `src/client.rs`.
 #
-# UPSTREAM CHANGE THIS REPRESENTS: pass the selected `AudioFormat` to
-# `RdpsndClientHandler::wave` instead of an index into the discarded, non-
-# deterministically-ordered client-format list. Filed to be offered back to
-# Devolutions/IronRDP. Apart from the #3510 Wave split, `pdu/mod.rs`, `server.rs`
-# and `lib.rs` are byte-for-byte upstream 0.9.0. The sibling `ironrdp-*` deps stay registry versions so nothing
-# else in the graph forks.
+# UPSTREAM CHANGE THIS REPRESENTS: Devolutions/IronRDP f86e3c49, "fix(rdpsnd): echo
+# the server's wPackSize in the Training Confirm (#2294)", merged to master after the
+# 0.11.0 release and not yet published. Drop this fork when an ironrdp-rdpsnd release
+# that contains it is adopted. Everything else is byte-for-byte the crates.io 0.11.0
+# package (this manifest is the registry-normalized one, with this header added).
 #
 # Wired into the workspace-EXCLUDED sidecar graph via `[patch.crates-io]` in
-# `rdp-sidecar/Cargo.toml`, exactly as `vendor/vnc-rs` is patched into the main
-# app (#1714). The sidecar has its own Cargo.lock, so this fork never touches the
-# desktop app's dependency graph.
+# `rdp-sidecar/Cargo.toml`. The sidecar has its own Cargo.lock, so this fork never
+# touches the desktop app's dependency graph.
 
 [package]
-name = "ironrdp-rdpsnd"
-version = "0.9.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.94"
+name = "ironrdp-rdpsnd"
+version = "0.11.0"
 authors = [
     "Devolutions Inc. <infos@devolutions.net>",
     "Teleport <goteleport.com>",
 ]
-description = "RDPSND static channel for audio output implemented as described in MS-RDPEA (termiHub vendored fork exposing the negotiated AudioFormat to wave callbacks)"
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "RDPSND and AUDIO_PLAYBACK_DVC audio output channels and wave codecs implemented as described in MS-RDPEA (termiHub vendored fork echoing the Training wPackSize)"
 homepage = "https://github.com/Devolutions/IronRDP"
-repository = "https://github.com/Devolutions/IronRDP"
 readme = "README.md"
-license = "MIT OR Apache-2.0"
-keywords = ["rdp", "remote-desktop", "network", "client", "protocol"]
+keywords = [
+    "rdp",
+    "remote-desktop",
+    "network",
+    "client",
+    "protocol",
+]
 categories = ["network-programming"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Devolutions/IronRDP"
+resolver = "2"
+
+[features]
+__test = ["dep:visibility"]
+default = []
+std = []
 
 [lib]
 name = "ironrdp_rdpsnd"
 path = "src/lib.rs"
-doctest = false
 test = false
+doctest = false
 
-[features]
-default = []
-std = []
-# Internal (PRIVATE!) upstream feature used only by IronRDP's own integration
-# testsuite. Kept for byte-for-byte fidelity with server.rs; never enabled here.
-__test = ["dep:visibility"]
+[dependencies.bitflags]
+version = "2.11"
 
-[dependencies]
-bitflags = "2.11"
-tracing = { version = "0.1", features = ["log"] }
-ironrdp-svc = { version = "0.8" }
-ironrdp-core = { version = "0.2", features = ["alloc"] }
-ironrdp-pdu = { version = "0.9", features = ["alloc"] }
-visibility = { version = "0.1", optional = true }
+[dependencies.ironrdp-core]
+version = "0.3"
+features = ["alloc"]
+
+[dependencies.ironrdp-dvc]
+version = "0.10"
+
+[dependencies.ironrdp-pdu]
+version = "0.11"
+features = ["alloc"]
+
+[dependencies.ironrdp-svc]
+version = "0.10"
+
+[dependencies.sha1]
+version = "0.11"
+
+[dependencies.tracing]
+version = "0.1"
+features = ["log"]
+
+[dependencies.visibility]
+version = "0.1"
+optional = true
+
+[lints.clippy]
+alloc_instead_of_core = "warn"
+allow_attributes = "warn"
+as_conversions = "warn"
+as_pointer_underscore = "warn"
+as_ptr_cast_mut = "warn"
+as_underscore = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_ptr_alignment = "warn"
+cast_sign_loss = "warn"
+cfg_not_test = "warn"
+checked_conversions = "warn"
+clone_on_ref_ptr = "warn"
+cloned_instead_of_copied = "warn"
+collection_is_never_read = "warn"
+copy_iterator = "warn"
+dbg_macro = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+doc_include_without_cfg = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+expl_impl_clone_on_copy = "warn"
+filetype_is_file = "warn"
+float_cmp = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+get_unwrap = "warn"
+implicit_clone = "warn"
+infinite_loop = "warn"
+inline_always = "warn"
+large_futures = "warn"
+large_include_file = "warn"
+large_stack_frames = "warn"
+large_types_passed_by_value = "warn"
+lossy_float_literal = "warn"
+map_with_unused_argument_over_ranges = "warn"
+mem_forget = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "warn"
+mixed_read_write_in_expression = "warn"
+multiple_inherent_impl = "warn"
+multiple_unsafe_ops_per_block = "warn"
+needless_raw_strings = "warn"
+non_ascii_literal = "warn"
+non_zero_suggestions = "warn"
+or_fun_call = "warn"
+panic = "warn"
+partial_pub_fields = "warn"
+precedence_bits = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+ptr_cast_constness = "warn"
+pub_without_shorthand = "warn"
+range_plus_one = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+redundant_clone = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+return_self_not_must_use = "warn"
+same_name_method = "warn"
+self_named_module_files = "warn"
+semicolon_outside_block = "warn"
+separated_literal_suffix = "warn"
+similar_names = "warn"
+std_instead_of_core = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_lit_chars_any = "warn"
+string_slice = "warn"
+suspicious_xor_used_as_pow = "warn"
+todo = "warn"
+trait_duplication_in_bounds = "warn"
+transmute_ptr_to_ptr = "warn"
+try_err = "warn"
+type_repetition_in_bounds = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_box_returns = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_self_imports = "warn"
+unused_result_ok = "warn"
+unused_self = "warn"
+unused_trait_names = "warn"
+unwrap_used = "warn"
+useless_let_if_seq = "warn"
+wildcard_dependencies = "warn"
+wildcard_imports = "warn"
+
+[lints.rust]
+absolute_paths_not_starting_with_crate = "warn"
+ambiguous_negative_literals = "warn"
+elided_lifetimes_in_paths = "warn"
+invalid_reference_casting = "warn"
+keyword_idents = "warn"
+macro_use_extern_crate = "warn"
+missing_unsafe_on_extern = "warn"
+noop_method_call = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unreachable_pub = "warn"
+unsafe_attr_outside_unsafe = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_crate_dependencies = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+unused_unsafe = "warn"

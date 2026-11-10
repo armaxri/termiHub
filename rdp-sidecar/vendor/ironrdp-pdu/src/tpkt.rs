@@ -57,18 +57,18 @@ impl TpktHeader {
         let version = src.read_u8();
 
         if version != Self::VERSION {
-            return Err(unsupported_version_err!("TPKT version", version));
+            return Err(unsupported_version_err!("TPKT version", version, in: src));
         }
 
         read_padding!(src, 1);
 
         let packet_length = src.read_u16_be();
 
-        // termiHub fork (#4461): ported from upstream IronRDP 33506e61 (#1515).
         if usize::from(packet_length) < 7 {
             return Err(invalid_field_err!(
                 "packetLength",
-                "length is smaller than the minimum TPKT size"
+                "length is smaller than the minimum TPKT size",
+                in: src
             ));
         }
 

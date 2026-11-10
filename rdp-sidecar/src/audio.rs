@@ -23,12 +23,12 @@
 //!
 //! The handler advertises a **table** of common PCM formats (48/44.1/22.05/11.025
 //! kHz, 16-bit, mono and stereo) and plays each `wave` PDU in whichever format the
-//! server selected. This is only sound because termiHub vendors a patched
-//! `ironrdp-rdpsnd` (see `vendor/ironrdp-rdpsnd/`): upstream 0.9.0 reported only a
-//! `format_no` index into a non-deterministically-ordered, then-discarded list, so
-//! more than one advertised format could not be mapped back to a concrete rate
-//! (risking "chipmunk" audio — e.g. playing 22.05 kHz data at 44.1 kHz). The fork
-//! passes the concrete [`AudioFormat`] to [`wave`](RdpsndClientHandler::wave), so
+//! server selected. `ironrdp-rdpsnd` 0.9.0 reported only a `format_no` index into
+//! a non-deterministically-ordered, then-discarded list, so more than one
+//! advertised format could not be mapped back to a concrete rate (risking
+//! "chipmunk" audio — e.g. playing 22.05 kHz data at 44.1 kHz); termiHub's
+//! vendored fork fixed that (#1773), and upstream adopted it in 0.10 (#5117).
+//! [`wave`](RdpsndClientHandler::wave) receives the concrete [`AudioFormat`], so
 //! each buffer is decoded and played at its **own** channel count and sample rate;
 //! [`rodio`] resamples to the device rate.
 //!
@@ -38,10 +38,10 @@
 //! **MS-ADPCM** (`WAVE_FORMAT_ADPCM`) and **IMA/DVI ADPCM** (`WAVE_FORMAT_DVI_ADPCM`)
 //! formats and decodes them to PCM (via [`crate::adpcm`]) before the jitter buffer
 //! and sink. Because a server chooses a compressed format's block layout, these
-//! cannot be advertised by structural equality like PCM; the vendored fork's
-//! [`accepts_format`](RdpsndClientHandler::accepts_format) hook lets the handler
-//! accept them by codec and echoes the server's exact format back, so `wave` still
-//! receives concrete, decodable parameters. Opus (`WAVE_FORMAT_OPUS`) remains a
+//! cannot be advertised by structural equality like PCM; the handler's
+//! [`choose_formats`](RdpsndClientHandler::choose_formats) accepts them by codec
+//! and echoes the server's exact format back, so `wave` still receives concrete,
+//! decodable parameters. Opus (`WAVE_FORMAT_OPUS`) remains a
 //! follow-up — its decoders link the native `libopus` C library.
 //!
 //! ## Platforms
@@ -392,6 +392,33 @@ impl RdpAudioBackend {
     }
 }
 
+/// Whether a handler advertising the PCM table `formats` can play a
+/// server-advertised format: the exact PCM table entries plus any compressed
+/// format whose codec [`crate::adpcm`] can decode, at whatever block layout the
+/// server chose.
+fn accepts_format(formats: &[AudioFormat], format: &AudioFormat) -> bool {
+    if formats.contains(format) {
+        return true;
+    }
+    // A compressed format is accepted only where the decoder is compiled; on
+    // other targets no formats are advertised at all, so this is unreachable.
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    let compressed = crate::adpcm::can_decode(format);
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    let compressed = false;
+    compressed
+}
+
+/// The formats to advertise in reply to the server's list: every server format
+/// [`accepts_format`] accepts, in the server's order, each **verbatim** (#1812).
+fn choose_playable(formats: &[AudioFormat], server_formats: &[AudioFormat]) -> Vec<AudioFormat> {
+    server_formats
+        .iter()
+        .filter(|format| accepts_format(formats, format))
+        .cloned()
+        .collect()
+}
+
 impl Default for RdpAudioBackend {
     fn default() -> Self {
         Self::new()
@@ -403,28 +430,22 @@ impl RdpsndClientHandler for RdpAudioBackend {
         &self.formats
     }
 
-    /// Accept a server-advertised format we can play: the exact PCM table entries
-    /// (matched by the vendored fork's default `contains` check) plus any
-    /// compressed format whose codec [`crate::adpcm`] can decode, at whatever block
-    /// layout the server chose. The fork echoes accepted formats back verbatim, so
-    /// [`wave`](Self::wave) always receives concrete, decodable parameters — we
-    /// never advertise a compressed format we would then have to drop.
-    fn accepts_format(&self, format: &AudioFormat) -> bool {
-        if self.formats.contains(format) {
-            return true;
-        }
-        // A compressed format is accepted only where the decoder is compiled; on
-        // other targets no formats are advertised at all, so this is unreachable.
-        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-        let compressed = crate::adpcm::can_decode(format);
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        let compressed = false;
-        compressed
+    /// Advertise, in the server's order, every server format we can play
+    /// ([`accepts_format`]), each echoed back **verbatim**.
+    /// `ironrdp-rdpsnd` then keeps only formats the server offered and hands
+    /// [`wave`](Self::wave) the advertised entry, so a compressed format arrives
+    /// with the server's own block layout: concrete, decodable parameters, never
+    /// a compressed format we would then have to drop (#1812). This replaces the
+    /// `accepts_format` hook of the 0.9 vendored fork with upstream's
+    /// `choose_formats` (ironrdp-rdpsnd 0.10, #5117); the advertised list is the
+    /// same.
+    fn choose_formats(&self, server_formats: &[AudioFormat]) -> Vec<AudioFormat> {
+        choose_playable(&self.formats, server_formats)
     }
 
     fn wave(&mut self, format: &AudioFormat, _ts: u32, data: Cow<'_, [u8]>) {
-        // `format` is the concrete format the server negotiated (thanks to the
-        // vendored ironrdp-rdpsnd fork), so the buffer is decoded and played at
+        // `format` is the concrete format the server negotiated (the advertised
+        // list entry `wFormatNo` indexes), so the buffer is decoded and played at
         // exactly its own channel count and sample rate — never guessed.
         if let Some(buffer) = decode_wave(format, &data) {
             self.sink.play(buffer);
@@ -586,6 +607,103 @@ impl AudioSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The server's own MS-ADPCM format, with a block layout the client cannot
+    /// predict (#1812).
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    fn server_ms_adpcm() -> AudioFormat {
+        // wSamplesPerBlock 500 + the 7 standard coefficient pairs.
+        let mut data = 500u16.to_le_bytes().to_vec();
+        data.extend_from_slice(&7u16.to_le_bytes());
+        for (c1, c2) in [
+            (256i16, 0i16),
+            (512, -256),
+            (0, 0),
+            (192, 64),
+            (240, 0),
+            (460, -208),
+            (392, -232),
+        ] {
+            data.extend_from_slice(&c1.to_le_bytes());
+            data.extend_from_slice(&c2.to_le_bytes());
+        }
+        AudioFormat {
+            format: WaveFormat::ADPCM,
+            n_channels: 2,
+            n_samples_per_sec: 22_050,
+            n_avg_bytes_per_sec: 22_311,
+            n_block_align: 512,
+            bits_per_sample: 4,
+            data: Some(data),
+        }
+    }
+
+    /// The advertised list is the server's playable formats, in the server's
+    /// order and verbatim — the behaviour of the 0.9 fork's `accepts_format`
+    /// hook, now through upstream's `choose_formats` (#5117).
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn choose_playable_echoes_playable_server_formats_in_server_order() {
+        let table = advertised_formats();
+        let adpcm = server_ms_adpcm();
+        let unplayable = pcm_format(1, 8_000);
+        assert!(!table.contains(&unplayable));
+        let server = vec![
+            pcm_format(1, 8_000),
+            adpcm.clone(),
+            pcm_format(2, 44_100),
+            pcm_format(2, 48_000),
+        ];
+        assert_eq!(
+            choose_playable(&table, &server),
+            vec![adpcm, pcm_format(2, 44_100), pcm_format(2, 48_000)]
+        );
+    }
+
+    /// Through `ironrdp-rdpsnd` itself: its `retain_offered` keeps every chosen
+    /// format (they are the server's own), so the Client Audio Formats PDU
+    /// carries the server's ADPCM block layout and `wFormatNo` indexes it.
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn rdpsnd_advertises_the_chosen_formats_verbatim() {
+        use ironrdp_rdpsnd::client::Rdpsnd;
+        use ironrdp_rdpsnd::pdu::{
+            ClientAudioOutputPdu, ServerAudioFormatPdu, ServerAudioOutputPdu, Version,
+        };
+        use ironrdp_svc::SvcProcessor;
+
+        #[derive(Debug)]
+        struct Chooser(Vec<AudioFormat>);
+        impl RdpsndClientHandler for Chooser {
+            fn get_formats(&self) -> &[AudioFormat] {
+                &self.0
+            }
+            fn choose_formats(&self, server_formats: &[AudioFormat]) -> Vec<AudioFormat> {
+                choose_playable(&self.0, server_formats)
+            }
+            fn wave(&mut self, _format: &AudioFormat, _ts: u32, _data: Cow<'_, [u8]>) {}
+            fn set_volume(&mut self, _volume: VolumePdu) {}
+            fn set_pitch(&mut self, _pitch: PitchPdu) {}
+            fn close(&mut self) {}
+        }
+
+        let adpcm = server_ms_adpcm();
+        let mut client = Rdpsnd::new(Box::new(Chooser(advertised_formats())));
+        let offer = ServerAudioOutputPdu::AudioFormat(ServerAudioFormatPdu {
+            version: Version::V8,
+            formats: vec![pcm_format(1, 8_000), adpcm.clone(), pcm_format(2, 44_100)],
+        });
+        let responses = client
+            .process(&ironrdp_core::encode_vec(&offer).unwrap())
+            .unwrap();
+        let first = responses[0].encode_unframed_pdu().unwrap();
+        match ironrdp_core::decode::<ClientAudioOutputPdu>(&first).unwrap() {
+            ClientAudioOutputPdu::AudioFormat(pdu) => {
+                assert_eq!(pdu.formats, vec![adpcm, pcm_format(2, 44_100)]);
+            }
+            other => panic!("expected the Client Audio Formats PDU, got {other:?}"),
+        }
+    }
 
     #[test]
     fn pcm_bytes_to_i16_decodes_little_endian_pairs() {

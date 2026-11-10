@@ -36,8 +36,15 @@ be retired (termiHub #4125).
   (the sidecar test `unknown_major_function_irp_is_completed_and_the_channel_keeps_serving` does);
   if it does, report it upstream and keep this delta until it is fixed.
 
-- **Base:** upstream `ironrdp-rdpdr` `0.7.0`, tag `ironrdp-rdpdr-v0.7.0`, commit
-  `11a0810cfbbabd8b8023875a05e3041216d4b01b`.
+- **Update 2026-11-10 (#5117): re-based onto 0.9.0.** The fork is now `ironrdp-rdpdr` 0.9.0
+  plus two changes (see `README.md`): the 8-bit `DeviceData` from `4cd9d4506` (change 1,
+  unreleased upstream) and the fork-only completion of unknown MajorFunctions (change 2, not
+  submitted). `for_drive`, `0f9154d2` and `d1c63ecd7b` are in 0.9.0 and no longer fork deltas.
+  The rest of this file, from here to "The patch", is the 0.7.0-era record.
+
+- **Base:** upstream `ironrdp-rdpdr` `0.9.0`, tag `ironrdp-rdpdr-v0.9.0`, commit
+  `b13befa0db86f48f523a0b2b007e399f9811e0ec` (until #5117: `0.7.0`, tag
+  `ironrdp-rdpdr-v0.7.0`, commit `11a0810cfbbabd8b8023875a05e3041216d4b01b`).
 - **Upstream state (checked 2026-10-06, master `38b074e4befe`):** the bug is already fixed on
   master, unreleased. `PreferredDosName::for_drive` arrived in
   [`161409e18dd1`](https://github.com/Devolutions/IronRDP/commit/161409e18dd185de9bb30730303e56f5e8d28941)
@@ -175,17 +182,19 @@ package are packaging only and are **not** part of the submission (see `README.m
 
 ## Retiring the fork
 
-Once an `ironrdp-rdpdr` release contains `for_drive`:
+Once an `ironrdp-rdpdr` release contains `4cd9d4506` (8-bit `DeviceData`):
 
-1. Check that release's drive `DeviceData` encoding. If it is UTF-16LE and IronRDP#2075 is not
-   fixed, Windows hosts would see the drive under its first letter only: keep the fork (re-based,
-   with a `DeviceData` delta instead) until it is.
+1. Check that the release completes a Device I/O Request with an unknown MajorFunction instead
+   of failing to decode it (`unknown_major_function_irp_is_completed_and_the_channel_keeps_serving`
+   in `rdp-sidecar/src/rdp.rs` shows it). If it still fails, report it upstream and keep the fork
+   re-based on that release with change 2 alone until it is fixed.
 2. Otherwise remove the `ironrdp-rdpdr` entry from `[patch.crates-io]` in `rdp-sidecar/Cargo.toml`,
    bump the sidecar's other `ironrdp-*` dependencies if that release needs newer siblings, and run
    `cargo update -p ironrdp-rdpdr` in `rdp-sidecar/`.
 3. Delete `rdp-sidecar/vendor/ironrdp-rdpdr/`, its entry in `vendor/vendored-forks.json`, its rows
    in the "Vendored forks" and "Upstreaming status" tables of `docs/supply-chain.md`, and update
    the parser watchlist row.
-4. Keep `drive_announce_carries_the_drive_name_in_preferred_dos_name` in `rdp-sidecar/src/rdp.rs`
-   and RDP-15 in `core/tests/rdp.rs`: they then guard the upstream fix. Run RDP-15 against the
-   Docker fixture before merging.
+4. Keep `drive_announce_carries_the_drive_name_in_preferred_dos_name` and
+   `unknown_major_function_irp_is_completed_and_the_channel_keeps_serving` in
+   `rdp-sidecar/src/rdp.rs` and RDP-15 in `core/tests/rdp.rs`: they then guard the upstream
+   fixes. Run RDP-15 against the Docker fixture before merging.

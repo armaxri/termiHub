@@ -18,25 +18,30 @@
 //! [`failure::is_auth_credssp_rejection`] combines it with the code.
 //!
 //! Apart from counting server replies and typing that one rejection, the loop is
-//! `ironrdp-async` 0.10's `connect_finalize` / `perform_credssp_step` verbatim —
-//! plus one hook: a multi-monitor session sends its Connect Initial through
+//! `ironrdp-async` 0.12's `connect_finalize` / `perform_credssp_step` — with its
+//! multitransport requests declined with `E_ABORT`, as its default
+//! `connect_finalize` does — plus two hooks: a multi-monitor session sends its
+//! Connect Initial through
 //! [`monitors::send_basic_settings`](crate::monitors::send_basic_settings), which
-//! adds the client monitor layout IronRDP's connector leaves out (#3696).
+//! adds the client monitor layout (#3696), and a Server Redirection ends the
+//! connect with a typed [`ServerRedirected`](failure::ServerRedirected) error,
+//! since the sidecar does not follow redirections (#5117).
 
 use anyhow::Result;
 use ironrdp_connector::credssp::{CredsspProcessGenerator, CredsspSequence};
 use ironrdp_connector::sspi::credssp::ClientState;
 use ironrdp_connector::sspi::generator::GeneratorState;
 use ironrdp_connector::{
-    ClientConnector, ClientConnectorState, ConnectionResult, ConnectorError, ConnectorErrorKind,
-    ConnectorResult, ServerName, State as _,
+    ClientConnector, ClientConnectorState, ConnectionOutcome, ConnectionResult, ConnectorError,
+    ConnectorErrorKind, ConnectorResult, MultitransportResult, ServerName, State as _,
 };
 use ironrdp_core::WriteBuf;
+use ironrdp_pdu::rdp::multitransport::MultitransportResponsePdu;
 use ironrdp_tokio::{
     single_sequence_step, Framed, FramedRead, FramedWrite, NetworkClient, Upgraded,
 };
 use termihub_core::connection::MonitorLayout;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::failure::{self, CredsspPhase, CredsspRejected};
 
@@ -69,7 +74,7 @@ where
         .await?;
     }
 
-    let result = loop {
+    let outcome = loop {
         match (monitor_layout, &connector.state) {
             (Some(layout), ClientConnectorState::BasicSettingsExchangeSendInitial { .. }) => {
                 // This step reads nothing from the server; it only sends.
@@ -84,17 +89,54 @@ where
                     .await
                     .map_err(|e| ironrdp_connector::custom_err!("write all", e))?;
             }
+            _ if connector.should_perform_multitransport() => {
+                // The sidecar advertises no multitransport (UDP) support, so a
+                // server should not ask; decline with E_ABORT and continue over
+                // TCP (MS-RDPBCGR 3.2.5.15.1), as `ironrdp-async`'s default does.
+                // Log the request's id and protocol only: its cookie binds the
+                // sideband transport.
+                if let Some(request) = connector.multitransport_request() {
+                    debug!(
+                        request_id = request.request_id,
+                        requested_protocol = ?request.requested_protocol,
+                        "declining a multitransport request"
+                    );
+                }
+                buf.clear();
+                let written = connector.complete_multitransport(
+                    MultitransportResult::Failure(MultitransportResponsePdu::E_ABORT),
+                    &mut buf,
+                )?;
+                if written.size().is_some() {
+                    framed.write_all(buf.filled()).await.map_err(|e| {
+                        ironrdp_connector::custom_err!("write multitransport response", e)
+                    })?;
+                }
+                continue;
+            }
             _ => single_sequence_step(framed, &mut connector, &mut buf).await?,
         }
 
-        if let ClientConnectorState::Connected { result } = connector.state {
-            break result;
+        if let Some(outcome) = connector.state.take_outcome() {
+            break outcome;
         }
     };
 
-    info!("Connected with success");
-
-    Ok(result)
+    match outcome {
+        ConnectionOutcome::Connected(result) => {
+            info!("Connected with success");
+            Ok(result)
+        }
+        ConnectionOutcome::Redirected(redirection) => {
+            let redirected = failure::ServerRedirected::from_pdu(&redirection);
+            warn!(
+                session_id = redirection.session_id,
+                target = ?redirected.target,
+                "rdp server redirected the connection"
+            );
+            Err(redirected.into())
+        }
+    }
 }
 
 async fn perform_credssp<S, N>(
