@@ -702,14 +702,18 @@ where
     .await
 }
 
-/// Encode and send a batch of fast-path input events, writing the resulting
-/// response frame(s) on the transport.
+/// Encode and send a batch of input events on the `path` the server allows,
+/// writing the resulting frame(s) on the transport.
 async fn send_input_events<T: FramedWrite>(
     stage: &mut ActiveStage,
     image: &mut DecodedImage,
     transport: &mut T,
     events: &[FastPathInputEvent],
+    path: input::InputPath,
 ) -> Flow {
+    // Always run the fast-path processing: besides encoding, it moves the
+    // pointer IronRDP tracks in the decoded image. On the slow path its
+    // fast-path frames are dropped and slow-path PDUs are sent instead (#5138).
     let outputs = match stage.process_fastpath_input(image, events) {
         Ok(o) => o,
         Err(e) => {
@@ -717,11 +721,25 @@ async fn send_input_events<T: FramedWrite>(
             return Flow::Stop;
         }
     };
-    for output in outputs {
-        if let ActiveStageOutput::ResponseFrame(bytes) = output {
-            if transport.write_all(&bytes).await.is_err() {
+    let frames = match path {
+        input::InputPath::FastPath => outputs
+            .into_iter()
+            .filter_map(|output| match output {
+                ActiveStageOutput::ResponseFrame(bytes) => Some(bytes),
+                _ => None,
+            })
+            .collect(),
+        input::InputPath::SlowPath => match input::encode_slow_path(stage, events) {
+            Ok(frames) => frames,
+            Err(e) => {
+                warn!(error = %e, "rdp slow-path input encode failed");
                 return Flow::Stop;
             }
+        },
+    };
+    for bytes in frames {
+        if transport.write_all(&bytes).await.is_err() {
+            return Flow::Stop;
         }
     }
     Flow::Continue
@@ -882,6 +900,10 @@ where
         refresh_rect: result.refresh_rect_support,
         suppress_output: result.suppress_output_support,
     };
+    // Fast-path or slow-path input, as the server's Input Capability Set allows
+    // (#5138); renegotiated by every reactivation.
+    let mut input_path = input::InputPath::negotiated(result.input_flags);
+    info!(?input_path, input_flags = ?result.input_flags, "rdp input path negotiated");
     let mut image = DecodedImage::new(PixelFormat::RgbA32, size.width, size.height);
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
@@ -954,7 +976,8 @@ where
                             continue;
                         }
                         if let Flow::Stop | Flow::Terminate(_) =
-                            send_input_events(&mut stage, &mut image, &mut writer, &events).await
+                            send_input_events(&mut stage, &mut image, &mut writer, &events, input_path)
+                                .await
                         {
                             break;
                         }
@@ -1158,8 +1181,12 @@ where
                         )
                         .await
                         {
-                            Ok((new_framed, new_redraw)) => {
+                            Ok((new_framed, new_redraw, new_input_path)) => {
                                 redraw = new_redraw;
+                                if new_input_path != input_path {
+                                    info!(?new_input_path, "rdp input path renegotiated");
+                                }
+                                input_path = new_input_path;
                                 let (r, w) = ironrdp_tokio::split_tokio_framed(new_framed);
                                 reader = r;
                                 writer = w;
@@ -1400,7 +1427,7 @@ async fn reactivate<S>(
     image: &mut DecodedImage,
     io_channel_id: u16,
     user_channel_id: u16,
-) -> Result<(TokioFramed<S>, RedrawSupport)>
+) -> Result<(TokioFramed<S>, RedrawSupport, input::InputPath)>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
 {
@@ -1441,9 +1468,8 @@ where
                 static_channel_chunk_size,
                 refresh_rect_support,
                 suppress_output_support,
-                // The sidecar keeps sending fast-path input; a desktop session
-                // negotiates no Window List support.
-                input_flags: _,
+                input_flags,
+                // A desktop session negotiates no Window List support.
                 window_support_level: _,
             } => {
                 check_desktop_size(desktop_size.width, desktop_size.height)?;
@@ -1477,6 +1503,7 @@ where
                         refresh_rect: refresh_rect_support,
                         suppress_output: suppress_output_support,
                     },
+                    input::InputPath::negotiated(input_flags),
                 ));
             }
             ConnectionActivationState::Redirected { redirection } => {

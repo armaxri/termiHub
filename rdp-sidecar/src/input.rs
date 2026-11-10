@@ -9,10 +9,22 @@
 //! move. Keyboard events carry a PC/AT scancode (from [`super::keymap`]) with an
 //! extended flag. These functions are pure so the mapping is unit-testable
 //! without a live session.
+//!
+//! A server that does not advertise fast-path input gets the same events as
+//! slow-path Input Event PDUs instead (#5138): see [`InputPath`] and
+//! [`encode_slow_path`].
 
-use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
+use ironrdp_core::WriteBuf;
+use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags, SynchronizeFlags};
 use ironrdp_pdu::input::mouse::PointerFlags;
-use ironrdp_pdu::input::MousePdu;
+use ironrdp_pdu::input::sync::SyncToggleFlags;
+use ironrdp_pdu::input::{
+    scan_code, unicode, InputEvent as SlowPathEvent, InputEventPdu, MousePdu, ScanCodePdu, SyncPdu,
+    UnicodePdu,
+};
+use ironrdp_pdu::rdp::capability_sets::InputFlags;
+use ironrdp_pdu::rdp::headers::ShareDataPdu;
+use ironrdp_session::{ActiveStage, SessionResult};
 
 use termihub_core::connection::InputEvent;
 
@@ -116,6 +128,109 @@ pub fn wheel_event(x: u32, y: u32, delta_y: f64) -> Option<FastPathInputEvent> {
         x_position: clamp_pos(x),
         y_position: clamp_pos(y),
     }))
+}
+
+/// Which input PDUs the server accepts, from its Input Capability Set
+/// (MS-RDPBCGR 2.2.7.1.6). Negotiated at connect and again by every
+/// Deactivation-Reactivation Sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputPath {
+    /// Fast-path Input Event PDUs (MS-RDPBCGR 2.2.8.1.2).
+    FastPath,
+    /// Slow-path Input Event PDUs on the IO channel (MS-RDPBCGR 2.2.8.1.1.3).
+    SlowPath,
+}
+
+impl InputPath {
+    /// The path the server's input flags allow. MS-RDPBCGR 2.2.8.1.2: a client
+    /// may send fast-path input only when the server set
+    /// `INPUT_FLAG_FASTPATH_INPUT` or `INPUT_FLAG_FASTPATH_INPUT2`. Some servers
+    /// (VirtualBox VRDP) close the connection on unsolicited fast-path input.
+    pub fn negotiated(flags: InputFlags) -> Self {
+        if flags.intersects(InputFlags::FASTPATH_INPUT | InputFlags::FASTPATH_INPUT_2) {
+            Self::FastPath
+        } else {
+            Self::SlowPath
+        }
+    }
+}
+
+/// The most events one slow-path Input Event PDU carries. The wire count is a
+/// `u16`; a small bound keeps each PDU far below any MCS size limit. The sidecar
+/// sends a handful of events per host input, so this never splits in practice.
+const SLOW_PATH_MAX_EVENTS: usize = 32;
+
+/// The slow-path form of a fast-path input event (MS-RDPBCGR 2.2.8.1.1.3.1.1),
+/// carrying the same flags, codes and positions.
+///
+/// Returns `None` for a Quality of Experience timestamp, which has no
+/// slow-path form; the sidecar never sends one.
+pub fn to_slow_path(event: &FastPathInputEvent) -> Option<SlowPathEvent> {
+    let event = match event {
+        FastPathInputEvent::KeyboardEvent(flags, code) => {
+            let mut slow = scan_code::KeyboardFlags::empty();
+            if flags.contains(KeyboardFlags::RELEASE) {
+                slow |= scan_code::KeyboardFlags::RELEASE;
+            }
+            if flags.contains(KeyboardFlags::EXTENDED) {
+                slow |= scan_code::KeyboardFlags::EXTENDED;
+            }
+            if flags.contains(KeyboardFlags::EXTENDED1) {
+                slow |= scan_code::KeyboardFlags::EXTENDED_1;
+            }
+            SlowPathEvent::ScanCode(ScanCodePdu {
+                flags: slow,
+                key_code: u16::from(*code),
+            })
+        }
+        FastPathInputEvent::UnicodeKeyboardEvent(flags, code) => {
+            let mut slow = unicode::KeyboardFlags::empty();
+            if flags.contains(KeyboardFlags::RELEASE) {
+                slow |= unicode::KeyboardFlags::RELEASE;
+            }
+            SlowPathEvent::Unicode(UnicodePdu {
+                flags: slow,
+                unicode_code: *code,
+            })
+        }
+        FastPathInputEvent::MouseEvent(pdu) => SlowPathEvent::Mouse(pdu.clone()),
+        FastPathInputEvent::MouseEventEx(pdu) => SlowPathEvent::MouseX(pdu.clone()),
+        FastPathInputEvent::MouseEventRel(pdu) => SlowPathEvent::MouseRel(pdu.clone()),
+        FastPathInputEvent::SyncEvent(flags) => {
+            let mut slow = SyncToggleFlags::empty();
+            for (fast, toggle) in [
+                (SynchronizeFlags::SCROLL_LOCK, SyncToggleFlags::SCROLL_LOCK),
+                (SynchronizeFlags::NUM_LOCK, SyncToggleFlags::NUM_LOCK),
+                (SynchronizeFlags::CAPS_LOCK, SyncToggleFlags::CAPS_LOCK),
+                (SynchronizeFlags::KANA_LOCK, SyncToggleFlags::KANA_LOCK),
+            ] {
+                if flags.contains(fast) {
+                    slow |= toggle;
+                }
+            }
+            SlowPathEvent::Sync(SyncPdu { flags: slow })
+        }
+        FastPathInputEvent::QoeEvent(_) => return None,
+    };
+    Some(event)
+}
+
+/// Encode input events as slow-path Input Event PDUs (MS-RDPBCGR 2.2.8.1.1.3)
+/// on the IO channel, one ready-to-write frame per [`SLOW_PATH_MAX_EVENTS`]
+/// events, in order.
+pub fn encode_slow_path(
+    stage: &ActiveStage,
+    events: &[FastPathInputEvent],
+) -> SessionResult<Vec<Vec<u8>>> {
+    let events: Vec<SlowPathEvent> = events.iter().filter_map(to_slow_path).collect();
+    let mut frames = Vec::with_capacity(events.len().div_ceil(SLOW_PATH_MAX_EVENTS));
+    for chunk in events.chunks(SLOW_PATH_MAX_EVENTS) {
+        let mut buf = WriteBuf::new();
+        let pdu = ShareDataPdu::Input(InputEventPdu(chunk.to_vec()));
+        stage.encode_static(&mut buf, pdu)?;
+        frames.push(buf.filled().to_vec());
+    }
+    Ok(frames)
 }
 
 /// Translate a shared [`InputEvent`] into zero or more RDP fast-path events,
