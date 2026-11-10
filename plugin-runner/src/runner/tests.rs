@@ -180,3 +180,154 @@ fn the_host_closing_the_channel_is_a_clean_exit() {
     assert_eq!(server.serve(&rx), exit::OK);
     assert_eq!(events(), ["shutdown"]);
 }
+
+// ---------------------------------------------------------------------------
+// Liveness pushes (#5231): `push_alive_change` and the poller's loop body are
+// exercised directly instead of hoping a session outlives the poll interval.
+// ---------------------------------------------------------------------------
+
+/// A backend whose liveness the test flips.
+struct Flippable(Arc<AtomicBool>);
+
+impl PluginTerminalBackend for Flippable {
+    fn write_input(&self, _data: &[u8]) -> Result<(), PluginError> {
+        Ok(())
+    }
+    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), PluginError> {
+        Ok(())
+    }
+    fn close(&self) -> Result<(), PluginError> {
+        Ok(())
+    }
+    fn is_alive(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// A channel writer whose bytes the test can decode afterwards.
+#[derive(Clone, Default)]
+struct Capture(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Capture {
+    /// Every frame written so far, decoded.
+    fn messages(&self) -> Vec<Message> {
+        let bytes = self.0.lock().unwrap().clone();
+        let mut frames = FrameReader::new(bytes.as_slice());
+        let mut messages = Vec::new();
+        while let Some(frame) = frames.read_frame().unwrap() {
+            messages.push(Message::decode(frame).unwrap());
+        }
+        messages
+    }
+}
+
+/// A session whose backend reports `live`, last seen as `alive: true`.
+fn flippable_session(id: u32, channel: &Arc<Channel>, live: &Arc<AtomicBool>) -> Session {
+    // SAFETY: `from_boxed` produced the handle; ownership moves to the wrapper.
+    let backend = unsafe {
+        LoadedBackend::from_raw(PluginBackend::from_boxed(Box::new(Flippable(Arc::clone(
+            live,
+        )))))
+    };
+    Session {
+        backend,
+        output: SessionOutput::new(id, Arc::clone(channel)),
+        services: None,
+        alive: true,
+    }
+}
+
+fn alive(session_id: u32, alive: bool) -> Message {
+    Message::Alive(Alive { session_id, alive })
+}
+
+#[test]
+fn push_alive_change_sends_one_frame_per_flip_and_nothing_otherwise() {
+    let capture = Capture::default();
+    let channel = Arc::new(Channel::new(Box::new(capture.clone())));
+    let live = Arc::new(AtomicBool::new(true));
+    let mut session = flippable_session(9, &channel, &live);
+
+    // Unchanged liveness: silence.
+    push_alive_change(&channel, 9, &mut session);
+    assert!(capture.messages().is_empty());
+
+    // A flip: exactly one frame, and the new state is remembered.
+    live.store(false, Ordering::SeqCst);
+    push_alive_change(&channel, 9, &mut session);
+    push_alive_change(&channel, 9, &mut session);
+    assert!(!session.alive);
+    assert_eq!(capture.messages(), [alive(9, false)]);
+
+    // Flipping back is reported once as well.
+    live.store(true, Ordering::SeqCst);
+    push_alive_change(&channel, 9, &mut session);
+    push_alive_change(&channel, 9, &mut session);
+    assert!(session.alive);
+    assert_eq!(capture.messages(), [alive(9, false), alive(9, true)]);
+}
+
+#[test]
+fn poll_alive_once_reports_only_the_sessions_that_changed() {
+    let capture = Capture::default();
+    let channel = Arc::new(Channel::new(Box::new(capture.clone())));
+    let steady = Arc::new(AtomicBool::new(true));
+    let dying = Arc::new(AtomicBool::new(true));
+    let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+    {
+        let mut map = sessions.lock().unwrap();
+        map.insert(1, flippable_session(1, &channel, &steady));
+        map.insert(2, flippable_session(2, &channel, &dying));
+    }
+
+    poll_alive_once(&sessions, &channel);
+    assert!(capture.messages().is_empty());
+
+    dying.store(false, Ordering::SeqCst);
+    poll_alive_once(&sessions, &channel);
+    poll_alive_once(&sessions, &channel);
+    assert_eq!(capture.messages(), [alive(2, false)]);
+}
+
+#[test]
+fn the_alive_poller_pushes_a_change_and_stops_when_asked() {
+    let capture = Capture::default();
+    let channel = Arc::new(Channel::new(Box::new(capture.clone())));
+    let live = Arc::new(AtomicBool::new(false));
+    let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+    sessions
+        .lock()
+        .unwrap()
+        .insert(3, flippable_session(3, &channel, &live));
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let poller = spawn_alive_poller(
+        Arc::clone(&sessions),
+        Arc::clone(&channel),
+        Arc::clone(&stop),
+        Duration::from_millis(1),
+    );
+    // The frame can only come from the poller's loop body, so seeing it proves
+    // the body ran; the deadline only bounds a broken poller.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while capture.messages().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "poller never reported"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    stop.store(true, Ordering::SeqCst);
+    poller.join().unwrap();
+    assert_eq!(capture.messages(), [alive(3, false)]);
+}

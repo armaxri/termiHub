@@ -316,6 +316,7 @@ impl Server {
             Arc::clone(&self.sessions),
             Arc::clone(&self.channel),
             Arc::clone(&stop),
+            ALIVE_POLL_INTERVAL,
         );
         let code = loop {
             let message = match frames.recv() {
@@ -528,18 +529,28 @@ fn push_alive_change(channel: &Channel, session_id: u32, session: &mut Session) 
     }
 }
 
+/// One poll of every live session: push an `Alive` frame for each whose
+/// liveness changed since it was last seen.
+fn poll_alive_once(sessions: &Sessions, channel: &Channel) {
+    let mut sessions = sessions.lock().unwrap_or_else(|e| e.into_inner());
+    for (id, session) in sessions.iter_mut() {
+        push_alive_change(channel, *id, session);
+    }
+}
+
+/// Poll session liveness every `interval` until `stop` is set. The interval
+/// is a parameter so tests can drive the loop without waiting out
+/// `ALIVE_POLL_INTERVAL` (#5231).
 fn spawn_alive_poller(
     sessions: Sessions,
     channel: Arc<Channel>,
     stop: Arc<AtomicBool>,
+    interval: Duration,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         while !stop.load(Ordering::SeqCst) {
-            std::thread::sleep(ALIVE_POLL_INTERVAL);
-            let mut sessions = sessions.lock().unwrap_or_else(|e| e.into_inner());
-            for (id, session) in sessions.iter_mut() {
-                push_alive_change(&channel, *id, session);
-            }
+            std::thread::sleep(interval);
+            poll_alive_once(&sessions, &channel);
         }
     })
 }
