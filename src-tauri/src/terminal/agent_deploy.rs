@@ -354,25 +354,49 @@ pub fn deploy_agent(
         }
     }
 
-    // 5. Read the binary and re-verify the release signature over exactly the
-    //    bytes we upload (AGT-005, #3330: resolution already verified the file;
-    //    this closes the swap window).
+    // 5–9. Read + re-verify, upload, install, verify, resolve the install path.
     bail_if_cancelled(cancel)?;
-    let binary_bytes = std::fs::read(&binary_path)
-        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
-    agent_binary::verify_deploy_bytes(&binary_path, &binary_bytes, version)
-        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-
-    // 6–9. Upload, install, verify, resolve the install path.
     let progress = |step: &str, message: &str, pct: f64| {
         log_progress(agent_id, step, message, pct);
     };
-    install_agent_bytes(
+    verify_and_install(
         &session,
         &remote_os,
         remote_path,
-        &binary_bytes,
+        &binary_path,
+        version,
         &progress,
+        cancel,
+    )
+}
+
+/// Read the resolved binary, re-verify its release signature over exactly the
+/// bytes to upload, then [`install_agent_bytes`] them — [`deploy_agent`] after
+/// binary resolution.
+///
+/// The re-verification (AGT-005, #3330) runs before anything touches the host:
+/// resolution already verified the file, this closes the swap window, and a
+/// refused binary leaves the host unchanged. Split out so the in-process host
+/// tests (#5162) can drive it without a Tauri `AppHandle`.
+fn verify_and_install(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    remote_os: &str,
+    remote_path: &str,
+    binary_path: &std::path::Path,
+    version: &str,
+    progress: &dyn Fn(&str, &str, f64),
+    cancel: Option<&CancellationToken>,
+) -> Result<AgentDeployResult, TerminalError> {
+    let binary_bytes = std::fs::read(binary_path)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    agent_binary::verify_deploy_bytes(binary_path, &binary_bytes, version)
+        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+    install_agent_bytes(
+        session,
+        remote_os,
+        remote_path,
+        &binary_bytes,
+        progress,
         cancel,
     )
 }
@@ -665,18 +689,44 @@ pub fn stage_agent_binary(
         }
     }
 
-    // 5. Upload WITHOUT installing — the agent's self-apply swaps the running
-    //    binary from this path (never run the install command or shut the agent
-    //    down; that is the agent's job for coordinated). The upload goes into a
-    //    fresh private dir inside the agent's `<config>/updates` staging root,
-    //    which the agent trusts and which no other local user can write
-    //    (AGT2-002, #4287); the agent removes it once the update is applied.
+    // 5. Verify, then upload WITHOUT installing.
     bail_if_cancelled(cancel)?;
-    let upload_dir = prepare_posix_upload_dir(&session)?;
-    let plan = posix_install_plan(remote_path, &upload_dir);
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "staging", "Staging agent binary…", 0.4);
-    let binary_bytes = std::fs::read(&binary_path)
+    stage_verified_binary(
+        agent_id,
+        &session,
+        remote_os,
+        remote_path,
+        &binary_path,
+        version,
+        cancel,
+    )
+}
+
+/// Read and verify the resolved binary, then upload it to a fresh private
+/// upload dir **without installing it** — [`stage_agent_binary`] after binary
+/// resolution (POSIX hosts only).
+///
+/// The agent's self-apply swaps the running binary from the returned path, so
+/// the install command never runs and the agent is never shut down here; that
+/// is the agent's job for a coordinated update. The upload dir lives inside the
+/// agent's `<config>/updates` staging root, which the agent trusts and which no
+/// other local user can write (AGT2-002, #4287); the agent removes it once the
+/// update is applied.
+///
+/// The binary is read and its signature verified before the host is touched,
+/// so a refused binary leaves nothing behind (not even an empty upload dir).
+/// Split out so the in-process host tests (#5162) can drive it without a Tauri
+/// `AppHandle`.
+fn stage_verified_binary(
+    agent_id: &str,
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    remote_os: String,
+    remote_path: &str,
+    binary_path: &std::path::Path,
+    version: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<StagedBinary, TerminalError> {
+    let binary_bytes = std::fs::read(binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
     // AGT-004: compute the SHA-256 of exactly the bytes we upload, so the agent
     // can re-verify the staged binary against it immediately before the swap.
@@ -686,15 +736,20 @@ pub fn stage_agent_binary(
     // tampered binary), then forward it; the agent re-verifies it against its
     // compiled-in release key before the swap.
     agent_binary::verify_signature_for_digest(
-        &binary_path,
+        binary_path,
         &expected_sha256,
         &agent_binary::deploy_signature_policy(version),
     )
     .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-    let signature = agent_binary::read_signature_sidecar(&binary_path);
-    upload_binary_or_rollback(&session, &binary_bytes, &plan.upload_path, cancel)?;
+    let signature = agent_binary::read_signature_sidecar(binary_path);
+
+    let upload_dir = prepare_posix_upload_dir(session)?;
+    let plan = posix_install_plan(remote_path, &upload_dir);
+    bail_if_cancelled(cancel)?;
+    log_progress(agent_id, "staging", "Staging agent binary…", 0.4);
+    upload_binary_or_rollback(session, &binary_bytes, &plan.upload_path, cancel)?;
     if let Err(e) = bail_if_cancelled(cancel) {
-        return Err(fail_with_rollback(&session, &plan.upload_path, e));
+        return Err(fail_with_rollback(session, &plan.upload_path, e));
     }
     info!(
         "Staged {} bytes to {} for coordinated update",
