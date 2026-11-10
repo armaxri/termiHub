@@ -18,7 +18,7 @@
 //!   is `termihub-agent <ver>` prints that line, anything else fails like a
 //!   binary that refuses to start.
 //!
-//! Every exec reports a real exit status and stderr, like OpenSSH does.
+//! Every exec reports stderr and a real exit status, sent after EOF as OpenSSH does.
 //! [`Faults`] inject the failures the tests need: an SFTP write that fails after
 //! N bytes, a refused create (permission denied), a refused remove (rollback
 //! failure), a cancel fired from inside the transfer, and an install step that
@@ -319,8 +319,9 @@ impl russh::server::Handler for HostHandler {
         if !stderr.is_empty() {
             session.extended_data(channel, 1, stderr.into_bytes())?;
         }
-        session.exit_status_request(channel, status)?;
+        // OpenSSH's order: EOF first, then the exit status, then close.
         session.eof(channel)?;
+        session.exit_status_request(channel, status)?;
         session.close(channel)?;
         Ok(())
     }
