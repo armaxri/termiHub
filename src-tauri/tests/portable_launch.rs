@@ -90,9 +90,15 @@ impl PortableLaunch {
     /// Run the copied binary with `args`, isolated from the real profile and
     /// with any inherited `TERMIHUB_CONFIG_DIR` removed.
     fn run(&self, args: &[&str]) -> Output {
+        self.run_with_env(args, &[])
+    }
+
+    /// [`Self::run`] with extra environment variables set.
+    fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
         let home = &self.home;
         Command::new(&self.exe)
             .args(args)
+            .envs(env.iter().copied())
             .current_dir(&self.root)
             .env_remove("TERMIHUB_CONFIG_DIR")
             .env("HOME", home)
@@ -304,4 +310,90 @@ fn installed_launch_writes_config_into_the_profile() {
         !launch.data_dir().exists(),
         "installed mode must not create a data/ dir next to the binary"
     );
+}
+
+// ---- second instance on a locked data dir (#3100, #5166) ---------------------
+
+/// Lock-file name inside the portable `data/` dir (`utils::data_dir_lock`).
+const LOCK_FILE_NAME: &str = ".termihub.lock";
+/// Suppresses the blocking "already running" dialog in headless tests
+/// (`utils::data_dir_lock::SUPPRESS_DIALOG_ENV`).
+const SUPPRESS_DIALOG_ENV: &str = "TERMIHUB_TEST_SUPPRESS_LOCK_DIALOG";
+
+/// Every file under `dir` with its size and modification time, so a test can
+/// prove a process wrote nothing there.
+fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in fs::read_dir(&current).expect("read dir").flatten() {
+            let path = entry.path();
+            let meta = entry.metadata().expect("metadata");
+            if meta.is_dir() {
+                stack.push(path.clone());
+            }
+            let rel = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+            found.push((rel, meta.len(), meta.modified().expect("mtime")));
+        }
+    }
+    found.sort();
+    found
+}
+
+/// A second launch of the same portable folder, while instance A holds the
+/// data-dir lock, refuses to start: exit code 1, the single-instance message on
+/// stderr, and nothing written into the shared `data/` dir.
+///
+/// Instance A is this test process holding the same OS lock the app takes
+/// (`File::try_lock`, i.e. `flock` / `LockFileEx`), so B — a real `termihub`
+/// process — sees a live holder. B runs without arguments, i.e. the normal GUI
+/// launch path; it exits at the lock, before any window is built.
+#[test]
+fn second_launch_on_a_locked_data_dir_exits_with_the_message() {
+    let launch = PortableLaunch::new(PortableFlavor::DataDir);
+    let data_dir = launch.data_dir();
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(data_dir.join(LOCK_FILE_NAME))
+        .expect("open lock file");
+    lock_file
+        .try_lock()
+        .expect("instance A takes the data-dir lock");
+    let before = snapshot_tree(&data_dir);
+
+    // The file log sink opens before the lock is taken, so in portable mode B
+    // would append `data/logs/termihub.log` even though it is refused. Point
+    // the log elsewhere until #5210 moves the lock ahead of it; every other
+    // write into `data/` is still caught below.
+    let log_dir = launch.home.join("redirected-logs");
+    let log_dir_str = log_dir.to_str().expect("utf-8 temp path");
+    let output = launch.run_with_env(
+        &[],
+        &[
+            (SUPPRESS_DIALOG_ENV, "1"),
+            ("TERMIHUB_LOG_DIR", log_dir_str),
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(1), "{}", describe(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("termiHub is already running from this folder"),
+        "the refusal message must reach stderr; {}",
+        describe(&output)
+    );
+    assert!(
+        stderr.contains(&data_dir.display().to_string()),
+        "the message must name the data folder; {}",
+        describe(&output)
+    );
+    assert_eq!(
+        snapshot_tree(&data_dir),
+        before,
+        "the refused instance must not write into the shared data dir"
+    );
+    drop(lock_file);
 }
