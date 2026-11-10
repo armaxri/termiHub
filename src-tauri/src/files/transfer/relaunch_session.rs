@@ -273,17 +273,35 @@ pub(crate) async fn resolve_remote_copy(
     src: CopyEnd<'_>,
     dst: CopyEnd<'_>,
 ) -> Result<(RemoteCopyEndpoint, RemoteCopyEndpoint), RelaunchBlocked> {
+    resolve_both_ends(src, dst, |end| resolve_copy_end(sources, end)).await
+}
+
+/// Resolve `src`, then `dst`, with `resolve` — the ordering and labelling rule
+/// of [`resolve_remote_copy`], separated from the app's resolver so it is
+/// testable with a fake one. The destination is not resolved when the source
+/// is unavailable; a [`RelaunchBlocked::Failed`] message names which end
+/// failed, any other block (a missing secret, an agent not reconnected yet)
+/// passes through unchanged so the row stays paused.
+async fn resolve_both_ends<E, T, F, Fut>(
+    src: E,
+    dst: E,
+    mut resolve: F,
+) -> Result<(T, T), RelaunchBlocked>
+where
+    F: FnMut(E) -> Fut,
+    Fut: std::future::Future<Output = Result<T, RelaunchBlocked>>,
+{
     let end = |which: &str, blocked: RelaunchBlocked| match blocked {
         RelaunchBlocked::Failed(message) => {
             RelaunchBlocked::Failed(format!("{message} (the {which} of the copy)"))
         }
         needs => needs,
     };
-    let src = resolve_copy_end(sources, src)
-        .await
-        .map_err(|e| end("source", e))?;
-    let dst = resolve_copy_end(sources, dst)
-        .await
-        .map_err(|e| end("destination", e))?;
+    let src = resolve(src).await.map_err(|e| end("source", e))?;
+    let dst = resolve(dst).await.map_err(|e| end("destination", e))?;
     Ok((src, dst))
 }
+
+#[cfg(test)]
+#[path = "relaunch_session_tests.rs"]
+mod tests;
