@@ -3,8 +3,9 @@
 This document explains the conflict-avoidance rules behind termiHub's default
 keybindings, the terminal-focus pass-through behavior, and the trade-offs
 involved. For the full list of bindings, open **Settings → Keyboard Shortcuts**
-inside the app or press <kbd>F1</kbd> (Win/Linux) / <kbd>Cmd</kbd>+<kbd>K</kbd>
-<kbd>Cmd</kbd>+<kbd>S</kbd> (macOS).
+inside the app or press <kbd>Ctrl</kbd>+<kbd>F1</kbd> (Win/Linux) /
+<kbd>Cmd</kbd>+<kbd>K</kbd> <kbd>Cmd</kbd>+<kbd>S</kbd> (macOS) — or bare
+<kbd>F1</kbd> anywhere except in a focused terminal.
 
 ## Why conflict avoidance matters
 
@@ -36,12 +37,29 @@ single-modifier readline / tmux range.
 | Split Right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
 | Split Down         | `Alt+Shift+-`        | (paired with Split Right)                                                        |
 | Focus Panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
-| Keyboard Shortcuts | `F1`                 | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
+| Keyboard Shortcuts | `Ctrl+F1`            | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
 | Jump to Prompt ↑↓  | `Ctrl+Shift+<Up/Dn>` | `Ctrl+<Up/Down>` — word/paragraph movement in shells and editors                 |
 
 macOS keeps the more conventional single-modifier forms (`Cmd+B`, `Cmd+W`,
 `Cmd+\`, `Cmd+K Cmd+S`, `Cmd+Alt+<Arrow>`) because `Cmd` does not appear in the
 shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
+
+## Function keys belong to the terminal program
+
+Terminal programs rely on bare function keys — <kbd>F1</kbd> is help in htop,
+Midnight Commander, nano and vim, <kbd>F6</kbd> is Rename/Move in
+Midnight Commander. So a default bound to a function key without
+<kbd>Ctrl</kbd>, <kbd>Alt</kbd> or <kbd>Cmd</kbd> **yields to a focused
+terminal**: the key goes to the program, and a modifier variant does the same
+job from inside the terminal.
+
+| Action                                                          | Bare key (outside terminals) | Also from a terminal (macOS / Win+Linux)        |
+| --------------------------------------------------------------- | ---------------------------- | ----------------------------------------------- |
+| Keyboard Shortcuts                                              | `F1`                         | `Cmd+K Cmd+S` / `Ctrl+F1`                       |
+| Focus Next / Previous Region ([F6](#moving-between-regions-f6)) | `F6` / `Shift+F6`            | `Cmd+F6` / `Ctrl+F6` (add `Shift` for previous) |
+
+The shortcuts overlay marks the bare keys as active "Outside terminals". A
+rebound key on one of these actions still yields while a terminal has focus.
 
 ## Prompt navigation and command output (OSC 133)
 
@@ -253,8 +271,8 @@ you hover over a row opens the same actions; it is not a Tab stop.
 
 ## Customizing shortcuts: the overlay and the recorder
 
-The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
-<kbd>Cmd</kbd>+<kbd>S</kbd>) is a searchable, read-only cheat sheet. It shows
+The shortcuts overlay (<kbd>Ctrl</kbd>+<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
+<kbd>Cmd</kbd>+<kbd>S</kbd>, or <kbd>F1</kbd> outside a terminal) is a searchable, read-only cheat sheet. It shows
 one **Shortcut** column with the bindings of the platform you are running on,
 including your own overrides. To change a binding, use its **Edit shortcuts…**
 button, which opens **Settings → Keyboard Shortcuts** — the panel with the
