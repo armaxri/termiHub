@@ -107,8 +107,9 @@ pub(crate) type HostKeyOutcome = Arc<Mutex<Option<HostKeyRefusal>>>;
 /// What the connecting task hands the handler for the host-key check (#5185).
 ///
 /// `check_server_key` runs on russh's spawned session task, which can see
-/// neither the connecting task's unattended scope nor its connect deadline, nor
-/// notice that the connecting task gave up. This carries all three across.
+/// neither the connecting task's unattended scope, its connect deadline nor its
+/// prompt owner, nor notice that the connecting task gave up. This carries them
+/// across.
 #[derive(Clone, Default)]
 pub(crate) struct HandshakeContext {
     /// Unattended (#3527): verify without prompting.
@@ -117,6 +118,9 @@ pub(crate) struct HandshakeContext {
     pub outcome: HostKeyOutcome,
     /// The connect deadline, paused while the trust prompt is open.
     pub clock: PromptClock,
+    /// The owner of the connect (#5243): the trust prompt carries it so the
+    /// frontend pauses that tab's own connect deadline while it is open.
+    pub owner: Option<String>,
     /// Cancelled when the connecting task stops waiting for the handshake
     /// (abort, connect timeout): the open prompt is then dropped — dismissed.
     pub abandoned: CancellationToken,
@@ -150,8 +154,8 @@ pub struct TermiHubHandler {
     /// verification (#1959).
     port: u16,
     /// The connecting task's context for the host-key check (#3527, #5185):
-    /// unattended mode, the refusal slot, the pausable connect deadline and the
-    /// abandon signal. The check runs on russh's session task, which cannot see
+    /// unattended mode, the refusal slot, the pausable connect deadline, the
+    /// prompt owner (#5243) and the abandon signal. The check runs on russh's session task, which cannot see
     /// the connecting task, so the handler carries them.
     handshake: HandshakeContext,
     /// The server's SSH identification line, set at the first key exchange
@@ -219,7 +223,10 @@ impl TermiHubHandler {
     /// connecting task abandons the handshake.
     async fn decide_attended(&self, info: &super::host_key::HostKeyInfo) -> bool {
         let ctx = &self.handshake;
-        let decision = super::host_key::decide_host_key(info, ctx.verifier.clone());
+        let decision = super::prompt_owner::with_prompt_owner(
+            ctx.owner.as_deref(),
+            super::host_key::decide_host_key(info, ctx.verifier.clone()),
+        );
         let bounded = ctx
             .clock
             .exclude(tokio::time::timeout(HOST_KEY_PROMPT_TIMEOUT, decision));
