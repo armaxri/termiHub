@@ -72,6 +72,8 @@ export default defineConfig({
       //   src/store/**         97.23 / 92.29 / 97.44 / 98.13 (2026-09-30, #3992)
       //   src/store/*Bridge.ts 94.96 / 91.00 / 93.58 / 95.81 (2026-09-30, #3992)
       //     (both floored ~1.5 points below: measured on macOS, CI runs Ubuntu)
+      //   src/components/SplitView/** 95.31 / 91.26 / 91.42 / 95.31 (2026-11-10, #5171;
+      //     SplitView.tsx 33.6 -> 92.6 % branches; floored ~3-4 points below)
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
       // recursively the subtree is only ~85%, so it is not uniformly covered.)
       // Raise a floor (never lower) as its directory's coverage climbs.
@@ -109,6 +111,12 @@ export default defineConfig({
           branches: 90.5,
           functions: 95.5,
           lines: 96.5,
+        },
+        "src/components/SplitView/**": {
+          statements: 91,
+          branches: 87,
+          functions: 87,
+          lines: 91,
         },
         "src/store/*Bridge.ts": {
           statements: 93.5,

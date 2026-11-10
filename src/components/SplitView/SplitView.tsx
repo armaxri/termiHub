@@ -683,7 +683,9 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
   // or a re-fire with the same sizes) so mounts do not churn the tree/backend.
   const handleLayoutChanged = (layout: Record<string, number>): void => {
     const next = split.children.map((c) => layout[c.id]);
-    if (!next.every((n) => typeof n === "number" && Number.isFinite(n))) return;
+    // Sanity guard: a missing, non-finite or negative size is never a real
+    // layout, and persisting it would corrupt the stored split (#5171).
+    if (!next.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) return;
     const prev = split.sizes ?? split.children.map(() => 100 / split.children.length);
     const normPrev = normalizeSizes(prev);
     const normNext = normalizeSizes(next);
