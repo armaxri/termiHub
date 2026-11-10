@@ -62,16 +62,39 @@ fn break_probe(shell: WindowsShell, path: &str) -> String {
 
 /// A command (in `shell`'s syntax) stopping this user's agents and removing
 /// the install, the backup and the upload temp file. Best effort: absent files
-/// and no running agent are fine. A running agent (a daemon of the earlier
-/// test) would lock the exe.
+/// and no running agent are fine.
+///
+/// An agent left running by the earlier test (its session daemon) locks the
+/// exe, and on the cmd leg `taskkill` gets "Access denied" for it. Windows
+/// lets a running exe be renamed, so whatever cannot be deleted is renamed
+/// aside (`*.stale-<n>.exe`): the install path is free either way.
 fn reset_command(shell: WindowsShell, plan: &InstallPlan) -> String {
     let (dst, bak) = (&plan.install_path, &plan.backup_path);
     match shell {
         WindowsShell::Cmd => format!(
-            r#"taskkill /F /IM {WINDOWS_AGENT_EXE} >nul 2>&1 & ping -n 2 127.0.0.1 >nul & del /F /Q "{dst}" "{bak}" "%USERPROFILE%\{WINDOWS_UPLOAD_NAME}" >nul 2>&1 & echo RESET"#
+            r#"taskkill /F /IM {WINDOWS_AGENT_EXE} >nul 2>&1 & ping -n 2 127.0.0.1 >nul & del /F /Q "{dst}" "{bak}" "%USERPROFILE%\{WINDOWS_UPLOAD_NAME}" >nul 2>&1 & (if exist "{dst}" ren "{dst}" "{STALE_PREFIX}%RANDOM%.exe") & (if exist "{bak}" ren "{bak}" "{STALE_PREFIX}b%RANDOM%.exe") & echo RESET"#
         ),
         WindowsShell::PowerShell => format!(
-            r#"Get-Process -Name termihub-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Remove-Item -Force -ErrorAction SilentlyContinue -Path "{dst}", "{bak}", "$env:USERPROFILE\{WINDOWS_UPLOAD_NAME}"; 'RESET'"#
+            r#"Get-Process -Name termihub-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Remove-Item -Force -ErrorAction SilentlyContinue -Path "{dst}", "{bak}", "$env:USERPROFILE\{WINDOWS_UPLOAD_NAME}"; foreach ($p in "{dst}", "{bak}") {{ if (Test-Path -Path $p) {{ Rename-Item -ErrorAction SilentlyContinue -Path $p -NewName ("{STALE_PREFIX}" + (Get-Random) + ".exe") }} }}; 'RESET'"#
+        ),
+    }
+}
+
+/// File-name prefix of an install or backup the reset had to rename aside.
+const STALE_PREFIX: &str = "termihub-agent.stale-";
+
+/// A command (in `shell`'s syntax) listing the running agents with their
+/// command lines, to log what a reset found holding the exe.
+fn agent_processes_probe(shell: WindowsShell) -> String {
+    const FIELDS: &str = "Format-List ProcessId, ParentProcessId, CommandLine";
+    match shell {
+        // cmd hands the double-quoted script to PowerShell; `''` is a quote
+        // inside PowerShell's single-quoted filter string.
+        WindowsShell::Cmd => format!(
+            r#"powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter 'Name=''{WINDOWS_AGENT_EXE}''' | {FIELDS}""#
+        ),
+        WindowsShell::PowerShell => format!(
+            r#"Get-CimInstance Win32_Process -Filter "Name='{WINDOWS_AGENT_EXE}'" | {FIELDS}"#
         ),
     }
 }
@@ -92,23 +115,26 @@ fn run_checked(session: &SshSession, command: &str, what: &str) {
     }
 }
 
-/// A command (in `shell`'s syntax) listing this user's running agents and
-/// trying to delete `path` with its error shown: why a reset left it behind.
+/// A command (in `shell`'s syntax) trying to delete and then rename `path`
+/// with the errors shown: why a reset left it behind.
 fn reset_diagnostics(shell: WindowsShell, path: &str) -> String {
     match shell {
-        WindowsShell::Cmd => format!(
-            r#"tasklist /V /FI "IMAGENAME eq {WINDOWS_AGENT_EXE}" & taskkill /F /T /IM {WINDOWS_AGENT_EXE} & del /F /Q "{path}""#
-        ),
+        WindowsShell::Cmd => format!(r#"del /F /Q "{path}" & ren "{path}" "{STALE_PREFIX}x.exe""#),
         WindowsShell::PowerShell => format!(
-            r#"Get-Process -Name termihub-agent -ErrorAction SilentlyContinue | Format-List Id, Path, StartTime; Remove-Item -Force -Path "{path}""#
+            r#"Remove-Item -Force -Path "{path}"; Rename-Item -Path "{path}" -NewName "{STALE_PREFIX}x.exe""#
         ),
     }
 }
 
-/// Start from a host with no agent, no backup and no staged upload. A killed
-/// agent can hold its exe for a moment, so the reset is retried a few times.
+/// Start from a host with no file at the install or backup path and no staged
+/// upload. A killed agent can hold its exe for a moment, so the reset is
+/// retried a few times; the running agents are logged first.
 fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
     const ATTEMPTS: u32 = 5;
+    eprintln!(
+        "{shell:?}: running agents before the reset:\n  => {}",
+        exec_detailed(session, &agent_processes_probe(shell))
+    );
     let mut left = Vec::new();
     for attempt in 1..=ATTEMPTS {
         let out = run(
@@ -389,7 +415,24 @@ fn reset_removes_install_backup_and_upload() {
         assert!(cmd.contains(&plan.backup_path), "{cmd}");
         assert!(cmd.contains(WINDOWS_UPLOAD_NAME), "{cmd}");
         assert!(cmd.ends_with("RESET") || cmd.ends_with("'RESET'"), "{cmd}");
+        assert!(cmd.contains(STALE_PREFIX), "a locked exe is renamed: {cmd}");
     }
+}
+
+#[test]
+fn agent_processes_probe_quotes_the_filter_for_each_shell() {
+    let cmd = agent_processes_probe(WindowsShell::Cmd);
+    assert!(
+        cmd.starts_with(r#"powershell -NoProfile -NonInteractive -Command "Get-CimInstance"#),
+        "{cmd}"
+    );
+    assert!(cmd.contains("'Name=''termihub-agent.exe'''"), "{cmd}");
+    assert!(cmd.ends_with("CommandLine\""), "{cmd}");
+    let ps = agent_processes_probe(WindowsShell::PowerShell);
+    assert!(
+        ps.contains(r#"-Filter "Name='termihub-agent.exe'""#),
+        "{ps}"
+    );
 }
 
 #[test]
