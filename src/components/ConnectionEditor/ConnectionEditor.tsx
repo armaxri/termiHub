@@ -1809,6 +1809,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         )}
       </div>
 
+      {/* An editor helper, not an import (#5195): it fills in *this* form from one
+          ~/.ssh/config host and saves nothing on its own. Whole-config bulk imports
+          live under Settings → Import & Migration. */}
       {showSshConfigImport && (
         <div className="settings-panel__category" data-testid="ssh-config-import-section">
           <Button
@@ -1818,7 +1821,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             onClick={() => setImportOpen(true)}
             data-testid="ssh-config-import-connection-open"
           >
-            Import from ~/.ssh/config
+            Fill from ~/.ssh/config…
           </Button>
           <p className="settings-form__hint">
             Fill in the host, user, port, key, and any jump-host chain from a host in your OpenSSH
