@@ -378,7 +378,20 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.createFile("notes.txt");
     });
-    expect(vi.mocked(localWriteFile)).toHaveBeenCalledWith("/home/user/notes.txt", "");
+    // An exclusive create, so it can never truncate an existing file (#5157).
+    expect(vi.mocked(localWriteFile)).toHaveBeenCalledWith("/home/user/notes.txt", "", {
+      exclusive: true,
+    });
+  });
+
+  it("createFile overwrites only once the replacement is confirmed (#5157)", async () => {
+    const api = await mountHook("/home/user");
+    await act(async () => {
+      await api.createFile("notes.txt", { overwrite: true });
+    });
+    expect(vi.mocked(localWriteFile)).toHaveBeenCalledWith("/home/user/notes.txt", "", {
+      exclusive: false,
+    });
   });
 
   it("deleteEntry forwards the path and isDirectory flag", async () => {
@@ -394,7 +407,24 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.renameEntry("/home/user/old.txt", "new.txt");
     });
-    expect(vi.mocked(localRename)).toHaveBeenCalledWith("/home/user/old.txt", "/home/user/new.txt");
+    // A no-replace rename unless the user confirmed replacing (#5157).
+    expect(vi.mocked(localRename)).toHaveBeenCalledWith(
+      "/home/user/old.txt",
+      "/home/user/new.txt",
+      { overwrite: false }
+    );
+  });
+
+  it("renameEntry replaces the target once confirmed (#5157)", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.renameEntry("/home/user/old.txt", "new.txt", { overwrite: true });
+    });
+    expect(vi.mocked(localRename)).toHaveBeenCalledWith(
+      "/home/user/old.txt",
+      "/home/user/new.txt",
+      { overwrite: true }
+    );
   });
 
   it("setPermissions forwards path and mode", async () => {

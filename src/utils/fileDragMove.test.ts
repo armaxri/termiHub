@@ -3,7 +3,9 @@ import type { FileEntry } from "@/types/connection";
 import {
   describeEntries,
   findNameConflicts,
+  isAlreadyExistsError,
   isSameOrDescendant,
+  keepBothName,
   planFileDrop,
 } from "./fileDragMove";
 
@@ -95,5 +97,35 @@ describe("findNameConflicts / describeEntries", () => {
   it("describes one entry by name and several by count", () => {
     expect(describeEntries([entry("/x/a.txt")])).toBe('"a.txt"');
     expect(describeEntries([entry("/x/a"), entry("/x/b")])).toBe("2 items");
+  });
+});
+
+describe("keepBothName (#5157)", () => {
+  it("numbers the stem before the extension", () => {
+    expect(keepBothName("report.txt", ["report.txt"])).toBe("report (1).txt");
+  });
+
+  it("skips numbers already taken", () => {
+    expect(keepBothName("report.txt", ["report.txt", "report (1).txt", "report (2).txt"])).toBe(
+      "report (3).txt"
+    );
+  });
+
+  it("suffixes a dotfile, an extension-less name and a folder at the end", () => {
+    expect(keepBothName(".bashrc", [".bashrc"])).toBe(".bashrc (1)");
+    expect(keepBothName("README", ["README"])).toBe("README (1)");
+    expect(keepBothName("v1.2", ["v1.2"], true)).toBe("v1.2 (1)");
+  });
+});
+
+describe("isAlreadyExistsError (#5157)", () => {
+  it("recognises the no-clobber refusals", () => {
+    expect(isAlreadyExistsError("IO error: /a already exists")).toBe(true);
+    expect(isAlreadyExistsError(new Error("File exists (os error 17)"))).toBe(true);
+    expect(isAlreadyExistsError({ code: "io", message: "EEXIST" })).toBe(true);
+  });
+
+  it("does not match other failures", () => {
+    expect(isAlreadyExistsError(new Error("permission denied"))).toBe(false);
   });
 });
