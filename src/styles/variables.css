@@ -42,6 +42,10 @@
   /* Text colors */
   --text-primary: #dde1ec;
   --text-secondary: #808a9c;
+  /* #5249: --text-secondary for labels on hovered/selected rows (--bg-hover /
+     --bg-active), where #808a9c drops to 4.44:1 / 4.06:1. Kept in sync with
+     dark.ts. */
+  --text-secondary-on-selection: #8992a3;
   /* Muted: lower emphasis than secondary (badges, counts, incidental labels).
      Per-theme values are supplied by the theme engine; this is the dark default.
      A11Y-007 / #2070: raised from #656e80 (which failed WCAG AA, ~3.4:1 on the

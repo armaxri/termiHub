@@ -173,6 +173,8 @@
 }
 
 .settings-form__container-option:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 

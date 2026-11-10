@@ -14,6 +14,8 @@
 }
 
 .sidebar-list-item:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   --sidebar-list-item-surface: var(--bg-hover);
   background: var(--bg-hover);
 }

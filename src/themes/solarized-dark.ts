@@ -33,6 +33,8 @@ export const solarizedDarkTheme: ThemeDefinition = {
     // Text
     textPrimary: "#839496", // base0
     textSecondary: "#657b83", // base00
+    // Same as textSecondary: the Solarized palette is tracked separately (#5190).
+    textSecondaryOnSelection: "#657b83",
     textMuted: "#586e75", // base01
     // Same as textMuted: the Solarized palette is tracked separately (#5190).
     textMutedOnSelection: "#586e75",
