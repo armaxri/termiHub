@@ -80,13 +80,21 @@ describe("resolveAgentGraphicalSettings", () => {
       requestPassword,
     });
     expect(requestPassword).toHaveBeenCalledWith("10.0.0.5", "alice", "", "password");
+    // The write is held for after the connect (#5197), never run here.
+    expect(mockedStore).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: "resolved",
+      settings: { ...SETTINGS, password: "entered" },
+      saveOnceConnected: expect.any(Function),
+    });
+    if (result.status !== "resolved") throw new Error("unreachable");
+    await result.saveOnceConnected?.();
     expect(mockedStore).toHaveBeenCalledWith(
       agentGraphicalCredentialId(AGENT, DEF),
       "password",
       "entered",
       null
     );
-    expect(result).toEqual({ status: "resolved", settings: { ...SETTINGS, password: "entered" } });
   });
 
   it("does not save a prompted answer when the Save box is left unchecked", async () => {

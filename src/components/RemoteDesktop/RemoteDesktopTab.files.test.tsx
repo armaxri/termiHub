@@ -551,4 +551,45 @@ describe("RemoteDesktopTab — linked SSH route without a saved password (#4265)
     await answer("pw");
     expect(q("remote-desktop-files-route")?.textContent).toContain("on tiger-box");
   });
+
+  describe("saves a typed secret only once the channel opens with it (#5197)", () => {
+    const REJECTED = { ...DEGRADED, needsSecret: { ...DEGRADED.needsSecret!, rejected: true } };
+
+    it("never saves a rejected typo, and saves the retry that opens the channel", async () => {
+      hoisted.channel.mockImplementation((_id: string, secret?: string) =>
+        Promise.resolve(secret === "typo" ? REJECTED : secret === "pw" ? READY : DEGRADED)
+      );
+      await render("active");
+      act(() => q("remote-desktop-files-btn")?.click());
+      await flushAsync();
+      await answer("typo", true);
+      expect(promptOpen()).toBe(true);
+      expect(hoisted.storeCredential).not.toHaveBeenCalled();
+      await answer("pw", true);
+      expect(hoisted.storeCredential).toHaveBeenCalledTimes(1);
+      expect(hoisted.storeCredential).toHaveBeenCalledWith("Lab/Tiger", "password", "pw", null);
+    });
+
+    it("saves nothing when every typed secret is rejected", async () => {
+      hoisted.channel.mockImplementation((_id: string, secret?: string) =>
+        Promise.resolve(secret ? REJECTED : DEGRADED)
+      );
+      await render("active");
+      act(() => q("remote-desktop-files-btn")?.click());
+      await flushAsync();
+      for (let round = 0; round < 4; round++) await answer("wrong", true);
+      expect(hoisted.storeCredential).not.toHaveBeenCalled();
+    });
+
+    it("saves nothing when the channel fails with the typed secret", async () => {
+      hoisted.channel.mockImplementation((_id: string, secret?: string) =>
+        secret ? Promise.reject(new Error("connection refused")) : Promise.resolve(DEGRADED)
+      );
+      await render("active");
+      act(() => q("remote-desktop-files-btn")?.click());
+      await flushAsync();
+      await answer("pw", true);
+      expect(hoisted.storeCredential).not.toHaveBeenCalled();
+    });
+  });
 });

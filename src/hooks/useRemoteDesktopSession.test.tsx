@@ -27,6 +27,10 @@ import {
   remoteDesktopRequestFullFrame,
   remoteDesktopSetMonitorLayout,
 } from "@/services/api";
+import {
+  hasHeldGraphicalSecret,
+  holdGraphicalSecretUntilConnected,
+} from "@/utils/graphicalSecretOnceConnected";
 import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
 import type {
   RemoteClipboardFile,
@@ -1027,5 +1031,101 @@ describe("useRemoteDesktopSession — shared event listeners (FEC2-002, #4378)",
     act(() => root.render(<></>));
     await flush();
     expect(remoteDesktopDispatcher.subscriberCount()).toBe(0);
+  });
+});
+
+describe("useRemoteDesktopSession — typed password saved only once connected (#5197)", () => {
+  /** Hold a write for `tabId` and return the spy plus the outcome promise. */
+  function hold(tabId: string) {
+    const persist = vi.fn(() => Promise.resolve());
+    const outcome = holdGraphicalSecretUntilConnected(tabId, persist);
+    return { persist, outcome };
+  }
+
+  it("writes the held password once the connect resolves", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockImplementationOnce(
+      () => new Promise<string>((res) => (resolveConnect = res))
+    );
+    const tabId = addTab();
+    const { persist, outcome } = hold(tabId);
+    renderSession(tabId);
+    await flush();
+    expect(persist).not.toHaveBeenCalled();
+
+    resolveConnect("rd-1");
+    await flush();
+    expect(persist).toHaveBeenCalledTimes(1);
+    await expect(outcome).resolves.toBe("persisted");
+  });
+
+  it("drops it when the server rejects the password", async () => {
+    mockedConnect.mockRejectedValueOnce("[thub-code:auth_failed] Authentication failed");
+    const tabId = addTab();
+    const { persist, outcome } = hold(tabId);
+    const h = renderSession(tabId);
+    await flush();
+    expect(h.get().state).toBe("authFailed");
+    await expect(outcome).resolves.toBe("discarded");
+
+    // A manual Reconnect that then succeeds writes nothing: the typo is gone.
+    act(() => h.get().reconnect());
+    await flush();
+    expect(h.get().state).toBe("active");
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("drops it when the connect fails or is canceled", async () => {
+    mockedConnect.mockRejectedValueOnce("Connection failed: refused");
+    const failedTab = addTab();
+    const failed = hold(failedTab);
+    renderSession(failedTab);
+    await flush();
+    await expect(failed.outcome).resolves.toBe("discarded");
+
+    act(() => root.render(<></>));
+    await flush();
+    mockedConnect.mockImplementationOnce(() => new Promise<string>(() => {}));
+    const canceledTab = addTab();
+    const canceled = hold(canceledTab);
+    const h = renderSession(canceledTab);
+    await flush();
+    act(() => h.get().cancelConnect());
+    await expect(canceled.outcome).resolves.toBe("discarded");
+    expect(failed.persist).not.toHaveBeenCalled();
+    expect(canceled.persist).not.toHaveBeenCalled();
+  });
+
+  it("drops it when the tab closes before connecting", async () => {
+    mockedConnect.mockImplementationOnce(() => new Promise<string>(() => {}));
+    const tabId = addTab();
+    const { persist, outcome } = hold(tabId);
+    renderSession(tabId);
+    await flush();
+    act(() => useAppStore.getState().closeTab(tabId, useAppStore.getState().activePanelId!));
+    act(() => root.render(<></>));
+    await flush();
+    await expect(outcome).resolves.toBe("discarded");
+    expect(hasHeldGraphicalSecret(tabId)).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("keeps it across a React StrictMode remount, then writes it on connect", async () => {
+    const tabId = addTab();
+    const { persist, outcome } = hold(tabId);
+    function Probe() {
+      useRemoteDesktopSession(tabId);
+      return null;
+    }
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Probe />
+        </StrictMode>
+      )
+    );
+    await flush();
+    await expect(outcome).resolves.toBe("persisted");
+    expect(persist).toHaveBeenCalledTimes(1);
   });
 });
