@@ -150,7 +150,7 @@ describe("Tab has no nested interactive controls (A11Y2-011)", () => {
     const onClose = vi.fn();
     renderTab({ onClose });
     const tab = tabEl();
-    expect(tab.getAttribute("aria-keyshortcuts")).toBe("Delete");
+    expect(tab.getAttribute("aria-keyshortcuts")).toContain("Delete");
     act(() => {
       tab.focus();
       tab.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));

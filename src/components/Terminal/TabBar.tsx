@@ -89,8 +89,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       frontendLog("multi_window", `Failed to focus owning window ${label}: ${errorMessage(err)}`)
     );
   };
-  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
-    useTerminalRegistry();
+  const {
+    clearTerminal,
+    saveTerminalToFile,
+    copyTerminalToClipboard,
+    openTerminalInEditor,
+    focusTerminal,
+  } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
@@ -217,9 +222,19 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
   // Roving-focus keyboard navigation for the tab strip (#2071). Only the active
   // tab is a Tab stop (`tabIndex=0`); Arrow/Home/End move focus between the
-  // `role="tab"` elements, matching the WAI-ARIA tabs pattern. Activation stays
-  // on click / the app's existing shortcuts — dnd-kit owns Space/Enter for drag.
+  // `role="tab"` elements, matching the WAI-ARIA tabs pattern with manual
+  // activation: Enter/Space on the focused tab activates it (handled in `Tab`,
+  // see `activateFromKeyboard`).
   // Ctrl/Cmd+Shift+ArrowLeft/Right instead moves the focused tab itself.
+  // Keyboard activation (#5182): select the tab, then hand focus to a terminal
+  // tab's content so the user can type straight away. A newly shown terminal
+  // also focuses itself once visible; this covers the already-active tab.
+  // Non-terminal tabs keep focus on the tab (Tab then moves into the panel).
+  const activateFromKeyboard = (tab: TerminalTab) => {
+    setActiveTab(tab.id, panelId);
+    if (tab.contentType === "terminal") focusTerminal(tab.id);
+  };
+
   const handleTabsKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const current = rovingTabIndexFromKey(e);
     if (current === -1) return;
@@ -250,6 +265,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               key={tab.id}
               tab={tab}
               onActivate={() => setActiveTab(tab.id, panelId)}
+              onKeyboardActivate={() => activateFromKeyboard(tab)}
               onClose={() => handleCloseTab(tab.id)}
               onClear={() => clearTerminal(tab.id)}
               onSave={() => saveTerminalToFile(tab.id)}
