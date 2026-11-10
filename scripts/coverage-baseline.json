@@ -20,6 +20,16 @@
       "plugin-api": 74.17,
       "rdp-sidecar": 78.77,
       "unified": 83.38
+    },
+    "win32": {
+      "frontend": 91.51,
+      "core": 91.36,
+      "agent": 90.35,
+      "src-tauri": 78.49,
+      "plugin-runner": 68.3,
+      "plugin-api": 74.25,
+      "rdp-sidecar": 80.68,
+      "unified": 85.79
     }
   }
 }
