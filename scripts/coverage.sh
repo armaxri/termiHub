@@ -113,7 +113,7 @@ else
     # truncated .profraw (see scripts/internal/llvm-cov-report.mjs).
     if [ "$SPLIT" -eq 1 ]; then
         # One partition, three instrumented phases whose profiles add up; the
-        # clean drops profiles a previous run left (each phase runs --no-clean).
+        # clean drops profiles a previous run left (--no-report never cleans).
         cargo llvm-cov clean --workspace
         export CI_RUST_TESTS_COVERAGE=1 CI_RUST_TESTS_SPLIT_SERIAL=1
         ./scripts/internal/ci-rust-tests.sh bulk --workspace

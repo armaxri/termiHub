@@ -35,7 +35,7 @@
 # path (e.g. `backends::local_shell::tests::foo`), across every binary.
 #
 # CI_RUST_TESTS_COVERAGE=1 runs bulk, heavy and serial under cargo-llvm-cov
-# (`cargo llvm-cov --no-report --no-clean` in place of `cargo test`), so a
+# (`cargo llvm-cov --no-report` in place of `cargo test`), so a
 # coverage lane keeps the same partition and the same thread caps. The phases'
 # profiles accumulate; the caller cleans first (`cargo llvm-cov clean
 # --workspace`) and writes the report after (scripts/coverage.sh --split, the
@@ -108,7 +108,7 @@ COVERAGE="${CI_RUST_TESTS_COVERAGE:-0}"
 # The command each run phase invokes: plain `cargo test`, or the instrumented
 # run of a coverage lane (profiles accumulate across phases; see the header).
 if [ "$COVERAGE" = "1" ]; then
-  test_cmd=(cargo llvm-cov --no-report --no-clean)
+  test_cmd=(cargo llvm-cov --no-report)
 else
   test_cmd=(cargo test)
 fi
