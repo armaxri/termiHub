@@ -176,6 +176,7 @@ export function PasswordPrompt() {
             >
               <Checkbox
                 checked={false}
+                onCheckedChange={() => {}}
                 disabled
                 aria-label={saveLabel}
                 aria-describedby={saveHintId}

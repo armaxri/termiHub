@@ -24,8 +24,8 @@ const MODE_PARAGRAPH: Record<CredentialStorageMode, string> = {
   none: CREDENTIAL_STORAGE_OFF_TEXT,
   os_keychain:
     "Credentials are stored in your operating system's keychain (macOS Keychain, " +
-    "Windows Credential Manager, or Linux Secret Service). The OS manages access — " +
-    "no master password needed.",
+    "Windows Credential Manager, or Linux Secret Service). The OS manages access, " +
+    "so there is nothing extra to unlock.",
   master_password:
     "The vault is protected by your master password using AES-256-GCM encryption. " +
     "You will be asked for the master password once per session to unlock the vault.",

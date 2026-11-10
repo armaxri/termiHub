@@ -1440,7 +1440,10 @@ mod tests {
             assert!(!lower.contains(banned), "{banned:?} in {help:?}");
         }
         assert!(help.contains("Settings ▸ Security"), "{help:?}");
-        assert!(help.contains("passphrase protecting your private key"), "{help:?}");
+        assert!(
+            help.contains("passphrase protecting your private key"),
+            "{help:?}"
+        );
     }
 
     /// #5028: the hook's help says which hosts are followed without it, and

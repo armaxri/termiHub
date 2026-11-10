@@ -181,6 +181,24 @@ describe("ConnectionEditor — credential hint", () => {
     const hint = container.querySelector('[data-testid="field-password-credential-saved"]');
     expect(hint).not.toBeNull();
   });
+
+  it("shows the save row disabled with an enable action when storage is off (#5186)", async () => {
+    useAppStore.setState({ credentialStoreStatus: { mode: "none", status: "unlocked" } });
+    await render();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="field-password-credential-saved"]')).toBeNull();
+    const toggle = container.querySelector('[data-testid="field-savePassword"]')!;
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+    const enable = container.querySelector<HTMLButtonElement>(
+      '[data-testid="field-savePassword-enable-storage"]'
+    )!;
+    expect(enable.textContent).toBe("Enable credential storage…");
+    await act(async () => enable.click());
+    expect(useAppStore.getState().pendingSettingsCategory).toBe("security");
+  });
 });
 
 // ---------------------------------------------------------------------------
