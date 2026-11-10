@@ -84,10 +84,23 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
       { key: "k", meta: true },
       { key: "s", meta: true },
     ],
-    // Avoid Ctrl+K chord leader: readline "kill-to-end-of-line". F1 is unbound
-    // in virtually every shell and is the long-standing "help" affordance.
+    // Avoid Ctrl+K chord leader: readline "kill-to-end-of-line". Ctrl+F1 is
+    // the modifier variant of the F1 "help" key, so it also opens the overlay
+    // from inside a terminal (#5194); bare F1 is the yielding companion below.
+    winLinuxDefault: { key: "F1", ctrl: true },
+    configurable: true,
+  },
+  {
+    action: "show-shortcuts-outside-terminal",
+    label: "Keyboard Shortcuts (Outside Terminals)",
+    category: "general",
+    // Bare F1 is the long-standing "help" key, but terminal programs own it
+    // (htop, mc, nano, vim, …): a focused terminal keeps it, the same as F6
+    // (#4773, #5194). Ctrl/Cmd variants above open the overlay from a terminal.
+    macDefault: { key: "F1" },
     winLinuxDefault: { key: "F1" },
     configurable: true,
+    scope: "yields-to-terminal",
   },
 
   // Terminal

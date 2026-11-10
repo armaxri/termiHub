@@ -124,6 +124,7 @@ export function useKeyboardShortcuts() {
           break;
 
         case "show-shortcuts":
+        case "show-shortcuts-outside-terminal":
           e.preventDefault();
           useAppStore.getState().setShortcutsOverlayOpen(true);
           break;

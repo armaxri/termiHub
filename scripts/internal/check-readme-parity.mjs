@@ -48,6 +48,7 @@ export const SHORTCUT_ROWS = {
   "Toggle sidebar": ["toggle-sidebar"],
   "Open settings": ["open-settings"],
   "Show all keyboard shortcuts": ["show-shortcuts"],
+  "… outside a terminal": ["show-shortcuts-outside-terminal"],
   "Save file (in editor)": null,
 };
 
