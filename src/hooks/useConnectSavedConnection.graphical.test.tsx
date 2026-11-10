@@ -12,6 +12,12 @@ import { useConnectSavedConnection } from "./useConnectSavedConnection";
 import type { SavedConnection, ConnectionTypeInfo } from "@/types/connection";
 import { resolveCredential, createTerminal, storeCredential } from "@/services/api";
 import { toast } from "@/components/ui";
+import {
+  discardGraphicalSecret,
+  graphicalConnectFailed,
+  graphicalConnectSucceeded,
+  hasHeldGraphicalSecret,
+} from "@/utils/graphicalSecretOnceConnected";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),
@@ -160,6 +166,14 @@ describe("useConnectSavedConnection — direct VNC/RDP password (#3818)", () => 
       await flush();
     });
 
+    // Not before the tab connected (#5197) …
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+    expect(hasHeldGraphicalSecret("tab-1")).toBe(true);
+    await act(async () => {
+      graphicalConnectSucceeded("tab-1");
+      await flush();
+    });
+    // … and once it did.
     expect(mockedStoreCredential).toHaveBeenCalledWith(
       "vnc-desk",
       "password",
@@ -174,6 +188,66 @@ describe("useConnectSavedConnection — direct VNC/RDP password (#3818)", () => 
       }),
       expect.objectContaining({ contentType: "remote-desktop" })
     );
+  });
+
+  it("keeps a stored password through a rejected connect and a successful retry (#5197)", async () => {
+    mockedResolveCredential.mockResolvedValue("stored-secret");
+    const { connect } = await renderHook();
+    await act(async () => {
+      await connect(makeDesktop("vnc", { savePassword: true }));
+    });
+    // The stored password is used as-is: nothing to hold, nothing to write.
+    expect(hasHeldGraphicalSecret("tab-1")).toBe(false);
+    await act(async () => {
+      graphicalConnectFailed("tab-1"); // a transient rejection …
+      graphicalConnectSucceeded("tab-1"); // … then the retry connects
+      await flush();
+    });
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "Desk vnc",
+      "vnc",
+      expect.objectContaining({
+        config: expect.objectContaining({ password: "stored-secret" }),
+      }),
+      expect.objectContaining({ contentType: "remote-desktop" })
+    );
+  });
+
+  it("never saves a typo the server rejects, and keeps the stored entry (#5197)", async () => {
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeDesktop("vnc", { savePassword: true }));
+      await flush();
+    });
+    await act(async () => {
+      useAppStore.getState().submitPassword("typo", true);
+      await flush();
+    });
+    await act(async () => {
+      graphicalConnectFailed("tab-1");
+      // A late success signal for the same tab writes nothing either.
+      graphicalConnectSucceeded("tab-1");
+      await flush();
+    });
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+    expect(hasHeldGraphicalSecret("tab-1")).toBe(false);
+  });
+
+  it("drops the typed password when the tab closes before connecting (#5197)", async () => {
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeDesktop("rdp", { savePassword: true }));
+      await flush();
+    });
+    await act(async () => {
+      useAppStore.getState().submitPassword("typed", true);
+      await flush();
+    });
+    discardGraphicalSecret("tab-1");
+    graphicalConnectSucceeded("tab-1");
+    await flush();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
   });
 
   it("opens without a prompt or lookup when the password is not saved", async () => {

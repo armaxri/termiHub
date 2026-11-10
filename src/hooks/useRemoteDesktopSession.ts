@@ -37,6 +37,11 @@ import { toast } from "@/components/ui";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import {
+  discardGraphicalSecret,
+  graphicalConnectFailed,
+  graphicalConnectSucceeded,
+} from "@/utils/graphicalSecretOnceConnected";
 
 /** Everything a RemoteDesktopTab needs to drive one graphical session. */
 export interface RemoteDesktopSession {
@@ -289,13 +294,20 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         const superseded =
           !early || early.state === "connecting" || early.state === "authenticating";
         applyState(superseded ? { session_id: id, state: "active", reconnect_attempt: 0 } : early);
+        // The connect resolved, so the password was accepted: only now does a
+        // typed one with Save ticked reach the credential store (#5197).
+        graphicalConnectSucceeded(tabId);
         frontendLog("remote_desktop", `session ${id} opened for tab ${tabId}`);
       } catch (err) {
         settle();
         connectPendingRef.current = false;
         earlyStatesRef.current.clear();
         // Unmounted, or cancelled by the user (who already sees "closed").
-        if (canceled || attempt.userCancelled) return;
+        if (canceled) return;
+        // A failed, rejected or user-cancelled connect never saves the typed
+        // password it was given (#5197); a stored one is left as it is.
+        graphicalConnectFailed(tabId);
+        if (attempt.userCancelled) return;
         // A rejected credential (typed `auth_failed`, #3390) keeps the
         // "Authentication failed" overlay instead of the generic connect error.
         setState(isAuthFailure(err) ? "authFailed" : "connectFailed");
@@ -329,6 +341,12 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
 
     return () => {
       canceled = true;
+      // A closed tab drops a typed password still waiting for its connect
+      // (#5197). Deferred, like the disconnect below, so a StrictMode remount
+      // (the tab still exists) keeps it for the remounted connect.
+      queueMicrotask(() => {
+        if (!readTab()) discardGraphicalSecret(tabId);
+      });
       // Closing the tab while it is still connecting aborts the backend connect
       // (#4298) instead of letting it run on to its timeout. A StrictMode
       // remount starts a fresh attempt, so aborting this one is always safe.
@@ -580,6 +598,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     if (!attempt) return;
     attempt.userCancelled = true;
     connectAttemptRef.current = null;
+    // A canceled connect never saves the typed password it was given (#5197).
+    graphicalConnectFailed(tabId);
     setState("closed");
     setReconnectAttempt(0);
     setMessage(null);
@@ -587,7 +607,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       remoteDesktopCancelConnect(attempt.connectId),
       `cancel connecting remote-desktop attempt ${attempt.connectId}`
     );
-  }, []);
+  }, [tabId]);
 
   const cancelReconnect = useCallback(() => {
     // Disconnecting aborts the backend's reconnect loop (and any pending

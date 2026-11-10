@@ -124,6 +124,7 @@ import {
   withAgentTunnelledTypes,
 } from "@/utils/agentGraphicalTunnel";
 import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
+import { holdTypedGraphicalSecret } from "@/utils/graphicalSecret";
 import { partitionConnectionTypes } from "@/utils/pluginConnectionTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
@@ -1259,12 +1260,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           toast.info("Connect canceled — your changes were saved.");
           throw new PromptCanceledError();
         }
-        addTab(
+        const tabId = addTab(
           name.trim(),
           selectedType,
           agentGraphicalTabConfig(existingAgent.id, selectedType, resolved.settings),
           { contentType: "remote-desktop" }
         );
+        // A typed password is saved only once the tab connects (#5197).
+        holdTypedGraphicalSecret(tabId, resolved);
         closeThisTab();
         return;
       }

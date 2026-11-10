@@ -60,7 +60,7 @@ import {
   ensureCredentialStoreUnlocked,
 } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
-import { resolveGraphicalSettings } from "@/utils/graphicalSecret";
+import { holdTypedGraphicalSecret, resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { neededFieldSecrets, resolveFieldSecrets } from "@/utils/fieldSecrets";
@@ -303,7 +303,7 @@ export async function connectSavedConnection(
 
   // A remote-desktop connection saved with "Save password" (#3818) takes its
   // password from the credential store — or asks once, with the prompt's
-  // Save box keeping it. Without the option the connect is unchanged: a VNC
+  // Save box keeping it once the connect succeeds. Without the option the connect is unchanged: a VNC
   // server may need no password at all.
   if (isGraphical && readConfigBoolean(connection.config, "savePassword") === true) {
     const resolved = await resolveGraphicalSettings({
@@ -317,10 +317,13 @@ export async function connectSavedConnection(
       toast.info("Connect canceled");
       return { status: "canceled" };
     }
-    return openTab({ ...config, config: resolved.settings } as typeof config, {
+    const opened = openTab({ ...config, config: resolved.settings } as typeof config, {
       terminalOptions: connection.terminalOptions,
       contentType,
     });
+    // A typed password with Save ticked is written only once the tab connects (#5197).
+    if (opened.status === "opened") holdTypedGraphicalSecret(opened.tabId, resolved);
+    return opened;
   }
 
   // Connections with authMethod and password support credential store resolution
