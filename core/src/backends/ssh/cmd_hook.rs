@@ -1,10 +1,13 @@
-//! The opt-in Command Marks hook for a cmd.exe login shell over SSH (#5109).
+//! The opt-in Command Marks hook for a cmd.exe login shell over SSH (#5109),
+//! and the hidden typed setup of any cmd.exe login shell (#5131).
 //!
 //! A local cmd.exe gets its `PROMPT` on the command line (`/K`), so nothing is
 //! typed. Over SSH the shell is already running, so the hook is typed — and a
 //! typed line has two side effects the maintainer rules out (#5127): its echo
 //! stays on screen, and the console records it in its command history (the
-//! up-arrow / `doskey /history` list). The typed setup handles both:
+//! up-arrow / `doskey /history` list). The env-var fallback and the X11
+//! `DISPLAY` line have the same two, hook or not, so they are typed the same
+//! way, minus the `PROMPT` (#5131). The typed setup handles both:
 //!
 //! - **History.** A leading space does not keep a line out of the console's
 //!   history (measured on the Windows SSH Host lane), and `doskey /reinstall`
@@ -13,7 +16,12 @@
 //!   key. It only clears the history, not the macros, and the history of a
 //!   fresh SSH session's console holds nothing but the setup at that point:
 //!   the setup is typed at the first prompt and the user's input is held until
-//!   it has run ([`SetupGate`](super::remote_shell::SetupGate)).
+//!   it has run ([`SetupGate`](super::remote_shell::SetupGate)) — with the
+//!   hook until its prompt mark, without it until the setup's output settles.
+//!   Either way Alt+F7 is sent in the same write as the setup line, so it
+//!   reaches the console before any byte of the user's, and the gate holds
+//!   the user's input from the session's start: no line of the user's can be
+//!   in the history it clears.
 //! - **Echo.** ConPTY renders from the console's screen, so the echo cannot be
 //!   filtered out of the stream. The line erases it itself, through the
 //!   console ([`cmd_erase_echo`]): it moves the cursor up over the echo's rows,
@@ -22,9 +30,9 @@
 //!
 //! The rest of the line leaves no state behind: the erase is drawn by a child
 //! cmd.exe started with `/d` (no AutoRun), `(call )` puts `ERRORLEVEL` back
-//! to 0, and the only
-//! lasting change is the one intended — `PROMPT` gains the OSC 133 / OSC 7
-//! marks around the user's own prompt.
+//! to 0, and the only lasting changes are the ones intended: the configured
+//! variables (and `DISPLAY`) are set, and with the hook `PROMPT` gains the
+//! OSC 133 / OSC 7 marks around the user's own prompt.
 
 /// Alt+F7 as the terminal sends it (`CSI 18 ; 3 ~`): the console's "clear
 /// command history" key. Its cooked line editor clears the history when it
@@ -77,8 +85,13 @@ pub fn cmd_erase_echo(rows: usize) -> String {
 }
 
 /// The cmd.exe session setup as one typed line (#5109): the env / X11 lines
-/// (each CR-ended), the echo erase and the hook's `PROMPT`, joined with `&`,
-/// ended with CR and then [`CMD_CLEAR_HISTORY`].
+/// (each CR-ended), the echo erase and — when `hook` is set — the hook's
+/// `PROMPT`, joined with `&`, ended with CR and then [`CMD_CLEAR_HISTORY`].
+///
+/// Without the hook (#5131) the line is the same minus the `PROMPT`: a
+/// cmd.exe host with env or X11 setup gets it hidden and out of the history
+/// whether Command Marks are on or not. A `PROMPT` statement among `lines`
+/// is dropped either way, so it is only ever set by `hook`.
 ///
 /// `prompt_col` is the column the first prompt left the cursor in (where the
 /// echo starts) and `cols` the terminal's width: the echo then spans
@@ -86,7 +99,7 @@ pub fn cmd_erase_echo(rows: usize) -> String {
 /// console's wrap could go either way, so the line gets a trailing space to
 /// stay clear of it. The row count's digits change the length, so it is
 /// solved as a fixed point.
-pub fn join_cmd_setup(lines: &[String], prompt_col: usize, cols: usize) -> String {
+pub fn join_cmd_setup(lines: &[String], hook: bool, prompt_col: usize, cols: usize) -> String {
     let cols = cols.max(1);
     let prompt_col = prompt_col.min(cols);
     let statements: Vec<&str> = lines
@@ -99,7 +112,9 @@ pub fn join_cmd_setup(lines: &[String], prompt_col: usize, cols: usize) -> Strin
         let erase = cmd_erase_echo(rows);
         let mut all = statements.clone();
         all.push(&erase);
-        all.push(cmd_hook_statement());
+        if hook {
+            all.push(cmd_hook_statement());
+        }
         let mut body = all.join("&");
         let mut len = body.chars().count();
         if (prompt_col + len).is_multiple_of(cols) {
@@ -228,7 +243,7 @@ mod tests {
     #[test]
     fn the_joined_line_ends_with_the_prompt_then_cr_then_alt_f7() {
         let lines = vec!["set \"A=1\"\r".to_string(), cmd_hook_line()];
-        let line = join_cmd_setup(&lines, 21, 80);
+        let line = join_cmd_setup(&lines, true, 21, 80);
         let (body, tail) = line.split_once('\r').unwrap();
         assert_eq!(tail, CMD_CLEAR_HISTORY);
         assert!(body.starts_with("set \"A=1\"&\"%SystemRoot%"), "{body}");
@@ -240,20 +255,47 @@ mod tests {
         assert_ne!((21 + len) % 80, 0);
     }
 
+    /// #5131: without the hook the line sets no `PROMPT` — not even one
+    /// passed in — and still ends with the erase, CR and Alt+F7.
+    #[test]
+    fn without_the_hook_the_joined_line_sets_no_prompt() {
+        let lines = vec![
+            "set \"A=1\" & set \"B=2\"\r".to_string(),
+            "set \"DISPLAY=localhost:10.0\"\r".to_string(),
+            cmd_hook_line(),
+        ];
+        let line = join_cmd_setup(&lines, false, 21, 80);
+        let (body, tail) = line.split_once('\r').unwrap();
+        assert_eq!(tail, CMD_CLEAR_HISTORY);
+        assert!(
+            body.starts_with(
+                "set \"A=1\" & set \"B=2\"&set \"DISPLAY=localhost:10.0\"&\"%SystemRoot%"
+            ),
+            "{body}"
+        );
+        assert!(!body.contains("PROMPT"), "{body}");
+        assert!(body.trim_end().ends_with("&(call )"), "{body}");
+        let len = body.chars().count();
+        assert_eq!(rows_in(&line), (21 + len).div_ceil(80) + 1);
+    }
+
     #[test]
     fn the_row_count_follows_the_prompt_column_and_width() {
-        for cols in [40, 80, 100, 120, 200, 400] {
+        for (cols, hook) in [40, 80, 100, 120, 200, 400]
+            .into_iter()
+            .flat_map(|c| [(c, true), (c, false)])
+        {
             for col in [0, 1, 21, 39, 79, 150] {
-                let line = join_cmd_setup(&[], col, cols);
+                let line = join_cmd_setup(&[], hook, col, cols);
                 let body = line.split('\r').next().unwrap();
                 let len = body.chars().count();
                 let col = col.min(cols);
                 assert_eq!(
                     rows_in(&line),
                     (col + len).div_ceil(cols) + 1,
-                    "{cols} {col}"
+                    "{cols} {col} {hook}"
                 );
-                assert_ne!((col + len) % cols, 0, "{cols} {col}");
+                assert_ne!((col + len) % cols, 0, "{cols} {col} {hook}");
             }
         }
     }
