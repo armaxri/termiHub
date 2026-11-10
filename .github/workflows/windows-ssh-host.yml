@@ -23,7 +23,7 @@ name: Windows SSH Host
 # session must load the user's profile exactly once (#5147).
 # The `cmd` leg (#5109) runs the core cmd.exe hook grade first: with the hook
 # on, a `cd` is reported and the setup leaves nothing on screen or in
-# `doskey /history`.
+# `doskey /history`; with the hook off an env var's setup leaves neither (#5131).
 #
 # The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
 # Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd

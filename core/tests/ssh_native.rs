@@ -844,7 +844,8 @@ async fn powershell_profile_grade(sshd: common::NativeSshd) {
 /// /history`, Alt+F7 cleared it), `ERRORLEVEL` still 0 for the first command.
 /// It also runs no extra AutoRun: with an AutoRun on the test user that
 /// appends to a marker file, a hooked session runs it exactly once, for its
-/// own shell, and so does a hook-free one with an env var configured. Both
+/// own shell, and so does a hook-free one with an env var configured — whose
+/// setup is hidden and kept out of the history too (#5131). Both
 /// need the login shell, and on a Win32-OpenSSH host it is told from cmd.exe's
 /// banner, not from an exec channel that would run as `cmd.exe /c` (#5134).
 /// The AutoRun is removed afterwards, also when the grade fails.
@@ -994,8 +995,11 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
     // shell too (#5134): it must not ask over an exec channel either.
     let mut ssh = Ssh::new();
     let mut settings = sshd.key_settings();
+    settings["cols"] = serde_json::json!(cols);
+    settings["rows"] = serde_json::json!(rows);
     settings["env"] = serde_json::json!({ "TH_5109_VAR": "th5109value" });
     ssh.connect(settings).await.expect("connect");
+    hook_free_setup_leaves_nothing(&mut ssh, cols, rows).await;
     let (done, seen) = type_and_wait(
         &mut ssh,
         "set \"PROMPT=\"\rcmd /d\rset PROMPT\rexit\recho th5109-%OS%-probe\r",
@@ -1021,6 +1025,81 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
         "the hook-free session with an env var ran the AutoRun other than once"
     );
     ssh.disconnect().await.ok();
+}
+
+/// #5131: with the hook off, a cmd.exe session's env-var setup leaves no
+/// trace either. The variable applies to the first command (`ERRORLEVEL`
+/// still 0), but no `set` line is on screen (the raw stream replayed through
+/// the terminal model) or in the console's command history (`doskey
+/// /history`), while the user's own command is. The session sets no `PROMPT`
+/// marks: no OSC 133 in its output.
+async fn hook_free_setup_leaves_nothing(ssh: &mut Ssh, cols: usize, rows: usize) {
+    let (done, mut all) = type_and_wait(ssh, "echo [%TH_5109_VAR%-%OS%-%ERRORLEVEL%]\r", |s| {
+        s.contains("[th5109value-Windows_NT-0]")
+    })
+    .await;
+    assert!(
+        done,
+        "the first command did not run without the hook: {all:?}"
+    );
+
+    let (done, history) = type_and_wait(ssh, "doskey /history\recho th5131-%OS%-end\r", |s| {
+        s.contains("th5131-Windows_NT-end")
+    })
+    .await;
+    all.push_str(&history);
+    assert!(done, "doskey /history did not run: {history:?}");
+    eprintln!("---- doskey /history (hook off) ----\n{history:?}");
+    assert!(
+        history.contains("echo [%TH_5109_VAR%"),
+        "the user's own command is in the history: {history:?}"
+    );
+    for leak in ["TH_5109_VAR=", "set \"", "/d /k", "18;3~"] {
+        assert!(
+            !history.contains(leak),
+            "the setup {leak:?} is in the command history (hook off): {history:?}"
+        );
+    }
+
+    // Let the prompt after it render.
+    let mut rx = ssh.subscribe_output();
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(chunk) = rx.recv().await {
+            all.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    })
+    .await;
+    let text = screen::render(all.as_bytes(), cols, rows);
+    eprintln!("---- rendered terminal (hook off) ----\n{text}\n---------------------------");
+    if all.contains("Microsoft Windows") {
+        assert!(
+            text.contains("Microsoft Windows"),
+            "the banner is gone: {text}"
+        );
+    }
+    for clear in ["\x1b[3J", "\x1bc"] {
+        assert!(
+            !all.contains(clear),
+            "{clear:?} cleared the screen: {all:?}"
+        );
+    }
+    assert!(
+        !all.contains("\x1b]133;"),
+        "the hook-free session set marks"
+    );
+    for leak in [
+        "System32\\cmd.exe",
+        "/d /k",
+        "$E[",
+        "TH_5109_VAR=",
+        "set \"",
+    ] {
+        assert!(
+            !text.contains(leak),
+            "setup text {leak:?} left on screen (hook off): {text}"
+        );
+    }
+    assert_eq!(text.matches(">echo [%TH_5109_VAR%").count(), 1, "{text}");
 }
 
 /// A minimal terminal model to grade what a raw stream leaves on screen
