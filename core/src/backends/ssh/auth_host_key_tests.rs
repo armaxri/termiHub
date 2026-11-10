@@ -94,7 +94,10 @@ async fn interactive_reject_is_host_key_untrusted() {
         Ok(_) => panic!("a rejected host key must not connect"),
         Err(e) => e,
     };
-    assert!(verifier.asked.load(Ordering::SeqCst), "the prompt was shown");
+    assert!(
+        verifier.asked.load(Ordering::SeqCst),
+        "the prompt was shown"
+    );
     assert_eq!(
         err.connect_failure_kind(),
         Some(ConnectFailureKind::HostKeyUntrusted),
@@ -126,10 +129,8 @@ async fn policy_refusal_is_not_reported_as_a_user_reject() {
 #[tokio::test]
 async fn trust_prompt_time_is_excluded_from_the_connect_timeout() {
     let (stream, observed) = serve(script());
-    let verifier = PromptingVerifier::new(
-        Some(Duration::from_millis(1500)),
-        HostKeyDecision::Accepted,
-    );
+    let verifier =
+        PromptingVerifier::new(Some(Duration::from_millis(1500)), HostKeyDecision::Accepted);
     let res = timeout_excluding_prompts(
         Duration::from_secs(1),
         handshake_and_authenticate_with(&config(), stream, Some(verifier.clone())),
@@ -149,10 +150,8 @@ async fn trust_prompt_time_is_excluded_from_the_connect_timeout() {
 #[tokio::test]
 async fn trust_prompt_time_is_excluded_from_a_nested_hop_timeout() {
     let (stream, _observed) = serve(script());
-    let verifier = PromptingVerifier::new(
-        Some(Duration::from_millis(1500)),
-        HostKeyDecision::Accepted,
-    );
+    let verifier =
+        PromptingVerifier::new(Some(Duration::from_millis(1500)), HostKeyDecision::Accepted);
     let res = timeout_excluding_prompts(Duration::from_secs(1), async {
         timeout_excluding_prompts(
             Duration::from_secs(1),
@@ -179,8 +178,14 @@ async fn abandoning_the_connect_dismisses_the_prompt() {
         handshake_and_authenticate_with(&config(), stream, Some(verifier.clone())),
     )
     .await;
-    assert!(res.is_err(), "the prompt never answers, so the connect waits");
-    assert!(verifier.asked.load(Ordering::SeqCst), "the prompt was shown");
+    assert!(
+        res.is_err(),
+        "the prompt never answers, so the connect waits"
+    );
+    assert!(
+        verifier.asked.load(Ordering::SeqCst),
+        "the prompt was shown"
+    );
     // The prompt runs on russh's session task: give it a moment to observe the
     // abandon signal.
     for _ in 0..100 {
