@@ -5,6 +5,7 @@ import {
   processKeyEvent,
   onChordStateChange,
   cancelChord,
+  eventMatchesSingleBinding,
   isShellReservedKey,
   isEventFromTerminal,
   getActionScope,
@@ -30,11 +31,13 @@ import {
 export function useKeyboardShortcuts() {
   // Capture-phase interception for zoom-panel: must fire before Monaco (and other
   // editors) so they don't process the key themselves (e.g. Monaco's "Insert Line
-  // Above" on Cmd/Ctrl+Shift+Enter).  We match the key directly here to avoid
-  // calling processKeyEvent() in two phases for the same event.
+  // Above" on Cmd/Ctrl+Shift+Enter).  We match zoom-panel's effective binding
+  // directly here (not a hardcoded key, so a rebind or unbind is honoured, #5174)
+  // to avoid calling processKeyEvent() in two phases for the same event. A chord
+  // binding never matches here and is dispatched by the bubble handler instead.
   useEffect(() => {
     const handleZoomCapture = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" || !e.shiftKey || (!e.metaKey && !e.ctrlKey) || e.altKey) return;
+      if (!eventMatchesSingleBinding(e, "zoom-panel")) return;
       e.preventDefault();
       e.stopPropagation();
       cancelChord();

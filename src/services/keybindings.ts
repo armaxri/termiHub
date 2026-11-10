@@ -788,30 +788,31 @@ export function formatActionBindings(action: string, mac: boolean = isMac()): st
  * For chord support, use processKeyEvent() instead.
  */
 export function findMatchingAction(event: KeyboardEvent): string | null {
-  for (const binding of DEFAULT_BINDINGS) {
-    const combo = getEffectiveCombo(binding.action);
-    if (!combo) continue;
+  return DEFAULT_BINDINGS.find((b) => eventMatchesSingleBinding(event, b.action))?.action ?? null;
+}
 
-    // Skip actions the user explicitly unbound: they must not fire, and must
-    // not fall back to their platform default.
-    if (isUnboundCombo(combo)) continue;
+/**
+ * Whether `event` matches one of `action`'s effective single-combo bindings —
+ * its primary combo (user override or platform default) or an alternate.
+ * Chord, unbound and modifier-only bindings never match.
+ */
+export function eventMatchesSingleBinding(event: KeyboardEvent, action: string): boolean {
+  const combo = getEffectiveCombo(action);
+  if (!combo) return false;
 
-    // Skip chord bindings (arrays with >1 combo)
-    if (Array.isArray(combo) && combo.length > 1) continue;
+  // Skip actions the user explicitly unbound: they must not fire, and must
+  // not fall back to their platform default.
+  if (isUnboundCombo(combo)) return false;
 
-    // Modifier-only chords (the remote-desktop release chord) are read
-    // directly by their owner, never matched as app shortcuts.
-    if (isModifierOnlyCombo(combo)) continue;
+  // Skip chord bindings (arrays with >1 combo)
+  if (Array.isArray(combo) && combo.length > 1) return false;
 
-    const single = Array.isArray(combo) ? combo[0] : combo;
-    if (eventMatchesCombo(event, single)) {
-      return binding.action;
-    }
-    if (getEffectiveAlternates(binding.action).some((alt) => eventMatchesCombo(event, alt))) {
-      return binding.action;
-    }
-  }
-  return null;
+  // Modifier-only chords (the remote-desktop release chord) are read
+  // directly by their owner, never matched as app shortcuts.
+  if (isModifierOnlyCombo(combo)) return false;
+
+  const single = Array.isArray(combo) ? combo[0] : combo;
+  return [single, ...getEffectiveAlternates(action)].some((c) => eventMatchesCombo(event, c));
 }
 
 /** Check if a keyboard event matches any application shortcut (non-terminal). */

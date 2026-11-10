@@ -6,6 +6,7 @@ vi.mock("@/services/keybindings", () => ({
   processKeyEvent: vi.fn(),
   onChordStateChange: vi.fn(),
   cancelChord: vi.fn(),
+  eventMatchesSingleBinding: vi.fn(() => false),
   isShellReservedKey: vi.fn(() => false),
   isEventFromTerminal: vi.fn(() => false),
   getActionScope: vi.fn((action: string) => {

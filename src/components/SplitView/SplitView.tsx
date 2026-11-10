@@ -1071,7 +1071,12 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   // visible (#4331, #4514): the disconnect overlay, the "Taken over" overlays
   // and the files-only panel. The terminal-focus effect below must not pull
   // focus back into the (dead or input-paused) terminal while one is up.
-  const overlayOwnsFocus = showDisconnectOverlay || isEvicted || lifecycle.filesOnly;
+  // A running reconnect renders as the non-blocking top strip (#5179), not a
+  // focus-owning overlay: the terminal stays focusable so its scrollback can be
+  // scrolled, selected and copied while the attempts run.
+  const reconnectStripShown = isReconnecting || isAutoReconnectWaiting;
+  const overlayOwnsFocus =
+    (showDisconnectOverlay && !reconnectStripShown) || isEvicted || lifecycle.filesOnly;
   const overlayOwnsFocusRef = useRef(overlayOwnsFocus);
   overlayOwnsFocusRef.current = overlayOwnsFocus;
 
