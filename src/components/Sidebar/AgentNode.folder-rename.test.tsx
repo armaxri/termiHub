@@ -151,8 +151,12 @@ describe("AgentNode — folder rename (#5233)", () => {
     const item = q("context-agent-folder-rename");
     expect(item?.textContent).toContain("Rename");
     act(() => item!.click());
-    await flushAsync();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
     expect(input()?.value).toBe("Servers");
+    // The closing menu must not steal focus back (which would blur-cancel).
+    expect(document.activeElement).toBe(input());
   });
 
   it("F2 swaps the row for an input pre-filled with the name", async () => {
