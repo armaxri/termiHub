@@ -27,6 +27,10 @@
 #    non-zero through the DefaultShell, an update to a binary that cannot
 #    start is rolled back to the previous agent, and a leftover
 #    termihub-agent.previous.exe next to a broken install is restored.
+#    Then the update-with-daemon-session test of
+#    windows_ssh_host_tests/daemon_update.rs (#5254): an update while a session
+#    daemon holds the installed exe installs, a broken one rolls back, and
+#    the session survives both.
 # 6. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
 #    (#5109): with the opt-in hook on, a cd is reported, no setup text is
 #    left on screen and nothing of it is in the console's command history --
@@ -86,6 +90,8 @@ FIXTURE="$SCRIPT_DIR/native-sshd-fixture.sh"
 TEST_NAME="terminal::agent_manager::windows_ssh_host_tests::${DEFAULT_SHELL}_default_shell_deploy_install_connect_reattach"
 # The update rollback through the same DefaultShell (#5219).
 ROLLBACK_TEST="terminal::agent_manager::windows_ssh_host_tests::rollback::${DEFAULT_SHELL}_default_shell_update_rollback"
+# The update under a running session daemon, same DefaultShell (#5254).
+DAEMON_UPDATE_TEST="terminal::agent_manager::windows_ssh_host_tests::daemon_update::${DEFAULT_SHELL}_default_shell_update_with_daemon_session"
 AGENT_SUITE="native_sshd_agent_backends"
 AGENT_TESTS=(
   ssh_session_through_agent_round_trips_resizes_and_closes_cleanly
@@ -362,6 +368,15 @@ rollback_log="$(mktemp)"
 cargo test -p termihub --lib "$ROLLBACK_TEST" -- --exact --show-output "$@" 2>&1 |
   tee "$rollback_log"
 require_passed "$rollback_log" "$ROLLBACK_TEST"
+
+# ---- Update under a running session daemon (#5254) ----
+# A daemon session holds the installed exe: the update must still install
+# (the running exe is renamed aside), a broken one must roll back, and the
+# session must survive both -- without killing anything by hand.
+daemon_update_log="$(mktemp)"
+cargo test -p termihub --lib "$DAEMON_UPDATE_TEST" -- --exact --show-output "$@" 2>&1 |
+  tee "$daemon_update_log"
+require_passed "$daemon_update_log" "$DAEMON_UPDATE_TEST"
 
 # ---- Windows agent -> targets (MT-AGENT-26/27/28) ----
 start_ssh_agent_with_fixture_key ||
