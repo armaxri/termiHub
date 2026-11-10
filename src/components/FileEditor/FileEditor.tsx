@@ -46,7 +46,6 @@ import {
   sessionRealpath,
   storeCredential,
   resolveCredential,
-  removeCredential,
   TransferTerminalError,
   type ElevatedWriteResult,
 } from "@/services/api";
@@ -1216,15 +1215,12 @@ export function FileEditor({
           return "saved";
         }
         if (outcome === "error") return "failed";
-        // Stale cache / rejected stored password — discard it and prompt.
+        // Stale cache / rejected stored password — drop the session cache and
+        // prompt. The stored one is KEPT (#5156): only a password the user
+        // types and that then succeeds replaces it (handleSudoSubmit).
         sudoPasswordRef.current = null;
-        if (fromStore && hostLabel) {
-          try {
-            await removeCredential(hostLabel, "sudo_password");
-          } catch (err) {
-            // Best-effort cleanup: the prompt below replaces the stale password anyway.
-            frontendLog("file_editor", `discard stale sudo password failed: ${errorMessage(err)}`);
-          }
+        if (fromStore) {
+          frontendLog("file_editor", "stored sudo password was rejected; kept, prompting");
         }
       }
     } finally {
