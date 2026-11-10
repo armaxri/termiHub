@@ -24,8 +24,7 @@ import {
   Server,
   ArrowLeftRight,
   Route,
-  FileDown,
-  FileSpreadsheet,
+  FileInput,
   Link,
   Square,
   Puzzle,
@@ -35,13 +34,12 @@ import {
   Folder,
   Palette,
 } from "lucide-react";
-import { open as openFileDialog } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { currentConnectionsView } from "@/store/connectionsBridge";
-import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
-import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
+import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { type AgentDefinitionInfo } from "@/services/api";
 import { newId } from "@/services/transport/ids";
 import {
   toast,
@@ -90,8 +88,6 @@ import {
   persistUndoableDeleteOptOut,
   useUndoableDeleteOptOut,
 } from "@/hooks/useUndoableDeleteOptOut";
-import { BulkSshImportDialog } from "./BulkSshImportDialog";
-import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
@@ -798,8 +794,6 @@ export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   // The folder whose Appearance dialog is open (#5020).
   const [appearanceFolderId, setAppearanceFolderId] = useState<string | null>(null);
-  const [bulkImportOpen, setBulkImportOpen] = useState(false);
-  const [fleetRows, setFleetRows] = useState<InventoryHost[] | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [agentFilterQuery, setAgentFilterQuery] = useState("");
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
@@ -835,9 +829,9 @@ export function ConnectionList() {
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
-  const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
   const deleteFolderWithUndo = useAppStore((s) => s.deleteFolderWithUndo);
   const addFolder = useAppStore((s) => s.addFolder);
   const updateFolder = useAppStore((s) => s.updateFolder);
@@ -1277,27 +1271,13 @@ export function ConnectionList() {
   }, [openConnectionEditorTab]);
 
   /**
-   * Pick a CSV / inventory file and open the fleet-onboard dialog with its hosts
-   * (#1961). A cancelled picker is a no-op; a read/parse failure or an
-   * empty/host-less file surfaces a toast rather than an empty dialog.
+   * Deep link to Settings → Import & Migration (#5195): imports are one-time
+   * actions, so the sidebar carries only this single entry point and every
+   * importer (SSH config, CSV inventory, JSON, MobaXterm) lives on that page.
    */
-  const handleImportCsv = useCallback(async () => {
-    const selected = await openFileDialog({
-      multiple: false,
-      filters: [{ name: "Inventory", extensions: ["csv", "txt", "tsv"] }],
-    });
-    if (typeof selected !== "string") return;
-    try {
-      const hosts = await importInventoryHosts(selected);
-      if (hosts.length === 0) {
-        toast.info("No hosts found in that file.");
-        return;
-      }
-      setFleetRows(hosts);
-    } catch {
-      toast.error("Could not read that inventory file.");
-    }
-  }, []);
+  const handleOpenImportSettings = useCallback(() => {
+    openSettingsTab({ category: "import" });
+  }, [openSettingsTab]);
 
   const handleNewConnectionInFolder = useCallback(
     (folderId: string) => {
@@ -1597,20 +1577,12 @@ export function ConnectionList() {
                 testId: "connection-list-new-connection",
               },
               {
-                id: "import-ssh-config",
-                label: "Import from ~/.ssh/config",
-                icon: <FileDown size={16} />,
-                onClick: () => setBulkImportOpen(true),
+                id: "import",
+                label: "Import connections…",
+                icon: <FileInput size={16} />,
+                onClick: handleOpenImportSettings,
                 iconOnly: true,
-                testId: "connection-list-import-ssh-config",
-              },
-              {
-                id: "import-csv",
-                label: "Onboard hosts from a CSV / inventory",
-                icon: <FileSpreadsheet size={16} />,
-                onClick: handleImportCsv,
-                iconOnly: true,
-                testId: "connection-list-import-csv",
+                testId: "connection-list-open-import-settings",
               },
             ]}
           />
@@ -1838,21 +1810,6 @@ export function ConnectionList() {
           if (!open) setAppearanceFolderId(null);
         }}
         onSave={updateFolder}
-      />
-      <BulkSshImportDialog
-        open={bulkImportOpen}
-        onOpenChange={setBulkImportOpen}
-        folders={folders}
-        existingConnections={connections}
-        onImport={bulkAddConnections}
-      />
-      <FleetOnboardDialog
-        open={fleetRows !== null}
-        onOpenChange={(open) => {
-          if (!open) setFleetRows(null);
-        }}
-        rows={fleetRows ?? []}
-        sourceLabel="a CSV inventory"
       />
     </div>
   );

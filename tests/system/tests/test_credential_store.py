@@ -59,8 +59,8 @@ class TestCredentialStore(
     def reset_before_rerun(self) -> None:
         # A failed attempt can leave the unlock dialog (or its reset confirm, or
         # the SSH password prompt) open; the tests carry the store's lock state
-        # forward on purpose, so close the dialogs only (Escape = Skip) (#4834).
-        self.dismiss_modals("unlock-dialog-skip", "unlock-dialog-reset-confirm")
+        # forward on purpose, so close the dialogs only (Escape = Cancel) (#4834).
+        self.dismiss_modals("unlock-dialog-body", "unlock-dialog-reset-confirm")
 
     def test_indicator_hidden_in_none_mode(self):
         # Runs first, before any store is set up: the app launches in "none" mode,
@@ -97,14 +97,15 @@ class TestCredentialStore(
         self.handle_unlock_dialog(MASTER_PASSWORD)
         assert self.credential_store_unlocked_master_password()
 
-    def test_skip_unlock_keeps_store_locked(self):
-        # Clicking Skip dismisses the unlock dialog but leaves the store locked.
+    def test_cancel_unlock_keeps_store_locked(self):
+        # Clicking Cancel dismisses the unlock dialog but leaves the store locked
+        # (opened from the indicator, no connect waits, so no fall-through, #5188).
         # Restore an unlocked store afterward for the later change-password test.
         self.setup_master_password_store(MASTER_PASSWORD)
         self.lock_credential_store()
         self.open_unlock_dialog()
 
-        self.driver.click("unlock-dialog-skip")
+        self.driver.click("unlock-dialog-cancel")
         self.wait(
             lambda: not self.driver.exists("unlock-dialog-input"),
             what="the unlock dialog to close",

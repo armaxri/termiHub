@@ -55,6 +55,7 @@ export type ConnectionErrorKind =
   | "refused"
   | "unreachable"
   | "dns"
+  | "host-key-rejected"
   | "other";
 
 /**
@@ -72,6 +73,9 @@ const CODE_TO_KIND: Partial<Record<IpcErrorCode, Exclude<ConnectionErrorKind, "o
   refused: "refused",
   unreachable: "unreachable",
   dns: "dns",
+  // An attended connect only gets this when the user rejected the key in the
+  // trust prompt (#5185); an unattended refusal never opens a terminal tab.
+  host_key_untrusted: "host-key-rejected",
 };
 
 /**
@@ -98,6 +102,8 @@ export function connectionErrorHeading(kind: ConnectionErrorKind): string | null
       return t("connection.heading.unreachable");
     case "dns":
       return t("connection.heading.dns");
+    case "host-key-rejected":
+      return t("connection.heading.hostKeyRejected");
     default:
       return null;
   }
@@ -223,6 +229,11 @@ export function connectionErrorHint(
       return { text: t("connection.hint.unreachable") };
     case "dns":
       return { text: t("connection.hint.dns") };
+    case "host-key-rejected":
+      // Only SSH has a host key to reject.
+      return family === "ssh" || family === "unknown"
+        ? { text: t("connection.hint.hostKeyRejected") }
+        : null;
     case "other":
       return null;
   }

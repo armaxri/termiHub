@@ -170,6 +170,24 @@ describe("AgentNode — row action keys (#5181)", () => {
     await flushAsync();
   }
 
+  /**
+   * Confirm a delete whose row stays (the store mock removes nothing) and drain
+   * the 2 s focus-rescue poll it starts. Left on real timers, that poll outlives
+   * the test and, on a slow runner, focuses the next test's agent header the
+   * moment a closing dialog leaves focus on `body`.
+   */
+  function confirmAndDrainFocusRescue() {
+    vi.useFakeTimers();
+    try {
+      act(() => q("confirm-delete-confirm")!.click());
+      act(() => {
+        vi.runAllTimers();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   describe("context menu", () => {
     it("Shift+F10 on a saved connection opens its menu", async () => {
       await render();
@@ -245,7 +263,7 @@ describe("AgentNode — row action keys (#5181)", () => {
       await render();
       await openWith(folderRow(), "Delete");
       expect(q("confirm-delete-dialog")?.textContent).toContain("Servers");
-      act(() => q("confirm-delete-confirm")!.click());
+      confirmAndDrainFocusRescue();
       expect(deleteAgentFolder).toHaveBeenCalledWith(AGENT_ID, "f1");
     });
 
@@ -253,7 +271,7 @@ describe("AgentNode — row action keys (#5181)", () => {
       await render();
       await openWith(headerToggle(), "Delete");
       expect(q("confirm-delete-dialog")?.textContent).toContain("Keys Agent");
-      act(() => q("confirm-delete-confirm")!.click());
+      confirmAndDrainFocusRescue();
       expect(deleteRemoteAgent).toHaveBeenCalledWith(AGENT_ID);
     });
 

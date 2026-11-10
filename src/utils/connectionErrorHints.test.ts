@@ -127,6 +127,8 @@ describe("connectionErrorHint — every kind for every family", () => {
     refused: FAMILIES,
     unreachable: FAMILIES,
     dns: FAMILIES,
+    // Only SSH has a host key to reject (#5185).
+    "host-key-rejected": ["ssh", "unknown"],
     other: [],
   };
 
@@ -229,5 +231,16 @@ describe("network failure kinds (#5183)", () => {
     expect(connectionErrorKindFromCode(parsed.code)).toBe("refused");
     expect(parsed.message).toBe("db.internal:2222: Connection refused (os error 61)");
     expect(parsed.message).not.toMatch(/failed:.*failed:/i);
+  });
+});
+
+describe("rejected host key (#5185)", () => {
+  it("maps host_key_untrusted to host-key-rejected with its own heading and hint", () => {
+    expect(connectionErrorKindFromCode("host_key_untrusted")).toBe("host-key-rejected");
+    expect(connectionErrorHeading("host-key-rejected")).toBe("You rejected the host key");
+    expect(connectionErrorHint("ssh", "host-key-rejected")?.text).toMatch(
+      /rejected the server's host key/
+    );
+    expect(isNetworkErrorKind("host-key-rejected")).toBe(false);
   });
 });

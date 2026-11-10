@@ -219,15 +219,44 @@ pub const TEST_REGISTRY_IDLE_SECS: &str = "15";
 )]
 pub const TEST_DAEMON_DETACHED_SECS: &str = "120";
 
-/// Env for a to-be-spawned `--listen` agent (pass to `Command::envs`) that
-/// points it at a registry endpoint inside `config_home` (a unix socket path)
-/// instead of the developer's real per-user one, and bounds the lifetimes of
-/// the registry and of any session daemon it spawns (#3636).
+/// The isolated registry endpoint [`isolated_registry_env`] points an agent
+/// spawned with `config_home` at: a socket inside `config_home` on unix; on
+/// windows a pipe name derived from this process and `config_home` (the
+/// `\\.\pipe\` namespace is machine-global, with no directory to scope it).
+/// Deterministic, so a test's drop guard can find the registry again.
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
+pub fn isolated_registry_endpoint(config_home: &Path) -> String {
+    #[cfg(windows)]
+    {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        config_home.hash(&mut hasher);
+        format!(
+            r"\\.\pipe\termihub-test-{}-{:016x}",
+            std::process::id(),
+            hasher.finish()
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        config_home
+            .join("registry.sock")
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+/// Env for a to-be-spawned agent (pass to `Command::envs`) that points it at
+/// [`isolated_registry_endpoint`] instead of the developer's real per-user
+/// registry, and bounds the lifetimes of the registry and of any session daemon
+/// it spawns (#3636).
 ///
 /// Without this an agent joins — or spawns — the live shared registry at
-/// `/tmp/termihub/<uid>/registry.sock`, which then stays up for as long as any
-/// leaked test agent is still connected to it.
-#[cfg(unix)]
+/// `/tmp/termihub/<uid>/registry.sock` (a per-user pipe on windows), which then
+/// stays up for as long as any leaked test agent is still connected to it.
 #[allow(
     dead_code,
     reason = "shared test helper; not every test binary uses it"
@@ -236,7 +265,7 @@ pub fn isolated_registry_env(config_home: &Path) -> [(&'static str, std::ffi::Os
     [
         (
             "TERMIHUB_REGISTRY_ENDPOINT",
-            config_home.join("registry.sock").into_os_string(),
+            isolated_registry_endpoint(config_home).into(),
         ),
         (
             "TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS",

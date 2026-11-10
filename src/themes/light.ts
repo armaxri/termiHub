@@ -34,6 +34,10 @@ export const lightTheme: ThemeDefinition = {
     textPrimary: "#383a42",
     textSecondary: "#5e6670",
     textMuted: "#686d74",
+    // #5200: muted hints on hovered/selected rows. #686d74 measures 4.25:1 on
+    // bgHover and 3.59:1 on bgActive; deriveTextMutedOnSelection nudges it 14%
+    // towards black (5.34:1 / 4.50:1). Locked by contrast.test.ts.
+    textMutedOnSelection: "#595e64",
     textDisabled: "#a0a0a0",
     textAccent: "#0366d6",
     textLink: "#0366d6",

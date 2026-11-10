@@ -237,6 +237,28 @@ describe("classifyFailure (#5159)", () => {
     );
   });
 
+  // coverage.yml's Windows job (#5160) shares the gate step's name; the job
+  // name tells which platform's baseline dropped.
+  it("names the platform job of a Windows-only ratchet drop", () => {
+    const windows = (steps) => ({ ...job(steps), name: "Unified Coverage (Windows)" });
+    const f = classifyFailure(lane, [
+      job([["Coverage ratchet", "success"]]),
+      windows([["Coverage ratchet", "failure"]]),
+    ]);
+    expect(f.kind).toBe("gate");
+    expect(describeFailure(f)).toBe("ratchet drop (Unified Coverage (Windows) / Coverage ratchet)");
+  });
+
+  it("calls a drop on one platform and a broken run on the other a broken lane", () => {
+    const windows = (steps) => ({ ...job(steps), name: "Unified Coverage (Windows)" });
+    const f = classifyFailure(lane, [
+      job([["Coverage ratchet", "failure"]]),
+      windows([["Run unified coverage", "failure"]]),
+    ]);
+    expect(f.kind).toBe("broken");
+    expect(f.detail).toBe("Unified Coverage (Windows) / Run unified coverage");
+  });
+
   it("is a broken lane when the lane has no gate steps or nothing failed", () => {
     const failed = [job([["Coverage ratchet", "failure"]])];
     expect(classifyFailure(daily(), failed).kind).toBe("broken");

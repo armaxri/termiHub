@@ -155,7 +155,8 @@ pub(crate) fn on_lock_failure(err: &DataDirLockError) -> LockFailureAction {
 }
 
 /// Startup entry point: in portable mode, lock the data dir before any store
-/// is built. Returns the held lock (keep it alive for the whole run).
+/// is built and before the durable log file (which lives in `<data>/logs`)
+/// opens (#5210). Returns the held lock (keep it alive for the whole run).
 ///
 /// If another instance already holds this data dir, shows a native error
 /// dialog and exits the process — this launch must not write the shared

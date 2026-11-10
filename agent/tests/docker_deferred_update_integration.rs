@@ -52,7 +52,10 @@
 //! self-replace overwrites *that* copy, never cargo's build artifact.
 //!
 //! Skips cleanly when Docker is unavailable, matching `docker_integration.rs`.
-//! Unix-only: the self-replace + re-exec (`apply_update_binary`) is Unix-only.
+//! Unix-only (#5160 reviewed it): the self-replace + re-exec
+//! (`apply_update_binary`) is Unix-only — on Windows the apply is a stub that
+//! errors — and the busy session is a Linux container, which a Windows runner
+//! cannot host.
 
 #![cfg(unix)]
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { RefreshCw, Zap, Ban, Copy, X, Pencil } from "lucide-react";
+import { RefreshCw, Zap, Ban, Copy, X, Pencil, KeyRound } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui";
@@ -399,6 +399,7 @@ export function TerminalConnectionOverlay({
   // stage, an agent session, or a single-step type).
   const failedAt: StepId | undefined = viaAgent ? "start" : reported;
   const networkFailure = phase === "failed" && isNetworkErrorKind(errorKind) && error !== "";
+  const hostKeyRejected = phase === "failed" && errorKind === "host-key-rejected";
   const showSteps = failedAt !== undefined || steps.length === 1;
   // Same words as the ConnectProgress defaults; spelled out for the announcement.
   const headings: Record<ConnectProgressPhase, string> = {
@@ -430,15 +431,30 @@ export function TerminalConnectionOverlay({
         }
         actions={
           <>
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<RefreshCw size={14} />}
-              onClick={handleRetry}
-              data-testid="terminal-connection-retry-btn"
-            >
-              Retry
-            </Button>
+            {hostKeyRejected ? (
+              // A deliberate reject is not a failure a retry fixes: offer to
+              // review the key again — reconnecting re-opens the trust prompt —
+              // instead of a Retry that would loop on it (#5185).
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<KeyRound size={14} />}
+                onClick={handleRetry}
+                data-testid="terminal-connection-review-key-btn"
+              >
+                {t("connection.action.reviewKey")}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<RefreshCw size={14} />}
+                onClick={handleRetry}
+                data-testid="terminal-connection-retry-btn"
+              >
+                Retry
+              </Button>
+            )}
             {connectionId && !viaAgent && phase !== "aborted" && (
               <Button
                 size="sm"

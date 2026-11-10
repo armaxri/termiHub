@@ -355,17 +355,17 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
 
   it("cancels cleanly when the store unlock dialog is dismissed", async () => {
     mockBackend({ stored: "vault-secret" });
-    const requestUnlock = vi.fn().mockResolvedValue(false);
+    const requestUnlockOutcome = vi.fn().mockResolvedValue("canceled");
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      requestUnlock,
+      requestUnlockOutcome,
     });
     render(CONN_STORED_PW.id);
     await flush();
 
     await clickTest();
 
-    expect(requestUnlock).toHaveBeenCalled();
+    expect(requestUnlockOutcome).toHaveBeenCalled();
     expect(commandCalls("test_connection")).toHaveLength(0);
     expect(toastError).not.toHaveBeenCalled();
     expect(toastInfo).toHaveBeenCalledWith("Connection test canceled.");

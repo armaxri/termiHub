@@ -48,6 +48,9 @@
      sidebar surface) into the same bluish-gray family at an AA-compliant
      luminance — kept in sync with dark.ts and locked by contrast.test.ts. */
   --text-muted: #838c9c;
+  /* #5200: --text-muted for hints on hovered/selected rows (--bg-hover /
+     --bg-active), where #838c9c drops to 4.17:1. Kept in sync with dark.ts. */
+  --text-muted-on-selection: #8992a1;
   --text-disabled: #3d4557;
   --text-accent: #5aa6ff;
   --text-link: #4190ee;

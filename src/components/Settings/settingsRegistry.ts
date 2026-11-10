@@ -920,6 +920,27 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "importSshConfig",
+    label: "Import from ~/.ssh/config",
+    description: "Create saved SSH connections from the hosts in your OpenSSH client config",
+    category: "import",
+    keywords: ["ssh", "ssh config", "openssh", "hosts", "import", "bulk", "onboard"],
+  },
+  {
+    id: "importInventory",
+    label: "Onboard hosts from a CSV / inventory",
+    description: "Create many saved connections at once from a CSV or inventory file",
+    category: "import",
+    keywords: ["csv", "inventory", "fleet", "onboard", "hosts", "bulk", "import", "tsv"],
+  },
+  {
+    id: "importExportConnections",
+    label: "Import / Export Connections",
+    description: "Move saved connections and folders between termiHub installs as a JSON file",
+    category: "import",
+    keywords: ["import", "export", "json", "connections", "share", "transfer", "file"],
+  },
+  {
     id: "portableMode",
     label: "Portable Mode",
     description: "Run termiHub from a USB drive or any directory without system installation",

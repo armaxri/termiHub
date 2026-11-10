@@ -26,6 +26,7 @@ const REQUIRED_KEYS: (keyof ThemeColors)[] = [
   "textPrimary",
   "textSecondary",
   "textMuted",
+  "textMutedOnSelection",
   "textDisabled",
   "textAccent",
   "textLink",

@@ -235,9 +235,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 **Folders** — Create folders via the toolbar icon. Drag and drop connections between folders. Deleting a folder moves children to the parent.
 
-**Import/Export** — Use the gear icon to export connections to JSON or import from a JSON file.
-
-**Import from other tools** — The Connections header imports from your `~/.ssh/config` and from a CSV / host inventory. Migrating from **MobaXterm** is a one-time step, described in [Importing from MobaXterm](#importing-from-mobaxterm) below.
+**Import & Export** — Imports are one-time steps, so they all live on **Settings → Import & Migration**: import hosts from your `~/.ssh/config`, onboard hosts from a CSV / host inventory, import or export connections as a JSON file, and migrate from **MobaXterm** (described in [Importing from MobaXterm](#importing-from-mobaxterm) below). The **Import connections…** icon in the Connections header opens that page. To move all app data to a new machine, use **Settings → Backup & Restore**. In the connection editor, **Fill from ~/.ssh/config…** fills in the SSH connection you are editing from one host of your OpenSSH config.
 
 **External Connection Files** — Load shared connection configs from external JSON files (e.g., from a git repo). Add them in Settings > External Connection Files. External connections appear read-only with a git-folder icon.
 
@@ -245,7 +243,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 #### Importing from MobaXterm
 
-The import lives under **Settings → Import & Migration** (also in the gear menu as **Import from MobaXterm…**). It always shows a preview first and creates nothing until you click **Import**.
+The import lives under **Settings → Import & Migration**. It always shows a preview first and creates nothing until you click **Import**.
 
 - **Finding the file** — The settings page tells you whether it found your MobaXterm configuration (on Windows: `%APPDATA%\MobaXterm\MobaXterm.ini` for the installed edition, or a `MobaXterm` folder in your Documents). **Import from MobaXterm…** opens a preview of it right away. On any OS — and for the portable edition, whose `MobaXterm.ini` sits next to its `.exe` — click **Choose file…** and pick a `MobaXterm.ini` or an exported `.mxtsessions` file (MobaXterm: right-click **User sessions** → **Export all sessions to file**). Files in UTF-8 or MobaXterm's Windows-1252 encoding are both read.
 - **Sessions** — SSH (host, port, user, private key), Telnet, Serial, RDP, VNC, FTP, SFTP (imported as SSH), local shell and WSL sessions are importable; anything else (Browser, Mosh, XDMCP, Rsh, File, S3) is listed as **Not imported** with the reason. MobaXterm's folder tree is recreated under the target folder you pick, existing folders with the same name are reused, and names that already exist get a "(2)" suffix. Path placeholders in key paths (`_ProfileDir_`, `_MyDocuments_`, `_CurrentDrive_`, …) are resolved for this computer.

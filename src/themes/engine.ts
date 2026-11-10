@@ -39,6 +39,7 @@ export const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
   textPrimary: "--text-primary",
   textSecondary: "--text-secondary",
   textMuted: "--text-muted",
+  textMutedOnSelection: "--text-muted-on-selection",
   textDisabled: "--text-disabled",
   textAccent: "--text-accent",
   textLink: "--text-link",

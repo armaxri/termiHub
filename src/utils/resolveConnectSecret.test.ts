@@ -4,20 +4,20 @@ vi.mock("@/services/api", () => ({
   isSshKeyEncrypted: vi.fn(),
 }));
 vi.mock("@/utils/ensureCredentialStoreUnlocked", () => ({
-  ensureCredentialStoreUnlocked: vi.fn(),
+  ensureCredentialStoreUnlockedForConnect: vi.fn(),
 }));
 vi.mock("@/utils/resolveConnectionCredential", () => ({
   resolveConnectionCredential: vi.fn(),
 }));
 
 import { isSshKeyEncrypted } from "@/services/api";
-import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { ensureCredentialStoreUnlockedForConnect } from "@/utils/ensureCredentialStoreUnlocked";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import type { SettingsSchema } from "@/types/schema";
 import { resolveConnectSecret, type ResolveConnectSecretOptions } from "./resolveConnectSecret";
 
 const mockedKeyEncrypted = vi.mocked(isSshKeyEncrypted);
-const mockedUnlock = vi.mocked(ensureCredentialStoreUnlocked);
+const mockedUnlock = vi.mocked(ensureCredentialStoreUnlockedForConnect);
 const mockedResolve = vi.mocked(resolveConnectionCredential);
 
 /** SSH-like schema: password field visible only for password auth. */
@@ -56,7 +56,7 @@ describe("resolveConnectSecret", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requestPassword = vi.fn<ResolveConnectSecretOptions["requestPassword"]>();
-    mockedUnlock.mockResolvedValue(true);
+    mockedUnlock.mockResolvedValue("unlocked");
     mockedResolve.mockResolvedValue({
       password: null,
       usedStoredCredential: false,
@@ -181,7 +181,7 @@ describe("resolveConnectSecret", () => {
   });
 
   it("returns canceled when the unlock gate is dismissed", async () => {
-    mockedUnlock.mockResolvedValue(false);
+    mockedUnlock.mockResolvedValue("canceled");
     const r = await resolveConnectSecret({
       schema: SCHEMA,
       settings: PASSWORD_SETTINGS,
@@ -190,6 +190,22 @@ describe("resolveConnectSecret", () => {
     });
     expect(r).toEqual({ status: "canceled" });
     expect(requestPassword).not.toHaveBeenCalled();
+  });
+
+  it("connect without saved password: prompts without Save and skips the store (#5188)", async () => {
+    mockedUnlock.mockResolvedValue("skipped");
+    requestPassword.mockResolvedValue({ password: "typed", shouldSave: false });
+    const r = await resolveConnectSecret({
+      schema: SCHEMA,
+      settings: PASSWORD_SETTINGS,
+      connectionId: "c1",
+      requestPassword,
+    });
+    expect(mockedResolve).not.toHaveBeenCalled();
+    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password", {
+      allowSave: false,
+    });
+    expect(r).toMatchObject({ status: "resolved", source: "prompt", secret: "typed" });
   });
 
   it("returns canceled when the password prompt is dismissed", async () => {
@@ -300,7 +316,7 @@ describe("resolveConnectSecret — telnet auto-login schema", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedUnlock.mockResolvedValue(true);
+    mockedUnlock.mockResolvedValue("unlocked");
   });
 
   it("needs no secret for manual login", async () => {

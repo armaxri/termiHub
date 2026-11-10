@@ -171,17 +171,62 @@ impl HostKeyInfo {
     }
 }
 
+/// How long an interactive host-key trust prompt may stay unanswered before
+/// the connect fails (#5185).
+///
+/// The prompt's wait is excluded from the connect timeout (comparing a
+/// fingerprint with what an administrator reads out takes time), so this is the
+/// only bound on it. It matches the keyboard-interactive prompt's bound.
+pub const HOST_KEY_PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The outcome of a host-key trust decision (#5185).
+///
+/// A plain `bool` cannot tell a **person** saying no from a policy refusing
+/// without asking — and the two need different words: "You rejected the host
+/// key" is only true when somebody actually did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKeyDecision {
+    /// Trust the key and proceed with the handshake.
+    Accepted,
+    /// Refused by policy, without asking anybody (the strict headless default,
+    /// or a verifier that cannot prompt).
+    Refused,
+    /// The user was asked and rejected the key (the trust prompt's Reject, or
+    /// closing it).
+    RejectedByUser,
+}
+
+impl HostKeyDecision {
+    /// Whether the handshake may proceed.
+    pub fn is_accepted(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+}
+
 /// Decides whether a presented server host key should be trusted (#1959).
 ///
-/// Called from the russh handshake on the connecting task; implementations may
-/// block on an interactive user prompt (the whole connect is bounded by
-/// [`SshConfig::connect_timeout`](crate::config::SshConfig::connect_timeout), so
-/// a never-answered prompt fails the connect rather than hanging forever).
+/// Called from the russh handshake (on russh's session task); implementations
+/// may block on an interactive user prompt. That wait is excluded from the
+/// connect timeout and bounded by [`HOST_KEY_PROMPT_TIMEOUT`] instead; when the
+/// connect is aborted or times out the pending decision future is dropped, so
+/// an implementation must treat a drop as "no answer" (#5185).
 #[async_trait]
 pub trait HostKeyVerifier: Send + Sync {
     /// Return `true` to accept the key and proceed, `false` to reject and abort
     /// the connection.
     async fn verify(&self, info: &HostKeyInfo) -> bool;
+
+    /// Like [`verify`](Self::verify), but saying whether a refusal came from the
+    /// user (#5185). The default maps `false` to [`HostKeyDecision::Refused`];
+    /// a verifier that prompts overrides it to report
+    /// [`HostKeyDecision::RejectedByUser`] when the user said no.
+    async fn decide(&self, info: &HostKeyInfo) -> HostKeyDecision {
+        if self.verify(info).await {
+            HostKeyDecision::Accepted
+        } else {
+            HostKeyDecision::Refused
+        }
+    }
 
     /// Decide **without prompting** whether to trust the key, for an
     /// unattended connect (a scheduled run, #3527): only a key that is already
@@ -211,13 +256,20 @@ pub fn host_key_verifier() -> Option<Arc<dyn HostKeyVerifier>> {
 
 /// Decide whether to accept a presented host key.
 ///
-/// Delegates to the registered [`HostKeyVerifier`]; with none registered it
-/// applies the strict headless default ([`default_verify`]) — trust only keys
-/// already in `~/.ssh/known_hosts`, refuse everything else (see the module docs).
-pub(crate) async fn verify_host_key(info: &HostKeyInfo) -> bool {
-    match host_key_verifier() {
-        Some(verifier) => verifier.verify(info).await,
-        None => default_verify(info),
+/// Delegates to the registered [`HostKeyVerifier`]'s
+/// [`decide`](HostKeyVerifier::decide); with none registered it applies the
+/// strict headless default ([`default_verify`]) — trust only keys already in
+/// `~/.ssh/known_hosts`, refuse everything else (see the module docs).
+///
+/// `verifier` overrides the process-wide one (tests only).
+pub(crate) async fn decide_host_key(
+    info: &HostKeyInfo,
+    verifier: Option<Arc<dyn HostKeyVerifier>>,
+) -> HostKeyDecision {
+    match verifier.or_else(host_key_verifier) {
+        Some(verifier) => verifier.decide(info).await,
+        None if default_verify(info) => HostKeyDecision::Accepted,
+        None => HostKeyDecision::Refused,
     }
 }
 
@@ -432,7 +484,33 @@ mod tests {
         );
     }
 
-    /// A registered verifier's verdict is what `verify_host_key` returns, and the
+    /// The default `decide` reports a `false` verdict as a policy refusal, never
+    /// as the user's rejection — only a prompting verifier can claim that
+    /// (#5185).
+    #[tokio::test]
+    async fn default_decide_maps_verify_to_policy_outcomes() {
+        let refuse = FixedVerifier {
+            accept: false,
+            called: AtomicBool::new(false),
+        };
+        assert_eq!(
+            refuse.decide(&sample_info()).await,
+            HostKeyDecision::Refused
+        );
+        let accept = FixedVerifier {
+            accept: true,
+            called: AtomicBool::new(false),
+        };
+        assert_eq!(
+            accept.decide(&sample_info()).await,
+            HostKeyDecision::Accepted
+        );
+        assert!(HostKeyDecision::Accepted.is_accepted());
+        assert!(!HostKeyDecision::Refused.is_accepted());
+        assert!(!HostKeyDecision::RejectedByUser.is_accepted());
+    }
+
+    /// A registered verifier's verdict is what `decide_host_key` returns, and the
     /// verifier is actually consulted (no blind accept).
     #[tokio::test]
     async fn registered_verifier_is_consulted() {

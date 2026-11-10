@@ -20,8 +20,6 @@ import { getByRole } from "@/test/accessibleRoles";
 vi.mock("@/components/OpenConnections/OpenConnectionsModal", () => ({
   OpenConnectionsModal: () => null,
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-vi.mock("@tauri-apps/plugin-fs", () => ({ readTextFile: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -105,21 +103,21 @@ describe("ActivityBar Settings menu — shortcuts discoverability (#1353)", () =
   });
 });
 
-describe("ActivityBar Settings menu — MobaXterm import (#4850)", () => {
-  it("offers Import from MobaXterm next to Import Connections and opens the dialog", async () => {
+describe("ActivityBar Settings menu — no import/export entries (#5195)", () => {
+  it("leaves imports and exports to Settings → Import & Migration", async () => {
     render();
     await openSettingsMenu();
 
-    const item = document.querySelector<HTMLElement>(
-      '[data-testid="settings-menu-import-mobaxterm"]'
-    );
-    expect(item?.textContent).toContain("Import from MobaXterm");
-    expect(useAppStore.getState().mobaxtermImportOpen).toBe(false);
-
-    await act(async () => {
-      item!.click();
-    });
-    expect(useAppStore.getState().mobaxtermImportOpen).toBe(true);
+    expect(document.querySelector('[data-testid="settings-menu-open"]')).not.toBeNull();
+    for (const testid of [
+      "settings-menu-import",
+      "settings-menu-import-mobaxterm",
+      "settings-menu-export",
+    ]) {
+      expect(document.querySelector(`[data-testid="${testid}"]`)).toBeNull();
+    }
+    expect(document.body.textContent).not.toContain("Import Connections");
+    expect(document.body.textContent).not.toContain("Export Connections");
   });
 });
 

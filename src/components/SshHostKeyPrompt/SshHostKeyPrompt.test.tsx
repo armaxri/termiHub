@@ -12,11 +12,16 @@ import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
 
 // Capture the event callback the component registers so tests can fire prompts.
 let emitPrompt: ((p: SshHostKeyPromptPayload) => void) | undefined;
+let emitClosed: ((p: { prompt_id: string }) => void) | undefined;
 const decisionMock = vi.fn().mockResolvedValue(true);
 
 vi.mock("@/services/events", () => ({
   onSshHostKeyPrompt: (cb: (p: SshHostKeyPromptPayload) => void) => {
     emitPrompt = cb;
+    return Promise.resolve(() => {});
+  },
+  onSshHostKeyPromptClosed: (cb: (p: { prompt_id: string }) => void) => {
+    emitClosed = cb;
     return Promise.resolve(() => {});
   },
 }));
@@ -204,5 +209,56 @@ describe("SshHostKeyPrompt", () => {
       "SHA256:99887766"
     );
     expect(document.querySelector('[data-testid="ssh-hostkey-mitm-warning"]')).not.toBeNull();
+  });
+});
+
+describe("SshHostKeyPrompt — stale prompts (#5185)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    decisionMock.mockClear();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  const modal = () => document.querySelector('[data-testid="ssh-hostkey-prompt"]');
+
+  it("closes the open prompt when its connect is aborted or times out", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    expect(modal()).not.toBeNull();
+
+    act(() => emitClosed?.({ prompt_id: unknownPrompt.prompt_id }));
+
+    expect(modal()).toBeNull();
+    // Closing a withdrawn prompt is not a verdict: nothing is sent back.
+    expect(decisionMock).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued prompt whose connect gave up, keeping the open one", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    act(() => emitPrompt?.({ ...unknownPrompt, prompt_id: "p-2", host: "second.example" }));
+
+    act(() => emitClosed?.({ prompt_id: "p-2" }));
+    expect(document.querySelector('[data-testid="ssh-hostkey-host"]')?.textContent).toBe(
+      "server.example:2222"
+    );
+
+    click("ssh-hostkey-reject");
+    expect(modal()).toBeNull();
+    expect(decisionMock).toHaveBeenCalledTimes(1);
+    expect(decisionMock).toHaveBeenCalledWith("p-1", false, false);
+  });
+
+  it("ignores a close for a prompt it never showed", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    act(() => emitClosed?.({ prompt_id: "unknown" }));
+    expect(modal()).not.toBeNull();
   });
 });
