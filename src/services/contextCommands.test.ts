@@ -128,13 +128,25 @@ describe("close-tab", () => {
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
   });
 
-  it("opens the confirm dialog when the confirm setting is enabled (default)", () => {
+  it("asks the live-session confirm for a live terminal (default), like the tab X (#5189)", () => {
     const tabId = addActiveTab();
     cmd.run();
     expect(activeLeaf()!.tabs).toHaveLength(1);
-    const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
-    expect(confirm?.kind).toBe("tab");
-    if (confirm?.kind === "tab") expect(confirm.tabId).toBe(tabId);
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+    const confirm = useAppStore.getState().pendingSessionCloseConfirm;
+    expect(confirm).toMatchObject({
+      kind: "tab",
+      tabId,
+      optOutSetting: "confirmCloseTabOnShortcut",
+    });
+  });
+
+  it("closes a clean settings tab immediately, with no prompt (#5189)", () => {
+    addActiveTab("settings");
+    cmd.run();
+    expect(activeLeaf()!.tabs).toHaveLength(0);
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+    expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
   });
 
   it("run() is inert when there is no target", () => {
@@ -207,18 +219,13 @@ describe("close-tab — unsaved-editor guard (#4410)", () => {
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
   });
 
-  it("asks the plain shortcut confirm for a clean editor tab when the setting is on", () => {
-    const tabId = addActiveTab("editor");
+  it("closes a clean editor tab immediately even when the setting is on (#5189)", () => {
+    addActiveTab("editor");
     seedSettings({ confirmCloseTabOnShortcut: true });
     cmd.run();
-    expect(activeLeaf()!.tabs).toHaveLength(1);
+    expect(activeLeaf()!.tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingCloseRequest).toBeNull();
-    const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
-    expect(confirm?.kind).toBe("tab");
-    if (confirm?.kind === "tab") {
-      expect(confirm.tabId).toBe(tabId);
-      expect(confirm.unsaved).toBeFalsy();
-    }
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
   });
 
   it("routes through the shared tab-close guard helper", () => {
