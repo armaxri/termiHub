@@ -6,15 +6,13 @@
 //! freshly re-parented view. See [`crate::window`] for the coordinator.
 
 use serde::Serialize;
-use tauri::{
-    AppHandle, Emitter, EventTarget, Manager, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::commands::remote_desktop::release_on_takeover;
 use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
+use crate::window::events::WindowEventSink;
 use crate::window::quit::{finish_if_ready, QuitCoordinator, QUIT_CANCELLED_EVENT};
 use crate::window::{
     superseded_notification, HandoffRecord, WindowLayoutReport, WindowManager, MAIN_WINDOW_LABEL,
@@ -87,7 +85,7 @@ pub async fn open_window(
     // Notify every open window that the window set changed so the status-bar
     // affordance (#1902) can refresh its count. The matching close-side emit
     // lives in the `Destroyed` RunEvent handler in `lib.rs`.
-    if let Err(e) = app.emit("windows-changed", ()) {
+    if let Err(e) = app.windows_changed() {
         tracing::warn!("Failed to emit windows-changed for {label}: {e}");
     }
 
@@ -116,7 +114,12 @@ pub fn claim_session(
     window: WebviewWindow,
     window_manager: State<'_, WindowManager>,
 ) -> Option<String> {
-    let previous = window_manager.claim(&session_id, window.label());
+    let previous = claim_session_for(
+        &window_manager,
+        window.app_handle(),
+        &session_id,
+        window.label(),
+    );
     let app = window.app_handle();
     // #3402: control of a graphical session moved to this window — release
     // whatever the previous controller still held on the remote (the evicted
@@ -132,10 +135,24 @@ pub fn claim_session(
             });
         }
     }
+    previous
+}
+
+/// The claim handshake behind [`claim_session`], over an injectable sink.
+///
+/// The map is updated **before** any event fires, so a window that reacts to
+/// `session-ownership-changed` by re-reading the owners already sees the claim.
+pub(crate) fn claim_session_for(
+    window_manager: &WindowManager,
+    sink: &dyn WindowEventSink,
+    session_id: &str,
+    label: &str,
+) -> Option<String> {
+    let previous = window_manager.claim(session_id, label);
     // Push the ownership change to every window (#1985) so a non-owning window
     // refreshes its `session → window` mirror immediately, instead of only once
     // a `transfer-progress` event happens to flow (which caused a brief flash).
-    if let Err(e) = app.emit("session-ownership-changed", ()) {
+    if let Err(e) = sink.session_ownership_changed() {
         tracing::warn!("Failed to emit session-ownership-changed on claim: {e}");
     }
     // SM-026 / #3368: if this claim superseded a *different* window, tell that
@@ -144,14 +161,8 @@ pub fn claim_session(
     // false) and it shows "Taken over by another window" with a Reclaim button.
     // Reclaim is simply this same command issued from the evicted window; nothing
     // claims automatically, so control never ping-pongs between windows.
-    if let Some((target, payload)) =
-        superseded_notification(previous.clone(), window.label(), &session_id)
-    {
-        if let Err(e) = app.emit_to(
-            EventTarget::labeled(&target),
-            "session-ownership-superseded",
-            payload,
-        ) {
+    if let Some((target, payload)) = superseded_notification(previous.clone(), label, session_id) {
+        if let Err(e) = sink.session_ownership_superseded(&target, payload) {
             tracing::warn!("Failed to emit session-ownership-superseded to {target}: {e}");
         }
     }
@@ -166,10 +177,25 @@ pub fn release_session(
     window: WebviewWindow,
     window_manager: State<'_, WindowManager>,
 ) -> bool {
-    let removed = window_manager.release(&session_id, window.label());
+    release_session_for(
+        &window_manager,
+        window.app_handle(),
+        &session_id,
+        window.label(),
+    )
+}
+
+/// The release behind [`release_session`], over an injectable sink.
+pub(crate) fn release_session_for(
+    window_manager: &WindowManager,
+    sink: &dyn WindowEventSink,
+    session_id: &str,
+    label: &str,
+) -> bool {
+    let removed = window_manager.release(session_id, label);
     // Only a real removal changed the map; a non-owner no-op release does not.
     if removed {
-        if let Err(e) = window.app_handle().emit("session-ownership-changed", ()) {
+        if let Err(e) = sink.session_ownership_changed() {
             tracing::warn!("Failed to emit session-ownership-changed on release: {e}");
         }
     }
@@ -237,9 +263,18 @@ pub fn report_window_tab_count(
     count: usize,
     window_manager: State<'_, WindowManager>,
 ) -> Result<(), String> {
-    window_manager.set_tab_count(window.label(), count);
-    app.emit("windows-changed", ()).map_err(|e| e.to_string())?;
-    Ok(())
+    report_window_tab_count_for(&window_manager, &app, window.label(), count)
+}
+
+/// The tab-count report behind [`report_window_tab_count`]: record, then nudge.
+pub(crate) fn report_window_tab_count_for(
+    window_manager: &WindowManager,
+    sink: &dyn WindowEventSink,
+    label: &str,
+    count: usize,
+) -> Result<(), String> {
+    window_manager.set_tab_count(label, count);
+    sink.windows_changed()
 }
 
 /// Take (and clear) the hand-off records queued for the **calling** window.
@@ -272,10 +307,27 @@ pub fn report_window_layout(
     active_group_index: usize,
     window_manager: State<'_, WindowManager>,
 ) -> Result<(), String> {
-    let changed = window_manager.report_layout(window.label(), tab_groups, active_group_index);
-    if changed && window.label() != MAIN_WINDOW_LABEL {
-        app.emit("window-layout-changed", ())
-            .map_err(|e| e.to_string())?;
+    report_window_layout_for(
+        &window_manager,
+        &app,
+        window.label(),
+        tab_groups,
+        active_group_index,
+    )
+}
+
+/// The layout report behind [`report_window_layout`]: only a changed layout of
+/// a secondary window nudges, so the main window never re-saves itself in a loop.
+pub(crate) fn report_window_layout_for(
+    window_manager: &WindowManager,
+    sink: &dyn WindowEventSink,
+    label: &str,
+    tab_groups: serde_json::Value,
+    active_group_index: usize,
+) -> Result<(), String> {
+    let changed = window_manager.report_layout(label, tab_groups, active_group_index);
+    if changed && label != MAIN_WINDOW_LABEL {
+        sink.window_layout_changed()?;
     }
     Ok(())
 }
@@ -314,9 +366,19 @@ pub fn send_handoff_to_window(
     handoff: HandoffRecord,
     window_manager: State<'_, WindowManager>,
 ) -> Result<(), String> {
-    window_manager.queue_handoff(&target_label, handoff);
-    app.emit("window-handoff", ()).map_err(|e| e.to_string())?;
-    Ok(())
+    send_handoff_to_window_for(&window_manager, &app, &target_label, handoff)
+}
+
+/// The hand-off behind [`send_handoff_to_window`]: the record is queued
+/// **before** the nudge, so the target's drain on `window-handoff` finds it.
+pub(crate) fn send_handoff_to_window_for(
+    window_manager: &WindowManager,
+    sink: &dyn WindowEventSink,
+    target_label: &str,
+    handoff: HandoffRecord,
+) -> Result<(), String> {
+    window_manager.queue_handoff(target_label, handoff);
+    sink.window_handoff()
 }
 
 /// Replay a session's ring-buffered scrollback so a freshly-created xterm in a
@@ -365,12 +427,20 @@ pub fn quit_window_prompting(window: WebviewWindow, quit: State<'_, QuitCoordina
 /// keeps running and every other window drops its quit dialog.
 #[tauri::command]
 pub fn cancel_quit(app: AppHandle, quit: State<'_, QuitCoordinator>) {
-    if quit.cancel() {
+    cancel_quit_for(&quit, &app);
+}
+
+/// The cancel behind [`cancel_quit`]: only a quit that was actually pending
+/// tells the other windows to drop their dialogs. Returns whether it was.
+pub(crate) fn cancel_quit_for(quit: &QuitCoordinator, sink: &dyn WindowEventSink) -> bool {
+    let cancelled = quit.cancel();
+    if cancelled {
         tracing::info!("Quit cancelled by the user (#4296)");
-        if let Err(e) = app.emit(QUIT_CANCELLED_EVENT, ()) {
+        if let Err(e) = sink.quit_cancelled() {
             tracing::warn!("Failed to emit {QUIT_CANCELLED_EVENT}: {e}");
         }
     }
+    cancelled
 }
 
 /// Quit the app with exit code 0, exactly as an explicit Quit does
@@ -407,6 +477,10 @@ fn exit_app_gated<F: FnOnce()>(bridge_enabled: bool, do_exit: F) -> Result<(), S
     do_exit();
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "window_tests.rs"]
+mod window_tests;
 
 #[cfg(all(test, feature = "test-bridge"))]
 mod test_exit_app_tests {

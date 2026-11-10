@@ -1199,14 +1199,15 @@ pub fn run() -> anyhow::Result<()> {
                     // directly here re-enters a RefCell Tauri already holds.
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = handle.emit("windows-changed", ()) {
+                        use crate::window::events::WindowEventSink;
+                        if let Err(e) = handle.windows_changed() {
                             tracing::warn!("Failed to emit windows-changed on destroy: {e}");
                         }
                         // The destroyed window's sessions were just released
                         // (release_all_for_window above), so push the ownership
                         // change too (#1985) — a surviving window refreshes its
                         // mirror without waiting on a transfer-progress event.
-                        if let Err(e) = handle.emit("session-ownership-changed", ()) {
+                        if let Err(e) = handle.session_ownership_changed() {
                             tracing::warn!(
                                 "Failed to emit session-ownership-changed on destroy: {e}"
                             );

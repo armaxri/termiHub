@@ -443,11 +443,19 @@ fn scan(tauri_src: &Path, core_src: &Path) -> EventInventory {
                 if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
                     continue;
                 }
+                let line = src[..at].matches('\n').count() + 1;
+                // A turbofish call (`.emit::<T>(..)`) would otherwise slip past the
+                // `(` check below and silently drop out of the contract (#5168).
+                if after.trim_start().starts_with("::") {
+                    unresolved.push(format!(
+                        "{rel}:{line}: .{method}::<..>() (drop the turbofish)"
+                    ));
+                    continue;
+                }
                 let open = at + dotted.len() + (after.len() - after.trim_start().len());
                 if !src[open..].starts_with('(') {
                     continue;
                 }
-                let line = src[..at].matches('\n').count() + 1;
                 let args = call_args(src, open);
                 let Some(arg) = args.get(idx) else {
                     unresolved.push(format!("{rel}:{line}: .{method}() with too few args"));
@@ -497,6 +505,23 @@ fn scan(tauri_src: &Path, core_src: &Path) -> EventInventory {
                         }
                     }
                 }
+            }
+        }
+    }
+    // A fully-qualified call (`Emitter::emit(&app, ..)`) has no `.emit` to scan;
+    // flag it so it is rewritten as a method call instead of going unseen.
+    for (rel, src) in &files {
+        for method in EMIT_FIRST_ARG.iter().chain(EMIT_SECOND_ARG) {
+            let path_call = format!("Emitter::{method}");
+            for (at, _) in src.match_indices(&path_call) {
+                let after = &src[at + path_call.len()..];
+                if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                    continue;
+                }
+                let line = src[..at].matches('\n').count() + 1;
+                unresolved.push(format!(
+                    "{rel}:{line}: {path_call}(..) (call it as a method so the scan sees it)"
+                ));
             }
         }
     }
@@ -591,6 +616,14 @@ mod tests {
             "remote-desktop-clipboard",
             "network-scan-result",
             "spawn-picker-requested",
+            // The multi-window events, emitted through `WindowEventSink` (#5168).
+            "windows-changed",
+            "session-ownership-changed",
+            "session-ownership-superseded",
+            "window-handoff",
+            "window-layout-changed",
+            "app-quit-requested",
+            "app-quit-cancelled",
         ] {
             assert!(inv.names.contains(expected), "missing {expected}");
         }
@@ -601,5 +634,61 @@ mod tests {
         ] {
             assert!(!inv.names.contains(removed), "{removed} is emitted again");
         }
+    }
+
+    /// Scan a throwaway `src/` tree holding `files` (relative path, contents).
+    fn scan_tree(files: &[(&str, &str)]) -> EventInventory {
+        let dir = tempfile::tempdir().unwrap();
+        let tauri_src = dir.path().join("src");
+        let core_src = dir.path().join("core");
+        std::fs::create_dir_all(&core_src).unwrap();
+        for (rel, body) in files {
+            let path = tauri_src.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        }
+        let mut inv = scan(&tauri_src, &core_src);
+        // The real FORWARDING_SITES never exist in a synthetic tree.
+        inv.unresolved
+            .retain(|u| !u.starts_with("stale FORWARDING_SITES"));
+        inv
+    }
+
+    #[test]
+    fn literal_const_and_sink_emits_are_all_inventoried() {
+        let inv = scan_tree(&[
+            (
+                "a/events.rs",
+                "pub const X_EVENT: &str = \"x-happened\";\n\
+                 impl Sink for AppHandle { fn x(&self) { self.emit(X_EVENT, ()); } }",
+            ),
+            (
+                "b.rs",
+                "fn f(app: &AppHandle) { app.emit_to(EventTarget::labeled(\"main\"), \"y\", 1); }",
+            ),
+            (
+                "b_tests.rs",
+                "fn t(app: &AppHandle) { app.emit(\"test-only\", ()); }",
+            ),
+        ]);
+        assert!(inv.unresolved.is_empty(), "{:#?}", inv.unresolved);
+        let names: Vec<&str> = inv.names.iter().map(String::as_str).collect();
+        assert_eq!(names, vec!["x-happened", "y"]);
+    }
+
+    #[test]
+    fn emit_forms_the_scan_cannot_read_are_flagged_not_dropped() {
+        let inv = scan_tree(&[(
+            "c.rs",
+            "fn f(app: &AppHandle, name: &str) {\n\
+                 app.emit::<()>(\"turbofish\", ());\n\
+                 Emitter::emit(app, \"ufcs\", ());\n\
+                 app.emit(name, ());\n\
+             }",
+        )]);
+        assert_eq!(inv.unresolved.len(), 3, "{:#?}", inv.unresolved);
+        assert!(inv.unresolved.iter().any(|u| u.contains("turbofish")));
+        assert!(inv.unresolved.iter().any(|u| u.contains("Emitter::emit")));
+        assert!(inv.unresolved.iter().any(|u| u.contains(".emit(name")));
     }
 }

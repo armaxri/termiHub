@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Runtime, State};
 
 use crate::schedules::manager::{
     RunCoverage, ScheduleInput, ScheduleManager, ScheduleView, SchedulerState, WindowRunReport,
@@ -10,7 +10,7 @@ use crate::schedules::manager::{
 use crate::schedules::runner::EVENT_SCHEDULES_CHANGED;
 use crate::utils::errors::TerminalError;
 
-fn notify(app: &AppHandle) {
+fn notify<R: Runtime>(app: &AppHandle<R>) {
     if let Err(e) = app.emit(EVENT_SCHEDULES_CHANGED, ()) {
         tracing::warn!("failed to emit {EVENT_SCHEDULES_CHANGED}: {e}");
     }
@@ -28,9 +28,9 @@ pub fn list_schedules(
 /// Add or update a schedule. New schedules are stored disabled; changing the
 /// action or targets disables the schedule until it is confirmed again.
 #[tauri::command]
-pub fn save_schedule(
+pub fn save_schedule<R: Runtime>(
     schedule: ScheduleInput,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<ScheduleView, TerminalError> {
     let view = manager.save(schedule, chrono::Utc::now(), &chrono::Local)?;
@@ -40,9 +40,9 @@ pub fn save_schedule(
 
 /// Delete a schedule.
 #[tauri::command]
-pub fn delete_schedule(
+pub fn delete_schedule<R: Runtime>(
     schedule_id: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<(), TerminalError> {
     manager.delete(&schedule_id)?;
@@ -53,11 +53,11 @@ pub fn delete_schedule(
 /// Enable or disable a schedule. The first enable must pass `confirmed: true`
 /// (the user confirmed the hosts it sends input to).
 #[tauri::command]
-pub fn set_schedule_enabled(
+pub fn set_schedule_enabled<R: Runtime>(
     schedule_id: String,
     enabled: bool,
     confirmed: bool,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<ScheduleView, TerminalError> {
     let view = manager.set_enabled(
@@ -73,9 +73,9 @@ pub fn set_schedule_enabled(
 
 /// Pause or resume all schedules.
 #[tauri::command]
-pub fn set_schedules_paused(
+pub fn set_schedules_paused<R: Runtime>(
     paused: bool,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<SchedulerState, TerminalError> {
     let state = manager.set_paused(paused, chrono::Utc::now(), &chrono::Local)?;
@@ -85,15 +85,27 @@ pub fn set_schedules_paused(
 
 /// A window's report of a fired run (`token` from the `schedule-fire` event).
 #[tauri::command]
-pub fn report_schedule_run(
+pub fn report_schedule_run<R: Runtime>(
     token: String,
     report: WindowRunReport,
-    window: tauri::Window,
-    app: AppHandle,
+    window: tauri::Window<R>,
+    app: AppHandle<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<(), TerminalError> {
-    if manager.report(&token, window.label(), report, chrono::Utc::now())? {
-        notify(&app);
+    report_run(&app, &manager, &token, window.label(), report)
+}
+
+/// Record window `label`'s report for run `token`; notify only when it
+/// settled the run (an unknown or stale token is ignored).
+fn report_run<R: Runtime>(
+    app: &AppHandle<R>,
+    manager: &ScheduleManager,
+    token: &str,
+    label: &str,
+    report: WindowRunReport,
+) -> Result<(), TerminalError> {
+    if manager.report(token, label, report, chrono::Utc::now())? {
+        notify(app);
     }
     Ok(())
 }
@@ -101,17 +113,20 @@ pub fn report_schedule_run(
 /// This window's frontend is listening for `schedule-fire` (called on boot and
 /// after a reload). Fired runs only go to registered windows.
 #[tauri::command]
-pub fn register_schedule_window(window: tauri::Window, manager: State<'_, Arc<ScheduleManager>>) {
+pub fn register_schedule_window<R: Runtime>(
+    window: tauri::Window<R>,
+    manager: State<'_, Arc<ScheduleManager>>,
+) {
     manager.mark_window_ready(window.label());
 }
 
 /// This window received the fired run `token` and will report its outcome;
 /// `connected` are the target connection ids it runs on itself (#3878).
 #[tauri::command]
-pub fn ack_schedule_run(
+pub fn ack_schedule_run<R: Runtime>(
     token: String,
     connected: Vec<String>,
-    window: tauri::Window,
+    window: tauri::Window<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) {
     manager.ack(&token, window.label(), &connected);
@@ -120,10 +135,14 @@ pub fn ack_schedule_run(
 /// The targets the other windows of run `token` connect themselves (#3878),
 /// asked by the fire's connect window before it connects anything.
 #[tauri::command]
-pub fn schedule_run_coverage(
+pub fn schedule_run_coverage<R: Runtime>(
     token: String,
-    window: tauri::Window,
+    window: tauri::Window<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> RunCoverage {
     manager.coverage(&token, window.label())
 }
+
+#[cfg(test)]
+#[path = "schedules_tests.rs"]
+mod schedules_tests;

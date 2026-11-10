@@ -220,3 +220,7 @@ pub fn cancel_connection_path_probe(
     debug!(probe_id, "Cancelling connection path probe");
     Ok(registry.cancel(&probe_id))
 }
+
+#[cfg(test)]
+#[path = "connection_path_tests.rs"]
+mod connection_path_tests;
