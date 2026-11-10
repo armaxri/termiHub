@@ -130,4 +130,41 @@ describe("TrustPrompt", () => {
     expect(document.querySelector('[data-testid="tp-fingerprint-copy"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="tp-host"] .ui-trust-prompt__copy')).toBeNull();
   });
+
+  /** The button with `testid`'s variant class, e.g. `ui-btn--ghost`. */
+  const variantOf = (testid: string) =>
+    Array.from(document.querySelector(`[data-testid="${testid}"]`)?.classList ?? []).find((c) =>
+      /^ui-btn--(primary|secondary|ghost|danger)$/.test(c)
+    );
+
+  it("keeps the usual verdict weights for a new identity", () => {
+    renderPrompt({ changed: false });
+    expect(variantOf("tp-reject")).toBe("ui-btn--ghost");
+    expect(variantOf("tp-accept-once")).toBe("ui-btn--secondary");
+    expect(variantOf("tp-accept-remember")).toBe("ui-btn--primary");
+  });
+
+  it("leads with Reject and demotes Accept once when the identity changed (#5185)", () => {
+    renderPrompt({ changed: true });
+    expect(variantOf("tp-reject")).toBe("ui-btn--primary");
+    expect(variantOf("tp-accept-once")).toBe("ui-btn--ghost");
+    expect(variantOf("tp-accept-remember")).toBe("ui-btn--danger");
+    const once = document.querySelector('[data-testid="tp-accept-once"]');
+    expect(once?.classList.contains("ui-trust-prompt__demoted")).toBe(true);
+    // Set apart first in the footer, away from the safe action.
+    expect(once?.parentElement?.firstElementChild).toBe(once);
+    // The MITM warning stays the first thing in the body.
+    const warning = document.querySelector('[data-testid="tp-mitm-warning"]');
+    expect(warning?.parentElement?.firstElementChild).toBe(warning);
+  });
+
+  it("still routes every verdict on the changed layout", () => {
+    const { onReject, onAcceptOnce, onAcceptForHost } = renderPrompt({ changed: true });
+    click("tp-reject");
+    click("tp-accept-once");
+    click("tp-accept-remember");
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onAcceptOnce).toHaveBeenCalledTimes(1);
+    expect(onAcceptForHost).toHaveBeenCalledTimes(1);
+  });
 });

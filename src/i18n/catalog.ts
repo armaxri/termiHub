@@ -58,6 +58,11 @@ const en = {
   "connection.hint.dns":
     "The host name could not be resolved. Check its spelling, and your DNS or VPN settings.",
   "connection.action.edit": "Edit connection",
+  // The user rejected the server's host key in the trust prompt (#5185).
+  "connection.heading.hostKeyRejected": "You rejected the host key",
+  "connection.hint.hostKeyRejected":
+    "termiHub did not connect because you rejected the server's host key. If you have since confirmed the fingerprint with the server's administrator, review the key again; if the host or port is wrong, edit the connection.",
+  "connection.action.reviewKey": "Review key",
   "connection.details.show": "Details",
   "connection.details.copy": "Copy error",
   "connection.details.copied": "Error copied to clipboard",
