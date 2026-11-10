@@ -57,13 +57,18 @@ export function TerminalReconnectStrip({
   // loop variant makes the input claim.
   const inLoop = auto !== undefined;
 
-  // Tick so the countdown stays live; only while a backoff window is open.
+  // Tick so the countdown stays live; only while a backoff window is open. A new
+  // window (the strip stays mounted across attempts) re-reads the clock at once,
+  // so the first frame never shows a countdown computed from a stale `now`.
+  const nextAttemptAt = waiting ? auto.nextAttemptAt : 0;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!waiting) return;
-    const id = setInterval(() => setNow(Date.now()), 500);
+    if (!nextAttemptAt) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const id = setInterval(tick, 500);
     return () => clearInterval(id);
-  }, [waiting]);
+  }, [nextAttemptAt]);
 
   const handleCancel = useCallback(() => {
     cancelAutoReconnect(tabId);
@@ -92,8 +97,7 @@ export function TerminalReconnectStrip({
       // countdown is for the next one, while connecting it is the current one.
       reconnectAttemptLabel(waiting ? auto.attempt + 1 : auto.attempt, auto.maxAttempts)
     : null;
-  const secondsLeft =
-    auto && waiting ? Math.max(0, Math.ceil((auto.nextAttemptAt - now) / 1000)) : 0;
+  const secondsLeft = waiting ? Math.max(0, Math.ceil((nextAttemptAt - now) / 1000)) : 0;
 
   const heading = inLoop ? RECONNECTING_HEADING : "Reconnecting…";
   const status = !auto
