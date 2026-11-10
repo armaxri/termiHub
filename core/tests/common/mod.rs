@@ -549,6 +549,11 @@ pub fn port_rdp() -> u16 {
 pub fn port_rdp_nla() -> u16 {
     resolve_port("TERMIHUB_TEST_RDP_NLA_PORT", 2602)
 }
+/// rdp-server container's second xrdp listener, which advertises no fast-path
+/// input so the client sends slow-path input (#5138).
+pub fn port_rdp_slow_path() -> u16 {
+    resolve_port("TERMIHUB_TEST_RDP_SLOWPATH_PORT", 2603)
+}
 /// ftp-server container control port (plain FTP + explicit FTPS on :21).
 pub fn port_ftp() -> u16 {
     resolve_port("TERMIHUB_TEST_FTP_PORT", 2401)

@@ -711,14 +711,18 @@ where
     .await
 }
 
-/// Encode and send a batch of fast-path input events, writing the resulting
-/// response frame(s) on the transport.
+/// Encode and send a batch of input events on the `path` the server allows,
+/// writing the resulting frame(s) on the transport.
 async fn send_input_events<T: FramedWrite>(
     stage: &mut ActiveStage,
     image: &mut DecodedImage,
     transport: &mut T,
     events: &[FastPathInputEvent],
+    path: input::InputPath,
 ) -> Flow {
+    // Always run the fast-path processing: besides encoding, it moves the
+    // pointer IronRDP tracks in the decoded image. On the slow path its
+    // fast-path frames are dropped and slow-path PDUs are sent instead (#5138).
     let outputs = match stage.process_fastpath_input(image, events) {
         Ok(o) => o,
         Err(e) => {
@@ -726,11 +730,25 @@ async fn send_input_events<T: FramedWrite>(
             return Flow::Stop;
         }
     };
-    for output in outputs {
-        if let ActiveStageOutput::ResponseFrame(bytes) = output {
-            if transport.write_all(&bytes).await.is_err() {
+    let frames = match path {
+        input::InputPath::FastPath => outputs
+            .into_iter()
+            .filter_map(|output| match output {
+                ActiveStageOutput::ResponseFrame(bytes) => Some(bytes),
+                _ => None,
+            })
+            .collect(),
+        input::InputPath::SlowPath => match input::encode_slow_path(stage, events) {
+            Ok(frames) => frames,
+            Err(e) => {
+                warn!(error = %e, "rdp slow-path input encode failed");
                 return Flow::Stop;
             }
+        },
+    };
+    for bytes in frames {
+        if transport.write_all(&bytes).await.is_err() {
+            return Flow::Stop;
         }
     }
     Flow::Continue
@@ -891,6 +909,10 @@ where
         refresh_rect: result.refresh_rect_support,
         suppress_output: result.suppress_output_support,
     };
+    // Fast-path or slow-path input, as the server's Input Capability Set allows
+    // (#5138); renegotiated by every reactivation.
+    let mut input_path = input::InputPath::negotiated(result.input_flags);
+    info!(?input_path, input_flags = ?result.input_flags, "rdp input path negotiated");
     let mut image = DecodedImage::new(PixelFormat::RgbA32, size.width, size.height);
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
@@ -963,7 +985,8 @@ where
                             continue;
                         }
                         if let Flow::Stop | Flow::Terminate(_) =
-                            send_input_events(&mut stage, &mut image, &mut writer, &events).await
+                            send_input_events(&mut stage, &mut image, &mut writer, &events, input_path)
+                                .await
                         {
                             break;
                         }
@@ -1167,8 +1190,12 @@ where
                         )
                         .await
                         {
-                            Ok((new_framed, new_redraw)) => {
+                            Ok((new_framed, new_redraw, new_input_path)) => {
                                 redraw = new_redraw;
+                                if new_input_path != input_path {
+                                    info!(?new_input_path, "rdp input path renegotiated");
+                                }
+                                input_path = new_input_path;
                                 let (r, w) = ironrdp_tokio::split_tokio_framed(new_framed);
                                 reader = r;
                                 writer = w;
@@ -1409,7 +1436,7 @@ async fn reactivate<S>(
     image: &mut DecodedImage,
     io_channel_id: u16,
     user_channel_id: u16,
-) -> Result<(TokioFramed<S>, RedrawSupport)>
+) -> Result<(TokioFramed<S>, RedrawSupport, input::InputPath)>
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
 {
@@ -1450,9 +1477,8 @@ where
                 static_channel_chunk_size,
                 refresh_rect_support,
                 suppress_output_support,
-                // The sidecar keeps sending fast-path input; a desktop session
-                // negotiates no Window List support.
-                input_flags: _,
+                input_flags,
+                // A desktop session negotiates no Window List support.
                 window_support_level: _,
             } => {
                 check_desktop_size(desktop_size.width, desktop_size.height)?;
@@ -1486,6 +1512,7 @@ where
                         refresh_rect: refresh_rect_support,
                         suppress_output: suppress_output_support,
                     },
+                    input::InputPath::negotiated(input_flags),
                 ));
             }
             ConnectionActivationState::Redirected { redirection } => {
@@ -2669,15 +2696,35 @@ mod tests {
     /// finalization PDUs (Synchronize, Cooperate, Granted Control, Font Map).
     /// `interleaved` is written after the Demand Active and after each
     /// finalization PDU, as a server's channel traffic can be (#4845).
+    /// `input_flags` adds an Input Capability Set (#5138).
     fn scripted_reactivation(
         share_id: u32,
         width: u16,
         height: u16,
         interleaved: &[u8],
+        input_flags: Option<ironrdp_pdu::rdp::capability_sets::InputFlags>,
     ) -> Vec<u8> {
         use ironrdp_pdu::rdp::capability_sets::{
-            Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, ServerDemandActive,
+            Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, Input, ServerDemandActive,
         };
+
+        let mut capability_sets = vec![CapabilitySet::Bitmap(Bitmap {
+            pref_bits_per_pix: 32,
+            desktop_width: width,
+            desktop_height: height,
+            desktop_resize_flag: true,
+            drawing_flags: BitmapDrawingFlags::empty(),
+        })];
+        if let Some(input_flags) = input_flags {
+            capability_sets.push(CapabilitySet::Input(Input {
+                input_flags,
+                keyboard_layout: 0,
+                keyboard_type: None,
+                keyboard_subtype: 0,
+                keyboard_function_key: 0,
+                keyboard_ime_filename: String::new(),
+            }));
+        }
         use ironrdp_pdu::rdp::finalization_messages::{
             ControlAction, ControlPdu, FontPdu, SynchronizePdu,
         };
@@ -2685,13 +2732,7 @@ mod tests {
         let demand_active = ShareControlPdu::ServerDemandActive(ServerDemandActive {
             pdu: DemandActive {
                 source_descriptor: "RDP".to_string(),
-                capability_sets: vec![CapabilitySet::Bitmap(Bitmap {
-                    pref_bits_per_pix: 32,
-                    desktop_width: width,
-                    desktop_height: height,
-                    desktop_resize_flag: true,
-                    drawing_flags: BitmapDrawingFlags::empty(),
-                })],
+                capability_sets,
             },
         });
         let mut script = server_share_control(share_id, demand_active);
@@ -2723,7 +2764,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let (client, mut server) = tokio::io::duplex(64 * 1024);
-        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &[]);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &[], None);
         let server_task = tokio::spawn(async move {
             server.write_all(&script).await.unwrap();
             // Collect what the client sends back (Confirm Active + finalization).
@@ -2806,7 +2847,7 @@ mod tests {
         interleaved.extend_from_slice(&[0x00, 0x02]);
 
         let (client, mut server) = tokio::io::duplex(64 * 1024);
-        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &interleaved);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &interleaved, None);
         let server_task = tokio::spawn(async move {
             server.write_all(&script).await.unwrap();
             let mut sent = Vec::new();
@@ -2828,6 +2869,103 @@ mod tests {
         assert_eq!((image.width(), image.height()), (1100, 700));
         drop(framed);
         server_task.await.unwrap();
+    }
+
+    /// Run one scripted reactivation advertising `input_flags` and return the
+    /// input path it negotiated (#5138).
+    async fn reactivated_input_path(
+        stage: &mut ActiveStage,
+        input_flags: Option<ironrdp_pdu::rdp::capability_sets::InputFlags>,
+    ) -> input::InputPath {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700, &[], input_flags);
+        let server_task = tokio::spawn(async move {
+            server.write_all(&script).await.unwrap();
+            let mut sent = Vec::new();
+            let _ = server.read_to_end(&mut sent).await;
+        });
+        let mut image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+        let (framed, _, path) = reactivate(
+            TokioFramed::new(client),
+            test_connector_config(),
+            stage,
+            &mut image,
+            TEST_IO_CHANNEL,
+            TEST_USER_CHANNEL,
+        )
+        .await
+        .expect("the reactivation sequence must complete");
+        drop(framed);
+        server_task.await.unwrap();
+        path
+    }
+
+    /// A reactivation renegotiates the input path from the server's new Input
+    /// Capability Set: it switches to slow-path input when the fast-path flags
+    /// disappear and back when they return (#5138).
+    #[tokio::test]
+    async fn reactivation_renegotiates_the_input_path() {
+        use ironrdp_pdu::rdp::capability_sets::InputFlags;
+
+        let mut stage = test_active_stage(0x0001_03EA);
+        let fast = InputFlags::SCANCODES | InputFlags::FASTPATH_INPUT_2;
+        assert_eq!(
+            reactivated_input_path(&mut stage, Some(fast)).await,
+            input::InputPath::FastPath
+        );
+        assert_eq!(
+            reactivated_input_path(&mut stage, Some(InputFlags::SCANCODES)).await,
+            input::InputPath::SlowPath
+        );
+        assert_eq!(
+            reactivated_input_path(&mut stage, Some(InputFlags::FASTPATH_INPUT)).await,
+            input::InputPath::FastPath
+        );
+        // A Demand Active without an Input Capability Set allows no fast path.
+        assert_eq!(
+            reactivated_input_path(&mut stage, None).await,
+            input::InputPath::SlowPath
+        );
+    }
+
+    /// `send_input_events` writes fast-path frames on the fast path and
+    /// slow-path Input Event PDUs on the slow path, for the same events (#5138).
+    #[tokio::test]
+    async fn input_is_sent_on_the_negotiated_path() {
+        use tokio::io::AsyncReadExt as _;
+
+        let events = input::translate(
+            0,
+            &InputEvent::Key {
+                code: "KeyA".to_string(),
+                pressed: true,
+            },
+        );
+        for path in [input::InputPath::FastPath, input::InputPath::SlowPath] {
+            let mut stage = test_active_stage(0x0001_03EA);
+            let mut image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+            let (transport, mut peer) = tokio::io::duplex(4096);
+            let mut transport = TokioFramed::new(transport);
+            let flow =
+                send_input_events(&mut stage, &mut image, &mut transport, &events, path).await;
+            assert!(matches!(flow, Flow::Continue));
+            drop(transport);
+            let mut sent = Vec::new();
+            peer.read_to_end(&mut sent).await.unwrap();
+            let expected = match path {
+                input::InputPath::FastPath => vec![0x04, 0x04, 0x00, 0x1E],
+                input::InputPath::SlowPath => {
+                    input::encode_slow_path(&stage, &events).unwrap().concat()
+                }
+            };
+            assert_eq!(sent, expected, "{path:?}");
+            if path == input::InputPath::SlowPath {
+                // A TPKT-framed X.224 PDU, never a fast-path header.
+                assert_eq!(&sent[..2], &[0x03, 0x00]);
+            }
+        }
     }
 }
 
