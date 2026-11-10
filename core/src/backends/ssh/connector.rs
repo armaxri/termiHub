@@ -151,11 +151,12 @@ async fn probe_remote_shell(
 }
 
 /// Read a just-started Win32-OpenSSH shell's first output until it shows
-/// whether it is cmd.exe (#5134): `Some(Cmd)` when cmd.exe's banner came,
-/// `None` when the output rules it out, the channel ended, or nothing told
-/// within [`remote_shell::CMD_BANNER_WAIT`]. Every message read is returned,
-/// in order, for the channel task to handle.
-async fn read_cmd_banner(
+/// which shell it is (#5134, #5147): `Some(Cmd)` / `Some(PowerShell)` when
+/// its banner came ([`remote_shell::shell_banner_verdict`]), `None` when the
+/// output is no banner it knows, the channel ended, or nothing told within
+/// [`remote_shell::SHELL_BANNER_WAIT`]. Every message read is returned, in
+/// order, for the channel task to handle.
+async fn read_shell_banner(
     channel: &mut russh::Channel<russh::client::Msg>,
     cancel: Option<&CancellationToken>,
 ) -> Result<
@@ -169,7 +170,7 @@ async fn read_cmd_banner(
     use russh::ChannelMsg;
 
     let started = std::time::Instant::now();
-    let deadline = tokio::time::Instant::now() + remote_shell::CMD_BANNER_WAIT;
+    let deadline = tokio::time::Instant::now() + remote_shell::SHELL_BANNER_WAIT;
     let mut msgs = std::collections::VecDeque::new();
     let mut output: Vec<u8> = Vec::new();
     let never = CancellationToken::new();
@@ -185,7 +186,7 @@ async fn read_cmd_banner(
             msg = tokio::time::timeout_at(deadline, channel.wait()) => msg,
         };
         let Ok(Some(msg)) = msg else {
-            break BannerVerdict::NotCmd;
+            break BannerVerdict::Unrecognised;
         };
         let ended = matches!(msg, ChannelMsg::Eof | ChannelMsg::Close);
         if let ChannelMsg::Data { ref data } = msg {
@@ -193,9 +194,9 @@ async fn read_cmd_banner(
         }
         msgs.push_back(msg);
         if ended {
-            break BannerVerdict::NotCmd;
+            break BannerVerdict::Unrecognised;
         }
-        match remote_shell::cmd_banner_verdict(&output) {
+        match remote_shell::shell_banner_verdict(&output) {
             BannerVerdict::Undecided => {}
             verdict => break verdict,
         }
@@ -205,7 +206,10 @@ async fn read_cmd_banner(
         elapsed_ms = started.elapsed().as_millis(),
         "Win32-OpenSSH shell banner"
     );
-    let shell = (verdict == BannerVerdict::Cmd).then_some(RemoteShell::Cmd);
+    let shell = match verdict {
+        BannerVerdict::Shell(shell) => Some(shell),
+        BannerVerdict::Unrecognised | BannerVerdict::Undecided => None,
+    };
     Ok((shell, msgs))
 }
 
@@ -407,9 +411,10 @@ impl SshConnector for RusshSshConnector {
         let types_setup = !config.env.is_empty() || config.enable_x11_forwarding;
         // On a Win32-OpenSSH host the exec channel runs as `cmd.exe /c` when
         // cmd.exe is the DefaultShell, which runs the user's cmd AutoRun once
-        // more (#5134). There the session shell's own first output is read
-        // instead (cmd.exe's banner), and the exec probe only runs when that
-        // banner does not show.
+        // more (#5134), and as `powershell -c` for a PowerShell one, which
+        // loads the user's profile once more (#5147). There the session
+        // shell's own first output is read instead (its banner), and the exec
+        // probe only runs when no banner it knows shows.
         let win32_openssh = liveness
             .server_id()
             .is_some_and(remote_shell::is_win32_openssh);
@@ -537,12 +542,12 @@ impl SshConnector for RusshSshConnector {
         let shell_requested_at = std::time::Instant::now();
         let shell_refused = Arc::new(AtomicBool::new(false));
 
-        // Win32-OpenSSH (#5134): tell cmd.exe by its banner, and keep what was
-        // read for the channel task below, which handles it as if it had just
-        // arrived.
+        // Win32-OpenSSH (#5134, #5147): tell cmd.exe or PowerShell by its
+        // banner, and keep what was read for the channel task below, which
+        // handles it as if it had just arrived.
         let mut early_msgs = std::collections::VecDeque::new();
         if needs_shell && win32_openssh {
-            let (banner, msgs) = read_cmd_banner(&mut channel, cancel).await?;
+            let (banner, msgs) = read_shell_banner(&mut channel, cancel).await?;
             early_msgs = msgs;
             remote_shell = match banner {
                 Some(shell) => {
