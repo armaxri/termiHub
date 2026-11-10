@@ -59,7 +59,7 @@ pub struct OsKeychainStore {
     service: String,
     /// Keychain service of the backup-restore seal keys
     /// ([`RESTORE_SEAL_SERVICE`]), or `None` to import a restore right away.
-    /// Unit tests default to `None`, so they never touch the real keyring.
+    /// Injected by the constructor (see `with_index_and_seal`).
     seal_service: Option<String>,
     /// Every seal-key id handed out, so the opt-in real-keychain tests can
     /// delete each one they created even when an assertion fails (#4659).
@@ -75,20 +75,36 @@ impl Default for OsKeychainStore {
 
 impl OsKeychainStore {
     /// Create a new OS keychain store whose key index lives in memory only.
+    /// A backup restore into it defers its credential import (see
+    /// [`Self::with_index_and_seal`]).
     pub fn new() -> Self {
-        Self::with_index(KeychainKeyIndex::in_memory())
+        Self::with_index_and_seal(
+            KeychainKeyIndex::in_memory(),
+            Some(RESTORE_SEAL_SERVICE.to_string()),
+        )
     }
 
     /// Create a new OS keychain store whose key index is persisted at
-    /// `index_path` (see [`KeychainKeyIndex`]).
+    /// `index_path` (see [`KeychainKeyIndex`]). This is the shipped store: a
+    /// backup restore into it defers its credential import.
     pub fn with_index_file(index_path: PathBuf) -> Self {
-        Self::with_index(KeychainKeyIndex::load(index_path))
+        Self::with_index_and_seal(
+            KeychainKeyIndex::load(index_path),
+            Some(RESTORE_SEAL_SERVICE.to_string()),
+        )
     }
 
-    fn with_index(index: KeychainKeyIndex) -> Self {
-        // Unit tests never touch the real OS keyring (and the `keyring` mock
-        // keeps state per entry handle), so a test build imports right away.
-        let seal_service = (!cfg!(test)).then(|| RESTORE_SEAL_SERVICE.to_string());
+    /// Create a store with an explicit key index and backup-restore seal
+    /// service (#5163).
+    ///
+    /// `seal_service` is the keychain service of the keys that seal a backup
+    /// restore's deferred credential import (#4414): `Some` defers the import
+    /// (the shipped behaviour, under `RESTORE_SEAL_SERVICE`); `None` makes
+    /// [`restore_seal_slot`](CredentialStore::restore_seal_slot) return `None`,
+    /// so a restore imports its credentials right away. The choice is injected
+    /// here rather than derived from the build, so the tested store is the
+    /// shipped one.
+    pub fn with_index_and_seal(index: KeychainKeyIndex, seal_service: Option<String>) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             index,
@@ -108,9 +124,11 @@ impl OsKeychainStore {
             service != SERVICE_NAME && seal_service != RESTORE_SEAL_SERVICE,
             "a test must never use the real keychain service names"
         );
-        let mut store = Self::new();
+        let mut store = Self::with_index_and_seal(
+            KeychainKeyIndex::in_memory(),
+            Some(seal_service.to_string()),
+        );
         store.service = service.to_string();
-        store.seal_service = Some(seal_service.to_string());
         store
     }
 
@@ -657,6 +675,61 @@ mod tests {
             assert!(!text.contains(v), "index file leaked a secret value");
         }
         assert!(!text.contains("SECRET"));
+    }
+
+    /// The shipped constructors defer a restore import (#5163): the seal slot
+    /// lives under the restore-seal service and round-trips a key.
+    #[test]
+    fn shipped_constructors_defer_restore_imports_under_the_seal_service() {
+        let _guard = with_mock();
+        let dir = tempfile::tempdir().unwrap();
+        for store in [OsKeychainStore::new(), indexed_store(dir.path())] {
+            assert_eq!(store.seal_service.as_deref(), Some(RESTORE_SEAL_SERVICE));
+            let slot = store
+                .restore_seal_slot("6f1c9d2e-0000-4000-8000-000000005163")
+                .expect("a shipped store defers the import");
+            assert_eq!(slot.read().unwrap(), None);
+            slot.write("seal-key").unwrap();
+            assert_eq!(
+                slot.read().unwrap().as_deref().map(String::as_str),
+                Some("seal-key")
+            );
+            slot.delete().unwrap();
+            assert_eq!(slot.read().unwrap(), None);
+        }
+    }
+
+    /// A store built without a seal service has no seal slot, so a restore
+    /// into it imports its credentials right away (#5163).
+    #[test]
+    fn store_without_a_seal_service_imports_restores_right_away() {
+        let _guard = with_mock();
+        let store = OsKeychainStore::with_index_and_seal(KeychainKeyIndex::in_memory(), None);
+        assert!(store
+            .restore_seal_slot("6f1c9d2e-0000-4000-8000-000000005163")
+            .is_none());
+        assert!(store.issued_seal_ids().is_empty());
+        // The credentials themselves are unaffected.
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+        assert_eq!(store.get(&key).unwrap().as_deref(), Some("secret"));
+    }
+
+    /// An injected seal service is the one the slot uses (#5163).
+    #[test]
+    fn injected_seal_service_is_used_for_the_seal_slot() {
+        let _guard = with_mock();
+        let store = OsKeychainStore::with_index_and_seal(
+            KeychainKeyIndex::in_memory(),
+            Some("termiHub-test-5163-seal".to_string()),
+        );
+        assert_eq!(
+            store.seal_service.as_deref(),
+            Some("termiHub-test-5163-seal")
+        );
+        let id = "6f1c9d2e-0000-4000-8000-000000005163";
+        assert!(store.restore_seal_slot(id).is_some());
+        assert_eq!(store.issued_seal_ids(), vec![id.to_string()]);
     }
 
     #[test]

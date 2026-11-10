@@ -126,6 +126,12 @@ node scripts\internal\check-adr14-regions.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === No cfg!(test) in non-test Rust code ===
+REM The tested binary must be the shipped one: inject a flag/trait instead (#5163).
+node scripts\internal\check-no-cfg-test.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1

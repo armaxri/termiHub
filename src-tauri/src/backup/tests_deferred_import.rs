@@ -8,6 +8,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use zeroize::Zeroizing;
 
 use super::commit::MANIFEST_FILE;
@@ -34,6 +36,19 @@ fn key(id: &str) -> CredentialKey {
 
 type Map = Arc<Mutex<HashMap<String, String>>>;
 
+/// Injected failures of a [`KeychainStore`] (#5163).
+#[derive(Default, Clone)]
+struct Faults {
+    /// `restore_seal_slot` returns `None` (no slot for the import's key).
+    no_seal_slot: bool,
+    /// Reading a seal key fails (the keychain is locked or unreachable).
+    seal_read_fails: bool,
+    /// Reading a credential fails.
+    get_fails: bool,
+    /// Writing this credential (connection id) fails.
+    set_fails_for: Option<&'static str>,
+}
+
 /// An OS-keychain-like store: always unlocked, no vault file, seal keys kept
 /// in a separate slot namespace. Counts writes per credential.
 #[derive(Default)]
@@ -41,6 +56,7 @@ struct KeychainStore {
     values: Map,
     seal_keys: Map,
     writes: Mutex<HashMap<String, usize>>,
+    faults: Mutex<Faults>,
 }
 
 impl KeychainStore {
@@ -62,15 +78,25 @@ impl KeychainStore {
     fn seal_key_count(&self) -> usize {
         self.seal_keys.lock().unwrap().len()
     }
+    fn set_faults(&self, faults: Faults) {
+        *self.faults.lock().unwrap() = faults;
+    }
+    fn faults(&self) -> Faults {
+        self.faults.lock().unwrap().clone()
+    }
 }
 
 struct Slot {
     id: String,
     map: Map,
+    read_fails: bool,
 }
 
 impl SecretSlot for Slot {
     fn read(&self) -> Result<Option<Zeroizing<String>>> {
+        if self.read_fails {
+            anyhow::bail!("the keychain is locked");
+        }
         Ok(self
             .map
             .lock()
@@ -94,9 +120,15 @@ impl SecretSlot for Slot {
 
 impl CredentialStore for KeychainStore {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
+        if self.faults().get_fails {
+            anyhow::bail!("the keychain is unreachable");
+        }
         Ok(self.values.lock().unwrap().get(&key.to_string()).cloned())
     }
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
+        if self.faults().set_fails_for == Some(key.connection_id.as_str()) {
+            anyhow::bail!("the keychain refused the write");
+        }
         *self
             .writes
             .lock()
@@ -123,9 +155,14 @@ impl CredentialStore for KeychainStore {
         CredentialStoreStatus::Unlocked
     }
     fn restore_seal_slot(&self, id: &str) -> Option<Box<dyn SecretSlot>> {
+        let faults = self.faults();
+        if faults.no_seal_slot {
+            return None;
+        }
         Some(Box::new(Slot {
             id: id.to_string(),
             map: Arc::clone(&self.seal_keys),
+            read_fails: faults.seal_read_fails,
         }))
     }
 }
@@ -408,4 +445,206 @@ fn credentials_only_restore_still_imports_right_away() {
     assert!(!result.restart_required);
     assert_eq!(store.value("Other").as_deref(), Some(ADDED_SECRET));
     assert_eq!(store.seal_key_count(), 0);
+}
+
+// --- unseal_and_write failure branches (#5163) ---
+
+const NOT_YET: &str = "could not be imported yet";
+const LOST: &str = "could not be imported. Your credentials were left unchanged";
+
+/// Restore into a keychain store and run the startup swap, so the sealed
+/// import waits in the config dir for the store.
+fn promoted(dir: &Path) -> KeychainStore {
+    let store = restore_into_keychain(dir);
+    assert!(apply_pending_restore(dir).is_none());
+    assert!(dir.join(DEFERRED_IMPORT_FILE).is_file());
+    assert_eq!(store.seal_key_count(), 1);
+    store
+}
+
+fn sealed_json(dir: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(dir.join(DEFERRED_IMPORT_FILE)).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+fn write_sealed_json(dir: &Path, value: &serde_json::Value) {
+    std::fs::write(
+        dir.join(DEFERRED_IMPORT_FILE),
+        serde_json::to_string_pretty(value).unwrap(),
+    )
+    .unwrap();
+}
+
+/// A transient failure — the store, or the key that seals the import, is
+/// unavailable — writes nothing and keeps the sealed file and its key for the
+/// next start, which then imports everything exactly once.
+#[test]
+fn store_unavailable_keeps_the_sealed_import_and_writes_nothing() {
+    let cases = [
+        (
+            "no seal slot",
+            Faults {
+                no_seal_slot: true,
+                ..Faults::default()
+            },
+        ),
+        (
+            "seal key unreadable",
+            Faults {
+                seal_read_fails: true,
+                ..Faults::default()
+            },
+        ),
+        (
+            "credentials unreadable",
+            Faults {
+                get_fails: true,
+                ..Faults::default()
+            },
+        ),
+        (
+            "batch write fails midway",
+            Faults {
+                set_fails_for: Some("Other"),
+                ..Faults::default()
+            },
+        ),
+    ];
+    for (case, faults) in cases {
+        let dst = tempfile::tempdir().unwrap();
+        let store = promoted(dst.path());
+        let sealed = std::fs::read(dst.path().join(DEFERRED_IMPORT_FILE)).unwrap();
+        let keys = store.seal_keys.lock().unwrap().clone();
+
+        store.set_faults(faults);
+        let warning = apply_deferred_import(dst.path(), &store)
+            .unwrap_or_else(|| panic!("{case}: the failure is reported"));
+        store.set_faults(Faults::default());
+
+        assert!(
+            warning.message.contains(NOT_YET),
+            "{case}: {}",
+            warning.message
+        );
+        // Nothing partially written: a failed batch was rolled back.
+        assert_pre_restore(&store);
+        // The sealed file is kept byte for byte, and so is its key.
+        assert_eq!(
+            std::fs::read(dst.path().join(DEFERRED_IMPORT_FILE)).unwrap(),
+            sealed,
+            "{case}: the sealed import is kept"
+        );
+        assert_eq!(*store.seal_keys.lock().unwrap(), keys, "{case}");
+        assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists(), "{case}");
+        assert_no_plaintext_secret(dst.path());
+
+        // Once the store is back, the next start imports exactly once.
+        assert!(
+            apply_deferred_import(dst.path(), &store).is_none(),
+            "{case}"
+        );
+        assert_eq!(
+            store.value("Local").as_deref(),
+            Some(BACKUP_SECRET),
+            "{case}"
+        );
+        assert_eq!(
+            store.value("Other").as_deref(),
+            Some(ADDED_SECRET),
+            "{case}"
+        );
+        assert_eq!(store.writes("Other"), 1, "{case}: never written twice");
+        assert!(!dst.path().join(DEFERRED_IMPORT_FILE).exists(), "{case}");
+        assert_eq!(store.seal_key_count(), 0, "{case}");
+    }
+}
+
+/// A sealed import naming another key — one that exists in the store but did
+/// not seal it — cannot be unsealed (the key id is bound into the AEAD
+/// associated data). Nothing is written; the import, which can never be
+/// applied, is dropped and the key it names is deleted.
+#[test]
+fn wrong_key_id_imports_nothing() {
+    let dst = tempfile::tempdir().unwrap();
+    let store = promoted(dst.path());
+    let mut sealed = sealed_json(dst.path());
+    let real_id = sealed["keyId"].as_str().unwrap().to_string();
+    let other_id = uuid::Uuid::new_v4().to_string();
+    let key = store.seal_keys.lock().unwrap()[&real_id].clone();
+    store
+        .seal_keys
+        .lock()
+        .unwrap()
+        .insert(other_id.clone(), key);
+    sealed["keyId"] = serde_json::Value::String(other_id.clone());
+    write_sealed_json(dst.path(), &sealed);
+
+    let warning = apply_deferred_import(dst.path(), &store).expect("the loss is reported");
+
+    assert!(warning.message.contains(LOST), "{}", warning.message);
+    assert_pre_restore(&store);
+    assert_eq!(store.writes("Other"), 0);
+    assert!(!dst.path().join(DEFERRED_IMPORT_FILE).exists());
+    assert!(!store.seal_keys.lock().unwrap().contains_key(&other_id));
+    assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists());
+    assert_no_plaintext_secret(dst.path());
+}
+
+/// A key id that is not a UUID is refused before it names a keychain entry.
+#[test]
+fn invalid_key_id_imports_nothing_and_reads_no_key() {
+    let dst = tempfile::tempdir().unwrap();
+    let store = promoted(dst.path());
+    let mut sealed = sealed_json(dst.path());
+    sealed["keyId"] = serde_json::Value::String("../termiHub".to_string());
+    write_sealed_json(dst.path(), &sealed);
+    // A slot read would fail: proves the id never reaches the store.
+    store.set_faults(Faults {
+        seal_read_fails: true,
+        ..Faults::default()
+    });
+
+    let warning = apply_deferred_import(dst.path(), &store).expect("the loss is reported");
+
+    assert!(warning.message.contains(LOST), "{}", warning.message);
+    assert_pre_restore(&store);
+    assert!(!dst.path().join(DEFERRED_IMPORT_FILE).exists());
+}
+
+/// A truncated sealed import — cut-off JSON, or a cut-off ciphertext that
+/// fails authentication — writes nothing. It can never be applied, so it is
+/// dropped; a readable key id gets its key deleted.
+#[test]
+fn truncated_seal_imports_nothing() {
+    // Cut-off file: not even the key id is readable.
+    let dst = tempfile::tempdir().unwrap();
+    let store = promoted(dst.path());
+    let path = dst.path().join(DEFERRED_IMPORT_FILE);
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
+
+    let warning = apply_deferred_import(dst.path(), &store).expect("the loss is reported");
+
+    assert!(warning.message.contains(LOST), "{}", warning.message);
+    assert_pre_restore(&store);
+    assert!(!path.exists());
+    assert_no_plaintext_secret(dst.path());
+
+    // Cut-off ciphertext: the AEAD tag check fails.
+    let dst = tempfile::tempdir().unwrap();
+    let store = promoted(dst.path());
+    let mut sealed = sealed_json(dst.path());
+    let data = BASE64.decode(sealed["data"].as_str().unwrap()).unwrap();
+    sealed["data"] = serde_json::Value::String(BASE64.encode(&data[..data.len() - 1]));
+    write_sealed_json(dst.path(), &sealed);
+
+    let warning = apply_deferred_import(dst.path(), &store).expect("the loss is reported");
+
+    assert!(warning.message.contains(LOST), "{}", warning.message);
+    assert_pre_restore(&store);
+    assert_eq!(store.writes("Other"), 0);
+    assert!(!dst.path().join(DEFERRED_IMPORT_FILE).exists());
+    assert_eq!(store.seal_key_count(), 0, "the key is deleted");
+    assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists());
+    assert_no_plaintext_secret(dst.path());
 }
