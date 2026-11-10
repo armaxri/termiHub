@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
 import "./NetworkTools.css";
 import {
+  Activity,
   Play,
   Pause,
   RefreshCw,
   Plus,
-  Circle,
   StopCircle,
   Trash2,
   AlertTriangle,
@@ -22,7 +22,9 @@ import {
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
-import { Button, Tooltip, TruncatedText, EmptyState, toast } from "@/components/ui";
+import { Button, Tooltip, EmptyState, StatusDot, toast } from "@/components/ui";
+import type { StatusTone } from "@/components/ui";
+import { SidebarListItem } from "@/components/SidebarListItem";
 import { isMonitorStale, formatCheckedAgo } from "./monitorStaleness";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -66,6 +68,24 @@ interface MonitorRowProps {
   onOpen: (id: string) => void;
 }
 
+/** Tone and accessible name of a monitor's status dot. */
+function monitorStatus(
+  monitor: HttpMonitorState,
+  stale: boolean
+): { tone: StatusTone; label: string; pulse?: boolean } {
+  const { running, paused, lastResult } = monitor;
+  if (!running) return { tone: "neutral", label: "Stopped" };
+  if (paused) return { tone: "neutral", label: "Paused" };
+  if (!lastResult) return { tone: "neutral", label: "Checking", pulse: true };
+  if (stale) return { tone: "warning", label: "Overdue" };
+  return lastResult.ok ? { tone: "success", label: "Up" } : { tone: "error", label: "Down" };
+}
+
+/**
+ * One HTTP monitor in the sidebar, built on the shared {@link SidebarListItem}
+ * like the tunnel and service rows (#5193): status dot, URL and hover/focus
+ * actions on the first line, the latest reading and its age on the second.
+ */
 function MonitorRow({
   monitor,
   now,
@@ -76,144 +96,179 @@ function MonitorRow({
   onOpen,
 }: MonitorRowProps) {
   const { config, running, paused, lastResult } = monitor;
-  // CSS cuts the URL to the row; TruncatedText then shows it in full (#4954).
+  // CSS cuts the URL to the row; the tooltip then shows it in full (#4954).
   const shortUrl = config.url.replace(/^https?:\/\//, "");
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
-  // The status and age read as the button's description, its name being the
-  // full URL (the visible one is truncated) (#4349).
+  const status = monitorStatus(monitor, stale);
+  // The status and age read as the Open button's description, its name being
+  // the full URL (the visible one is truncated) (#4349).
   const idBase = useId();
   const resultId = `${idBase}-result`;
   const stateId = `${idBase}-state`;
   const ageId = `${idBase}-age`;
   const checking = !lastResult && running && !paused;
+  const stateText = checking
+    ? "checking…"
+    : running && paused
+      ? "paused"
+      : !running
+        ? "stopped"
+        : null;
   const describedBy = [
     lastResult ? resultId : null,
-    checking || paused || !running ? stateId : null,
+    stateText ? stateId : null,
     lastResult ? ageId : null,
   ]
     .filter(Boolean)
     .join(" ");
 
-  return (
-    <div className="network-sidebar__monitor" data-testid={`monitor-row-${config.id}`}>
-      <button
-        type="button"
-        className="network-sidebar__monitor-info"
-        onClick={() => onOpen(config.id)}
-        aria-label={`Open monitor ${config.url}`}
-        aria-describedby={describedBy}
-        data-testid={`monitor-open-${config.id}`}
+  /** Run a row action without the click also opening the monitor. */
+  const act = (fn: (id: string) => void) => (e: MouseEvent) => {
+    e.stopPropagation();
+    fn(config.id);
+  };
+
+  const parts: ReactNode[] = [];
+  if (lastResult) {
+    parts.push(
+      <span
+        key="result"
+        id={resultId}
+        className={lastResult.ok ? undefined : "network-sidebar__monitor-down"}
       >
-        <Circle
-          size={8}
-          fill={
-            running
-              ? stale
-                ? "var(--color-warning)"
-                : lastResult?.ok
-                  ? "var(--vscode-charts-green)"
-                  : "var(--vscode-charts-red)"
-              : "var(--vscode-disabledForeground)"
-          }
-          color="transparent"
-        />
-        <TruncatedText className="network-sidebar__monitor-url" tooltip={config.url}>
-          {shortUrl}
-        </TruncatedText>
-        {lastResult && (
-          <span id={resultId} className="network-sidebar__monitor-status">
-            {lastResult.ok ? `${lastResult.statusCode} · ${lastResult.latencyMs}ms` : "✗ down"}
-          </span>
-        )}
-        {checking && (
-          <span id={stateId} className="network-sidebar__monitor-status">
-            checking…
-          </span>
-        )}
-        {running && paused && (
-          <span id={stateId} className="network-sidebar__monitor-status">
-            paused
-          </span>
-        )}
-        {!running && (
-          <span id={stateId} className="network-sidebar__monitor-status">
-            stopped
-          </span>
-        )}
-        {lastResult && (
-          <span
-            id={ageId}
-            className={`network-sidebar__monitor-age${
-              stale ? " network-sidebar__monitor-age--stale" : ""
-            }`}
+        {lastResult.ok ? `${lastResult.statusCode} · ${lastResult.latencyMs}ms` : "✗ down"}
+      </span>
+    );
+  }
+  if (stateText) {
+    parts.push(
+      <span key="state" id={stateId}>
+        {stateText}
+      </span>
+    );
+  }
+  if (lastResult) {
+    parts.push(
+      <span
+        key="age"
+        id={ageId}
+        className={`network-sidebar__monitor-age${
+          stale ? " network-sidebar__monitor-age--stale" : ""
+        }`}
+      >
+        {stale && (
+          <Tooltip
+            content={`Overdue: last check was more than 2× the ${Math.round(
+              config.intervalMs / 1000
+            )}s interval ago; this reading may be out of date`}
+            side="left"
           >
-            {stale && (
-              <Tooltip
-                content={`Overdue: last check was more than 2× the ${Math.round(
-                  config.intervalMs / 1000
-                )}s interval ago; this reading may be out of date`}
-                side="left"
-              >
-                <span
-                  className="network-sidebar__monitor-stale"
-                  data-testid={`monitor-stale-${config.id}`}
-                >
-                  <AlertTriangle size={10} aria-hidden="true" />
-                  overdue
-                </span>
-              </Tooltip>
-            )}
-            {formatCheckedAgo(lastResult.timestampMs, now)}
-          </span>
+            <span
+              className="network-sidebar__monitor-stale"
+              data-testid={`monitor-stale-${config.id}`}
+            >
+              <AlertTriangle size={10} aria-hidden="true" />
+              overdue
+            </span>
+          </Tooltip>
         )}
-      </button>
-      {running && !paused && (
-        <Tooltip content="Pause monitor" side="left">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label="Pause monitor"
-            icon={<Pause size={12} />}
-            onClick={() => onPause(config.id)}
-          />
-        </Tooltip>
-      )}
-      {(paused || !running) && (
-        <Tooltip content="Resume monitor" side="left">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label="Resume monitor"
-            icon={<Play size={12} />}
-            onClick={() => onResume(config.id)}
-          />
-        </Tooltip>
-      )}
-      {running && (
-        <Tooltip content="Stop monitor" side="left">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label="Stop monitor"
-            icon={<StopCircle size={12} />}
-            onClick={() => onStop(config.id)}
-          />
-        </Tooltip>
-      )}
-      <Tooltip content="Remove monitor" side="left">
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label="Remove monitor"
-          icon={<Trash2 size={12} />}
-          onClick={() => onRemove(config.id)}
+        {formatCheckedAgo(lastResult.timestampMs, now)}
+      </span>
+    );
+  }
+
+  return (
+    <SidebarListItem
+      testId={`monitor-row-${config.id}`}
+      nameTestId={`monitor-url-${config.id}`}
+      name={shortUrl}
+      nameTooltip={config.url}
+      onClick={() => onOpen(config.id)}
+      status={
+        <StatusDot
+          tone={status.tone}
+          label={status.label}
+          pulse={status.pulse}
+          testId={`monitor-status-${config.id}`}
         />
-      </Tooltip>
-    </div>
+      }
+      actions={
+        <>
+          <Tooltip content="Open monitor" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Open monitor ${config.url}`}
+              aria-describedby={describedBy || undefined}
+              data-testid={`monitor-open-${config.id}`}
+              icon={<Activity size={12} />}
+              onClick={act(onOpen)}
+            />
+          </Tooltip>
+          {running && !paused && (
+            <Tooltip content="Pause monitor" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Pause monitor"
+                icon={<Pause size={12} />}
+                onClick={act(onPause)}
+              />
+            </Tooltip>
+          )}
+          {(paused || !running) && (
+            <Tooltip content="Resume monitor" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Resume monitor"
+                icon={<Play size={12} />}
+                onClick={act(onResume)}
+              />
+            </Tooltip>
+          )}
+          {running && (
+            <Tooltip content="Stop monitor" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Stop monitor"
+                icon={<StopCircle size={12} />}
+                onClick={act(onStop)}
+              />
+            </Tooltip>
+          )}
+          <Tooltip content="Remove monitor" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Remove monitor"
+              icon={<Trash2 size={12} />}
+              onClick={act(onRemove)}
+            />
+          </Tooltip>
+        </>
+      }
+      details={
+        <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
+          {parts.flatMap((part, i) =>
+            i === 0
+              ? [part]
+              : [
+                  <span key={`sep-${i}`} aria-hidden="true">
+                    ·
+                  </span>,
+                  part,
+                ]
+          )}
+        </span>
+      }
+    />
   );
 }
 

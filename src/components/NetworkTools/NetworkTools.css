@@ -331,53 +331,20 @@
   color: var(--text-primary);
 }
 
-/* Monitor rows in sidebar */
-.network-sidebar__monitor {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xxs) var(--spacing-md);
-}
-
-/* A real <button> (#4349) — reset to the row's plain look. */
-.network-sidebar__monitor-info {
+/* Monitor rows are SidebarListItem rows (#5193); only the second line — the
+   latest reading and its age — is styled here. Muted, not disabled: it is the
+   answer to "is my service up?" and has to stay readable (UI-002). */
+.network-sidebar__monitor-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--spacing-xs);
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.network-sidebar__monitor-info:hover .network-sidebar__monitor-url {
-  color: var(--text-primary);
-}
-
-.network-sidebar__monitor-url {
-  font-size: var(--font-size-sm);
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-  /* Keeps at least half the row; when the status and age no longer fit beside
-     it they wrap onto a second line instead of squeezing the URL away (#4709). */
-  flex: 1 1 auto;
-  min-width: 50%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.network-sidebar__monitor-status {
-  font-size: var(--font-size-xs);
+  column-gap: var(--spacing-xs);
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+.network-sidebar__monitor-down {
+  color: var(--color-error);
 }
 
 /* Relative "checked N ago" label; the freshest reading's age lives here so a
@@ -386,9 +353,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 .network-sidebar__monitor-age--stale {
