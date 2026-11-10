@@ -34,6 +34,7 @@ import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFie
 
 import type { AppState } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
+import { deferDelete, isDeleteUndone, showUndoToast } from "@/utils/undoableDelete";
 
 /**
  * Connection-tree domain slice — a cut of the appStore god-module split
@@ -85,6 +86,13 @@ export interface ConnectionTreeSlice {
    */
   updateFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
+  /**
+   * Delete a folder with a 10 s Undo toast (#5158). The folder disappears at
+   * once (its children move up to its parent), but the delete is only
+   * committed when the undo window ends — so Undo restores the folder, its
+   * children's parent, their ids and credentials exactly, with nothing written.
+   */
+  deleteFolderWithUndo: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
   moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
   bulkMoveConnectionsToFolder: (connectionIds: string[], folderId: string | null) => void;
@@ -472,6 +480,28 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       persistWithOverlay(removeFolderFold(folderId), () => removeFolder(folderId)).catch((err) => {
         frontendLog("app_store", `Failed to persist folder deletion: ${errorMessage(err)}`);
         toast.error(`Failed to delete folder: ${errorMessage(err)}`);
+      });
+    },
+
+    deleteFolderWithUndo: (folderId) => {
+      const folder = currentConnectionsView().folders.find((f) => f.id === folderId);
+      if (!folder) return;
+      frontendLog("connection_sync", `deleteFolderWithUndo: hiding ${folderId}`);
+      const deferred = deferDelete(() => removeFolder(folderId));
+      persistWithOverlay(removeFolderFold(folderId), () => deferred.promise).catch((err) => {
+        if (isDeleteUndone(err)) return;
+        frontendLog("app_store", `Failed to persist folder deletion: ${errorMessage(err)}`);
+        toast.error(`Failed to delete folder: ${errorMessage(err)}`);
+      });
+      showUndoToast(`Deleted folder "${folder.name}"`, {
+        testId: "folder-delete-undo-toast",
+        onUndo: () => {
+          if (deferred.cancel()) {
+            toast.success(`Restored folder "${folder.name}"`);
+          } else {
+            toast.error(`Folder "${folder.name}" was already deleted`);
+          }
+        },
       });
     },
 

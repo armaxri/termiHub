@@ -105,8 +105,9 @@ export function upsertFolder(folder: ConnectionFolder): ConnectionsFold {
 }
 
 /**
- * Remove a folder, re-homing its children the way the backend does: child
- * folders move to the removed folder's parent, child connections to root.
+ * Remove a folder, re-homing its children the way the backend's
+ * `delete_folder` does: child folders and child connections move to the
+ * removed folder's parent (root for a top-level folder).
  */
 export function removeFolder(folderId: string): ConnectionsFold {
   return (view) => {
@@ -118,7 +119,7 @@ export function removeFolder(folderId: string): ConnectionsFold {
         .filter((f) => f.id !== folderId)
         .map((f) => (f.parentId === folderId ? { ...f, parentId } : f)),
       connections: view.connections.map((c) =>
-        c.folderId === folderId ? { ...c, folderId: null } : c
+        c.folderId === folderId ? { ...c, folderId: parentId } : c
       ),
     };
   };
