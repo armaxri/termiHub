@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Runtime, State};
 
 use crate::terminal::xserver::manager::XServerStatus as ManagedStatus;
 use crate::terminal::xserver::{
@@ -64,8 +64,8 @@ pub async fn x_server_ensure(
 /// Adopted external servers are never stopped — termiHub only shuts down what it
 /// started.
 #[tauri::command]
-pub fn x_server_stop(
-    app: AppHandle,
+pub fn x_server_stop<R: Runtime>(
+    app: AppHandle<R>,
     manager: State<'_, Arc<XServerManager>>,
 ) -> Result<(), XServerError> {
     if !matches!(manager.status(), ManagedStatus::Running { .. }) {
@@ -104,8 +104,8 @@ pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerEr
 /// Emit the terminal progress event for an install `result` and return it, so the
 /// success/failure tail is written once. Mirrors the `Ok/Err => emit` shape
 /// [`x_server_ensure`] already uses.
-fn finish(
-    app: &AppHandle,
+fn finish<R: Runtime>(
+    app: &AppHandle<R>,
     result: Result<(), XServerError>,
     ok_message: &str,
 ) -> Result<(), XServerError> {
@@ -131,3 +131,7 @@ pub fn x_server_connect_consent_reply(
 ) -> bool {
     registry.resolve(&id, decision)
 }
+
+#[cfg(test)]
+#[path = "xserver_tests.rs"]
+mod xserver_tests;

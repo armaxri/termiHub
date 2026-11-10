@@ -475,3 +475,7 @@ pub async fn drag_out_start(
         .await
         .map_err(|_| TerminalError::InternalError("drag-out ended without a result".to_string()))
 }
+
+#[cfg(test)]
+#[path = "files_tests.rs"]
+mod files_tests;
