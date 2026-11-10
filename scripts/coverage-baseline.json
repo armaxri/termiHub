@@ -2,14 +2,14 @@
   "tolerance": 0.25,
   "platforms": {
     "linux": {
-      "frontend": 90.69,
-      "core": 93.07,
-      "agent": 92.45,
-      "src-tauri": 78.15,
-      "plugin-runner": 67.02,
-      "plugin-api": 74.25,
-      "rdp-sidecar": 78.57,
-      "unified": 86.17
+      "frontend": 91.35,
+      "core": 93.15,
+      "agent": 92.6,
+      "src-tauri": 78.52,
+      "plugin-runner": 84.4,
+      "plugin-api": 79.14,
+      "rdp-sidecar": 80.43,
+      "unified": 86.83
     },
     "darwin": {
       "frontend": 86.77,
