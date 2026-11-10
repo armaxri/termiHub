@@ -57,7 +57,7 @@
 //! offers the folder's **recursive** contents as a `FileGroupDescriptorW` list —
 //! directory entries plus files carrying their `\`-separated relative paths so
 //! the remote recreates the tree (#1780) — and the driver calls
-//! [`Cliprdr::initiate_file_copy`]; on a remote paste the server asks for each
+//! [`Cliprdr::initiate_file_copy`](ironrdp_cliprdr::Cliprdr::initiate_file_copy); on a remote paste the server asks for each
 //! file's size/bytes and [`on_file_contents_request`](SidecarClipboardBackend::on_file_contents_request)
 //! serves them, reading **only** through the shared [`crate::sandbox`] resolver,
 //! at most `CLIPBOARD_CHUNK_BYTES` per range response so a large file streams
@@ -405,7 +405,7 @@ pub struct SidecarClipboardBackend {
     /// Opt-in to serving files copied to the host OS clipboard, decoupled from the
     /// shared folder (#1808). When set (and not view-only), host-clipboard files
     /// are advertised and served from their real host paths without a
-    /// [`Self::download_dir`]. Set from [`RdpConfig::host_clipboard_files_enabled`].
+    /// [`Self::download_dir`]. Set from [`RdpConfig::host_clipboard_files_enabled`](termihub_core::backends::rdp_sidecar::config::RdpConfig::host_clipboard_files_enabled).
     /// The shared-folder fallback in [`Self::build_local_file_offer`] still needs
     /// [`Self::download_dir`]; this flag only enables the host-clipboard source.
     serve_host_clipboard: bool,
@@ -415,7 +415,7 @@ pub struct SidecarClipboardBackend {
     chunk_bytes: u64,
     /// When `true`, a remote file copy is **surfaced** to the host as a file list
     /// (delayed rendering, #1793) instead of eagerly downloaded into the shared
-    /// folder (#1765). Set from [`RdpConfig::clipboard_delayed_render_enabled`].
+    /// folder (#1765). Set from [`RdpConfig::clipboard_delayed_render_enabled`](termihub_core::backends::rdp_sidecar::config::RdpConfig::clipboard_delayed_render_enabled).
     delayed_render: bool,
     /// The sanitized file list last surfaced to the host in delayed-render mode
     /// (#1793). A [`Self::fetch_remote_file`] may only name an `index` present
@@ -534,13 +534,13 @@ impl SidecarClipboardBackend {
     /// remote file copy surfaces its file list to the host rather than eagerly
     /// downloading it into the shared folder; the host then fetches a file's
     /// bytes on demand via [`Self::fetch_remote_file`]. Set from
-    /// [`RdpConfig::clipboard_delayed_render_enabled`] at connect time.
+    /// [`RdpConfig::clipboard_delayed_render_enabled`](termihub_core::backends::rdp_sidecar::config::RdpConfig::clipboard_delayed_render_enabled) at connect time.
     pub fn set_delayed_render(&mut self, enabled: bool) {
         self.delayed_render = enabled;
     }
 
     /// Opt in to serving host OS clipboard files to the remote without a shared
-    /// folder (#1808). Set from [`RdpConfig::host_clipboard_files_enabled`] at
+    /// folder (#1808). Set from [`RdpConfig::host_clipboard_files_enabled`](termihub_core::backends::rdp_sidecar::config::RdpConfig::host_clipboard_files_enabled) at
     /// connect time. Decoupled from [`Self::download_dir`]: with this on, files
     /// the user copied locally are advertised and served from their real host
     /// paths even when no shared folder is configured. View-only suppression and

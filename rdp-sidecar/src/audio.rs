@@ -3,7 +3,7 @@
 //!
 //! IronRDP's [`Rdpsnd`](ironrdp_rdpsnd::client::Rdpsnd) static virtual channel
 //! decodes the server's audio stream and drives an
-//! [`RdpsndClientHandler`](ironrdp_rdpsnd::client::RdpsndClientHandler): the
+//! [`RdpsndClientHandler`]: the
 //! handler advertises the [`AudioFormat`]s it can play via
 //! [`get_formats`](RdpsndClientHandler::get_formats), and the channel calls
 //! [`wave`](RdpsndClientHandler::wave) with each decoded audio buffer, handing us
@@ -48,7 +48,7 @@
 //!
 //! Audible playback is compiled for **macOS, Windows and Linux** — the three
 //! platforms the bundle CI builds the sidecar for. On Linux [`rodio`] uses
-//! [`cpal`]'s ALSA backend, which links `libasound2-dev` at build time (the
+//! [`cpal`](https://docs.rs/cpal)'s ALSA backend, which links `libasound2-dev` at build time (the
 //! bundle CI installs it on its native `ubuntu` sidecar legs, #1772) and loads
 //! `libasound.so.2` at runtime — present on every desktop Linux. Any other
 //! target `cpal` cannot build for degrades to the no-op sink below (advertising

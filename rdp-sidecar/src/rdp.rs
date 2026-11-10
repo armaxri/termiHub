@@ -174,7 +174,7 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
 
 /// Run the IronRDP connect sequence to an active session: TCP → X.224 → TLS →
 /// CredSSP/NLA → capability exchange. Returns the negotiated result, the framed
-/// transport for the driver to take over, the connector [`Config`] (needed
+/// transport for the driver to take over, the connector [`Config`](ConnectorConfig) (needed
 /// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
 /// #1755), and the receiver on which the registered CLIPRDR backend surfaces
 /// clipboard events for the driver (#1756).

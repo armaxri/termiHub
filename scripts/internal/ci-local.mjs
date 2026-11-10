@@ -60,7 +60,11 @@ export const CI_LOCAL_JOBS = {
       "(ci-local.cmd's check.cmd clippy is its equivalent there)",
   },
   "rdp-sidecar-quality": {
-    gates: ["RDP sidecar: fmt + clippy + tests", "RDP sidecar: cargo deny"],
+    gates: [
+      "RDP sidecar: fmt + clippy + tests",
+      "RDP sidecar: rustdoc (-D warnings)",
+      "RDP sidecar: cargo deny",
+    ],
   },
   "frontend-quality": {
     gates: [
