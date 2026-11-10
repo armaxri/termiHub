@@ -83,7 +83,7 @@ describe("appStore password prompt queue (#4312)", () => {
 
   it("cancelling the first prompt does not affect the second", async () => {
     const store = useAppStore.getState();
-    const first = track(store.requestPassword("first.example", "alice"));
+    track(store.requestPassword("first.example", "alice"));
     const second = track(store.requestPassword("second.example", "bob"));
 
     useAppStore.getState().dismissPasswordPrompt();
@@ -155,7 +155,7 @@ describe("appStore password prompt queue (#4312)", () => {
   it("removes and rejects a queued request whose owner aborts", async () => {
     const store = useAppStore.getState();
     const controller = new AbortController();
-    const first = track(store.requestPassword("first.example", "alice"));
+    track(store.requestPassword("first.example", "alice"));
     const secondPromise = store.requestPassword("second.example", "bob", "", "password", {
       signal: controller.signal,
     });
@@ -186,7 +186,7 @@ describe("appStore password prompt queue (#4312)", () => {
   it("aborting the prompt on screen advances to the next one", async () => {
     const store = useAppStore.getState();
     const controller = new AbortController();
-    const first = track(
+    track(
       store.requestPassword("first.example", "alice", "", "password", {
         signal: controller.signal,
       })
@@ -251,5 +251,28 @@ describe("appStore password prompt queue (#4312)", () => {
     ]);
     expect(useAppStore.getState().passwordPromptQueue).toHaveLength(0);
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+  });
+});
+
+describe("password prompt — rejected saved secret (#5156)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  it("mirrors the head's savedRejected flag and resets it for the next request", () => {
+    track(
+      useAppStore.getState().requestPassword("a.example", "alice", "rejected", "password", {
+        savedRejected: true,
+      })
+    );
+    void useAppStore.getState().requestPassword("b.example", "bob");
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(true);
+
+    useAppStore.getState().submitPassword("pw", true);
+    // The next queued prompt is an ordinary one.
+    expect(useAppStore.getState().passwordPromptHost).toBe("b.example");
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(false);
+    useAppStore.getState().dismissPasswordPrompt();
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(false);
   });
 });

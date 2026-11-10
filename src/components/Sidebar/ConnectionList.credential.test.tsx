@@ -18,11 +18,16 @@ import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connection
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { resolveCredential, storeCredential, isSshKeyEncrypted } from "@/services/api";
+import { collectLiveTabs } from "@/store/layoutHelpers";
+import {
+  connected,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
   createTerminal: vi.fn(() => Promise.resolve({ sessionId: "s1" })),
-  removeCredential: vi.fn(),
   storeCredential: vi.fn(() => Promise.resolve()),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
   // Default: key files are encrypted. Tests override per-case.
@@ -106,6 +111,7 @@ afterEach(() => {
 });
 
 setupConnectionsRegion();
+const sessionRegion = installSessionLifecycleHarness();
 
 describe("ConnectionList — password dialog conditions", () => {
   it("shows dialog for password auth when no credential is stored", async () => {
@@ -220,7 +226,7 @@ describe("ConnectionList — password dialog conditions", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
-  it("stores passphrase as key_passphrase type when user opts in for key auth", async () => {
+  it("stores passphrase as key_passphrase once the connect succeeds when user opts in (#5156)", async () => {
     const conn = makeSshConn("key-store-test", "key", true);
     render([conn]);
     await act(async () => {
@@ -233,6 +239,12 @@ describe("ConnectionList — password dialog conditions", () => {
       useAppStore.getState().submitPassword("my-passphrase", true);
       await Promise.resolve();
     });
+    // Saved only once the opened tab's session is established.
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+    const tab = collectLiveTabs(useAppStore.getState()).find((t) => t.connectionId === conn.id);
+    expect(tab).toBeDefined();
+    sessionRegion.transport.setSession(tab!.id, connected());
+    await flushSessionRegion();
 
     expect(mockedStoreCredential).toHaveBeenCalledWith(
       conn.id,
