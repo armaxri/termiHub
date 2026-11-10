@@ -393,3 +393,61 @@ fn second_launch_on_a_locked_data_dir_exits_with_the_message() {
     );
     drop(lock_file);
 }
+
+/// #5245: `uninstall-shell-integration` run against a portable folder whose
+/// data dir another instance holds refuses: exit code 1, a message pointing
+/// at the running app's Settings, and `data/` (including a seeded
+/// `settings.json`) left untouched.
+///
+/// Skipped on Windows like the other write-path tests: a broken lock check
+/// there would edit the real HKCU registry.
+#[cfg(not(windows))]
+#[test]
+fn shell_integration_on_a_locked_data_dir_refuses_and_writes_nothing() {
+    let launch = PortableLaunch::new(PortableFlavor::DataDir);
+    let data_dir = launch.data_dir();
+    let original = br#"{"version":"1","shellIntegration":{"registered":false}}"#;
+    fs::write(data_dir.join("settings.json"), original).expect("seed settings.json");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(data_dir.join(LOCK_FILE_NAME))
+        .expect("open lock file");
+    lock_file
+        .try_lock()
+        .expect("instance A takes the data-dir lock");
+    let before = snapshot_tree(&data_dir);
+
+    let output = launch.run(&["uninstall-shell-integration"]);
+
+    assert_eq!(output.status.code(), Some(1), "{}", describe(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("termiHub is running from this folder"),
+        "the refusal message must reach stderr; {}",
+        describe(&output)
+    );
+    assert!(
+        stderr.contains("Settings") && stderr.contains(&data_dir.display().to_string()),
+        "the message must point at Settings and name the data folder; {}",
+        describe(&output)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("Shell integration removed."),
+        "{}",
+        describe(&output)
+    );
+    assert_eq!(
+        snapshot_tree(&data_dir),
+        before,
+        "the refused command must not write into the shared data dir"
+    );
+    assert_eq!(
+        fs::read(data_dir.join("settings.json")).expect("read settings.json"),
+        original,
+        "settings.json must be byte-for-byte unchanged"
+    );
+    drop(lock_file);
+}
