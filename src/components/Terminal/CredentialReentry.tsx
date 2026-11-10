@@ -43,7 +43,7 @@ function CredentialReentryForm({
   const isKey = target.authMethod === "key";
 
   // Driven by the submit Button's async lifecycle (click or Enter), so the
-  // button shows a pending state while the credential is saved.
+  // button shows a pending state while the store is unlocked for a save.
   const handleSubmit = useCallback(async () => {
     const saved = await reconnectWithReenteredCredentials(tabId, target, {
       secret,

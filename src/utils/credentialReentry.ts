@@ -9,14 +9,17 @@
  *
  * Saving follows the connect-time password prompt: a ticked "Save" box writes
  * the secret to the credential store under the connection's existing key, the
- * same entry the next connect reads; otherwise it is used for this attempt
- * only. The secret only ever goes into the in-memory tab config and the
+ * same entry the next connect reads — but only once the reconnect reaches an
+ * established session (#5156), so a mistyped secret never replaces the saved
+ * one. Otherwise it is used for this attempt only. The secret only ever goes into the in-memory tab config and the
  * credential store — it is never logged.
  *
  * Whether re-entry is offered at all is decided structurally by the callers
  * (`authFailed` region status, `auth_failed` spawn-error kind), never by
  * parsing message text (I18N-001).
  */
+import { toast } from "@/components/ui";
+import { t } from "@/i18n/catalog";
 import { storeCredential } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
@@ -26,6 +29,7 @@ import type { ConnectionConfig } from "@/types/terminal";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendError } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { persistSecretOnceConnected } from "@/utils/persistSecretOnceConnected";
 
 /** The auth methods whose secret the user can re-enter. */
 type ReentryAuthMethod = "password" | "key";
@@ -98,18 +102,15 @@ function reentryCredentialType(authMethod: ReentryAuthMethod): PasswordPromptKin
   return authMethod === "key" ? "key_passphrase" : "password";
 }
 
-/** Persist a re-entered secret under the connection's credential-store key. */
-async function saveReenteredSecret(
+/**
+ * Write a re-entered secret under the connection's credential-store key.
+ * Rejects when the write fails (logged here; the secret is never logged).
+ */
+async function writeReenteredSecret(
   target: CredentialReentryTarget,
   credentialId: string,
   secret: string
-): Promise<boolean> {
-  // A locked master-password store must be unlocked before it can be written.
-  if (
-    !(await ensureCredentialStoreUnlocked({ authMethod: target.authMethod, savePassword: true }))
-  ) {
-    return false;
-  }
+): Promise<void> {
   const sourceFile =
     currentConnectionsView().connections.find((c) => c.id === credentialId)?.sourceFile ?? null;
   try {
@@ -119,21 +120,24 @@ async function saveReenteredSecret(
       secret,
       sourceFile
     );
-    return true;
   } catch (err) {
     frontendError(
       "credential_reentry",
       `Failed to store re-entered credential: ${errorMessage(err)}`
     );
-    return false;
+    throw err;
   }
 }
 
 /**
- * Reconnect `tabId` with the re-entered credential: optionally save it, put it
- * (and a changed key file) into the tab's in-memory config, then start a fresh
- * connect. Resolves `false` when a requested save failed — the reconnect still
- * runs with the credential, used for this attempt only.
+ * Reconnect `tabId` with the re-entered credential: put it (and a changed key
+ * file) into the tab's in-memory config and start a fresh connect. A requested
+ * save is written only once that connect is established (#5156); a rejected or
+ * failed reconnect leaves the saved secret untouched. A locked store is
+ * unlocked before the reconnect, so the later write never prompts. Resolves
+ * `false` when the save cannot happen (the unlock was declined) — the reconnect
+ * still runs with the credential, used for this attempt only. A write that
+ * fails after connecting is reported with a toast.
  */
 export async function reconnectWithReenteredCredentials(
   tabId: string,
@@ -141,8 +145,15 @@ export async function reconnectWithReenteredCredentials(
   input: CredentialReentryInput
 ): Promise<boolean> {
   let saved = true;
-  if (input.save && target.credentialId !== null && input.secret.length > 0) {
-    saved = await saveReenteredSecret(target, target.credentialId, input.secret);
+  const credentialId = target.credentialId;
+  let saveOnConnect = input.save && credentialId !== null && input.secret.length > 0;
+  // A locked master-password store must be unlocked before it can be written.
+  if (
+    saveOnConnect &&
+    !(await ensureCredentialStoreUnlocked({ authMethod: target.authMethod, savePassword: true }))
+  ) {
+    saved = false;
+    saveOnConnect = false;
   }
 
   const store = useAppStore.getState();
@@ -157,5 +168,13 @@ export async function reconnectWithReenteredCredentials(
   // A fresh create with the new credential — never a re-attach of the failed
   // (or never-started) session.
   store.startFreshShellForTab(tabId);
+  if (saveOnConnect && credentialId !== null) {
+    const secret = input.secret;
+    void persistSecretOnceConnected(tabId, () =>
+      writeReenteredSecret(target, credentialId, secret)
+    ).then((outcome) => {
+      if (outcome === "failed") toast.error(t("credentialReentry.saveFailed"));
+    });
+  }
   return saved;
 }
