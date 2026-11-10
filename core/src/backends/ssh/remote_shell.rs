@@ -47,6 +47,15 @@
 //! no markers) is [`RemoteShell::Unknown`], and nothing is injected for it: a
 //! missing CWD hook is a degradation, a corrupted first command is a bug.
 //!
+//! A Win32-OpenSSH host is asked differently (#5134). Its exec channel runs
+//! the probe as `cmd.exe /c <probe>` when cmd.exe is the DefaultShell, and
+//! cmd.exe runs the user's AutoRun before it: an AutoRun with side effects
+//! (a log line, a file) would run once more per session. So there the
+//! connector reads the session shell's own first output for cmd.exe's banner
+//! ([`cmd_banner_verdict`]) and runs the exec probe only when the banner does
+//! not show: a PowerShell, Git Bash or fish DefaultShell, whose `-c` runs no
+//! cmd AutoRun.
+//!
 //! `%OS%` stays literal under PowerShell on every OS, so it cannot tell a
 //! Windows host from a Unix one there; `$PSHOME` can: it is an absolute POSIX
 //! path (`/opt/microsoft/powershell/7`) only on Linux/macOS, giving
@@ -218,6 +227,103 @@ fn is_windows_host_os(word: &str) -> bool {
 fn fish_has_native_integration(version: &str) -> bool {
     let major: String = version.chars().take_while(char::is_ascii_digit).collect();
     major.parse::<u32>().is_ok_and(|major| major >= 4)
+}
+
+/// Whether the server's SSH identification line (`SSH-2.0-OpenSSH_for_Windows_9.5`)
+/// names Win32-OpenSSH (#5134). Its exec channel runs the command as
+/// `cmd.exe /c <command>` when cmd.exe is the DefaultShell, and cmd.exe then
+/// runs the user's AutoRun (HKCU / HKLM `Software\Microsoft\Command
+/// Processor`) first: no option of the command line can skip it.
+pub fn is_win32_openssh(server_id: &str) -> bool {
+    server_id.contains("OpenSSH_for_Windows")
+}
+
+/// How long a Win32-OpenSSH session's first output is read for cmd.exe's
+/// banner before the exec probe runs instead (#5134). cmd.exe prints it as
+/// soon as it starts; a host this slow still gets the right answer, from the
+/// probe.
+pub const CMD_BANNER_WAIT: Duration = Duration::from_secs(10);
+
+/// What a Win32-OpenSSH shell's first output says (#5134): see
+/// [`cmd_banner_verdict`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BannerVerdict {
+    /// cmd.exe's banner (`Microsoft Windows [Version 10.0...]`) is there.
+    Cmd,
+    /// The output rules cmd.exe out: the exec probe tells the shell.
+    NotCmd,
+    /// Not enough output yet.
+    Undecided,
+}
+
+/// The banner an interactive cmd.exe prints first, `Microsoft Windows
+/// [Version 10.0.20348.2849]` (`[Versión ...` and the like when localised).
+const CMD_BANNER: &str = "Microsoft Windows [";
+
+/// Tell cmd.exe from a Win32-OpenSSH session's first raw output (#5134),
+/// without running anything on the host.
+///
+/// ConPTY renders the console, so the text comes with escape sequences
+/// around it, and a run of spaces may be a cursor move: every escape
+/// sequence counts as a space and runs of white space as one.
+pub fn cmd_banner_verdict(output: &[u8]) -> BannerVerdict {
+    let text = visible_text(output);
+    if text.contains(CMD_BANNER) {
+        return BannerVerdict::Cmd;
+    }
+    let text = text.trim_start();
+    if text.is_empty() || CMD_BANNER.starts_with(text) {
+        return BannerVerdict::Undecided;
+    }
+    BannerVerdict::NotCmd
+}
+
+/// `output` without its escape sequences (CSI, OSC, two-byte ESC), each
+/// replaced by a space, with every run of white space as one space.
+fn visible_text(output: &[u8]) -> String {
+    let raw = String::from_utf8_lossy(output);
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    let push = |out: &mut String, c: char| {
+        if c.is_whitespace() || c.is_control() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+        }
+    };
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            push(&mut out, c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters and intermediates up to a final byte.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: up to BEL or ST (ESC \\).
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next_if_eq(&'\\');
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+        push(&mut out, ' ');
+    }
+    out
 }
 
 /// Probe the remote login shell over an exec channel on `session`.
@@ -2394,5 +2500,77 @@ mod tests {
         let mut gate = SetupGate::new(hold, SetupDone::OutputSettled, Instant::now());
         assert!(!gate.is_holding());
         assert_eq!(gate.write(b"dir\r".to_vec()), Some(b"dir\r".to_vec()));
+    }
+    // ── Win32-OpenSSH: cmd.exe told by its banner (#5134) ─────────────
+
+    /// A Win32-OpenSSH cmd.exe session's first output as measured on the
+    /// Windows SSH Host lane (run 42722303666), one chunk per message, with
+    /// a test AutoRun that prints a line.
+    const CMD_SESSION_START: [&[u8]; 3] = [
+        b"\x1b[?9001h\x1b[?1004h",
+        b"\x1b[?25l\x1b[2J\x1b[m\x1b[H\r\n\r\n\r\n\x1b[H\x1b]0;C:\\Windows\\system32\\conhost.exe\x07\x1b[?25h",
+        b"\x1b[?25lMicrosoft Windows [Version 10.0.26100.33674]\r\n(c) Microsoft Corporation. \
+          All rights reserved.\r\nth5134-autorun-visible\x1b[5;1Htermihubssh@runner \
+          C:\\Users\\termihubssh>\x1b[?25h",
+    ];
+
+    #[test]
+    fn win32_openssh_is_told_by_its_server_id() {
+        assert!(is_win32_openssh("SSH-2.0-OpenSSH_for_Windows_9.5"));
+        assert!(!is_win32_openssh(
+            "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.5"
+        ));
+        assert!(!is_win32_openssh("SSH-2.0-dropbear_2022.83"));
+    }
+
+    #[test]
+    fn cmd_banner_decides_only_once_the_banner_text_comes() {
+        let mut seen = Vec::new();
+        for chunk in &CMD_SESSION_START[..2] {
+            seen.extend_from_slice(chunk);
+            // Escapes, blank lines and the window title only.
+            assert_eq!(cmd_banner_verdict(&seen), BannerVerdict::Undecided);
+        }
+        seen.extend_from_slice(CMD_SESSION_START[2]);
+        assert_eq!(cmd_banner_verdict(&seen), BannerVerdict::Cmd);
+    }
+
+    #[test]
+    fn cmd_banner_split_across_chunks_waits_for_the_rest() {
+        assert_eq!(
+            cmd_banner_verdict(b"\x1b[?25lMicrosoft Win"),
+            BannerVerdict::Undecided
+        );
+        // ConPTY may render a space as a cursor move.
+        assert_eq!(
+            cmd_banner_verdict(b"Microsoft\x1b[1CWindows\x1b[1C[Versi\xc3\xb3n 10.0.19045]"),
+            BannerVerdict::Cmd
+        );
+    }
+
+    #[test]
+    fn other_windows_shells_are_not_cmd() {
+        for start in [
+            &b"\x1b[?25l\x1b[2J\x1b[HWindows PowerShell\r\nCopyright (C) Microsoft"[..],
+            b"\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07PowerShell 7.4.6\r\n",
+            b"\x1b[2J\x1b[H\x1b]0;MINGW64:/c/Users/u\x07\r\nu@host MINGW64 ~\r\n$ ",
+            b"PS C:\\Users\\u> ",
+        ] {
+            assert_eq!(
+                cmd_banner_verdict(start),
+                BannerVerdict::NotCmd,
+                "{:?}",
+                String::from_utf8_lossy(start)
+            );
+        }
+    }
+
+    #[test]
+    fn no_output_yet_is_undecided() {
+        assert_eq!(cmd_banner_verdict(b""), BannerVerdict::Undecided);
+        assert_eq!(
+            cmd_banner_verdict(b"\x1b[?9001h\x1b[?1004h\r\n"),
+            BannerVerdict::Undecided
+        );
     }
 }
