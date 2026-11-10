@@ -11,9 +11,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
-#[cfg(test)]
-use tracing::debug;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
@@ -429,6 +427,11 @@ fn verify_and_install(
 /// the `mkdir -p`/`mv -f`/`chmod` plan at `remote_path`), uploads via SFTP,
 /// moves the binary into place, verifies it with `--version` and resolves the
 /// absolute install path. `progress(step, message, fraction)` reports each step.
+///
+/// The previous working binary is copied to [`InstallPlan::backup_path`] before
+/// the move and restored if the new binary fails its verify, which returns
+/// [`AgentDeployResult::RolledBack`] (#5207). A leftover backup from an
+/// interrupted deploy is restored first when the installed binary does not run.
 ///
 /// Split out of [`deploy_agent`] (which needs a Tauri `AppHandle` to resolve the
 /// binary and emit events) so the live Windows SSH-host lane can drive the real
