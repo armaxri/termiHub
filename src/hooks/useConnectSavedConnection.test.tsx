@@ -636,6 +636,55 @@ describe("useConnectSavedConnection", () => {
     expect(infoToastSpy).not.toHaveBeenCalled();
   });
 
+  // #5184: the backend now types a key that will not decrypt with the saved
+  // passphrase as `auth_failed`, so the passphrase re-entry flow fires: the
+  // saved passphrase is kept, the prompt asks for a passphrase and offers to
+  // replace it, and a replacement is stored only once it connects (#5156).
+  it("re-prompts for the passphrase when the saved one fails to decrypt the key (#5184)", async () => {
+    mockedResolveCredential.mockResolvedValue("old-passphrase");
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("[thub-code:auth_failed] Authentication failed")
+    );
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("key-rejected", "key", true));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const state = useAppStore.getState();
+    expect(state.passwordPromptOpen).toBe(true);
+    expect(state.passwordPromptKind).toBe("key_passphrase");
+    expect(state.passwordPromptSavedRejected).toBe(true);
+    expect(state.passwordPromptNotice).toBe(
+      "The saved passphrase was rejected. It is kept — enter the passphrase to connect."
+    );
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+
+    await act(async () => {
+      useAppStore.getState().submitPassword("new-passphrase", true);
+      await Promise.resolve();
+    });
+    await flushSessionRegion();
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "SSH key-rejected",
+      "ssh",
+      expect.objectContaining({
+        config: expect.objectContaining({ password: "new-passphrase" }),
+      }),
+      expect.anything()
+    );
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+    sessionRegion.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    expect(mockedStoreCredential).toHaveBeenCalledWith(
+      "key-rejected",
+      "key_passphrase",
+      "new-passphrase",
+      undefined
+    );
+  });
+
   it("shows no re-prompt notice for an ordinary first-time password prompt (UX-013)", async () => {
     const { connect } = await renderHook();
     await act(async () => {

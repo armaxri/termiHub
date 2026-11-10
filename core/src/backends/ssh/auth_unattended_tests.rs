@@ -128,9 +128,11 @@ async fn unattended_encrypted_key_without_a_passphrase_needs_interaction() {
     }
 }
 
-/// Attended, the same encrypted key keeps its previous, untyped error.
+/// Attended, an encrypted key the passphrase cannot unlock (none, or a wrong
+/// one) is the typed credential rejection, so the desktop offers to re-enter
+/// the passphrase (#5184) — never an untyped spawn failure.
 #[tokio::test]
-async fn attended_encrypted_key_without_a_passphrase_is_unchanged() {
+async fn attended_encrypted_key_passphrase_failure_is_auth_failed() {
     use crate::backends::ssh::ki_test_server::connect as ki_connect;
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("id_ed25519");
@@ -138,9 +140,36 @@ async fn attended_encrypted_key_without_a_passphrase_is_unchanged() {
     let mut cfg = trusted_key_config("key", None);
     cfg.key_path = Some(key_path.to_string_lossy().into_owned());
 
+    for passphrase in [None, Some("wrong-passphrase".to_string())] {
+        cfg.password = passphrase.clone();
+        let (mut session, observed) = ki_connect(script()).await;
+        let err = authenticate_with_prompter(&mut session, &cfg, None)
+            .await
+            .expect_err("the key must not unlock");
+        assert!(
+            matches!(err, SessionError::AuthFailed),
+            "{passphrase:?}: {err:?}"
+        );
+        assert!(observed.lock().unwrap().responses.is_empty());
+    }
+}
+
+/// A missing key file is not a credential problem: it stays an untyped
+/// spawn failure that names the file (#5184).
+#[tokio::test]
+async fn attended_missing_key_file_stays_spawn_failed() {
+    use crate::backends::ssh::ki_test_server::connect as ki_connect;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("no_such_key");
+    let mut cfg = trusted_key_config("key", Some("passphrase"));
+    cfg.key_path = Some(missing.to_string_lossy().into_owned());
+
     let (mut session, _observed) = ki_connect(script()).await;
     let err = authenticate_with_prompter(&mut session, &cfg, None)
         .await
-        .expect_err("no passphrase");
-    assert_eq!(err.connect_failure_kind(), None, "got {err:?}");
+        .expect_err("missing key file");
+    assert!(
+        matches!(err, SessionError::SpawnFailed(ref m) if m.contains("no_such_key")),
+        "got {err:?}"
+    );
 }
