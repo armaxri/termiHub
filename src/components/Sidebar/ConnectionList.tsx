@@ -78,6 +78,13 @@ import {
   findFileRouteDependents,
 } from "@/utils/jumpHost";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import {
+  captureNeighborFocus,
+  handleTreeRowActionKey,
+  rescueFocusAfterRemoval,
+  treeRowKeyShortcuts,
+  type FocusTarget,
+} from "@/utils/treeRowKeys";
 import { folderDeleteMessage } from "./folderDeleteMessage";
 import {
   persistUndoableDeleteOptOut,
@@ -243,6 +250,7 @@ function TreeNode({
             onClick={() => onToggle(folder.id)}
             onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
             onFocus={() => onRowFocus(rowIndex)}
+            aria-keyshortcuts={treeRowKeyShortcuts({ delete: true })}
           />
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -503,6 +511,7 @@ function ConnectionItem({
               onDoubleClick={() => onConnect(connection)}
               onKeyDown={(e) => onTreeKeyDown(e, connection.id)}
               onFocus={() => onRowFocus(rowIndex)}
+              aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
             >
               <ConnectionIcon
                 config={connection.config}
@@ -1141,7 +1150,7 @@ export function ConnectionList() {
   );
 
   const handleDelete = useCallback(
-    (connectionId: string) => {
+    (connectionId: string, focusAfter?: FocusTarget) => {
       const bulk = selectedConnectionIds.size > 1 && selectedConnectionIds.has(connectionId);
       const targetIds = bulk ? [...selectedConnectionIds] : [connectionId];
       const doDelete = () => {
@@ -1184,6 +1193,7 @@ export function ConnectionList() {
         onConfirm: () => {
           setDeleteConfirm(null);
           doDelete();
+          if (focusAfter) rescueFocusAfterRemoval(focusAfter);
         },
       });
     },
@@ -1206,9 +1216,10 @@ export function ConnectionList() {
   // A folder delete confirms (unless opted out) and then offers Undo (#5158).
   const { shouldConfirm: confirmFolderDelete, take: takeFolderOptOut } = folderOptOut;
   const handleDeleteFolder = useCallback(
-    (folderId: string) => {
+    (folderId: string, focusAfter?: FocusTarget) => {
       if (!confirmFolderDelete) {
         deleteFolderWithUndo(folderId);
+        if (focusAfter) rescueFocusAfterRemoval(focusAfter);
         return;
       }
       setDeleteConfirm({
@@ -1218,10 +1229,35 @@ export function ConnectionList() {
           setDeleteConfirm(null);
           if (takeFolderOptOut()) persistUndoableDeleteOptOut();
           deleteFolderWithUndo(folderId);
+          if (focusAfter) rescueFocusAfterRemoval(focusAfter);
         },
       });
     },
     [deleteFolderWithUndo, confirmFolderDelete, takeFolderOptOut, folders, allConnections]
+  );
+
+  // Row-action keys on a focused tree row (#5181): Shift+F10 / the Menu key
+  // open its context menu, F2 opens a connection's editor (where it is
+  // renamed), Delete / Backspace start the same confirmed delete as the menu.
+  // Focus moves to the neighbouring row once the deleted row is gone. Every
+  // other key falls through to the tree navigation handler.
+  const handleRowKeyDown = useCallback(
+    (event: React.KeyboardEvent, nodeId: string) => {
+      const node = treeNodes[getNodeIndex(nodeId)];
+      const handled =
+        node &&
+        handleTreeRowActionKey(
+          event as React.KeyboardEvent<HTMLElement>,
+          node.kind === "connection"
+            ? {
+                onRename: () => handleEdit(node.id),
+                onDelete: (row) => handleDelete(node.id, captureNeighborFocus(row)),
+              }
+            : { onDelete: (row) => handleDeleteFolder(node.id, captureNeighborFocus(row)) }
+        );
+      if (!handled) handleTreeKeyDown(event, nodeId);
+    },
+    [treeNodes, getNodeIndex, handleEdit, handleDelete, handleDeleteFolder, handleTreeKeyDown]
   );
 
   const handleCreateFolder = useCallback(
@@ -1623,7 +1659,7 @@ export function ConnectionList() {
               activeIndex={activeIndex}
               getNodeIndex={getNodeIndex}
               getRowRef={getRowRef}
-              onTreeKeyDown={handleTreeKeyDown}
+              onTreeKeyDown={handleRowKeyDown}
               onRowFocus={handleRowFocus}
               moveActions={moveActions}
             />
