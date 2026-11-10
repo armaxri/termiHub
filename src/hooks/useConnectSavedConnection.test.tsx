@@ -314,7 +314,8 @@ describe("useConnectSavedConnection", () => {
       expect.objectContaining({
         config: expect.objectContaining({ password: "saved-secret" }),
       }),
-      undefined,
+      // The pre-connect runs under its own abortable connect id (#5180).
+      expect.stringMatching(/^preconnect-/),
       undefined,
       undefined,
       undefined,
@@ -566,7 +567,10 @@ describe("useConnectSavedConnection", () => {
     await act(async () => {
       await connect(makeSshConn("pw-slow", "password"));
     });
-    expect(loadingToastSpy).toHaveBeenCalledWith("Connecting…");
+    expect(loadingToastSpy).toHaveBeenCalledWith(
+      "Connecting…",
+      expect.objectContaining({ action: expect.objectContaining({ label: "Abort" }) })
+    );
     // The opened tab (and its own connection overlay) takes over feedback, so
     // the pre-connect indicator is cleared.
     expect(dismissToastSpy).toHaveBeenCalledWith("connecting-toast");
@@ -580,7 +584,10 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(loadingToastSpy).toHaveBeenCalledWith("Connecting…");
+    expect(loadingToastSpy).toHaveBeenCalledWith(
+      "Connecting…",
+      expect.objectContaining({ action: expect.objectContaining({ label: "Abort" }) })
+    );
     // The prompt modal is now the feedback surface — the toast is dismissed
     // rather than left lingering behind the dialog.
     expect(dismissToastSpy).toHaveBeenCalledWith("connecting-toast");
