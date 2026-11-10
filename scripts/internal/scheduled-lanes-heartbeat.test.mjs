@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  classifyFailure,
+  describeFailure,
   dispatchArgs,
   fetchLaneRuns,
   fmtAge,
@@ -200,5 +202,54 @@ describe("fmtAge / renderTable", () => {
     );
     expect(table).toContain("none (workflow not registered)");
     expect(table).toContain("own schedule (main)");
+  });
+});
+
+describe("classifyFailure (#5159)", () => {
+  const lane = daily({ gateSteps: { "Coverage ratchet": "ratchet drop" } });
+  const job = (steps) => ({
+    name: "Unified Coverage (ratchet)",
+    conclusion: steps.some(([, c]) => c === "failure") ? "failure" : "success",
+    steps: steps.map(([name, conclusion]) => ({ name, conclusion })),
+  });
+
+  it("calls a failure in a gate step a ratchet drop", () => {
+    const f = classifyFailure(lane, [
+      job([
+        ["Run unified coverage", "success"],
+        ["Coverage ratchet", "failure"],
+      ]),
+    ]);
+    expect(f.kind).toBe("gate");
+    expect(describeFailure(f)).toBe("ratchet drop (Unified Coverage (ratchet) / Coverage ratchet)");
+  });
+
+  it("calls any other failed step a broken lane, naming it", () => {
+    const f = classifyFailure(lane, [
+      job([
+        ["Run unified coverage", "failure"],
+        ["Coverage ratchet", "skipped"],
+      ]),
+    ]);
+    expect(f.kind).toBe("broken");
+    expect(describeFailure(f)).toBe(
+      "lane broken at Unified Coverage (ratchet) / Run unified coverage"
+    );
+  });
+
+  it("is a broken lane when the lane has no gate steps or nothing failed", () => {
+    const failed = [job([["Coverage ratchet", "failure"]])];
+    expect(classifyFailure(daily(), failed).kind).toBe("broken");
+    expect(classifyFailure(lane, []).detail).toBe("no failed job recorded");
+  });
+
+  it("shows the cause in the heartbeat table", () => {
+    const runs = [run("workflow_dispatch", "develop", 2, "failure")];
+    const failure = classifyFailure(lane, [job([["Coverage ratchet", "failure"]])]);
+    const table = renderTable(
+      [{ lane, registered: true, ownLive: false, status: laneStatus(lane, runs, NOW), failure }],
+      new Set()
+    );
+    expect(table).toContain("(failure, workflow_dispatch) — ratchet drop (");
   });
 });

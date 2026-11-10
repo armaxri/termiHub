@@ -181,6 +181,25 @@ export function formatTable(rows, platform, tolerance) {
   return lines.join("\n");
 }
 
+/**
+ * One line naming every failing component, e.g.
+ * `rdp-sidecar 78.57 → 78.00 (-0.57 pp)`. Empty when nothing failed.
+ *
+ * @param {{component: string, baseline: number, current: number|null, delta: number|null,
+ *   status: string}[]} rows
+ */
+export function failureSummary(rows) {
+  return rows
+    .filter((r) => r.status === "FAIL" || r.status === "MISSING")
+    .map((r) =>
+      r.status === "MISSING"
+        ? `${r.component} ${r.baseline.toFixed(2)} → no data`
+        : `${r.component} ${r.baseline.toFixed(2)} → ${r.current.toFixed(2)} ` +
+          `(${r.delta.toFixed(2)} pp)`
+    )
+    .join(", ");
+}
+
 export function parseArgs(argv) {
   const opts = {
     mode: "check",
@@ -284,9 +303,15 @@ function main(argv) {
   console.log(table);
   if (opts.report) writeFileSync(opts.report, table + "\n");
   if (!ok) {
+    const which = failureSummary(rows);
+    console.error(`\ncoverage-ratchet: FAIL — ${which}`);
     console.error(
-      `\ncoverage-ratchet: FAIL — coverage dropped more than ${tolerance} pp below the baseline.`
+      `  Coverage dropped more than ${tolerance} pp below the '${opts.platform}' baseline.`
     );
+    if (process.env.GITHUB_ACTIONS) {
+      // A distinct annotation, so a ratchet drop reads differently from a broken lane.
+      console.log(`::error title=Coverage ratchet drop::${which}`);
+    }
     console.error("  Add tests for the new/changed code, or — if the drop is intended and");
     console.error("  justified — lower the value in the baseline file in a reviewed commit");
     console.error("  (./scripts/coverage.sh --update-baseline never lowers it on its own).");

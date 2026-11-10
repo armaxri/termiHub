@@ -70,6 +70,8 @@ export function loadWorkflows(dir = WORKFLOW_DIR) {
   return out;
 }
 
+const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** True when the `on:` block declares `<key>:` under workflow_dispatch.inputs. */
 function declaresInput(text, key) {
   const block = extractOnBlock(text) ?? [];
@@ -128,6 +130,15 @@ export function registryProblems(workflows, lanes = LANES) {
     for (const key of Object.keys(lane.inputs ?? {})) {
       if (!declaresInput(text, key)) {
         problems.push(`${lane.file} does not declare the workflow_dispatch input "${key}".`);
+      }
+    }
+    for (const step of Object.keys(lane.gateSteps ?? {})) {
+      const named = new RegExp(`^\\s*-?\\s*name:\\s*["']?${escapeRe(step)}["']?\\s*$`, "m");
+      if (!named.test(text)) {
+        problems.push(
+          `${lane.file} has no step named "${step}", but scheduled-lanes.mjs lists it in ` +
+            'gateSteps. The heartbeat would report its failures as "lane broken" (#5159).'
+        );
       }
     }
     if (lane.ownSchedule === false && checksOutDevelopOnSchedule(text)) {

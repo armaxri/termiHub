@@ -32,6 +32,10 @@
 //              branch is develop; a `schedule` source matches any scheduled
 //              run, because scheduled runs are recorded on `main` even when
 //              they check out develop.
+//   gateSteps  optional { "<step name>": "<verdict>" }: a failure in only these
+//              steps is a gate verdict (e.g. "ratchet drop"), which the heartbeat
+//              reports apart from "lane broken" (#5159). Step names must exist
+//              in the lane's workflow (check-scheduled-lane-drift.mjs checks).
 //   ownSchedule
 //              true (default) when the lane's own `schedule:` grades develop,
 //              so once the file is on `main` its cron takes over and the
@@ -139,6 +143,8 @@ export const LANES = [
     dispatch: true,
     ownSchedule: false,
     sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
+    // A red ratchet is a coverage drop, not a broken lane (#5159).
+    gateSteps: { "Coverage ratchet": "ratchet drop" },
   },
   {
     // The upstream-drift job runs only on dispatch; the path-filtered push
