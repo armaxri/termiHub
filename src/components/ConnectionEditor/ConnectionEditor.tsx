@@ -17,7 +17,6 @@ import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { currentConnectionsView } from "@/store/connectionsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
   ConnectionConfig,
@@ -44,6 +43,7 @@ import {
   isSecondFactorFailure,
 } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
+import { persistSecretOnceConnected } from "@/utils/persistSecretOnceConnected";
 import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import {
@@ -1381,29 +1381,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       toast.info("Connect canceled — your changes were saved.");
       throw new PromptCanceledError();
     }
+    // A secret typed into the connect prompt with its Save box checked (#874,
+    // #879) is written only once the tab's session is established (#5156), so
+    // a typo is never saved. It is stored under the persisted id, in the file
+    // the connection lives in (#3591); a failed save stores nothing.
+    let typedSecret: (() => Promise<void>) | null = null;
     if (secret.status === "resolved") {
-      // Persist a freshly-entered secret when the prompt's Save box is checked
-      // (#874, #879). Store under the connection's persisted id — a new
-      // connection's optimistic conn-<ts> id has been reconciled by now (#863),
-      // and the editor enforces unique names per folder, so name + folderId
-      // identifies the stored entry.
-      if (secret.source === "prompt" && secret.shouldSave) {
-        // The file matters too: a same-named connection in another file has
-        // its own secret (#3591).
-        const storeConn = currentConnectionsView().connections.find(
-          (c) =>
-            c.name === saved.name &&
-            (c.folderId ?? null) === (saved.folderId ?? null) &&
-            (c.sourceFile ?? null) === savedSourceFile
-        );
-        await storeCredential(
-          connectionId ?? storeConn?.id ?? saved.id,
-          secret.credentialType,
-          secret.secret,
-          savedSourceFile
-        ).catch((err) =>
-          frontendLog("connection_editor", `Failed to store credential: ${errorMessage(err)}`)
-        );
+      if (secret.source === "prompt" && secret.shouldSave && connectionId) {
+        const { credentialType, secret: value } = secret;
+        typedSecret = () => storeCredential(connectionId, credentialType, value, savedSourceFile);
       }
       config = {
         ...config,
@@ -1413,7 +1399,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
     // Open the same tab the sidebar would: a graphical type (VNC/RDP) gets its
     // canvas, a terminal-less type (FTP) its browser — not a terminal (#4017).
-    addTab(saved.name, saved.config.type, config, {
+    const tabId = addTab(saved.name, saved.config.type, config, {
       connectionId,
       terminalOptions: saved.terminalOptions,
       contentType: connectionTabContentType(
@@ -1421,6 +1407,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         saved.config.type
       ),
     });
+    if (typedSecret) {
+      void persistSecretOnceConnected(tabId, typedSecret).then((outcome) => {
+        if (outcome === "failed") {
+          frontendLog("connection_editor", `Failed to store the typed credential for ${tabId}`);
+        } else if (outcome === "discarded") {
+          frontendLog("connection_editor", `Connect of ${tabId} did not succeed: not saved`);
+        }
+      });
+    }
     closeThisTab();
   }, [
     isAgentDefinitionMode,
