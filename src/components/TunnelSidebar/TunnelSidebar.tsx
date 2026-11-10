@@ -43,9 +43,10 @@ export function TunnelSidebar() {
   // always confirms; a plain idle delete (`undoable`) confirms with a "don't ask
   // again" opt-out. Every sidebar delete gets an Undo toast (#5158).
   const tunnelOptOut = useUndoableDeleteOptOut();
+  const takeTunnelOptOut = tunnelOptOut.take;
   const tunnelDelete = useDeleteConfirm<{ id: string; message: string; undoable: boolean }>(
     ({ id, undoable }) => {
-      if (undoable && tunnelOptOut.take()) persistUndoableDeleteOptOut();
+      if (undoable && takeTunnelOptOut()) persistUndoableDeleteOptOut();
       void deleteTunnel(id, { undoable: true });
     }
   );

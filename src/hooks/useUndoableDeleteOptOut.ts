@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ConfirmDontAskAgain } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
@@ -30,14 +30,21 @@ export interface UndoableDeleteOptOut {
  */
 export function useUndoableDeleteOptOut(): UndoableDeleteOptOut {
   const settings = useProjectedSettings();
-  const [checked, setChecked] = useState(false);
+  const [checked, setCheckedState] = useState(false);
+  // Mirrors `checked` so `take` reads the live value even from a confirm
+  // handler captured before the box was ticked.
+  const checkedRef = useRef(false);
+  const setChecked = useCallback((next: boolean) => {
+    checkedRef.current = next;
+    setCheckedState(next);
+  }, []);
 
   const take = useCallback(() => {
-    const ticked = checked;
+    const ticked = checkedRef.current;
     setChecked(false);
     return ticked;
-  }, [checked]);
-  const reset = useCallback(() => setChecked(false), []);
+  }, [setChecked]);
+  const reset = useCallback(() => setChecked(false), [setChecked]);
 
   return {
     shouldConfirm: settings.confirmUndoableDelete !== false,
