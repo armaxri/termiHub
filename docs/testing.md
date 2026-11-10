@@ -2398,7 +2398,12 @@ every entry point honours. The resolver lives in three mirrored forms:
 - **Shell:** `scripts/internal/dev-local-env.sh` — sourced by `test.sh`,
   `test-system*.sh`, and the E2E runner; exports `COMPOSE_PROJECT_NAME`,
   `TERMIHUB_TEST_PORT_OFFSET`, the per-service `TERMIHUB_TEST_*_PORT` values, the
-  serial device paths, and `TERMIHUB_TAURI_DRIVER_PORT`.
+  serial device paths, and `TERMIHUB_TAURI_DRIVER_PORT`. It is POSIX-sh only, so
+  it can be sourced from **bash or zsh** (the macOS default shell) with the same
+  result — `source "$(git rev-parse --show-toplevel)/scripts/internal/dev-local-env.sh"`
+  from an interactive zsh works. Before #5144 zsh aborted on a bash-only
+  `${!var}` with `bad substitution`, leaving every port at dev0's value;
+  `scripts/internal/dev-local-env.test.mjs` now sources it under both shells.
 - **Python:** `termihub_harness.dev_local` — read by the bridge-harness Docker
   fixtures so the harness publishes/looks up the same offset ports and runs
   `compose` under the same project name.
