@@ -139,8 +139,11 @@ export function Modal({
     open,
     element: open ? document.activeElement : null,
   }));
+  // Closing keeps the recorded opener: the close-autofocus handler runs after
+  // this render, so a modal that stays mounted with `open={false}` (rather
+  // than unmounting) still finds where to send focus back (#5181).
   if (opener.open !== open) {
-    setOpener({ open, element: open ? document.activeElement : null });
+    setOpener({ open, element: open ? document.activeElement : opener.element });
   }
 
   const handleOpenChange = (next: boolean) => {
