@@ -56,7 +56,7 @@
 }
 
 .tab-bar:not(.tab-bar--focused) .tab--active {
-  border-top-color: var(--text-disabled);
+  border-top-color: var(--text-muted);
 }
 
 .tab__icon {

@@ -35,6 +35,9 @@ describe("theme text contrast (WCAG 2.2 AA)", () => {
     const surfaces: [string, string][] = [
       ["bgPrimary", theme.colors.bgPrimary],
       ["sidebarBg", theme.colors.sidebarBg],
+      // Popovers/menus (#5165: spawn-picker hints and other former
+      // `--text-disabled` sites now render `--text-muted` here).
+      ["bgDropdown", theme.colors.bgDropdown],
     ];
 
     for (const [surfaceName, bg] of surfaces) {
