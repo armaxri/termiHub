@@ -16,4 +16,11 @@
  * only changed relative to the user's `~/.ssh/known_hosts` (that file's recorded
  * fingerprint is not available at this point).
  */
-export type SshHostKeyPromptEvent = { prompt_id: string, host: string, port: number, key_type: string, fingerprint: string, changed: boolean, previous_fingerprints: Array<string> | null, };
+export type SshHostKeyPromptEvent = { prompt_id: string, host: string, port: number, key_type: string, fingerprint: string, changed: boolean, previous_fingerprints: Array<string> | null, 
+/**
+ * The `connect_id` of the connect that raised this prompt (for a terminal
+ * tab `${tabId}:${retryCount}`), when known (#5243). The frontend pauses
+ * that tab's own connect deadline while the prompt is open. `null` for a
+ * prompt with no owning connect.
+ */
+owner: string | null, };

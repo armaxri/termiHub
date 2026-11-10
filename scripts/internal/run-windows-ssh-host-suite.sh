@@ -22,7 +22,12 @@
 #    banner stays and no setup text is left on screen, and a session loads the
 #    user's profile exactly once (#5147) -- under Windows PowerShell 5.1, then
 #    under PowerShell 7 (DefaultShell switched to pwsh.exe and back).
-# 5. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
+# 5. Both cmd and powershell then run the update-rollback test of
+#    windows_ssh_host_tests/rollback.rs (#5219): a failed copy/move exits
+#    non-zero through the DefaultShell, an update to a binary that cannot
+#    start is rolled back to the previous agent, and a leftover
+#    termihub-agent.previous.exe next to a broken install is restored.
+# 6. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
 #    (#5109): with the opt-in hook on, a cd is reported, no setup text is
 #    left on screen and nothing of it is in the console's command history --
 #    and with the hook off an env var's setup leaves neither (#5131).
@@ -47,7 +52,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -79,6 +84,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FIXTURE="$SCRIPT_DIR/native-sshd-fixture.sh"
 TEST_NAME="terminal::agent_manager::windows_ssh_host_tests::${DEFAULT_SHELL}_default_shell_deploy_install_connect_reattach"
+# The update rollback through the same DefaultShell (#5219).
+ROLLBACK_TEST="terminal::agent_manager::windows_ssh_host_tests::rollback::${DEFAULT_SHELL}_default_shell_update_rollback"
 AGENT_SUITE="native_sshd_agent_backends"
 AGENT_TESTS=(
   ssh_session_through_agent_round_trips_resizes_and_closes_cleanly
@@ -346,6 +353,15 @@ cargo test -p termihub --lib "$TEST_NAME" -- --exact --show-output "$@" 2>&1 | t
 # Guard against a false green: the named test must have run and passed, and
 # must not have skipped.
 require_passed "$log" "$TEST_NAME"
+
+# ---- Update rollback (#5219): a broken update leaves the previous agent ----
+# After the test above (it reuses the same install path), with the same test
+# binary: a failed copy/move exits non-zero, an update to a binary that cannot
+# start rolls back, and a leftover backup next to a broken install is restored.
+rollback_log="$(mktemp)"
+cargo test -p termihub --lib "$ROLLBACK_TEST" -- --exact --show-output "$@" 2>&1 |
+  tee "$rollback_log"
+require_passed "$rollback_log" "$ROLLBACK_TEST"
 
 # ---- Windows agent -> targets (MT-AGENT-26/27/28) ----
 start_ssh_agent_with_fixture_key ||

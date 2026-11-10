@@ -6,6 +6,8 @@ import { useAppStore } from "@/store/appStore";
 import {
   WAITING_FOR_AGENT_TIMEOUT_MS,
   CONNECTING_TIMEOUT_MS,
+  CONNECT_PROMPT_GRACE_MS,
+  CONNECT_PROMPT_LIMIT_MS,
   connectTimeoutMessage,
 } from "@/utils/connectTimeout";
 
@@ -181,5 +183,94 @@ describe("TerminalConnectionOverlay — timeouts", () => {
     expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBe(
       connectTimeoutMessage("connecting")
     );
+  });
+});
+
+describe("TerminalConnectionOverlay — deadline paused for the connect's own prompt (#5243)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const SECOND = 1000;
+  const failed = () => useAppStore.getState().terminalSpawnErrors[TAB_ID];
+  const advance = (ms: number) =>
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+    useAppStore.getState().setTerminalConnecting(TAB_ID, true);
+    render(root);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  it("does not fail the tab while its prompt is open for longer than 90 s", () => {
+    advance(10 * SECOND);
+    act(() => useAppStore.getState().pauseConnectDeadlineForPrompt("hk-1", `${TAB_ID}:0`));
+    advance(120 * SECOND);
+    expect(failed()).toBeUndefined();
+    // No countdown is shown for a connect that is waiting on the user.
+    expect(container.textContent).not.toContain("times out in");
+  });
+
+  it("resumes the deadline with the time that was left once the prompt is answered", () => {
+    advance(10 * SECOND);
+    act(() => useAppStore.getState().pauseConnectDeadlineForPrompt("hk-1", `${TAB_ID}:0`));
+    advance(120 * SECOND);
+    act(() => useAppStore.getState().resumeConnectDeadlineForPrompt("hk-1"));
+
+    // 80 s were left when the prompt opened.
+    advance(79 * SECOND);
+    expect(failed()).toBeUndefined();
+    advance(2 * SECOND);
+    expect(failed()).toBe(connectTimeoutMessage("connecting"));
+  });
+
+  it("stays paused until the last of the connect's prompts closes", () => {
+    act(() => useAppStore.getState().pauseConnectDeadlineForPrompt("hk-1", `${TAB_ID}:0`));
+    act(() => useAppStore.getState().pauseConnectDeadlineForPrompt("ki-1", `${TAB_ID}:0`));
+    act(() => useAppStore.getState().resumeConnectDeadlineForPrompt("hk-1"));
+    advance(CONNECTING_TIMEOUT_MS + SECOND);
+    expect(failed()).toBeUndefined();
+    act(() => useAppStore.getState().resumeConnectDeadlineForPrompt("ki-1"));
+    advance(CONNECTING_TIMEOUT_MS + SECOND);
+    expect(failed()).toBe(connectTimeoutMessage("connecting"));
+  });
+
+  it("does not pause for an unrelated connect's prompt", () => {
+    act(() => {
+      const store = useAppStore.getState();
+      store.pauseConnectDeadlineForPrompt("other-tab", "tab-other:0");
+      // An older attempt of this same tab is not its current connect either.
+      store.pauseConnectDeadlineForPrompt("old-attempt", `${TAB_ID}:3`);
+      // Nor is a prompt with no owning connect (a tunnel, Test Connection).
+      store.pauseConnectDeadlineForPrompt("unowned", null);
+    });
+    expect(useAppStore.getState().terminalConnectDeadline[TAB_ID]?.pausedAt).toBeUndefined();
+    advance(CONNECTING_TIMEOUT_MS + 100);
+    expect(failed()).toBe(connectTimeoutMessage("connecting"));
+  });
+
+  it("still fails at 90 s when no prompt ever opens", () => {
+    advance(CONNECTING_TIMEOUT_MS - SECOND);
+    expect(failed()).toBeUndefined();
+    advance(2 * SECOND);
+    expect(failed()).toBe(connectTimeoutMessage("connecting"));
+  });
+
+  it("is bounded by the prompt's own limit, so an unanswered prompt cannot hang the tab", () => {
+    act(() => useAppStore.getState().pauseConnectDeadlineForPrompt("hk-1", `${TAB_ID}:0`));
+    advance(CONNECTING_TIMEOUT_MS + CONNECT_PROMPT_LIMIT_MS + CONNECT_PROMPT_GRACE_MS - SECOND);
+    expect(failed()).toBeUndefined();
+    advance(2 * SECOND);
+    expect(failed()).toBe(connectTimeoutMessage("connecting"));
   });
 });

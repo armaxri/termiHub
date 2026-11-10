@@ -60,6 +60,7 @@ function closeTab(tabId: string) {
 
 import { SshKeyboardInteractivePrompt } from "./SshKeyboardInteractivePrompt";
 import { promptOwnerTabId } from "./promptOwnerTab";
+import { useAppStore } from "@/store/appStore";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -292,5 +293,53 @@ describe("promptOwnerTabId", () => {
     expect(promptOwnerTabId("probe")).toBe("probe");
     expect(promptOwnerTabId(null)).toBeNull();
     expect(promptOwnerTabId("")).toBeNull();
+  });
+});
+
+describe("SshKeyboardInteractivePrompt — pauses its own connect's deadline (#5243)", () => {
+  const TAB = "tab-ki";
+  const deadline = () => useAppStore.getState().terminalConnectDeadline[TAB];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    emitPrompt = undefined;
+    emitClosed = undefined;
+    openTabs.clear();
+    useAppStore.setState({
+      terminalConnectDeadline: { [TAB]: { kind: "connecting", at: Date.now() + 90_000 } },
+      terminalRetryCounters: {},
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    useAppStore.setState({ terminalConnectDeadline: {} });
+  });
+
+  it("pauses the owning tab's deadline while open and resumes it on submit", async () => {
+    render(<SshKeyboardInteractivePrompt />);
+    await fire({ ...secondPrompt, owner: `${TAB}:0` });
+    expect(deadline()?.pausedBy).toEqual([secondPrompt.prompt_id]);
+
+    type("kbd-interactive-input-0", "123456");
+    click("kbd-interactive-submit");
+    expect(deadline()?.pausedAt).toBeUndefined();
+  });
+
+  it("resumes the deadline when the backend closes the prompt", async () => {
+    render(<SshKeyboardInteractivePrompt />);
+    await fire({ ...secondPrompt, owner: `${TAB}:0` });
+    act(() => emitClosed?.({ prompt_id: secondPrompt.prompt_id }));
+    expect(deadline()?.pausedAt).toBeUndefined();
+  });
+
+  it("leaves the deadline alone for another connect's prompt", async () => {
+    render(<SshKeyboardInteractivePrompt />);
+    await fire({ ...secondPrompt, owner: "tab-other:0" });
+    expect(deadline()?.pausedAt).toBeUndefined();
   });
 });

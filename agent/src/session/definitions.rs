@@ -1860,6 +1860,46 @@ mod tests {
         assert!(result.is_none());
     }
 
+    /// #5233: renaming a folder from the desktop tree only changes its name —
+    /// its id is stable, so its connections and subfolders stay inside it,
+    /// also after the store is reloaded from disk.
+    #[tokio::test]
+    async fn renaming_a_folder_keeps_its_id_and_children() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path.clone());
+
+        store
+            .create_folder(make_folder("folder-1", "Servers", None))
+            .await
+            .unwrap();
+        store
+            .create_folder(make_folder("folder-2", "Lab", Some("folder-1")))
+            .await
+            .unwrap();
+        let mut conn = make_connection("conn-1", "Shell", false);
+        conn.folder_id = Some("folder-1".to_string());
+        store.create(conn).await.unwrap();
+
+        let renamed = store
+            .update_folder("folder-1", Some("Hosts".to_string()), None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.id, "folder-1");
+        assert_eq!(renamed.name, "Hosts");
+
+        let reloaded = ConnectionStore::new(path);
+        let (conns, folders) = reloaded.list().await;
+        let folder = folders.iter().find(|f| f.id == "folder-1").unwrap();
+        assert_eq!(folder.name, "Hosts");
+        let child = folders.iter().find(|f| f.id == "folder-2").unwrap();
+        assert_eq!(child.parent_id.as_deref(), Some("folder-1"));
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].id, "conn-1");
+        assert_eq!(conns[0].folder_id.as_deref(), Some("folder-1"));
+    }
+
     #[tokio::test]
     async fn delete_folder_moves_children_to_root() {
         let tmp = TempDir::new().unwrap();

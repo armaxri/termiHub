@@ -7,6 +7,7 @@ import {
 } from "@/services/events";
 import { sshKeyboardInteractiveRespond } from "@/services/api";
 import type { SshKeyboardInteractivePromptPayload } from "@/types/sshKeyboardInteractive";
+import { useAppStore } from "@/store/appStore";
 import { isTabOpen, promptOwnerTabId, subscribeToTabs } from "./promptOwnerTab";
 import "./SshKeyboardInteractivePrompt.css";
 import { isImeComposing } from "@/utils/imeComposition";
@@ -38,6 +39,9 @@ function promptLabel(prompt: string, index: number): string {
  * closes the dialog (#3437); as a safety net, a prompt whose owning tab was
  * open when it arrived and has since been closed is also dropped here and
  * answered with `null`, so a stale dialog never outlives its tab.
+ *
+ * While a tab's own prompt is open, that tab's client-side connect deadline is
+ * paused, and it resumes once the prompt is answered or closed (#5243).
  */
 export function SshKeyboardInteractivePrompt() {
   const [queue, setQueue] = useState<SshKeyboardInteractivePromptPayload[]>([]);
@@ -59,10 +63,13 @@ export function SshKeyboardInteractivePrompt() {
     void onSshKeyboardInteractivePrompt((payload) => {
       const tabId = promptOwnerTabId(payload.owner);
       if (tabId && isTabOpen(tabId)) owned.set(payload.prompt_id, tabId);
+      // The owning tab's connect deadline waits while the user answers (#5243).
+      useAppStore.getState().pauseConnectDeadlineForPrompt(payload.prompt_id, payload.owner);
       setQueue((q) => [...q, payload]);
     }).then(keep);
     void onSshKeyboardInteractivePromptClosed(({ prompt_id }) => {
       owned.delete(prompt_id);
+      useAppStore.getState().resumeConnectDeadlineForPrompt(prompt_id);
       setQueue((q) => q.filter((p) => p.prompt_id !== prompt_id));
     }).then(keep);
     // Drop (and cancel) prompts whose owning tab was closed (#3437).
@@ -72,6 +79,7 @@ export function SshKeyboardInteractivePrompt() {
       if (gone.length === 0) return;
       for (const id of gone) {
         owned.delete(id);
+        useAppStore.getState().resumeConnectDeadlineForPrompt(id);
         void sshKeyboardInteractiveRespond(id, null);
       }
       setQueue((q) => q.filter((p) => !gone.includes(p.prompt_id)));
@@ -92,6 +100,8 @@ export function SshKeyboardInteractivePrompt() {
     (responses: string[] | null) => {
       if (!current) return;
       tabOwned.current.delete(current.prompt_id);
+      // Answered or cancelled: the connect's own deadline runs again (#5243).
+      useAppStore.getState().resumeConnectDeadlineForPrompt(current.prompt_id);
       void sshKeyboardInteractiveRespond(current.prompt_id, responses);
       setAnswers([]);
       setQueue((q) => q.filter((p) => p.prompt_id !== current.prompt_id));

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/ConnectProgress";
 import { useTabConnectProgress } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { connectDeadlineFiresAt } from "@/store/slices/terminalSessionStateSlice";
 import { buildStages, connectTypeLabel, stepsFor, type StepId } from "@/utils/connectStages";
 import {
   connectTimeoutMessage,
@@ -196,24 +197,29 @@ export function TerminalConnectionOverlay({
   // the REMAINING time rather than restarting the countdown (#1263).
   const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
   const connectDeadline = useAppStore((s) => s.terminalConnectDeadline[tabId]);
-  const deadlineAt = connectDeadline?.at;
   const deadlineKind = connectDeadline?.kind;
+  // While one of this connect's own SSH prompts is open the deadline is paused
+  // (#5243): no countdown is shown and the timer only backs the prompt's own
+  // bound. On resume `at` moves out by the paused time, re-arming the timer.
+  const deadlinePaused = connectDeadline?.pausedAt !== undefined;
+  const deadlineAt = deadlinePaused ? undefined : connectDeadline?.at;
+  const firesAt = connectDeadline ? connectDeadlineFiresAt(connectDeadline) : undefined;
 
   useEffect(() => {
-    if (deadlineAt === undefined || !deadlineKind) return;
+    if (firesAt === undefined || !deadlineKind) return;
     const id = setTimeout(
       () => failTerminalConnectTimeout(tabId, deadlineKind),
-      Math.max(0, deadlineAt - Date.now())
+      Math.max(0, firesAt - Date.now())
     );
     return () => clearTimeout(id);
-  }, [tabId, deadlineAt, deadlineKind, failTerminalConnectTimeout]);
+  }, [tabId, firesAt, deadlineKind, failTerminalConnectTimeout]);
 
   // The ring's start: derived from the stored deadline so it survives a
   // remount; without one (auto-retry, reattach) from when this overlay mounted.
   const mountedAt = useRef(Date.now()).current;
   const startedAt =
-    deadlineAt !== undefined && deadlineKind
-      ? deadlineAt - connectTimeoutMs(deadlineKind)
+    connectDeadline !== undefined && deadlineKind
+      ? connectDeadline.at - connectTimeoutMs(deadlineKind)
       : mountedAt;
 
   const handleCancel = useCallback(() => {
