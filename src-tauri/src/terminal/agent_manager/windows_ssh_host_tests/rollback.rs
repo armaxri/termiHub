@@ -31,7 +31,8 @@ use termihub_core::backends::ssh::handler::SshSession;
 
 /// Bytes that are not a Windows executable: running them fails at once (no
 /// stdout), exactly like a corrupt or wrong-architecture download.
-pub(super) const BROKEN_AGENT: &[u8] = b"not a Windows executable: termiHub #5219 rollback test\r\n";
+pub(super) const BROKEN_AGENT: &[u8] =
+    b"not a Windows executable: termiHub #5219 rollback test\r\n";
 
 /// A command (in `shell`'s syntax) printing `PRESENT` or `ABSENT` for `path`.
 pub(super) fn exists_probe(shell: WindowsShell, path: &str) -> String {
@@ -427,10 +428,7 @@ fn reset_removes_install_backup_and_upload() {
             "a locked install is freed with the production command: {cmd}"
         );
         assert!(cmd.contains(&plan.discard_backup_command), "{cmd}");
-        assert!(
-            cmd.contains(&windows_cleanup_stale_command(shell)),
-            "{cmd}"
-        );
+        assert!(cmd.contains(&windows_cleanup_stale_command(shell)), "{cmd}");
     }
 }
 

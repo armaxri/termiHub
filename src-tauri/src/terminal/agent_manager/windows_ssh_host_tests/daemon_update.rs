@@ -127,7 +127,11 @@ async fn update_under_the_daemon(fixture: &Fixture) {
         let plan = windows_install_plan(shell);
         let working = std::fs::read(&bin).unwrap_or_else(|e| panic!("read agent binary: {e}"));
         let planted = planted_stale_path(&plan);
-        run(session, &plant_probe(shell, &planted), "planting a stale image");
+        run(
+            session,
+            &plant_probe(shell, &planted),
+            "planting a stale image",
+        );
         assert_eq!(
             run(session, &exists_probe(shell, &planted), "probing the plant").trim(),
             "PRESENT"
