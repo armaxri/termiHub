@@ -33,6 +33,7 @@
 //! decides "a window owns whole tab groups", that layer can be added on top
 //! without reshaping this map.
 
+pub mod events;
 #[cfg(target_os = "macos")]
 pub mod macos_terminate;
 pub mod quit;
