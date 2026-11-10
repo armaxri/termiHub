@@ -1026,6 +1026,12 @@ runs one walkthrough per OpenSSH `DefaultShell` (`cmd.exe` and PowerShell):
 3. **Reattach (MT-AGENT-24).** It disconnects with a counter running in a
    daemon-backed session. After the reconnect it expects the same session id,
    a counter past its pre-drop value, and a counter that keeps advancing.
+4. **Update rollback (#5219).** `windows_ssh_host_tests/rollback.rs` checks
+   that a failed backup, restore or install copy/move exits non-zero through
+   the `DefaultShell`. It installs a working agent and then a binary that
+   cannot start, and expects `RolledBack` with the original exe back at the
+   install path and still running. A leftover `termihub-agent.previous.exe`
+   next to a broken install must be restored by the next deploy.
 
 Binary resolution (cache, bundle or download, plus the release-signature
 check) needs a Tauri `AppHandle`. The test therefore uploads a locally built
