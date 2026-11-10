@@ -5,22 +5,44 @@
  * lives only in this computer's credential store — never in
  * `connections.json` and never on an agent host. At connect time the password
  * is taken from the settings (a form's Save & Connect), else from the
- * credential store, else prompted for, with the prompt's Save box writing it
- * to the same store entry.
+ * credential store, else prompted for. The prompt's Save box writes it to the
+ * same store entry, but only once the connect has succeeded (#5197): the
+ * result carries the write as `saveOnceConnected`, and the caller hands it to
+ * {@link holdTypedGraphicalSecret} with the tab it opened. A typo is never
+ * saved, and a stored password is never deleted here.
  *
  * The secret only ever goes into the in-memory tab config handed to this
  * computer's remote-desktop backend; it is never logged.
  */
 import { resolveCredential, storeCredential } from "@/services/api";
+import { holdGraphicalSecretUntilConnected } from "@/utils/graphicalSecretOnceConnected";
 import type { RequestPassword } from "@/store/slices/passwordPromptSlice";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
-import { frontendLog, frontendWarn } from "@/utils/frontendLog";
+import { frontendWarn } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 
 /** Outcome of {@link resolveGraphicalSettings}. */
 export type GraphicalSettingsResult =
-  | { status: "resolved"; settings: Record<string, unknown> }
+  | {
+      status: "resolved";
+      settings: Record<string, unknown>;
+      /**
+       * Present when the user typed the password with Save ticked: the store
+       * write, to run only once the connect succeeded (see
+       * {@link holdTypedGraphicalSecret}). Never run it before.
+       */
+      saveOnceConnected?: () => Promise<void>;
+    }
   | { status: "canceled" };
+
+/**
+ * Hold a typed password's store write until the remote-desktop tab `tabId`
+ * connects (#5197). A no-op for a result that carries no write.
+ */
+export function holdTypedGraphicalSecret(tabId: string, result: GraphicalSettingsResult): void {
+  if (result.status !== "resolved" || !result.saveOnceConnected) return;
+  void holdGraphicalSecretUntilConnected(tabId, result.saveOnceConnected);
+}
 
 export type { RequestPassword };
 
@@ -61,7 +83,9 @@ export async function resolveGraphicalSettings({
   if (readString(settings, "password").length > 0) {
     return { status: "resolved", settings };
   }
-  const withPassword = (password: string): GraphicalSettingsResult => ({
+  const withPassword = (
+    password: string
+  ): Extract<GraphicalSettingsResult, { status: "resolved" }> => ({
     status: "resolved",
     settings: { ...settings, password },
   });
@@ -103,13 +127,10 @@ export async function resolveGraphicalSettings({
     : await requestPassword(host, username, notice, "password");
   if (answer === null) return { status: "canceled" };
   const entered = answer.password;
+  const result = withPassword(entered);
   if (entered && answer.shouldSave) {
-    await storeCredential(credentialId, "password", entered, sourceFile).catch((err) =>
-      frontendLog(
-        "graphical_secret",
-        `Failed to store remote-desktop password: ${errorMessage(err)}`
-      )
-    );
+    // Held, not written: a typo must never replace or create the saved entry.
+    result.saveOnceConnected = () => storeCredential(credentialId, "password", entered, sourceFile);
   }
-  return withPassword(entered);
+  return result;
 }
