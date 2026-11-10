@@ -6,6 +6,7 @@
 //! new binary installed, or the previous binary intact and nothing
 //! half-written in the upload dir.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -315,4 +316,153 @@ async fn install_failing_at_the_rename_keeps_the_old_binary() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn install_dir_not_creatable_keeps_the_old_binary() {
     assert_failed_install_step_rolls_back("mkdir").await;
+}
+
+// ── Signature verification and coordinated staging ─────────────────────
+
+/// Write `bytes` as a resolved agent binary in `dir`, with `sig` (if any) as
+/// its `.sig` sidecar.
+fn resolved_binary(dir: &tempfile::TempDir, bytes: &[u8], sig: Option<&str>) -> PathBuf {
+    let path = dir.path().join("termihub-agent-linux-x64");
+    std::fs::write(&path, bytes).expect("write binary");
+    if let Some(sig) = sig {
+        std::fs::write(dir.path().join("termihub-agent-linux-x64.sig"), sig).expect("write sig");
+    }
+    path
+}
+
+/// A `.sig` sidecar that does not verify (even a dev build refuses it; only
+/// a *missing* signature is tolerated there).
+const BAD_SIGNATURE: &str = "bm90LWEtcmVhbC1zaWduYXR1cmU=";
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+async fn verify_install(
+    session: SshSession,
+    binary: PathBuf,
+) -> Result<AgentDeployResult, TerminalError> {
+    on_blocking(move || {
+        verify_and_install(
+            &session,
+            "Linux",
+            DEFAULT_REMOTE_PATH,
+            &binary,
+            VERSION,
+            &|_, _, _| {},
+            None,
+        )
+    })
+    .await
+}
+
+async fn stage(session: SshSession, binary: PathBuf) -> Result<StagedBinary, TerminalError> {
+    on_blocking(move || {
+        stage_verified_binary(
+            "agent-1",
+            &session,
+            "Linux".to_string(),
+            DEFAULT_REMOTE_PATH,
+            &binary,
+            VERSION,
+            None,
+        )
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deploy_of_a_verified_binary_installs_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bytes = fake_binary("0.9.0", BINARY_SIZE);
+    let binary = resolved_binary(&dir, &bytes, None);
+    let (session, state) = fake_host::connect(&[]).await;
+
+    let result = verify_install(session, binary).await.expect("deploy");
+
+    assert!(
+        matches!(result, AgentDeployResult::Deployed { success: true, .. }),
+        "{result:?}"
+    );
+    assert_eq!(installed(&state), Some(bytes));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signature_mismatch_refuses_the_deploy_before_touching_the_host() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let binary = resolved_binary(&dir, &fake_binary("0.9.0", 4096), Some(BAD_SIGNATURE));
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+
+    let err = verify_install(session, binary)
+        .await
+        .expect_err("a binary whose signature does not verify must be refused");
+
+    assert!(
+        err.to_string().to_lowercase().contains("signature"),
+        "{err}"
+    );
+    let st = state.lock().expect("host");
+    assert!(st.commands.is_empty(), "nothing may run: {:?}", st.commands);
+    assert_eq!(st.files.len(), 1, "nothing may be uploaded: {:?}", st.files);
+    assert_eq!(st.files.get(DEFAULT_INSTALLED), Some(&old));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn staging_uploads_without_installing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bytes = fake_binary("0.9.0", BINARY_SIZE);
+    let binary = resolved_binary(&dir, &bytes, None);
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+
+    let staged = stage(session, binary).await.expect("stage");
+
+    assert!(!staged.is_windows);
+    assert_eq!(
+        staged.expected_sha256,
+        crate::terminal::agent_binary::sha256_hex_of_bytes(&bytes)
+    );
+    assert_eq!(staged.signature, None, "an unsigned dev binary has no sig");
+    let upload_path = staged.upload_path.expect("a Unix stage has a path");
+    let st = state.lock().expect("host");
+    assert_eq!(st.files.get(&upload_path), Some(&bytes), "staged as is");
+    assert_eq!(
+        st.files.get(DEFAULT_INSTALLED),
+        Some(&old),
+        "staging never replaces the running agent"
+    );
+    assert!(
+        !st.commands.iter().any(|c| c.starts_with("mkdir -p ")),
+        "the install command must not run for a coordinated update"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn staging_refuses_a_bad_signature_before_touching_the_host() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let binary = resolved_binary(&dir, &fake_binary("0.9.0", 4096), Some(BAD_SIGNATURE));
+    let (session, state) = fake_host::connect(&[]).await;
+
+    stage(session, binary)
+        .await
+        .expect_err("a binary whose signature does not verify must not be staged");
+
+    let st = state.lock().expect("host");
+    assert!(st.commands.is_empty(), "nothing may run: {:?}", st.commands);
+    assert!(st.files.is_empty(), "nothing may be uploaded");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn staging_upload_failure_leaves_nothing_half_written() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let binary = resolved_binary(&dir, &fake_binary("0.9.0", BINARY_SIZE), None);
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+    state.lock().expect("host").faults.fail_write_after = Some(BINARY_SIZE / 2);
+
+    stage(session, binary)
+        .await
+        .expect_err("a failed staging upload must fail");
+
+    assert_old_binary_intact(&state, &old);
 }
