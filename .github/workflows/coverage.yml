@@ -15,6 +15,15 @@ name: Coverage (unified, ratchet)
 # with `./scripts/coverage.sh --update-baseline` (raise-only) and commit it;
 # lowering a value is a deliberate, reviewed edit of the JSON.
 #
+# WINDOWS LEG (#5160, COV-002): `coverage-windows` measures the same components
+# on windows-latest and grades them against the `win32` baseline. Windows has
+# the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC,
+# WSL), and none of it reaches the Linux number. It runs the Rust tests in the
+# per-PR Windows leg's partition (`coverage.sh --split`): the contention-
+# sensitive suites with capped threads and the live-agent-TCP tests one at a
+# time, which is what keeps that leg green on a 4-core runner (#2495, #3615).
+# Same triggers as the Linux job, so it adds one Windows runner per night.
+#
 # NIGHTLY LANE (#4119; post-merge since #3325): this no longer runs on every
 # push to develop (a ~21-minute Ubuntu runner per merge). It grades:
 #   * develop — once a day, dispatched on develop by scheduled-dispatch.yml
@@ -34,7 +43,7 @@ name: Coverage (unified, ratchet)
 # gate every frontend PR via the Ubuntu "Run Tests" leg.
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 # A blocking gate on a low-volume trigger set (main pushes, the nightly dispatch,
@@ -79,8 +88,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '22'
-          cache: 'pnpm'
+          node-version: "22"
+          cache: "pnpm"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -157,7 +166,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Unified whole-app coverage"
+            echo "## Unified whole-app coverage (linux)"
             echo ""
             echo '```'
             cat coverage-unified/summary.txt 2>/dev/null || echo "(no summary produced)"
@@ -185,4 +194,107 @@ jobs:
             coverage-unified/
             coverage/lcov.info
             coverage-integration/
+          if-no-files-found: warn
+
+  # The Windows twin of the job above (#5160): same script, same ratchet, graded
+  # against the `win32` baseline. Keep the gate step's name "Coverage ratchet"
+  # (scheduled-lanes.mjs `gateSteps`): the heartbeat names the failing job, so a
+  # Windows-only drop reads "ratchet drop (Unified Coverage (Windows) / ...)".
+  coverage-windows:
+    name: Unified Coverage (Windows)
+    runs-on: windows-latest
+    # Backstop only: the split run is slower than Linux's single pass.
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Its own key: the instrumented Windows build shares nothing with the
+          # Linux job's cache. Only develop/main save it, like every cargo job.
+          key: coverage-windows
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-llvm-cov@0.9.1
+
+      # core/tests/sideloaded_conpty.rs runs a real PTY on the pinned sideloaded
+      # ConPTY host and fails, never skips, on a runner without it (#4130) —
+      # staged exactly as the per-PR Windows "Run Tests" leg does.
+      - name: Stage the sideloaded ConPTY host for the Rust tests
+        run: |
+          set -euo pipefail
+          dest="$(cygpath -u "$RUNNER_TEMP")/conpty-test-host"
+          ./scripts/internal/fetch-conpty.sh --arch x64 --dest "$dest"
+          echo "TERMIHUB_TEST_CONPTY_DIR=$(cygpath -w "$dest")" >>"$GITHUB_ENV"
+
+      # Unit coverage only: the nightly integration overlays are Linux fixture
+      # runs, so their line numbers say nothing about the Windows build.
+      - name: Run unified coverage
+        env:
+          # The per-PR Windows leg's live-agent cold-start gate (code-quality.yml).
+          TERMIHUB_AGENT_TEST_MAX_CONCURRENT: "2"
+        # Measures only; a failure HERE means the lane is broken, not a drop.
+        run: ./scripts/coverage.sh --no-ratchet --split
+
+      - name: Coverage ratchet
+        run: >-
+          node scripts/internal/coverage-ratchet.mjs --check
+          --report coverage-unified/ratchet.md
+
+      - name: Publish unified number to job summary
+        if: always()
+        run: |
+          {
+            echo "## Unified whole-app coverage (Windows)"
+            echo ""
+            echo '```'
+            cat coverage-unified/summary.txt 2>/dev/null || echo "(no summary produced)"
+            echo '```'
+            echo ""
+            if [ -f coverage-unified/ratchet.md ]; then
+              echo "### Ratchet (unit coverage vs the win32 baseline)"
+              echo ""
+              cat coverage-unified/ratchet.md
+              echo ""
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Its own name: release-coverage-summary.mjs reads `coverage-unified`
+      # (the Linux job's) for the release notes.
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-unified-windows
+          path: |
+            coverage-unified/
+            coverage/lcov.info
           if-no-files-found: warn

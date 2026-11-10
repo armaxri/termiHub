@@ -43,6 +43,12 @@
 #   --no-ratchet
 #               Measure and report, but skip the ratchet. CI runs the ratchet as
 #               its own step, so a drop is told apart from a broken run (#5159).
+#   --split     Run the workspace Rust tests in the per-PR legs' partition
+#               (scripts/internal/ci-rust-tests.sh bulk, heavy, serial) instead
+#               of one `cargo llvm-cov` pass: the contention-sensitive suites
+#               with capped threads and the live-agent-TCP tests one at a time.
+#               The Windows coverage leg uses it (#5160), for the same runner
+#               starvation that made the Windows test leg split (#2495, #3615).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -50,11 +56,13 @@ cd "$(git rev-parse --show-toplevel)"
 DRY_RUN=0
 UPDATE_BASELINE=0
 NO_RATCHET=0
+SPLIT=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --update-baseline) UPDATE_BASELINE=1 ;;
         --no-ratchet) NO_RATCHET=1 ;;
+        --split) SPLIT=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -103,7 +111,18 @@ else
     echo "  plugin runner: $TERMIHUB_PLUGIN_RUNNER"
     # Tests and report are split so the report step can survive an intermittent
     # truncated .profraw (see scripts/internal/llvm-cov-report.mjs).
-    cargo llvm-cov --workspace --all-features --no-report
+    if [ "$SPLIT" -eq 1 ]; then
+        # One partition, three instrumented phases whose profiles add up; the
+        # clean drops profiles a previous run left (each phase runs --no-clean).
+        cargo llvm-cov clean --workspace
+        export CI_RUST_TESTS_COVERAGE=1 CI_RUST_TESTS_SPLIT_SERIAL=1
+        ./scripts/internal/ci-rust-tests.sh bulk --workspace
+        ./scripts/internal/ci-rust-tests.sh heavy --workspace
+        ./scripts/internal/ci-rust-tests.sh serial --workspace
+        unset CI_RUST_TESTS_COVERAGE CI_RUST_TESTS_SPLIT_SERIAL
+    else
+        cargo llvm-cov --workspace --all-features --no-report
+    fi
     unset TERMIHUB_PLUGIN_RUNNER
     node scripts/internal/llvm-cov-report.mjs "$RUST_LCOV"
 fi
