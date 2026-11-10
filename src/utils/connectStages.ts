@@ -24,6 +24,11 @@ const LABELS: Record<StepId, string> = {
   start: "Start session",
 };
 
+/** The display label of one step (e.g. `"Authenticate"`). */
+export function stepLabel(id: StepId): string {
+  return LABELS[id];
+}
+
 /** The ordered steps a connect of `sessionType` goes through. */
 export function stepsFor(sessionType: string, viaAgent = false): StepId[] {
   if (viaAgent) return ["agent", "start"];
