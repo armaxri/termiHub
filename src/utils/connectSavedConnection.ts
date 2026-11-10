@@ -12,8 +12,10 @@
  *   the `savePassword` flag (#885).
  * - Treats a non-empty inline password as the credential itself (#963).
  * - Unlocks the credential store before resolving a stored secret (#1144).
- * - Validates a stored credential with a pre-connect and clears it if stale
- *   (#885/#963), otherwise prompts and optionally persists the entered secret.
+ * - Validates a stored credential with a pre-connect (#885/#963). A rejected
+ *   one is never deleted (#5156): it is kept, and the re-prompt offers to
+ *   replace it. A typed secret the user chose to save is persisted only once
+ *   the tab's session is established, so a typo is never saved.
  * - Refuses a connection whose plugin is missing, disabled or untrusted with a
  *   clear message (#3344), before any tab opens.
  *
@@ -39,12 +41,7 @@
  */
 import { toast } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
-import {
-  createTerminal,
-  isSshKeyEncrypted,
-  removeCredential,
-  storeCredential,
-} from "@/services/api";
+import { createTerminal, isSshKeyEncrypted, storeCredential } from "@/services/api";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { useAppStore, type AddTabOptions } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
@@ -67,8 +64,9 @@ import { resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { neededFieldSecrets, resolveFieldSecrets } from "@/utils/fieldSecrets";
-import { errorMessage } from "@/utils/errorMessage";
 import { withLoggedFallback } from "@/utils/loggedFallback";
+import { persistSecretOnceConnected } from "@/utils/persistSecretOnceConnected";
+import type { PasswordPromptKind } from "@/store/slices/passwordPromptSlice";
 
 /** Options for {@link connectSavedConnection}. */
 export interface ConnectSavedConnectionOptions {
@@ -129,6 +127,35 @@ function unattendedAgentRefusal(agentId: string | undefined): string | null {
     return t("schedule.connect.skip.agentTooOld");
   }
   return null;
+}
+
+/** A typed secret waiting for its connect to succeed before it is saved (#5156). */
+interface PendingSecret {
+  kind: PasswordPromptKind;
+  secret: string;
+}
+
+/**
+ * Persist `pending` for `connection` once `tabId`'s session is established
+ * (#5156); a connect that does not succeed leaves the store untouched.
+ */
+function persistOnceConnected(
+  connection: SavedConnection,
+  tabId: string,
+  pending: PendingSecret
+): void {
+  void persistSecretOnceConnected(tabId, () =>
+    storeCredential(connection.id, pending.kind, pending.secret, connection.sourceFile)
+  ).then((outcome) => {
+    if (outcome === "failed") {
+      frontendError(
+        "connection_list",
+        `Failed to store the ${pending.kind} credential for ${connection.id} after connecting`
+      );
+    } else if (outcome === "discarded") {
+      frontendLog("connection_list", `Connect of ${connection.id} did not succeed: not saved`);
+    }
+  });
 }
 
 /**
@@ -200,6 +227,8 @@ export async function connectSavedConnection(
   // it when a tab (and its own connection overlay) takes over the feedback,
   // and the prompt/cancel branches clear it explicitly.
   let connectingToastId: string | number | undefined;
+  // A typed secret the user chose to save, written only after it connects.
+  let pendingSecret: PendingSecret | null = null;
   const dismissConnecting = () => {
     if (connectingToastId !== undefined) {
       toast.dismiss(connectingToastId);
@@ -383,12 +412,14 @@ export async function connectSavedConnection(
     // place (it would never be read) — #3557.
     const sharedCredential = resolution.namedCredentialId !== undefined;
 
-    // UX-013: when a stored credential is rejected by the server we clear it
-    // and fall through to re-prompt. Carry the reason INTO that re-prompt
+    // UX-013: when a stored credential is rejected by the server we keep it
+    // (#5156) and fall through to re-prompt. Carry the reason INTO that re-prompt
     // (as prompt context) rather than firing a separate mid-connect error
     // toast (which the flow deliberately avoids as noise), so the user
     // understands why they are being asked again. Empty until a rejection.
     let rejectedCredentialNotice = "";
+    // The saved per-connection secret was rejected and kept (#5156).
+    let savedRejected = false;
 
     if (resolution.usedStoredCredential && resolution.password) {
       // Pre-connect with stored credential to validate it
@@ -432,31 +463,16 @@ export async function connectSavedConnection(
             "The shared credential was rejected — enter it for this connect, or rotate it in Settings → Security.";
         } else if (isAuthFailure(err)) {
           // Genuine auth rejection (typed, locale-independent signal —
-          // I18N-001): the stored credential is stale. Remove it and fall
-          // through to prompt. Gating on the typed code, never on English
-          // message text, means a localized/reworded backend or remote
-          // message can neither destroy a valid credential nor trap the user
-          // by failing to clear a genuinely stale one.
-          // Log (WA-FE-005) rather than swallow: if clearing the stale
-          // credential fails it lingers in the store, so the failure must be
-          // auditable. No toast — the flow falls through to re-prompt the
-          // user, so a mid-connect error toast would be noise.
-          await removeCredential(
-            connection.id,
-            resolution.credentialType,
-            connection.sourceFile
-          ).catch((err) => {
-            frontendError(
-              "connection_list",
-              `Failed to remove stale ${resolution.credentialType} credential for ${connection.id}: ${errorMessage(err)}`
-            );
-          });
-          // Explain the re-prompt: the saved secret was rejected and cleared.
-          // Worded per credential kind; surfaced as prompt context (UX-013).
+          // I18N-001). The saved secret is KEPT (#5156): a rejection can be
+          // transient (account lock, PAM hiccup, wrong 2FA path), so only the
+          // user replaces it — the re-prompt offers "Replace saved …", and a
+          // replacement is persisted only once it connects. Worded per
+          // credential kind; surfaced as prompt context (UX-013).
+          savedRejected = true;
           rejectedCredentialNotice =
             resolution.credentialType === "key_passphrase"
-              ? "Saved passphrase was rejected — please re-enter."
-              : "Saved password was rejected — please re-enter.";
+              ? "The saved passphrase was rejected. It is kept — enter the passphrase to connect."
+              : "The saved password was rejected. It is kept — enter the password to connect.";
         } else if (isSecondFactorFailure(err)) {
           // The saved password was ACCEPTED and only the one-time code the
           // user typed was rejected (#3376): keep the credential and open
@@ -488,7 +504,13 @@ export async function connectSavedConnection(
       };
     }
 
-    // No stored credential or stale credential was cleared — prompt the user
+    // No stored credential, or it was rejected — prompt the user. A graphical
+    // tab never reports an established terminal session, so it offers no Save.
+    const promptOptions = {
+      allowSave: !sharedCredential && !isGraphical,
+      label: connection.name,
+      ...(savedRejected ? { savedRejected: true } : {}),
+    };
     if (authMethod === "password") {
       const host = readConfigString(connection.config, "host") ?? "";
       const username = readConfigString(connection.config, "username") ?? "";
@@ -497,10 +519,13 @@ export async function connectSavedConnection(
       dismissConnecting();
       // The label names the connection in the prompt title, so a queued
       // prompt says which connect it belongs to (#4312).
-      const answer = await requestPassword(host, username, rejectedCredentialNotice, "password", {
-        allowSave: !sharedCredential,
-        label: connection.name,
-      });
+      const answer = await requestPassword(
+        host,
+        username,
+        rejectedCredentialNotice,
+        "password",
+        promptOptions
+      );
       if (answer === null) {
         // Acknowledge the cancel so the click isn't silently dropped (UX-012),
         // matching the editor path's toast.info on connect-cancel.
@@ -509,14 +534,8 @@ export async function connectSavedConnection(
       }
       const password = answer.password;
       config = { ...config, config: { ...cfg, password } } as typeof config;
-      // Persist the entered password if the user opted in via the prompt checkbox
-      if (!sharedCredential && answer.shouldSave) {
-        await storeCredential(connection.id, "password", password, connection.sourceFile).catch(
-          (err) => {
-            frontendLog("connection_list", `Failed to store credential: ${errorMessage(err)}`);
-          }
-        );
-      }
+      // Opted in via the prompt checkbox: saved once the connect succeeds.
+      if (answer.shouldSave) pendingSecret = { kind: "password", secret: password };
     } else if (authMethod === "key") {
       // Key auth with an encrypted key (guaranteed by the needsCredential
       // gate above) and no stored passphrase yet — prompt so the backend can
@@ -532,7 +551,7 @@ export async function connectSavedConnection(
         username,
         rejectedCredentialNotice,
         "key_passphrase",
-        { allowSave: !sharedCredential, label: connection.name }
+        promptOptions
       );
       if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.
@@ -541,22 +560,17 @@ export async function connectSavedConnection(
       }
       const passphrase = answer.password;
       config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
-      if (!sharedCredential && answer.shouldSave) {
-        await storeCredential(
-          connection.id,
-          "key_passphrase",
-          passphrase,
-          connection.sourceFile
-        ).catch((err) => {
-          frontendLog("connection_list", `Failed to store key passphrase: ${errorMessage(err)}`);
-        });
-      }
+      if (answer.shouldSave) pendingSecret = { kind: "key_passphrase", secret: passphrase };
     }
   }
 
   if (unattended) return connectUnattended(config);
-  return openTab(config, {
+  const opened = openTab(config, {
     terminalOptions: connection.terminalOptions,
     contentType,
   });
+  if (pendingSecret && opened.status === "opened") {
+    persistOnceConnected(connection, opened.tabId, pendingSecret);
+  }
+  return opened;
 }
