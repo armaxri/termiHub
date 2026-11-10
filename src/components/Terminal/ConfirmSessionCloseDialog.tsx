@@ -7,8 +7,10 @@ import type { SessionCloseConfirmRequest } from "@/types/terminal";
 
 /**
  * Confirmation dialog shown before tearing down a live session by closing a tab
- * (via the tab X or middle-click), a split panel, or a whole tab group, while
- * `settings.confirmCloseLiveSession` is enabled. A panel or group close also
+ * (via the tab X, middle-click, context menu or the close-tab shortcut — see
+ * `tabCloseFlow.ts`), a split panel, or a whole tab group, while
+ * `settings.confirmCloseLiveSession` (or, for the shortcut,
+ * `confirmCloseTabOnShortcut`) is enabled. A panel or group close also
  * prompts when it would discard unsaved editors (UX2-001, UX2-003); the "Don't
  * ask again" opt-out is then hidden, since it only covers live sessions.
  *
@@ -41,7 +43,13 @@ export function ConfirmSessionCloseDialog() {
 
   const handleConfirm = () => {
     if (dontAsk) {
-      void updateSettings({ ...settings, confirmCloseLiveSession: false });
+      // A tab close clears the setting that gated it (the shortcut's own switch
+      // when raised by Cmd/Ctrl+W, #5189); panel/group closes use the live one.
+      const key =
+        request.kind === "tab"
+          ? (request.optOutSetting ?? "confirmCloseLiveSession")
+          : "confirmCloseLiveSession";
+      void updateSettings({ ...settings, [key]: false });
     }
     if (request.kind === "tab") {
       closeTab(request.tabId, request.panelId);
