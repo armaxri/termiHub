@@ -72,6 +72,17 @@ class SettingsUi(HarnessMixin):
         self.wait(lambda: self.driver.exists(nav), what=f"the {category} settings nav")
         self.driver.click(nav)
 
+    def open_import_migration_action(self, testid: str) -> None:
+        """Click one action on Settings → Import & Migration (#5195).
+
+        That page is the single home for the one-time imports and exports (JSON
+        import/export, ``~/.ssh/config``, CSV inventory, MobaXterm); the gear menu
+        and the Connections sidebar no longer carry them.
+        """
+        self.open_settings_category("import")
+        self.wait(lambda: self.driver.exists(testid), what=f"the {testid!r} action")
+        self.driver.click(testid)
+
     # ── persisted settings (settings.json) ─────────────────────────────────────
     def persisted_settings(self) -> dict[str, Any]:
         """The on-disk ``settings.json`` document (``{}`` if absent/unreadable)."""

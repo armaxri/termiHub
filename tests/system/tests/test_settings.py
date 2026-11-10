@@ -36,11 +36,14 @@ class TestSettings(TerminalUi, TabsUi, LayoutUi, SettingsUi, SystemTest):
         # Exactly one tab titled "Settings" should exist.
         assert sum(1 for t in self._all_tabs() if t.get("title") == "Settings") == 1
 
-    def test_gear_menu_lists_settings_import_export(self):
+    def test_gear_menu_has_no_import_export(self):
+        # Imports/exports are one-time actions; they live on Settings → Import &
+        # Migration, not in the gear menu (#5195).
         self.driver.click("activity-bar-settings")
         self.wait(lambda: self.driver.exists("settings-menu-open"), what="the gear menu")
-        assert self.driver.exists("settings-menu-import")
-        assert self.driver.exists("settings-menu-export")
+        assert not self.driver.exists("settings-menu-import")
+        assert not self.driver.exists("settings-menu-import-mobaxterm")
+        assert not self.driver.exists("settings-menu-export")
         self.driver.press_key("Escape")
 
     def test_connection_list_toolbar_has_no_import_export(self):
@@ -54,6 +57,11 @@ class TestSettings(TerminalUi, TabsUi, LayoutUi, SettingsUi, SystemTest):
             assert self.driver.exists("connection-list-new-connection")
             assert not self.driver.exists("connection-list-import")
             assert not self.driver.exists("connection-list-export")
+            # One deep link to Settings → Import & Migration replaces the old
+            # ~/.ssh/config and CSV icons (#5195).
+            assert self.driver.exists("connection-list-open-import-settings")
+            assert not self.driver.exists("connection-list-import-ssh-config")
+            assert not self.driver.exists("connection-list-import-csv")
         finally:
             if menu_open:
                 self.driver.press_key("Escape")

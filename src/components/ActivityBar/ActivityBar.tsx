@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import {
   Network,
   FolderOpen,
@@ -9,9 +9,6 @@ import {
   Workflow,
   Server,
   Settings,
-  Download,
-  Upload,
-  FileInput,
   ScrollText,
   LayoutDashboard,
   Stethoscope,
@@ -22,11 +19,8 @@ import {
   Keyboard,
   Puzzle,
 } from "lucide-react";
-import { open } from "@/services/nativeDialog";
 import { openDiagnosticsExport } from "@/components/Diagnostics/diagnosticsDialogStore";
-import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore, SidebarView } from "@/store/appStore";
-import { frontendError } from "@/utils/frontendLog";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
@@ -46,7 +40,6 @@ import {
 import { getActionAccelerator } from "@/services/keybindings";
 import { ActivityBarItem } from "./ActivityBarItem";
 import "./ActivityBar.css";
-import { errorMessage } from "@/utils/errorMessage";
 
 interface ActivityBarItemDef {
   view: SidebarView;
@@ -91,32 +84,9 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
     (s) => s.layoutConfig.hiddenActivityBarViews ?? EMPTY_HIDDEN_VIEWS
   );
   const setLayoutDialogOpen = useAppStore((s) => s.setLayoutDialogOpen);
-  const setExportDialogOpen = useAppStore((s) => s.setExportDialogOpen);
-  const setImportDialog = useAppStore((s) => s.setImportDialog);
-  const setMobaxtermImportOpen = useAppStore((s) => s.setMobaxtermImportOpen);
   const toggleActivityBarView = useAppStore((s) => s.toggleActivityBarView);
   const showRecentSessions = useProjectedSettings().showRecentSessions;
   const experimental = useExperimentalFeatures();
-
-  const handleExport = useCallback(() => {
-    setExportDialogOpen(true);
-  }, [setExportDialogOpen]);
-
-  const handleImport = useCallback(async () => {
-    try {
-      const filePath = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
-      const json = await readTextFile(filePath);
-      setImportDialog(true, json);
-    } catch (err) {
-      // Record the read failure in the user-openable LogViewer instead of the
-      // unreachable DevTools console (OBS-005).
-      frontendError("activity_bar", `failed to read import file: ${errorMessage(err)}`);
-    }
-  }, [setImportDialog]);
 
   const availableOptionalItems = OPTIONAL_ITEMS.filter(
     (item) => (!item.experimental || experimental) && !isViewHiddenBySetting(item.view)
@@ -206,22 +176,6 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 >
                   <Activity size={14} />
                   Open Connections
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem onSelect={handleImport} data-testid="settings-menu-import">
-                  <Upload size={14} />
-                  Import Connections
-                </MenuItem>
-                <MenuItem
-                  onSelect={() => setMobaxtermImportOpen(true)}
-                  data-testid="settings-menu-import-mobaxterm"
-                >
-                  <FileInput size={14} />
-                  Import from MobaXterm…
-                </MenuItem>
-                <MenuItem onSelect={handleExport} data-testid="settings-menu-export">
-                  <Download size={14} />
-                  Export Connections
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem
