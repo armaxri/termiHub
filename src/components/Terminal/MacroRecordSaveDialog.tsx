@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Modal, Button, Input, Field } from "@/components/ui";
+import { Modal, ModalClose, Button, Input, Field } from "@/components/ui";
 import { parseTags } from "@/utils/parseTags";
 import "./MacroRecordSaveDialog.css";
 
@@ -17,20 +17,32 @@ export interface MacroRecordSaveDialogProps {
   stepCount: number;
   /** Called with the entered metadata when the user confirms the save. */
   onSave: (meta: RecordedMacroMeta) => void;
-  /** Called when the user cancels — the recording is discarded. */
-  onCancel: () => void;
+  /**
+   * Called when the user explicitly discards the recording. A passive dismiss
+   * (Escape, a scrim click, the X) never calls it on its own: while any step is
+   * captured it first asks "Discard changes?", and only that confirmation
+   * discards (#5201).
+   */
+  onDiscard: () => void;
 }
 
 /**
  * Prompt shown after a macro recording stops: name the macro (required) plus an
  * optional description and tags, then persist it. Composed from the shared UI
- * primitives. Cancelling discards the recording without saving.
+ * primitives.
+ *
+ * Every non-save exit goes through the Modal's dismiss path, which is guarded by
+ * `dirty` while steps are captured: Escape, a scrim click, the X and the
+ * "Discard recording" button all raise the shared unsaved-changes prompt, whose
+ * Cancel returns to this dialog with the recording intact (#5201). Only its
+ * "Discard changes" reaches {@link MacroRecordSaveDialogProps.onDiscard}. With no
+ * steps captured there is nothing to lose, so a dismiss discards directly.
  */
 export function MacroRecordSaveDialog({
   open,
   stepCount,
   onSave,
-  onCancel,
+  onDiscard,
 }: MacroRecordSaveDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -62,18 +74,27 @@ export function MacroRecordSaveDialog({
     <Modal
       open={open}
       onOpenChange={(next) => {
-        if (!next) onCancel();
+        if (!next) onDiscard();
       }}
+      dirty={stepCount > 0}
+      data-testid="macro-save-dialog"
       title="Save Recorded Macro"
       description={`${stepCount} step${stepCount === 1 ? "" : "s"} captured`}
       onKeyDown={(e) => {
+        // The discard prompt is a React child of this dialog, so its keys bubble
+        // here too; only act on Enter pressed inside this dialog's own content.
+        if (!e.currentTarget.contains(e.target as Node)) return;
+        // Enter on a focused footer button activates that button, not Save.
+        if ((e.target as HTMLElement).closest("button")) return;
         if (e.key === "Enter" && canSave) handleSave();
       }}
       footer={
         <>
-          <Button variant="secondary" onClick={onCancel} data-testid="macro-save-cancel">
-            Cancel
-          </Button>
+          <ModalClose>
+            <Button variant="secondary" data-testid="macro-save-discard">
+              Discard recording
+            </Button>
+          </ModalClose>
           <Button
             variant="primary"
             onClick={handleSave}
