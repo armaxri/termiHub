@@ -123,7 +123,7 @@ describe("PasswordPrompt", () => {
     expect(notice?.textContent).toContain("Saved password was rejected");
   });
 
-  it("hides save checkbox when no credential store is configured", async () => {
+  it("shows the save row disabled with an enable action when storage is off (#5186)", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
@@ -132,7 +132,78 @@ describe("PasswordPrompt", () => {
     });
     render();
 
+    const checkbox = query("password-prompt-save-checkbox");
+    expect(checkbox).not.toBeNull();
+    expect(checkbox?.hasAttribute("disabled")).toBe(true);
+    expect(checkbox?.getAttribute("aria-checked")).toBe("false");
+    expect(query("password-prompt-storage-off")?.textContent).toContain(
+      "Credential storage is off"
+    );
+    expect(query("password-prompt-enable-storage")?.textContent).toBe("Enable credential storage…");
+    // The success-only hint belongs to an active store, not this row.
+    expect(query("password-prompt-save-hint")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/master password/i);
+  });
+
+  it("opens Settings ▸ Security and cancels the prompt from the enable action (#5186)", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
+    });
+    let answer: PasswordPromptAnswer | null | undefined;
+    await act(async () => {
+      void useAppStore
+        .getState()
+        .requestPassword("example.com", "alice")
+        .then((a) => {
+          answer = a;
+        });
+    });
+    render();
+
+    await act(async () => {
+      query("password-prompt-enable-storage")!.click();
+    });
+
+    expect(answer).toBeNull();
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    expect(useAppStore.getState().pendingSettingsCategory).toBe("security");
+  });
+
+  it("submits without saving when storage is off (#5186)", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
+    });
+    let answer: PasswordPromptAnswer | null | undefined;
+    await act(async () => {
+      void useAppStore
+        .getState()
+        .requestPassword("example.com", "alice")
+        .then((a) => {
+          answer = a;
+        });
+    });
+    render();
+
+    await act(async () => {
+      query("password-prompt-connect")!.click();
+    });
+
+    expect(answer).toEqual({ password: "", shouldSave: false });
+  });
+
+  it("shows no save row at all when the caller never saves, even with storage off", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
+    });
+    await act(async () => {
+      useAppStore
+        .getState()
+        .requestPassword("example.com", "alice", "", "password", { allowSave: false });
+    });
+    render();
+
     expect(query("password-prompt-save-checkbox")).toBeNull();
+    expect(query("password-prompt-enable-storage")).toBeNull();
   });
 
   it("shows save checkbox pre-checked when credential store is active", async () => {
