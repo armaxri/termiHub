@@ -37,11 +37,11 @@ const TRIGGERS: TabCloseTrigger[] = ["pointer", "shortcut"];
 setupSettingsRegion();
 const harness = installSessionLifecycleHarness();
 
-let closeTab: ReturnType<typeof vi.fn>;
+let closeTab: ReturnType<typeof vi.fn<(tabId: string, panelId: string) => void>>;
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
-  closeTab = vi.fn();
+  closeTab = vi.fn<(tabId: string, panelId: string) => void>();
   useAppStore.setState({ closeTab });
   toastSuccess.mockClear();
 });
@@ -75,7 +75,9 @@ function pending() {
 
 /** The Reopen action label of the last success toast, if any. */
 function lastToastAction(): string | undefined {
-  const opts = toastSuccess.mock.calls.at(-1)?.[1] as { action?: { label: string } } | undefined;
+  const opts = toastSuccess.mock.calls[toastSuccess.mock.calls.length - 1]?.[1] as
+    | { action?: { label: string } }
+    | undefined;
   return opts?.action?.label;
 }
 
