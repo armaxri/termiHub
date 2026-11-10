@@ -40,16 +40,21 @@
 #               Instead of gating, raise this platform's baseline in
 #               scripts/coverage-baseline.json to the measured values (never
 #               lowers a value). Commit the updated file.
+#   --no-ratchet
+#               Measure and report, but skip the ratchet. CI runs the ratchet as
+#               its own step, so a drop is told apart from a broken run (#5159).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 DRY_RUN=0
 UPDATE_BASELINE=0
+NO_RATCHET=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --update-baseline) UPDATE_BASELINE=1 ;;
+        --no-ratchet) NO_RATCHET=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -212,7 +217,9 @@ echo "HTML reports:   coverage/ (frontend) — run 'cargo llvm-cov --html' for R
 #    (with --update-baseline) raise the baseline to the measured values.
 echo ""
 echo "=== Coverage ratchet (scripts/coverage-baseline.json) ==="
-if [ "$UPDATE_BASELINE" -eq 1 ]; then
+if [ "$NO_RATCHET" -eq 1 ]; then
+    echo "Skipped (--no-ratchet). Run: node scripts/internal/coverage-ratchet.mjs --check"
+elif [ "$UPDATE_BASELINE" -eq 1 ]; then
     node scripts/internal/coverage-ratchet.mjs --update
 else
     node scripts/internal/coverage-ratchet.mjs --check --report "$RATCHET_REPORT"

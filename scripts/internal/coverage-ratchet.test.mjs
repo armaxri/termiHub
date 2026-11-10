@@ -12,6 +12,7 @@ import {
   check,
   updatedBaseline,
   parseArgs,
+  failureSummary,
 } from "./coverage-ratchet.mjs";
 import { corruptProfraws, parseReportArgs, reportCommand } from "./llvm-cov-report.mjs";
 
@@ -186,6 +187,73 @@ describe("CLI", () => {
     run("--update");
     writeFileSync(path.join(dir, "fe.lcov"), lcov(record("src/a.ts", 100, 79)));
     expect(() => run("--check")).toThrow(/FAIL/);
+  });
+});
+
+describe("a deliberate 1 pp drop (#5159)", () => {
+  const DIRS = {
+    frontend: "src",
+    core: "core",
+    agent: "agent",
+    "src-tauri": "src-tauri",
+    "plugin-runner": "plugin-runner",
+    "plugin-api": "plugin-api",
+    "rdp-sidecar": "rdp-sidecar",
+  };
+  const gated = COMPONENTS.filter((c) => c !== "unified");
+
+  it("covers every gated component", () => {
+    expect(Object.keys(DIRS).sort()).toEqual([...gated].sort());
+  });
+
+  it.each(gated)("fails the gate and names %s", (component) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "ratchet-drop-"));
+    const write = (dropped) =>
+      writeFileSync(
+        path.join(dir, "all.lcov"),
+        lcov(...gated.map((c) => record(`${dir}/${DIRS[c]}/x.rs`, 100, c === dropped ? 79 : 80)))
+      );
+    const run = (...args) =>
+      execFileSync(
+        "node",
+        [
+          SCRIPT,
+          "--root",
+          dir,
+          "--platform",
+          "linux",
+          "--baseline",
+          path.join(dir, "b.json"),
+          "--lcov",
+          path.join(dir, "all.lcov"),
+          ...args,
+        ],
+        { encoding: "utf8", stdio: "pipe", env: { ...process.env, GITHUB_ACTIONS: "true" } }
+      );
+    write(null);
+    run("--update");
+    expect(run("--check")).toMatch(/PASS/);
+    write(component);
+    let err;
+    try {
+      run("--check");
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.status).toBe(1);
+    expect(err.stderr).toContain(`coverage-ratchet: FAIL — ${component} 80.00 → 79.00 (-1.00 pp)`);
+    expect(err.stdout).toContain(`::error title=Coverage ratchet drop::${component} 80.00`);
+  });
+});
+
+describe("failureSummary", () => {
+  it("lists only failing and missing rows", () => {
+    const { rows } = check(
+      { frontend: 80, core: null, agent: 50 },
+      { frontend: 90, core: 90, agent: 50 },
+      0.25
+    );
+    expect(failureSummary(rows)).toBe("frontend 90.00 → 80.00 (-10.00 pp), core 90.00 → no data");
   });
 });
 

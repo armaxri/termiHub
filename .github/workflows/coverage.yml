@@ -4,9 +4,10 @@ name: Coverage (unified, ratchet)
 # backend/agent/core crates merged into ONE repo-wide number (TOOL-001/002/003).
 # See scripts/coverage.sh.
 #
-# BLOCKING FAIL-ON-DECREASE RATCHET (#3740 — CI-011, TBE-007): scripts/coverage.sh
-# grades the per-component UNIT line coverage (frontend, core, agent, src-tauri
-# and the unified total) against the committed linux baseline in
+# BLOCKING FAIL-ON-DECREASE RATCHET (#3740 — CI-011, TBE-007): the "Coverage
+# ratchet" step grades the per-component UNIT line coverage (frontend, core,
+# agent, src-tauri, plugin-runner, plugin-api, rdp-sidecar and the unified
+# total) against the committed linux baseline in
 # scripts/coverage-baseline.json (scripts/internal/coverage-ratchet.mjs) and
 # exits non-zero when any component drops more than the baseline's tolerance
 # (0.25 pp). The nightly integration overlay is reported but not gated — its
@@ -139,7 +140,18 @@ jobs:
           TERMIHUB_INTEGRATION_STALE: coverage-integration/stale-files.txt
           TERMIHUB_HARNESS_LCOV: coverage-integration/harness/harness.lcov
           TERMIHUB_HARNESS_STALE: coverage-integration/harness/stale-files.txt
-        run: ./scripts/coverage.sh
+        # Measures only; the ratchet is the next step (#5159). A failure HERE means
+        # the lane is broken (a test, the build or a tool failed) — not a drop.
+        run: ./scripts/coverage.sh --no-ratchet
+
+      # The gate, as its own step so a red run names its cause: a failure in THIS
+      # step is a coverage drop (the error names the component), which the
+      # scheduled-lane heartbeat reports as "ratchet drop", not "lane broken".
+      # Keep the step name in sync with `gateSteps` in scheduled-lanes.mjs.
+      - name: Coverage ratchet
+        run: >-
+          node scripts/internal/coverage-ratchet.mjs --check
+          --report coverage-unified/ratchet.md
 
       - name: Publish unified number to job summary
         if: always()

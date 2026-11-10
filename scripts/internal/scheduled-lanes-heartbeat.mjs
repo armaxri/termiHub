@@ -18,6 +18,12 @@
 //   --dispatch-cron C  dispatches the lanes assigned to cron C (the dispatcher's
 //                      `github.event.schedule`), regardless of age.
 //
+// When a lane's newest develop run FAILED, the report says why (#5159): a
+// failure in one of the lane's `gateSteps` (e.g. coverage.yml's "Coverage
+// ratchet") is a gate verdict — "ratchet drop": the lane works, the code
+// regressed — while a failure anywhere else is "lane broken" at the named
+// job/step. Both still fail the heartbeat; they need different fixes.
+//
 // Either dispatch mode skips a lane whose own `schedule:` is live, meaning
 // its workflow file is on main with a schedule trigger and `ownSchedule` is not
 // false. Every registered lane is `ownSchedule: false` (#4449, #4847), so the
@@ -123,6 +129,43 @@ export function laneStatus(lane, runs, now) {
 }
 
 /**
+ * Why a failed run failed: a gate verdict (every failed step is one of the
+ * lane's `gateSteps`) or a broken lane (anything else failed).
+ *
+ * @param {{ gateSteps?: Record<string, string> }} lane
+ * @param {{ name: string, conclusion: string | null,
+ *   steps?: { name: string, conclusion: string | null }[] }[]} jobs the run's jobs
+ * @returns {{ kind: "gate" | "broken", label: string, detail: string }}
+ */
+export function classifyFailure(lane, jobs) {
+  const gates = lane.gateSteps ?? {};
+  const failed = [];
+  for (const job of jobs ?? []) {
+    if (job.conclusion !== "failure") continue;
+    const step = (job.steps ?? []).find((st) => st.conclusion === "failure");
+    failed.push({ job: job.name, step: step?.name ?? null });
+  }
+  const where = (f) => `${f.job} / ${f.step ?? "(no failed step)"}`;
+  if (failed.length === 0) {
+    return { kind: "broken", label: "lane broken", detail: "no failed job recorded" };
+  }
+  const broken = failed.find((f) => !(f.step && gates[f.step]));
+  if (broken) return { kind: "broken", label: "lane broken", detail: where(broken) };
+  return {
+    kind: "gate",
+    label: [...new Set(failed.map((f) => gates[f.step]))].join(", "),
+    detail: failed.map(where).join("; "),
+  };
+}
+
+/** One phrase for a classified failure, e.g. `ratchet drop (Job / Step)`. */
+export function describeFailure(failure) {
+  return failure.kind === "gate"
+    ? `${failure.label} (${failure.detail})`
+    : `${failure.label} at ${failure.detail}`;
+}
+
+/**
  * True when the lane's own schedule fires from main (so the dispatcher must
  * not double it).
  *
@@ -175,7 +218,8 @@ export function fmtAge(hours) {
 /**
  * The report table.
  *
- * @param {{ lane: object, registered: boolean, status: object, ownLive: boolean }[]} rows
+ * @param {{ lane: object, registered: boolean, status: object, ownLive: boolean,
+ *   failure?: ReturnType<typeof classifyFailure> | null }[]} rows
  * @param {Set<string>} dispatched files dispatched in this run
  */
 export function renderTable(rows, dispatched) {
@@ -183,9 +227,10 @@ export function renderTable(rows, dispatched) {
     "| Lane | Cadence | Newest develop run | Newest success | Heartbeat | Cron owner |",
     "| --- | --- | --- | --- | --- | --- |",
   ];
-  for (const { lane, registered, status, ownLive } of rows) {
+  for (const { lane, registered, status, ownLive, failure } of rows) {
+    const cause = failure ? ` — ${describeFailure(failure)}` : "";
     const newest = status.newest
-      ? `${fmtAge(status.newestAge)} ago (${status.newest.conclusion ?? status.newest.status}, ${status.newest.event})`
+      ? `${fmtAge(status.newestAge)} ago (${status.newest.conclusion ?? status.newest.status}, ${status.newest.event})${cause}`
       : registered
         ? "none"
         : "none (workflow not registered)";
@@ -282,11 +327,24 @@ function main() {
         registered,
         status: laneStatus(lane, runs, now),
         ownLive: ownScheduleLive(lane, readMain),
+        failure: null,
       };
     });
   } catch (e) {
     console.error(String(e.message));
     return 2;
+  }
+  for (const row of rows) {
+    if (row.status.newest?.conclusion !== "failure") continue;
+    try {
+      const body = ghApi(
+        `repos/${args.repo}/actions/runs/${row.status.newest.id}/jobs?per_page=100`
+      );
+      row.failure = classifyFailure(row.lane, body?.jobs ?? []);
+    } catch (e) {
+      // Advisory detail only: the heartbeat verdict does not depend on it.
+      console.error(`could not read the jobs of ${row.lane.file}'s newest run: ${e.message}`);
+    }
   }
 
   let failed = false;
@@ -331,15 +389,21 @@ function main() {
     out.push(
       "",
       `${stale.length} lane(s) have no successful develop run inside their heartbeat window: ` +
-        stale.map((r) => r.lane.file).join(", ") +
-        ". Open the lane's runs, fix the failure or the trigger, and re-dispatch it."
+        stale
+          .map((r) => (r.failure ? `${r.lane.file} (${describeFailure(r.failure)})` : r.lane.file))
+          .join(", ") +
+        ". Open the lane's runs, fix the failure or the trigger, and re-dispatch it. A gate " +
+        "verdict (e.g. ratchet drop) means the lane works and the code regressed; " +
+        '"lane broken" means the lane itself failed.'
     );
     if (gha) {
       for (const r of stale) {
+        const title = r.failure ? `${r.lane.file}: ${r.failure.label}` : `${r.lane.file}: stale`;
+        const cause = r.failure ? ` Newest run: ${describeFailure(r.failure)}.` : "";
         console.log(
-          `::error file=.github/workflows/${r.lane.file}::No successful develop run in ` +
-            `${fmtAge(HEARTBEAT_HOURS[r.lane.cadence])} (newest success: ` +
-            `${r.status.newestSuccess ? fmtAge(r.status.successAge) + " ago" : "never"}).`
+          `::error file=.github/workflows/${r.lane.file},title=${title}::No successful develop ` +
+            `run in ${fmtAge(HEARTBEAT_HOURS[r.lane.cadence])} (newest success: ` +
+            `${r.status.newestSuccess ? fmtAge(r.status.successAge) + " ago" : "never"}).${cause}`
         );
       }
     }

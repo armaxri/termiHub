@@ -29,12 +29,15 @@ cd /d "%~dp0\.."
 
 set DRY_RUN=0
 set UPDATE_BASELINE=0
+set NO_RATCHET=0
 :parse_args
 if "%~1"=="" goto args_done
 if "%~1"=="--dry-run" (
     set DRY_RUN=1
 ) else if "%~1"=="--update-baseline" (
     set UPDATE_BASELINE=1
+) else if "%~1"=="--no-ratchet" (
+    set NO_RATCHET=1
 ) else (
     echo unknown argument: %~1 1>&2
     exit /b 2
@@ -187,7 +190,9 @@ REM Ratchet: fail on a coverage decrease against the committed baseline, or
 REM (with --update-baseline) raise the baseline to the measured values.
 echo.
 echo === Coverage ratchet (scripts\coverage-baseline.json) ===
-if "%UPDATE_BASELINE%"=="1" (
+if "%NO_RATCHET%"=="1" (
+    echo Skipped ^(--no-ratchet^). Run: node scripts\internal\coverage-ratchet.mjs --check
+) else if "%UPDATE_BASELINE%"=="1" (
     node scripts\internal\coverage-ratchet.mjs --update
 ) else (
     node scripts\internal\coverage-ratchet.mjs --check --report "%RATCHET_REPORT%"

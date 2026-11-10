@@ -40,6 +40,17 @@ describe("registryProblems", () => {
     expect(registryProblems(tree({ "after-ci.yml": wr }), [lane()])[0]).toMatch(/after-ci\.yml/);
   });
 
+  it("flags a gate step the lane's workflow does not have (#5159)", () => {
+    const withStep = NIGHTLY.replace(
+      "jobs: {}\n",
+      "jobs:\n  c:\n    steps:\n      - name: Coverage ratchet\n        run: x\n"
+    );
+    const gated = lane({ gateSteps: { "Coverage ratchet": "ratchet drop" } });
+    expect(registryProblems(tree({ "nightly.yml": withStep }), [gated])).toEqual([]);
+    const problems = registryProblems(tree(), [gated]);
+    expect(problems.some((p) => /no step named "Coverage ratchet"/.test(p))).toBe(true);
+  });
+
   it("flags a lane whose file is missing", () => {
     const problems = registryProblems(tree(), [lane(), lane({ file: "gone.yml" })]);
     expect(problems.some((p) => /gone\.yml .* does not exist/.test(p))).toBe(true);
