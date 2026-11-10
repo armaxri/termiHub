@@ -1248,6 +1248,21 @@ class SshServerControl:
             stdin=content,
         )
 
+    def sha256(self, path: str) -> str:
+        """The SHA-256 hex digest of ``path`` inside the container (``sha256sum``)."""
+        return self._exec(["sha256sum", "--", path]).split()[0]
+
+    def write_random_file(self, path: str, size: int, *, user: str) -> None:
+        """Write ``size`` random bytes to ``path`` inside the container **as** ``user``.
+
+        Random, so the content cannot be compressed on the wire and a
+        truncated or shifted copy never hashes the same.
+        """
+        self._exec(
+            ["sh", "-c", 'head -c "$2" /dev/urandom > "$1"', "sh", path, str(size)],
+            user=user,
+        )
+
     def remove_path(self, path: str) -> None:
         """Remove ``path`` (file or directory tree) inside the container, if present."""
         self._exec(["rm", "-rf", "--", path])
