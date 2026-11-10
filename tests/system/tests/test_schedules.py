@@ -19,7 +19,7 @@ three and a half minutes:
    the two completed runs.
 
 The schedule is authored like a user would: a local-shell connection opened
-with Save & Connect, a one-step macro, the macro row's Schedule action, then
+from the sidebar, a one-step macro, the macro row's Schedule action, then
 Settings -> Schedules to enable (with the first-enable confirmation) and to
 pause/resume. Experimental features stay off; none of this needs them.
 """
@@ -207,9 +207,15 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
     # ── the journey ──────────────────────────────────────────────────────────
     def test_fires_once_then_pause_skips_and_resume_does_not_replay(self):
         conn_name = unique_name("sched-target")
-        self.create_local_connection(conn_name, connect=True)
+        self.create_local_connection(conn_name)
         connection_id = self.require_stable_connection(conn_name)["id"]
-        self.wait(lambda: self.find_tab(conn_name), what=f"the {conn_name!r} terminal tab")
+        # Connect from the sidebar: that tab carries the saved connection's id,
+        # which is what a schedule targets. A Save & Connect tab does not (#5257).
+        self.connect_connection(conn_name)
+        self.wait(
+            lambda: (self.find_tab(conn_name) or {}).get("connectionId") == connection_id,
+            what=f"the {conn_name!r} terminal tab for connection {connection_id}",
+        )
 
         macro_id = self._create_macro(unique_name("sched-macro"), "echo sched-tick\\r")
         schedule_id = self._create_schedule(unique_name("sched"), macro_id, connection_id)
