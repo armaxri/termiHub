@@ -130,12 +130,16 @@ export function TerminalReconnectStrip({
       <div className="terminal-reconnect-strip__text">
         <div className="terminal-reconnect-strip__line">
           <span className="terminal-reconnect-strip__heading">{heading}</span>
-          <span
-            className="terminal-reconnect-strip__status"
-            data-testid={inLoop ? "terminal-auto-reconnect-countdown" : undefined}
-          >
-            {status}
-          </span>
+          {inLoop ? (
+            <span
+              className="terminal-reconnect-strip__status"
+              data-testid="terminal-auto-reconnect-countdown"
+            >
+              {status}
+            </span>
+          ) : (
+            <span className="terminal-reconnect-strip__status">{status}</span>
+          )}
         </div>
         {inLoop && (
           <div className="terminal-reconnect-strip__line terminal-reconnect-strip__note">
@@ -170,16 +174,27 @@ export function TerminalReconnectStrip({
           </div>
         )}
       </div>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={handleCancel}
-        data-testid={
-          waiting ? "terminal-auto-reconnect-cancel-btn" : "terminal-disconnect-stop-btn"
-        }
-      >
-        {waiting ? "Cancel" : "Stop"}
-      </Button>
+      {/* Literal testids per control, so the static testid scan (and the
+          system-test harness) sees both. */}
+      {waiting ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleCancel}
+          data-testid="terminal-auto-reconnect-cancel-btn"
+        >
+          Cancel
+        </Button>
+      ) : (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleCancel}
+          data-testid="terminal-disconnect-stop-btn"
+        >
+          Stop
+        </Button>
+      )}
     </div>
   );
 }
