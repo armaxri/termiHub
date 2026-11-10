@@ -17,10 +17,11 @@
 #    with shell integration on -- native_05b/05c/05d of core/tests/ssh_native.rs
 #    (TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash). No agent is deployed: the
 #    agent's deploy path supports only a cmd.exe / PowerShell DefaultShell.
-# 4. `powershell` also runs native_05b/05c/05d/05h of core/tests/ssh_native.rs
-#    first (#5044): with the opt-in hook on, the login banner stays and no
-#    setup text is left on screen -- under Windows PowerShell 5.1, then under
-#    PowerShell 7 (DefaultShell switched to pwsh.exe and back).
+# 4. `powershell` also runs native_05b/05c/05d/05h/05j of
+#    core/tests/ssh_native.rs first (#5044): with the opt-in hook on, the login
+#    banner stays and no setup text is left on screen, and a session loads the
+#    user's profile exactly once (#5147) -- under Windows PowerShell 5.1, then
+#    under PowerShell 7 (DefaultShell switched to pwsh.exe and back).
 # 5. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
 #    (#5109): with the opt-in hook on, a cd is reported, no setup text is
 #    left on screen and nothing of it is in the console's command history.
@@ -45,7 +46,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -92,13 +93,14 @@ CORE_TESTS=(
   native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
   native_05g_windows_host_is_not_followed_without_the_hook
 )
-# The PowerShell DefaultShell leg's core SSH tests (#5044), run under Windows
-# PowerShell 5.1 and then, when the runner has it, PowerShell 7.
+# The PowerShell DefaultShell leg's core SSH tests (#5044, #5147), run under
+# Windows PowerShell 5.1 and then, when the runner has it, PowerShell 7.
 PS_CORE_TESTS=(
   native_05b_remote_shell_probe_detects_the_login_shell
   native_05c_first_command_runs_with_shell_integration_on
   native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs
   native_05h_powershell_hook_keeps_the_login_banner
+  native_05j_powershell_profile_runs_once_per_session
 )
 # The cmd.exe DefaultShell leg's core SSH tests (#5109).
 CMD_CORE_TESTS=(

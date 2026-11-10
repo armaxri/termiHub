@@ -700,6 +700,143 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
+/// #5147: a session on a Windows PowerShell host loads the user's profile
+/// exactly once, for its own shell. With a profile on the test user
+/// (`$PROFILE.CurrentUserAllHosts`) that appends to a marker file and prints a
+/// line, a hooked session with an env var runs it once, and so does a
+/// hook-free one with an env var. Both need the login shell, and on a
+/// Win32-OpenSSH host it is told from PowerShell's banner, not from an exec
+/// channel that would run as `powershell -c` and load the profile again. The
+/// profile and the marker are removed afterwards, also when the grade fails.
+/// The `powershell` leg of the Windows SSH Host lane runs it under Windows
+/// PowerShell 5.1 and PowerShell 7.
+#[tokio::test]
+async fn native_05j_powershell_profile_runs_once_per_session() {
+    let sshd = require_native_sshd!();
+    if !cfg!(windows) || fixture_shell() != RemoteShell::PowerShell {
+        eprintln!("this grade is for a Windows PowerShell SSH host; skipping");
+        return;
+    }
+    let (session, _) = connect_and_authenticate(&sshd.key_config())
+        .await
+        .expect("key auth");
+    // These execs run as `powershell -c`, so `$PROFILE` is the profile of
+    // the DefaultShell under test (5.1's and 7's live apart). They may load
+    // the profile themselves; the grade only counts what ran between them.
+    // No double quotes: Win32-OpenSSH hands the command over in them.
+    let set = ssh_exec(
+        &session,
+        &format!(
+            "$p = $PROFILE.CurrentUserAllHosts; \
+             Remove-Item -Force -ErrorAction SilentlyContinue {PROFILE_MARKER}; \
+             $null = New-Item -ItemType Directory -Force -Path (Split-Path $p); \
+             Set-Content -Path $p -Value '{PROFILE_BODY}'; \
+             Write-Output ('th5147-set:' + $p)"
+        ),
+    )
+    .await
+    .expect("write the test profile");
+    eprintln!("[5147] {}", set.trim());
+    assert!(
+        set.contains("th5147-set:"),
+        "the test profile was not set up: {set:?}"
+    );
+    // Run the grade as its own task so a failure still reaches the cleanup.
+    let grade = tokio::spawn(powershell_profile_grade(sshd)).await;
+    let cleanup = ssh_exec(
+        &session,
+        &format!(
+            "Remove-Item -Force -ErrorAction SilentlyContinue \
+             $PROFILE.CurrentUserAllHosts, {PROFILE_MARKER}; \
+             Write-Output ('th5147-' + 'cleaned')"
+        ),
+    )
+    .await;
+    if let Err(e) = grade {
+        std::panic::resume_unwind(e.into_panic());
+    }
+    let cleanup = cleanup.expect("remove the test profile");
+    assert!(
+        cleanup.contains("th5147-cleaned"),
+        "the test profile was not removed: {cleanup:?}"
+    );
+}
+
+/// The test profile's marker file (#5147), as a PowerShell expression.
+const PROFILE_MARKER: &str = "(Join-Path $HOME 'th5147-profile.log')";
+
+/// The test profile (#5147), inside a single-quoted PowerShell string: it
+/// appends a line to [`PROFILE_MARKER`] and prints one, as a chatty profile
+/// does before the first prompt.
+const PROFILE_BODY: &str = "Add-Content -Path (Join-Path $HOME ''th5147-profile.log'') \
+     -Value th5147-ran; Write-Output th5147-profile-says-hi";
+
+/// How often the test profile has run so far, read in `ssh`'s PowerShell
+/// with `Get-Content` (a cmdlet: no child process, so no profile of its own).
+async fn profile_runs(ssh: &mut Ssh) -> usize {
+    // Split in the typed line, so only its output has the whole tag.
+    const TAG: &str = "[th5147-runs=";
+    let line = format!(
+        "Write-Output ('[th5147-' + 'runs=' + @(Get-Content -ErrorAction \
+         SilentlyContinue {PROFILE_MARKER}).Count + ']')\r"
+    );
+    let count = |s: &str| {
+        s.rmatch_indices(TAG).find_map(|(at, _)| {
+            let rest = &s[at + TAG.len()..];
+            rest.split(']').next()?.parse::<usize>().ok()
+        })
+    };
+    let (done, seen) = type_and_wait(ssh, &line, |s| count(s).is_some()).await;
+    assert!(done, "could not read the profile marker: {seen:?}");
+    count(&seen).expect("a count")
+}
+
+async fn powershell_profile_grade(sshd: common::NativeSshd) {
+    let line = "Write-Output ('[' + $env:TH_5147_VAR + '-' + (40+2) + ']')\r";
+
+    // A hooked session with an env var: its setup is typed after the banner,
+    // the profile's output and the first prompt.
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    settings["env"] = serde_json::json!({ "TH_5147_VAR": "th5147value" });
+    ssh.connect(settings).await.expect("shell session connects");
+    let (done, seen) = type_and_wait(&mut ssh, line, |s| {
+        s.contains("[th5147value-42]") && s.contains("\x1b]7;file://")
+    })
+    .await;
+    assert!(
+        done,
+        "the first command did not run with the hook: {seen:?}"
+    );
+    assert!(
+        seen.contains("th5147-profile-says-hi"),
+        "the test profile did not run in the session shell: {seen:?}"
+    );
+    let hooked_runs = profile_runs(&mut ssh).await;
+    ssh.disconnect().await.expect("disconnect cleanly");
+
+    // A hook-free session with an env var needs the login shell too.
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["env"] = serde_json::json!({ "TH_5147_VAR": "th5147value" });
+    ssh.connect(settings).await.expect("connect");
+    let (done, seen) = type_and_wait(&mut ssh, line, |s| s.contains("[th5147value-42]")).await;
+    assert!(done, "the first command did not run: {seen:?}");
+    let all_runs = profile_runs(&mut ssh).await;
+    ssh.disconnect().await.ok();
+
+    eprintln!("[5147] profile runs: hooked session {hooked_runs}, both sessions {all_runs}");
+    assert_eq!(
+        hooked_runs, 1,
+        "the hooked session loaded the profile other than once, for its shell"
+    );
+    assert_eq!(
+        all_runs, 2,
+        "the hook-free session with an env var loaded the profile other than once"
+    );
+}
+
 /// #5109: with the opt-in hook on, a cmd.exe DefaultShell is followed: a
 /// `cd` reports the new directory (OSC 7). The typed setup leaves nothing
 /// behind: no setup text on screen (the raw stream replayed through the

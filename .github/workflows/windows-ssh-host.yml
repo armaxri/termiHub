@@ -19,7 +19,8 @@ name: Windows SSH Host
 # on Windows, whose setup echo is never filtered (no agent deploy there).
 # The `powershell` leg (#5044) also runs those core tests with Windows
 # PowerShell 5.1 and PowerShell 7 as the DefaultShell: with the opt-in hook on,
-# the login banner must stay and no setup text may be left on screen.
+# the login banner must stay and no setup text may be left on screen, and a
+# session must load the user's profile exactly once (#5147).
 # The `cmd` leg (#5109) runs the core cmd.exe hook grade first: with the hook
 # on, a `cd` is reported and the setup leaves nothing on screen or in
 # `doskey /history`.
