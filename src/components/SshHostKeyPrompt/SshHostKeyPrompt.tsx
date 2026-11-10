@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { TrustPrompt, type TrustFact } from "@/components/ui";
-import { onSshHostKeyPrompt } from "@/services/events";
+import { onSshHostKeyPrompt, onSshHostKeyPromptClosed } from "@/services/events";
 import { sshHostKeyDecision } from "@/services/api";
 import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
 
@@ -20,26 +20,32 @@ import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
  * Any SSH connect path (terminal, tunnel, SFTP, jump host) can raise a prompt,
  * so this mounts once at the app root and serialises concurrent prompts through
  * a small queue — one dialog at a time.
+ *
+ * When the connect behind a prompt is aborted or times out, the backend sends
+ * `ssh-host-key-prompt-closed` and the prompt is dropped from the queue — open
+ * or still waiting — so nobody is asked to trust a key for a connect that no
+ * longer exists (#5185).
  */
 export function SshHostKeyPrompt() {
   const [queue, setQueue] = useState<SshHostKeyPromptPayload[]>([]);
   const current = queue[0] ?? null;
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    const unlisteners: (() => void)[] = [];
     let active = true;
+    const keep = (fn: () => void) => {
+      if (active) unlisteners.push(fn);
+      else fn();
+    };
     void onSshHostKeyPrompt((payload) => {
       setQueue((q) => [...q, payload]);
-    }).then((fn) => {
-      if (active) {
-        unlisten = fn;
-      } else {
-        fn();
-      }
-    });
+    }).then(keep);
+    void onSshHostKeyPromptClosed(({ prompt_id }) => {
+      setQueue((q) => q.filter((p) => p.prompt_id !== prompt_id));
+    }).then(keep);
     return () => {
       active = false;
-      unlisten?.();
+      unlisteners.forEach((fn) => fn());
     };
   }, []);
 

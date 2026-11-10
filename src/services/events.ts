@@ -8,7 +8,7 @@ import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerError, XServerProgress } from "@/types/xserver";
-import { SshHostKeyPromptPayload } from "@/types/sshHostKey";
+import type { SshHostKeyPromptClosedPayload, SshHostKeyPromptPayload } from "@/types/sshHostKey";
 import type { ConnectionIdChange } from "@/types/connection";
 import type {
   SshKeyboardInteractivePromptClosedPayload,
@@ -158,6 +158,22 @@ export async function onSshHostKeyPrompt(
   return await listen<SshHostKeyPromptPayload>(TAURI_EVENT.sshHostKeyPrompt, (event) => {
     callback(event.payload);
   });
+}
+
+/**
+ * Subscribe to "prompt no longer awaited" notices for host-key trust prompts
+ * (#5185) — the connect that raised the prompt was aborted or timed out, so
+ * the dialog for that `prompt_id` must close (an answer would be ignored).
+ */
+export async function onSshHostKeyPromptClosed(
+  callback: (payload: SshHostKeyPromptClosedPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SshHostKeyPromptClosedPayload>(
+    TAURI_EVENT.sshHostKeyPromptClosed,
+    (event) => {
+      callback(event.payload);
+    }
+  );
 }
 
 /**
