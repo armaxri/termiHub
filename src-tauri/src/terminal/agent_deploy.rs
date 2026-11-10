@@ -25,7 +25,7 @@ use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
     detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
-    run_remote_command, upload_bytes_via_sftp_cancellable,
+    run_remote_command, run_remote_command_checked, upload_bytes_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 #[cfg(test)]
@@ -354,25 +354,49 @@ pub fn deploy_agent(
         }
     }
 
-    // 5. Read the binary and re-verify the release signature over exactly the
-    //    bytes we upload (AGT-005, #3330: resolution already verified the file;
-    //    this closes the swap window).
+    // 5–9. Read + re-verify, upload, install, verify, resolve the install path.
     bail_if_cancelled(cancel)?;
-    let binary_bytes = std::fs::read(&binary_path)
-        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
-    agent_binary::verify_deploy_bytes(&binary_path, &binary_bytes, version)
-        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-
-    // 6–9. Upload, install, verify, resolve the install path.
     let progress = |step: &str, message: &str, pct: f64| {
         log_progress(agent_id, step, message, pct);
     };
-    install_agent_bytes(
+    verify_and_install(
         &session,
         &remote_os,
         remote_path,
-        &binary_bytes,
+        &binary_path,
+        version,
         &progress,
+        cancel,
+    )
+}
+
+/// Read the resolved binary, re-verify its release signature over exactly the
+/// bytes to upload, then [`install_agent_bytes`] them — [`deploy_agent`] after
+/// binary resolution.
+///
+/// The re-verification (AGT-005, #3330) runs before anything touches the host:
+/// resolution already verified the file, this closes the swap window, and a
+/// refused binary leaves the host unchanged. Split out so the in-process host
+/// tests (#5162) can drive it without a Tauri `AppHandle`.
+fn verify_and_install(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    remote_os: &str,
+    remote_path: &str,
+    binary_path: &std::path::Path,
+    version: &str,
+    progress: &dyn Fn(&str, &str, f64),
+    cancel: Option<&CancellationToken>,
+) -> Result<AgentDeployResult, TerminalError> {
+    let binary_bytes = std::fs::read(binary_path)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    agent_binary::verify_deploy_bytes(binary_path, &binary_bytes, version)
+        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+    install_agent_bytes(
+        session,
+        remote_os,
+        remote_path,
+        &binary_bytes,
+        progress,
         cancel,
     )
 }
@@ -425,19 +449,23 @@ pub fn install_agent_bytes(
     // A cancel that landed during the upload must not leave the temp file
     // behind — roll it back before returning (G10, #1242).
     if let Err(e) = bail_if_cancelled(cancel) {
-        rollback_partial_upload(session, &plan.upload_path);
-        return Err(e);
+        return Err(fail_with_rollback(session, &plan.upload_path, e));
     }
 
     // Install: create dir + move binary into place (POSIX also sets +x).
     progress("installing", "Installing agent binary…", 0.7);
-    run_remote_command(session, &plan.install_command).map_err(|e| {
+    // The exit status is checked: a failed `mkdir`/`mv` used to be ignored, so
+    // the verify step ran the *previous* binary and reported its version as a
+    // successful update (#5162). A failure now fails the deploy and removes the
+    // staged upload; the previous binary is untouched.
+    run_remote_command_checked(session, &plan.install_command).map_err(|e| {
         // Keep a timeout typed so the UI reports the frozen server (#3698).
-        if e.is_timeout() {
+        let e = if e.is_timeout() {
             e
         } else {
             TerminalError::RemoteError(format!("Install command failed: {e}"))
-        }
+        };
+        fail_with_rollback(session, &plan.upload_path, e)
     })?;
 
     // Verify
@@ -661,18 +689,44 @@ pub fn stage_agent_binary(
         }
     }
 
-    // 5. Upload WITHOUT installing — the agent's self-apply swaps the running
-    //    binary from this path (never run the install command or shut the agent
-    //    down; that is the agent's job for coordinated). The upload goes into a
-    //    fresh private dir inside the agent's `<config>/updates` staging root,
-    //    which the agent trusts and which no other local user can write
-    //    (AGT2-002, #4287); the agent removes it once the update is applied.
+    // 5. Verify, then upload WITHOUT installing.
     bail_if_cancelled(cancel)?;
-    let upload_dir = prepare_posix_upload_dir(&session)?;
-    let plan = posix_install_plan(remote_path, &upload_dir);
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "staging", "Staging agent binary…", 0.4);
-    let binary_bytes = std::fs::read(&binary_path)
+    stage_verified_binary(
+        agent_id,
+        &session,
+        remote_os,
+        remote_path,
+        &binary_path,
+        version,
+        cancel,
+    )
+}
+
+/// Read and verify the resolved binary, then upload it to a fresh private
+/// upload dir **without installing it** — [`stage_agent_binary`] after binary
+/// resolution (POSIX hosts only).
+///
+/// The agent's self-apply swaps the running binary from the returned path, so
+/// the install command never runs and the agent is never shut down here; that
+/// is the agent's job for a coordinated update. The upload dir lives inside the
+/// agent's `<config>/updates` staging root, which the agent trusts and which no
+/// other local user can write (AGT2-002, #4287); the agent removes it once the
+/// update is applied.
+///
+/// The binary is read and its signature verified before the host is touched,
+/// so a refused binary leaves nothing behind (not even an empty upload dir).
+/// Split out so the in-process host tests (#5162) can drive it without a Tauri
+/// `AppHandle`.
+fn stage_verified_binary(
+    agent_id: &str,
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    remote_os: String,
+    remote_path: &str,
+    binary_path: &std::path::Path,
+    version: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<StagedBinary, TerminalError> {
+    let binary_bytes = std::fs::read(binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
     // AGT-004: compute the SHA-256 of exactly the bytes we upload, so the agent
     // can re-verify the staged binary against it immediately before the swap.
@@ -682,16 +736,20 @@ pub fn stage_agent_binary(
     // tampered binary), then forward it; the agent re-verifies it against its
     // compiled-in release key before the swap.
     agent_binary::verify_signature_for_digest(
-        &binary_path,
+        binary_path,
         &expected_sha256,
         &agent_binary::deploy_signature_policy(version),
     )
     .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-    let signature = agent_binary::read_signature_sidecar(&binary_path);
-    upload_binary_or_rollback(&session, &binary_bytes, &plan.upload_path, cancel)?;
+    let signature = agent_binary::read_signature_sidecar(binary_path);
+
+    let upload_dir = prepare_posix_upload_dir(session)?;
+    let plan = posix_install_plan(remote_path, &upload_dir);
+    bail_if_cancelled(cancel)?;
+    log_progress(agent_id, "staging", "Staging agent binary…", 0.4);
+    upload_binary_or_rollback(session, &binary_bytes, &plan.upload_path, cancel)?;
     if let Err(e) = bail_if_cancelled(cancel) {
-        rollback_partial_upload(&session, &plan.upload_path);
-        return Err(e);
+        return Err(fail_with_rollback(session, &plan.upload_path, e));
     }
     info!(
         "Staged {} bytes to {} for coordinated update",
@@ -717,40 +775,63 @@ pub fn stage_agent_binary(
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Upload the agent binary, aborting promptly when `cancel` fires mid-transfer
-/// (#4060). A cancelled upload rolls back the partial temp file before
-/// returning [`TerminalError::Cancelled`], so the dialog reports "cancelled"
-/// rather than a generic failure and nothing lingers on the host.
+/// (#4060). A failed upload — cancelled or not — rolls back the partial temp
+/// file before returning, so no half-written binary lingers on the host
+/// (#5162; before, only a cancel was rolled back). See [`fail_with_rollback`]
+/// for how the error is reported.
 fn upload_binary_or_rollback(
     session: &termihub_core::backends::ssh::handler::SshSession,
     binary_bytes: &[u8],
     upload_path: &str,
     cancel: Option<&CancellationToken>,
 ) -> Result<u64, TerminalError> {
-    match upload_bytes_via_sftp_cancellable(session, binary_bytes, upload_path, cancel) {
-        Err(TerminalError::Cancelled) => {
-            rollback_partial_upload(session, upload_path);
-            Err(TerminalError::Cancelled)
-        }
-        other => other,
+    upload_bytes_via_sftp_cancellable(session, binary_bytes, upload_path, cancel)
+        .map_err(|e| fail_with_rollback(session, upload_path, e))
+}
+
+/// Roll back the upload at `upload_path` after `err` failed the deploy, and
+/// return the error to report.
+///
+/// - [`TerminalError::Cancelled`] stays `Cancelled` so the dialog reports
+///   "cancelled"; a failed rollback is logged.
+/// - A typed timeout (#3698) is returned as is **without** a rollback: the
+///   server stopped responding, so a remove would only wait out another
+///   deadline.
+/// - Any other error gets the rollback outcome appended when the partial
+///   upload could not be removed, so a stranded file is never silent.
+fn fail_with_rollback(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    upload_path: &str,
+    err: TerminalError,
+) -> TerminalError {
+    if err.is_timeout() {
+        warn!("Upload to {upload_path} timed out; skipping rollback on a frozen host");
+        return err;
+    }
+    match (rollback_partial_upload(session, upload_path), err) {
+        (Ok(()), err) | (Err(_), err @ TerminalError::Cancelled) => err,
+        (Err(rollback), err) => TerminalError::RemoteError(format!(
+            "{err}; the partial agent upload at {upload_path} could not be removed: {rollback}"
+        )),
     }
 }
 
-/// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
+/// Remove a partially uploaded or staged binary after a failed deploy (G10,
+/// #1242; #5162).
 ///
 /// The upload target lives at a temp path (`plan.upload_path`, a private upload
-/// dir on POSIX) that has not yet been moved into place, so removing it fully rolls back
-/// the SFTP upload. Failures are logged but not surfaced — the deploy already
-/// failed with `Cancelled` and the temp file is harmless if it lingers.
+/// dir on POSIX) that has not yet been moved into place, so removing it fully
+/// rolls back the SFTP upload. A failure is logged and returned so the caller
+/// can report it.
 fn rollback_partial_upload(
     session: &termihub_core::backends::ssh::handler::SshSession,
     upload_path: &str,
-) {
+) -> Result<(), TerminalError> {
     // SFTP remove works uniformly on POSIX and Windows hosts (the upload path is
     // a temp location that has not yet been moved into place).
-    match remove_via_sftp(session, upload_path) {
-        Ok(_) => info!("Rolled back partial agent upload at {upload_path}"),
-        Err(e) => warn!("Failed to roll back partial upload at {upload_path}: {e}"),
-    }
+    remove_via_sftp(session, upload_path)
+        .inspect(|()| info!("Rolled back partial agent upload at {upload_path}"))
+        .inspect_err(|e| warn!("Failed to roll back partial upload at {upload_path}: {e}"))
 }
 
 /// Trace one deploy/update step.
@@ -929,3 +1010,11 @@ mod tests {
         assert!(!version::is_agent_compatible(ver, "0.3.0"));
     }
 }
+
+#[cfg(test)]
+#[path = "agent_deploy_fake_host.rs"]
+mod fake_host;
+
+#[cfg(test)]
+#[path = "agent_deploy_host_tests.rs"]
+mod host_tests;

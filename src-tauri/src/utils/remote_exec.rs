@@ -91,9 +91,47 @@ pub fn run_remote_command_with_timeout(
     timeout: Duration,
 ) -> Result<String, TerminalError> {
     debug!(command, ?timeout, "Executing remote command");
-    let result = block_on(run_remote_command_async(session, command, timeout))?;
+    let result = block_on(run_remote_command_async(session, command, timeout, false))?.stdout;
     debug!(command, result = %result, "Remote command completed");
     Ok(result)
+}
+
+/// [`run_remote_command`] that also fails when the command reports a non-zero
+/// exit status, with its stderr in the message.
+///
+/// [`run_remote_command`] returns stdout whatever the exit status, which suits
+/// probes (empty output means "not this platform"). A step whose failure must
+/// stop the caller — the agent install `mkdir`/`mv`/`chmod` chain (#5162) —
+/// uses this instead. A server that sends no exit status is treated as
+/// success, matching [`run_remote_command`].
+pub fn run_remote_command_checked(
+    session: &SshSession,
+    command: &str,
+) -> Result<String, TerminalError> {
+    debug!(command, "Executing remote command (exit status checked)");
+    let output = block_on(run_remote_command_async(
+        session,
+        command,
+        DEFAULT_REMOTE_COMMAND_TIMEOUT,
+        true,
+    ))?;
+    match output.exit_status {
+        Some(status) if status != 0 => Err(TerminalError::RemoteError(format!(
+            "exit status {status}: {}",
+            output.stderr.trim()
+        ))),
+        _ => Ok(output.stdout),
+    }
+}
+
+/// What a remote exec produced.
+struct ExecOutput {
+    /// Trimmed stdout.
+    stdout: String,
+    /// Raw stderr.
+    stderr: String,
+    /// The reported exit status, if the server sent one.
+    exit_status: Option<u32>,
 }
 
 /// Async core of [`run_remote_command_with_timeout`].
@@ -101,7 +139,8 @@ async fn run_remote_command_async(
     session: &SshSession,
     command: &str,
     timeout: Duration,
-) -> Result<String, TerminalError> {
+    want_status: bool,
+) -> Result<ExecOutput, TerminalError> {
     // The channel lives outside the timed future so a timeout can still close
     // it after the future is dropped.
     let mut opened: Option<russh::Channel<russh::client::Msg>> = None;
@@ -119,6 +158,8 @@ async fn run_remote_command_async(
             .map_err(|e| TerminalError::SshError(format!("exec failed: {e}")))?;
 
         let mut output = String::new();
+        let mut stderr = String::new();
+        let mut exit_status = None;
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { ref data }) => {
@@ -126,12 +167,36 @@ async fn run_remote_command_async(
                         output.push_str(s);
                     }
                 }
-                Some(ChannelMsg::ExitStatus { .. }) => {}
+                Some(ChannelMsg::ExtendedData { ref data, .. }) => {
+                    stderr.push_str(&String::from_utf8_lossy(data));
+                }
+                Some(ChannelMsg::ExitStatus { exit_status: code }) => exit_status = Some(code),
                 Some(ChannelMsg::Eof) | None => break,
                 _ => {}
             }
         }
-        Ok::<String, TerminalError>(output.trim().to_string())
+        // OpenSSH sends the exit status *after* EOF. Only a caller that checks
+        // it waits for it, bounded so a server that never sends one cannot
+        // stall the call.
+        if want_status && exit_status.is_none() {
+            exit_status = tokio::time::timeout(CLOSE_GRACE, async {
+                loop {
+                    match channel.wait().await {
+                        Some(ChannelMsg::ExitStatus { exit_status: code }) => break Some(code),
+                        None => break None,
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten();
+        }
+        Ok::<ExecOutput, TerminalError>(ExecOutput {
+            stdout: output.trim().to_string(),
+            stderr,
+            exit_status,
+        })
     })
     .await;
 
