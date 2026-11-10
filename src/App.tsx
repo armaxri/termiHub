@@ -69,6 +69,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { flushPendingDeletes } from "@/utils/undoableDelete";
 
 function App() {
   useKeyboardShortcuts();
@@ -289,6 +290,8 @@ function App() {
     const win = getCurrentWindow();
     const onCloseRequested = async (event: { preventDefault: () => void }) => {
       event.preventDefault();
+      // Commit deletes still inside their undo window so closing never loses them (#5158).
+      await flushPendingDeletes();
       let others: Awaited<ReturnType<typeof listWindows>> = [];
       try {
         others = (await listWindows()).filter((w) => w.label !== win.label);

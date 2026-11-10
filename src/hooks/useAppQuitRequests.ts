@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { quitWindowListening, quitWindowPrompting, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
+import { flushPendingDeletes } from "@/utils/undoableDelete";
 import { frontendError } from "@/utils/frontendLog";
 import { subscribeGuarded, useTauriListener } from "./useTauriListener";
 
@@ -19,6 +20,8 @@ export const APP_QUIT_CANCELLED_EVENT = "app-quit-cancelled";
  * while the quit dialog is already up only re-acknowledges it.
  */
 export async function handleAppQuitRequested(): Promise<void> {
+  // Commit deletes still inside their undo window before the app goes (#5158).
+  await flushPendingDeletes();
   const store = useAppStore.getState();
   try {
     if (store.pendingWindowClose?.mode === "quit") {
