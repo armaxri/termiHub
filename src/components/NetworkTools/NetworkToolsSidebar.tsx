@@ -256,16 +256,7 @@ function MonitorRow({
       }
       details={
         <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
-          {parts.flatMap((part, i) =>
-            i === 0
-              ? [part]
-              : [
-                  <span key={`sep-${i}`} aria-hidden="true">
-                    ·
-                  </span>,
-                  part,
-                ]
-          )}
+          {parts}
         </span>
       }
     />

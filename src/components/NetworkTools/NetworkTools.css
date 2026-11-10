@@ -343,18 +343,25 @@
   white-space: nowrap;
 }
 
+.network-sidebar__monitor-meta > * {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/* The separator travels with the part after it, so a wrapped line never ends
+   on a dangling dot. Empty alt text keeps it out of the accessible name. */
+.network-sidebar__monitor-meta > * + *::before {
+  content: "·" / "";
+  color: var(--text-muted);
+}
+
 .network-sidebar__monitor-down {
   color: var(--color-error);
 }
 
 /* Relative "checked N ago" label; the freshest reading's age lives here so a
    long-interval monitor no longer looks perpetually current (audit gap #11). */
-.network-sidebar__monitor-age {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-}
-
 .network-sidebar__monitor-age--stale {
   color: var(--color-warning);
 }
