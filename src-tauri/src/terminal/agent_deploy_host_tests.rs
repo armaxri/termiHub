@@ -353,6 +353,57 @@ async fn failed_restore_is_an_error_that_names_the_backup() {
     );
 }
 
+/// #5254: an install that failed *before* it replaced the binary (on Windows,
+/// a running agent holding the exe) leaves the previous agent in place. When
+/// the restore then fails too, the error must not say the agent is gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn install_failing_before_the_replace_with_a_failed_restore_keeps_the_agent() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+    {
+        let mut st = state.lock().expect("host");
+        st.faults.fail_install_step = Some("mv");
+        st.faults.fail_restore = true;
+    }
+
+    let err = install(session, fake_binary("0.9.0", BINARY_SIZE), None)
+        .await
+        .expect_err("a failed install must fail the deploy");
+
+    let msg = err.to_string();
+    assert!(msg.contains("Install command failed"), "{msg}");
+    assert!(
+        msg.contains("was not replaced and still runs (v0.8.0)"),
+        "the previous agent is still installed: {msg}"
+    );
+    assert!(!msg.contains("could not be restored"), "{msg}");
+    assert!(!msg.contains("no working agent"), "{msg}");
+    assert!(msg.contains(".previous"), "the backup must be named: {msg}");
+    assert_old_binary_intact(&state, &old);
+}
+
+/// #5254: the install replaced the binary and then failed (`chmod` after the
+/// `mv`), and the restore failed: the error names what runs now, not a gone agent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn install_failing_after_the_replace_with_a_failed_restore_names_what_runs() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+    {
+        let mut st = state.lock().expect("host");
+        st.faults.fail_install_step = Some("chmod");
+        st.faults.fail_restore = true;
+    }
+
+    let err = install(session, fake_binary("0.9.0", BINARY_SIZE), None)
+        .await
+        .expect_err("a failed install must fail the deploy");
+
+    let msg = err.to_string();
+    assert!(msg.contains("the installed agent runs v0.9.0"), "{msg}");
+    assert!(!msg.contains("no working agent"), "{msg}");
+    assert_eq!(backup(&state), Some(old), "the backup must be kept");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn install_failing_after_the_rename_restores_the_old_binary() {
     // `chmod` runs after `mv`: the new binary is already in place.

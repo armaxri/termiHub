@@ -540,6 +540,16 @@ fn run_windows_install(
         &format!("{}\n", plan.verify_command),
         rt_handle,
     );
+    // The install renames a running agent's exe aside (#5254); delete those
+    // stale images that nothing runs any more.
+    if let Some(cleanup) = &plan.cleanup_stale_command {
+        inject_commands(
+            session_manager,
+            session_id,
+            &format!("{cleanup}\n"),
+            rt_handle,
+        );
+    }
     inject_commands(
         session_manager,
         session_id,

@@ -102,8 +102,12 @@ pub struct InstallPlan {
     /// Moves [`Self::backup_path`] back over the install path (a rename inside
     /// the install dir); exit status is checked.
     pub restore_command: String,
-    /// Deletes [`Self::backup_path`]; a missing backup is not an error.
+    /// Deletes [`Self::backup_path`]; a missing backup is not an error. On
+    /// Windows a backup that a running process holds is renamed aside instead.
     pub discard_backup_command: String,
+    /// Deletes stale images an earlier install renamed aside because a running
+    /// agent held them (Windows only, #5254). Best effort, exit status ignored.
+    pub cleanup_stale_command: Option<String>,
 }
 
 /// Suffix of the previous-binary backup on POSIX hosts (`<path>.previous`).
@@ -112,6 +116,10 @@ pub const POSIX_BACKUP_SUFFIX: &str = ".previous";
 /// File name of the previous-binary backup on Windows hosts. It keeps the
 /// `.exe` extension so `cmd`/PowerShell can still run it with `--version`.
 pub const WINDOWS_BACKUP_EXE: &str = "termihub-agent.previous.exe";
+
+/// File-name prefix of an install or backup renamed aside on Windows because a
+/// running agent held it (#5254): `termihub-agent.stale-<random>.exe`.
+pub const WINDOWS_STALE_PREFIX: &str = "termihub-agent.stale-";
 
 /// Returns `true` if a path looks like a Windows path rather than a POSIX one.
 ///
@@ -186,6 +194,7 @@ pub fn posix_install_plan(remote_path: &str, upload_dir: &str) -> InstallPlan {
         backup_command: format!("cp -pf {remote_path} {backup_path}"),
         restore_command: format!("mv -f {backup_path} {remote_path}"),
         discard_backup_command: format!("rm -f {backup_path}"),
+        cleanup_stale_command: None,
         backup_path,
         install_path: remote_path.to_string(),
         install_command: format!(
@@ -203,6 +212,17 @@ pub fn posix_install_plan(remote_path: &str, upload_dir: &str) -> InstallPlan {
 ///
 /// Always installs to `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, using
 /// `cmd.exe` or PowerShell syntax depending on `shell`. No `chmod` is issued.
+///
+/// A running agent (a session daemon, the registry daemon or a `--stdio`
+/// worker) keeps its exe open, and Windows refuses to replace or delete an
+/// open image — but it does allow renaming one (#5254). So the install first
+/// renames whatever is at the install path aside to a stale name
+/// (`termihub-agent.stale-<random>.exe`) and then moves the upload in; the
+/// running process keeps executing from the stale name. The backup stays a
+/// *copy* (reading an open image is allowed), so a rollback moves the
+/// unlocked copy back and the install path is only empty inside the one
+/// install command. [`InstallPlan::cleanup_stale_command`] deletes stale
+/// images once nothing runs them any more.
 pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
     // Install dir, destination exe, and uploaded-binary source, expressed with
     // the shell's own environment-variable syntax.
@@ -214,15 +234,18 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
     let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
     let src = format!(r"{user_profile}\{WINDOWS_UPLOAD_NAME}");
     let bak = format!(r"{dir}\{WINDOWS_BACKUP_EXE}");
+    let set_aside_dst = windows_set_aside_command(shell, &dst);
 
     let (install_command, verify_command) = match shell {
         WindowsShell::Cmd => (
-            format!(r#"(if not exist "{dir}" md "{dir}") & move /Y "{src}" "{dst}""#),
+            format!(
+                r#"(if not exist "{dir}" md "{dir}") & {set_aside_dst} & move /Y "{src}" "{dst}""#
+            ),
             format!(r#""{dst}" --version"#),
         ),
         WindowsShell::PowerShell => (
             format!(
-                r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; Move-Item -Force -Path "{src}" -Destination "{dst}""#
+                r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; {set_aside_dst}; Move-Item -Force -Path "{src}" -Destination "{dst}""#
             ),
             // PowerShell needs the call operator to launch a quoted path.
             format!(r#"& "{dst}" --version"#),
@@ -231,23 +254,24 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
 
     // Backup / restore of the previous binary (#5207). PowerShell's
     // `-ErrorAction Stop` turns a failed copy/move into a non-zero exit status.
-    let (backup_verify_command, backup_command, restore_command, discard_backup_command) =
-        match shell {
-            WindowsShell::Cmd => (
-                format!(r#""{bak}" --version"#),
-                format!(r#"copy /Y "{dst}" "{bak}""#),
-                format!(r#"move /Y "{bak}" "{dst}""#),
-                format!(r#"if exist "{bak}" del /F /Q "{bak}""#),
+    // The backup slot is freed first and again on discard (#5254): a backup
+    // that cannot be deleted because something runs it is renamed aside, so a
+    // locked leftover never blocks the next copy.
+    let free_bak = windows_free_slot_command(shell, &bak);
+    let (backup_verify_command, backup_command, restore_command) = match shell {
+        WindowsShell::Cmd => (
+            format!(r#""{bak}" --version"#),
+            format!(r#"{free_bak} & copy /Y "{dst}" "{bak}""#),
+            format!(r#"move /Y "{bak}" "{dst}""#),
+        ),
+        WindowsShell::PowerShell => (
+            format!(r#"& "{bak}" --version"#),
+            format!(
+                r#"{free_bak}; Copy-Item -Force -ErrorAction Stop -Path "{dst}" -Destination "{bak}""#
             ),
-            WindowsShell::PowerShell => (
-                format!(r#"& "{bak}" --version"#),
-                format!(r#"Copy-Item -Force -ErrorAction Stop -Path "{dst}" -Destination "{bak}""#),
-                format!(r#"Move-Item -Force -ErrorAction Stop -Path "{bak}" -Destination "{dst}""#),
-                format!(
-                    r#"if (Test-Path -Path "{bak}") {{ Remove-Item -Force -ErrorAction Stop -Path "{bak}" }}"#
-                ),
-            ),
-        };
+            format!(r#"Move-Item -Force -ErrorAction Stop -Path "{bak}" -Destination "{dst}""#),
+        ),
+    };
 
     InstallPlan {
         upload_path: WINDOWS_UPLOAD_NAME.to_string(),
@@ -258,7 +282,72 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
         backup_verify_command,
         backup_command,
         restore_command,
-        discard_backup_command,
+        discard_backup_command: free_bak,
+        cleanup_stale_command: Some(windows_cleanup_stale_command(shell)),
+    }
+}
+
+/// A command (in `shell`'s syntax) renaming `path` aside to a fresh
+/// `termihub-agent.stale-<random>.exe` in the install dir, when it exists
+/// (#5254). Windows lets a running image be renamed though it cannot be
+/// replaced or deleted. The rename's failure is a non-zero exit status in
+/// PowerShell (`-ErrorAction Stop` ends the script); in `cmd` the next step of
+/// the chain fails instead, because `path` is still there.
+///
+/// `path` must be inside the install dir: the stale name is a sibling, so the
+/// rename never crosses a volume.
+pub fn windows_set_aside_command(shell: WindowsShell, path: &str) -> String {
+    let stale = windows_stale_prefix(shell);
+    match shell {
+        // `%RANDOM%` expands to 0–32767 per occurrence; two give 30 bits, so a
+        // clash with a stale file that is still locked is negligible.
+        WindowsShell::Cmd => {
+            format!(r#"(if exist "{path}" move /Y "{path}" "{stale}%RANDOM%%RANDOM%.exe" >nul)"#)
+        }
+        WindowsShell::PowerShell => format!(
+            r#"if (Test-Path -Path "{path}") {{ Move-Item -Force -ErrorAction Stop -Path "{path}" -Destination ("{stale}" + [guid]::NewGuid().ToString('N') + '.exe') }}"#
+        ),
+    }
+}
+
+/// A command (in `shell`'s syntax) that empties `path`: deletes it, and when
+/// the delete fails because a running process holds it, renames it aside with
+/// [`windows_set_aside_command`]. A missing `path` is not an error.
+pub fn windows_free_slot_command(shell: WindowsShell, path: &str) -> String {
+    let set_aside = windows_set_aside_command(shell, path);
+    match shell {
+        WindowsShell::Cmd => {
+            format!(r#"(if exist "{path}" del /F /Q "{path}" >nul 2>&1) & {set_aside}"#)
+        }
+        WindowsShell::PowerShell => format!(
+            r#"if (Test-Path -Path "{path}") {{ Remove-Item -Force -ErrorAction SilentlyContinue -Path "{path}" }}; {set_aside}"#
+        ),
+    }
+}
+
+/// Path prefix of the stale images [`windows_set_aside_command`] creates.
+fn windows_stale_prefix(shell: WindowsShell) -> String {
+    let app_data = match shell {
+        WindowsShell::Cmd => "%LOCALAPPDATA%",
+        WindowsShell::PowerShell => "$env:LOCALAPPDATA",
+    };
+    format!(r"{app_data}\{WINDOWS_INSTALL_SUBDIR}\{WINDOWS_STALE_PREFIX}")
+}
+
+/// A command (in `shell`'s syntax) deleting every stale image in the install
+/// dir that nothing runs any more (#5254). Best effort: one that is still
+/// locked is skipped and the command still succeeds, so a later deploy retries.
+/// The pattern only matches `termihub-agent.stale-*.exe`, never the install or
+/// the backup.
+pub fn windows_cleanup_stale_command(shell: WindowsShell) -> String {
+    match shell {
+        WindowsShell::Cmd => {
+            let pattern = format!("{}*.exe", windows_stale_prefix(shell));
+            format!(r#"if exist "{pattern}" del /F /Q "{pattern}" >nul 2>&1"#)
+        }
+        WindowsShell::PowerShell => format!(
+            r#"Get-ChildItem -Path "$env:LOCALAPPDATA\{WINDOWS_INSTALL_SUBDIR}" -Filter "{WINDOWS_STALE_PREFIX}*.exe" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"#
+        ),
     }
 }
 
@@ -541,6 +630,8 @@ mod tests {
                 &plan.backup_command,
                 &plan.restore_command,
                 &plan.discard_backup_command,
+                &plan.install_command,
+                plan.cleanup_stale_command.as_ref().unwrap(),
             ] {
                 assert!(!cmd.contains("2>/dev/null"), "{cmd}");
                 assert!(!cmd.contains("$HOME"), "{cmd}");
@@ -587,13 +678,19 @@ mod tests {
         let plan = windows_install_plan(WindowsShell::Cmd);
         let dst = r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe";
         let bak = r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.previous.exe";
-        assert_eq!(plan.backup_path, bak);
-        assert_eq!(plan.backup_command, format!(r#"copy /Y "{dst}" "{bak}""#));
-        assert_eq!(plan.restore_command, format!(r#"move /Y "{bak}" "{dst}""#));
-        assert_eq!(
-            plan.discard_backup_command,
-            format!(r#"if exist "{bak}" del /F /Q "{bak}""#)
+        let stale = r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-%RANDOM%%RANDOM%.exe";
+        let free_bak = format!(
+            r#"(if exist "{bak}" del /F /Q "{bak}" >nul 2>&1) & (if exist "{bak}" move /Y "{bak}" "{stale}" >nul)"#
         );
+        assert_eq!(plan.backup_path, bak);
+        // Still a copy: the install path keeps a runnable agent until the
+        // install command itself runs.
+        assert_eq!(
+            plan.backup_command,
+            format!(r#"{free_bak} & copy /Y "{dst}" "{bak}""#)
+        );
+        assert_eq!(plan.restore_command, format!(r#"move /Y "{bak}" "{dst}""#));
+        assert_eq!(plan.discard_backup_command, free_bak);
         assert_eq!(plan.backup_verify_command, format!(r#""{bak}" --version"#));
     }
 
@@ -602,25 +699,107 @@ mod tests {
         let plan = windows_install_plan(WindowsShell::PowerShell);
         let dst = r"$env:LOCALAPPDATA\termiHub\agent\termihub-agent.exe";
         let bak = r"$env:LOCALAPPDATA\termiHub\agent\termihub-agent.previous.exe";
+        let stale = r"$env:LOCALAPPDATA\termiHub\agent\termihub-agent.stale-";
+        let free_bak = format!(
+            r#"if (Test-Path -Path "{bak}") {{ Remove-Item -Force -ErrorAction SilentlyContinue -Path "{bak}" }}; if (Test-Path -Path "{bak}") {{ Move-Item -Force -ErrorAction Stop -Path "{bak}" -Destination ("{stale}" + [guid]::NewGuid().ToString('N') + '.exe') }}"#
+        );
         assert_eq!(plan.backup_path, bak);
         assert_eq!(
             plan.backup_command,
-            format!(r#"Copy-Item -Force -ErrorAction Stop -Path "{dst}" -Destination "{bak}""#)
+            format!(
+                r#"{free_bak}; Copy-Item -Force -ErrorAction Stop -Path "{dst}" -Destination "{bak}""#
+            )
         );
         assert_eq!(
             plan.restore_command,
             format!(r#"Move-Item -Force -ErrorAction Stop -Path "{bak}" -Destination "{dst}""#)
         );
-        assert_eq!(
-            plan.discard_backup_command,
-            format!(
-                r#"if (Test-Path -Path "{bak}") {{ Remove-Item -Force -ErrorAction Stop -Path "{bak}" }}"#
-            )
-        );
+        assert_eq!(plan.discard_backup_command, free_bak);
         // PowerShell needs the call operator to launch a quoted path.
         assert_eq!(
             plan.backup_verify_command,
             format!(r#"& "{bak}" --version"#)
+        );
+    }
+
+    // ── Replacing a running exe (#5254) ────────────────────────────────
+
+    #[test]
+    fn windows_cmd_install_renames_a_running_exe_aside_before_the_move() {
+        let plan = windows_install_plan(WindowsShell::Cmd);
+        let dir = r"%LOCALAPPDATA%\termiHub\agent";
+        let dst = format!(r"{dir}\termihub-agent.exe");
+        let src = r"%USERPROFILE%\termihub-agent-upload.exe";
+        assert_eq!(
+            plan.install_command,
+            format!(
+                r#"(if not exist "{dir}" md "{dir}") & (if exist "{dst}" move /Y "{dst}" "{dir}\termihub-agent.stale-%RANDOM%%RANDOM%.exe" >nul) & move /Y "{src}" "{dst}""#
+            )
+        );
+        // The upload move is last, so its exit status is the command's.
+        assert!(plan
+            .install_command
+            .ends_with(&format!(r#"move /Y "{src}" "{dst}""#)));
+    }
+
+    #[test]
+    fn windows_powershell_install_renames_a_running_exe_aside_before_the_move() {
+        let plan = windows_install_plan(WindowsShell::PowerShell);
+        let dir = r"$env:LOCALAPPDATA\termiHub\agent";
+        let dst = format!(r"{dir}\termihub-agent.exe");
+        let src = r"$env:USERPROFILE\termihub-agent-upload.exe";
+        assert_eq!(
+            plan.install_command,
+            format!(
+                r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; if (Test-Path -Path "{dst}") {{ Move-Item -Force -ErrorAction Stop -Path "{dst}" -Destination ("{dir}\termihub-agent.stale-" + [guid]::NewGuid().ToString('N') + '.exe') }}; Move-Item -Force -Path "{src}" -Destination "{dst}""#
+            )
+        );
+    }
+
+    #[test]
+    fn windows_set_aside_stays_in_the_install_dir() {
+        for shell in [WindowsShell::Cmd, WindowsShell::PowerShell] {
+            let plan = windows_install_plan(shell);
+            let cmd = windows_set_aside_command(shell, &plan.install_path);
+            let dir = plan.install_path.rsplit_once('\\').unwrap().0;
+            assert!(
+                cmd.contains(&format!(r"{dir}\{WINDOWS_STALE_PREFIX}")),
+                "a sibling rename never crosses a volume: {cmd}"
+            );
+            assert!(cmd.contains(&plan.install_path), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn windows_cleanup_only_matches_stale_images() {
+        assert_eq!(
+            windows_cleanup_stale_command(WindowsShell::Cmd),
+            r#"if exist "%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-*.exe" del /F /Q "%LOCALAPPDATA%\termiHub\agent\termihub-agent.stale-*.exe" >nul 2>&1"#
+        );
+        assert_eq!(
+            windows_cleanup_stale_command(WindowsShell::PowerShell),
+            r#"Get-ChildItem -Path "$env:LOCALAPPDATA\termiHub\agent" -Filter "termihub-agent.stale-*.exe" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"#
+        );
+        for shell in [WindowsShell::Cmd, WindowsShell::PowerShell] {
+            let plan = windows_install_plan(shell);
+            assert_eq!(
+                plan.cleanup_stale_command.as_deref(),
+                Some(windows_cleanup_stale_command(shell).as_str())
+            );
+            let cmd = windows_cleanup_stale_command(shell);
+            // The pattern can match neither the install nor the backup.
+            assert!(!cmd.contains(WINDOWS_AGENT_EXE), "{cmd}");
+            assert!(!cmd.contains(WINDOWS_BACKUP_EXE), "{cmd}");
+            assert!(!WINDOWS_AGENT_EXE.starts_with(WINDOWS_STALE_PREFIX));
+            assert!(!WINDOWS_BACKUP_EXE.starts_with(WINDOWS_STALE_PREFIX));
+        }
+    }
+
+    #[test]
+    fn posix_plan_has_no_stale_cleanup() {
+        assert_eq!(
+            posix_install_plan(".local/bin/termihub-agent", UPLOAD_DIR).cleanup_stale_command,
+            None
         );
     }
 
