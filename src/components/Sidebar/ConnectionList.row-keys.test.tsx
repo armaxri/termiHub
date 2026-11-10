@@ -53,7 +53,7 @@ function press(el: HTMLElement, key: string, mods: KeyboardEventInit = {}) {
 /** Let the focus-rescue poll (real timers) run. */
 async function settleFocus() {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await new Promise((resolve) => setTimeout(resolve, 150));
   });
 }
 
