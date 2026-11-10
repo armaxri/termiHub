@@ -16,6 +16,8 @@ import {
 } from "@/services/api";
 import { notifyWorkflowSessionExited } from "../workflowSessionTriggers";
 import {
+  CONNECT_PROMPT_GRACE_MS,
+  CONNECT_PROMPT_LIMIT_MS,
   connectTimeoutMessage,
   connectTimeoutMs,
   type ConnectTimeoutKind,
@@ -36,7 +38,41 @@ import { currentMonitorsView } from "@/store/systemMonitorBridge";
  * the deadline is set once on entry and the overlay only reads it, so
  * unmounting/remounting the overlay can never restart the countdown (#1263).
  */
-export type ConnectDeadline = { kind: ConnectTimeoutKind; at: number };
+export type ConnectDeadline = {
+  kind: ConnectTimeoutKind;
+  at: number;
+  /**
+   * While one of this connect's own SSH prompts is open (#5243): when the
+   * pause began, and the open prompts' ids. The deadline does not tick while
+   * paused; on resume `at` moves out by the time spent paused.
+   */
+  pausedAt?: number;
+  pausedBy?: string[];
+};
+
+/**
+ * When the timer for `deadline` should fire (#5243). Running: at `at`. Paused
+ * for a prompt: the prompt may take up to {@link CONNECT_PROMPT_LIMIT_MS} (the
+ * backend's own prompt bound) on top of the time that was left, plus a grace so
+ * the backend's typed prompt timeout wins — a prompt can never hang a tab.
+ */
+export function connectDeadlineFiresAt(deadline: ConnectDeadline): number {
+  return deadline.pausedAt === undefined
+    ? deadline.at
+    : deadline.at + CONNECT_PROMPT_LIMIT_MS + CONNECT_PROMPT_GRACE_MS;
+}
+
+/**
+ * Split a prompt owner (`connect_id = ${tabId}:${retryCount}`) into its tab id
+ * and attempt number; `null` when it is not a terminal tab's connect id.
+ */
+function parsePromptOwner(owner: string): { tabId: string; attempt: number } | null {
+  const sep = owner.lastIndexOf(":");
+  if (sep <= 0) return null;
+  const attempt = Number(owner.slice(sep + 1));
+  if (!Number.isInteger(attempt) || attempt < 0) return null;
+  return { tabId: owner.slice(0, sep), attempt };
+}
 
 /**
  * Arm the connect deadline for `tabId`, idempotently: if a deadline for the
@@ -112,6 +148,20 @@ export interface TerminalSessionStateSlice {
    * keeps the tab open — distinct from Cancel, which closes the tab (#1128).
    */
   abortTerminalConnect: (tabId: string) => void;
+  /**
+   * An SSH prompt (host-key trust, keyboard-interactive) opened (#5243). When
+   * `owner` is the connect id of a tab's current connect attempt, that tab's
+   * `Connecting` deadline pauses until {@link resumeConnectDeadlineForPrompt}.
+   * A prompt of any other connect (another tab, an older attempt, a tunnel, no
+   * owner) leaves every deadline alone.
+   */
+  pauseConnectDeadlineForPrompt: (promptId: string, owner: string | null | undefined) => void;
+  /**
+   * The prompt `promptId` closed — answered, cancelled or withdrawn (#5243).
+   * Once a paused tab has no open prompt left, its deadline resumes, pushed out
+   * by the time spent paused. Unknown ids are a no-op.
+   */
+  resumeConnectDeadlineForPrompt: (promptId: string) => void;
   /**
    * A direct connect attempt failed (#5081): fold the session-lifecycle region
    * out of `connecting`. The backend folds only an initial attempt's failure, so
@@ -337,11 +387,17 @@ export const createTerminalSessionStateSlice: StateCreator<
       // state the timeout was armed for. A connect that succeeded, an agent
       // that came online, or a cancelled tab all clear the relevant flag
       // first, making this a no-op.
+      const deadline = state.terminalConnectDeadline[tabId];
       const stillArmed =
         kind === "waiting-for-agent"
           ? state.terminalWaitingForAgent[tabId] !== undefined
-          : state.terminalConnectDeadline[tabId]?.kind === "connecting";
+          : deadline?.kind === "connecting";
       if (!stillArmed) {
+        return {};
+      }
+      // A connect waiting on its own prompt only times out once the prompt's
+      // own bound is spent (#5243); an earlier, stale timer is a no-op.
+      if (deadline?.pausedAt !== undefined && Date.now() < connectDeadlineFiresAt(deadline)) {
         return {};
       }
       frontendLog(
@@ -390,6 +446,48 @@ export const createTerminalSessionStateSlice: StateCreator<
           [tabId]: ABORTED_CONNECT_MESSAGE,
         },
         terminalSpawnErrorKinds: omitKey(state.terminalSpawnErrorKinds, tabId),
+      };
+    }),
+
+  pauseConnectDeadlineForPrompt: (promptId, owner) =>
+    set((state) => {
+      const parsed = owner ? parsePromptOwner(owner) : null;
+      if (!parsed) return {};
+      const { tabId, attempt } = parsed;
+      const deadline = state.terminalConnectDeadline[tabId];
+      // Only the tab's current connect attempt pauses its own deadline.
+      if (deadline?.kind !== "connecting") return {};
+      if ((state.terminalRetryCounters[tabId] ?? 0) !== attempt) return {};
+      const pausedBy = deadline.pausedBy ?? [];
+      if (pausedBy.includes(promptId)) return {};
+      return {
+        terminalConnectDeadline: {
+          ...state.terminalConnectDeadline,
+          [tabId]: {
+            ...deadline,
+            pausedAt: deadline.pausedAt ?? Date.now(),
+            pausedBy: [...pausedBy, promptId],
+          },
+        },
+      };
+    }),
+  resumeConnectDeadlineForPrompt: (promptId) =>
+    set((state) => {
+      const entry = Object.entries(state.terminalConnectDeadline).find(([, d]) =>
+        d.pausedBy?.includes(promptId)
+      );
+      if (!entry) return {};
+      const [tabId, deadline] = entry;
+      const pausedBy = (deadline.pausedBy ?? []).filter((id) => id !== promptId);
+      const next: ConnectDeadline =
+        pausedBy.length > 0
+          ? { ...deadline, pausedBy }
+          : {
+              kind: deadline.kind,
+              at: deadline.at + Math.max(0, Date.now() - (deadline.pausedAt ?? Date.now())),
+            };
+      return {
+        terminalConnectDeadline: { ...state.terminalConnectDeadline, [tabId]: next },
       };
     }),
 

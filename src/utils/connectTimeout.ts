@@ -26,6 +26,20 @@ export const CONNECTING_TIMEOUT_MS = 90_000;
  */
 export const WAITING_FOR_AGENT_TIMEOUT_MS = 60_000;
 
+/**
+ * How long a connect's own SSH prompt (host-key trust, keyboard-interactive /
+ * one-time code) may hold the `Connecting` deadline paused (#5243). Matches the
+ * backend's prompt bound (`HOST_KEY_PROMPT_TIMEOUT`, 300 s, the same for
+ * keyboard-interactive), so a prompt nobody answers still ends the connect.
+ */
+export const CONNECT_PROMPT_LIMIT_MS = 300_000;
+
+/**
+ * Slack on top of {@link CONNECT_PROMPT_LIMIT_MS} so the backend's own typed
+ * prompt timeout settles the tab first; the client cap is only a safety net.
+ */
+export const CONNECT_PROMPT_GRACE_MS = 10_000;
+
 /** The timeout duration in milliseconds for a given pre-connect kind. */
 export function connectTimeoutMs(kind: ConnectTimeoutKind): number {
   return kind === "connecting" ? CONNECTING_TIMEOUT_MS : WAITING_FOR_AGENT_TIMEOUT_MS;

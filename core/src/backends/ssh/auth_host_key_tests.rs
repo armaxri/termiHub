@@ -246,3 +246,56 @@ async fn an_unanswered_prompt_times_out_on_its_own_bound() {
     );
     assert!(err.to_string().contains("was not confirmed within 300s"));
 }
+
+/// Records the prompt owner it sees while deciding (#5243).
+struct OwnerRecordingVerifier {
+    seen: std::sync::Mutex<Option<Option<String>>>,
+}
+
+#[async_trait]
+impl HostKeyVerifier for OwnerRecordingVerifier {
+    async fn verify(&self, info: &HostKeyInfo) -> bool {
+        self.decide(info).await.is_accepted()
+    }
+
+    async fn decide(&self, _info: &HostKeyInfo) -> HostKeyDecision {
+        *self.seen.lock().unwrap() =
+            Some(crate::backends::ssh::prompt_owner::current_prompt_owner());
+        HostKeyDecision::Accepted
+    }
+}
+
+/// The trust prompt runs on russh's session task, yet it sees the owner the
+/// connecting task scoped (#5243) — so the desktop can name the connect on the
+/// prompt event and the frontend pauses that tab's own deadline.
+#[tokio::test]
+async fn trust_prompt_sees_the_connecting_tasks_prompt_owner() {
+    let (stream, _observed) = serve(script());
+    let verifier = Arc::new(OwnerRecordingVerifier {
+        seen: std::sync::Mutex::new(None),
+    });
+    crate::backends::ssh::prompt_owner::with_prompt_owner(
+        Some("tab-5243:0"),
+        handshake_and_authenticate_with(&config(), stream, Some(verifier.clone())),
+    )
+    .await
+    .expect("connect");
+    assert_eq!(
+        *verifier.seen.lock().unwrap(),
+        Some(Some("tab-5243:0".to_string())),
+        "the verifier was asked with the connect's owner"
+    );
+}
+
+/// Without an owner scope the trust prompt carries none.
+#[tokio::test]
+async fn trust_prompt_without_an_owner_scope_has_no_owner() {
+    let (stream, _observed) = serve(script());
+    let verifier = Arc::new(OwnerRecordingVerifier {
+        seen: std::sync::Mutex::new(None),
+    });
+    handshake_and_authenticate_with(&config(), stream, Some(verifier.clone()))
+        .await
+        .expect("connect");
+    assert_eq!(*verifier.seen.lock().unwrap(), Some(None));
+}
