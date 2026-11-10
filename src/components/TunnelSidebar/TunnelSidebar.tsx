@@ -6,11 +6,7 @@ import { toast, ConfirmDialog, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
-import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
-import {
-  persistUndoableDeleteOptOut,
-  useUndoableDeleteOptOut,
-} from "@/hooks/useUndoableDeleteOptOut";
+import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import {
   combinedPairStatus,
@@ -18,7 +14,6 @@ import {
   isCompanionRedundant,
   orderTunnelRows,
 } from "@/utils/tunnelChain";
-import { tunnelDeleteConfirmMessage } from "@/utils/tunnelSummary";
 import { TunnelListItem } from "./TunnelListItem";
 import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
@@ -34,23 +29,11 @@ export function TunnelSidebar() {
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
-  const deleteTunnel = useAppStore((s) => s.deleteTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
 
-  // Tunnel pending delete confirmation, or null when idle. The per-case
-  // `message` is derived caller-side in `handleDelete` and carried on the
-  // pending target. An active teardown, chained-pair cascade or companion delete
-  // always confirms; a plain idle delete (`undoable`) confirms with a "don't ask
-  // again" opt-out. Every sidebar delete gets an Undo toast (#5158).
-  const tunnelOptOut = useUndoableDeleteOptOut();
-  const takeTunnelOptOut = tunnelOptOut.take;
-  const tunnelDelete = useDeleteConfirm<{ id: string; message: string; undoable: boolean }>(
-    ({ id, undoable }) => {
-      if (undoable && takeTunnelOptOut()) persistUndoableDeleteOptOut();
-      void deleteTunnel(id, { undoable: true });
-    }
-  );
-  const requestDelete = tunnelDelete.request;
+  // Confirm + Undo for a tunnel delete, shared with the connection editor's
+  // Port Forwarding section (#5158, #5216).
+  const tunnelDelete = useTunnelDeleteConfirm();
   // A live tunnel pending a Stop / force-Reconnect confirmation (UX-021): both
   // drop every connection currently forwarded through it, so they are guarded
   // like Delete. Null when idle.
@@ -101,25 +84,7 @@ export function TunnelSidebar() {
     [tunnels, saveTunnel]
   );
 
-  const handleDelete = useCallback(
-    (tunnelId: string) => {
-      // A chained companion/parent or an active tunnel needs a confirm first
-      // (#2597, UX-021); the shared helper derives the per-case message.
-      const message = tunnelDeleteConfirmMessage(tunnels, tunnelStates, tunnelId);
-      if (message) {
-        requestDelete({ id: tunnelId, message, undoable: false });
-        return;
-      }
-      // An idle, unchained tunnel: confirm unless opted out (#5158).
-      if (!tunnelOptOut.shouldConfirm) {
-        void deleteTunnel(tunnelId, { undoable: true });
-        return;
-      }
-      const name = tunnels.find((t) => t.id === tunnelId)?.name ?? "this tunnel";
-      requestDelete({ id: tunnelId, message: `Delete tunnel “${name}”?`, undoable: true });
-    },
-    [tunnelStates, tunnels, deleteTunnel, requestDelete, tunnelOptOut.shouldConfirm]
-  );
+  const handleDelete = tunnelDelete.requestDelete;
 
   // Stopping a live tunnel drops every connection flowing through it — confirm
   // first (UX-021). A tunnel with no live forwards has nothing to lose, so stop
@@ -241,15 +206,7 @@ export function TunnelSidebar() {
           })}
         </div>
       )}
-      <ConfirmDeleteDialog
-        {...tunnelDelete.dialogProps}
-        onCancel={() => {
-          tunnelOptOut.reset();
-          tunnelDelete.cancel();
-        }}
-        message={tunnelDelete.pending?.message ?? ""}
-        dontAskAgain={tunnelDelete.pending?.undoable ? tunnelOptOut.dontAskAgain : undefined}
-      />
+      <ConfirmDeleteDialog {...tunnelDelete.dialogProps} />
       <ConfirmDialog
         open={pendingLifecycle !== null}
         variant="danger"

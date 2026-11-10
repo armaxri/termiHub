@@ -89,9 +89,9 @@ export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
   {
     kind: "http-monitor",
     view: "network-tools",
-    row: ".network-sidebar__monitor",
-    name: ".network-sidebar__monitor-url",
-    actions: ":scope > button:not(.network-sidebar__monitor-info)",
+    row: "[data-testid^=monitor-row-]",
+    name: ".sidebar-list-item__name",
+    actions: ".sidebar-list-item__actions button",
   },
   {
     kind: "workspace",

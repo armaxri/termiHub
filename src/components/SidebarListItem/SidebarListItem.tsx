@@ -25,6 +25,11 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
   /** Test hook for the name element. */
   nameTestId?: string;
   /**
+   * Tooltip for a cut name; defaults to `name`. Use when the visible name is a
+   * shortened form of something longer (a URL shown without its scheme).
+   */
+  nameTooltip?: React.ReactNode;
+  /**
    * Action controls (compose from the shared Button primitive). Revealed on
    * hover/focus as an overlay on the row's trailing edge, so while hidden they
    * reserve no width and the name gets the whole row (#4709). When the overlay
@@ -99,6 +104,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
     {
       name,
       nameTestId,
+      nameTooltip,
       actions,
       status,
       badge,
@@ -172,7 +178,11 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
               {badge}
             </span>
           )}
-          <TruncatedText className="sidebar-list-item__name" data-testid={nameTestId}>
+          <TruncatedText
+            className="sidebar-list-item__name"
+            data-testid={nameTestId}
+            tooltip={nameTooltip}
+          >
             {name}
           </TruncatedText>
           {actions != null && <div className="sidebar-list-item__actions">{actions}</div>}
