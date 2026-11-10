@@ -92,21 +92,54 @@ fn run_checked(session: &SshSession, command: &str, what: &str) {
     }
 }
 
-/// Start from a host with no agent, no backup and no staged upload.
-fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
-    let out = run(
-        session,
-        &reset_command(shell, plan),
-        "resetting the install",
-    );
-    assert!(out.contains("RESET"), "reset did not finish: {out:?}");
-    for path in [&plan.install_path, &plan.backup_path] {
-        assert_eq!(
-            run(session, &exists_probe(shell, path), "probing a reset path").trim(),
-            "ABSENT",
-            "{path} survived the reset (locked by a running agent?)"
-        );
+/// A command (in `shell`'s syntax) listing this user's running agents and
+/// trying to delete `path` with its error shown: why a reset left it behind.
+fn reset_diagnostics(shell: WindowsShell, path: &str) -> String {
+    match shell {
+        WindowsShell::Cmd => format!(
+            r#"tasklist /V /FI "IMAGENAME eq {WINDOWS_AGENT_EXE}" & taskkill /F /T /IM {WINDOWS_AGENT_EXE} & del /F /Q "{path}""#
+        ),
+        WindowsShell::PowerShell => format!(
+            r#"Get-Process -Name termihub-agent -ErrorAction SilentlyContinue | Format-List Id, Path, StartTime; Remove-Item -Force -Path "{path}""#
+        ),
     }
+}
+
+/// Start from a host with no agent, no backup and no staged upload. A killed
+/// agent can hold its exe for a moment, so the reset is retried a few times.
+fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
+    const ATTEMPTS: u32 = 5;
+    let mut left = Vec::new();
+    for attempt in 1..=ATTEMPTS {
+        let out = run(
+            session,
+            &reset_command(shell, plan),
+            "resetting the install",
+        );
+        assert!(out.contains("RESET"), "reset did not finish: {out:?}");
+        left = [&plan.install_path, &plan.backup_path]
+            .into_iter()
+            .filter(|path| {
+                run(session, &exists_probe(shell, path), "probing a reset path").trim() != "ABSENT"
+            })
+            .cloned()
+            .collect();
+        if left.is_empty() {
+            return;
+        }
+        eprintln!("reset attempt {attempt}/{ATTEMPTS} left {left:?}");
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    let report: String = left
+        .iter()
+        .map(|path| {
+            format!(
+                "\n  {path}: {}",
+                exec_detailed(session, &reset_diagnostics(shell, path))
+            )
+        })
+        .collect();
+    panic!("the reset could not remove {left:?} after {ATTEMPTS} attempts:{report}");
 }
 
 /// #5219 scope 3: every copy/move the deploy checks must report its failure as
