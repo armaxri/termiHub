@@ -1390,6 +1390,16 @@
   justify-content: flex-end;
 }
 
+/* A changed identity (#5185): "Accept once" is set apart at the far left so the
+   safe Reject and the MITM warning lead. */
+.ui-trust-prompt__actions--changed {
+  align-items: center;
+}
+
+.ui-trust-prompt__demoted {
+  margin-right: auto;
+}
+
 /* ── ContentOverlay ─────────────────────────────────────────────────────
    Shared body skeleton for the connection-state overlays (UISF-008): the
    centred icon → heading → message → actions column that the terminal
