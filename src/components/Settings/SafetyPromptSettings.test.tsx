@@ -56,14 +56,16 @@ describe("SafetyPromptSettings", () => {
     container.remove();
   });
 
-  it("renders both sub-headers and all five guard toggles by default", () => {
+  it("renders the sub-headers and all six guard toggles by default", () => {
     renderWith(defaultSettings);
     expect(container.textContent).toContain("Close confirmations");
+    expect(container.textContent).toContain("Delete confirmations");
     expect(container.textContent).toContain("Network operation warnings");
     for (const id of [
       "settings-confirm-close-tab-on-shortcut",
       "settings-confirm-close-live-session",
       "settings-confirm-close-attached-tab",
+      "settings-confirm-undoable-delete",
       "settings-warn-large-port-scan",
       "settings-warn-large-ping-sweep",
     ]) {
@@ -90,6 +92,16 @@ describe("SafetyPromptSettings", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(applied(onChange, defaultSettings)).toEqual(
       expect.objectContaining({ confirmCloseLiveSession: false })
+    );
+  });
+
+  it("turns the undoable-delete confirmation back on (#5158)", () => {
+    const start = { ...defaultSettings, confirmUndoableDelete: false };
+    const onChange = renderWith(start);
+    expect(query("settings-confirm-undoable-delete")!.getAttribute("aria-checked")).toBe("false");
+    act(() => query("settings-confirm-undoable-delete")!.click());
+    expect(applied(onChange, start)).toEqual(
+      expect.objectContaining({ confirmUndoableDelete: true })
     );
   });
 

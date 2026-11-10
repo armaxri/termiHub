@@ -109,6 +109,7 @@ describe("settingsRegistry", () => {
         "confirmCloseTabOnShortcut",
         "confirmCloseLiveSession",
         "confirmCloseAttachedTab",
+        "confirmUndoableDelete",
         "warnLargePortScan",
         "warnLargePingSweep",
       ]) {
