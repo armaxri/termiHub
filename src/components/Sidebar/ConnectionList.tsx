@@ -78,6 +78,11 @@ import {
   findFileRouteDependents,
 } from "@/utils/jumpHost";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import { folderDeleteMessage } from "./folderDeleteMessage";
+import {
+  persistUndoableDeleteOptOut,
+  useUndoableDeleteOptOut,
+} from "@/hooks/useUndoableDeleteOptOut";
 import { BulkSshImportDialog } from "./BulkSshImportDialog";
 import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { AgentNode } from "./AgentNode";
@@ -795,8 +800,11 @@ export function ConnectionList() {
   /** Pending jump-host delete confirmation (set when the target is referenced). */
   const [deleteConfirm, setDeleteConfirm] = useState<{
     message: string;
+    /** True for a delete with an Undo toast: the dialog offers the opt-out. */
+    undoable?: boolean;
     onConfirm: () => void;
   } | null>(null);
+  const folderOptOut = useUndoableDeleteOptOut();
   // The saved-connection / folder inventory, sourced from the authoritative
   // `connections` region (#2225).
   const { folders, connections: allConnections } = useProjectedConnections();
@@ -821,7 +829,7 @@ export function ConnectionList() {
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
   const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
-  const deleteFolder = useAppStore((s) => s.deleteFolder);
+  const deleteFolderWithUndo = useAppStore((s) => s.deleteFolderWithUndo);
   const addFolder = useAppStore((s) => s.addFolder);
   const updateFolder = useAppStore((s) => s.updateFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
@@ -1195,11 +1203,25 @@ export function ConnectionList() {
     [duplicateConnection]
   );
 
+  // A folder delete confirms (unless opted out) and then offers Undo (#5158).
+  const { shouldConfirm: confirmFolderDelete, take: takeFolderOptOut } = folderOptOut;
   const handleDeleteFolder = useCallback(
     (folderId: string) => {
-      deleteFolder(folderId);
+      if (!confirmFolderDelete) {
+        deleteFolderWithUndo(folderId);
+        return;
+      }
+      setDeleteConfirm({
+        message: folderDeleteMessage(folders, allConnections, folderId),
+        undoable: true,
+        onConfirm: () => {
+          setDeleteConfirm(null);
+          if (takeFolderOptOut()) persistUndoableDeleteOptOut();
+          deleteFolderWithUndo(folderId);
+        },
+      });
     },
-    [deleteFolder]
+    [deleteFolderWithUndo, confirmFolderDelete, takeFolderOptOut, folders, allConnections]
   );
 
   const handleCreateFolder = useCallback(
@@ -1744,7 +1766,11 @@ export function ConnectionList() {
         open={deleteConfirm !== null}
         message={deleteConfirm?.message ?? ""}
         onConfirm={() => deleteConfirm?.onConfirm()}
-        onCancel={() => setDeleteConfirm(null)}
+        onCancel={() => {
+          folderOptOut.reset();
+          setDeleteConfirm(null);
+        }}
+        dontAskAgain={deleteConfirm?.undoable ? folderOptOut.dontAskAgain : undefined}
       />
       <ConfirmDialog
         open={insecureFtpConnection !== null}
