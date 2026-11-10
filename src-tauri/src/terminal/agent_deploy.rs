@@ -929,3 +929,11 @@ mod tests {
         assert!(!version::is_agent_compatible(ver, "0.3.0"));
     }
 }
+
+#[cfg(test)]
+#[path = "agent_deploy_fake_host.rs"]
+mod fake_host;
+
+#[cfg(test)]
+#[path = "agent_deploy_host_tests.rs"]
+mod host_tests;
