@@ -421,10 +421,10 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     // locked it silently fell back to an interactive password prompt instead
     // of first offering to unlock and use the saved credential. It must now
     // call requestUnlock() before resolveCredential, matching the sidebar path.
-    const mockRequestUnlock = vi.fn().mockResolvedValue(false); // user dismisses
+    const mockRequestUnlock = vi.fn().mockResolvedValue("canceled"); // user dismisses
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      requestUnlock: mockRequestUnlock,
+      requestUnlockOutcome: mockRequestUnlock,
     });
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "resolve_credential") return Promise.resolve("vault-secret");

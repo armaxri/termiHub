@@ -34,6 +34,14 @@
 # not. Filters are libtest substring filters matched against the full test
 # path (e.g. `backends::local_shell::tests::foo`), across every binary.
 #
+# CI_RUST_TESTS_COVERAGE=1 runs bulk, heavy and serial under cargo-llvm-cov
+# (`cargo llvm-cov --no-report` in place of `cargo test`), so a
+# coverage lane keeps the same partition and the same thread caps. The phases'
+# profiles accumulate; the caller cleans first (`cargo llvm-cov clean
+# --workspace`) and writes the report after (scripts/coverage.sh --split, the
+# Windows coverage leg, #5160). Doc-tests are skipped there: llvm-cov measures
+# them only on nightly, and the Linux coverage run does not count them either.
+#
 # Usage:
 #   scripts/internal/ci-rust-tests.sh <bulk|heavy|serial|list> [cargo selection args]
 #   scripts/internal/ci-rust-tests.sh bulk --workspace
@@ -46,7 +54,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Contention-sensitive tests, as libtest substring filters. Add a module here
@@ -95,6 +103,15 @@ SERIAL_MIN_TESTS="${CI_SERIAL_MIN_TESTS:-$SERIAL_MIN_TESTS_DEFAULT}"
 # silently eating its own timeout.
 SERIAL_TIMEOUT_SECS="${CI_SERIAL_TIMEOUT_SECS:-1200}"
 SPLIT_SERIAL="${CI_RUST_TESTS_SPLIT_SERIAL:-0}"
+COVERAGE="${CI_RUST_TESTS_COVERAGE:-0}"
+
+# The command each run phase invokes: plain `cargo test`, or the instrumented
+# run of a coverage lane (profiles accumulate across phases; see the header).
+if [ "$COVERAGE" = "1" ]; then
+  test_cmd=(cargo llvm-cov --no-report)
+else
+  test_cmd=(cargo test)
+fi
 
 phase="${1:-}"
 case "$phase" in
@@ -146,6 +163,11 @@ cores() {
 # where the paths are native and the check would need a path translation; the
 # bug class is not platform-specific, so Linux/macOS catch it.
 check_build_script_watches() {
+  if [ "$COVERAGE" = "1" ]; then
+    # The instrumented build lives in llvm-cov's own target dir; the plain
+    # `cargo test` legs already run this check.
+    return
+  fi
   if [ "${OS:-}" = "Windows_NT" ]; then
     cargo test "${selection[@]}" "${targets[@]}" --no-run
     return
@@ -205,13 +227,17 @@ case "$phase" in
       echo "  also skipping the serial set (runs in its own job): ${SERIAL_FILTERS[*]}"
     fi
     check_build_script_watches
-    cargo test "${selection[@]}" "${targets[@]}" -- "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
-    cargo test "${selection[@]}" --all-features --doc
+    "${test_cmd[@]}" "${selection[@]}" "${targets[@]}" -- "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
+    if [ "$COVERAGE" = "1" ]; then
+      echo "  doc-tests skipped (coverage run; see the header)"
+    else
+      cargo test "${selection[@]}" --all-features --doc
+    fi
     ;;
   heavy)
     echo "runner cores: $(cores); heavy phase: --test-threads=${HEAVY_TEST_THREADS}"
     printf '  filter: %s\n' "${HEAVY_FILTERS[@]}"
-    cargo test "${selection[@]}" "${targets[@]}" -- \
+    "${test_cmd[@]}" "${selection[@]}" "${targets[@]}" -- \
       --test-threads="$HEAVY_TEST_THREADS" "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
     ;;
   serial)
@@ -226,7 +252,7 @@ case "$phase" in
     # pipe then never reaches EOF: all 10 tests passed in 16s and the job still
     # hung until its 60-minute timeout (#3615, first run). A file has no EOF to
     # wait for, so we poll cargo itself and stream the log while it runs.
-    cargo test "${selection[@]}" "${targets[@]}" -- \
+    "${test_cmd[@]}" "${selection[@]}" "${targets[@]}" -- \
       --test-threads=1 --nocapture "${SERIAL_FILTERS[@]}" >"$log" 2>&1 &
     cargo_pid=$!
     streamed=0

@@ -16,7 +16,16 @@ import { isImeComposing } from "@/utils/imeComposition";
 
 interface UnlockDialogProps {
   open: boolean;
+  /** Closing the dialog any other way than unlocking cancels the request. */
   onOpenChange: (open: boolean) => void;
+  /**
+   * Offer "Connect without saved password" (#5188): a connect is waiting that
+   * can go on by prompting for its secret, with the store left locked.
+   * Without it the secondary action is a plain Cancel.
+   */
+  connectFallback?: boolean;
+  /** "Connect without saved password" was chosen (only with `connectFallback`). */
+  onConnectWithoutSaved?: () => void;
 }
 
 /** Type guard for the backend's unlock error shape (see `UnlockCredentialStoreError`). */
@@ -46,8 +55,19 @@ function isCorruptStoreError(err: unknown): boolean {
  * the Touch ID / Windows Hello prompt opens automatically once per opening,
  * and the master password field stays available as the fallback (cancelling
  * the OS prompt, or choosing "Use Master Password" in it, lands there).
+ *
+ * A connect waiting on the dialog can go on without the vault (#5188):
+ * "Connect without saved password" leaves the store locked and lets that
+ * connect ask for its password. Escape/×/Cancel cancel the connect instead.
+ * The guarded "Forgot password?" reset sits under the actions, away from the
+ * error line, so it is never the next thing after a wrong password.
  */
-export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
+export function UnlockDialog({
+  open,
+  onOpenChange,
+  connectFallback = false,
+  onConnectWithoutSaved,
+}: UnlockDialogProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [corrupt, setCorrupt] = useState(false);
@@ -153,7 +173,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
     }
   }, [resetting, onOpenChange]);
 
-  const handleSkip = useCallback(() => {
+  const handleCancel = useCallback(() => {
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -171,35 +191,59 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
       onOpenChange={onOpenChange}
       title="Unlock Credential Store"
       footer={
-        <>
-          <Button variant="secondary" onClick={handleSkip} data-testid="unlock-dialog-skip">
-            Skip
-          </Button>
-          {corrupt ? (
-            <Button
-              variant="danger"
-              onClick={handleReset}
-              disabled={resetting}
-              data-testid="unlock-dialog-reset"
-            >
-              {resetting ? "Resetting…" : "Reset store"}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={handleUnlock}
-              disabled={!password || loading}
-              data-testid="unlock-dialog-unlock"
-            >
-              Unlock
-            </Button>
+        <div className="unlock-dialog__footer" data-testid="unlock-dialog-footer">
+          <div className="unlock-dialog__actions">
+            {connectFallback && onConnectWithoutSaved ? (
+              <Button
+                variant="secondary"
+                onClick={onConnectWithoutSaved}
+                data-testid="unlock-dialog-connect-without-saved"
+              >
+                Connect without saved password
+              </Button>
+            ) : (
+              <Button variant="secondary" onClick={handleCancel} data-testid="unlock-dialog-cancel">
+                Cancel
+              </Button>
+            )}
+            {corrupt ? (
+              <Button
+                variant="danger"
+                onClick={handleReset}
+                disabled={resetting}
+                data-testid="unlock-dialog-reset"
+              >
+                {resetting ? "Resetting…" : "Reset store"}
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                onClick={handleUnlock}
+                disabled={!password || loading}
+                data-testid="unlock-dialog-unlock"
+              >
+                Unlock
+              </Button>
+            )}
+          </div>
+          {/* Tertiary, under the actions (#5188): never right below the error. */}
+          {!corrupt && (
+            <div className="unlock-dialog__forgot-row">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setConfirmReset(true)}
+                data-testid="unlock-dialog-forgot"
+              >
+                Forgot password? Reset credential store…
+              </Button>
+            </div>
           )}
-        </>
+        </div>
       }
     >
       {/* One spacing container (#4710): the description, the optional biometric
-          row, the password field, the error and the reset link are separate
-          blocks separated by the stack gap, so the input's focus ring never
+          row, the password field and the error are separate blocks separated by the stack gap, so the input's focus ring never
           overlaps the wrapped description text above it. */}
       <div className="unlock-dialog__body" data-testid="unlock-dialog-body">
         <p className="unlock-dialog__description" data-testid="unlock-dialog-description">
@@ -241,18 +285,6 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
           <p className="unlock-dialog__error" data-testid="unlock-dialog-error">
             {error}
           </p>
-        )}
-        {!corrupt && (
-          <div className="unlock-dialog__forgot-row">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setConfirmReset(true)}
-              data-testid="unlock-dialog-forgot"
-            >
-              Forgot password? Reset credential store…
-            </Button>
-          </div>
         )}
       </div>
       <ConfirmDialog

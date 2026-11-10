@@ -27,6 +27,8 @@
 
 /* ── Step row ───────────────────────────────────────────────────────── */
 .workflow-step {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs-sm);

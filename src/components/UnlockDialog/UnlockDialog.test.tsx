@@ -72,10 +72,8 @@ describe("UnlockDialog", () => {
     // The field carries a real label tied to the input.
     const input = query("unlock-dialog-input") as HTMLInputElement;
     expect(field!.querySelector(`label[for="${input.id}"]`)?.textContent).toBe("Master password");
-    // The reset link is its own block in the same stack.
-    expect(
-      query("unlock-dialog-forgot")!.closest(".unlock-dialog__forgot-row")!.parentElement
-    ).toBe(body);
+    // The reset link is no longer in the body stack (#5188): it sits in the footer.
+    expect(body!.contains(query("unlock-dialog-forgot"))).toBe(false);
   });
 
   it("keeps the error message as its own block in the stack (#4710)", async () => {
@@ -101,8 +99,10 @@ describe("UnlockDialog", () => {
     });
 
     expect(query("unlock-dialog-input")).not.toBeNull();
-    expect(query("unlock-dialog-skip")).not.toBeNull();
+    expect(query("unlock-dialog-cancel")).not.toBeNull();
     expect(query("unlock-dialog-unlock")).not.toBeNull();
+    // No connect is waiting, so no fall-through is offered.
+    expect(query("unlock-dialog-connect-without-saved")).toBeNull();
   });
 
   it("does not render content when closed", async () => {
@@ -172,19 +172,100 @@ describe("UnlockDialog", () => {
     expect(updatedInput.value).toBe("");
   });
 
-  it("skip calls onOpenChange(false)", async () => {
+  it("cancel calls onOpenChange(false)", async () => {
     const onOpenChange = vi.fn();
 
     await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
     });
 
-    const skipBtn = query("unlock-dialog-skip") as HTMLButtonElement;
     act(() => {
-      skipBtn.click();
+      (query("unlock-dialog-cancel") as HTMLButtonElement).click();
     });
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  // --- #5188: a waiting connect can go on without the vault ---
+
+  it("offers 'Connect without saved password' instead of Skip when a connect waits", async () => {
+    const onOpenChange = vi.fn();
+    const onConnectWithoutSaved = vi.fn();
+    await act(async () => {
+      root.render(
+        <UnlockDialog
+          open={true}
+          onOpenChange={onOpenChange}
+          connectFallback={true}
+          onConnectWithoutSaved={onConnectWithoutSaved}
+        />
+      );
+    });
+
+    const btn = query("unlock-dialog-connect-without-saved") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Connect without saved password");
+    expect(document.body.textContent).not.toMatch(/\bSkip\b/);
+    expect(query("unlock-dialog-cancel")).toBeNull();
+    act(() => btn.click());
+
+    expect(onConnectWithoutSaved).toHaveBeenCalledTimes(1);
+    // Falling through is not a cancel: the dialog leaves the closing to the store.
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(mockedUnlock).not.toHaveBeenCalled();
+  });
+
+  it("Escape closes through onOpenChange(false) (the cancel path)", async () => {
+    const onOpenChange = vi.fn();
+    const onConnectWithoutSaved = vi.fn();
+    await act(async () => {
+      root.render(
+        <UnlockDialog
+          open={true}
+          onOpenChange={onOpenChange}
+          connectFallback={true}
+          onConnectWithoutSaved={onConnectWithoutSaved}
+        />
+      );
+    });
+
+    act(() => {
+      query("unlock-dialog-input")!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+      );
+    });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onConnectWithoutSaved).not.toHaveBeenCalled();
+  });
+
+  it("places the reset link under the actions, not under the error line", async () => {
+    mockedUnlock.mockRejectedValueOnce(new Error("wrong"));
+    await act(async () => {
+      root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+    });
+    const input = query("unlock-dialog-input") as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "bad");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      query("unlock-dialog-unlock")!.click();
+    });
+
+    const error = query("unlock-dialog-error")!;
+    const forgot = query("unlock-dialog-forgot")!;
+    const unlock = query("unlock-dialog-unlock")!;
+    const footer = query("unlock-dialog-footer")!;
+    // The link is in the footer, not the body that holds the error line…
+    expect(footer.contains(forgot)).toBe(true);
+    expect(query("unlock-dialog-body")!.contains(forgot)).toBe(false);
+    expect(error.nextElementSibling).toBeNull();
+    // …and it comes after the action buttons in document order.
+    expect(unlock.compareDocumentPosition(forgot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(error.compareDocumentPosition(forgot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // It stays tertiary.
+    expect(forgot.closest(".unlock-dialog__forgot-row")).not.toBeNull();
   });
 
   it("unlock button is disabled when password is empty", async () => {

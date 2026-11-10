@@ -75,6 +75,8 @@
 }
 
 .log-viewer__level-filter--active.log-viewer__level-filter--debug {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 
@@ -116,6 +118,8 @@
 }
 
 .log-viewer__entry:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 
@@ -155,6 +159,13 @@
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.log-viewer__entry:hover .log-viewer__timestamp,
+.log-viewer__entry:hover .log-viewer__target {
+  color: var(--text-muted-on-selection);
 }
 
 .log-viewer__message {

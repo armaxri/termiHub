@@ -1,5 +1,12 @@
-//! Files-only SSH sessions hosted on an agent (#4081), against the Docker
-//! `ssh-sftp-only` fixture (`ForceCommand internal-sftp`).
+//! Files-only SSH sessions hosted on an agent (#4081), against two SFTP-only
+//! hosts:
+//!
+//! - core's in-process SFTP-only server
+//!   (`termihub_core::backends::ssh::sftp_only_test_server`, behind the
+//!   `ssh-test-support` feature) on a loopback port. No Docker, so this case runs
+//!   in per-PR CI on every OS, Windows included (#5160).
+//! - the Docker `ssh-sftp-only` fixture (`ForceCommand internal-sftp`): the real
+//!   OpenSSH behaviour. Linux containers only, so on a Windows runner it skips.
 //!
 //! Drives the real chain:
 //!
@@ -16,15 +23,13 @@
 //! runs with `HOME` pointed at a temp dir whose `known_hosts` holds the
 //! fixture's key (read with `ssh-keyscan`).
 //!
-//! Requires: `docker compose -f tests/docker/docker-compose.yml up -d
+//! The Docker case requires: `docker compose -f tests/docker/docker-compose.yml up -d
 //! ssh-sftp-only` (ports offset by `TERMIHUB_TEST_PORT_OFFSET`). Skips when it is
 //! not reachable, unless `TERMIHUB_REQUIRE_DOCKER=1`.
 //!
 //! ```sh
 //! cargo test -p termihub-agent --test ssh_files_only_integration
 //! ```
-
-#![cfg(unix)]
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -35,6 +40,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
+use termihub_core::backends::ssh::ki_test_server::host_public_key_openssh;
+use termihub_core::backends::ssh::sftp_only_test_server;
 use termihub_core::protocol::methods as pm;
 use termihub_core::test_fixtures;
 
@@ -106,7 +113,9 @@ impl StdioAgent {
 
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_termihub-agent"));
         cmd.arg("--stdio")
+            // `~/.ssh/known_hosts`: windows resolves `~` from USERPROFILE.
             .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
             .env("XDG_CONFIG_HOME", home.path().join(".config"))
             .env("XDG_DATA_HOME", home.path().join(".local/share"))
             .env("XDG_STATE_HOME", home.path().join(".local/state"))
@@ -199,18 +208,16 @@ impl Drop for StdioAgent {
         // their `DaemonGuard`s (endpoint-verified PIDs) as `daemons` drops.
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let registry = self.home.path().join("registry.sock");
-        drop(DaemonGuard::discover(&registry.to_string_lossy()));
+        drop(DaemonGuard::discover(&common::isolated_registry_endpoint(
+            self.home.path(),
+        )));
     }
 }
 
-#[test]
-fn sftp_only_host_through_an_agent_is_files_only() {
-    let port = port_ssh_sftp_only();
-    if !fixture_available(port) {
-        return;
-    }
-    let mut agent = StdioAgent::spawn(&known_hosts_for(port));
+/// Create an `ssh` session to an SFTP-only host and check the files-only
+/// contract: the desktop hears `connection.filesOnly` on create and on attach,
+/// the session stays up, and `connection.files.list` of `/etc` shows `hostname`.
+fn assert_files_only_session(agent: &mut StdioAgent, port: u16, user: &str, password: &str) {
     let init = agent.rpc(
         pm::INITIALIZE,
         json!({
@@ -229,9 +236,9 @@ fn sftp_only_host_through_an_agent_is_files_only() {
             "config": {
                 "host": "127.0.0.1",
                 "port": port,
-                "username": "testuser",
+                "username": user,
                 "authMethod": "password",
-                "password": "testpass",
+                "password": password,
                 "shellIntegration": false,
                 "enableMonitoring": false,
             },
@@ -276,4 +283,50 @@ fn sftp_only_host_through_an_agent_is_files_only() {
 
     let closed = agent.rpc(pm::CONNECTION_CLOSE, json!({"session_id": session_id}));
     assert!(closed["result"].is_object(), "close failed: {closed}");
+}
+
+/// Against core's in-process SFTP-only server: runs everywhere, no Docker.
+#[test]
+fn in_process_sftp_only_host_through_an_agent_is_files_only() {
+    // Field order matters: the server drops before the runtime driving it.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let server = rt
+        .block_on(sftp_only_test_server::serve_tcp())
+        .expect("start the sftp-only server");
+    let port = server.addr.port();
+    let mut agent = StdioAgent::spawn(&format!(
+        "[127.0.0.1]:{port} {}\n",
+        host_public_key_openssh()
+    ));
+    assert_files_only_session(
+        &mut agent,
+        port,
+        sftp_only_test_server::USER,
+        sftp_only_test_server::PASSWORD,
+    );
+    let observed = server.observed.lock().expect("observed");
+    assert!(
+        observed.refused >= 1,
+        "the shell request must have been refused"
+    );
+    assert!(observed.sftp_sessions >= 1, "no sftp subsystem was started");
+    drop(observed);
+    drop(agent);
+    drop(server);
+    drop(rt);
+}
+
+/// Against the Docker `ssh-sftp-only` fixture (real OpenSSH).
+#[test]
+fn sftp_only_host_through_an_agent_is_files_only() {
+    let port = port_ssh_sftp_only();
+    if !fixture_available(port) {
+        return;
+    }
+    let mut agent = StdioAgent::spawn(&known_hosts_for(port));
+    assert_files_only_session(&mut agent, port, "testuser", "testpass");
 }

@@ -27,7 +27,21 @@ export interface ThemeColors {
   // Text
   textPrimary: string;
   textSecondary: string;
+  /**
+   * `textSecondary` for labels drawn on a hovered or selected row (`bgHover` /
+   * `bgActive`), where plain `textSecondary` can fall below AA (#5249). Built-in
+   * themes pin it; custom and plugin themes derive it like
+   * `textMutedOnSelection`.
+   */
+  textSecondaryOnSelection: string;
   textMuted: string;
+  /**
+   * `textMuted` for hints drawn on a hovered or selected row (`bgHover` /
+   * `bgActive`), which sit closer to the muted tone than the plain surfaces do
+   * (#5200). Built-in themes pin it; custom and plugin themes derive it from
+   * `textMuted` against those two row backgrounds.
+   */
+  textMutedOnSelection: string;
   textDisabled: string;
   textAccent: string;
   textLink: string;

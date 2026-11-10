@@ -166,12 +166,41 @@ pub(crate) async fn excluded_from_connect_timeout<F>(fut: F) -> F::Output
 where
     F: Future,
 {
-    let clock = CURRENT.try_with(Arc::clone).ok();
-    if let Some(c) = &clock {
-        c.pause();
+    PromptClock::capture().exclude(fut).await
+}
+
+/// A handle on the connecting task's connect deadline, carried to code that
+/// waits on the user from **another task** (#5185).
+///
+/// [`excluded_from_connect_timeout`] finds the deadline through a task-local,
+/// which only the connecting task can see. The host-key trust prompt, however,
+/// runs inside russh's spawned session task (`check_server_key`), so the
+/// connecting task captures its deadline here and hands it to the SSH handler,
+/// which pauses it around the prompt with [`exclude`](Self::exclude).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PromptClock(Option<Arc<PausableDeadline>>);
+
+impl PromptClock {
+    /// The current task's innermost connect deadline, or an inert handle
+    /// outside any [`timeout_excluding_prompts`] scope.
+    pub(crate) fn capture() -> Self {
+        Self(CURRENT.try_with(Arc::clone).ok())
     }
-    let _guard = PauseGuard(clock);
-    fut.await
+
+    /// Run `fut` with the captured deadline (and every enclosing one) paused.
+    /// The pause ends when `fut` completes or is dropped. An inert handle makes
+    /// this a plain `.await`.
+    pub(crate) async fn exclude<F>(&self, fut: F) -> F::Output
+    where
+        F: Future,
+    {
+        let clock = self.0.clone();
+        if let Some(c) = &clock {
+            c.pause();
+        }
+        let _guard = PauseGuard(clock);
+        fut.await
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +265,62 @@ mod tests {
         })
         .await;
         assert_eq!(res, Ok(Ok(1)));
+    }
+
+    /// A captured clock pauses the deadline from **another task** — the shape
+    /// of the host-key prompt, which runs on russh's session task (#5185).
+    #[tokio::test(start_paused = true)]
+    async fn captured_clock_pauses_from_another_task() {
+        let res = timeout_excluding_prompts(Duration::from_secs(5), async {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            let clock = PromptClock::capture();
+            tokio::spawn(async move {
+                clock
+                    .exclude(tokio::time::sleep(Duration::from_secs(60)))
+                    .await;
+            })
+            .await
+            .unwrap();
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            "done"
+        })
+        .await;
+        assert_eq!(res, Ok("done"));
+    }
+
+    /// Without the pause the same 60 s wait on another task times out.
+    #[tokio::test(start_paused = true)]
+    async fn wait_on_another_task_without_pause_times_out() {
+        let res = timeout_excluding_prompts(Duration::from_secs(5), async {
+            tokio::spawn(tokio::time::sleep(Duration::from_secs(60)))
+                .await
+                .unwrap();
+        })
+        .await;
+        assert_eq!(res, Err(Elapsed));
+    }
+
+    /// Dropping the paused wait mid-way resumes the deadline (the prompt was
+    /// dismissed), so the remaining budget still applies.
+    #[tokio::test(start_paused = true)]
+    async fn dropped_pause_resumes_the_deadline() {
+        let res = timeout_excluding_prompts(Duration::from_secs(5), async {
+            let clock = PromptClock::capture();
+            let _ = tokio::time::timeout(
+                Duration::from_secs(30),
+                clock.exclude(std::future::pending::<()>()),
+            )
+            .await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        })
+        .await;
+        assert_eq!(res, Err(Elapsed));
+    }
+
+    /// An inert (uncaptured) clock is a plain await.
+    #[tokio::test(start_paused = true)]
+    async fn inert_clock_is_plain_await() {
+        assert_eq!(PromptClock::default().exclude(async { 4 }).await, 4);
     }
 
     /// Outside any scope the helper is a plain await.

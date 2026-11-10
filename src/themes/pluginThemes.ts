@@ -18,7 +18,11 @@
 import type { ThemeColors, ThemeDefinition } from "./types";
 import type { ThemeEntry, PluginFileReader } from "@/types/plugin";
 import { COLOR_TOKEN_KEYS } from "./colorTokens";
-import { deriveTextOnAccent } from "./contrast";
+import {
+  deriveTextMutedOnSelection,
+  deriveTextOnAccent,
+  deriveTextSecondaryOnSelection,
+} from "./contrast";
 import { THEME_FILE_SCHEMA } from "./themeIO";
 import { BASE_THEME_ORDER } from "./customThemes";
 
@@ -112,6 +116,18 @@ export function parsePluginTheme(
     typeof onAccent === "string" && onAccent.trim() !== ""
       ? onAccent
       : deriveTextOnAccent(colors.accentColor);
+  // Optional too: muted text on hovered/selected rows (#5200).
+  const mutedOnSelection = stored.textMutedOnSelection;
+  colors.textMutedOnSelection =
+    typeof mutedOnSelection === "string" && mutedOnSelection.trim() !== ""
+      ? mutedOnSelection
+      : deriveTextMutedOnSelection(colors);
+  // Optional too: secondary text on hovered/selected rows (#5249).
+  const secondaryOnSelection = stored.textSecondaryOnSelection;
+  colors.textSecondaryOnSelection =
+    typeof secondaryOnSelection === "string" && secondaryOnSelection.trim() !== ""
+      ? secondaryOnSelection
+      : deriveTextSecondaryOnSelection(colors);
 
   return {
     id: pluginThemeId(pluginId, entry.id),

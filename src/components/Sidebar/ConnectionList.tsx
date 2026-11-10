@@ -24,8 +24,7 @@ import {
   Server,
   ArrowLeftRight,
   Route,
-  FileDown,
-  FileSpreadsheet,
+  FileInput,
   Link,
   Square,
   Puzzle,
@@ -35,13 +34,12 @@ import {
   Folder,
   Palette,
 } from "lucide-react";
-import { open as openFileDialog } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { currentConnectionsView } from "@/store/connectionsBridge";
-import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
-import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
+import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { type AgentDefinitionInfo } from "@/services/api";
 import { newId } from "@/services/transport/ids";
 import {
   toast,
@@ -90,11 +88,13 @@ import {
   persistUndoableDeleteOptOut,
   useUndoableDeleteOptOut,
 } from "@/hooks/useUndoableDeleteOptOut";
-import { BulkSshImportDialog } from "./BulkSshImportDialog";
-import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
+import {
+  useConnectionFolderRename,
+  type ConnectionFolderRenameActions,
+} from "./useConnectionFolderRename";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 import { SidebarGroupHeader } from "./SidebarGroupHeader";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -150,6 +150,8 @@ interface TreeNavProps {
   onRowFocus: (index: number) => void;
   /** Keyboard / menu move commands for connection rows (#4528). */
   moveActions: ConnectionMoveActions;
+  /** Inline rename for folder rows (#5233). */
+  folderRename: ConnectionFolderRenameActions;
 }
 
 interface TreeNodeProps extends TreeNavProps {
@@ -200,6 +202,7 @@ function TreeNode({
   onTreeKeyDown,
   onRowFocus,
   moveActions,
+  folderRename,
 }: TreeNodeProps) {
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   // Under an active filter, matched folders are force-expanded regardless of
@@ -235,53 +238,70 @@ function TreeNode({
 
   return (
     <div className="connection-tree__node" role="none">
-      <ContextMenuRoot>
-        <ContextMenuTrigger asChild>
-          <TreeFolderRow
-            buttonRef={setRowNode}
-            label={folder.name}
-            icon={<FolderIcon iconColor={folder.iconColor} iconEmoji={folder.iconEmoji} />}
-            expanded={expanded}
-            indentPx={treeRowPaddingLeft(depth)}
-            ariaLevel={depth + 1}
-            tabIndex={rowIndex === activeIndex ? 0 : -1}
-            dropOver={isConnectionOver}
-            testId={`folder-toggle-${folder.id}`}
-            onClick={() => onToggle(folder.id)}
-            onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
-            onFocus={() => onRowFocus(rowIndex)}
-            aria-keyshortcuts={treeRowKeyShortcuts({ delete: true })}
-          />
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <MenuItem
-            onSelect={() => onNewConnectionInFolder(folder.id)}
-            data-testid="context-folder-new-connection"
-          >
-            <Plus size={14} /> New Connection
-          </MenuItem>
-          <MenuItem
-            onSelect={() => setCreatingSubfolder(true)}
-            data-testid="context-folder-new-subfolder"
-          >
-            <FolderPlus size={14} /> New Subfolder
-          </MenuItem>
-          <MenuItem
-            onSelect={() => onFolderAppearance(folder.id)}
-            data-testid="context-folder-appearance"
-          >
-            <Palette size={14} /> Appearance…
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem
-            danger
-            onSelect={() => onDeleteFolder(folder.id)}
-            data-testid="context-folder-delete"
-          >
-            <Trash2 size={14} /> Delete Folder
-          </MenuItem>
-        </ContextMenuContent>
-      </ContextMenuRoot>
+      {folderRename.renamingId === folder.id ? (
+        <InlineFolderInput
+          depth={depth}
+          initialName={folder.name}
+          ariaLabel={`Rename folder ${folder.name}`}
+          validate={(name) => folderRename.validate(folder, name)}
+          onConfirm={(name) => folderRename.commit(folder, name)}
+          onCancel={(reason) => folderRename.cancel(folder, reason)}
+        />
+      ) : (
+        <ContextMenuRoot>
+          <ContextMenuTrigger asChild>
+            <TreeFolderRow
+              buttonRef={setRowNode}
+              label={folder.name}
+              icon={<FolderIcon iconColor={folder.iconColor} iconEmoji={folder.iconEmoji} />}
+              expanded={expanded}
+              indentPx={treeRowPaddingLeft(depth)}
+              ariaLevel={depth + 1}
+              tabIndex={rowIndex === activeIndex ? 0 : -1}
+              dropOver={isConnectionOver}
+              testId={`folder-toggle-${folder.id}`}
+              onClick={() => onToggle(folder.id)}
+              onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
+              onFocus={() => onRowFocus(rowIndex)}
+              aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <MenuItem
+              onSelect={() => onNewConnectionInFolder(folder.id)}
+              data-testid="context-folder-new-connection"
+            >
+              <Plus size={14} /> New Connection
+            </MenuItem>
+            <MenuItem
+              onSelect={() => setCreatingSubfolder(true)}
+              data-testid="context-folder-new-subfolder"
+            >
+              <FolderPlus size={14} /> New Subfolder
+            </MenuItem>
+            <MenuItem
+              onSelect={() => onFolderAppearance(folder.id)}
+              data-testid="context-folder-appearance"
+            >
+              <Palette size={14} /> Appearance…
+            </MenuItem>
+            <MenuItem
+              onSelect={() => folderRename.start(folder.id)}
+              data-testid="context-folder-rename"
+            >
+              <Pencil size={14} /> Rename
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              danger
+              onSelect={() => onDeleteFolder(folder.id)}
+              data-testid="context-folder-delete"
+            >
+              <Trash2 size={14} /> Delete Folder
+            </MenuItem>
+          </ContextMenuContent>
+        </ContextMenuRoot>
+      )}
       {expanded && (
         <div className="connection-tree__children" role="group">
           {creatingSubfolder && (
@@ -322,6 +342,7 @@ function TreeNode({
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
               moveActions={moveActions}
+              folderRename={folderRename}
             />
           ))}
           {visibleConnections.map((conn) => (
@@ -798,8 +819,6 @@ export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   // The folder whose Appearance dialog is open (#5020).
   const [appearanceFolderId, setAppearanceFolderId] = useState<string | null>(null);
-  const [bulkImportOpen, setBulkImportOpen] = useState(false);
-  const [fleetRows, setFleetRows] = useState<InventoryHost[] | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [agentFilterQuery, setAgentFilterQuery] = useState("");
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
@@ -835,9 +854,9 @@ export function ConnectionList() {
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
-  const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
   const deleteFolderWithUndo = useAppStore((s) => s.deleteFolderWithUndo);
   const addFolder = useAppStore((s) => s.addFolder);
   const updateFolder = useAppStore((s) => s.updateFolder);
@@ -1236,9 +1255,19 @@ export function ConnectionList() {
     [deleteFolderWithUndo, confirmFolderDelete, takeFolderOptOut, folders, allConnections]
   );
 
+  // Inline folder rename (#5233): the menu's Rename item and F2 on a folder row.
+  const folderRename = useConnectionFolderRename({
+    folders,
+    connections: allConnections,
+    updateFolder,
+    getNodeIndex,
+    focusRow,
+  });
+
   // Row-action keys on a focused tree row (#5181): Shift+F10 / the Menu key
   // open its context menu, F2 opens a connection's editor (where it is
-  // renamed), Delete / Backspace start the same confirmed delete as the menu.
+  // renamed) or renames a folder in place (#5233), Delete / Backspace start the
+  // same confirmed delete as the menu.
   // Focus moves to the neighbouring row once the deleted row is gone. Every
   // other key falls through to the tree navigation handler.
   const handleRowKeyDown = useCallback(
@@ -1253,11 +1282,22 @@ export function ConnectionList() {
                 onRename: () => handleEdit(node.id),
                 onDelete: (row) => handleDelete(node.id, captureNeighborFocus(row)),
               }
-            : { onDelete: (row) => handleDeleteFolder(node.id, captureNeighborFocus(row)) }
+            : {
+                onRename: () => folderRename.start(node.id),
+                onDelete: (row) => handleDeleteFolder(node.id, captureNeighborFocus(row)),
+              }
         );
       if (!handled) handleTreeKeyDown(event, nodeId);
     },
-    [treeNodes, getNodeIndex, handleEdit, handleDelete, handleDeleteFolder, handleTreeKeyDown]
+    [
+      treeNodes,
+      getNodeIndex,
+      handleEdit,
+      handleDelete,
+      handleDeleteFolder,
+      handleTreeKeyDown,
+      folderRename,
+    ]
   );
 
   const handleCreateFolder = useCallback(
@@ -1277,27 +1317,13 @@ export function ConnectionList() {
   }, [openConnectionEditorTab]);
 
   /**
-   * Pick a CSV / inventory file and open the fleet-onboard dialog with its hosts
-   * (#1961). A cancelled picker is a no-op; a read/parse failure or an
-   * empty/host-less file surfaces a toast rather than an empty dialog.
+   * Deep link to Settings → Import & Migration (#5195): imports are one-time
+   * actions, so the sidebar carries only this single entry point and every
+   * importer (SSH config, CSV inventory, JSON, MobaXterm) lives on that page.
    */
-  const handleImportCsv = useCallback(async () => {
-    const selected = await openFileDialog({
-      multiple: false,
-      filters: [{ name: "Inventory", extensions: ["csv", "txt", "tsv"] }],
-    });
-    if (typeof selected !== "string") return;
-    try {
-      const hosts = await importInventoryHosts(selected);
-      if (hosts.length === 0) {
-        toast.info("No hosts found in that file.");
-        return;
-      }
-      setFleetRows(hosts);
-    } catch {
-      toast.error("Could not read that inventory file.");
-    }
-  }, []);
+  const handleOpenImportSettings = useCallback(() => {
+    openSettingsTab({ category: "import" });
+  }, [openSettingsTab]);
 
   const handleNewConnectionInFolder = useCallback(
     (folderId: string) => {
@@ -1597,20 +1623,12 @@ export function ConnectionList() {
                 testId: "connection-list-new-connection",
               },
               {
-                id: "import-ssh-config",
-                label: "Import from ~/.ssh/config",
-                icon: <FileDown size={16} />,
-                onClick: () => setBulkImportOpen(true),
+                id: "import",
+                label: "Import connections…",
+                icon: <FileInput size={16} />,
+                onClick: handleOpenImportSettings,
                 iconOnly: true,
-                testId: "connection-list-import-ssh-config",
-              },
-              {
-                id: "import-csv",
-                label: "Onboard hosts from a CSV / inventory",
-                icon: <FileSpreadsheet size={16} />,
-                onClick: handleImportCsv,
-                iconOnly: true,
-                testId: "connection-list-import-csv",
+                testId: "connection-list-open-import-settings",
               },
             ]}
           />
@@ -1661,6 +1679,7 @@ export function ConnectionList() {
               getRowRef={getRowRef}
               onTreeKeyDown={handleRowKeyDown}
               onRowFocus={handleRowFocus}
+              folderRename={folderRename}
               moveActions={moveActions}
             />
           )}
@@ -1839,21 +1858,6 @@ export function ConnectionList() {
         }}
         onSave={updateFolder}
       />
-      <BulkSshImportDialog
-        open={bulkImportOpen}
-        onOpenChange={setBulkImportOpen}
-        folders={folders}
-        existingConnections={connections}
-        onImport={bulkAddConnections}
-      />
-      <FleetOnboardDialog
-        open={fleetRows !== null}
-        onOpenChange={(open) => {
-          if (!open) setFleetRows(null);
-        }}
-        rows={fleetRows ?? []}
-        sourceLabel="a CSV inventory"
-      />
     </div>
   );
 }
@@ -1913,6 +1917,7 @@ function RootDropZone({
   onTreeKeyDown,
   onRowFocus,
   moveActions,
+  folderRename,
 }: RootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "root",
@@ -1982,6 +1987,7 @@ function RootDropZone({
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
               moveActions={moveActions}
+              folderRename={folderRename}
             />
           ))}
           {visibleRootConnections.map((conn) => (

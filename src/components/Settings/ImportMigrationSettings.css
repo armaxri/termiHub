@@ -11,3 +11,7 @@
   font-family: var(--font-mono);
   color: var(--text-primary);
 }
+
+.import-migration__group + .import-migration__group {
+  margin-top: var(--spacing-lg);
+}

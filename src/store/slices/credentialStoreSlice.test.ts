@@ -117,3 +117,37 @@ describe("credentialStoreSlice", () => {
     expect(store.getState().unlockResolvers).toEqual([resolve]);
   });
 });
+
+describe("credentialStoreSlice — connect fall-through (#5188)", () => {
+  it("offers the fall-through only for a connectFallback request", () => {
+    const store = makeStore();
+    void store.getState().requestUnlockOutcome();
+    expect(store.getState().unlockConnectFallback).toBe(false);
+    void store.getState().requestUnlockOutcome({ connectFallback: true });
+    expect(store.getState().unlockConnectFallback).toBe(true);
+  });
+
+  it("skipUnlock settles every waiter 'skipped', closes the dialog and clears the offer", async () => {
+    const store = makeStore();
+    const outcome = store.getState().requestUnlockOutcome({ connectFallback: true });
+    const plain = store.getState().requestUnlock();
+    store.getState().skipUnlock();
+    await expect(outcome).resolves.toBe("skipped");
+    // A boolean waiter (e.g. a Settings action) reads the fall-through as a cancel.
+    await expect(plain).resolves.toBe(false);
+    expect(store.getState().unlockDialogOpen).toBe(false);
+    expect(store.getState().unlockConnectFallback).toBe(false);
+    expect(store.getState().unlockResolvers).toEqual([]);
+  });
+
+  it("closing the dialog settles 'canceled'; an unlock settles 'unlocked'", async () => {
+    const store = makeStore();
+    const canceled = store.getState().requestUnlockOutcome({ connectFallback: true });
+    store.getState().setUnlockDialogOpen(false);
+    await expect(canceled).resolves.toBe("canceled");
+
+    const unlocked = store.getState().requestUnlockOutcome({ connectFallback: true });
+    store.getState().resolveUnlock(true);
+    await expect(unlocked).resolves.toBe("unlocked");
+  });
+});

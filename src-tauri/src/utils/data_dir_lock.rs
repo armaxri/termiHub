@@ -155,7 +155,8 @@ pub(crate) fn on_lock_failure(err: &DataDirLockError) -> LockFailureAction {
 }
 
 /// Startup entry point: in portable mode, lock the data dir before any store
-/// is built. Returns the held lock (keep it alive for the whole run).
+/// is built and before the durable log file (which lives in `<data>/logs`)
+/// opens (#5210). Returns the held lock (keep it alive for the whole run).
 ///
 /// If another instance already holds this data dir, shows a native error
 /// dialog and exits the process — this launch must not write the shared
@@ -216,6 +217,56 @@ pub(crate) fn lock_or_exit_with(
         LockFailureAction::ContinueUnlocked => {
             tracing::warn!("data-dir lock: {err}; continuing without the lock");
             None
+        }
+    }
+}
+
+/// User-facing explanation printed when a settings-writing CLI subcommand
+/// (`install-shell-integration` / `uninstall-shell-integration`) is refused
+/// because a termiHub instance already holds this portable data dir (#5245).
+pub fn cli_held_message(data_dir: &Path) -> String {
+    format!(
+        "termiHub is running from this folder, so this command cannot change its settings.\n\n\
+         The portable data folder is in use:\n{}\n\n\
+         Use Settings in the running termiHub, or close it first and run the command again. \
+         Nothing was changed.",
+        data_dir.display()
+    )
+}
+
+/// Take the portable data-dir lock for a CLI subcommand that writes the shared
+/// files (#5245), without any dialog or process exit.
+///
+/// * Installed mode, or an explicit `TERMIHUB_CONFIG_DIR` override: no lock is
+///   needed, returns `Ok(None)`.
+/// * Lock free: returns the held lock; keep it alive until the write is done.
+/// * Lock held by another instance: returns `Err` with [`cli_held_message`].
+///   The caller must change nothing and exit non-zero.
+/// * Any other failure (creating the dir, a read-only medium): logged, and
+///   `Ok(None)` — the same degrade-don't-die policy as the GUI launch.
+pub fn lock_for_cli_write(
+    mode: &AppMode,
+    config_dir_env_override: bool,
+) -> Result<Option<DataDirLock>, String> {
+    let Some(data_dir) = lock_target(mode, config_dir_env_override) else {
+        return Ok(None);
+    };
+    if let Err(e) = std::fs::create_dir_all(data_dir) {
+        tracing::warn!(
+            "data-dir lock: cannot create {}, not locking: {e}",
+            data_dir.display()
+        );
+        return Ok(None);
+    }
+    let err = match acquire(data_dir) {
+        Ok(lock) => return Ok(Some(lock)),
+        Err(err) => err,
+    };
+    match on_lock_failure(&err) {
+        LockFailureAction::Refuse { .. } => Err(cli_held_message(data_dir)),
+        LockFailureAction::ContinueUnlocked => {
+            tracing::warn!("data-dir lock: {err}; continuing without the lock");
+            Ok(None)
         }
     }
 }

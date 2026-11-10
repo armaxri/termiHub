@@ -18,16 +18,23 @@
 //! "Accept for host" (`accept && remember`) persists the fingerprint so the host
 //! is not prompted again; plain "Accept" is session-scoped; "Reject" (or the
 //! dialog being dismissed / the prompt future being dropped) aborts the connect.
+//!
+//! When the connect gives up while the prompt is open (abort, timeout) the core
+//! drops the prompt future; the verifier then emits `ssh-host-key-prompt-closed`
+//! so the dialog closes, and a late answer to it is ignored (#5185).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde::Serialize;
-use termihub_core::backends::ssh::host_key::{HostKeyInfo, HostKeyVerifier, KnownHostsStatus};
+use termihub_core::backends::ssh::host_key::{
+    HostKeyDecision, HostKeyInfo, HostKeyVerifier, KnownHostsStatus,
+};
 use tokio::sync::oneshot;
 use tracing::warn;
 
+use super::ssh_keyboard_interactive::current_prompt_owner;
 use super::ssh_trust_store::{SshTrustStore, TrustLookup};
 
 /// `ssh-host-key-prompt` payload: a server presented an untrusted host key that
@@ -55,6 +62,21 @@ pub struct SshHostKeyPromptEvent {
     pub fingerprint: String,
     pub changed: bool,
     pub previous_fingerprints: Option<Vec<String>>,
+    /// The `connect_id` of the connect that raised this prompt (for a terminal
+    /// tab `${tabId}:${retryCount}`), when known (#5243). The frontend pauses
+    /// that tab's own connect deadline while the prompt is open. `null` for a
+    /// prompt with no owning connect.
+    pub owner: Option<String>,
+}
+
+/// `ssh-host-key-prompt-closed` payload: the connect that raised prompt
+/// `prompt_id` was aborted or timed out before anybody answered (#5185). The
+/// dialog closes; an answer sent anyway is ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct SshHostKeyPromptClosedEvent {
+    pub prompt_id: String,
 }
 
 /// Abstracts frontend event delivery so the verifier is unit-testable without a
@@ -62,12 +84,20 @@ pub struct SshHostKeyPromptEvent {
 pub trait SshHostKeyEventSink: Send + Sync + 'static {
     /// Emit an interactive host-key trust prompt.
     fn emit_prompt(&self, event: &SshHostKeyPromptEvent);
+
+    /// Withdraw a prompt nobody answered because its connect is gone (#5185).
+    fn emit_closed(&self, event: &SshHostKeyPromptClosedEvent);
 }
 
 impl<R: tauri::Runtime> SshHostKeyEventSink for tauri::AppHandle<R> {
     fn emit_prompt(&self, event: &SshHostKeyPromptEvent) {
         use tauri::Emitter;
         let _ = self.emit("ssh-host-key-prompt", event);
+    }
+
+    fn emit_closed(&self, event: &SshHostKeyPromptClosedEvent) {
+        use tauri::Emitter;
+        let _ = self.emit("ssh-host-key-prompt-closed", event);
     }
 }
 
@@ -91,16 +121,30 @@ pub struct SshHostKeyVerifier {
 /// cleaned up even if the `prompt` future is dropped mid-await (e.g. the connect
 /// times out) — not only on the normal resolve/reply path (#1979). Without it, a
 /// timed-out unknown-host connect leaked one `pending` entry per attempt.
+///
+/// An entry still present at drop was never answered: its connect gave up. The
+/// guard then tells the frontend to close the dialog (#5185); removing the entry
+/// is what makes a late answer to it a no-op in [`SshHostKeyVerifier::resolve`].
 struct PendingGuard<'a> {
     pending: &'a Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    sink: &'a dyn SshHostKeyEventSink,
     prompt_id: String,
 }
 
 impl Drop for PendingGuard<'_> {
     fn drop(&mut self) {
-        // Never panic in Drop — a poisoned mutex just skips cleanup.
-        if let Ok(mut map) = self.pending.lock() {
-            map.remove(&self.prompt_id);
+        // Never panic in Drop — a poisoned mutex is recovered, as everywhere
+        // else in this verifier, so the entry is still removed.
+        let unanswered = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.prompt_id)
+            .is_some();
+        if unanswered {
+            self.sink.emit_closed(&SshHostKeyPromptClosedEvent {
+                prompt_id: std::mem::take(&mut self.prompt_id),
+            });
         }
     }
 }
@@ -164,6 +208,7 @@ impl SshHostKeyVerifier {
         // normal resolve/reply path (#1979).
         let _guard = PendingGuard {
             pending: &self.pending,
+            sink: self.sink.as_ref(),
             prompt_id: prompt_id.clone(),
         };
 
@@ -183,6 +228,7 @@ impl SshHostKeyVerifier {
             fingerprint: info.fingerprint.clone(),
             changed,
             previous_fingerprints,
+            owner: current_prompt_owner(),
         });
 
         let decision = rx.await.unwrap_or(Decision {
@@ -199,11 +245,17 @@ impl SshHostKeyVerifier {
 #[async_trait]
 impl HostKeyVerifier for SshHostKeyVerifier {
     async fn verify(&self, info: &HostKeyInfo) -> bool {
+        self.decide(info).await.is_accepted()
+    }
+
+    /// Trust-on-first-use with a prompt; a refusal after the prompt is the
+    /// user's own [`HostKeyDecision::RejectedByUser`] (#5185).
+    async fn decide(&self, info: &HostKeyInfo) -> HostKeyDecision {
         // Honour the user's own `~/.ssh/known_hosts` first: a key already
         // recorded there is trusted silently, exactly as `ssh` would, without a
         // prompt (#1969 — previously done in the core SSH handler).
         if info.known_hosts == KnownHostsStatus::Match {
-            return true;
+            return HostKeyDecision::Accepted;
         }
 
         let host_port = info.host_port();
@@ -213,7 +265,7 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         let (changed, previous_fingerprints) =
             match self.trust_store.lookup(&host_port, &info.fingerprint) {
                 // Already trusted → accept without prompting.
-                TrustLookup::Trusted => return true,
+                TrustLookup::Trusted => return HostKeyDecision::Accepted,
                 // Unknown to termiHub's own store, but if the key is *changed*
                 // relative to the user's `~/.ssh/known_hosts` this is the
                 // possible-MITM case, so warn as a changed key rather than first
@@ -230,10 +282,13 @@ impl HostKeyVerifier for SshHostKeyVerifier {
             };
 
         let decision = self.prompt(info, changed, previous_fingerprints).await;
-        if decision.accept && decision.remember {
+        if !decision.accept {
+            return HostKeyDecision::RejectedByUser;
+        }
+        if decision.remember {
             self.trust_store.remember(&host_port, &info.fingerprint);
         }
-        decision.accept
+        HostKeyDecision::Accepted
     }
 
     /// An unattended connect (a scheduled run, #3527) never prompts: only a key
@@ -273,6 +328,7 @@ impl HostKeyVerifier for SshHostKeyVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::ssh_keyboard_interactive::with_prompt_owner;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Records emitted prompts and returns the last `prompt_id` so a test can
@@ -281,6 +337,7 @@ mod tests {
     struct RecordingSink {
         prompts: Mutex<Vec<SshHostKeyPromptEvent>>,
         count: AtomicUsize,
+        dismissed: Mutex<Vec<String>>,
     }
 
     impl SshHostKeyEventSink for RecordingSink {
@@ -290,6 +347,13 @@ mod tests {
                 .lock()
                 .expect("prompts mutex")
                 .push(event.clone());
+        }
+
+        fn emit_closed(&self, event: &SshHostKeyPromptClosedEvent) {
+            self.dismissed
+                .lock()
+                .expect("dismissed mutex")
+                .push(event.prompt_id.clone());
         }
     }
 
@@ -427,6 +491,34 @@ mod tests {
             1,
             "no re-prompt after remember"
         );
+    }
+
+    /// The prompt names the connect that raised it (#5243), so the frontend
+    /// pauses that tab's own connect deadline; unscoped, it names none.
+    #[tokio::test]
+    async fn prompt_carries_the_connects_owner() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let v = verifier.clone();
+        let owned = tokio::spawn(async move {
+            with_prompt_owner(Some("tab-a:2"), v.verify(&info("h", 22, "SHA256:O"))).await
+        });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert!(owned.await.unwrap());
+
+        let v = verifier.clone();
+        let unowned = tokio::spawn(async move { v.verify(&info("h", 22, "SHA256:O")).await });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert!(unowned.await.unwrap());
+
+        let prompts = sink.prompts.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0].owner.as_deref(), Some("tab-a:2"));
+        assert_eq!(prompts[1].owner, None);
+        let wire = serde_json::to_value(&prompts[0]).unwrap();
+        assert_eq!(wire["owner"], "tab-a:2", "the owner is on the wire");
     }
 
     /// A changed key prompts with `changed=true` and is NOT persisted unless
@@ -585,6 +677,80 @@ mod tests {
             verifier.pending.lock().expect("pending mutex").len(),
             0,
             "pending prompt entry leaked after the future was dropped"
+        );
+    }
+
+    // ── Reject vs dismiss (#5185) ─────────────────────────────────────
+
+    /// Rejecting in the prompt is reported as the user's own rejection, so the
+    /// connect can say "You rejected the host key" instead of "failed".
+    #[tokio::test]
+    async fn reject_is_reported_as_rejected_by_user() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:AA");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let v = verifier.clone();
+        let handle = tokio::spawn(async move { v.decide(&info("h", 22, "SHA256:EVIL")).await });
+        resolve_when_ready(&verifier, &sink, false, false).await;
+
+        assert_eq!(handle.await.unwrap(), HostKeyDecision::RejectedByUser);
+        assert!(
+            sink.dismissed.lock().unwrap().is_empty(),
+            "an answered prompt is not dismissed"
+        );
+    }
+
+    /// Trusted keys and accepted prompts decide `Accepted`.
+    #[tokio::test]
+    async fn trusted_and_accepted_keys_decide_accepted() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:AA");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+        assert_eq!(
+            verifier.decide(&info("h", 22, "SHA256:AA")).await,
+            HostKeyDecision::Accepted
+        );
+
+        let v = verifier.clone();
+        let handle = tokio::spawn(async move { v.decide(&info("n", 22, "SHA256:N")).await });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert_eq!(handle.await.unwrap(), HostKeyDecision::Accepted);
+    }
+
+    /// A prompt whose connect gave up (the core drops the prompt future on an
+    /// abort or timeout) is withdrawn from the frontend, and an answer that
+    /// arrives afterwards is ignored — a stale "Accept for host" must never
+    /// remember a key for a connect that no longer exists (#5185).
+    #[tokio::test]
+    async fn abandoned_prompt_is_dismissed_and_a_late_answer_ignored() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store.clone(), sink.clone()));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            verifier.decide(&info("late", 22, "SHA256:LATE")),
+        )
+        .await;
+        assert!(result.is_err(), "nobody answered");
+
+        let prompt_id = sink.prompts.lock().unwrap()[0].prompt_id.clone();
+        assert_eq!(
+            *sink.dismissed.lock().unwrap(),
+            vec![prompt_id.clone()],
+            "the unanswered prompt must be dismissed exactly once"
+        );
+        assert!(
+            !verifier.resolve(&prompt_id, true, true),
+            "a late answer to a dismissed prompt must be ignored"
+        );
+        assert_eq!(
+            store.lookup("late:22", "SHA256:LATE"),
+            TrustLookup::Unknown,
+            "a late Accept for host must not remember the key"
         );
     }
 }

@@ -80,10 +80,15 @@ export interface TrustPromptProps {
  * warning, the three-verdict footer, ESC=reject, and the `role="alert"` behaviour
  * identical across protocols.
  *
- * Three verdicts, always in the same order and skins:
+ * Three verdicts. For a new identity:
  * - **Reject** (ghost) — abort the connection; ESC / scrim / close do the same.
  * - **Accept once** (secondary) — trust for this session only.
- * - **Accept for host** (`changed ? danger : primary`) — trust and remember.
+ * - **Accept for host** (primary) — trust and remember.
+ *
+ * For a *changed* identity the safe choice leads (#5185): **Reject** becomes the
+ * primary action, **Accept for host** stays `danger`, and **Accept once** is
+ * demoted to a small ghost button set apart at the far left, so a quick
+ * "continue" never reads as the default while the MITM warning is up.
  *
  * Composed from the shared {@link Modal} + {@link Button} primitives; all values
  * come from design tokens. Facts marked `copyable` grow a copy button that
@@ -138,21 +143,37 @@ export function TrustPrompt({
       }
       data-testid={modalTestId}
       footer={
-        <div className="ui-trust-prompt__actions">
-          <Button variant="ghost" onClick={onReject} data-testid={rejectTestId}>
-            Reject
-          </Button>
-          <Button variant="secondary" onClick={onAcceptOnce} data-testid={acceptOnceTestId}>
-            Accept once
-          </Button>
-          <Button
-            variant={changed ? "danger" : "primary"}
-            onClick={onAcceptForHost}
-            data-testid={acceptForHostTestId}
-          >
-            Accept for host
-          </Button>
-        </div>
+        changed ? (
+          <div className="ui-trust-prompt__actions ui-trust-prompt__actions--changed">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ui-trust-prompt__demoted"
+              onClick={onAcceptOnce}
+              data-testid={acceptOnceTestId}
+            >
+              Accept once
+            </Button>
+            <Button variant="primary" onClick={onReject} data-testid={rejectTestId}>
+              Reject
+            </Button>
+            <Button variant="danger" onClick={onAcceptForHost} data-testid={acceptForHostTestId}>
+              Accept for host
+            </Button>
+          </div>
+        ) : (
+          <div className="ui-trust-prompt__actions">
+            <Button variant="ghost" onClick={onReject} data-testid={rejectTestId}>
+              Reject
+            </Button>
+            <Button variant="secondary" onClick={onAcceptOnce} data-testid={acceptOnceTestId}>
+              Accept once
+            </Button>
+            <Button variant="primary" onClick={onAcceptForHost} data-testid={acceptForHostTestId}>
+              Accept for host
+            </Button>
+          </div>
+        )
       }
     >
       <div className="ui-trust-prompt__body">

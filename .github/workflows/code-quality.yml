@@ -1017,6 +1017,18 @@ jobs:
           rem echo keeps the last negative test's ERRORLEVEL; exit 0 explicitly.
           exit /b 0
 
+      # coverage.cmd's argument parsing, incl. --split (#5160), on a real cmd.exe:
+      # --dry-run skips the heavy runs, and with no prior lcov exits 0.
+      - name: coverage.cmd --dry-run --split and fail-fast paths
+        shell: cmd
+        run: |
+          call scripts\coverage.cmd --dry-run --split --no-ratchet
+          if errorlevel 1 exit /b 1
+          call scripts\coverage.cmd --no-such-flag
+          if not errorlevel 1 (echo expected failure: unknown option& exit /b 1)
+          echo coverage.cmd smoke OK
+          exit /b 0
+
       - name: Stage the build-agents.cmd checksum line
         shell: bash
         run: |

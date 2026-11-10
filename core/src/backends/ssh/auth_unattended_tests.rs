@@ -45,8 +45,9 @@ async fn unattended_untrusted_host_key_is_a_typed_refusal() {
     assert!(observed.lock().unwrap().responses.is_empty());
 }
 
-/// The same refusal on an attended connect keeps its previous, untyped
-/// handshake error — the new kind is reserved for unattended connects.
+/// The same policy refusal on an attended connect (nobody was asked) keeps its
+/// untyped handshake error; only a user's own Reject is typed on an attended
+/// connect (#5185).
 #[tokio::test]
 async fn attended_host_key_refusal_is_unchanged() {
     let (stream, _observed) = serve(script());

@@ -80,6 +80,9 @@ use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
 use crate::utils::ssh_auth::connect_and_authenticate;
 use termihub_core::ipc::ndjson::LineSplitter;
 
+/// Update rollback through each `DefaultShell` (#5219).
+mod rollback;
+
 const PORT_ENV: &str = "TERMIHUB_NATIVE_SSHD_PORT";
 const USER_ENV: &str = "TERMIHUB_NATIVE_SSHD_USER";
 const KEY_ENV: &str = "TERMIHUB_NATIVE_SSHD_KEY";
@@ -361,10 +364,24 @@ fn verify_diagnostics(
 /// so this runs on a `spawn_blocking` thread like the real deploy.
 fn deploy(fixture: &Fixture) -> Result<DeployOutcome, TerminalError> {
     let session = connect_and_authenticate(&fixture.ssh_config())?;
-    let (remote_os, _arch) = detect_remote_info(&session)?;
-    let detected_shell = detect_windows_shell(&session);
-    let bytes = std::fs::read(&fixture.agent_bin)
-        .map_err(|e| TerminalError::RemoteError(format!("read agent binary: {e}")))?;
+    let bytes = read_agent_bin(fixture)?;
+    deploy_bytes(&session, &bytes)
+}
+
+/// The locally built agent the lane deploys.
+fn read_agent_bin(fixture: &Fixture) -> Result<Vec<u8>, TerminalError> {
+    std::fs::read(&fixture.agent_bin)
+        .map_err(|e| TerminalError::RemoteError(format!("read agent binary: {e}")))
+}
+
+/// Run the production install of `bytes` over an open `session` (the body of
+/// [`deploy`]; the #5219 rollback cases install a broken binary with it too).
+fn deploy_bytes(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    bytes: &[u8],
+) -> Result<DeployOutcome, TerminalError> {
+    let (remote_os, _arch) = detect_remote_info(session)?;
+    let detected_shell = detect_windows_shell(session);
     let steps = Mutex::new(Vec::new());
     let progress = |step: &str, _message: &str, _pct: f64| {
         steps
@@ -373,19 +390,19 @@ fn deploy(fixture: &Fixture) -> Result<DeployOutcome, TerminalError> {
             .push(step.to_string());
     };
     let result = install_agent_bytes(
-        &session,
+        session,
         &remote_os,
         crate::terminal::agent_install::POSIX_DEFAULT_INSTALL_PATH,
-        &bytes,
+        bytes,
         &progress,
         None,
     )?;
-    let upload_leftover = run_remote_command(&session, &upload_leftover_probe(detected_shell))?;
+    let upload_leftover = run_remote_command(session, &upload_leftover_probe(detected_shell))?;
     let diagnostics = match &result {
         AgentDeployResult::Deployed {
             installed_version: None,
             ..
-        } => verify_diagnostics(&session, detected_shell),
+        } => verify_diagnostics(session, detected_shell),
         _ => String::new(),
     };
     Ok(DeployOutcome {

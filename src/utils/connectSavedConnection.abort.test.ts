@@ -38,6 +38,7 @@ import {
   storeCredential,
 } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import type { UnlockOutcome } from "@/store/slices/credentialStoreSlice";
 import type { SavedConnection } from "@/types/connection";
 import {
   connectSavedConnection,
@@ -98,7 +99,7 @@ function pressAbort(): void {
 /** Abort was acknowledged and nothing was opened or saved. */
 function expectCleanCancel(result: ConnectSavedConnectionResult): void {
   expect(result).toEqual({ status: "canceled" });
-  expect(infoSpy).toHaveBeenCalledWith("Connection cancelled");
+  expect(infoSpy).toHaveBeenCalledWith("Connect canceled");
   expect(addTabSpy).not.toHaveBeenCalled();
   expect(vi.mocked(storeCredential)).not.toHaveBeenCalled();
   expect(useAppStore.getState().passwordPromptOpen).toBe(false);
@@ -126,19 +127,17 @@ afterEach(() => {
 
 describe("connectSavedConnection — abortable pre-connect (#5180)", () => {
   it("aborts while the credential store unlock is pending and ignores a late unlock", async () => {
-    const unlock = deferred<boolean>();
+    const unlock = deferred<UnlockOutcome>();
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      requestUnlock: (() => unlock.promise) as unknown as ReturnType<
-        typeof useAppStore.getState
-      >["requestUnlock"],
+      requestUnlockOutcome: () => unlock.promise,
     });
     const pending = connectSavedConnection(sshPassword());
     await flush();
     pressAbort();
     expectCleanCancel(await pending);
 
-    unlock.resolve(true);
+    unlock.resolve("unlocked");
     await flush();
     expect(mockedResolveCredential).not.toHaveBeenCalled();
     expect(mockedCreateTerminal).not.toHaveBeenCalled();

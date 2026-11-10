@@ -53,6 +53,8 @@
 }
 
 .oc-row:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 
@@ -112,6 +114,15 @@
   padding: 1px var(--spacing-xs);
   height: auto;
   gap: var(--spacing-xs);
+}
+
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.oc-row:hover .oc-row__title--muted,
+.oc-row:hover .oc-row__detail,
+.oc-row:hover .oc-row__window:not(:hover),
+.oc-row:hover .oc-transfer__meta {
+  color: var(--text-muted-on-selection);
 }
 
 /* Trailing action cluster for rows that expose more than one intent

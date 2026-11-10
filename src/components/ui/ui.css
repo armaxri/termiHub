@@ -379,6 +379,8 @@
 }
 
 .ui-select__item[data-highlighted] {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 
@@ -450,6 +452,8 @@
 
 .ui-menu__item:hover,
 .ui-menu__item[data-highlighted] {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
   color: var(--text-primary);
 }
@@ -525,6 +529,8 @@
 
 /* Submenu trigger (e.g. "Move to Window ▸") and its trailing chevron. */
 .ui-menu__sub-trigger[data-state="open"] {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 
@@ -732,6 +738,8 @@
 }
 
 .ui-radio-card:hover:not(:disabled) {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 
@@ -1388,6 +1396,16 @@
   display: flex;
   gap: var(--spacing-sm);
   justify-content: flex-end;
+}
+
+/* A changed identity (#5185): "Accept once" is set apart at the far left so the
+   safe Reject and the MITM warning lead. */
+.ui-trust-prompt__actions--changed {
+  align-items: center;
+}
+
+.ui-trust-prompt__demoted {
+  margin-right: auto;
 }
 
 /* ── ContentOverlay ─────────────────────────────────────────────────────

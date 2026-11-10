@@ -35,25 +35,9 @@ use termihub_core::backends::ssh::keyboard_interactive::{
 use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
-tokio::task_local! {
-    /// The `connect_id` of the connect running in this task (#3437).
-    static PROMPT_OWNER: String;
-}
-
-/// Run `fut` with `owner` recorded as the owner of any keyboard-interactive
-/// prompt it raises (#3437). `None` runs `fut` unscoped (an inherited owner,
-/// if any, stays in effect).
-pub async fn with_prompt_owner<F: std::future::Future>(owner: Option<&str>, fut: F) -> F::Output {
-    match owner {
-        Some(owner) => PROMPT_OWNER.scope(owner.to_string(), fut).await,
-        None => fut.await,
-    }
-}
-
-/// The owner scoped around the current task by [`with_prompt_owner`], if any.
-pub fn current_prompt_owner() -> Option<String> {
-    PROMPT_OWNER.try_with(Clone::clone).ok()
-}
+// The owner scope lives in core (#5243) so the SSH handler can carry it to
+// the host-key check, which runs on russh's session task.
+pub use termihub_core::backends::ssh::prompt_owner::{current_prompt_owner, with_prompt_owner};
 
 /// One prompt in an `ssh-keyboard-interactive-prompt` event.
 #[derive(Debug, Clone, Serialize)]

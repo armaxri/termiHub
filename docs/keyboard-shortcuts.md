@@ -255,19 +255,24 @@ refuses any binding that could trap you:
 The Connections tree and the Remote Agents tree act on the focused row. These
 keys are bound to the row itself, so they never fire while a terminal has focus.
 
-| Key                                                           | Action                                                                      |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move to another row                                                         |
-| <kbd>←</kbd> / <kbd>→</kbd>                                   | Collapse / expand a folder, or move to its parent / first child             |
-| <kbd>Enter</kbd> / <kbd>Space</kbd>                           | Connect, or open / close the folder                                         |
-| <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key               | Open the row's context menu (the right-click menu)                          |
-| <kbd>F2</kbd>                                                 | Rename: open the connection's or agent's editor (folders have no rename)    |
-| <kbd>Delete</kbd> / <kbd>Backspace</kbd>                      | Delete the row, after the same confirmation (and Undo) as the menu's Delete |
+| Key                                                           | Action                                                                       |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move to another row                                                          |
+| <kbd>←</kbd> / <kbd>→</kbd>                                   | Collapse / expand a folder, or move to its parent / first child              |
+| <kbd>Enter</kbd> / <kbd>Space</kbd>                           | Connect, or open / close the folder                                          |
+| <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key               | Open the row's context menu (the right-click menu)                           |
+| <kbd>F2</kbd>                                                 | Rename: open the connection's or agent's editor, or rename a folder in place |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd>                      | Delete the row, after the same confirmation (and Undo) as the menu's Delete  |
 
 On an agent, the keys work on its header row. <kbd>Shift</kbd>+<kbd>F10</kbd> works on
 every platform, including macOS keyboards without a Menu key. After a delete, focus
 moves to the next row (or the last one); closing a menu or cancelling a delete puts
 focus back on the row.
+
+Renaming a folder (with <kbd>F2</kbd> or the menu's **Rename** item) turns its row into
+a text field. <kbd>Enter</kbd> saves the new name and <kbd>Escape</kbd> cancels; either
+way focus goes back to the folder's row. An empty name, or a name another folder or
+connection next to it already uses, is refused with a message under the field.
 
 ## File browser list keys
 

@@ -68,12 +68,15 @@ import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFie
 import { connectionTabContentType } from "@/utils/connectionTabContentType";
 import {
   credentialStoreNeedsUnlock,
-  ensureCredentialStoreUnlocked,
+  ensureCredentialStoreUnlockedForConnect,
 } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { holdTypedGraphicalSecret, resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
-import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import {
+  resolveConnectionCredential,
+  type CredentialResolution,
+} from "@/utils/resolveConnectionCredential";
 import { neededFieldSecrets, resolveFieldSecrets } from "@/utils/fieldSecrets";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import { persistSecretOnceConnected } from "@/utils/persistSecretOnceConnected";
@@ -107,6 +110,26 @@ export type ConnectSavedConnectionResult =
   | { status: "refused"; reason: string }
   /** Unattended only: the connect itself failed (unreachable, timeout, …). */
   | { status: "failed"; reason: string };
+
+/**
+ * The one toast every attended cancel of a saved-connection connect shows
+ * (#5188): a dismissed unlock dialog, a dismissed password prompt and the
+ * "Connecting…" toast's Abort all acknowledge the cancel with it.
+ */
+export const CONNECT_CANCELED_MESSAGE = "Connect canceled";
+
+/**
+ * The resolution of a connect that skips the stored credential: "Connect
+ * without saved password" on the unlock dialog (#5188) leaves the store
+ * locked, so the flow prompts as if nothing were saved.
+ */
+function noStoredCredential(authMethod: string): CredentialResolution {
+  return {
+    password: null,
+    usedStoredCredential: false,
+    credentialType: authMethod === "key" ? "key_passphrase" : "password",
+  };
+}
 
 /** The unattended refusal / failure for a failed never-prompt connect. */
 function unattendedFailure(err: unknown): ConnectSavedConnectionResult {
@@ -267,7 +290,7 @@ export async function connectSavedConnection(
       );
     }
     dismissConnecting();
-    toast.info("Connection cancelled");
+    toast.info(CONNECT_CANCELED_MESSAGE);
   };
 
   // Open a tab for this saved connection, always stamping its `connectionId`
@@ -348,7 +371,7 @@ export async function connectSavedConnection(
       label: connection.name,
     });
     if (resolved.status === "canceled") {
-      toast.info("Connect canceled");
+      toast.info(CONNECT_CANCELED_MESSAGE);
       return { status: "canceled" };
     }
     const opened = openTab({ ...config, config: resolved.settings } as typeof config, {
@@ -429,29 +452,36 @@ export async function connectSavedConnection(
     // is locked. If it is, we can't read the stored credential and SSH would fall
     // back to interactive password prompts. Prompt for unlock first and wait —
     // on success the code continues and the credential resolves automatically.
-    const proceed =
-      unattended ||
-      (await untilAborted(
-        ensureCredentialStoreUnlocked({ authMethod, savePassword, credentialRef }),
-        preconnect.signal
-      ));
-    if (proceed === PRECONNECT_ABORTED) return { status: "canceled" };
-    if (!proceed) {
+    // "Connect without saved password" (#5188) goes on with the store still
+    // locked: no stored credential is read and the prompt below offers no Save.
+    const unlock = unattended
+      ? "unlocked"
+      : await untilAborted(
+          ensureCredentialStoreUnlockedForConnect({ authMethod, savePassword, credentialRef }),
+          preconnect.signal
+        );
+    if (unlock === PRECONNECT_ABORTED) return { status: "canceled" };
+    if (unlock === "canceled") {
+      // Escape/× on the unlock dialog: acknowledge it like every other cancel.
       dismissConnecting();
+      toast.info(CONNECT_CANCELED_MESSAGE);
       return { status: "canceled" };
     }
+    const storeStaysLocked = unlock === "skipped";
 
     // Try to resolve credential from the store first
-    const resolved = await untilAborted(
-      resolveConnectionCredential(
-        connection.id,
-        authMethod,
-        savePassword,
-        credentialRef,
-        connection.sourceFile
-      ),
-      preconnect.signal
-    );
+    const resolved = storeStaysLocked
+      ? noStoredCredential(authMethod)
+      : await untilAborted(
+          resolveConnectionCredential(
+            connection.id,
+            authMethod,
+            savePassword,
+            credentialRef,
+            connection.sourceFile
+          ),
+          preconnect.signal
+        );
     if (resolved === PRECONNECT_ABORTED) return { status: "canceled" };
     const resolution = resolved;
     // A shared credential is never deleted on rejection (other connections
@@ -565,7 +595,8 @@ export async function connectSavedConnection(
     // No stored credential, or it was rejected — prompt the user. A graphical
     // tab never reports an established terminal session, so it offers no Save.
     const promptOptions = {
-      allowSave: !sharedCredential && !isGraphical,
+      // Nothing is stored while the store stays locked (#5188).
+      allowSave: !sharedCredential && !isGraphical && !storeStaysLocked,
       label: connection.name,
       ...(savedRejected ? { savedRejected: true } : {}),
     };
@@ -587,7 +618,7 @@ export async function connectSavedConnection(
       if (answer === null) {
         // Acknowledge the cancel so the click isn't silently dropped (UX-012),
         // matching the editor path's toast.info on connect-cancel.
-        toast.info("Connect canceled");
+        toast.info(CONNECT_CANCELED_MESSAGE);
         return { status: "canceled" };
       }
       const password = answer.password;
@@ -613,7 +644,7 @@ export async function connectSavedConnection(
       );
       if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.
-        toast.info("Connect canceled");
+        toast.info(CONNECT_CANCELED_MESSAGE);
         return { status: "canceled" };
       }
       const passphrase = answer.password;

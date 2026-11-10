@@ -189,7 +189,7 @@ class TestNativeDialogs(
 
         target = self._scratch("export", "connections-export.json")
         # gear → Export → plain → submit opens the Save dialog.
-        self._open_activity_menu_item("settings-menu-export")
+        self.open_import_migration_action("import-migration-json-export-btn")
         self.wait(lambda: self.driver.exists("export-submit"), what="the export dialog")
         self.driver.click("export-mode-plain")
         self.driver.stub_native_dialog("save", target)
@@ -216,7 +216,7 @@ class TestNativeDialogs(
         self.create_local_connection(name)
         target = self._scratch("export-cancel", "connections-export.json")
 
-        self._open_activity_menu_item("settings-menu-export")
+        self.open_import_migration_action("import-migration-json-export-btn")
         self.wait(lambda: self.driver.exists("export-submit"), what="the export dialog")
         self.driver.click("export-mode-plain")
         self.driver.stub_native_dialog("save")  # the operator cancels
@@ -248,9 +248,9 @@ class TestNativeDialogs(
             json.dumps(self._import_connections_doc(name)), encoding="utf-8"
         )
 
-        # gear → Import opens the native Open dialog immediately.
+        # Settings → Import & Migration → Import opens the native Open dialog immediately.
         self.driver.stub_native_dialog("open", fixture)
-        self._open_activity_menu_item("settings-menu-import")
+        self.open_import_migration_action("import-migration-json-import-btn")
 
         # With the file picked, the in-app Import dialog appears — finish a
         # plain (no-credentials) import from there.
@@ -347,7 +347,7 @@ class TestNativeDialogs(
 
         # 3) Export WITH credentials (encrypted) → native Save dialog.
         export_target = self._scratch("enc-export", "encrypted-export.json")
-        self._open_activity_menu_item("settings-menu-export")
+        self.open_import_migration_action("import-migration-json-export-btn")
         self.wait(lambda: self.driver.exists("export-submit"), what="the export dialog")
         self.driver.click("export-mode-encrypted")
         self.wait(
@@ -385,7 +385,7 @@ class TestNativeDialogs(
         # 5) Import the same file back → native Open dialog, then type the export
         #    password and confirm the credential was imported.
         self.driver.stub_native_dialog("open", export_target)
-        self._open_activity_menu_item("settings-menu-import")
+        self.open_import_migration_action("import-migration-json-import-btn")
         self.wait(
             lambda: self.driver.exists("import-password"),
             what="the encrypted-import password field",

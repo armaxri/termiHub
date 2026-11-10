@@ -62,11 +62,15 @@
 }
 
 .plugin-row:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 
 .plugin-row--selected,
 .plugin-row--selected:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 
@@ -99,6 +103,13 @@
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   flex: 0 0 auto;
+}
+
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.plugin-row:hover .plugin-row__ver,
+.plugin-row--selected .plugin-row__ver {
+  color: var(--text-muted-on-selection);
 }
 
 .plugin-manager__footer {

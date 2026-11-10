@@ -24,13 +24,18 @@ mod legacy_pem;
 mod monitoring;
 mod process;
 mod prompt_clock;
+pub mod prompt_owner;
 // The outbound proxy dialer (#4867) lives in the feature-free
 // `backends::proxy_dial` (#4897); kept reachable here for the SSH backend.
 pub use crate::backends::proxy_dial as proxy;
 pub mod remote_cwd;
 pub mod remote_shell;
 pub mod session_pool;
+// In-process SFTP-only SSH server for files-only tests (#5160), exposed like
+// `ki_test_server` behind `ssh-test-support`.
 pub mod sftp;
+#[cfg(any(test, feature = "ssh-test-support"))]
+pub mod sftp_only_test_server;
 pub mod sftp_ops;
 mod terminal_reply;
 pub mod unattended;

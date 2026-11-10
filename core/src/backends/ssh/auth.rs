@@ -6,7 +6,6 @@
 
 use crate::connection::connect_progress::{self, ConnectStage};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -15,12 +14,16 @@ use crate::config::expand_config_value;
 use crate::config::SshConfig;
 use crate::errors::{ConnectFailureKind, SessionError};
 
-use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession, TermiHubHandler};
+use super::handler::{
+    ForwardedChannelRegistry, HandshakeContext, HostKeyRefusal, LivenessWatch, SshSession,
+    TermiHubHandler,
+};
+use super::host_key::{HostKeyVerifier, HOST_KEY_PROMPT_TIMEOUT};
 use super::keyboard_interactive::{
     keyboard_interactive_prompter, offers_keyboard_interactive, run_keyboard_interactive,
     KeyboardInteractivePrompter, KiContext, KiMode, AUTH_METHOD_KEYBOARD_INTERACTIVE,
 };
-use super::prompt_clock::timeout_excluding_prompts;
+use super::prompt_clock::{timeout_excluding_prompts, PromptClock};
 
 /// Connect to an SSH server, perform handshake, and authenticate.
 ///
@@ -63,8 +66,9 @@ pub async fn connect_and_authenticate_cancellable_with_liveness(
 ) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     let timeout = config.connect_timeout();
     let connect = async {
-        // Time the user spends answering a keyboard-interactive prompt does not
-        // count against the network connect timeout (#3371).
+        // Time the user spends answering a keyboard-interactive prompt (#3371)
+        // or the host-key trust prompt (#5185) does not count against the
+        // network connect timeout.
         timeout_excluding_prompts(timeout, do_connect_and_authenticate(config))
             .await
             .map_err(|_| {
@@ -125,6 +129,20 @@ async fn handshake_and_authenticate<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    handshake_and_authenticate_with(config, stream, None).await
+}
+
+/// [`handshake_and_authenticate`] with an explicit host-key verifier in place of
+/// the process-wide one (`None` = the process-wide one). The override exists for
+/// tests, since the global verifier can be registered only once per process.
+async fn handshake_and_authenticate_with<S>(
+    config: &SshConfig,
+    stream: S,
+    verifier: Option<Arc<dyn HostKeyVerifier>>,
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let russh_config = Arc::new(russh::client::Config {
         // SSH-level keepalives: send every `keepalive_interval` (default 30 s),
         // abort after `keepalive_max_count` unanswered (default 3). Both are
@@ -145,14 +163,23 @@ where
         config.port,
         config.forward_agent,
     );
-    // An unattended connect (#3527) verifies the host key without prompting;
-    // the handler records a refusal so it surfaces as a typed error below.
-    let host_key_refused = Arc::new(AtomicBool::new(false));
-    let handler = if super::unattended::is_unattended() {
-        handler.unattended(host_key_refused.clone())
-    } else {
-        handler
+    // The host-key check runs on russh's session task, so hand it what only
+    // this task knows (#3527, #5185): whether the connect is unattended (verify
+    // without prompting), the connect deadline (paused while a trust prompt is
+    // open), the prompt owner the trust prompt names (#5243), and a signal
+    // that fires if this task stops waiting — an abort or a connect timeout
+    // drops this future, the drop guard cancels the token, and the open prompt
+    // is dismissed instead of lingering for a connect that no longer exists. A refusal is recorded so it surfaces typed below.
+    let handshake = HandshakeContext {
+        unattended: super::unattended::is_unattended(),
+        clock: PromptClock::capture(),
+        owner: super::prompt_owner::current_prompt_owner(),
+        verifier,
+        ..HandshakeContext::default()
     };
+    let outcome = handshake.outcome.clone();
+    let abandon_on_drop = handshake.abandoned.clone().drop_guard();
+    let handler = handler.with_handshake(handshake);
 
     connect_progress::report(
         ConnectStage::HostKey,
@@ -161,27 +188,60 @@ where
             config.host, config.port
         )),
     );
-    let mut session = russh::client::connect_stream(russh_config, stream, handler)
-        .await
-        .map_err(|e| {
-            if host_key_refused.load(Ordering::SeqCst) {
-                SessionError::classified(
-                    ConnectFailureKind::HostKeyUntrusted,
-                    format!(
-                        "The host key of {}:{} is not trusted yet; connect once \
-                         interactively to review and trust it",
-                        config.host, config.port
-                    ),
-                )
-            } else {
-                SessionError::SpawnFailed(format!("SSH handshake failed: {e}"))
-            }
-        })?;
+    let handshake = russh::client::connect_stream(russh_config, stream, handler).await;
+    // The handshake finished (either way) while this task was still waiting:
+    // nothing to dismiss.
+    abandon_on_drop.disarm();
+    let refusal = *outcome.lock().unwrap_or_else(|e| e.into_inner());
+    let mut session = handshake.map_err(|e| host_key_error(config, refusal, e))?;
 
     connect_progress::report(ConnectStage::Authenticate, Some(auth_status(config)));
     authenticate(&mut session, config).await?;
 
     Ok((session, registry, liveness))
+}
+
+/// The error for a failed SSH handshake, classified by why the host key was
+/// refused, if it was (#3527, #5185).
+fn host_key_error(
+    config: &SshConfig,
+    refusal: Option<HostKeyRefusal>,
+    e: russh::Error,
+) -> SessionError {
+    let at = format!("{}:{}", config.host, config.port);
+    let unattended = super::unattended::is_unattended();
+    match refusal {
+        Some(HostKeyRefusal::NotTrusted) if unattended => SessionError::classified(
+            ConnectFailureKind::HostKeyUntrusted,
+            format!(
+                "The host key of {at} is not trusted yet; connect once \
+                 interactively to review and trust it"
+            ),
+        ),
+        // The user deliberately said no: not a failure of the handshake, and
+        // nothing a plain retry would fix (#5185).
+        Some(HostKeyRefusal::RejectedByUser) => SessionError::classified(
+            ConnectFailureKind::HostKeyUntrusted,
+            format!("You rejected the host key of {at}, so the connection was not made"),
+        ),
+        Some(HostKeyRefusal::PromptTimedOut) => SessionError::classified(
+            ConnectFailureKind::Timeout,
+            format!(
+                "The host key of {at} was not confirmed within {}s",
+                HOST_KEY_PROMPT_TIMEOUT.as_secs()
+            ),
+        ),
+        // Only reachable if the abandon signal fired while this task still
+        // waited, which the drop guard rules out; report it as cancelled.
+        Some(HostKeyRefusal::Abandoned) => {
+            SessionError::SpawnFailed("Connection cancelled".to_string())
+        }
+        // The strict headless default refused without asking anybody (#1969):
+        // keep the established handshake error.
+        Some(HostKeyRefusal::NotTrusted) | None => {
+            SessionError::SpawnFailed(format!("SSH handshake failed: {e}"))
+        }
+    }
 }
 
 /// Establish and authenticate an SSH session over an existing forwarded channel.
@@ -903,3 +963,7 @@ pub(super) mod unattended_tests;
 #[cfg(test)]
 #[path = "auth_progress_tests.rs"]
 mod progress_tests;
+
+#[cfg(test)]
+#[path = "auth_host_key_tests.rs"]
+mod host_key_tests;

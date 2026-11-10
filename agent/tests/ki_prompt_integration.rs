@@ -24,15 +24,14 @@
 //! server's fixed key, which also isolates the agent's config and state from
 //! the developer's real ones.
 //!
-//! Unix only: the daemon, relay and known-hosts plumbing are the same code on
-//! Windows, but the Windows leg's live-agent tests are quarantined for runner
-//! slowness (#2495); this suite would join them.
+//! Every OS (#5160): the daemon, relay and known-hosts plumbing are the same
+//! code on Windows, where the daemon's endpoint is a named pipe and the agent's
+//! home comes from `USERPROFILE`. The suite drives a `--stdio` worker, not the
+//! `--listen` cold starts the Windows leg runs serially (#2495, #3615).
 //!
 //! ```sh
 //! cargo test -p termihub-agent --test ki_prompt_integration
 //! ```
-
-#![cfg(unix)]
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -202,7 +201,9 @@ impl StdioAgent {
 
         let mut cmd = Command::new(agent_binary());
         cmd.arg("--stdio")
+            // `~/.ssh/known_hosts`: windows resolves `~` from USERPROFILE.
             .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
             .env("XDG_CONFIG_HOME", home.path().join(".config"))
             .env("XDG_DATA_HOME", home.path().join(".local/share"))
             .env("XDG_STATE_HOME", home.path().join(".local/state"))
@@ -356,8 +357,9 @@ impl Drop for StdioAgent {
         let _ = self.child.kill();
         let _ = self.child.wait();
         // The isolated registry lives in `home`; reap it by the PID serving it.
-        let registry = self.home.path().join("registry.sock");
-        drop(DaemonGuard::discover(&registry.to_string_lossy()));
+        drop(DaemonGuard::discover(&common::isolated_registry_endpoint(
+            self.home.path(),
+        )));
     }
 }
 

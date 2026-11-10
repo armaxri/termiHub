@@ -48,6 +48,8 @@
 }
 
 .status-bar__item--interactive:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
   color: var(--text-primary);
 }
@@ -339,6 +341,13 @@
   color: var(--text-muted);
 }
 
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.ui-menu__item:hover .monitoring-menu__radio-default,
+.ui-menu__item[data-highlighted] .monitoring-menu__radio-default {
+  color: var(--text-muted-on-selection);
+}
+
 /* Layout-only placement for the shared StatusDot in the status bar; its size
    and tone->token colour come from the StatusDot primitive (UISF-003). */
 .update-indicator__dot {
@@ -398,6 +407,8 @@
 }
 
 .process-table__row:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 

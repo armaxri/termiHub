@@ -6,7 +6,7 @@
  * local connections experience).
  */
 
-import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -110,7 +110,8 @@ import {
   type FocusTarget,
 } from "@/utils/treeRowKeys";
 import { agentFolderDeleteMessage, remoteAgentDeleteMessage } from "./agentDeleteMessages";
-import { InlineFolderInput } from "./InlineFolderInput";
+import { InlineFolderInput, type InlineFolderCancelReason } from "./InlineFolderInput";
+import { folderRenameError } from "@/utils/folderRename";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
@@ -588,7 +589,15 @@ function AgentFolderNode({
 }: AgentFolderNodeProps) {
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
   const deleteAgentFolder = useAppStore((s) => s.deleteAgentFolder);
+  const updateAgentFolder = useAppStore((s) => s.updateAgentFolder);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Inline rename (#5233): started by the menu's Rename item or F2 on the row.
+  const [renaming, setRenaming] = useState(false);
+  // Mirrors `renaming` synchronously, so a blur racing a commit is ignored.
+  const renamingRef = useRef(false);
+  // Whether the row takes focus back once the rename input is gone.
+  const refocusRowRef = useRef(false);
+  const rowElRef = useRef<HTMLButtonElement | null>(null);
   // Where focus goes once a keyboard-started delete removes this row (#5181).
   const deleteFocusRef = useRef<FocusTarget | null>(null);
 
@@ -625,10 +634,48 @@ function AgentFolderNode({
     (el: HTMLButtonElement | null) => {
       setDropRef(el);
       rowRef(el);
+      rowElRef.current = el;
     },
     [setDropRef, rowRef]
   );
   const { active } = useDndContext();
+
+  const startRename = useCallback(() => {
+    renamingRef.current = true;
+    setRenaming(true);
+  }, []);
+  const endRename = useCallback((refocusRow: boolean) => {
+    if (!renamingRef.current) return false;
+    renamingRef.current = false;
+    refocusRowRef.current = refocusRow;
+    setRenaming(false);
+    return true;
+  }, []);
+  const validateRename = useCallback(
+    (name: string) =>
+      folderRenameError(
+        name,
+        allFolders
+          .filter((f) => f.parentId === folder.parentId && f.id !== folder.id)
+          .map((f) => f.name)
+      ),
+    [allFolders, folder.parentId, folder.id]
+  );
+  const commitRename = useCallback(
+    (name: string) => {
+      if (!endRename(true)) return;
+      if (name !== folder.name) void updateAgentFolder(agentId, { id: folder.id, name });
+    },
+    [endRename, updateAgentFolder, agentId, folder.id, folder.name]
+  );
+  // Put focus back on the row once it is rendered again (agent folder ids are
+  // stable, so the same row comes back).
+  useEffect(() => {
+    if (renaming || !refocusRowRef.current) return;
+    refocusRowRef.current = false;
+    rowElRef.current?.focus();
+  }, [renaming]);
+
   const isAgentConnectionOver =
     isOver &&
     active?.data.current?.type === "agent-connection" &&
@@ -636,55 +683,73 @@ function AgentFolderNode({
 
   return (
     <div>
-      <ContextMenuRoot>
-        <ContextMenuTrigger asChild>
-          <TreeFolderRow
-            buttonRef={setRowNode}
-            label={folder.name}
-            expanded={expanded}
-            indentPx={treeRowPaddingLeft(depth)}
-            ariaLevel={depth}
-            tabIndex={rowIndex === activeIndex ? 0 : -1}
-            dropOver={isAgentConnectionOver}
-            onClick={() => onToggleFolder(folder.id)}
-            onKeyDown={(e) => {
-              // Row-action keys (#5181): Shift+F10 menu, Delete confirm.
-              const handled = handleTreeRowActionKey(e, {
-                onDelete: (row) => {
-                  deleteFocusRef.current = captureNeighborFocus(
-                    row,
-                    undefined,
-                    agentTreeScope(agentId)
-                  );
-                  setConfirmingDelete(true);
-                },
-              });
-              if (!handled) onTreeKeyDown(e, folder.id);
-            }}
-            onFocus={() => onRowFocus(rowIndex)}
-            aria-keyshortcuts={treeRowKeyShortcuts({ delete: true })}
-          />
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <MenuItem onSelect={() => onNewConnection(folder.id)}>
-            <Plus size={14} />
-            New Connection
-          </MenuItem>
-          <MenuItem onSelect={() => setCreatingSubfolder(true)}>
-            <FolderPlus size={14} />
-            New Subfolder
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem
-            danger
-            onSelect={() => setConfirmingDelete(true)}
-            data-testid="context-agent-folder-delete"
-          >
-            <Trash2 size={14} />
-            Delete Folder
-          </MenuItem>
-        </ContextMenuContent>
-      </ContextMenuRoot>
+      {renaming ? (
+        <InlineFolderInput
+          depth={depth}
+          initialName={folder.name}
+          ariaLabel={`Rename folder ${folder.name}`}
+          validate={validateRename}
+          onConfirm={commitRename}
+          onCancel={(reason: InlineFolderCancelReason) => endRename(reason !== "blur")}
+        />
+      ) : (
+        <ContextMenuRoot>
+          <ContextMenuTrigger asChild>
+            <TreeFolderRow
+              buttonRef={setRowNode}
+              label={folder.name}
+              testId={`agent-folder-toggle-${folder.id}`}
+              expanded={expanded}
+              indentPx={treeRowPaddingLeft(depth)}
+              ariaLevel={depth}
+              tabIndex={rowIndex === activeIndex ? 0 : -1}
+              dropOver={isAgentConnectionOver}
+              onClick={() => onToggleFolder(folder.id)}
+              onKeyDown={(e) => {
+                // Row-action keys (#5181): Shift+F10 menu, F2 rename (#5233),
+                // Delete confirm.
+                const handled = handleTreeRowActionKey(e, {
+                  onRename: startRename,
+                  onDelete: (row) => {
+                    deleteFocusRef.current = captureNeighborFocus(
+                      row,
+                      undefined,
+                      agentTreeScope(agentId)
+                    );
+                    setConfirmingDelete(true);
+                  },
+                });
+                if (!handled) onTreeKeyDown(e, folder.id);
+              }}
+              onFocus={() => onRowFocus(rowIndex)}
+              aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <MenuItem onSelect={() => onNewConnection(folder.id)}>
+              <Plus size={14} />
+              New Connection
+            </MenuItem>
+            <MenuItem onSelect={() => setCreatingSubfolder(true)}>
+              <FolderPlus size={14} />
+              New Subfolder
+            </MenuItem>
+            <MenuItem onSelect={startRename} data-testid="context-agent-folder-rename">
+              <Pencil size={14} />
+              Rename
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              danger
+              onSelect={() => setConfirmingDelete(true)}
+              data-testid="context-agent-folder-delete"
+            >
+              <Trash2 size={14} />
+              Delete Folder
+            </MenuItem>
+          </ContextMenuContent>
+        </ContextMenuRoot>
+      )}
       {confirmingDelete && (
         <ConfirmDeleteDialog
           open

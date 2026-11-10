@@ -57,6 +57,9 @@
 //!
 //! Unix-only, matching `self_update_integration.rs`: the apply path this hook
 //! deliberately fails is Unix-only, so the guarantee is only meaningful here.
+//! The hook's notify / busy-deferral cases are platform-neutral, but each one
+//! cold-starts a `--listen` agent over TCP — the class the Windows leg runs
+//! serially (#2495, #3615); porting them there is #5218.
 
 #![cfg(unix)]
 

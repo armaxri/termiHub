@@ -74,6 +74,8 @@
 }
 
 .transfer-row:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 
@@ -174,6 +176,12 @@
 
 .transfer-row__status--cancelled {
   color: var(--text-muted);
+}
+
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.transfer-row:hover .transfer-row__status--cancelled {
+  color: var(--text-muted-on-selection);
 }
 
 .transfer-row__actions {

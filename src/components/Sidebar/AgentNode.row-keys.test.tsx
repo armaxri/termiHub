@@ -2,7 +2,7 @@
  * Keyboard access to the Remote Agents tree's context actions (#5181): on a
  * focused agent header, agent folder or agent saved connection, Shift+F10 /
  * the ContextMenu key open its context menu, F2 opens the editor (where it is
- * renamed) and Delete / Backspace start the same confirmed delete as the
+ * renamed; a folder is renamed in place, #5233) and Delete / Backspace start the same confirmed delete as the
  * menu. Focus returns to the row on cancel and moves to the neighbouring row
  * after a delete. A focused terminal never sees these keys acted on.
  */
@@ -170,6 +170,24 @@ describe("AgentNode — row action keys (#5181)", () => {
     await flushAsync();
   }
 
+  /**
+   * Confirm a delete whose row stays (the store mock removes nothing) and drain
+   * the 2 s focus-rescue poll it starts. Left on real timers, that poll outlives
+   * the test and, on a slow runner, focuses the next test's agent header the
+   * moment a closing dialog leaves focus on `body`.
+   */
+  function confirmAndDrainFocusRescue() {
+    vi.useFakeTimers();
+    try {
+      act(() => q("confirm-delete-confirm")!.click());
+      act(() => {
+        vi.runAllTimers();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   describe("context menu", () => {
     it("Shift+F10 on a saved connection opens its menu", async () => {
       await render();
@@ -225,11 +243,14 @@ describe("AgentNode — row action keys (#5181)", () => {
       expect(openConnectionEditorTab).toHaveBeenCalledWith(AGENT_ID);
     });
 
-    it("does nothing on a folder (folders have no rename)", async () => {
+    it("renames a folder in place instead of opening an editor (#5233)", async () => {
       await render();
       press(focused(folderRow()), "F2");
       expect(openAgentDefinitionEditorTab).not.toHaveBeenCalled();
       expect(q("confirm-delete-dialog")).toBeNull();
+      // The row is swapped for the (here mocked-out) inline rename input; the
+      // rename itself is covered in AgentNode.folder-rename.test.tsx.
+      expect(folderRow()).toBeNull();
     });
   });
 
@@ -245,7 +266,7 @@ describe("AgentNode — row action keys (#5181)", () => {
       await render();
       await openWith(folderRow(), "Delete");
       expect(q("confirm-delete-dialog")?.textContent).toContain("Servers");
-      act(() => q("confirm-delete-confirm")!.click());
+      confirmAndDrainFocusRescue();
       expect(deleteAgentFolder).toHaveBeenCalledWith(AGENT_ID, "f1");
     });
 
@@ -253,7 +274,7 @@ describe("AgentNode — row action keys (#5181)", () => {
       await render();
       await openWith(headerToggle(), "Delete");
       expect(q("confirm-delete-dialog")?.textContent).toContain("Keys Agent");
-      act(() => q("confirm-delete-confirm")!.click());
+      confirmAndDrainFocusRescue();
       expect(deleteRemoteAgent).toHaveBeenCalledWith(AGENT_ID);
     });
 
@@ -290,7 +311,7 @@ describe("AgentNode — row action keys (#5181)", () => {
   it("announces the keys via aria-keyshortcuts", async () => {
     await render();
     expect(defRow("d1").getAttribute("aria-keyshortcuts")).toBe("Shift+F10 F2 Delete");
-    expect(folderRow().getAttribute("aria-keyshortcuts")).toBe("Shift+F10 Delete");
+    expect(folderRow().getAttribute("aria-keyshortcuts")).toBe("Shift+F10 F2 Delete");
     expect(headerToggle().getAttribute("aria-keyshortcuts")).toBe("Shift+F10 F2 Delete");
   });
 

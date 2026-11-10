@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { RefreshCw, Zap, Ban, Copy, X, Pencil } from "lucide-react";
+import { RefreshCw, Zap, Ban, Copy, X, Pencil, KeyRound } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui";
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/ConnectProgress";
 import { useTabConnectProgress } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { connectDeadlineFiresAt } from "@/store/slices/terminalSessionStateSlice";
 import { buildStages, connectTypeLabel, stepsFor, type StepId } from "@/utils/connectStages";
 import {
   connectTimeoutMessage,
@@ -196,24 +197,29 @@ export function TerminalConnectionOverlay({
   // the REMAINING time rather than restarting the countdown (#1263).
   const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
   const connectDeadline = useAppStore((s) => s.terminalConnectDeadline[tabId]);
-  const deadlineAt = connectDeadline?.at;
   const deadlineKind = connectDeadline?.kind;
+  // While one of this connect's own SSH prompts is open the deadline is paused
+  // (#5243): no countdown is shown and the timer only backs the prompt's own
+  // bound. On resume `at` moves out by the paused time, re-arming the timer.
+  const deadlinePaused = connectDeadline?.pausedAt !== undefined;
+  const deadlineAt = deadlinePaused ? undefined : connectDeadline?.at;
+  const firesAt = connectDeadline ? connectDeadlineFiresAt(connectDeadline) : undefined;
 
   useEffect(() => {
-    if (deadlineAt === undefined || !deadlineKind) return;
+    if (firesAt === undefined || !deadlineKind) return;
     const id = setTimeout(
       () => failTerminalConnectTimeout(tabId, deadlineKind),
-      Math.max(0, deadlineAt - Date.now())
+      Math.max(0, firesAt - Date.now())
     );
     return () => clearTimeout(id);
-  }, [tabId, deadlineAt, deadlineKind, failTerminalConnectTimeout]);
+  }, [tabId, firesAt, deadlineKind, failTerminalConnectTimeout]);
 
   // The ring's start: derived from the stored deadline so it survives a
   // remount; without one (auto-retry, reattach) from when this overlay mounted.
   const mountedAt = useRef(Date.now()).current;
   const startedAt =
-    deadlineAt !== undefined && deadlineKind
-      ? deadlineAt - connectTimeoutMs(deadlineKind)
+    connectDeadline !== undefined && deadlineKind
+      ? connectDeadline.at - connectTimeoutMs(deadlineKind)
       : mountedAt;
 
   const handleCancel = useCallback(() => {
@@ -399,6 +405,7 @@ export function TerminalConnectionOverlay({
   // stage, an agent session, or a single-step type).
   const failedAt: StepId | undefined = viaAgent ? "start" : reported;
   const networkFailure = phase === "failed" && isNetworkErrorKind(errorKind) && error !== "";
+  const hostKeyRejected = phase === "failed" && errorKind === "host-key-rejected";
   const showSteps = failedAt !== undefined || steps.length === 1;
   // Same words as the ConnectProgress defaults; spelled out for the announcement.
   const headings: Record<ConnectProgressPhase, string> = {
@@ -430,15 +437,30 @@ export function TerminalConnectionOverlay({
         }
         actions={
           <>
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<RefreshCw size={14} />}
-              onClick={handleRetry}
-              data-testid="terminal-connection-retry-btn"
-            >
-              Retry
-            </Button>
+            {hostKeyRejected ? (
+              // A deliberate reject is not a failure a retry fixes: offer to
+              // review the key again — reconnecting re-opens the trust prompt —
+              // instead of a Retry that would loop on it (#5185).
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<KeyRound size={14} />}
+                onClick={handleRetry}
+                data-testid="terminal-connection-review-key-btn"
+              >
+                {t("connection.action.reviewKey")}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<RefreshCw size={14} />}
+                onClick={handleRetry}
+                data-testid="terminal-connection-retry-btn"
+              >
+                Retry
+              </Button>
+            )}
             {connectionId && !viaAgent && phase !== "aborted" && (
               <Button
                 size="sm"

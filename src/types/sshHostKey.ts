@@ -13,3 +13,10 @@
  * stay unchanged.
  */
 export type { SshHostKeyPromptEvent as SshHostKeyPromptPayload } from "./generated/SshHostKeyPromptEvent";
+
+/**
+ * Payload of the `ssh-host-key-prompt-closed` event (#5185): the connect that
+ * raised prompt `prompt_id` was aborted or timed out before anybody answered,
+ * so the dialog closes. Generated from the Rust `SshHostKeyPromptClosedEvent`.
+ */
+export type { SshHostKeyPromptClosedEvent as SshHostKeyPromptClosedPayload } from "./generated/SshHostKeyPromptClosedEvent";
