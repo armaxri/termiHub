@@ -196,11 +196,14 @@ class TestCredentialStore(
         self.wait(lambda: self.find_tab(name), what="the unlocked SSH tab")
         self.wait(self.has_terminal, what="the SSH terminal session after unlock")
 
-    def test_stale_stored_credential_is_recovered(self):
-        # A saved-but-wrong password is detected on the next connect (auth fails),
-        # cleared, and the user is re-prompted; the corrected password then connects.
+    def test_typo_is_never_saved(self):
+        # #5156: a typed password is saved only once its connect succeeds. A wrong
+        # password (the save box defaults on) fails to authenticate and is never
+        # written, so the next connect prompts afresh — no "saved password was
+        # rejected" notice — and the correct password, once connected, is saved
+        # and reused without a prompt.
         self.setup_master_password_store(MASTER_PASSWORD)
-        name = unique_name("cred-stale")
+        name = unique_name("cred-typo")
         self.create_ssh_connection(
             name,
             host=SSH_HOST,
@@ -210,8 +213,7 @@ class TestCredentialStore(
         )
         self.require_stable_connection(name)
 
-        # First connect stores a wrong password (the save box defaults on); the
-        # session fails to authenticate, leaving a (disconnected/error) tab.
+        # First connect with a typo: the session fails to authenticate.
         self.connect_connection(name)
         self.handle_password_prompt("definitely-the-wrong-password")
         self.accept_host_key_prompt()
@@ -219,13 +221,22 @@ class TestCredentialStore(
         self.close_tab(bad["id"])
         self.wait(lambda: self.find_tab(name) is None, what="the failed tab to close")
 
-        # Reconnect: the stale credential is tried, auth fails, it is cleared, and
-        # the password prompt is raised again — answer it correctly this time.
+        # Reconnect: nothing was saved, so this is an ordinary first-time prompt.
         self.connect_connection(name)
+        self.wait(self.password_prompt_open, what="the password prompt after the typo")
+        assert not self.driver.exists("password-prompt-notice")
         self.handle_password_prompt()
         self.accept_host_key_prompt()
-        self.wait(lambda: self.find_tab(name), what="the recovered SSH tab")
-        self.wait(self.has_terminal, what="the SSH terminal session after recovery")
+        good = self.wait(lambda: self.find_tab(name), what="the corrected SSH tab")
+        self.wait(self.has_terminal, what="the SSH terminal session after correcting")
+        self.close_tab(good["id"])
+        self.wait(lambda: self.find_tab(name) is None, what="the corrected tab to close")
+
+        # The correct password was saved once it connected: no prompt now.
+        self.connect_connection(name)
+        self.wait(lambda: self.find_tab(name), what="the reconnected SSH tab")
+        self.wait(self.has_terminal, what="the reconnected SSH terminal session")
+        assert not self.password_prompt_open()
 
     def test_disabled_save_does_not_store_and_reprompts(self):
         # The inverse of test_saved_password_is_reused_on_reconnect, and the last

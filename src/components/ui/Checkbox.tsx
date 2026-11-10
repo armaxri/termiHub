@@ -29,6 +29,8 @@ export interface CheckboxProps {
   disabled?: boolean;
   /** Accessible label (use when there is no associated visible `<label>`). */
   "aria-label"?: string;
+  /** Id of an element that describes the checkbox (a hint line). */
+  "aria-describedby"?: string;
   /** Associates the checkbox with a `<label htmlFor>`. */
   id?: string;
   /** Test hook forwarded to the checkbox root. */

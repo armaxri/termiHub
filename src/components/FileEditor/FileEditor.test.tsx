@@ -671,11 +671,14 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
    * Mock the elevated backend and capture credential-store calls. `resolvePw`
    * seeds a stored sudo password returned by `resolve_credential`.
    */
-  function mockBackend(opts: { resolvePw?: string | null; unlocked?: boolean } = {}): {
+  function mockBackend(
+    opts: { resolvePw?: string | null; unlocked?: boolean; elevatedResults?: unknown[] } = {}
+  ): {
     elevatedCalls: Array<Record<string, unknown>>;
     credentialCalls: Array<{ cmd: string; args: Record<string, unknown> }>;
   } {
     const { resolvePw = null } = opts;
+    const elevatedQueue = [...(opts.elevatedResults ?? [])];
     const elevatedCalls: Array<Record<string, unknown>> = [];
     const credentialCalls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     mockedInvoke.mockImplementation((cmd, args) => {
@@ -684,7 +687,7 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
       if (cmd === "session_check_writable") return Promise.resolve("readOnly");
       if (cmd === "session_write_file_elevated") {
         elevatedCalls.push((args ?? {}) as Record<string, unknown>);
-        return Promise.resolve({ kind: "success" });
+        return Promise.resolve(elevatedQueue.shift() ?? { kind: "success" });
       }
       if (cmd === "store_credential") {
         credentialCalls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
@@ -914,6 +917,31 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
     expect(elevatedCalls[0].sudoPassword).toBe("stored-pw");
     const resolve = credentialCalls.find((c) => c.cmd === "resolve_credential");
     expect(resolve?.args.connectionId).toBe("pi@raspberrypi:22");
+  });
+
+  it("keeps a rejected saved sudo password and prompts instead (#5156)", async () => {
+    const { elevatedCalls, credentialCalls } = mockBackend({
+      resolvePw: "stored-pw",
+      elevatedResults: [{ kind: "incorrectPassword" }],
+    });
+    seedOwningTab();
+    render(SSH_META);
+    await flush();
+    unlockCredentialStore();
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // The stored password was tried and rejected: the prompt opens, and the
+    // saved password is never deleted.
+    expect(elevatedCalls).toHaveLength(1);
+    expect(docQuery("sudo-prompt-dialog")).not.toBeNull();
+    expect(credentialCalls.some((c) => c.cmd === "remove_credential")).toBe(false);
   });
 });
 

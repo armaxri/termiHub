@@ -253,3 +253,26 @@ describe("appStore password prompt queue (#4312)", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 });
+
+describe("password prompt — rejected saved secret (#5156)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  it("mirrors the head's savedRejected flag and resets it for the next request", () => {
+    track(
+      useAppStore.getState().requestPassword("a.example", "alice", "rejected", "password", {
+        savedRejected: true,
+      })
+    );
+    void useAppStore.getState().requestPassword("b.example", "bob");
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(true);
+
+    useAppStore.getState().submitPassword("pw", true);
+    // The next queued prompt is an ordinary one.
+    expect(useAppStore.getState().passwordPromptHost).toBe("b.example");
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(false);
+    useAppStore.getState().dismissPasswordPrompt();
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(false);
+  });
+});

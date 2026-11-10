@@ -46,6 +46,13 @@ export interface PasswordPromptOptions {
    */
   label?: string;
   /**
+   * The connection's saved secret was just rejected by the server (#5156). The
+   * saved secret is kept, never deleted; the prompt's Save control becomes
+   * "Replace saved password", and a submit's `shouldSave` then means "replace
+   * the saved secret once this connect succeeds".
+   */
+  savedRejected?: boolean;
+  /**
    * Aborts the request when the owning connect is canceled or its tab closes
    * (#4312). A queued or on-screen request is removed and its promise rejects
    * with an `AbortError` (see {@link isPasswordPromptAbort}); a request that
@@ -85,6 +92,8 @@ export interface PasswordPromptRequest {
   kind: PasswordPromptKind;
   allowSave: boolean;
   label: string;
+  /** See {@link PasswordPromptOptions.savedRejected}. */
+  savedRejected: boolean;
 }
 
 /** A queued request together with the private handles that settle it. */
@@ -136,6 +145,8 @@ export interface PasswordPromptSlice {
   passwordPromptAllowSave: boolean;
   /** Connection name of the prompt on screen, or `""` (#4312). */
   passwordPromptLabel: string;
+  /** Whether the prompt on screen follows a rejected saved secret (#5156). */
+  passwordPromptSavedRejected: boolean;
   requestPassword: RequestPassword;
   /** Answers the prompt on screen and shows the next queued one, if any. */
   submitPassword: (password: string, shouldSave?: boolean) => void;
@@ -155,6 +166,7 @@ function headFields(queue: PendingPasswordPrompt[]) {
     passwordPromptKind: head?.kind ?? ("password" as PasswordPromptKind),
     passwordPromptAllowSave: head?.allowSave ?? true,
     passwordPromptLabel: head?.label ?? "",
+    passwordPromptSavedRejected: head?.savedRejected ?? false,
   };
 }
 
@@ -200,6 +212,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
           kind,
           allowSave: options.allowSave ?? true,
           label: options.label ?? "",
+          savedRejected: options.savedRejected ?? false,
           resolve,
           reject,
           detach: () => signal?.removeEventListener("abort", onAbort),

@@ -45,6 +45,8 @@ import { useAppStore } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
 import {
   authFailed,
+  connected,
+  connecting,
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
@@ -214,7 +216,7 @@ describe("authFailed overlay — credential re-entry", () => {
     expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(1);
   });
 
-  it("saves to the credential store under the connection key when Save is ticked", async () => {
+  it("saves under the connection key only once the reconnect succeeds (#5156)", async () => {
     const tabId = sshTab(PASSWORD, { connectionId: "conn-1" });
     await renderAuthFailedOverlay(tabId);
     click("terminal-credential-reentry-open-btn");
@@ -224,8 +226,53 @@ describe("authFailed overlay — credential re-entry", () => {
     typeInto("terminal-credential-reentry-secret", "n3w-pw");
     click("terminal-credential-reentry-submit");
     await flush();
+    // Not proven yet: the saved secret is untouched while the reconnect runs.
+    expect(storeCredentialMock).not.toHaveBeenCalled();
 
+    harness.transport.setSession(tabId, connecting());
+    await flushSessionRegion();
+    expect(storeCredentialMock).not.toHaveBeenCalled();
+    harness.transport.setSession(tabId, connected());
+    await flushSessionRegion();
+    await flush();
     expect(storeCredentialMock).toHaveBeenCalledWith("conn-1", "password", "n3w-pw", null);
+  });
+
+  it("reports a save that fails after the reconnect succeeds (#5156)", async () => {
+    const { toast } = await import("@/components/ui");
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("err");
+    storeCredentialMock.mockRejectedValueOnce(new Error("keychain locked"));
+    const tabId = sshTab(PASSWORD, { connectionId: "conn-1" });
+    await renderAuthFailedOverlay(tabId);
+    click("terminal-credential-reentry-open-btn");
+    typeInto("terminal-credential-reentry-secret", "n3w-pw");
+    click("terminal-credential-reentry-submit");
+    await flush();
+    expect(errorToast).not.toHaveBeenCalled();
+
+    harness.transport.setSession(tabId, connected());
+    await flushSessionRegion();
+    await flush();
+    expect(errorToast).toHaveBeenCalledWith(
+      "The credential could not be saved. It is used for this connection attempt only."
+    );
+    errorToast.mockRestore();
+  });
+
+  it("never saves a re-entered secret the server rejects again (#5156)", async () => {
+    const tabId = sshTab(PASSWORD, { connectionId: "conn-1" });
+    await renderAuthFailedOverlay(tabId);
+    click("terminal-credential-reentry-open-btn");
+    typeInto("terminal-credential-reentry-secret", "typo-pw");
+    click("terminal-credential-reentry-submit");
+    await flush();
+
+    harness.transport.setSession(tabId, connecting());
+    await flushSessionRegion();
+    harness.transport.setSession(tabId, authFailed());
+    await flushSessionRegion();
+    await flush();
+    expect(storeCredentialMock).not.toHaveBeenCalled();
   });
 
   it("stores a key passphrase as key_passphrase", async () => {
@@ -239,7 +286,11 @@ describe("authFailed overlay — credential re-entry", () => {
     typeInto("terminal-credential-reentry-secret", "phrase");
     click("terminal-credential-reentry-submit");
     await flush();
+    expect(storeCredentialMock).not.toHaveBeenCalled();
 
+    harness.transport.setSession(tabId, connected());
+    await flushSessionRegion();
+    await flush();
     expect(storeCredentialMock).toHaveBeenCalledWith("conn-1", "key_passphrase", "phrase", null);
   });
 
@@ -254,6 +305,9 @@ describe("authFailed overlay — credential re-entry", () => {
     click("terminal-credential-reentry-submit");
     await flush();
 
+    harness.transport.setSession(tabId, connected());
+    await flushSessionRegion();
+    await flush();
     expect(storeCredentialMock).not.toHaveBeenCalled();
     expect(tabSettings(tabId).password).toBe("once");
     expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(1);

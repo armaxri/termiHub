@@ -1739,10 +1739,11 @@ starts without secrets), and a file that lost its id (rewritten by another tool)
 read-only file keeps a locally remembered id.
 
 Every place that reads, writes or deletes a per-connection secret uses the scoped owner id: the
-`store_credential` / `resolve_credential` / `remove_credential` commands (which take the
-connection's `sourceFile`), saving, renaming, moving (including between files, which changes the
-scope even when the id stays) and deleting connections, the jump-host resolver, and the vault /
-backup owner list.
+`store_credential` / `resolve_credential` commands (which take the connection's `sourceFile`),
+saving, renaming, moving (including between files, which changes the scope even when the id
+stays) and deleting connections, the jump-host resolver, and the vault / backup owner list. There
+is deliberately no command to delete a single connection secret: a secret the server rejects is
+kept until the user replaces it with one that connects (#5156).
 
 **Migration.** Secrets saved before #3591 sit under the bare connection id. The first time an
 external file is seen with the store unlocked (at startup for the OS keychain, on unlock for the

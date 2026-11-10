@@ -69,13 +69,12 @@ import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { frontendError, frontendLog } from "@/utils/frontendLog";
+import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import {
   AgentSessionInfo,
   AgentDefinitionInfo,
   AgentFolderInfo,
-  removeCredential,
   storeCredential,
   cancelConnectAgent,
   listAgentHosts,
@@ -1029,17 +1028,9 @@ export function AgentNode({
         // non-auth branches. A transport error that merely mentions "auth
         // failed" must not delete a valid credential.
         if (resolution.usedStoredCredential && isAuthFailure(err)) {
-          // A failed removal leaves a known-bad stored credential in place — log
-          // it to the LogViewer instead of swallowing it (WA-FE-005). The flow
-          // still re-prompts for a password below.
-          if (!sharedCredential) {
-            await removeCredential(agent.id, resolution.credentialType).catch((err) => {
-              frontendError(
-                "agent_node",
-                `Failed to remove stale credential for agent ${agent.id}: ${errorMessage(err)}`
-              );
-            });
-          }
+          // The saved password is KEPT (#5156): a rejection can be transient,
+          // so only the user replaces it — the re-prompt offers "Replace saved
+          // password", written below only after the retry connects.
           const retry = sharedCredential
             ? await requestPassword(
                 agent.config.host,
@@ -1051,16 +1042,16 @@ export function AgentNode({
             : await requestPassword(
                 agent.config.host,
                 agent.config.username,
-                "",
+                "The saved password was rejected. It is kept — enter the password to connect.",
                 "password",
-                promptLabel
+                { savedRejected: true, ...promptLabel }
               );
           if (!retry || !retry.password) {
             setConnecting(false);
             return;
           }
           await connectRemoteAgent(agent.id, retry.password);
-          // Persist the retry password if the user opted in
+          // Connected: replace the saved password if the user opted in.
           if (!sharedCredential && retry.shouldSave) {
             await storeCredential(agent.id, "password", retry.password).catch((err) => {
               frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);

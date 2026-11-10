@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId } from "react";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox } from "@/components/ui";
@@ -13,6 +13,13 @@ import { isImeComposing } from "@/utils/imeComposition";
  * for future connections without having to re-enter it. A caller that never
  * persists the secret (Test Connection, #3316) opts out via
  * `requestPassword(..., { allowSave: false })`, which hides the checkbox.
+ *
+ * Saving happens only after the connect succeeds (#5156): a ticked box asks the
+ * caller to persist the secret once the session is established, so a typo is
+ * never saved. When the connection's saved secret was just rejected
+ * (`savedRejected`), the saved secret is kept and the box reads "Replace saved
+ * password" instead — ticked, a new secret replaces it once it connects;
+ * unticked, the typed one is used for this connect only.
  *
  * Concurrent requests queue (#4312): the dialog shows the oldest one, titled
  * with the connection it is for, says how many more are waiting, and resets its
@@ -30,6 +37,7 @@ export function PasswordPrompt() {
 
   const allowSave = useAppStore((s) => s.passwordPromptAllowSave);
   const label = useAppStore((s) => s.passwordPromptLabel);
+  const savedRejected = useAppStore((s) => s.passwordPromptSavedRejected);
   const requestId = useAppStore((s) => s.passwordPromptQueue[0]?.id ?? null);
   const waiting = useAppStore((s) => Math.max(0, s.passwordPromptQueue.length - 1));
 
@@ -47,8 +55,13 @@ export function PasswordPrompt() {
     : `Enter password for ${username}@${host}`;
   const inputPlaceholder = isPassphrase ? "Passphrase" : "Password";
   const inputAriaLabel = isPassphrase ? "SSH key passphrase" : "SSH password";
-  const saveLabel = isPassphrase ? "Save passphrase" : "Save password";
+  const secretNoun = isPassphrase ? "passphrase" : "password";
+  const saveLabel = savedRejected ? `Replace saved ${secretNoun}` : `Save ${secretNoun}`;
+  const saveHint = savedRejected
+    ? `The saved ${secretNoun} is kept. Ticked, it is replaced once this one connects.`
+    : `Saved once the connection succeeds.`;
 
+  const saveHintId = useId();
   const [password, setPassword] = useState("");
   const [savePassword, setSavePassword] = useState(showSave);
   const [shownRequestId, setShownRequestId] = useState<number | null>(null);
@@ -139,10 +152,20 @@ export function PasswordPrompt() {
               checked={savePassword}
               onCheckedChange={setSavePassword}
               aria-label={saveLabel}
+              aria-describedby={saveHintId}
               data-testid="password-prompt-save-checkbox"
             />
             <span>{saveLabel}</span>
           </label>
+        )}
+        {showSave && (
+          <p
+            id={saveHintId}
+            className="password-prompt__save-hint"
+            data-testid="password-prompt-save-hint"
+          >
+            {saveHint}
+          </p>
         )}
       </div>
     </Modal>

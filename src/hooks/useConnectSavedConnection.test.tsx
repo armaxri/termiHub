@@ -4,7 +4,7 @@
  * This hook is the extracted saved-connection connect flow that previously
  * lived inline in `ConnectionList` (#1484). These tests pin the credential
  * behavior — password/passphrase prompting (#885), inline-password shortcut
- * (#963), stale-credential clearing, and store opt-in — so the extraction and
+ * (#963), keeping a rejected credential (#5156), and save-after-connect opt-in — so the extraction and
  * any future refactor stay behavior-identical to the sidebar's connect path.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -16,17 +16,24 @@ import type { SavedConnection, ConnectionTypeInfo } from "@/types/connection";
 import {
   resolveCredential,
   createTerminal,
-  removeCredential,
   storeCredential,
   isSshKeyEncrypted,
 } from "@/services/api";
 import { frontendError } from "@/utils/frontendLog";
 import { toast } from "@/components/ui";
 import { backendPlugin } from "@/test/pluginFixtures";
+import {
+  authFailed,
+  connected,
+  connecting,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
+
+const sessionRegion = installSessionLifecycleHarness();
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),
-  removeCredential: vi.fn(() => Promise.resolve()),
   storeCredential: vi.fn(() => Promise.resolve()),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
   // Default: key files are encrypted. Tests override per-case.
@@ -40,7 +47,6 @@ vi.mock("@/utils/frontendLog", () => ({
 
 const mockedResolveCredential = vi.mocked(resolveCredential);
 const mockedCreateTerminal = vi.mocked(createTerminal);
-const mockedRemoveCredential = vi.mocked(removeCredential);
 const mockedStoreCredential = vi.mocked(storeCredential);
 const mockedIsSshKeyEncrypted = vi.mocked(isSshKeyEncrypted);
 
@@ -260,25 +266,81 @@ describe("useConnectSavedConnection", () => {
     expect(addTabSpy).toHaveBeenCalledOnce();
   });
 
-  it("clears a stale credential and prompts when the pre-connect auth fails", async () => {
-    mockedResolveCredential.mockResolvedValue("stale-secret");
+  // #5156: a rejected saved secret is KEPT — never deleted before the user
+  // decides — and the re-prompt offers to replace it.
+  it("keeps a rejected stored credential and re-prompts with the replace choice (#5156)", async () => {
+    mockedResolveCredential.mockResolvedValue("saved-secret");
     // The backend marks a genuine auth rejection with the typed, locale-
-    // independent code (I18N-001) — the discard gates on it, not on English text.
+    // independent code (I18N-001).
     mockedCreateTerminal.mockRejectedValue(
       new Error("[thub-code:auth_failed] Authentication failed")
     );
     const { connect } = await renderHook();
     await act(async () => {
-      void connect(makeSshConn("pw-stale", "password"));
+      void connect(makeSshConn("pw-rejected", "password"));
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-stale", "password", undefined);
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(true);
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
   });
 
-  it("clears only the external connection's own stale credential (#3591)", async () => {
-    mockedResolveCredential.mockResolvedValue("stale-secret");
+  it("reconnects with the same kept secret after a transient rejection (#5156)", async () => {
+    mockedResolveCredential.mockResolvedValue("saved-secret");
+    mockedCreateTerminal
+      .mockRejectedValueOnce(new Error("[thub-code:auth_failed] Authentication failed"))
+      .mockResolvedValueOnce("session-2");
+    const { connect } = await renderHook();
+    const conn = makeSshConn("pw-transient", "password");
+    let first: Promise<void> | undefined;
+    await act(async () => {
+      first = connect(conn);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The user dismisses the re-prompt: nothing is changed in the store.
+    await act(async () => {
+      useAppStore.getState().dismissPasswordPrompt();
+      await first;
+    });
+    expect(addTabSpy).not.toHaveBeenCalled();
+
+    // The next connect reads the same saved secret — still there — and succeeds.
+    await act(async () => {
+      await connect(conn);
+    });
+    expect(mockedCreateTerminal).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ password: "saved-secret" }),
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "pw-transient"
+    );
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "SSH pw-transient",
+      "ssh",
+      expect.anything(),
+      expect.objectContaining({ sessionId: "session-2" })
+    );
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+  });
+
+  it("resolves the external connection's own scoped credential (#3591)", async () => {
+    mockedResolveCredential.mockResolvedValue("saved-secret");
+    const { connect } = await renderHook();
+    const conn = { ...makeSshConn("x", "password"), sourceFile: "/team.json" };
+    await act(async () => {
+      await connect(conn);
+    });
+    expect(mockedResolveCredential).toHaveBeenCalledWith("x", "password", "/team.json");
+  });
+
+  it("replaces a rejected secret only once the new one connects (#5156, #3591)", async () => {
+    mockedResolveCredential.mockResolvedValue("saved-secret");
     mockedCreateTerminal.mockRejectedValue(
       new Error("[thub-code:auth_failed] Authentication failed")
     );
@@ -289,39 +351,76 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedResolveCredential).toHaveBeenCalledWith("x", "password", "/team.json");
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("x", "password", "/team.json");
+    await act(async () => {
+      useAppStore.getState().submitPassword("new-secret", true);
+      await Promise.resolve();
+    });
+    await flushSessionRegion();
+    expect(addTabSpy).toHaveBeenCalledOnce();
+    // The tab is connecting: the saved secret is not replaced yet.
+    sessionRegion.transport.setSession("tab-1", connecting());
+    await flushSessionRegion();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+
+    sessionRegion.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    expect(mockedStoreCredential).toHaveBeenCalledWith("x", "password", "new-secret", "/team.json");
   });
 
-  it("surfaces (not swallows) a failed stale-credential removal to the LogViewer (WA-FE-005)", async () => {
-    mockedResolveCredential.mockResolvedValue("stale-secret");
+  it("keeps the saved secret when the replace box is unticked (#5156)", async () => {
+    mockedResolveCredential.mockResolvedValue("saved-secret");
     mockedCreateTerminal.mockRejectedValue(
       new Error("[thub-code:auth_failed] Authentication failed")
     );
-    // The stale-credential clear itself fails — previously this was
-    // `.catch(() => {})` and vanished. It must now land in the LogViewer.
-    mockedRemoveCredential.mockRejectedValueOnce(new Error("keychain locked"));
     const { connect } = await renderHook();
     await act(async () => {
-      void connect(makeSshConn("pw-clearfail", "password"));
-      await Promise.resolve();
+      void connect(makeSshConn("pw-keep", "password"));
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-clearfail", "password", undefined);
-    expect(vi.mocked(frontendError)).toHaveBeenCalledWith(
-      "connection_list",
-      expect.stringContaining("Failed to remove stale password credential for pw-clearfail")
+    await act(async () => {
+      useAppStore.getState().submitPassword("once-secret", false);
+      await Promise.resolve();
+    });
+    sessionRegion.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    // The typed secret is used for this connect only.
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "SSH pw-keep",
+      "ssh",
+      expect.objectContaining({
+        config: expect.objectContaining({ password: "once-secret" }),
+      }),
+      expect.anything()
     );
-    // The connect flow still re-prompts despite the clear failure.
-    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
   });
 
-  it("clears a stale credential on a non-English auth failure (typed signal, I18N-001)", async () => {
-    mockedResolveCredential.mockResolvedValue("stale-secret");
+  it("logs (not swallows) a save that fails after connecting (WA-FE-005)", async () => {
+    mockedStoreCredential.mockRejectedValueOnce(new Error("keychain locked"));
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-savefail", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      useAppStore.getState().submitPassword("typed", true);
+      await Promise.resolve();
+    });
+    sessionRegion.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    await flushSessionRegion();
+    expect(vi.mocked(frontendError)).toHaveBeenCalledWith(
+      "connection_list",
+      expect.stringContaining("Failed to store the password credential for pw-savefail")
+    );
+  });
+
+  it("keeps a stored credential on a non-English auth failure (typed signal, I18N-001)", async () => {
+    mockedResolveCredential.mockResolvedValue("saved-secret");
     // A localized/reworded remote message that no English substring test would
-    // match — the typed code still drives the destructive discard. This would
-    // FAIL against the old `raw.includes("auth failed")` gate.
+    // match — the typed code still drives the rejection handling.
     mockedCreateTerminal.mockRejectedValue(
       new Error("[thub-code:auth_failed] Authentifizierung fehlgeschlagen")
     );
@@ -331,8 +430,8 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-i18n", "password", undefined);
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    expect(useAppStore.getState().passwordPromptSavedRejected).toBe(true);
   });
 
   it("never discards a valid credential for a non-auth error mentioning 'auth failed'", async () => {
@@ -350,7 +449,7 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
     // Non-auth failure: the tab is opened to surface the error, no re-prompt.
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
     expect(addTabSpy).toHaveBeenCalledOnce();
@@ -369,7 +468,7 @@ describe("useConnectSavedConnection", () => {
       await connect(makeSshConn("pw-otp", "password"));
     });
     // The saved password was accepted — never discarded, never re-prompted.
-    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
     expect(errorToastSpy).toHaveBeenCalledWith("Verification code rejected — try again.");
     // The tab retries WITH the saved password, so only a fresh code is asked.
@@ -414,7 +513,7 @@ describe("useConnectSavedConnection", () => {
     );
   });
 
-  it("stores the passphrase as key_passphrase when the user opts in for key auth", async () => {
+  it("stores the passphrase as key_passphrase only once the connect succeeds (#5156)", async () => {
     const { connect } = await renderHook();
     await act(async () => {
       void connect(makeSshConn("key-store", "key", true));
@@ -425,12 +524,37 @@ describe("useConnectSavedConnection", () => {
       useAppStore.getState().submitPassword("my-passphrase", true);
       await Promise.resolve();
     });
+    // Typed but not yet proven: nothing is saved before the session is up.
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
+    sessionRegion.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
     expect(mockedStoreCredential).toHaveBeenCalledWith(
       "key-store",
       "key_passphrase",
       "my-passphrase",
       undefined
     );
+  });
+
+  it("never saves a typed password the server rejects (a typo, #5156)", async () => {
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-typo", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      useAppStore.getState().submitPassword("typo", true);
+      await Promise.resolve();
+    });
+    sessionRegion.transport.setSession("tab-1", connecting());
+    await flushSessionRegion();
+    sessionRegion.transport.setSession("tab-1", authFailed());
+    await flushSessionRegion();
+    // A later success of a different attempt cannot resurrect the typo.
+    sessionRegion.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
   });
 
   // UX-011: the pre-connect window (unlock → resolve → blocking pre-connect
@@ -482,10 +606,9 @@ describe("useConnectSavedConnection", () => {
     expect(addTabSpy).not.toHaveBeenCalled();
   });
 
-  // UX-013: a rejected stored credential is cleared and the re-prompt carries
-  // an explanatory notice — surfaced IN the prompt, not as a separate error
-  // toast. The destructive clear still gates on the typed auth-failure code
-  // (I18N-001), never on English text.
+  // UX-013: a rejected stored credential is kept (#5156) and the re-prompt
+  // carries an explanatory notice — surfaced IN the prompt, not as a separate
+  // error toast. The rejection gates on the typed auth-failure code (I18N-001).
   it("re-prompts with an explanatory notice when a stored credential is rejected (UX-013)", async () => {
     mockedResolveCredential.mockResolvedValue("stale-secret");
     mockedCreateTerminal.mockRejectedValue(
@@ -498,10 +621,9 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-reprompt", "password", undefined);
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
     expect(useAppStore.getState().passwordPromptNotice).toBe(
-      "Saved password was rejected — please re-enter."
+      "The saved password was rejected. It is kept — enter the password to connect."
     );
     // No separate mid-connect error toast — the reason rides inside the prompt.
     expect(infoToastSpy).not.toHaveBeenCalled();
@@ -531,7 +653,7 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
     expect(useAppStore.getState().passwordPromptNotice).toBe("");
     // Non-auth failure opens the tab to surface the error; no re-prompt.
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);

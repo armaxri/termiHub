@@ -247,6 +247,96 @@ describe("PasswordPrompt", () => {
     await expect(resolved).resolves.toEqual({ password: "", shouldSave: false });
   });
 
+  describe("rejected saved secret (#5156)", () => {
+    function typePassword(value: string) {
+      const input = query("password-prompt-input") as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      act(() => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+
+    beforeEach(() => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      });
+    });
+
+    it("offers 'Replace saved password', ticked by default, and says the old one is kept", async () => {
+      await act(async () => {
+        useAppStore.getState().requestPassword("example.com", "alice", "rejected", "password", {
+          savedRejected: true,
+        });
+      });
+      render();
+
+      expect(query("password-prompt-save-label")?.textContent).toBe("Replace saved password");
+      expect(query("password-prompt-save-checkbox")?.getAttribute("aria-checked")).toBe("true");
+      const hint = query("password-prompt-save-hint");
+      expect(hint?.textContent).toContain("The saved password is kept");
+      // The hint describes the checkbox for assistive tech.
+      expect(query("password-prompt-save-checkbox")?.getAttribute("aria-describedby")).toBe(
+        hint?.id
+      );
+    });
+
+    it("words the replace choice for a key passphrase", async () => {
+      await act(async () => {
+        useAppStore
+          .getState()
+          .requestPassword("example.com", "alice", "rejected", "key_passphrase", {
+            savedRejected: true,
+          });
+      });
+      render();
+
+      expect(query("password-prompt-save-label")?.textContent).toBe("Replace saved passphrase");
+    });
+
+    it("answers shouldSave=true when the user replaces the saved secret", async () => {
+      let answer: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
+      await act(async () => {
+        answer = useAppStore
+          .getState()
+          .requestPassword("example.com", "alice", "rejected", "password", { savedRejected: true });
+      });
+      render();
+      typePassword("new-pw");
+      act(() => query("password-prompt-connect")!.click());
+
+      await expect(answer).resolves.toEqual({ password: "new-pw", shouldSave: true });
+    });
+
+    it("answers shouldSave=false when the user keeps the saved secret", async () => {
+      let answer: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
+      await act(async () => {
+        answer = useAppStore
+          .getState()
+          .requestPassword("example.com", "alice", "rejected", "password", { savedRejected: true });
+      });
+      render();
+      typePassword("once-pw");
+      act(() => query("password-prompt-save-checkbox")!.click());
+      expect(query("password-prompt-save-checkbox")?.getAttribute("aria-checked")).toBe("false");
+      act(() => query("password-prompt-connect")!.click());
+
+      await expect(answer).resolves.toEqual({ password: "once-pw", shouldSave: false });
+    });
+
+    it("keeps the plain 'Save password' wording for a first-time prompt", async () => {
+      await act(async () => {
+        useAppStore.getState().requestPassword("example.com", "alice");
+      });
+      render();
+
+      expect(query("password-prompt-save-label")?.textContent).toBe("Save password");
+      expect(query("password-prompt-save-hint")?.textContent).toBe(
+        "Saved once the connection succeeds."
+      );
+    });
+  });
+
   it("keeps the typed password when the store turns active while the prompt is open (#4995)", async () => {
     let answer: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
     await act(async () => {

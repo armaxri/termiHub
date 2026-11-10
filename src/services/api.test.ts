@@ -87,7 +87,6 @@ import {
   switchCredentialStore,
   resolveCredential,
   storeCredential,
-  removeCredential,
   sessionMonitoringOpen,
 } from "./api";
 import { holdSessionInput } from "./sessionInputGate";
@@ -1228,7 +1227,6 @@ describe("api service", () => {
 
       await storeCredential("x", "password", "secret", "/team/conns.json");
       await resolveCredential("x", "password", "/team/conns.json");
-      await removeCredential("x", "password", "/team/conns.json");
 
       const scope = {
         connectionId: "x",
@@ -1237,19 +1235,6 @@ describe("api service", () => {
       };
       expect(mockedInvoke).toHaveBeenCalledWith("store_credential", { ...scope, value: "secret" });
       expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", scope);
-      expect(mockedInvoke).toHaveBeenCalledWith("remove_credential", scope);
-    });
-
-    it("removeCredential invokes with correct parameters", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await removeCredential("conn-1", "password");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("remove_credential", {
-        connectionId: "conn-1",
-        credentialType: "password",
-        sourceFile: null,
-      });
     });
   });
 
