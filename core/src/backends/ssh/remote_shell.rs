@@ -51,10 +51,12 @@
 //! the probe as `cmd.exe /c <probe>` when cmd.exe is the DefaultShell, and
 //! cmd.exe runs the user's AutoRun before it: an AutoRun with side effects
 //! (a log line, a file) would run once more per session. So there the
-//! connector reads the session shell's own first output for cmd.exe's banner
-//! ([`cmd_banner_verdict`]) and runs the exec probe only when the banner does
-//! not show: a PowerShell, Git Bash or fish DefaultShell, whose `-c` runs no
-//! cmd AutoRun.
+//! connector reads the session shell's own first output for its banner
+//! ([`shell_banner_verdict`]) and runs the exec probe only when no banner it
+//! knows shows: a Git Bash or fish DefaultShell, say, whose `-c` runs no cmd
+//! AutoRun. A PowerShell DefaultShell is told by its banner too (#5147): its
+//! exec channel runs as `powershell -c <probe>`, which loads the user's
+//! profile once more, the same side effect.
 //!
 //! `%OS%` stays literal under PowerShell on every OS, so it cannot tell a
 //! Windows host from a Unix one there; `$PSHOME` can: it is an absolute POSIX
@@ -238,20 +240,21 @@ pub fn is_win32_openssh(server_id: &str) -> bool {
     server_id.contains("OpenSSH_for_Windows")
 }
 
-/// How long a Win32-OpenSSH session's first output is read for cmd.exe's
-/// banner before the exec probe runs instead (#5134). cmd.exe prints it as
-/// soon as it starts; a host this slow still gets the right answer, from the
-/// probe.
-pub const CMD_BANNER_WAIT: Duration = Duration::from_secs(10);
+/// How long a Win32-OpenSSH session's first output is read for its shell's
+/// banner before the exec probe runs instead (#5134, #5147). cmd.exe and
+/// PowerShell print theirs as soon as they start (within 0.1-0.5 s on the CI
+/// host); a host this slow still gets the right answer, from the probe.
+pub const SHELL_BANNER_WAIT: Duration = Duration::from_secs(10);
 
-/// What a Win32-OpenSSH shell's first output says (#5134): see
-/// [`cmd_banner_verdict`].
+/// What a Win32-OpenSSH shell's first output says (#5134, #5147): see
+/// [`shell_banner_verdict`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BannerVerdict {
-    /// cmd.exe's banner (`Microsoft Windows [Version 10.0...]`) is there.
-    Cmd,
-    /// The output rules cmd.exe out: the exec probe tells the shell.
-    NotCmd,
+    /// The output names the shell: [`RemoteShell::Cmd`] or
+    /// [`RemoteShell::PowerShell`].
+    Shell(RemoteShell),
+    /// The output is no banner this knows: the exec probe tells the shell.
+    Unrecognised,
     /// Not enough output yet.
     Undecided,
 }
@@ -260,22 +263,147 @@ pub enum BannerVerdict {
 /// [Version 10.0.20348.2849]` (`[Versión ...` and the like when localised).
 const CMD_BANNER: &str = "Microsoft Windows [";
 
-/// Tell cmd.exe from a Win32-OpenSSH session's first raw output (#5134),
-/// without running anything on the host.
+/// The banner an interactive Windows PowerShell 5.1 prints first, its two
+/// lines joined as [`visible_text`] joins them: `Windows PowerShell`, then
+/// `Copyright (C) Microsoft Corporation. All rights reserved.` (the rest of
+/// that line is localised).
+const WINDOWS_POWERSHELL_BANNER: &str = "Windows PowerShell Copyright (C) Microsoft Corporation";
+
+/// The word an interactive PowerShell 7 (`pwsh`) banner starts with, before
+/// its version: `PowerShell 7.4.6`.
+const PWSH_BANNER: &str = "PowerShell ";
+
+/// The longest directory a banner-less PowerShell prompt (`PS C:\...> `) is
+/// waited for: a Windows path (`MAX_PATH`).
+const PS_PROMPT_MAX_PATH: usize = 260;
+
+/// Tell cmd.exe and PowerShell (5.1 or 7) from a Win32-OpenSSH session's
+/// first raw output (#5134, #5147), without running anything on the host.
+///
+/// The shell prints its banner before it runs anything of the user's (cmd's
+/// AutoRun, PowerShell's profile), so only the start of the output is read,
+/// and it must be one of:
+///
+/// - cmd.exe's banner, `Microsoft Windows [Version ...]`;
+/// - Windows PowerShell 5.1's, `Windows PowerShell` + `Copyright (C)
+///   Microsoft Corporation...`;
+/// - PowerShell 7's, `PowerShell <major>.<minor>...`;
+/// - with no banner (a shell started with `-NoLogo`, say), PowerShell's
+///   default prompt, `PS <drive>:\<path>>`.
+///
+/// Anything else, e.g. a banner-less shell whose profile prints first or
+/// whose prompt is customised, is [`BannerVerdict::Unrecognised`]: the exec
+/// probe then tells the shell, so an unsure answer costs a probe, never a
+/// setup line in the wrong syntax.
 ///
 /// ConPTY renders the console, so the text comes with escape sequences
 /// around it, and a run of spaces may be a cursor move: every escape
 /// sequence counts as a space and runs of white space as one.
-pub fn cmd_banner_verdict(output: &[u8]) -> BannerVerdict {
+pub fn shell_banner_verdict(output: &[u8]) -> BannerVerdict {
     let text = visible_text(output);
     if text.contains(CMD_BANNER) {
-        return BannerVerdict::Cmd;
+        return BannerVerdict::Shell(RemoteShell::Cmd);
     }
     let text = text.trim_start();
-    if text.is_empty() || CMD_BANNER.starts_with(text) {
+    if text.is_empty() {
         return BannerVerdict::Undecided;
     }
-    BannerVerdict::NotCmd
+    let verdicts = [
+        prefix_verdict(text, CMD_BANNER, RemoteShell::Cmd),
+        prefix_verdict(text, WINDOWS_POWERSHELL_BANNER, RemoteShell::PowerShell),
+        pwsh_banner_verdict(text),
+        ps_prompt_verdict(text),
+    ];
+    if let Some(shell) = verdicts.iter().find_map(|v| match v {
+        BannerVerdict::Shell(shell) => Some(*shell),
+        _ => None,
+    }) {
+        return BannerVerdict::Shell(shell);
+    }
+    if verdicts.contains(&BannerVerdict::Undecided) {
+        return BannerVerdict::Undecided;
+    }
+    BannerVerdict::Unrecognised
+}
+
+/// `text` starts with `banner` ([`BannerVerdict::Shell`]), is still a prefix
+/// of it ([`BannerVerdict::Undecided`]), or is something else.
+fn prefix_verdict(text: &str, banner: &str, shell: RemoteShell) -> BannerVerdict {
+    if text.starts_with(banner) {
+        BannerVerdict::Shell(shell)
+    } else if banner.starts_with(text) {
+        BannerVerdict::Undecided
+    } else {
+        BannerVerdict::Unrecognised
+    }
+}
+
+/// [`BannerVerdict::Undecided`] while more output may still decide, else
+/// [`BannerVerdict::Unrecognised`].
+fn undecided_if(may_still_match: bool) -> BannerVerdict {
+    if may_still_match {
+        BannerVerdict::Undecided
+    } else {
+        BannerVerdict::Unrecognised
+    }
+}
+
+/// PowerShell 7's banner: [`PWSH_BANNER`], then a version token with at
+/// least a major and a minor number (`7.4.6`, `7.5.0-preview.2`), ended by
+/// white space.
+fn pwsh_banner_verdict(text: &str) -> BannerVerdict {
+    let Some(rest) = text.strip_prefix(PWSH_BANNER) else {
+        return undecided_if(PWSH_BANNER.starts_with(text));
+    };
+    let version_chars = |v: &str| {
+        v.starts_with(|c: char| c.is_ascii_digit())
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+    };
+    let Some((version, _)) = rest.split_once(' ') else {
+        // The version is still coming: it must look like one so far.
+        return undecided_if(rest.is_empty() || version_chars(rest));
+    };
+    let mut parts = version.split('.');
+    let mut numeric = || {
+        parts
+            .next()
+            .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    };
+    if version_chars(version) && numeric() && numeric() {
+        BannerVerdict::Shell(RemoteShell::PowerShell)
+    } else {
+        BannerVerdict::Unrecognised
+    }
+}
+
+/// PowerShell's default prompt, `PS C:\Users\u> `, as the very first output
+/// (a banner-less PowerShell).
+fn ps_prompt_verdict(text: &str) -> BannerVerdict {
+    const HEAD: &str = "PS ";
+    let Some(rest) = text.strip_prefix(HEAD) else {
+        return undecided_if(HEAD.starts_with(text));
+    };
+    // A drive, `C:\`, then the directory up to the `>`.
+    let mut chars = rest.chars();
+    for ok in [
+        char::is_ascii_alphabetic as fn(&char) -> bool,
+        |c: &char| *c == ':',
+        |c: &char| *c == '\\',
+    ] {
+        match chars.next() {
+            None => return BannerVerdict::Undecided,
+            Some(c) if ok(&c) => {}
+            Some(_) => return BannerVerdict::Unrecognised,
+        }
+    }
+    let path = chars.as_str();
+    match path.find('>') {
+        Some(end) if end <= PS_PROMPT_MAX_PATH => BannerVerdict::Shell(RemoteShell::PowerShell),
+        Some(_) => BannerVerdict::Unrecognised,
+        None if path.len() <= PS_PROMPT_MAX_PATH => BannerVerdict::Undecided,
+        None => BannerVerdict::Unrecognised,
+    }
 }
 
 /// `output` without its escape sequences (CSI, OSC, two-byte ESC), each
@@ -2501,6 +2629,7 @@ mod tests {
         assert!(!gate.is_holding());
         assert_eq!(gate.write(b"dir\r".to_vec()), Some(b"dir\r".to_vec()));
     }
+
     // ── Win32-OpenSSH: cmd.exe told by its banner (#5134) ─────────────
 
     /// A Win32-OpenSSH cmd.exe session's first output as measured on the
@@ -2523,42 +2652,173 @@ mod tests {
         assert!(!is_win32_openssh("SSH-2.0-dropbear_2022.83"));
     }
 
+    /// Feed `chunks` one message at a time and return the first verdict
+    /// that is not [`BannerVerdict::Undecided`], with the number of chunks
+    /// it took, as the connector reads them.
+    fn replay(chunks: &[&[u8]]) -> (BannerVerdict, usize) {
+        let mut seen = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            seen.extend_from_slice(chunk);
+            match shell_banner_verdict(&seen) {
+                BannerVerdict::Undecided => {}
+                verdict => return (verdict, i + 1),
+            }
+        }
+        (BannerVerdict::Undecided, chunks.len())
+    }
+
+    const CMD: BannerVerdict = BannerVerdict::Shell(RemoteShell::Cmd);
+    const POWERSHELL: BannerVerdict = BannerVerdict::Shell(RemoteShell::PowerShell);
+
+    /// ConPTY's first two messages of every Win32-OpenSSH session (Windows
+    /// SSH Host lane, runs 42722303666 / 42723962588): modes, a screen
+    /// clear, blank rows and conhost's window title.
+    const CONPTY_START: [&[u8]; 2] = [
+        b"\x1b[?9001h\x1b[?1004h",
+        b"\x1b[?25l\x1b[2J\x1b[m\x1b[H\r\n\r\n\r\n\x1b[H\x1b]0;C:\\Windows\\system32\\conhost.exe\x07\x1b[?25h",
+    ];
+
     #[test]
     fn cmd_banner_decides_only_once_the_banner_text_comes() {
-        let mut seen = Vec::new();
-        for chunk in &CMD_SESSION_START[..2] {
-            seen.extend_from_slice(chunk);
-            // Escapes, blank lines and the window title only.
-            assert_eq!(cmd_banner_verdict(&seen), BannerVerdict::Undecided);
-        }
-        seen.extend_from_slice(CMD_SESSION_START[2]);
-        assert_eq!(cmd_banner_verdict(&seen), BannerVerdict::Cmd);
+        // Escapes, blank lines and the window title only.
+        assert_eq!(replay(&CONPTY_START), (BannerVerdict::Undecided, 2));
+        let mut start = CONPTY_START.to_vec();
+        start.push(CMD_SESSION_START[2]);
+        assert_eq!(replay(&start), (CMD, 3));
     }
 
     #[test]
     fn cmd_banner_split_across_chunks_waits_for_the_rest() {
         assert_eq!(
-            cmd_banner_verdict(b"\x1b[?25lMicrosoft Win"),
-            BannerVerdict::Undecided
+            replay(&[b"\x1b[?25lMicrosoft Win", b"dows [Version 10.0.26100]"]),
+            (CMD, 2)
         );
         // ConPTY may render a space as a cursor move.
         assert_eq!(
-            cmd_banner_verdict(b"Microsoft\x1b[1CWindows\x1b[1C[Versi\xc3\xb3n 10.0.19045]"),
-            BannerVerdict::Cmd
+            shell_banner_verdict(b"Microsoft\x1b[1CWindows\x1b[1C[Versi\xc3\xb3n 10.0.19045]"),
+            CMD
+        );
+    }
+
+    // ── Win32-OpenSSH: PowerShell told by its banner (#5147) ──────────
+
+    /// A Windows PowerShell 5.1 session's first output as measured on the
+    /// Windows SSH Host lane (run 42723962588), one chunk per message.
+    const WINDOWS_POWERSHELL_START: [&[u8]; 3] = [
+        b"Windows PowerShell\r\nCopyright (C) Microsoft Corporation. All rights reserved.",
+        b"\x1b[?25l\x1b[4;1H\x1b[?25h",
+        b"PS C:\\Users\\termihubssh> ",
+    ];
+
+    /// A PowerShell 7 session's first output, same run: the prompt came
+    /// ~0.9 s after the banner, once the profile had loaded.
+    const PWSH_START: [&[u8]; 2] = [b"PowerShell 7.6.9\r\n", b"PS C:\\Users\\termihubssh> "];
+
+    #[test]
+    fn windows_powershell_is_told_by_its_banner_before_its_profile_runs() {
+        let mut start = CONPTY_START.to_vec();
+        start.extend_from_slice(&WINDOWS_POWERSHELL_START);
+        // Decided on the banner itself, before the prompt (or anything a
+        // profile prints) comes.
+        assert_eq!(replay(&start), (POWERSHELL, 3));
+        // A localised copyright line, and the banner split mid-word.
+        assert_eq!(
+            replay(&[
+                b"Windows Power",
+                b"Shell\r\n",
+                b"Copyright (C) Microsoft Corporation. Alle Rechte vorbehalten.",
+            ]),
+            (POWERSHELL, 3)
+        );
+        // An older 5.1 banner with the "Install the latest PowerShell" line.
+        assert_eq!(
+            shell_banner_verdict(
+                b"Windows PowerShell\r\nCopyright (C) Microsoft Corporation. All rights \
+                  reserved.\r\n\r\nInstall the latest PowerShell for new features and \
+                  improvements! https://aka.ms/PSWindows\r\n\r\n"
+            ),
+            POWERSHELL
         );
     }
 
     #[test]
-    fn other_windows_shells_are_not_cmd() {
+    fn pwsh_is_told_by_its_banner_before_its_profile_runs() {
+        let mut start = CONPTY_START.to_vec();
+        start.extend_from_slice(&PWSH_START);
+        assert_eq!(replay(&start), (POWERSHELL, 3));
+        // A preview build, and the version split across messages: undecided
+        // until the version ends.
+        assert_eq!(
+            replay(&[b"PowerShell 7", b".5.0-preview.2", b"\r\n"]),
+            (POWERSHELL, 3)
+        );
+        assert_eq!(shell_banner_verdict(b"PowerShell 10.0.1\r\n"), POWERSHELL);
+    }
+
+    #[test]
+    fn a_banner_less_powershell_is_told_by_its_default_prompt() {
+        // `-NoLogo`, say: the default prompt is the first output.
+        let mut start = CONPTY_START.to_vec();
+        start.extend_from_slice(&[b"PS C:\\Users\\", b"termihubssh> "]);
+        assert_eq!(replay(&start), (POWERSHELL, 4));
+        assert_eq!(shell_banner_verdict(b"PS D:\\work dir\\a b> "), POWERSHELL);
+    }
+
+    #[test]
+    fn a_profile_or_prompt_this_does_not_know_falls_back_to_the_probe() {
         for start in [
-            &b"\x1b[?25l\x1b[2J\x1b[HWindows PowerShell\r\nCopyright (C) Microsoft"[..],
-            b"\x1b]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07PowerShell 7.4.6\r\n",
+            // A banner-less PowerShell whose profile prints first.
+            &b"\x1b[2J\x1b[HLoading my profile...\r\nPS C:\\Users\\u> "[..],
+            // A customised prompt, no banner.
+            b"\x1b[32mu@host\x1b[m C:\\Users\\u \xe2\x9d\xaf ",
+            b"PS> ",
+            b"PS C:/Users/u> ",
+            // A banner-ish line that is not one.
+            b"PowerShell is starting...\r\n",
+            b"PowerShell v7\r\n",
+            b"PowerShell 7\r\n",
+            b"Windows PowerShell\r\nLoading profile\r\n",
+            // Git Bash and an MSYS2 fish.
             b"\x1b[2J\x1b[H\x1b]0;MINGW64:/c/Users/u\x07\r\nu@host MINGW64 ~\r\n$ ",
-            b"PS C:\\Users\\u> ",
+            b"Welcome to fish, the friendly interactive shell\r\n",
         ] {
             assert_eq!(
-                cmd_banner_verdict(start),
-                BannerVerdict::NotCmd,
+                shell_banner_verdict(start),
+                BannerVerdict::Unrecognised,
+                "{:?}",
+                String::from_utf8_lossy(start)
+            );
+        }
+    }
+
+    #[test]
+    fn a_powershell_prompt_with_no_end_stops_waiting() {
+        let mut long = b"PS C:\\".to_vec();
+        long.extend(std::iter::repeat_n(b'a', PS_PROMPT_MAX_PATH));
+        assert_eq!(shell_banner_verdict(&long), BannerVerdict::Undecided);
+        long.push(b'a');
+        assert_eq!(shell_banner_verdict(&long), BannerVerdict::Unrecognised);
+    }
+
+    #[test]
+    fn partial_banners_wait_for_more() {
+        for start in [
+            &b"W"[..],
+            b"Windows PowerShell\r\n",
+            b"Windows PowerShell\r\nCopyright (C) Micro",
+            b"Power",
+            b"PowerShell ",
+            b"PowerShell 7.",
+            b"PowerShell 7.4.6",
+            b"P",
+            b"PS C",
+            b"PS C:",
+            b"PS C:\\Users\\u",
+            b"Microsoft",
+        ] {
+            assert_eq!(
+                shell_banner_verdict(start),
+                BannerVerdict::Undecided,
                 "{:?}",
                 String::from_utf8_lossy(start)
             );
@@ -2567,9 +2827,9 @@ mod tests {
 
     #[test]
     fn no_output_yet_is_undecided() {
-        assert_eq!(cmd_banner_verdict(b""), BannerVerdict::Undecided);
+        assert_eq!(shell_banner_verdict(b""), BannerVerdict::Undecided);
         assert_eq!(
-            cmd_banner_verdict(b"\x1b[?9001h\x1b[?1004h\r\n"),
+            shell_banner_verdict(b"\x1b[?9001h\x1b[?1004h\r\n"),
             BannerVerdict::Undecided
         );
     }
