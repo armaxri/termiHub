@@ -660,7 +660,11 @@ impl ConnectionType for Ssh {
                                 "this problem. ",
                                 "On a Windows PowerShell host the hook's echo cannot be filtered ",
                                 "out, so the screen is cleared once after it, which also clears ",
-                                "the login banner.\n\n",
+                                "the login banner. ",
+                                "On a PowerShell host the hook leaves one line of setup in ",
+                                "PowerShell's history per session: it is saved to PowerShell's ",
+                                "history file and comes back with the up arrow. PowerShell saves ",
+                                "a typed line before it runs, so the hook cannot keep itself out.\n\n",
                                 "Connections saved while this was on by default were switched off ",
                                 "once when you updated; turn it back on here if you want it.",
                             ).to_string()),
@@ -1434,6 +1438,29 @@ mod tests {
             "Set-Location",
             "cmd.exe, PowerShell or",
             "command history (Alt+F7)",
+        ] {
+            assert!(help.contains(needle), "{needle:?} missing from {help:?}");
+        }
+    }
+
+    /// #5127: the maintainer accepted the one setup line per session that the
+    /// typed hook leaves in PowerShell's history; the help must say so.
+    #[test]
+    fn shell_hook_help_says_powershell_keeps_one_history_line_per_session() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .find(|f| f.key == "shellIntegration")
+            .expect("the shell hook field");
+        let help = field.help_text.as_deref().expect("help text");
+        for needle in [
+            "On a PowerShell host the hook leaves one line of setup in",
+            "PowerShell's history per session",
+            "history file",
+            "up arrow",
         ] {
             assert!(help.contains(needle), "{needle:?} missing from {help:?}");
         }
