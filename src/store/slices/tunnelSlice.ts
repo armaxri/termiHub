@@ -14,6 +14,7 @@ import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
+import { showUndoToast } from "@/utils/undoableDelete";
 
 /** The projection region id for the SSH-tunnels domain (twin of the Rust const). */
 const TUNNELS_REGION = "tunnels";
@@ -150,7 +151,12 @@ export interface TunnelSlice {
   tunnelStates: Record<string, TunnelState>;
   loadTunnels: () => Promise<void>;
   saveTunnel: (config: TunnelConfig) => Promise<void>;
-  deleteTunnel: (tunnelId: string) => Promise<void>;
+  /**
+   * Delete a tunnel. With `undoable`, the success toast carries a 10 s Undo
+   * that re-creates the deleted config (and a chained companion removed with
+   * it) under the same id (#5158); the restored tunnel starts stopped.
+   */
+  deleteTunnel: (tunnelId: string, options?: { undoable?: boolean }) => Promise<void>;
   startTunnel: (tunnelId: string) => Promise<void>;
   stopTunnel: (tunnelId: string) => Promise<void>;
   /** Force-reconnect a connected tunnel (stop + start), for a stale-but-green tunnel (#1243). */
@@ -164,6 +170,20 @@ export interface TunnelSlice {
    * toast — the session's own "Connected" toast is the user-facing signal.
    */
   startConnectionTunnels: (connectionId: string) => Promise<void>;
+}
+
+/** Re-create deleted tunnel configs in order (the Undo of a delete, #5158). */
+async function restoreTunnels(
+  get: () => AppState,
+  configs: TunnelConfig[],
+  name: string
+): Promise<void> {
+  try {
+    for (const config of configs) await get().saveTunnel(config);
+    toast.success(`Restored ${name}`);
+  } catch (err) {
+    toast.error(`Failed to restore ${name}: ${errorMessage(err)}`);
+  }
 }
 
 export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (set, get) => ({
@@ -207,12 +227,24 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     }
   },
 
-  deleteTunnel: async (tunnelId) => {
+  deleteTunnel: async (tunnelId, options) => {
     const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+    // The configs the delete removes: the tunnel and any companion hop chained
+    // to it, parent first so a restore re-creates the parent before its hop.
+    const removed = get().tunnels.filter((t) => t.id === tunnelId || t.companionOf === tunnelId);
+    removed.sort((a, b) => Number(a.id !== tunnelId) - Number(b.id !== tunnelId));
     const toastId = toast.loading(`Deleting ${name}…`);
     try {
       const ack = await dispatchTunnelIntent("tunnel.remove", { id: tunnelId });
       throwIfRejected(ack, "delete tunnel");
+      if (options?.undoable && removed.length > 0) {
+        showUndoToast(`Deleted ${name}`, {
+          id: toastId,
+          testId: "tunnel-delete-undo-toast",
+          onUndo: () => void restoreTunnels(get, removed, name),
+        });
+        return;
+      }
       toast.success(`Deleted ${name}`, { id: toastId });
     } catch (err) {
       toast.error(`Failed to delete ${name}: ${errorMessage(err)}`, { id: toastId });

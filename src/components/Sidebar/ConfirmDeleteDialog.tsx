@@ -1,18 +1,22 @@
 import { ConfirmDialog } from "@/components/ui";
+import type { ConfirmDontAskAgain } from "@/components/ui";
 
 interface ConfirmDeleteDialogProps {
   open: boolean;
   message: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Optional "don't ask again" opt-out (only for deletes that can be undone). */
+  dontAskAgain?: ConfirmDontAskAgain;
 }
 
-/** Themed confirmation dialog for destructive delete actions in the file browser. */
+/** Themed confirmation dialog for destructive delete actions. */
 export function ConfirmDeleteDialog({
   open,
   message,
   onConfirm,
   onCancel,
+  dontAskAgain,
 }: ConfirmDeleteDialogProps) {
   return (
     <ConfirmDialog
@@ -26,6 +30,7 @@ export function ConfirmDeleteDialog({
       data-testid="confirm-delete-dialog"
       onConfirm={onConfirm}
       onCancel={onCancel}
+      dontAskAgain={dontAskAgain}
     />
   );
 }

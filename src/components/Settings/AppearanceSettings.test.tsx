@@ -193,6 +193,8 @@ describe("AppearanceSettings — custom themes", () => {
       customThemes: [customTheme("t1", "Ocean")],
     });
     act(() => (byId("appearance-theme-delete") as HTMLButtonElement).click());
+    // The delete confirms first (#5158).
+    act(() => (byId("confirm-delete-confirm") as HTMLButtonElement).click());
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ theme: "dark", customThemes: [] })
     );

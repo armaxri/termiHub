@@ -299,6 +299,12 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             what="the delete control",
         )
         self.driver.click(f"tunnel-delete-{tid}")
+        # An idle tunnel delete confirms first, then offers Undo (#5158).
+        self.wait(
+            lambda: self.driver.exists("confirm-delete-confirm"),
+            what="the delete-tunnel confirm dialog",
+        )
+        self.driver.click("confirm-delete-confirm")
         assert self.wait(
             lambda: self._tunnel_by_name(tunnel["name"]) is None,
             what="the tunnel to be removed from the store",
