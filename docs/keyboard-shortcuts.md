@@ -250,6 +250,25 @@ refuses any binding that could trap you:
 - An unusable stored value (for example from a hand-edited settings file or an
   imported shortcuts file) is ignored and the default chord applies.
 
+## Connection and agent tree keys
+
+The Connections tree and the Remote Agents tree act on the focused row. These
+keys are bound to the row itself, so they never fire while a terminal has focus.
+
+| Key                                                           | Action                                                                      |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move to another row                                                         |
+| <kbd>←</kbd> / <kbd>→</kbd>                                   | Collapse / expand a folder, or move to its parent / first child             |
+| <kbd>Enter</kbd> / <kbd>Space</kbd>                           | Connect, or open / close the folder                                         |
+| <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key               | Open the row's context menu (the right-click menu)                          |
+| <kbd>F2</kbd>                                                 | Rename: open the connection's or agent's editor (folders have no rename)    |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd>                      | Delete the row, after the same confirmation (and Undo) as the menu's Delete |
+
+On an agent, the keys work on its header row. <kbd>Shift</kbd>+<kbd>F10</kbd> works on
+every platform, including macOS keyboards without a Menu key. After a delete, focus
+moves to the next row (or the last one); closing a menu or cancelling a delete puts
+focus back on the row.
+
 ## File browser list keys
 
 The file list in the Files sidebar is a multi-selectable list. When a row has focus:
