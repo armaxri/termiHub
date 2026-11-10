@@ -3,8 +3,9 @@
 This document explains the conflict-avoidance rules behind termiHub's default
 keybindings, the terminal-focus pass-through behavior, and the trade-offs
 involved. For the full list of bindings, open **Settings → Keyboard Shortcuts**
-inside the app or press <kbd>F1</kbd> (Win/Linux) / <kbd>Cmd</kbd>+<kbd>K</kbd>
-<kbd>Cmd</kbd>+<kbd>S</kbd> (macOS).
+inside the app or press <kbd>Ctrl</kbd>+<kbd>F1</kbd> (Win/Linux) /
+<kbd>Cmd</kbd>+<kbd>K</kbd> <kbd>Cmd</kbd>+<kbd>S</kbd> (macOS) — or bare
+<kbd>F1</kbd> anywhere except in a focused terminal.
 
 ## Why conflict avoidance matters
 
@@ -36,12 +37,29 @@ single-modifier readline / tmux range.
 | Split Right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
 | Split Down         | `Alt+Shift+-`        | (paired with Split Right)                                                        |
 | Focus Panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
-| Keyboard Shortcuts | `F1`                 | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
+| Keyboard Shortcuts | `Ctrl+F1`            | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
 | Jump to Prompt ↑↓  | `Ctrl+Shift+<Up/Dn>` | `Ctrl+<Up/Down>` — word/paragraph movement in shells and editors                 |
 
 macOS keeps the more conventional single-modifier forms (`Cmd+B`, `Cmd+W`,
 `Cmd+\`, `Cmd+K Cmd+S`, `Cmd+Alt+<Arrow>`) because `Cmd` does not appear in the
 shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
+
+## Function keys belong to the terminal program
+
+Terminal programs rely on bare function keys — <kbd>F1</kbd> is help in htop,
+Midnight Commander, nano and vim, <kbd>F6</kbd> is Rename/Move in
+Midnight Commander. So a default bound to a function key without
+<kbd>Ctrl</kbd>, <kbd>Alt</kbd> or <kbd>Cmd</kbd> **yields to a focused
+terminal**: the key goes to the program, and a modifier variant does the same
+job from inside the terminal.
+
+| Action                                                          | Bare key (outside terminals) | Also from a terminal (macOS / Win+Linux)        |
+| --------------------------------------------------------------- | ---------------------------- | ----------------------------------------------- |
+| Keyboard Shortcuts                                              | `F1`                         | `Cmd+K Cmd+S` / `Ctrl+F1`                       |
+| Focus Next / Previous Region ([F6](#moving-between-regions-f6)) | `F6` / `Shift+F6`            | `Cmd+F6` / `Ctrl+F6` (add `Shift` for previous) |
+
+The shortcuts overlay marks the bare keys as active "Outside terminals". A
+rebound key on one of these actions still yields while a terminal has focus.
 
 ## Prompt navigation and command output (OSC 133)
 
@@ -232,6 +250,25 @@ refuses any binding that could trap you:
 - An unusable stored value (for example from a hand-edited settings file or an
   imported shortcuts file) is ignored and the default chord applies.
 
+## Connection and agent tree keys
+
+The Connections tree and the Remote Agents tree act on the focused row. These
+keys are bound to the row itself, so they never fire while a terminal has focus.
+
+| Key                                                           | Action                                                                      |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move to another row                                                         |
+| <kbd>←</kbd> / <kbd>→</kbd>                                   | Collapse / expand a folder, or move to its parent / first child             |
+| <kbd>Enter</kbd> / <kbd>Space</kbd>                           | Connect, or open / close the folder                                         |
+| <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key               | Open the row's context menu (the right-click menu)                          |
+| <kbd>F2</kbd>                                                 | Rename: open the connection's or agent's editor (folders have no rename)    |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd>                      | Delete the row, after the same confirmation (and Undo) as the menu's Delete |
+
+On an agent, the keys work on its header row. <kbd>Shift</kbd>+<kbd>F10</kbd> works on
+every platform, including macOS keyboards without a Menu key. After a delete, focus
+moves to the next row (or the last one); closing a menu or cancelling a delete puts
+focus back on the row.
+
 ## File browser list keys
 
 The file list in the Files sidebar is a multi-selectable list. When a row has focus:
@@ -253,8 +290,8 @@ you hover over a row opens the same actions; it is not a Tab stop.
 
 ## Customizing shortcuts: the overlay and the recorder
 
-The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
-<kbd>Cmd</kbd>+<kbd>S</kbd>) is a searchable, read-only cheat sheet. It shows
+The shortcuts overlay (<kbd>Ctrl</kbd>+<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
+<kbd>Cmd</kbd>+<kbd>S</kbd>, or <kbd>F1</kbd> outside a terminal) is a searchable, read-only cheat sheet. It shows
 one **Shortcut** column with the bindings of the platform you are running on,
 including your own overrides. To change a binding, use its **Edit shortcuts…**
 button, which opens **Settings → Keyboard Shortcuts** — the panel with the

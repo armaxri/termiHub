@@ -29,6 +29,8 @@ import { useAppStore } from "@/store/appStore";
  *   moves focus relative to the currently focused region; from the palette,
  *   focus sits in the palette dialog and is restored on close, so there is no
  *   region to move from.
+ * - `show-shortcuts-outside-terminal` — the bare-F1 companion of
+ *   `show-shortcuts` (#5194); the palette already lists "Keyboard Shortcuts".
  *
  * The clipboard actions (`copy` / `paste` / `select-all`) are surfaced through
  * `CONTEXT_COMMANDS`, which routes them to the focused terminal via the
@@ -41,6 +43,7 @@ const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set([
   "focus-prev-region",
   "focus-next-region-anywhere",
   "focus-prev-region-anywhere",
+  "show-shortcuts-outside-terminal",
 ]);
 
 describe("command palette action coverage", () => {

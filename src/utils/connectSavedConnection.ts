@@ -12,7 +12,13 @@
  *   the `savePassword` flag (#885).
  * - Treats a non-empty inline password as the credential itself (#963).
  * - Unlocks the credential store before resolving a stored secret (#1144).
- * - Validates a stored credential with a pre-connect (#885/#963). A rejected
+ * - Validates a stored credential with a pre-connect (#885/#963). The window
+ *   before the tab (unlock, resolve, pre-connect) shows a "Connecting…" toast
+ *   with the live connect stage and an **Abort** action (#5180): Abort cancels
+ *   the backend connect, ignores any late result (closing a late session) and
+ *   saves nothing. A pre-connect that fails for a non-auth reason hands its
+ *   error to the tab, which shows it instead of connecting a second time.
+ *   A rejected
  *   one is never deleted (#5156): it is kept, and the re-prompt offers to
  *   replace it. A typed secret the user chose to save is persisted only once
  *   the tab's session is established, so a typo is never saved.
@@ -41,7 +47,12 @@
  */
 import { toast } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
-import { createTerminal, isSshKeyEncrypted, storeCredential } from "@/services/api";
+import {
+  cancelConnecting,
+  createTerminal,
+  isSshKeyEncrypted,
+  storeCredential,
+} from "@/services/api";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { useAppStore, type AddTabOptions } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
@@ -60,12 +71,18 @@ import {
   ensureCredentialStoreUnlocked,
 } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
-import { resolveGraphicalSettings } from "@/utils/graphicalSecret";
+import { holdTypedGraphicalSecret, resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { neededFieldSecrets, resolveFieldSecrets } from "@/utils/fieldSecrets";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import { persistSecretOnceConnected } from "@/utils/persistSecretOnceConnected";
+import {
+  PRECONNECT_ABORTED,
+  runPreconnect,
+  stashPreconnectFailure,
+  untilAborted,
+} from "@/utils/preconnect";
 import type { PasswordPromptKind } from "@/store/slices/passwordPromptSlice";
 
 /** Options for {@link connectSavedConnection}. */
@@ -235,6 +252,23 @@ export async function connectSavedConnection(
       connectingToastId = undefined;
     }
   };
+  // #5180: the toast's Abort ends the pre-tab window at once. Every await in
+  // it races this signal, and the backend pre-connect (once started) is told
+  // to cancel by its connect id.
+  const preconnect = new AbortController();
+  let preconnectId: string | null = null;
+  const abortPreconnect = () => {
+    if (preconnect.signal.aborted) return;
+    preconnect.abort();
+    if (preconnectId) {
+      const id = preconnectId;
+      void cancelConnecting(id).catch((err: unknown) =>
+        frontendLog("connection_list", `cancel of ${id} failed: ${backendErrorMessage(err)}`)
+      );
+    }
+    dismissConnecting();
+    toast.info("Connection cancelled");
+  };
 
   // Open a tab for this saved connection, always stamping its `connectionId`
   // so the on-connect workflow trigger (#1855) can match the freshly opened
@@ -303,7 +337,7 @@ export async function connectSavedConnection(
 
   // A remote-desktop connection saved with "Save password" (#3818) takes its
   // password from the credential store — or asks once, with the prompt's
-  // Save box keeping it. Without the option the connect is unchanged: a VNC
+  // Save box keeping it once the connect succeeds. Without the option the connect is unchanged: a VNC
   // server may need no password at all.
   if (isGraphical && readConfigBoolean(connection.config, "savePassword") === true) {
     const resolved = await resolveGraphicalSettings({
@@ -317,10 +351,13 @@ export async function connectSavedConnection(
       toast.info("Connect canceled");
       return { status: "canceled" };
     }
-    return openTab({ ...config, config: resolved.settings } as typeof config, {
+    const opened = openTab({ ...config, config: resolved.settings } as typeof config, {
       terminalOptions: connection.terminalOptions,
       contentType,
     });
+    // A typed password with Save ticked is written only once the tab connects (#5197).
+    if (opened.status === "opened") holdTypedGraphicalSecret(opened.tabId, resolved);
+    return opened;
   }
 
   // Connections with authMethod and password support credential store resolution
@@ -381,7 +418,12 @@ export async function connectSavedConnection(
     // stored-credential resolve, blocking pre-connect handshake). Show the
     // non-blocking connecting indicator now — before any of them — so the
     // pre-tab window is never a silent gap.
-    if (!unattended) connectingToastId = toast.loading("Connecting…");
+    if (!unattended) {
+      connectingToastId = toast.loading("Connecting…", {
+        action: { label: "Abort", onClick: abortPreconnect },
+        testId: "connect-preconnect-toast",
+      });
+    }
 
     // Before attempting credential resolution, check whether the credential store
     // is locked. If it is, we can't read the stored credential and SSH would fall
@@ -389,24 +431,29 @@ export async function connectSavedConnection(
     // on success the code continues and the credential resolves automatically.
     const proceed =
       unattended ||
-      (await ensureCredentialStoreUnlocked({
-        authMethod,
-        savePassword,
-        credentialRef,
-      }));
+      (await untilAborted(
+        ensureCredentialStoreUnlocked({ authMethod, savePassword, credentialRef }),
+        preconnect.signal
+      ));
+    if (proceed === PRECONNECT_ABORTED) return { status: "canceled" };
     if (!proceed) {
       dismissConnecting();
       return { status: "canceled" };
     }
 
     // Try to resolve credential from the store first
-    const resolution = await resolveConnectionCredential(
-      connection.id,
-      authMethod,
-      savePassword,
-      credentialRef,
-      connection.sourceFile
+    const resolved = await untilAborted(
+      resolveConnectionCredential(
+        connection.id,
+        authMethod,
+        savePassword,
+        credentialRef,
+        connection.sourceFile
+      ),
+      preconnect.signal
     );
+    if (resolved === PRECONNECT_ABORTED) return { status: "canceled" };
+    const resolution = resolved;
     // A shared credential is never deleted on rejection (other connections
     // use it) and a prompted secret is never saved per-connection in its
     // place (it would never be read) — #3557.
@@ -441,14 +488,20 @@ export async function connectSavedConnection(
         });
       }
       try {
-        const sessionId = await createTerminal(
-          preConfig,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          connection.id
-        );
+        const sessionId = await runPreconnect(preConfig, connection.id, preconnect.signal, {
+          started: (id) => (preconnectId = id),
+          stage: (text) => {
+            if (connectingToastId !== undefined) {
+              toast.loading("Connecting…", {
+                id: connectingToastId,
+                description: text,
+                action: { label: "Abort", onClick: abortPreconnect },
+                testId: "connect-preconnect-toast",
+              });
+            }
+          },
+        });
+        if (sessionId === PRECONNECT_ABORTED) return { status: "canceled" };
         // Stored credential worked — open tab with existing session
         return openTab(preConfig, {
           terminalOptions: connection.terminalOptions,
@@ -484,11 +537,16 @@ export async function connectSavedConnection(
             contentType,
           });
         } else {
-          // Non-auth failure — let the Terminal component handle the error
-          return openTab(config, {
+          // Non-auth failure (unreachable, timeout, …): open the tab on THIS
+          // failure (#5180) — it shows the error with Retry instead of
+          // connecting again, so the user never waits out a second timeout.
+          // The tab keeps the stored credential, so Retry uses it.
+          const opened = openTab(preConfig, {
             terminalOptions: connection.terminalOptions,
             contentType,
           });
+          if (opened.status === "opened") stashPreconnectFailure(opened.tabId, err);
+          return opened;
         }
       }
     }

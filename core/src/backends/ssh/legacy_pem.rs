@@ -232,18 +232,18 @@ fn sec1_private_scalar(der: &[u8]) -> Result<Vec<u8>, LegacyPemError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use russh::keys::ssh_key::{Algorithm, EcdsaCurve};
 
     // Shared passphrase for every committed test key (see tests/fixtures README).
-    const PASSPHRASE: &str = "testpass123";
+    pub(in crate::backends::ssh) const PASSPHRASE: &str = "testpass123";
 
     // Self-contained AES-128-CBC PEM/SEC1 keys (passphrase `testpass123`) for the
     // two curves the fallback exists for. Kept inline rather than read from
     // `tests/fixtures/ssh-keys/` because those fixtures are OpenSSH-format (russh
     // loads them directly) — these exercise the legacy-PEM path specifically.
-    const P384_AES128: &str = r"-----BEGIN EC PRIVATE KEY-----
+    pub(in crate::backends::ssh) const P384_AES128: &str = r"-----BEGIN EC PRIVATE KEY-----
 Proc-Type: 4,ENCRYPTED
 DEK-Info: AES-128-CBC,DF8026B0D98D1566B0EA00199159ECBA
 

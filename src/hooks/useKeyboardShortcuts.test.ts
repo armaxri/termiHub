@@ -6,6 +6,7 @@ vi.mock("@/services/keybindings", () => ({
   processKeyEvent: vi.fn(),
   onChordStateChange: vi.fn(),
   cancelChord: vi.fn(),
+  eventMatchesSingleBinding: vi.fn(() => false),
   isShellReservedKey: vi.fn(() => false),
   isEventFromTerminal: vi.fn(() => false),
   getActionScope: vi.fn((action: string) => {
@@ -20,7 +21,11 @@ vi.mock("@/services/keybindings", () => ({
     if (action === "copy" || action === "paste" || action === "select-all") {
       return "editor-delegated";
     }
-    if (action === "focus-next-region" || action === "focus-prev-region") {
+    if (
+      action === "focus-next-region" ||
+      action === "focus-prev-region" ||
+      action === "show-shortcuts-outside-terminal"
+    ) {
       return "yields-to-terminal";
     }
     return "global";
@@ -520,6 +525,38 @@ describe("useKeyboardShortcuts", () => {
 
       expect(useAppStore.getState().shortcutsOverlayOpen).toBe(false);
       fireKey("?");
+      expect(useAppStore.getState().shortcutsOverlayOpen).toBe(true);
+    });
+
+    it("opens the overlay on bare F1 outside a terminal", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("show-shortcuts-outside-terminal");
+
+      expect(fireKey("F1")).toBe(true);
+      expect(useAppStore.getState().shortcutsOverlayOpen).toBe(true);
+    });
+
+    it("leaves bare F1 to a focused terminal: no overlay, key not consumed (#5194)", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue("show-shortcuts-outside-terminal");
+
+      expect(fireKey("F1")).toBe(false);
+      expect(useAppStore.getState().shortcutsOverlayOpen).toBe(false);
+    });
+
+    it("opens the overlay on Ctrl+F1 from a focused terminal", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue("show-shortcuts");
+
+      expect(fireKey("F1", { ctrlKey: true })).toBe(true);
       expect(useAppStore.getState().shortcutsOverlayOpen).toBe(true);
     });
   });

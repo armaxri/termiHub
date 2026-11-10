@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { beginConnectAttempt } from "@/store/connectProgressBridge";
 import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { takePreconnectFailure } from "@/utils/preconnect";
 import { connectTimeoutMessage } from "@/utils/connectTimeout";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -732,6 +733,15 @@ export function Terminal({
             if (isCanceled()) return;
           }
         } else {
+          // A saved-credential pre-connect already failed for this tab (#5180):
+          // show that failure (Retry reconnects) instead of connecting again.
+          if (!isReconnect) {
+            const preFailure = takePreconnectFailure(tabId);
+            if (preFailure.found) {
+              setClassifiedSpawnError(tabId, preFailure.error);
+              return;
+            }
+          }
           let attempt = 0;
           let resolved: string | null = null;
 

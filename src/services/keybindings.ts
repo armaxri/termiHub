@@ -84,10 +84,23 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
       { key: "k", meta: true },
       { key: "s", meta: true },
     ],
-    // Avoid Ctrl+K chord leader: readline "kill-to-end-of-line". F1 is unbound
-    // in virtually every shell and is the long-standing "help" affordance.
+    // Avoid Ctrl+K chord leader: readline "kill-to-end-of-line". Ctrl+F1 is
+    // the modifier variant of the F1 "help" key, so it also opens the overlay
+    // from inside a terminal (#5194); bare F1 is the yielding companion below.
+    winLinuxDefault: { key: "F1", ctrl: true },
+    configurable: true,
+  },
+  {
+    action: "show-shortcuts-outside-terminal",
+    label: "Keyboard Shortcuts (Outside Terminals)",
+    category: "general",
+    // Bare F1 is the long-standing "help" key, but terminal programs own it
+    // (htop, mc, nano, vim, …): a focused terminal keeps it, the same as F6
+    // (#4773, #5194). Ctrl/Cmd variants above open the overlay from a terminal.
+    macDefault: { key: "F1" },
     winLinuxDefault: { key: "F1" },
     configurable: true,
+    scope: "yields-to-terminal",
   },
 
   // Terminal
@@ -775,30 +788,31 @@ export function formatActionBindings(action: string, mac: boolean = isMac()): st
  * For chord support, use processKeyEvent() instead.
  */
 export function findMatchingAction(event: KeyboardEvent): string | null {
-  for (const binding of DEFAULT_BINDINGS) {
-    const combo = getEffectiveCombo(binding.action);
-    if (!combo) continue;
+  return DEFAULT_BINDINGS.find((b) => eventMatchesSingleBinding(event, b.action))?.action ?? null;
+}
 
-    // Skip actions the user explicitly unbound: they must not fire, and must
-    // not fall back to their platform default.
-    if (isUnboundCombo(combo)) continue;
+/**
+ * Whether `event` matches one of `action`'s effective single-combo bindings —
+ * its primary combo (user override or platform default) or an alternate.
+ * Chord, unbound and modifier-only bindings never match.
+ */
+export function eventMatchesSingleBinding(event: KeyboardEvent, action: string): boolean {
+  const combo = getEffectiveCombo(action);
+  if (!combo) return false;
 
-    // Skip chord bindings (arrays with >1 combo)
-    if (Array.isArray(combo) && combo.length > 1) continue;
+  // Skip actions the user explicitly unbound: they must not fire, and must
+  // not fall back to their platform default.
+  if (isUnboundCombo(combo)) return false;
 
-    // Modifier-only chords (the remote-desktop release chord) are read
-    // directly by their owner, never matched as app shortcuts.
-    if (isModifierOnlyCombo(combo)) continue;
+  // Skip chord bindings (arrays with >1 combo)
+  if (Array.isArray(combo) && combo.length > 1) return false;
 
-    const single = Array.isArray(combo) ? combo[0] : combo;
-    if (eventMatchesCombo(event, single)) {
-      return binding.action;
-    }
-    if (getEffectiveAlternates(binding.action).some((alt) => eventMatchesCombo(event, alt))) {
-      return binding.action;
-    }
-  }
-  return null;
+  // Modifier-only chords (the remote-desktop release chord) are read
+  // directly by their owner, never matched as app shortcuts.
+  if (isModifierOnlyCombo(combo)) return false;
+
+  const single = Array.isArray(combo) ? combo[0] : combo;
+  return [single, ...getEffectiveAlternates(action)].some((c) => eventMatchesCombo(event, c));
 }
 
 /** Check if a keyboard event matches any application shortcut (non-terminal). */

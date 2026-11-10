@@ -245,6 +245,32 @@ describe("Modal", () => {
       expect(document.activeElement).toBe(trigger);
     });
 
+    it("returns focus to the opener when the modal stays mounted with open={false}", async () => {
+      function Mounted() {
+        const [open, setOpen] = React.useState(false);
+        return (
+          <>
+            <button type="button" data-testid="trigger" onClick={() => setOpen(true)}>
+              Open
+            </button>
+            <Modal data-testid="modal" open={open} onOpenChange={setOpen} title="Pick">
+              <input data-testid="modal-field" />
+            </Modal>
+          </>
+        );
+      }
+      render(<Mounted />);
+      const trigger = document.querySelector<HTMLButtonElement>('[data-testid="trigger"]')!;
+      act(() => trigger.focus());
+      act(() => trigger.click());
+      act(() => (document.querySelector('[data-testid="modal-close"]') as HTMLElement).click());
+      expect(document.querySelector('[data-testid="modal"]')).toBeNull();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(document.activeElement).toBe(trigger);
+    });
+
     it("does not pull focus back from an element that claimed it on close", async () => {
       openFromTrigger(true);
       const elsewhere = document.createElement("input");

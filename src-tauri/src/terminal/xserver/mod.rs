@@ -52,7 +52,12 @@ pub use types::{
 /// progress is reported identically whether setup was invoked manually from the
 /// Open Connections "X Servers" section or triggered automatically on connect
 /// (#1116).
-pub(crate) fn emit_progress(app: &AppHandle, step: &str, message: &str, progress: f64) {
+pub(crate) fn emit_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    step: &str,
+    message: &str,
+    progress: f64,
+) {
     let _ = app.emit(
         X_SERVER_PROGRESS_EVENT,
         XServerProgress {

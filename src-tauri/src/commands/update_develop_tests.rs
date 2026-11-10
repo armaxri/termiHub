@@ -183,3 +183,66 @@ fn build_commit_time_parses_git_iso_format() {
     assert!(parse_build_commit_time("2026-10-26T23:55:14+01:00\n").is_some());
     assert!(parse_build_commit_time("").is_none());
 }
+
+// ── boundaries and normalisation (#5168) ──────────────────────────────────────
+
+#[test]
+fn a_release_published_exactly_at_the_build_commit_time_is_not_offered() {
+    let release = release_json(Some(RELEASE_SHA), Some("2026-10-26T23:31:19Z"));
+    let info = evaluate_develop_release(release, "abc1234", at("2026-10-26T23:31:19Z"));
+    assert!(!info.available);
+}
+
+#[test]
+fn an_offered_commit_is_trimmed_lowercased_and_shortened() {
+    let padded = format!("  {}  ", RELEASE_SHA.to_ascii_uppercase());
+    let release = release_json(Some(&padded), Some("2026-10-26T23:31:19+02:00"));
+    let info = evaluate_develop_release(release, "abc1234", at("2026-10-25T00:00:00Z"));
+    assert!(info.available);
+    assert_eq!(info.latest_version, "0e3504c");
+    assert_eq!(info.build_commit.as_deref(), Some("0e3504c"));
+    // Normalised to UTC.
+    assert_eq!(
+        info.build_published_at.as_deref(),
+        Some("2026-10-26T21:31:19+00:00")
+    );
+    assert_eq!(info.release_url, RELEASE_URL);
+}
+
+#[test]
+fn a_not_available_result_keeps_the_running_hash_and_release_url() {
+    let release = release_json(Some(RELEASE_SHA), None);
+    let info = evaluate_develop_release(release, "abc1234", at("2026-10-25T00:00:00Z"));
+    assert!(!info.available);
+    assert_eq!(info.latest_version, "abc1234");
+    assert_eq!(info.release_url, RELEASE_URL);
+    assert!(info.build_published_at.is_none());
+    assert!(!info.is_security);
+}
+
+#[test]
+fn a_too_short_or_non_hex_hash_is_not_a_commit() {
+    for (hash, ok) in [
+        ("abc123", false),
+        ("abc1234", true),
+        ("ABC1234", true),
+        ("abc123g", false),
+        (RELEASE_SHA, true),
+    ] {
+        assert_eq!(is_commit_hash(hash), ok, "{hash}");
+    }
+}
+
+#[test]
+fn abbreviated_hashes_match_their_full_commit_either_way() {
+    assert!(same_commit("0e3504c", RELEASE_SHA));
+    assert!(same_commit(RELEASE_SHA, "0E3504C"));
+    assert!(!same_commit("0e3504d", RELEASE_SHA));
+}
+
+#[test]
+fn a_malformed_build_commit_time_does_not_parse() {
+    assert!(parse_build_commit_time("").is_none());
+    assert!(parse_build_commit_time("2026-10-26").is_none());
+    assert!(parse_build_commit_time(" 2026-10-26T23:31:19Z\n").is_some());
+}

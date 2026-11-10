@@ -20,7 +20,6 @@ use super::keyboard_interactive::{
     keyboard_interactive_prompter, offers_keyboard_interactive, run_keyboard_interactive,
     KeyboardInteractivePrompter, KiContext, KiMode, AUTH_METHOD_KEYBOARD_INTERACTIVE,
 };
-use super::legacy_pem;
 use super::prompt_clock::timeout_excluding_prompts;
 
 /// Connect to an SSH server, perform handshake, and authenticate.
@@ -291,17 +290,9 @@ where
                 passphrase
             };
 
-            let key_pair = match russh::keys::load_secret_key(&key_path, passphrase) {
-                Ok(key) => key,
-                // An unattended connect never asks for the passphrase an
-                // encrypted key needs (#3877).
-                Err(russh::keys::Error::KeyIsEncrypted) if unattended => {
-                    return Err(super::unattended::passphrase_required(key_path_str));
-                }
-                // russh 0.61 can't load passphrase-protected legacy-PEM EC keys
-                // (its PKCS#5 path assumes RSA); fall back to our own loader.
-                Err(orig) => load_legacy_pem_ec_key(&key_path, passphrase, orig)?,
-            };
+            // A decrypt failure is a typed credential rejection (#5184).
+            let key_pair =
+                super::key_load::load_private_key(&key_path, key_path_str, passphrase, unattended)?;
 
             // For RSA keys, negotiate the strongest hash the server accepts
             // (rsa-sha2-512/256); the choice is ignored for ed25519/ecdsa keys.
@@ -388,30 +379,6 @@ fn continuation_after(auth_method: &str, result: &russh::client::AuthResult) -> 
             }
         }
     }
-}
-
-/// Fallback loader for passphrase-protected **legacy-PEM** EC keys.
-///
-/// russh 0.61's PKCS#5 path decrypts such keys but parses the plaintext only as
-/// RSA, so `load_secret_key` fails on a `-----BEGIN EC PRIVATE KEY-----` key.
-/// When the file is one of those we decrypt and parse it ourselves; otherwise we
-/// surface russh's `original_error` unchanged so unrelated failures keep their
-/// message. See [`legacy_pem`].
-fn load_legacy_pem_ec_key(
-    key_path: &std::path::Path,
-    passphrase: Option<&str>,
-    original_error: russh::keys::Error,
-) -> Result<russh::keys::PrivateKey, SessionError> {
-    let fail = || SessionError::SpawnFailed(format!("Failed to load key: {original_error}"));
-    let contents = std::fs::read_to_string(key_path).map_err(|_| fail())?;
-    if !legacy_pem::is_encrypted_ec_pem(&contents) {
-        return Err(fail());
-    }
-    let passphrase = passphrase.ok_or_else(|| {
-        SessionError::SpawnFailed("Encrypted key requires a passphrase".to_string())
-    })?;
-    legacy_pem::load(&contents, passphrase)
-        .map_err(|e| SessionError::SpawnFailed(format!("Failed to load key: {e}")))
 }
 
 /// Try each identity offered by the SSH agent until one succeeds (Unix).
@@ -931,7 +898,7 @@ mod tests {
 
 #[cfg(test)]
 #[path = "auth_unattended_tests.rs"]
-mod unattended_tests;
+pub(super) mod unattended_tests;
 
 #[cfg(test)]
 #[path = "auth_progress_tests.rs"]

@@ -14,6 +14,8 @@
 //!   `~/.config/termihub-agent/updates/upload.<n>` and prints it;
 //! * the POSIX install chain (`mkdir -p … && mv -f … && chmod +x … && rmdir …`),
 //!   step by step with `&&` short-circuiting;
+//! * the previous-binary backup / restore / discard (`cp -pf`, `mv -f`, `rm -f`
+//!   on `<path>.previous`, #5207);
 //! * `<path> --version 2>/dev/null` → runs the "binary": a file whose first line
 //!   is `termihub-agent <ver>` prints that line, anything else fails like a
 //!   binary that refuses to start.
@@ -62,6 +64,10 @@ pub(super) struct Faults {
     pub fail_install_step: Option<&'static str>,
     /// Make the upload-dir `mktemp` fail (no writable config dir).
     pub fail_prepare: bool,
+    /// Fail the previous-binary backup copy (`cp -pf <path> <path>.previous`).
+    pub fail_backup: bool,
+    /// Fail moving the backup back into place (`mv -f <path>.previous <path>`).
+    pub fail_restore: bool,
 }
 
 /// Everything the host holds, shared across every connection.
@@ -210,7 +216,10 @@ fn run_exec(st: &mut HostState, command: &str) -> ExecResult {
     if let Some(binary) = command.strip_suffix(" --version 2>/dev/null") {
         return run_binary(st, &resolve(binary));
     }
-    if command.starts_with("mkdir -p ") {
+    if ["mkdir -p ", "cp ", "mv ", "rm "]
+        .iter()
+        .any(|p| command.starts_with(p))
+    {
         return run_chain(st, command);
     }
     fail(format!("sh: {command}: not found\n"), 127)
@@ -240,7 +249,12 @@ fn run_chain(st: &mut HostState, command: &str) -> ExecResult {
         let Some(verb) = words.first().map(String::as_str) else {
             return fail("sh: syntax error\n", 2);
         };
-        if st.faults.fail_install_step == Some(verb) {
+        let is_backup = verb == "cp";
+        let is_restore = verb == "mv" && words.get(2).is_some_and(|src| src.ends_with(".previous"));
+        if (is_backup && st.faults.fail_backup)
+            || (is_restore && st.faults.fail_restore)
+            || (!is_backup && !is_restore && st.faults.fail_install_step == Some(verb))
+        {
             return fail(format!("{verb}: Permission denied\n"), 1);
         }
         let result = match (verb, words.as_slice()) {
@@ -261,6 +275,17 @@ fn run_chain(st: &mut HostState, command: &str) -> ExecResult {
                 }
                 None => Err(format!("mv: cannot stat '{src}': No such file\n")),
             },
+            ("cp", [_, _, src, dst]) => match st.files.get(&resolve(src)).cloned() {
+                Some(content) => {
+                    st.files.insert(resolve(dst), content);
+                    Ok(())
+                }
+                None => Err(format!("cp: cannot stat '{src}': No such file\n")),
+            },
+            ("rm", [_, _, target]) => {
+                st.files.remove(&resolve(target));
+                Ok(())
+            }
             ("chmod", [_, _, target]) if st.files.contains_key(&resolve(target)) => Ok(()),
             ("chmod", [_, _, target]) => Err(format!("chmod: cannot access '{target}'\n")),
             ("rmdir", [_, dir]) => {

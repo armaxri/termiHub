@@ -683,7 +683,9 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
   // or a re-fire with the same sizes) so mounts do not churn the tree/backend.
   const handleLayoutChanged = (layout: Record<string, number>): void => {
     const next = split.children.map((c) => layout[c.id]);
-    if (!next.every((n) => typeof n === "number" && Number.isFinite(n))) return;
+    // Sanity guard: a missing, non-finite or negative size is never a real
+    // layout, and persisting it would corrupt the stored split (#5171).
+    if (!next.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) return;
     const prev = split.sizes ?? split.children.map(() => 100 / split.children.length);
     const normPrev = normalizeSizes(prev);
     const normNext = normalizeSizes(next);
@@ -1067,7 +1069,12 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   // visible (#4331, #4514): the disconnect overlay, the "Taken over" overlays
   // and the files-only panel. The terminal-focus effect below must not pull
   // focus back into the (dead or input-paused) terminal while one is up.
-  const overlayOwnsFocus = showDisconnectOverlay || isEvicted || lifecycle.filesOnly;
+  // A running reconnect renders as the non-blocking top strip (#5179), not a
+  // focus-owning overlay: the terminal stays focusable so its scrollback can be
+  // scrolled, selected and copied while the attempts run.
+  const reconnectStripShown = isReconnecting || isAutoReconnectWaiting;
+  const overlayOwnsFocus =
+    (showDisconnectOverlay && !reconnectStripShown) || isEvicted || lifecycle.filesOnly;
   const overlayOwnsFocusRef = useRef(overlayOwnsFocus);
   overlayOwnsFocusRef.current = overlayOwnsFocus;
 

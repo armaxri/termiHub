@@ -6,7 +6,7 @@
  * local connections experience).
  */
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -51,6 +51,7 @@ import {
   isAgentTunnelledGraphicalType,
 } from "@/utils/agentGraphicalTunnel";
 import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
+import { holdTypedGraphicalSecret } from "@/utils/graphicalSecret";
 import {
   Button,
   StatusDot,
@@ -100,6 +101,14 @@ import { AgentRunningSessionsDialog } from "./AgentRunningSessionsDialog";
 import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessionBoundDefinition";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import {
+  agentTreeScope,
+  captureNeighborFocus,
+  handleTreeRowActionKey,
+  rescueFocusAfterRemoval,
+  treeRowKeyShortcuts,
+  type FocusTarget,
+} from "@/utils/treeRowKeys";
 import { agentFolderDeleteMessage, remoteAgentDeleteMessage } from "./agentDeleteMessages";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { PersistentStateDot } from "./PersistentStateDot";
@@ -168,6 +177,13 @@ function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
   }
 }
 
+/** Class of an agent header's expand/collapse toggle (its focusable control). */
+const AGENT_TOGGLE_CLASS = "connection-list__group-toggle";
+/** Every agent header in the Remote Agents section. */
+const AGENT_HEADER_SELECTOR = ".connection-list__group-header--agent";
+/** Every agent header's toggle, in section order. */
+const AGENT_TOGGLE_SELECTOR = `${AGENT_HEADER_SELECTOR} .${AGENT_TOGGLE_CLASS}`;
+
 // ── Agent connection item ────────────────────────────────────────────
 
 interface AgentConnectionItemProps extends AgentItemNavProps {
@@ -213,6 +229,8 @@ function AgentConnectionItem({
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
   // Every agent-side delete confirms first (#5158).
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Where focus goes once a keyboard-started delete removes this row (#5181).
+  const deleteFocusRef = useRef<FocusTarget | null>(null);
   const persistentEntry = useAppStore((s) => s.persistentSessions[`${agentId}:${definition.id}`]);
   const runState = persistentEntry?.state ?? null;
 
@@ -277,8 +295,23 @@ function AgentConnectionItem({
               onOpen(definition);
             }
           }}
-          onKeyDown={(e) => onTreeKeyDown(e, definition.id)}
+          onKeyDown={(e) => {
+            // Row-action keys (#5181): Shift+F10 menu, F2 edit, Delete confirm.
+            const handled = handleTreeRowActionKey(e, {
+              onRename: () => onEdit(definition),
+              onDelete: (row) => {
+                deleteFocusRef.current = captureNeighborFocus(
+                  row,
+                  undefined,
+                  agentTreeScope(agentId)
+                );
+                setConfirmingDelete(true);
+              },
+            });
+            if (!handled) onTreeKeyDown(e, definition.id);
+          }}
           onFocus={() => onRowFocus(rowIndex)}
+          aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
         >
           <ConnectionIcon
             config={{
@@ -443,8 +476,13 @@ function AgentConnectionItem({
           onConfirm={() => {
             setConfirmingDelete(false);
             void deleteAgentDef(agentId, definition.id);
+            if (deleteFocusRef.current) rescueFocusAfterRemoval(deleteFocusRef.current);
+            deleteFocusRef.current = null;
           }}
-          onCancel={() => setConfirmingDelete(false)}
+          onCancel={() => {
+            deleteFocusRef.current = null;
+            setConfirmingDelete(false);
+          }}
         />
       )}
     </ContextMenuRoot>
@@ -551,6 +589,8 @@ function AgentFolderNode({
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
   const deleteAgentFolder = useAppStore((s) => s.deleteAgentFolder);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Where focus goes once a keyboard-started delete removes this row (#5181).
+  const deleteFocusRef = useRef<FocusTarget | null>(null);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
 
@@ -607,8 +647,22 @@ function AgentFolderNode({
             tabIndex={rowIndex === activeIndex ? 0 : -1}
             dropOver={isAgentConnectionOver}
             onClick={() => onToggleFolder(folder.id)}
-            onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
+            onKeyDown={(e) => {
+              // Row-action keys (#5181): Shift+F10 menu, Delete confirm.
+              const handled = handleTreeRowActionKey(e, {
+                onDelete: (row) => {
+                  deleteFocusRef.current = captureNeighborFocus(
+                    row,
+                    undefined,
+                    agentTreeScope(agentId)
+                  );
+                  setConfirmingDelete(true);
+                },
+              });
+              if (!handled) onTreeKeyDown(e, folder.id);
+            }}
             onFocus={() => onRowFocus(rowIndex)}
+            aria-keyshortcuts={treeRowKeyShortcuts({ delete: true })}
           />
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -638,8 +692,13 @@ function AgentFolderNode({
           onConfirm={() => {
             setConfirmingDelete(false);
             void deleteAgentFolder(agentId, folder.id);
+            if (deleteFocusRef.current) rescueFocusAfterRemoval(deleteFocusRef.current);
+            deleteFocusRef.current = null;
           }}
-          onCancel={() => setConfirmingDelete(false)}
+          onCancel={() => {
+            deleteFocusRef.current = null;
+            setConfirmingDelete(false);
+          }}
         />
       )}
 
@@ -751,6 +810,7 @@ function AgentRootDropZone({
       onKeyDown={onKeyDown}
       role="tree"
       aria-label={ariaLabel}
+      data-agent-tree={agentId}
     >
       {children}
     </div>
@@ -807,6 +867,8 @@ export function AgentNode({
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const deleteRemoteAgent = useAppStore((s) => s.deleteRemoteAgent);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Where focus goes once a keyboard-started delete removes this agent (#5181).
+  const deleteFocusRef = useRef<FocusTarget | null>(null);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const addTab = useAppStore((s) => s.addTab);
@@ -976,14 +1038,36 @@ export function AgentNode({
   const canMoveUp = canMoveBy?.(agent.id, -1) ?? false;
   const canMoveDown = canMoveBy?.(agent.id, 1) ?? false;
   const handleHeaderKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      // Row-action keys on the header or its toggle (#5181): Shift+F10 menu,
+      // F2 edit, Delete confirm. Not on the header's action buttons.
+      const target = event.target as HTMLElement;
+      const isToggle = target.classList.contains(AGENT_TOGGLE_CLASS);
+      if (target === event.currentTarget || isToggle) {
+        const handled = handleTreeRowActionKey(
+          event,
+          {
+            onRename: () => openConnectionEditorTab(agent.id),
+            onDelete: (row) => {
+              deleteFocusRef.current = captureNeighborFocus(
+                row,
+                isToggle ? AGENT_TOGGLE_SELECTOR : AGENT_HEADER_SELECTOR,
+                row.ownerDocument.body
+              );
+              setConfirmingDelete(true);
+            },
+          },
+          target
+        );
+        if (handled) return;
+      }
       const delta = moveShortcutDelta(event);
       if (delta === null || !onMoveBy) return;
       event.preventDefault();
       event.stopPropagation();
       onMoveBy(agent.id, delta);
     },
-    [onMoveBy, agent.id]
+    [onMoveBy, agent.id, openConnectionEditorTab]
   );
 
   useDndMonitor({
@@ -1253,12 +1337,14 @@ export function AgentNode({
             toast.info("Connect canceled");
             return;
           }
-          addTab(
+          const tabId = addTab(
             def.name,
             def.sessionType,
             agentGraphicalTabConfig(agent.id, def.sessionType, resolved.settings),
             { contentType: "remote-desktop" }
           );
+          // A typed password is saved only once the tab connects (#5197).
+          holdTypedGraphicalSecret(tabId, resolved);
         });
         return;
       }
@@ -1474,8 +1560,9 @@ export function AgentNode({
             onKeyDown={handleHeaderKeyDown}
           >
             <button
-              className="connection-list__group-toggle"
+              className={AGENT_TOGGLE_CLASS}
               onClick={() => toggleRemoteAgent(agent.id)}
+              aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
             >
               <Chevron size={16} className="connection-tree__chevron" />
               <StatusDot
@@ -1715,8 +1802,13 @@ export function AgentNode({
           onConfirm={() => {
             setConfirmingDelete(false);
             deleteRemoteAgent(agent.id);
+            if (deleteFocusRef.current) rescueFocusAfterRemoval(deleteFocusRef.current);
+            deleteFocusRef.current = null;
           }}
-          onCancel={() => setConfirmingDelete(false)}
+          onCancel={() => {
+            deleteFocusRef.current = null;
+            setConfirmingDelete(false);
+          }}
         />
       )}
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />

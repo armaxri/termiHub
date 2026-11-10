@@ -427,10 +427,11 @@ The most-used default shortcuts:
 | Split right / split down       | `Cmd+\` / `Cmd+Shift+\`       | `Alt+Shift+\` / `Alt+Shift+-`       |
 | Toggle sidebar                 | `Cmd+B`                       | `Ctrl+Shift+B`                      |
 | Open settings                  | `Cmd+,`                       | `Ctrl+,`                            |
-| Show all keyboard shortcuts    | `Cmd+K` `Cmd+S`               | `F1`                                |
+| Show all keyboard shortcuts    | `Cmd+K` `Cmd+S`               | `Ctrl+F1`                           |
+| … outside a terminal           | `F1`                          | `F1`                                |
 | Save file (in editor)          | `Cmd+S`                       | `Ctrl+S`                            |
 
-Windows/Linux defaults use `Ctrl+Shift` or `Alt+Shift` so that common shell keys such as `Ctrl+W` and `Ctrl+B` still reach the terminal. Every shortcut can be rebound under **Settings → Keyboard → Keyboard Shortcuts**. See [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md) for the reasoning and the prompt-navigation and focus keys.
+Windows/Linux defaults use `Ctrl+Shift` or `Alt+Shift` so that common shell keys such as `Ctrl+W` and `Ctrl+B` still reach the terminal. Bare function keys such as `F1` and `F6` go to the program running in a focused terminal (htop, mc, nano, …); their `Ctrl` / `Cmd` variants work there too. Every shortcut can be rebound under **Settings → Keyboard → Keyboard Shortcuts**. See [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md) for the reasoning and the prompt-navigation and focus keys.
 
 ### Settings
 
