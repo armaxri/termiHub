@@ -132,9 +132,9 @@ async fn update_replaces_an_existing_binary() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn new_binary_that_refuses_to_start_is_reported_not_silent_success() {
-    let old = fake_binary("0.8.0", 1024);
-    let (session, _state) = fake_host::connect(&[(DEFAULT_INSTALLED, old)]).await;
+async fn first_deploy_of_a_binary_that_refuses_to_start_is_reported_not_silent_success() {
+    // Nothing installed yet, so there is nothing to roll back to.
+    let (session, state) = fake_host::connect(&[]).await;
 
     let result = install(session, broken_binary(BINARY_SIZE), None)
         .await
@@ -151,6 +151,217 @@ async fn new_binary_that_refuses_to_start_is_reported_not_silent_success() {
         }
         other => panic!("expected Deployed, got {other:?}"),
     }
+    assert!(
+        backup(&state).is_none(),
+        "no backup without a previous binary"
+    );
+}
+
+// ── Rollback to the previous binary (#5207) ─────────────────────────────
+
+/// Path of the previous-binary backup on the fake host.
+fn backup_path() -> String {
+    format!(
+        "{DEFAULT_INSTALLED}{}",
+        crate::terminal::agent_install::POSIX_BACKUP_SUFFIX
+    )
+}
+
+fn backup(state: &Arc<Mutex<HostState>>) -> Option<Vec<u8>> {
+    state
+        .lock()
+        .expect("host")
+        .files
+        .get(&backup_path())
+        .cloned()
+}
+
+/// The binary at the install path runs: `--version` was executed on it as the
+/// last command and the host "runs" its contents as a working agent.
+fn assert_installed_runs(state: &Arc<Mutex<HostState>>, version: &str) {
+    let st = state.lock().expect("host");
+    let content = st.files.get(DEFAULT_INSTALLED).expect("an installed agent");
+    assert!(
+        content.starts_with(format!("termihub-agent {version}\n").as_bytes()),
+        "the installed agent must be the runnable v{version}"
+    );
+    assert_eq!(
+        st.commands.last().map(String::as_str),
+        Some(format!("{DEFAULT_REMOTE_PATH} --version 2>/dev/null").as_str()),
+        "the restored agent must be proven runnable last: {:?}",
+        st.commands
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_to_a_binary_that_refuses_to_start_restores_the_previous_binary() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+
+    let result = install(session, broken_binary(BINARY_SIZE), None)
+        .await
+        .expect("a rolled-back update is reported, not an error");
+
+    assert_eq!(
+        installed(&state),
+        Some(old),
+        "the previous agent must be back at the install path"
+    );
+    assert_installed_runs(&state, "0.8.0");
+    match result {
+        AgentDeployResult::RolledBack {
+            reason,
+            restored_version,
+            installed_path,
+        } => {
+            assert_eq!(restored_version, "0.8.0");
+            assert!(reason.contains("failed to start"), "{reason}");
+            assert_eq!(installed_path.as_deref(), Some(DEFAULT_REMOTE_PATH));
+        }
+        other => panic!("expected RolledBack, got {other:?}"),
+    }
+    assert!(
+        backup(&state).is_none(),
+        "the backup was moved back, not left"
+    );
+    assert!(state.lock().expect("host").staged_files().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn successful_update_removes_the_backup() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old)]).await;
+    let new = fake_binary("0.9.0", BINARY_SIZE);
+
+    let result = install(session, new.clone(), None).await.expect("update");
+
+    assert!(
+        matches!(result, AgentDeployResult::Deployed { success: true, .. }),
+        "{result:?}"
+    );
+    assert_eq!(installed(&state), Some(new));
+    assert!(ran(&state, "cp -pf "), "the previous binary was backed up");
+    assert!(
+        backup(&state).is_none(),
+        "the backup is deleted once verified"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn leftover_backup_with_a_broken_install_is_restored_not_deleted() {
+    // An earlier deploy died after moving a broken binary into place and
+    // before restoring the backup: the backup is the last working agent.
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[
+        (DEFAULT_INSTALLED, broken_binary(1024)),
+        (backup_path().as_str(), old.clone()),
+    ])
+    .await;
+
+    // The next deploy is broken too: the recovered binary must survive it.
+    let result = install(session, broken_binary(BINARY_SIZE), None)
+        .await
+        .expect("a rolled-back update is reported, not an error");
+
+    assert!(
+        matches!(
+            &result,
+            AgentDeployResult::RolledBack { restored_version, .. } if restored_version == "0.8.0"
+        ),
+        "{result:?}"
+    );
+    assert_eq!(installed(&state), Some(old));
+    assert_installed_runs(&state, "0.8.0");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn leftover_backup_with_a_missing_install_is_restored_before_the_update() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(backup_path().as_str(), old)]).await;
+    let new = fake_binary("0.9.0", BINARY_SIZE);
+
+    let result = install(session, new.clone(), None).await.expect("update");
+
+    assert!(
+        matches!(result, AgentDeployResult::Deployed { success: true, .. }),
+        "{result:?}"
+    );
+    assert_eq!(installed(&state), Some(new));
+    let st = state.lock().expect("host");
+    let restore = format!("mv -f {DEFAULT_REMOTE_PATH}.previous {DEFAULT_REMOTE_PATH}");
+    let backup_cmd = format!("cp -pf {DEFAULT_REMOTE_PATH} {DEFAULT_REMOTE_PATH}.previous");
+    let pos = |c: &str| st.commands.iter().position(|x| x == c);
+    assert!(
+        pos(&restore) < pos(&backup_cmd) && pos(&restore).is_some(),
+        "the leftover is restored first, then backed up again: {:?}",
+        st.commands
+    );
+    assert!(!st.files.contains_key(&backup_path()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stale_backup_next_to_a_working_install_is_replaced_then_removed() {
+    let (session, state) = fake_host::connect(&[
+        (DEFAULT_INSTALLED, fake_binary("0.8.0", 1024)),
+        (backup_path().as_str(), fake_binary("0.7.0", 1024)),
+    ])
+    .await;
+    let new = fake_binary("0.9.0", BINARY_SIZE);
+
+    let result = install(session, new.clone(), None).await.expect("update");
+
+    assert!(
+        matches!(result, AgentDeployResult::Deployed { success: true, .. }),
+        "{result:?}"
+    );
+    assert_eq!(installed(&state), Some(new));
+    assert!(backup(&state).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_backup_stops_the_update_before_replacing_the_agent() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+    state.lock().expect("host").faults.fail_backup = true;
+
+    let err = install(session, fake_binary("0.9.0", BINARY_SIZE), None)
+        .await
+        .expect_err("no backup must mean no update");
+
+    assert!(err.to_string().contains("Could not back up"), "{err}");
+    assert!(!ran(&state, "mkdir -p "), "the install must not run");
+    assert_old_binary_intact(&state, &old);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_restore_is_an_error_that_names_the_backup() {
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+    state.lock().expect("host").faults.fail_restore = true;
+
+    let err = install(session, broken_binary(BINARY_SIZE), None)
+        .await
+        .expect_err("a failed rollback must not look like a rollback");
+
+    let msg = err.to_string();
+    assert!(msg.contains("could not be restored"), "{msg}");
+    assert!(msg.contains(".previous"), "the backup must be named: {msg}");
+    assert_eq!(
+        backup(&state),
+        Some(old),
+        "the backup must be kept for the next deploy to recover"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn install_failing_after_the_rename_restores_the_old_binary() {
+    // `chmod` runs after `mv`: the new binary is already in place.
+    assert_failed_install_step_rolls_back("chmod").await;
+    let old = fake_binary("0.8.0", 1024);
+    let (session, state) = fake_host::connect(&[(DEFAULT_INSTALLED, old.clone())]).await;
+    state.lock().expect("host").faults.fail_install_step = Some("chmod");
+    let _ = install(session, fake_binary("0.9.0", BINARY_SIZE), None).await;
+    assert!(backup(&state).is_none(), "the backup was moved back");
 }
 
 // ── Upload failures and rollback ────────────────────────────────────────

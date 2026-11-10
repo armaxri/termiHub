@@ -4,6 +4,7 @@
  * with credential storage "none" — is taken from the store behind the unlock
  * gate, else prompted for, before the tab opens.
  */
+import { graphicalConnectSucceeded } from "@/utils/graphicalSecretOnceConnected";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/services/api", () => ({
@@ -180,6 +181,10 @@ describe("connectSavedConnection — remote-desktop password prompt (#4474, #447
     expect(requestPasswordSpy).toHaveBeenCalledWith("office", "me", "", "password", {
       label: "Office desktop",
     });
+    // Held until the tab connects (#5197), then written.
+    expect(vi.mocked(storeCredential)).not.toHaveBeenCalled();
+    graphicalConnectSucceeded("tab-new");
+    await Promise.resolve();
     expect(vi.mocked(storeCredential)).toHaveBeenCalledWith(
       "Office",
       "password",

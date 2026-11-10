@@ -9,6 +9,11 @@
  * dialog for a locked store, else the usual password prompt — with its "Save
  * password" box writing to the linked connection's own credential entry.
  *
+ * That write happens only once the file channel has opened with the entered
+ * secret (#5197): the outcome carries it as `saveOnceReady`, which the caller
+ * runs on a `ready` answer and drops otherwise. A rejected secret is therefore
+ * never saved, and nothing here ever deletes a saved one.
+ *
  * Callers invoke it only on a user action (opening the Files popover, a drop,
  * Retry), never when a session starts; unattended paths never call it. The
  * secret is never logged.
@@ -18,15 +23,21 @@ import { currentConnectionsView } from "@/store/connectionsBridge";
 import type { LinkedSecretRequest } from "@/types/generated/LinkedSecretRequest";
 import type { RequestPassword } from "@/utils/graphicalSecret";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
-import { errorMessage } from "@/utils/errorMessage";
-import { frontendLog } from "@/utils/frontendLog";
 
 /** Outcome of {@link askLinkedSshSecret}. */
 export type LinkedSecretOutcome =
   /** The store was unlocked: resolve again, the saved secret may now be read. */
   | { status: "unlocked" }
   /** The user entered the secret: hand it to `remote_desktop_file_channel`. */
-  | { status: "entered"; secret: string }
+  | {
+      status: "entered";
+      secret: string;
+      /**
+       * Present when the user ticked Save: the store write, to run only once
+       * the file channel answered `ready` with {@link secret}. Never earlier.
+       */
+      saveOnceReady?: () => Promise<void>;
+    }
   /** The user dismissed the unlock dialog or the prompt. */
   | { status: "canceled" };
 
@@ -73,14 +84,14 @@ export async function askLinkedSshSecret(
   if (answer === null) return { status: "canceled" };
   const entered = answer.password;
 
-  if (request.canSave && answer.shouldSave) {
-    await storeCredential(request.connectionId, request.kind, entered, request.sourceFile).catch(
-      (err) =>
-        frontendLog(
-          "remote_desktop_files",
-          `Failed to store the linked SSH ${request.kind}: ${errorMessage(err)}`
-        )
-    );
+  if (request.canSave && answer.shouldSave && entered) {
+    // Held, not written: the secret is unvalidated until the channel opens.
+    const { connectionId, kind, sourceFile } = request;
+    return {
+      status: "entered",
+      secret: entered,
+      saveOnceReady: () => storeCredential(connectionId, kind, entered, sourceFile),
+    };
   }
   return { status: "entered", secret: entered };
 }

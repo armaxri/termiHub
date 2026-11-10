@@ -53,6 +53,19 @@ export interface RemoteDesktopFiles {
  */
 const MAX_SECRET_ROUNDS = 4;
 
+/** Run a held linked-secret write, logging (never throwing) a failure. */
+async function saveLinkedSecret(save: () => Promise<void>): Promise<void> {
+  try {
+    await save();
+  } catch (err) {
+    frontendLog(
+      "remote_desktop_files",
+      `Failed to store the linked SSH secret: ${errorMessage(err)}`
+    );
+    toast.error("Linked SSH credential not saved", { description: errorMessage(err) });
+  }
+}
+
 /** States in which the session is live and its route can be resolved. */
 function isLive(state: GraphicalSessionState): boolean {
   return state === "active" || state === "resizing";
@@ -147,6 +160,13 @@ export function useRemoteDesktopFiles(
             id,
             outcome.status === "entered" ? outcome.secret : undefined
           );
+          // Save a typed secret only once the channel opened with it (#5197);
+          // a rejection (or a session gone meanwhile) drops it unsaved.
+          if (outcome.status === "entered" && outcome.saveOnceReady) {
+            if (answer.status === "ready" && sessionRef.current === id) {
+              await saveLinkedSecret(outcome.saveOnceReady);
+            }
+          }
         }
         return settle(answer);
       } catch (err) {
