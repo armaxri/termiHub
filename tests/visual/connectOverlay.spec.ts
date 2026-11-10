@@ -54,15 +54,18 @@ async function boot(page: Page): Promise<void> {
 async function openTab(
   page: Page,
   title: string,
-  config: { type: string; config: Record<string, unknown> }
+  config: { type: string; config: Record<string, unknown> },
+  connectionId?: string
 ): Promise<string> {
   const before = await page.evaluate(
     () => (window.__VISUAL_INVOKED__ ?? []).filter((c) => c === "create_connection").length
   );
   const tabId = await page.evaluate(
-    ([t, c]) =>
-      window.__visual.store.getState().addTab(t, c.type, c, { contentType: "terminal" }) as string,
-    [title, config] as const
+    ([t, c, id]) =>
+      window.__visual.store
+        .getState()
+        .addTab(t, c.type, c, { contentType: "terminal", connectionId: id }) as string,
+    [title, config, connectionId] as const
   );
   await page.waitForFunction(
     (n) => (window.__VISUAL_INVOKED__ ?? []).filter((c) => c === "create_connection").length > n,
@@ -198,6 +201,26 @@ test("the wired connect overlay renders telnet, SSH, failed and timed-out in Dar
   });
   await expect(page.locator(`${OVERLAY} .ui-content-overlay__heading`)).toHaveText("Timed out");
   await shoot(page, "timed-out", testInfo);
+
+  // A closed port names itself, explains itself and keeps the OS error behind
+  // a Details disclosure (#5183).
+  // A saved connection, so Edit connection is offered.
+  await openTab(
+    page,
+    "refused.example",
+    { type: "telnet", config: { host: "refused.example", port: 2222 } },
+    "saved-refused"
+  );
+  await expect(page.locator(`${OVERLAY} .ui-content-overlay__heading`)).toHaveText(
+    "Connection refused"
+  );
+  await expect(
+    page.locator(`${OVERLAY} [data-testid=terminal-connection-error-details]`)
+  ).toBeVisible();
+  await expect(page.locator(`${OVERLAY} [data-testid=terminal-connection-edit-btn]`)).toHaveText(
+    "Edit connection"
+  );
+  await shoot(page, "refused", testInfo);
 });
 
 test("the connect ring's animations run without any JS timer (full motion)", async ({ page }) => {

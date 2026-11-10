@@ -100,11 +100,20 @@ pub enum ConnectFailureKind {
     /// for interactive input (a keyboard-interactive / one-time-code round the
     /// saved password cannot answer). An attended connect would have prompted.
     InteractionRequired,
+    /// The host answered but refused the TCP connection — nothing is listening
+    /// on that port (`ECONNREFUSED` / `WSAECONNREFUSED`, #5183).
+    Refused,
+    /// No route to the host or its network (`EHOSTUNREACH` / `ENETUNREACH` and
+    /// their Winsock equivalents, #5183): the host is offline, or a VPN /
+    /// network link is down.
+    Unreachable,
+    /// The host name could not be resolved to an address (#5183).
+    Dns,
 }
 
 impl ConnectFailureKind {
     /// Every kind, for consumers that map a wire slug back to its kind.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 11] = [
         Self::Timeout,
         Self::AgentAuthFailed,
         Self::NotFound,
@@ -113,6 +122,9 @@ impl ConnectFailureKind {
         Self::AuthFailed,
         Self::HostKeyUntrusted,
         Self::InteractionRequired,
+        Self::Refused,
+        Self::Unreachable,
+        Self::Dns,
     ];
 
     /// The stable machine slug for this kind, as carried in the
@@ -128,6 +140,9 @@ impl ConnectFailureKind {
             Self::AuthFailed => "auth_failed",
             Self::HostKeyUntrusted => "host_key_untrusted",
             Self::InteractionRequired => "interaction_required",
+            Self::Refused => "refused",
+            Self::Unreachable => "unreachable",
+            Self::Dns => "dns",
         }
     }
 
@@ -267,6 +282,17 @@ impl SessionError {
             _ => None,
         }
     }
+
+    /// The user-facing description of this error: a classified failure's own
+    /// message, without the `Spawn failed:` prefix its `Display` adds, else the
+    /// `Display` text (#5183). Relayed and shown under a UI headline chosen
+    /// from the kind, so a prefix there would only stack (`… failed: … failed:`).
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::Classified { message, .. } => message.clone(),
+            other => other.to_string(),
+        }
+    }
 }
 
 /// Errors related to file browsing and file operations.
@@ -325,6 +351,18 @@ mod tests {
         );
     }
 
+    /// `user_message` drops only a classified failure's `Spawn failed:`
+    /// prefix; every other variant keeps its `Display` text (#5183).
+    #[test]
+    fn user_message_drops_the_classified_prefix_only() {
+        let err = SessionError::classified(ConnectFailureKind::Refused, "h:22: refused");
+        assert_eq!(err.user_message(), "h:22: refused");
+        assert_eq!(
+            SessionError::SpawnFailed("x".into()).user_message(),
+            "Spawn failed: x"
+        );
+    }
+
     /// The kind slugs are the stable wire codes the desktop parses back.
     #[test]
     fn connect_failure_kind_codes_are_stable() {
@@ -350,6 +388,10 @@ mod tests {
             ConnectFailureKind::InteractionRequired.code(),
             "interaction_required"
         );
+        // Classified TCP connect failures (#5183).
+        assert_eq!(ConnectFailureKind::Refused.code(), "refused");
+        assert_eq!(ConnectFailureKind::Unreachable.code(), "unreachable");
+        assert_eq!(ConnectFailureKind::Dns.code(), "dns");
         assert_eq!(with_code("busy", "held"), "[thub-code:busy] held");
     }
 

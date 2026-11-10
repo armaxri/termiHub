@@ -60,8 +60,9 @@ export interface VisualScenario {
   terminal?: boolean;
   /**
    * `create_connection` never resolves, so a tab stays on its connect overlay
-   * (#5068) — except host `fail.example` (rejects: auth refused) and
-   * `timeout.example` (rejects with the typed `timeout` code).
+   * (#5068) — except host `fail.example` (rejects: auth refused),
+   * `timeout.example` (rejects with the typed `timeout` code) and
+   * `refused.example` (rejects with the typed `refused` code, #5183).
    */
   connectOverlay?: boolean;
   /** Seed one live SSH host monitor ({@link MONITOR_KEY}) for Open Connections (#4949). */
@@ -767,6 +768,13 @@ export function handleCommand(cmd: string, args: Args): unknown {
           return Promise.reject({
             code: "connection_failed",
             message: "Permission denied (publickey,password).",
+          });
+        }
+        if (host === "refused.example") {
+          // A closed port: the typed `refused` code (#5183).
+          return Promise.reject({
+            code: "refused",
+            message: "refused.example:2222: Connection refused (os error 61)",
           });
         }
         if (host === "timeout.example") {

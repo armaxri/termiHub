@@ -52,6 +52,9 @@ export type ConnectionErrorKind =
   | "not-found"
   | "permission"
   | "busy"
+  | "refused"
+  | "unreachable"
+  | "dns"
   | "other";
 
 /**
@@ -65,7 +68,40 @@ const CODE_TO_KIND: Partial<Record<IpcErrorCode, Exclude<ConnectionErrorKind, "o
   not_found: "not-found",
   permission_denied: "permission",
   busy: "busy",
+  // TCP connect categories (#5183).
+  refused: "refused",
+  unreachable: "unreachable",
+  dns: "dns",
 };
+
+/**
+ * Network failure kinds whose remedy is usually a corrected host or port, so
+ * the overlay offers **Edit connection** and tucks the OS-level detail behind a
+ * disclosure (#5183).
+ */
+const NETWORK_KINDS: ReadonlySet<ConnectionErrorKind> = new Set(["refused", "unreachable", "dns"]);
+
+/** Whether `kind` is a TCP connect category (refused / unreachable / DNS). */
+export function isNetworkErrorKind(kind: ConnectionErrorKind): boolean {
+  return NETWORK_KINDS.has(kind);
+}
+
+/**
+ * The headline the failure screen shows for `kind`, or `null` for the generic
+ * "Connection failed" (#5183).
+ */
+export function connectionErrorHeading(kind: ConnectionErrorKind): string | null {
+  switch (kind) {
+    case "refused":
+      return t("connection.heading.refused");
+    case "unreachable":
+      return t("connection.heading.unreachable");
+    case "dns":
+      return t("connection.heading.dns");
+    default:
+      return null;
+  }
+}
 
 /**
  * Map a backend error code (as returned by `parseBackendError(err).code`) to
@@ -180,6 +216,13 @@ export function connectionErrorHint(
           };
     case "busy":
       return family === "serial" ? { text: t("connection.hint.busy.serial") } : null;
+    // Only the network backends raise these, so the copy is family-neutral.
+    case "refused":
+      return { text: t("connection.hint.refused") };
+    case "unreachable":
+      return { text: t("connection.hint.unreachable") };
+    case "dns":
+      return { text: t("connection.hint.dns") };
     case "other":
       return null;
   }

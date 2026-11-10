@@ -47,6 +47,20 @@ const en = {
   "connection.hint.permission.serial.macos":
     "You may not have permission to access this port, or another application may be using it. Close any program using the port and try again.",
   "connection.hint.busy.serial": "The serial port is already in use by another application.",
+  // TCP connect categories (#5183): the host / port is usually what is wrong.
+  "connection.heading.refused": "Connection refused",
+  "connection.heading.unreachable": "Host unreachable",
+  "connection.heading.dns": "Host not found",
+  "connection.hint.refused":
+    "The host answered, but nothing is accepting connections on this port. Check the port number and that the service is running on the host.",
+  "connection.hint.unreachable":
+    "The host could not be reached. Check your network or VPN connection, and that the host is online and not blocked by a firewall.",
+  "connection.hint.dns":
+    "The host name could not be resolved. Check its spelling, and your DNS or VPN settings.",
+  "connection.action.edit": "Edit connection",
+  "connection.details.show": "Details",
+  "connection.details.copy": "Copy error",
+  "connection.details.copied": "Error copied to clipboard",
 
   // ── Credential re-entry on an auth failure (terminal overlays, #3089) ───
   "credentialReentry.open": "Update Credentials",

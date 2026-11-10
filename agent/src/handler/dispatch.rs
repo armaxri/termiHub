@@ -211,7 +211,10 @@ use termihub_core::monitoring::{
 /// the host's serial ports while an agent-hosted serial connection's Port field
 /// is visible. It calls the method only on an agent that advertises the flag
 /// and keeps the `availableSerialPorts` snapshot for an older one.
-const AGENT_PROTOCOL_VERSION: &str = "0.34.0";
+/// Bumped to 0.35.0 for the additive `refused` / `unreachable` / `dns` values
+/// of a failed `connection.create`'s `data.connect_failure` (#5183); a desktop
+/// ignores a value it does not recognize.
+const AGENT_PROTOCOL_VERSION: &str = "0.35.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -3995,10 +3998,11 @@ mod tests {
     /// and 0.32.0 the `agent.logs.*` methods (#4519), and 0.33.0 the
     /// definition icon colour / emoji with its `definitionIconStyle`
     /// capability (#5021), and 0.34.0 `serial.list_ports` with its
-    /// `serialPortRescan` capability (#5069).
+    /// `serialPortRescan` capability (#5069), and 0.35.0 the `refused` /
+    /// `unreachable` / `dns` connect-failure kinds (#5183).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.34.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.35.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

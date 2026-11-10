@@ -75,3 +75,15 @@
   margin: 0;
   line-height: 1.5;
 }
+
+/* The technical error of a network failure, secondary to its hint (#5183). */
+.terminal-connection-overlay__details {
+  max-width: 520px;
+  font-size: var(--font-size-xs, var(--font-size-sm));
+  color: var(--text-secondary);
+}
+
+.terminal-connection-overlay__details > summary {
+  cursor: pointer;
+  margin-bottom: var(--spacing-xs);
+}

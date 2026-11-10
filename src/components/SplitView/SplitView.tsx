@@ -523,6 +523,7 @@ export function SplitView() {
                   tabTitle={zoomedTab.title}
                   isVisible={true}
                   {...connectOverlayIdentity(zoomedTab.config)}
+                  connectionId={zoomedTab.connectionId}
                 />
               ) : zoomedTab.contentType === "terminal" ? (
                 // The zoomed terminal gets the same right-click menu as the
@@ -926,6 +927,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               tabTitle={tab.title}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
               {...connectOverlayIdentity(tab.config)}
+              connectionId={tab.connectionId}
             />
           ) : (
             <TerminalContextMenu

@@ -63,6 +63,8 @@ import {
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
 import type { PanelNode } from "@/types/terminal";
+import { parseBackendError } from "@/utils/backendErrorCode";
+import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -159,6 +161,32 @@ describe("wire contract: session create", () => {
       "create_connection",
       expect.objectContaining({ typeId: "serial", agentId: "agent-pi" })
     );
+  });
+
+  // #5183: a refused / unreachable / unresolvable host rejects with a typed
+  // code and a message free of the stacked `Failed to spawn terminal: Spawn
+  // failed:` prefixes, which the overlay's hint selection keys off.
+  it("rejects a failed connect with a typed code and an unprefixed message", async () => {
+    const failures = sessionFixture.connectFailures;
+    const expected = { refused: "refused", unreachable: "unreachable", dns: "dns" } as const;
+    for (const [name, kind] of Object.entries(expected)) {
+      const envelope = failures[name as keyof typeof expected];
+      expect(keys(envelope)).toEqual(["code", "details", "message"]);
+      mockedInvoke.mockRejectedValueOnce(envelope);
+      const err = await createTerminal({ type: "ssh", config: {} }).catch((e: unknown) => e);
+      const parsed = parseBackendError(err);
+      expect(connectionErrorKindFromCode(parsed.code)).toBe(kind);
+      expect(parsed.message).not.toMatch(/failed:/i);
+      expect(parsed.message).not.toContain("[thub-code:");
+    }
+    expect(failures.refused.message).toBe("db.internal:2222: Connection refused (os error 61)");
+    // An untyped spawn failure keeps its prefixed text and has no hint kind.
+    expect(failures.untyped).toEqual({
+      code: "spawn_failed",
+      message: "Failed to spawn terminal: Spawn failed: pty closed",
+      details: null,
+    });
+    expect(connectionErrorKindFromCode(failures.untyped.code)).toBe("other");
   });
 
   it("names the saved connection a session is opened for, and only then (#3876)", async () => {

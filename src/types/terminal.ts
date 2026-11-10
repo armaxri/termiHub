@@ -144,6 +144,20 @@ export interface ConnectionEditorMeta {
   agentDefinitionId?: string;
   /** Folder on the agent to place a new definition in. */
   agentFolderId?: string | null;
+  /**
+   * Focus this connection field once the editor shows it — set by a failed
+   * connect's **Edit connection** action (#5183). `nonce` changes on every
+   * request so a repeat request refocuses an editor that is already open.
+   */
+  focusRequest?: ConnectionEditorFocusRequest;
+}
+
+/** A request to focus one field of the connection editor (#5183). */
+export interface ConnectionEditorFocusRequest {
+  /** The schema field key (`host` / `port`). */
+  field: "host" | "port";
+  /** Distinguishes repeat requests for the same field. */
+  nonce: number;
 }
 
 export interface TunnelEditorMeta {
