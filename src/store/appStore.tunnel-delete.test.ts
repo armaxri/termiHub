@@ -138,3 +138,69 @@ describe("appStore — deleteTunnel feedback (GAP 7, #1141)", () => {
     expect(useAppStore.getState().tunnels).toHaveLength(1);
   });
 });
+
+describe("appStore — undoable tunnel delete (#5158)", () => {
+  const parent = makeTunnel("tun-1", "My Tunnel");
+  const companion = { ...makeTunnel("tun-1-hop", "My Tunnel hop"), companionOf: "tun-1" };
+  const other = makeTunnel("tun-2", "Other");
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    // The companion is listed first: the restore must still re-create the parent first.
+    useAppStore.setState({ tunnels: [companion, parent, other] });
+    vi.clearAllMocks();
+    dispatchMock.mockResolvedValue(ACCEPTED);
+  });
+
+  function undoAction(): () => void {
+    const call = vi.mocked(toast.success).mock.calls[0];
+    const opts = call[1] as { action?: { label: string; onClick: () => void }; duration?: number };
+    expect(opts.action?.label).toBe("Undo");
+    expect(opts.duration).toBe(10_000);
+    return opts.action!.onClick;
+  }
+
+  it("offers Undo that re-creates the tunnel and its companion, parent first", async () => {
+    await useAppStore.getState().deleteTunnel("tun-1", { undoable: true });
+    dispatchMock.mockClear();
+
+    undoAction()();
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(2));
+    const created = dispatchMock.mock.calls.map((c) => c[0] as { kind: string; payload: unknown });
+    expect(created.map((c) => c.kind)).toEqual(["tunnel.create", "tunnel.create"]);
+    expect(created.map((c) => c.payload)).toEqual([parent, companion]);
+    await vi.waitFor(() =>
+      expect(toast.success).toHaveBeenLastCalledWith(expect.stringContaining("Restored"))
+    );
+  });
+
+  it("restores only a directly deleted companion", async () => {
+    await useAppStore.getState().deleteTunnel("tun-1-hop", { undoable: true });
+    dispatchMock.mockClear();
+    undoAction()();
+    await vi.waitFor(() => expect(dispatchMock).toHaveBeenCalledTimes(1));
+    expect(dispatchMock.mock.calls[0][0]).toMatchObject({
+      kind: "tunnel.create",
+      payload: companion,
+    });
+  });
+
+  it("reports a failed restore", async () => {
+    await useAppStore.getState().deleteTunnel("tun-2", { undoable: true });
+    dispatchMock.mockResolvedValueOnce({
+      intentId: "intent-test",
+      status: "rejected",
+      error: { code: "save_failed", message: "nope" },
+    });
+    undoAction()();
+    await vi.waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Failed to restore"))
+    );
+  });
+
+  it("has no Undo without the option", async () => {
+    await useAppStore.getState().deleteTunnel("tun-2");
+    const opts = vi.mocked(toast.success).mock.calls[0][1] as { action?: unknown };
+    expect(opts.action).toBeUndefined();
+  });
+});
