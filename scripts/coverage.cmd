@@ -9,6 +9,12 @@ REM Addresses audit findings TOOL-001 (unified number), TOOL-002 (the .tsx glob
 REM fix lives in vitest.config.ts), and TOOL-003 (Rust coverage via llvm-cov).
 REM
 REM Run from the repo root: scripts\coverage.cmd  [--dry-run] [--update-baseline]
+REM                         [--no-ratchet] [--split]
+REM
+REM --split runs the workspace Rust tests in the per-PR legs' partition
+REM (scripts/internal/ci-rust-tests.sh bulk, heavy, serial under
+REM CI_RUST_TESTS_COVERAGE=1) instead of one llvm-cov pass, as coverage.sh does
+REM (#5160). That runner is bash on every OS, so this needs Git Bash on PATH.
 REM
 REM BLOCKING RATCHET (#3740): after reporting, the per-component unit line
 REM coverage (incl. plugin-runner, plugin-api and rdp-sidecar, #4341) is graded against the committed per-platform baseline in
@@ -30,6 +36,7 @@ cd /d "%~dp0\.."
 set DRY_RUN=0
 set UPDATE_BASELINE=0
 set NO_RATCHET=0
+set SPLIT=0
 :parse_args
 if "%~1"=="" goto args_done
 if "%~1"=="--dry-run" (
@@ -38,6 +45,8 @@ if "%~1"=="--dry-run" (
     set UPDATE_BASELINE=1
 ) else if "%~1"=="--no-ratchet" (
     set NO_RATCHET=1
+) else if "%~1"=="--split" (
+    set SPLIT=1
 ) else (
     echo unknown argument: %~1 1>&2
     exit /b 2
@@ -70,6 +79,7 @@ if "%DRY_RUN%"=="1" (
 echo === Rust coverage (cargo llvm-cov -^> lcov) ===
 if "%DRY_RUN%"=="1" (
     echo   [dry-run] skipping: cargo llvm-cov --workspace --all-features --no-report
+    if "%SPLIT%"=="1" echo   [dry-run] --split: bulk, heavy, serial via scripts/internal/ci-rust-tests.sh
 ) else (
     REM Core's out-of-process plugin suites spawn the runner llvm-cov builds and
     REM scans, not a private build of their own, so the runner lines they drive
@@ -80,8 +90,23 @@ if "%DRY_RUN%"=="1" (
     echo   plugin runner: !TERMIHUB_PLUGIN_RUNNER!
     REM Tests and report are split so the report step survives an intermittent
     REM truncated .profraw (see scripts\internal\llvm-cov-report.mjs).
-    cargo llvm-cov --workspace --all-features --no-report
-    if errorlevel 1 exit /b 1
+    if "!SPLIT!"=="1" (
+        REM One partition, three instrumented phases whose profiles add up; the
+        REM clean drops profiles a previous run left (--no-report never cleans).
+        cargo llvm-cov clean --workspace
+        if errorlevel 1 exit /b 1
+        set CI_RUST_TESTS_COVERAGE=1
+        set CI_RUST_TESTS_SPLIT_SERIAL=1
+        for %%S in (bulk heavy serial) do (
+            bash scripts/internal/ci-rust-tests.sh %%S --workspace
+            if errorlevel 1 exit /b 1
+        )
+        set "CI_RUST_TESTS_COVERAGE="
+        set "CI_RUST_TESTS_SPLIT_SERIAL="
+    ) else (
+        cargo llvm-cov --workspace --all-features --no-report
+        if errorlevel 1 exit /b 1
+    )
     set "TERMIHUB_PLUGIN_RUNNER="
     node scripts\internal\llvm-cov-report.mjs "%RUST_LCOV%"
     if errorlevel 1 exit /b 1
