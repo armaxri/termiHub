@@ -163,7 +163,8 @@ pub struct ConnectedHost {
 /// Outcome of an agent deploy/update.
 ///
 /// `Deployed` is the normal outcome (of both deploy and a proceeding update);
-/// `OtherHostsConnected` is returned only by the update path when the
+/// `RolledBack` means the new binary failed to start and the previous one was
+/// restored (#5207); `OtherHostsConnected` is returned only by the update path when the
 /// connected-host guard blocks an unforced update because other hosts are
 /// connected. The desktop then shows the Update dialog's warning and may retry
 /// via `update_agent_force`.
@@ -183,6 +184,24 @@ pub enum AgentDeployResult {
         /// Useful for Windows hosts, where the install location
         /// (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) differs from the
         /// POSIX default and should be stored as the connection's agent path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        installed_path: Option<String>,
+    },
+    /// The new binary failed its `--version` verify, so the previous binary
+    /// was moved back into place and proven to run (#5207). The update did
+    /// **not** happen; the host keeps running `restored_version`.
+    ///
+    /// Returned only when a working previous binary existed. A first deploy of
+    /// a binary that fails `--version` has nothing to restore and reports
+    /// `Deployed { success: false }`; a rollback that itself fails is an error.
+    #[serde(rename_all = "camelCase")]
+    RolledBack {
+        /// Why the new binary was rejected, for the user.
+        reason: String,
+        /// Version the restored previous binary reported after the restore.
+        restored_version: String,
+        /// Absolute path of the restored agent on the remote host.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         installed_path: Option<String>,
@@ -436,6 +455,11 @@ pub fn install_agent_bytes(
             (posix_install_plan(remote_path, &upload_dir), None)
         };
 
+    // Before touching anything, settle a backup left by an earlier deploy that
+    // died between backup and cleanup (#5207). `previous_version` is the version
+    // of the working binary now at the install path, if there is one.
+    let previous_version = recover_leftover_backup(session, &plan)?;
+
     // Upload via SFTP.
     bail_if_cancelled(cancel)?;
     progress("uploading", "Uploading agent binary…", 0.4);
@@ -452,51 +476,67 @@ pub fn install_agent_bytes(
         return Err(fail_with_rollback(session, &plan.upload_path, e));
     }
 
-    // Install: create dir + move binary into place (POSIX also sets +x).
+    // Keep the working binary before it is overwritten, so a new binary that
+    // refuses to start can be rolled back (#5207). With no working binary there
+    // is nothing worth keeping. A failed backup stops the deploy: replacing the
+    // only working agent without a way back is not allowed.
     progress("installing", "Installing agent binary…", 0.7);
+    let backed_up = match &previous_version {
+        Some(_) => {
+            run_remote_command_checked(session, &plan.backup_command).map_err(|e| {
+                let e = if e.is_timeout() {
+                    e
+                } else {
+                    TerminalError::RemoteError(format!(
+                        "Could not back up the installed agent before replacing it: {e}"
+                    ))
+                };
+                fail_with_rollback(session, &plan.upload_path, e)
+            })?;
+            true
+        }
+        None => false,
+    };
+
+    // Install: create dir + move binary into place (POSIX also sets +x).
     // The exit status is checked: a failed `mkdir`/`mv` used to be ignored, so
     // the verify step ran the *previous* binary and reported its version as a
-    // successful update (#5162). A failure now fails the deploy and removes the
-    // staged upload; the previous binary is untouched.
-    run_remote_command_checked(session, &plan.install_command).map_err(|e| {
+    // successful update (#5162). A failure now fails the deploy, puts the
+    // backup back (a step after the move may have failed) and removes the
+    // staged upload.
+    if let Err(e) = run_remote_command_checked(session, &plan.install_command) {
         // Keep a timeout typed so the UI reports the frozen server (#3698).
-        let e = if e.is_timeout() {
-            e
-        } else {
-            TerminalError::RemoteError(format!("Install command failed: {e}"))
-        };
-        fail_with_rollback(session, &plan.upload_path, e)
-    })?;
+        // The backup stays; the next deploy restores it if it is needed.
+        if e.is_timeout() {
+            return Err(fail_with_rollback(session, &plan.upload_path, e));
+        }
+        let mut msg = format!("Install command failed: {e}");
+        if backed_up {
+            if let Err(why) = restore_previous_binary(session, &plan) {
+                msg.push_str(&format!(
+                    "; the previous agent could not be restored ({why}), a copy is at {}",
+                    plan.backup_path
+                ));
+            }
+        }
+        return Err(fail_with_rollback(
+            session,
+            &plan.upload_path,
+            TerminalError::RemoteError(msg),
+        ));
+    }
 
-    // Verify
-    bail_if_cancelled(cancel)?;
+    // Verify. Not cancellable: the new binary is already in place, so the
+    // deploy must finish verifying it — and roll back if it does not start.
     progress("verifying", "Verifying installation…", 0.9);
     // A frozen server during verify fails the deploy with the typed timeout
-    // rather than reporting "installed but --version failed" (#3698).
-    let verify_output = match run_remote_command(session, &plan.verify_command) {
-        Err(e) if e.is_timeout() => return Err(e),
-        other => other,
-    };
-
-    let installed_version = match verify_output {
-        Ok(output) if !output.is_empty() => {
-            let ver = output
-                .strip_prefix("termihub-agent ")
-                .unwrap_or(&output)
-                .trim()
-                .to_string();
-            info!("Agent installed successfully: v{ver}");
-            Some(ver)
-        }
-        Ok(_) => {
-            warn!("Agent binary installed but --version returned empty output");
-            None
-        }
-        Err(e) => {
-            warn!("Agent binary installed but --version failed: {e}");
-            None
-        }
-    };
+    // rather than reporting "installed but --version failed" (#3698). Any
+    // backup stays and the next deploy restores it if the new binary is broken.
+    let installed_version = probe_version(session, &plan.verify_command)?;
+    match &installed_version {
+        Some(ver) => info!("Agent installed successfully: v{ver}"),
+        None => warn!("Agent binary installed but --version failed or printed nothing"),
+    }
 
     // Resolve the concrete install path. On Windows this expands
     // `%LOCALAPPDATA%`/`$env:LOCALAPPDATA` to an absolute, shell-agnostic path.
@@ -507,6 +547,43 @@ pub fn install_agent_bytes(
             .or_else(|| Some(plan.install_path.clone())),
         None => Some(plan.install_path.clone()),
     };
+
+    if installed_version.is_none() && backed_up {
+        // The new binary refuses to start: put the previous one back (#5207).
+        let reason = "the new agent binary failed to start (its --version check failed)";
+        return match restore_previous_binary(session, &plan) {
+            Ok(restored_version) => {
+                warn!("Rolled back to the previous agent v{restored_version}: {reason}");
+                progress(
+                    "done",
+                    &format!("Update rolled back — kept agent v{restored_version}"),
+                    1.0,
+                );
+                Ok(AgentDeployResult::RolledBack {
+                    reason: reason.to_string(),
+                    restored_version,
+                    installed_path,
+                })
+            }
+            Err(why) => Err(TerminalError::RemoteError(format!(
+                "{reason}, and the previous agent could not be restored ({why}). \
+                 The host has no working agent; a copy of the previous binary is at {}",
+                plan.backup_path
+            ))),
+        };
+    }
+
+    // The new binary runs (or there was no working one to keep): drop the
+    // backup and any unusable leftover. A failed delete only leaves a stale
+    // file that the next deploy overwrites.
+    if installed_version.is_some() {
+        if let Err(e) = run_remote_command_checked(session, &plan.discard_backup_command) {
+            warn!(
+                "Could not remove the agent backup {}: {e}",
+                plan.backup_path
+            );
+        }
+    }
 
     let success = installed_version.is_some();
     progress(
@@ -524,6 +601,82 @@ pub fn install_agent_bytes(
         installed_version,
         installed_path,
     })
+}
+
+/// Run a `--version` command and return the reported version, or `None` when
+/// the binary is missing, fails or prints nothing. Only a timeout (a frozen
+/// server, #3698) is an error.
+fn probe_version(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    command: &str,
+) -> Result<Option<String>, TerminalError> {
+    match run_remote_command(session, command) {
+        Err(e) if e.is_timeout() => Err(e),
+        Ok(output) if !output.is_empty() => Ok(Some(
+            output
+                .strip_prefix("termihub-agent ")
+                .unwrap_or(&output)
+                .trim()
+                .to_string(),
+        )),
+        Ok(_) => Ok(None),
+        Err(e) => {
+            debug!("`{command}` failed: {e}");
+            Ok(None)
+        }
+    }
+}
+
+/// Settle the previous-binary backup an earlier deploy may have left behind
+/// (#5207), and return the version of the working binary now at the install
+/// path (`None` when there is none).
+///
+/// A deploy that dies between the backup and its cleanup leaves
+/// [`InstallPlan::backup_path`]. If the installed binary runs, the leftover is
+/// stale and is simply overwritten by the next backup. If it does not run but
+/// the leftover does, the leftover is the last working agent: it is moved back
+/// into place, **never deleted**. A restore that fails stops the deploy.
+fn recover_leftover_backup(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    plan: &InstallPlan,
+) -> Result<Option<String>, TerminalError> {
+    if let Some(ver) = probe_version(session, &plan.verify_command)? {
+        return Ok(Some(ver));
+    }
+    if probe_version(session, &plan.backup_verify_command)?.is_none() {
+        // No working binary anywhere (a first deploy, or both broken).
+        return Ok(None);
+    }
+    warn!(
+        "Installed agent does not run but a working backup is at {}; restoring it",
+        plan.backup_path
+    );
+    restore_previous_binary(session, plan)
+        .map(Some)
+        .map_err(|why| {
+            TerminalError::RemoteError(format!(
+                "The installed agent does not run and the backup at {} could not be \
+                 restored ({why}); nothing was changed",
+                plan.backup_path
+            ))
+        })
+}
+
+/// Move the backup back over the install path and prove it runs. Returns the
+/// restored version, or why the restore failed.
+fn restore_previous_binary(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    plan: &InstallPlan,
+) -> Result<String, String> {
+    run_remote_command_checked(session, &plan.restore_command).map_err(|e| e.to_string())?;
+    match probe_version(session, &plan.verify_command) {
+        Ok(Some(ver)) => {
+            info!("Restored the previous agent v{ver}");
+            Ok(ver)
+        }
+        Ok(None) => Err("the restored binary does not run --version".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 // ── Update ─────────────────────────────────────────────────────────────

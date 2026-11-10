@@ -5,6 +5,7 @@ import { UpdateAgentDialog } from "./UpdateAgentDialog";
 import type { ConnectedHost } from "@/services/api";
 import type { RemoteAgentConfig } from "@/types/terminal";
 import * as api from "@/services/api";
+import { toast } from "@/components/ui/Toast";
 
 vi.mock("@/services/api", async () => {
   const actual = await vi.importActual<typeof import("@/services/api")>("@/services/api");
@@ -12,6 +13,21 @@ vi.mock("@/services/api", async () => {
     ...actual,
     updateAgent: vi.fn(),
     updateAgentForce: vi.fn(),
+  };
+});
+
+vi.mock("@/components/ui/Toast", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui/Toast")>();
+  return {
+    ...actual,
+    toast: {
+      success: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      loading: vi.fn(),
+      dismiss: vi.fn(),
+      promise: vi.fn(),
+    },
   };
 });
 
@@ -211,6 +227,46 @@ describe("UpdateAgentDialog", () => {
       expect.objectContaining({ kind: "coordinated", notifiedClients: 2 })
     );
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("reports a rolled-back update as a failure that kept the previous agent (#5207)", async () => {
+    mockedUpdateAgent.mockResolvedValue({
+      kind: "rolledBack",
+      reason: "the new agent binary failed to start (its --version check failed)",
+      restoredVersion: "0.2.1",
+      installedPath: ".local/bin/termihub-agent",
+    });
+    const props = baseProps();
+    const onUpdated = vi.fn();
+    render(<UpdateAgentDialog {...props} otherHosts={[]} onUpdated={onUpdated} />);
+    await act(async () => {
+      (document.querySelector('[data-testid="update-agent-confirm"]') as HTMLElement).click();
+    });
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "rolledBack", restoredVersion: "0.2.1" })
+    );
+    // Not a success: the dialog stays open and the error names the kept version.
+    expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("previous agent v0.2.1 was restored")
+    );
+  });
+
+  it("reports an installed-but-not-starting agent as a failure", async () => {
+    mockedUpdateAgent.mockResolvedValue({
+      kind: "deployed",
+      success: false,
+      installedVersion: null,
+    });
+    const props = baseProps();
+    render(<UpdateAgentDialog {...props} otherHosts={[]} />);
+    await act(async () => {
+      (document.querySelector('[data-testid="update-agent-confirm"]') as HTMLElement).click();
+    });
+    expect(props.onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("does not start"));
   });
 
   it("keeps the dialog open when a deferred coordinated update reports active sessions", async () => {

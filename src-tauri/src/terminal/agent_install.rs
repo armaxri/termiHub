@@ -91,7 +91,27 @@ pub struct InstallPlan {
     pub install_command: String,
     /// Command run through the remote default shell to print the agent version.
     pub verify_command: String,
+    /// Where the previous binary is kept while the new one is verified (#5207).
+    pub backup_path: String,
+    /// Prints the version of the binary at [`Self::backup_path`] (like
+    /// [`Self::verify_command`]): proves a leftover backup is worth restoring.
+    pub backup_verify_command: String,
+    /// Copies the installed binary to [`Self::backup_path`]. A copy, not a move,
+    /// so the install path never goes missing; exit status is checked.
+    pub backup_command: String,
+    /// Moves [`Self::backup_path`] back over the install path (a rename inside
+    /// the install dir); exit status is checked.
+    pub restore_command: String,
+    /// Deletes [`Self::backup_path`]; a missing backup is not an error.
+    pub discard_backup_command: String,
 }
+
+/// Suffix of the previous-binary backup on POSIX hosts (`<path>.previous`).
+pub const POSIX_BACKUP_SUFFIX: &str = ".previous";
+
+/// File name of the previous-binary backup on Windows hosts. It keeps the
+/// `.exe` extension so `cmd`/PowerShell can still run it with `--version`.
+pub const WINDOWS_BACKUP_EXE: &str = "termihub-agent.previous.exe";
 
 /// Returns `true` if a path looks like a Windows path rather than a POSIX one.
 ///
@@ -156,10 +176,17 @@ pub fn posix_upload_path(upload_dir: &str) -> String {
 /// `mkdir -p`/`mv -f`/`chmod +x` install and removes the emptied upload dir.
 /// `remote_path` is used verbatim (relative to the SSH home for the default
 /// `.local/bin` path); `upload_dir` was validated by
-/// [`parse_prepared_upload_dir`], so single-quoting it is safe.
+/// [`parse_prepared_upload_dir`], so single-quoting it is safe. The previous
+/// binary is backed up to `<remote_path>.previous` (#5207).
 pub fn posix_install_plan(remote_path: &str, upload_dir: &str) -> InstallPlan {
     let upload_path = posix_upload_path(upload_dir);
+    let backup_path = format!("{remote_path}{POSIX_BACKUP_SUFFIX}");
     InstallPlan {
+        backup_verify_command: format!("{backup_path} --version 2>/dev/null"),
+        backup_command: format!("cp -pf {remote_path} {backup_path}"),
+        restore_command: format!("mv -f {backup_path} {remote_path}"),
+        discard_backup_command: format!("rm -f {backup_path}"),
+        backup_path,
         install_path: remote_path.to_string(),
         install_command: format!(
             "mkdir -p \"$(dirname {remote_path})\" && \
@@ -186,6 +213,7 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
     let dir = format!(r"{app_data}\{WINDOWS_INSTALL_SUBDIR}");
     let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
     let src = format!(r"{user_profile}\{WINDOWS_UPLOAD_NAME}");
+    let bak = format!(r"{dir}\{WINDOWS_BACKUP_EXE}");
 
     let (install_command, verify_command) = match shell {
         WindowsShell::Cmd => (
@@ -201,11 +229,36 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
         ),
     };
 
+    // Backup / restore of the previous binary (#5207). PowerShell's
+    // `-ErrorAction Stop` turns a failed copy/move into a non-zero exit status.
+    let (backup_verify_command, backup_command, restore_command, discard_backup_command) =
+        match shell {
+            WindowsShell::Cmd => (
+                format!(r#""{bak}" --version"#),
+                format!(r#"copy /Y "{dst}" "{bak}""#),
+                format!(r#"move /Y "{bak}" "{dst}""#),
+                format!(r#"if exist "{bak}" del /F /Q "{bak}""#),
+            ),
+            WindowsShell::PowerShell => (
+                format!(r#"& "{bak}" --version"#),
+                format!(r#"Copy-Item -Force -ErrorAction Stop -Path "{dst}" -Destination "{bak}""#),
+                format!(r#"Move-Item -Force -ErrorAction Stop -Path "{bak}" -Destination "{dst}""#),
+                format!(
+                    r#"if (Test-Path -Path "{bak}") {{ Remove-Item -Force -ErrorAction Stop -Path "{bak}" }}"#
+                ),
+            ),
+        };
+
     InstallPlan {
         upload_path: WINDOWS_UPLOAD_NAME.to_string(),
         install_path: dst,
         install_command,
         verify_command,
+        backup_path: bak,
+        backup_verify_command,
+        backup_command,
+        restore_command,
+        discard_backup_command,
     }
 }
 
@@ -483,6 +536,98 @@ mod tests {
             let plan = windows_install_plan(shell);
             assert!(!plan.verify_command.contains("2>/dev/null"));
             assert!(!plan.verify_command.contains("$HOME"));
+            for cmd in [
+                &plan.backup_verify_command,
+                &plan.backup_command,
+                &plan.restore_command,
+                &plan.discard_backup_command,
+            ] {
+                assert!(!cmd.contains("2>/dev/null"), "{cmd}");
+                assert!(!cmd.contains("$HOME"), "{cmd}");
+            }
+        }
+    }
+
+    // ── Previous-binary backup / restore (#5207) ───────────────────────
+
+    #[test]
+    fn posix_plan_backs_up_and_restores_the_previous_binary() {
+        let plan = posix_install_plan(".local/bin/termihub-agent", UPLOAD_DIR);
+        assert_eq!(plan.backup_path, ".local/bin/termihub-agent.previous");
+        assert_eq!(
+            plan.backup_command,
+            "cp -pf .local/bin/termihub-agent .local/bin/termihub-agent.previous",
+            "a copy keeps the install path populated and preserves +x"
+        );
+        assert_eq!(
+            plan.restore_command,
+            "mv -f .local/bin/termihub-agent.previous .local/bin/termihub-agent"
+        );
+        assert_eq!(
+            plan.discard_backup_command,
+            "rm -f .local/bin/termihub-agent.previous"
+        );
+        assert_eq!(
+            plan.backup_verify_command,
+            ".local/bin/termihub-agent.previous --version 2>/dev/null"
+        );
+    }
+
+    #[test]
+    fn posix_plan_backup_follows_a_custom_path() {
+        let plan = posix_install_plan("/opt/termihub-agent", UPLOAD_DIR);
+        assert_eq!(plan.backup_path, "/opt/termihub-agent.previous");
+        assert!(plan
+            .restore_command
+            .ends_with("/opt/termihub-agent.previous /opt/termihub-agent"));
+    }
+
+    #[test]
+    fn windows_cmd_plan_backs_up_and_restores_the_previous_binary() {
+        let plan = windows_install_plan(WindowsShell::Cmd);
+        let dst = r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe";
+        let bak = r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.previous.exe";
+        assert_eq!(plan.backup_path, bak);
+        assert_eq!(plan.backup_command, format!(r#"copy /Y "{dst}" "{bak}""#));
+        assert_eq!(plan.restore_command, format!(r#"move /Y "{bak}" "{dst}""#));
+        assert_eq!(
+            plan.discard_backup_command,
+            format!(r#"if exist "{bak}" del /F /Q "{bak}""#)
+        );
+        assert_eq!(plan.backup_verify_command, format!(r#""{bak}" --version"#));
+    }
+
+    #[test]
+    fn windows_powershell_plan_backs_up_and_restores_the_previous_binary() {
+        let plan = windows_install_plan(WindowsShell::PowerShell);
+        let dst = r"$env:LOCALAPPDATA\termiHub\agent\termihub-agent.exe";
+        let bak = r"$env:LOCALAPPDATA\termiHub\agent\termihub-agent.previous.exe";
+        assert_eq!(plan.backup_path, bak);
+        assert_eq!(
+            plan.backup_command,
+            format!(r#"Copy-Item -Force -ErrorAction Stop -Path "{dst}" -Destination "{bak}""#)
+        );
+        assert_eq!(
+            plan.restore_command,
+            format!(r#"Move-Item -Force -ErrorAction Stop -Path "{bak}" -Destination "{dst}""#)
+        );
+        assert_eq!(
+            plan.discard_backup_command,
+            format!(
+                r#"if (Test-Path -Path "{bak}") {{ Remove-Item -Force -ErrorAction Stop -Path "{bak}" }}"#
+            )
+        );
+        // PowerShell needs the call operator to launch a quoted path.
+        assert_eq!(
+            plan.backup_verify_command,
+            format!(r#"& "{bak}" --version"#)
+        );
+    }
+
+    #[test]
+    fn windows_backup_keeps_an_exe_extension_so_it_can_be_run() {
+        for shell in [WindowsShell::Cmd, WindowsShell::PowerShell] {
+            assert!(windows_install_plan(shell).backup_path.ends_with(".exe"));
         }
     }
 }
