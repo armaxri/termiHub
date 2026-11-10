@@ -417,10 +417,19 @@ export interface ReopenTabPayload {
  * A pending confirmation before tearing down a live session by closing a tab
  * (X / middle-click), a split panel, or a whole tab group (which may also discard
  * unsaved editors). The `tab` variant carries the optional
- * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen.
+ * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen, and
+ * the setting its "Don't ask again" clears — the one that gated the prompt for
+ * the trigger that raised it (#5189); defaults to `confirmCloseLiveSession`.
  */
 export type SessionCloseConfirmRequest =
-  | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
+  | {
+      kind: "tab";
+      tabId: string;
+      panelId: string;
+      label: string;
+      reopen: ReopenTabPayload | null;
+      optOutSetting?: "confirmCloseLiveSession" | "confirmCloseTabOnShortcut";
+    }
   | {
       kind: "panel";
       panelId: string;

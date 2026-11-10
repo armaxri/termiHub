@@ -368,7 +368,7 @@ describe("useKeyboardShortcuts", () => {
   });
 
   describe("close-tab", () => {
-    it("opens the confirmation dialog instead of closing immediately when the setting is enabled (default)", () => {
+    it("opens the live-session confirm instead of closing a live tab when the setting is enabled (default)", () => {
       useAppStore.getState().addTab("Tab A", "local");
       const panel = getAllLeaves(layoutState().rootPanel)[0];
       useAppStore.getState().setActivePanel(panel.id);
@@ -380,9 +380,10 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("w");
 
-      // The tab must NOT be closed yet — the dialog should be open instead.
+      // The tab must NOT be closed yet — the shared live-session dialog (the
+      // same one the tab X raises, #5189) should be open instead.
       expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
-      const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
+      const confirm = useAppStore.getState().pendingSessionCloseConfirm;
       expect(confirm).not.toBeNull();
       expect(confirm?.kind).toBe("tab");
       if (confirm?.kind === "tab") {

@@ -34,7 +34,7 @@ describe("ConfirmCloseTabDialog", () => {
     expect(document.querySelector('[data-testid="confirm-close-tab-dialog"]')).toBeNull();
   });
 
-  it("shows the tab label in the description when kind is 'tab'", () => {
+  it("shows the unsaved-changes copy with the tab label when kind is 'tab'", () => {
     render(<ConfirmCloseTabDialog />);
 
     act(() => {
@@ -43,12 +43,16 @@ describe("ConfirmCloseTabDialog", () => {
         tabId: "tab-1",
         panelId: "panel-1",
         label: "my-server",
+        unsaved: true,
       });
     });
 
     const dialog = document.querySelector('[data-testid="confirm-close-tab-dialog"]');
     expect(dialog).toBeTruthy();
     expect(dialog?.textContent).toContain("my-server");
+    expect(dialog?.textContent).toContain("unsaved changes");
+    // Never the old blanket "work will be lost" copy (#5189).
+    expect(dialog?.textContent).not.toContain("will be lost");
   });
 
   it("Cancel button clears the request and does not close the tab", () => {
@@ -64,6 +68,7 @@ describe("ConfirmCloseTabDialog", () => {
         tabId,
         panelId: panel.id,
         label: "Tab A",
+        unsaved: true,
       });
     });
 
@@ -75,8 +80,8 @@ describe("ConfirmCloseTabDialog", () => {
     expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
   });
 
-  it("Confirm button closes the tab and clears the request", () => {
-    useAppStore.getState().addTab("Tab A", "local");
+  it("Confirm closes a non-session tab and clears the request", () => {
+    useAppStore.getState().addTab("Tab A", "local", undefined, { contentType: "editor" });
     const panel = getAllLeaves(layoutState().rootPanel)[0];
     const tabId = panel.tabs[0].id;
 
@@ -88,6 +93,7 @@ describe("ConfirmCloseTabDialog", () => {
         tabId,
         panelId: panel.id,
         label: "Tab A",
+        unsaved: true,
       });
     });
 
@@ -97,6 +103,34 @@ describe("ConfirmCloseTabDialog", () => {
 
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
     expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(0);
+  });
+
+  it("Confirm on a dirty live terminal continues to the live-session confirm (#5189)", () => {
+    useAppStore.getState().addTab("Shell", "local");
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
+    const tabId = panel.tabs[0].id;
+
+    render(<ConfirmCloseTabDialog />);
+    act(() => {
+      useAppStore.getState().setPendingShortcutCloseConfirm({
+        kind: "tab",
+        tabId,
+        panelId: panel.id,
+        label: "Shell",
+        unsaved: true,
+      });
+    });
+    act(() => {
+      (document.querySelector('[data-testid="confirm-close-tab-confirm"]') as HTMLElement).click();
+    });
+
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+    expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
+    expect(useAppStore.getState().pendingSessionCloseConfirm).toMatchObject({
+      kind: "tab",
+      tabId,
+      optOutSetting: "confirmCloseTabOnShortcut",
+    });
   });
 
   it("for tab-group kind, confirm closes the tab group", () => {
@@ -128,7 +162,7 @@ describe("ConfirmCloseTabDialog", () => {
   });
 
   it("shows the unsaved-changes copy and closes on confirm for an unsaved request (#4410)", () => {
-    useAppStore.getState().addTab("Diag", "local");
+    useAppStore.getState().addTab("Diag", "local", undefined, { contentType: "log-viewer" });
     const panel = getAllLeaves(layoutState().rootPanel)[0];
     const tabId = panel.tabs[0].id;
 

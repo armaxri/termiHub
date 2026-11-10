@@ -34,7 +34,7 @@ export function SafetyPromptSettings({
           {show("confirmCloseTabOnShortcut") && (
             <SettingsField
               label="Confirm before closing a tab via keyboard shortcut"
-              hint="Ask for confirmation when closing a tab or tab group via keyboard shortcut."
+              hint="Ask before a keyboard shortcut ends a live session or closes a tab group. Tabs with nothing running close at once, with Reopen."
             >
               <Toggle
                 checked={settings.confirmCloseTabOnShortcut ?? true}
@@ -49,7 +49,7 @@ export function SafetyPromptSettings({
           {show("confirmCloseLiveSession") && (
             <SettingsField
               label="Confirm before closing a tab with a live session"
-              hint="Ask for confirmation before closing a tab (X or middle-click) or split panel that holds a live SSH, serial, or shell session."
+              hint="Ask for confirmation before closing a tab (X, middle-click or context menu) or split panel that holds a live SSH, serial, or shell session."
             >
               <Toggle
                 checked={settings.confirmCloseLiveSession ?? true}
@@ -64,7 +64,7 @@ export function SafetyPromptSettings({
           {show("confirmCloseAttachedTab") && (
             <SettingsField
               label="Show a one-time notice when closing a persistent-session tab"
-              hint="Show a one-time notice that a persistent session keeps running in the background when its tab is closed (X or middle-click)."
+              hint="Show a one-time notice that a persistent session keeps running in the background when its tab is closed (any way, including the keyboard shortcut)."
             >
               <Toggle
                 checked={settings.confirmCloseAttachedTab ?? true}
