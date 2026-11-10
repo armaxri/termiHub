@@ -24,7 +24,7 @@ function isTabChecked(tab: RestoreTabInfo, override: boolean | undefined): boole
  * Self-contained: it reads the pending {@link RestorePrompt} from the store and
  * resolves it through `confirmRestorePrompt` / `dismissRestorePrompt`. The
  * "Remember my choice" opt-out persists the mode (`always` on Restore, `never`
- * on Start Fresh) so the dialog is not shown again.
+ * on the explicit Start Fresh button) so the dialog is not shown again.
  *
  * Per-tab selection (#1931): each tab has a checkbox so the user restores only a
  * subset; the chosen indices are passed to `confirmRestorePrompt`. Tabs whose
@@ -33,11 +33,16 @@ function isTabChecked(tab: RestoreTabInfo, override: boolean | undefined): boole
  *
  * Composes the shared {@link ConfirmDialog}: "Restore" is the primary confirm,
  * "Start Fresh" is the cancel, and the opt-out rides the `dontAskAgain` slot.
+ *
+ * Escape / backdrop click are a *defer*, not "Start Fresh" (#5155): they route
+ * to `deferRestorePrompt`, which keeps the stored session, ignores "Remember my
+ * choice", and asks again on the next launch.
  */
 export function SessionRestoreDialog(): React.ReactElement | null {
   const restorePrompt = useAppStore((s) => s.restorePrompt);
   const confirmRestorePrompt = useAppStore((s) => s.confirmRestorePrompt);
   const dismissRestorePrompt = useAppStore((s) => s.dismissRestorePrompt);
+  const deferRestorePrompt = useAppStore((s) => s.deferRestorePrompt);
   const [remember, setRemember] = useState(false);
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
 
@@ -70,6 +75,7 @@ export function SessionRestoreDialog(): React.ReactElement | null {
       testIdBase="session-restore"
       onConfirm={() => confirmRestorePrompt(remember, selectedIndices)}
       onCancel={() => dismissRestorePrompt(remember)}
+      onDismiss={deferRestorePrompt}
       data-testid="session-restore-dialog"
     >
       <ul className="session-restore__tabs" data-testid="session-restore-tabs">

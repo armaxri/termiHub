@@ -112,8 +112,20 @@ export interface ConfirmDialogProps {
    * Button's async (pending → success/error) lifecycle.
    */
   onConfirm: () => void | Promise<void>;
-  /** Invoked when the user cancels (button, ESC, scrim click). */
+  /**
+   * Invoked when the user cancels: the Cancel button, and — unless
+   * {@link ConfirmDialogProps.onDismiss | onDismiss} is given — ESC and a
+   * scrim click.
+   */
   onCancel: () => void;
+  /**
+   * Optional handler for a passive dismissal (ESC, scrim click, close X). When
+   * set, those gestures call this instead of `onCancel`, so a dialog whose
+   * Cancel button is itself a decision (e.g. the session-restore "Start Fresh",
+   * #5155) can treat a reflex Escape as "decide later" rather than as that
+   * decision. Omit it to keep the default ESC/scrim → `onCancel` mapping.
+   */
+  onDismiss?: () => void;
   /**
    * Base for the action-button test ids (defaults to `"confirm-dialog"`, so the
    * Cancel/Confirm buttons and the "don't ask again" checkbox are
@@ -158,6 +170,7 @@ export function ConfirmDialog({
   testIdBase = "confirm-dialog",
   onConfirm,
   onCancel,
+  onDismiss,
   ...rest
 }: ConfirmDialogProps): React.ReactElement {
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
@@ -191,7 +204,7 @@ export function ConfirmDialog({
   return (
     <Modal
       open={open}
-      onOpenChange={(isOpen) => !isOpen && onCancel()}
+      onOpenChange={(isOpen) => !isOpen && (onDismiss ?? onCancel)()}
       title={titleNode}
       description={description}
       data-testid={rest["data-testid"]}

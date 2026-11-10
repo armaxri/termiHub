@@ -5,16 +5,19 @@ import type { RestorePrompt } from "@/utils/restoreMode";
 
 const confirmRestorePrompt = vi.fn(() => Promise.resolve());
 const dismissRestorePrompt = vi.fn(() => Promise.resolve());
+const deferRestorePrompt = vi.fn();
 
 /** Mutable slice the mocked store selector reads from. */
 const storeState: {
   restorePrompt: RestorePrompt | null;
   confirmRestorePrompt: typeof confirmRestorePrompt;
   dismissRestorePrompt: typeof dismissRestorePrompt;
+  deferRestorePrompt: typeof deferRestorePrompt;
 } = {
   restorePrompt: null,
   confirmRestorePrompt,
   dismissRestorePrompt,
+  deferRestorePrompt,
 };
 
 vi.mock("@/store/appStore", () => ({
@@ -197,5 +200,52 @@ describe("SessionRestoreDialog", () => {
     });
 
     expect(dismissRestorePrompt).toHaveBeenCalledWith(true);
+  });
+
+  describe("passive dismissal defers instead of starting fresh (#5155)", () => {
+    function pressEscape() {
+      const content = byTestId("session-restore-dialog") as HTMLElement;
+      content.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+      );
+    }
+
+    it("Escape defers and never starts fresh", async () => {
+      storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
+      await render();
+
+      await act(async () => pressEscape());
+
+      expect(deferRestorePrompt).toHaveBeenCalledTimes(1);
+      expect(dismissRestorePrompt).not.toHaveBeenCalled();
+      expect(confirmRestorePrompt).not.toHaveBeenCalled();
+    });
+
+    it("Escape with 'Remember my choice' ticked still only defers", async () => {
+      storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
+      await render();
+
+      act(() => (byTestId("session-restore-remember") as HTMLElement).click());
+      await act(async () => pressEscape());
+
+      expect(deferRestorePrompt).toHaveBeenCalledTimes(1);
+      expect(dismissRestorePrompt).not.toHaveBeenCalled();
+    });
+
+    it("a backdrop click defers and never starts fresh", async () => {
+      storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
+      await render();
+
+      const overlay = document.querySelector(".ui-modal__overlay") as HTMLElement;
+      expect(overlay).not.toBeNull();
+      await act(async () => {
+        overlay.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+        overlay.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+        overlay.click();
+      });
+
+      expect(deferRestorePrompt).toHaveBeenCalledTimes(1);
+      expect(dismissRestorePrompt).not.toHaveBeenCalled();
+    });
   });
 });
