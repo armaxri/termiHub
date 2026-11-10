@@ -79,6 +79,8 @@
 
 .key-path-input__option:hover,
 .key-path-input__option--highlighted {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-active);
 }
 

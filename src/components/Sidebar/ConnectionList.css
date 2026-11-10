@@ -190,6 +190,8 @@
 
 .connection-tree__folder:hover,
 .connection-tree__item:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 
@@ -294,6 +296,8 @@
 }
 
 .connection-tree__folder--drop-over {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
   outline: 1px dashed var(--accent-color);
   outline-offset: -1px;

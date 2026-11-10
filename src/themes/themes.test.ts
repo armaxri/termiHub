@@ -25,6 +25,7 @@ const REQUIRED_KEYS: (keyof ThemeColors)[] = [
   "tabBorder",
   "textPrimary",
   "textSecondary",
+  "textSecondaryOnSelection",
   "textMuted",
   "textMutedOnSelection",
   "textDisabled",

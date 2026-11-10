@@ -48,6 +48,8 @@
 }
 
 .macro-item__tag {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   padding: 0 var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
