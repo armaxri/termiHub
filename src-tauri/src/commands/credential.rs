@@ -811,32 +811,6 @@ pub fn resolve_credential(
     }
 }
 
-/// Remove a stored credential for a connection.
-///
-/// Used to clear stale credentials after an authentication failure.
-/// `source_file` scopes the key as in [`store_credential`].
-#[tauri::command]
-pub fn remove_credential(
-    connection_id: String,
-    credential_type: String,
-    source_file: Option<String>,
-    manager: State<'_, Arc<CredentialManager>>,
-    connection_manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    let cred_type = parse_credential_type(&credential_type)?;
-    let key = connection_manager.connection_credential_key(
-        &connection_id,
-        source_file.as_deref(),
-        cred_type,
-    );
-    debug!(
-        connection_id = %connection_id,
-        credential_type = %credential_type,
-        "Removing credential"
-    );
-    manager.remove(&key).map_err(|e| e.to_string())
-}
-
 /// Resolve the schema secrets other than `password` stored for a saved
 /// connection — e.g. a VNC SSH-tunnel password or an inline jump-host hop's
 /// password (#4289) — for the connect flow to splice into its in-memory config

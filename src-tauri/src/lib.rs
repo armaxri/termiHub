@@ -978,7 +978,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::credential::switch_credential_store,
             commands::credential::store_credential,
             commands::credential::resolve_credential,
-            commands::credential::remove_credential,
             commands::credential::resolve_field_secrets,
             commands::credential::store_field_secrets,
             commands::credential::list_stored_field_secret_keys,

@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),
-  removeCredential: vi.fn(() => Promise.resolve()),
   storeCredential: vi.fn(() => Promise.resolve()),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
   isSshKeyEncrypted: vi.fn(() => Promise.resolve(false)),
@@ -22,8 +21,8 @@ import { toast } from "@/components/ui";
 import {
   createTerminal,
   isSshKeyEncrypted,
-  removeCredential,
   resolveCredential,
+  storeCredential,
 } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { EMPTY_AGENTS_VIEW, setAgentsViewForTest } from "@/store/agentsBridge";
@@ -33,7 +32,7 @@ import { connectSavedConnection } from "./connectSavedConnection";
 const mockedCreateTerminal = vi.mocked(createTerminal);
 const mockedResolveCredential = vi.mocked(resolveCredential);
 const mockedIsSshKeyEncrypted = vi.mocked(isSshKeyEncrypted);
-const mockedRemoveCredential = vi.mocked(removeCredential);
+const mockedStoreCredential = vi.mocked(storeCredential);
 
 let addTabSpy: ReturnType<typeof vi.fn>;
 let requestUnlockSpy: ReturnType<typeof vi.fn>;
@@ -139,7 +138,7 @@ describe("connectSavedConnection — unattended refusals (#3527)", () => {
     mockedCreateTerminal.mockRejectedValue(ipcError("auth_failed"));
     const result = await connectSavedConnection(ssh("password"), unattended);
     expect(result).toEqual({ status: "refused", reason: "the saved credential was rejected" });
-    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    expect(mockedStoreCredential).not.toHaveBeenCalled();
     expectNoPromptAndNoTab();
   });
 

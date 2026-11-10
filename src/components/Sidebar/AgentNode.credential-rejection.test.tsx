@@ -10,7 +10,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
-import { removeCredential, storeCredential } from "@/services/api";
+import { storeCredential } from "@/services/api";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 
 // --- mocks required by AgentNode --------------------------------------------
@@ -38,7 +38,6 @@ vi.mock("@dnd-kit/utilities", () => ({
 }));
 
 vi.mock("@/services/api", () => ({
-  removeCredential: vi.fn(() => Promise.resolve()),
   storeCredential: vi.fn(() => Promise.resolve()),
   cancelConnectAgent: vi.fn(() => Promise.resolve()),
   listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
@@ -128,7 +127,6 @@ describe("AgentNode — rejected saved password (#5156)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    vi.mocked(removeCredential).mockClear();
     vi.mocked(storeCredential).mockClear();
     mockConnect.mockReset();
     mockRequestPassword.mockReset();
@@ -164,7 +162,6 @@ describe("AgentNode — rejected saved password (#5156)", () => {
 
     await clickConnect();
 
-    expect(removeCredential).not.toHaveBeenCalled();
     expect(mockRequestPassword).toHaveBeenCalledWith(
       "bastion.example.com",
       "ops",
@@ -184,7 +181,6 @@ describe("AgentNode — rejected saved password (#5156)", () => {
 
     expect(mockConnect).toHaveBeenLastCalledWith(AGENT_ID, "new-pw");
     expect(storeCredential).toHaveBeenCalledWith(AGENT_ID, "password", "new-pw");
-    expect(removeCredential).not.toHaveBeenCalled();
   });
 
   it("never saves a retry password the server also rejects (a typo)", async () => {
@@ -196,7 +192,6 @@ describe("AgentNode — rejected saved password (#5156)", () => {
 
     expect(mockConnect).toHaveBeenCalledTimes(2);
     expect(storeCredential).not.toHaveBeenCalled();
-    expect(removeCredential).not.toHaveBeenCalled();
   });
 
   it("uses an unticked retry password for this connect only", async () => {
@@ -208,6 +203,5 @@ describe("AgentNode — rejected saved password (#5156)", () => {
 
     expect(mockConnect).toHaveBeenLastCalledWith(AGENT_ID, "once-pw");
     expect(storeCredential).not.toHaveBeenCalled();
-    expect(removeCredential).not.toHaveBeenCalled();
   });
 });

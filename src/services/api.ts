@@ -3198,22 +3198,6 @@ export async function clearFieldSecrets(
   });
 }
 
-/**
- * Remove a stored credential for a connection (e.g., after auth failure).
- * `sourceFile` scopes the key as in {@link storeCredential}.
- */
-export async function removeCredential(
-  connectionId: string,
-  credentialType: CredentialType,
-  sourceFile?: string | null
-): Promise<void> {
-  await invoke("remove_credential", {
-    connectionId,
-    credentialType,
-    sourceFile: sourceFile ?? null,
-  });
-}
-
 // --- Portable mode commands ---
 
 /** Return the current app mode (portable vs. installed) and the data directory path. */
