@@ -364,19 +364,10 @@ fn second_launch_on_a_locked_data_dir_exits_with_the_message() {
         .expect("instance A takes the data-dir lock");
     let before = snapshot_tree(&data_dir);
 
-    // The file log sink opens before the lock is taken, so in portable mode B
-    // would append `data/logs/termihub.log` even though it is refused. Point
-    // the log elsewhere until #5210 moves the lock ahead of it; every other
-    // write into `data/` is still caught below.
-    let log_dir = launch.home.join("redirected-logs");
-    let log_dir_str = log_dir.to_str().expect("utf-8 temp path");
-    let output = launch.run_with_env(
-        &[],
-        &[
-            (SUPPRESS_DIALOG_ENV, "1"),
-            ("TERMIHUB_LOG_DIR", log_dir_str),
-        ],
-    );
+    // No `TERMIHUB_LOG_DIR` redirect: in portable mode the durable log lives in
+    // `data/logs`, and the lock is taken before that sink opens (#5210), so B
+    // must leave `data/` — logs included — completely untouched.
+    let output = launch.run_with_env(&[], &[(SUPPRESS_DIALOG_ENV, "1")]);
 
     assert_eq!(output.status.code(), Some(1), "{}", describe(&output));
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -394,6 +385,11 @@ fn second_launch_on_a_locked_data_dir_exits_with_the_message() {
         snapshot_tree(&data_dir),
         before,
         "the refused instance must not write into the shared data dir"
+    );
+    assert!(
+        !data_dir.join("logs").exists(),
+        "the refused instance must not create data/logs; {}",
+        describe(&output)
     );
     drop(lock_file);
 }
