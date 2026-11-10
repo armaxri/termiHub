@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
+import { flushAsync } from "@/test/flushAsync";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -25,8 +26,18 @@ const baseProps = {
   open: true,
   stepCount: 3,
   onSave: () => {},
-  onCancel: () => {},
+  onDiscard: () => {},
 };
+
+const q = (testId: string) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+
+/** Render and let Radix register its outside-pointer listener (set on a timeout). */
+async function renderSettled(ui: React.ReactElement) {
+  await act(async () => {
+    root.render(ui);
+  });
+  await flushAsync();
+}
 
 describe("MacroRecordSaveDialog", () => {
   beforeEach(() => {
@@ -92,14 +103,115 @@ describe("MacroRecordSaveDialog", () => {
     expect(onSave).toHaveBeenCalledWith({ name: "Bare", description: undefined, tags: [] });
   });
 
-  it("Cancel fires onCancel without saving", () => {
-    const onSave = vi.fn();
-    const onCancel = vi.fn();
-    render(<MacroRecordSaveDialog {...baseProps} onSave={onSave} onCancel={onCancel} />);
-    act(() => {
-      (document.querySelector('[data-testid="macro-save-cancel"]') as HTMLElement).click();
+  describe("dismissing keeps the recording (#5201)", () => {
+    function pressEscape() {
+      const el = q("macro-save-name")!;
+      act(() => {
+        el.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+        );
+      });
+    }
+
+    function clickScrim() {
+      act(() => {
+        q("macro-save-dialog-overlay")!.dispatchEvent(
+          new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
+        );
+      });
+    }
+
+    const dismissPaths: Array<[string, () => void]> = [
+      ["Escape", pressEscape],
+      ["a scrim click", clickScrim],
+      ["the X button", () => act(() => q("modal-close")!.click())],
+      ["the Discard recording button", () => act(() => q("macro-save-discard")!.click())],
+    ];
+
+    describe.each(dismissPaths)("%s", (_label, dismiss) => {
+      it("asks first and does not discard", async () => {
+        const onDiscard = vi.fn();
+        const onSave = vi.fn();
+        await renderSettled(
+          <MacroRecordSaveDialog {...baseProps} onDiscard={onDiscard} onSave={onSave} />
+        );
+        dismiss();
+        expect(onDiscard).not.toHaveBeenCalled();
+        expect(onSave).not.toHaveBeenCalled();
+        expect(q("unsaved-changes-just-close")).not.toBeNull();
+      });
+
+      it("keeps the dialog and its entered name when the prompt is cancelled", async () => {
+        const onDiscard = vi.fn();
+        await renderSettled(<MacroRecordSaveDialog {...baseProps} onDiscard={onDiscard} />);
+        setInput("macro-save-name", "Deploy");
+        dismiss();
+        act(() => q("unsaved-changes-cancel")!.click());
+        expect(onDiscard).not.toHaveBeenCalled();
+        expect(q("unsaved-changes-just-close")).toBeNull();
+        expect((q("macro-save-name") as HTMLInputElement).value).toBe("Deploy");
+      });
+
+      it("discards only once the prompt is confirmed", async () => {
+        const onDiscard = vi.fn();
+        const onSave = vi.fn();
+        await renderSettled(
+          <MacroRecordSaveDialog {...baseProps} onDiscard={onDiscard} onSave={onSave} />
+        );
+        dismiss();
+        act(() => q("unsaved-changes-just-close")!.click());
+        expect(onDiscard).toHaveBeenCalledTimes(1);
+        expect(onSave).not.toHaveBeenCalled();
+      });
+
+      it("discards directly when no step was captured", async () => {
+        const onDiscard = vi.fn();
+        await renderSettled(
+          <MacroRecordSaveDialog {...baseProps} stepCount={0} onDiscard={onDiscard} />
+        );
+        dismiss();
+        expect(onDiscard).toHaveBeenCalledTimes(1);
+        expect(q("unsaved-changes-just-close")).toBeNull();
+      });
     });
-    expect(onCancel).toHaveBeenCalledTimes(1);
-    expect(onSave).not.toHaveBeenCalled();
+
+    it("Escape on the prompt returns to the dialog without discarding", async () => {
+      const onDiscard = vi.fn();
+      await renderSettled(<MacroRecordSaveDialog {...baseProps} onDiscard={onDiscard} />);
+      pressEscape();
+      act(() => {
+        q("unsaved-changes-just-close")!.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+        );
+      });
+      expect(onDiscard).not.toHaveBeenCalled();
+      expect(q("unsaved-changes-just-close")).toBeNull();
+      expect(q("macro-save-dialog")).not.toBeNull();
+    });
+
+    it("Enter in the prompt does not save the macro", async () => {
+      const onSave = vi.fn();
+      await renderSettled(<MacroRecordSaveDialog {...baseProps} onSave={onSave} />);
+      setInput("macro-save-name", "Deploy");
+      pressEscape();
+      act(() => {
+        q("unsaved-changes-cancel")!.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+        );
+      });
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it("Enter in the name field still saves", async () => {
+      const onSave = vi.fn();
+      await renderSettled(<MacroRecordSaveDialog {...baseProps} onSave={onSave} />);
+      setInput("macro-save-name", "Deploy");
+      act(() => {
+        q("macro-save-name")!.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+        );
+      });
+      expect(onSave).toHaveBeenCalledWith({ name: "Deploy", description: undefined, tags: [] });
+    });
   });
 });
