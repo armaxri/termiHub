@@ -22,6 +22,7 @@ pub mod handler;
 pub mod ipc_client;
 pub mod ipc_server;
 pub mod registry;
+pub mod shell_integration_cli;
 
 #[cfg(test)]
 mod tests;
