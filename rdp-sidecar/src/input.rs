@@ -193,9 +193,9 @@ pub fn to_slow_path(event: &FastPathInputEvent) -> Option<SlowPathEvent> {
                 unicode_code: *code,
             })
         }
-        FastPathInputEvent::MouseEvent(pdu) => SlowPathEvent::Mouse(pdu.clone()),
-        FastPathInputEvent::MouseEventEx(pdu) => SlowPathEvent::MouseX(pdu.clone()),
-        FastPathInputEvent::MouseEventRel(pdu) => SlowPathEvent::MouseRel(pdu.clone()),
+        FastPathInputEvent::MouseEvent(pdu) => SlowPathEvent::Mouse(*pdu),
+        FastPathInputEvent::MouseEventEx(pdu) => SlowPathEvent::MouseX(*pdu),
+        FastPathInputEvent::MouseEventRel(pdu) => SlowPathEvent::MouseRel(*pdu),
         FastPathInputEvent::SyncEvent(flags) => {
             let mut slow = SyncToggleFlags::empty();
             for (fast, toggle) in [
@@ -369,6 +369,346 @@ mod tests {
             pressed: true,
         };
         assert!(translate(0, &ev).is_empty());
+    }
+
+    /// Channel ids and share id of the test session: user 1007, IO 1003.
+    const USER_CHANNEL: u16 = 1007;
+    const IO_CHANNEL: u16 = 1003;
+    const SHARE_ID: u32 = 0x0001_03EA;
+
+    fn stage() -> ActiveStage {
+        ironrdp_session::ActiveStageBuilder {
+            static_channels: ironrdp_svc::StaticChannelSet::new(),
+            user_channel_id: USER_CHANNEL,
+            io_channel_id: IO_CHANNEL,
+            message_channel_id: None,
+            share_id: SHARE_ID,
+            compression_type: None,
+            enable_server_pointer: true,
+            pointer_software_rendering: false,
+        }
+        .build()
+    }
+
+    /// The 36 header bytes of a slow-path Input Event PDU carrying one event,
+    /// written out by hand from MS-RDPBCGR so the encoder is checked against
+    /// the spec, not against itself.
+    const ONE_EVENT_HEADER: [u8; 36] = [
+        // TPKT (RFC 1006): version 3, reserved, total length 48.
+        0x03, 0x00, 0x00, 0x30, //
+        // X.224 Data TPDU.
+        0x02, 0xF0, 0x80, //
+        // MCS Send Data Request: initiator 1007 - 1001 = 6, channel 1003,
+        // high priority + begin/end segmentation, PER length 34.
+        0x64, 0x00, 0x06, 0x03, 0xEB, 0x70, 0x22, //
+        // Share Control Header: totalLength 34, PDUTYPE_DATAPDU | version 1,
+        // pduSource = user channel 1007.
+        0x22, 0x00, 0x17, 0x00, 0xEF, 0x03, //
+        // Share Data Header: shareId, pad, STREAM_MED, uncompressedLength 16,
+        // PDUTYPE2_INPUT, no compression, compressedLength 0.
+        0xEA, 0x03, 0x01, 0x00, 0x00, 0x02, 0x10, 0x00, 0x1C, 0x00, 0x00, 0x00, //
+        // TS_INPUT_PDU_DATA: numEvents 1, pad.
+        0x01, 0x00, 0x00, 0x00,
+    ];
+
+    /// The full wire frame of a one-event slow-path Input Event PDU whose
+    /// TS_INPUT_EVENT is `event` (eventTime 0 + messageType + 6-byte body).
+    fn one_event_frame(event: [u8; 12]) -> Vec<u8> {
+        let mut frame = ONE_EVENT_HEADER.to_vec();
+        frame.extend_from_slice(&event);
+        frame
+    }
+
+    fn slow_frames(events: &[FastPathInputEvent]) -> Vec<Vec<u8>> {
+        encode_slow_path(&stage(), events).expect("slow-path input must encode")
+    }
+
+    #[test]
+    fn input_path_needs_a_fast_path_flag() {
+        assert_eq!(
+            InputPath::negotiated(InputFlags::empty()),
+            InputPath::SlowPath
+        );
+        assert_eq!(
+            InputPath::negotiated(InputFlags::SCANCODES | InputFlags::MOUSEX | InputFlags::UNICODE),
+            InputPath::SlowPath
+        );
+        assert_eq!(
+            InputPath::negotiated(InputFlags::SCANCODES | InputFlags::FASTPATH_INPUT),
+            InputPath::FastPath
+        );
+        assert_eq!(
+            InputPath::negotiated(InputFlags::SCANCODES | InputFlags::FASTPATH_INPUT_2),
+            InputPath::FastPath
+        );
+        assert_eq!(
+            InputPath::negotiated(InputFlags::FASTPATH_INPUT | InputFlags::FASTPATH_INPUT_2),
+            InputPath::FastPath
+        );
+    }
+
+    #[test]
+    fn slow_path_scancode_press_wire_bytes() {
+        let frames = slow_frames(&[FastPathInputEvent::KeyboardEvent(
+            KeyboardFlags::empty(),
+            0x1E,
+        )]);
+        assert_eq!(
+            frames,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, // eventTime
+                0x04, 0x00, // INPUT_EVENT_SCANCODE
+                0x00, 0x00, // keyboardFlags: key down
+                0x1E, 0x00, // keyCode
+                0x00, 0x00, // pad
+            ])]
+        );
+    }
+
+    #[test]
+    fn slow_path_extended_scancode_release_wire_bytes() {
+        let frames = slow_frames(&[FastPathInputEvent::KeyboardEvent(
+            KeyboardFlags::RELEASE | KeyboardFlags::EXTENDED,
+            0x1D,
+        )]);
+        assert_eq!(
+            frames,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, 0x04, 0x00, //
+                0x00, 0x81, // KBDFLAGS_RELEASE | KBDFLAGS_EXTENDED
+                0x1D, 0x00, 0x00, 0x00,
+            ])]
+        );
+    }
+
+    #[test]
+    fn slow_path_extended1_scancode_wire_bytes() {
+        let frames = slow_frames(&[FastPathInputEvent::KeyboardEvent(
+            KeyboardFlags::EXTENDED1,
+            0x45,
+        )]);
+        assert_eq!(
+            frames,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, 0x04, 0x00, //
+                0x00, 0x02, // KBDFLAGS_EXTENDED1
+                0x45, 0x00, 0x00, 0x00,
+            ])]
+        );
+    }
+
+    #[test]
+    fn slow_path_unicode_wire_bytes() {
+        let press = slow_frames(&[FastPathInputEvent::UnicodeKeyboardEvent(
+            KeyboardFlags::empty(),
+            0x00E9,
+        )]);
+        assert_eq!(
+            press,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, //
+                0x05, 0x00, // INPUT_EVENT_UNICODE
+                0x00, 0x00, // keyboardFlags: key down
+                0xE9, 0x00, // unicodeCode
+                0x00, 0x00,
+            ])]
+        );
+        let release = slow_frames(&[FastPathInputEvent::UnicodeKeyboardEvent(
+            KeyboardFlags::RELEASE,
+            0x00E9,
+        )]);
+        assert_eq!(
+            release,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, 0x05, 0x00, //
+                0x00, 0x80, // KBDFLAGS_RELEASE
+                0xE9, 0x00, 0x00, 0x00,
+            ])]
+        );
+    }
+
+    #[test]
+    fn slow_path_mouse_move_and_button_wire_bytes() {
+        let frames = slow_frames(&pointer_events(0, DOM_LEFT, 100, 200));
+        assert_eq!(
+            frames,
+            vec![{
+                // Two events: the header's lengths grow by one 12-byte event.
+                let mut frame = ONE_EVENT_HEADER.to_vec();
+                frame[3] = 0x3C; // TPKT length 60
+                frame[13] = 0x2E; // MCS PER length 46
+                frame[14] = 0x2E; // Share Control totalLength 46
+                frame[26] = 0x1C; // uncompressedLength 28
+                frame[32] = 0x02; // numEvents 2
+                frame.extend_from_slice(&[
+                    0x00, 0x00, 0x00, 0x00, //
+                    0x01, 0x80, // INPUT_EVENT_MOUSE
+                    0x00, 0x08, // PTRFLAGS_MOVE
+                    0x64, 0x00, 0xC8, 0x00, // x 100, y 200
+                ]);
+                frame.extend_from_slice(&[
+                    0x00, 0x00, 0x00, 0x00, 0x01, 0x80, //
+                    0x00, 0x90, // PTRFLAGS_DOWN | PTRFLAGS_BUTTON1
+                    0x64, 0x00, 0xC8, 0x00,
+                ]);
+                frame
+            }]
+        );
+    }
+
+    #[test]
+    fn slow_path_wheel_wire_bytes() {
+        let down = slow_frames(&[wheel_event(7, 9, 1.0).unwrap()]);
+        assert_eq!(
+            down,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, 0x01, 0x80, //
+                // PTRFLAGS_WHEEL | PTRFLAGS_WHEEL_NEGATIVE | (-120 & 0x1FF)
+                0x88, 0x03, //
+                0x07, 0x00, 0x09, 0x00,
+            ])]
+        );
+        let up = slow_frames(&[wheel_event(7, 9, -1.0).unwrap()]);
+        assert_eq!(
+            up,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, 0x01, 0x80, //
+                0x78, 0x02, // PTRFLAGS_WHEEL | 120
+                0x07, 0x00, 0x09, 0x00,
+            ])]
+        );
+    }
+
+    #[test]
+    fn slow_path_extended_mouse_wire_bytes() {
+        use ironrdp_pdu::input::mouse_x::PointerXFlags;
+        use ironrdp_pdu::input::MouseXPdu;
+        let frames = slow_frames(&[FastPathInputEvent::MouseEventEx(MouseXPdu {
+            flags: PointerXFlags::DOWN | PointerXFlags::BUTTON1,
+            x_position: 3,
+            y_position: 4,
+        })]);
+        assert_eq!(
+            frames,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, //
+                0x02, 0x80, // INPUT_EVENT_MOUSEX
+                0x01, 0x80, // PTRXFLAGS_DOWN | PTRXFLAGS_BUTTON1
+                0x03, 0x00, 0x04, 0x00,
+            ])]
+        );
+    }
+
+    #[test]
+    fn slow_path_sync_wire_bytes() {
+        let frames = slow_frames(&[FastPathInputEvent::SyncEvent(
+            SynchronizeFlags::NUM_LOCK | SynchronizeFlags::CAPS_LOCK,
+        )]);
+        assert_eq!(
+            frames,
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, //
+                0x00, 0x00, // INPUT_EVENT_SYNC
+                0x00, 0x00, // pad
+                0x06, 0x00, 0x00, 0x00, // TS_SYNC_NUM_LOCK | TS_SYNC_CAPS_LOCK
+            ])]
+        );
+        let all = to_slow_path(&FastPathInputEvent::SyncEvent(SynchronizeFlags::all()));
+        assert_eq!(
+            all,
+            Some(SlowPathEvent::Sync(SyncPdu {
+                flags: SyncToggleFlags::SCROLL_LOCK
+                    | SyncToggleFlags::NUM_LOCK
+                    | SyncToggleFlags::CAPS_LOCK
+                    | SyncToggleFlags::KANA_LOCK,
+            }))
+        );
+    }
+
+    #[test]
+    fn slow_path_relative_mouse_keeps_its_deltas() {
+        use ironrdp_pdu::input::mouse_rel::PointerRelFlags;
+        use ironrdp_pdu::input::MouseRelPdu;
+        let pdu = MouseRelPdu {
+            flags: PointerRelFlags::MOVE,
+            x_delta: -3,
+            y_delta: 5,
+        };
+        assert_eq!(
+            to_slow_path(&FastPathInputEvent::MouseEventRel(pdu)),
+            Some(SlowPathEvent::MouseRel(pdu))
+        );
+    }
+
+    #[test]
+    fn slow_path_drops_a_qoe_timestamp() {
+        assert_eq!(to_slow_path(&FastPathInputEvent::QoeEvent(42)), None);
+        assert!(slow_frames(&[FastPathInputEvent::QoeEvent(42)]).is_empty());
+        assert!(slow_frames(&[]).is_empty());
+    }
+
+    #[test]
+    fn slow_path_splits_large_batches_in_order() {
+        let events: Vec<_> = (0..(SLOW_PATH_MAX_EVENTS as u16 + 3))
+            .map(|x| move_event(x, 0))
+            .collect();
+        let frames = slow_frames(&events);
+        assert_eq!(frames.len(), 2);
+        let decoded: Vec<SlowPathEvent> = frames
+            .iter()
+            .flat_map(|frame| {
+                let request: ironrdp_pdu::x224::X224<ironrdp_pdu::mcs::SendDataRequest<'_>> =
+                    ironrdp_core::decode(frame).unwrap();
+                assert_eq!(request.0.channel_id, IO_CHANNEL);
+                let header: ironrdp_pdu::rdp::headers::ShareControlHeader =
+                    ironrdp_core::decode(&request.0.user_data).unwrap();
+                assert_eq!(header.share_id, SHARE_ID);
+                let ironrdp_pdu::rdp::headers::ShareControlPdu::Data(data) =
+                    header.share_control_pdu
+                else {
+                    panic!("expected a Share Data PDU");
+                };
+                let ShareDataPdu::Input(InputEventPdu(events)) = data.share_data_pdu else {
+                    panic!("expected an Input Event PDU");
+                };
+                events
+            })
+            .collect();
+        let expected: Vec<_> = events.iter().filter_map(to_slow_path).collect();
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn translated_key_encodes_on_both_paths() {
+        let ev = InputEvent::Key {
+            code: "KeyA".to_string(),
+            pressed: true,
+        };
+        let events = translate(0, &ev);
+        assert_eq!(
+            slow_frames(&events),
+            vec![one_event_frame([
+                0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x1E, 0x00, 0x00, 0x00,
+            ])]
+        );
+        // The fast-path encoding is unchanged: a 2-byte header (one event, no
+        // encryption), length 4, then FASTPATH_INPUT_EVENT_SCANCODE + key code.
+        let mut stage = stage();
+        let mut image = ironrdp_session::image::DecodedImage::new(
+            ironrdp_graphics::image_processing::PixelFormat::RgbA32,
+            64,
+            64,
+        );
+        let fast: Vec<Vec<u8>> = stage
+            .process_fastpath_input(&mut image, &events)
+            .unwrap()
+            .into_iter()
+            .filter_map(|o| match o {
+                ironrdp_session::ActiveStageOutput::ResponseFrame(b) => Some(b),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fast, vec![vec![0x04, 0x04, 0x00, 0x1E]]);
     }
 
     #[test]
