@@ -12,6 +12,7 @@ import { settingsSchemaToZod } from "./settingsSchemaToZod";
 import { DynamicField } from "./DynamicField";
 import { savedConnectionValues } from "./savedConnectionValues";
 import { storedSecretState, type StoredSecretsControl } from "./storedSecrets";
+import { SAVE_PASSWORD_KEY } from "@/utils/credentialStorageCopy";
 
 /**
  * The settings key whose secret has its own credential entries (the
@@ -33,6 +34,12 @@ interface ConnectionSettingsFormProps {
    * and will not be overwritten unless the user types a new value).
    */
   credentialSavedHint?: boolean;
+  /**
+   * When true, credential storage is off (None mode, #5186): the
+   * `savePassword` toggle renders disabled with an "Enable credential
+   * storage…" action instead of silently disappearing.
+   */
+  credentialStorageOff?: boolean;
   /**
    * The schema secrets other than `password` stored for the saved connection,
    * by settings key, with the user's pending clears (#4431). An empty password
@@ -105,6 +112,7 @@ export function ConnectionSettingsForm({
   settings,
   onChange,
   credentialSavedHint,
+  credentialStorageOff,
   storedFieldSecrets,
   availablePorts,
   serialPortAgentId,
@@ -378,6 +386,9 @@ export function ConnectionSettingsForm({
                             field.fieldType.type === "password" &&
                             field.key === PASSWORD_KEY &&
                             !rhfField.value
+                          }
+                          credentialStorageOff={
+                            credentialStorageOff && field.key === SAVE_PASSWORD_KEY
                           }
                           storedSecret={
                             field.fieldType.type === "password" && field.key !== PASSWORD_KEY

@@ -9,6 +9,8 @@
 import type { SettingsSchema, SettingsField, Condition } from "@/types/schema";
 import type { PasswordPromptInfo } from "@/types/generated/PasswordPromptInfo";
 import { isSameHost, isSameNamedHost } from "./sameHost";
+import type { CredentialStorageMode } from "@/types/generated/CredentialStorageMode";
+import { withModeAwareSaveHelp } from "./credentialStorageCopy";
 
 // Generated via ts-rs from the Rust `PasswordPromptInfo` in
 // `core/src/connection/schema_defaults.rs` (#3088).
@@ -239,27 +241,33 @@ function findFieldKey(schema: SettingsSchema, key: string): string | null {
 }
 
 /**
- * Filter out credential-related fields (`password`, `savePassword`) from a
- * schema when no credential store is configured.
+ * Adapt credential-related fields (`password`, `savePassword`) to the active
+ * credential storage mode.
  *
- * When the credential store mode is `"none"`, passwords are always prompted
- * at connect time — pre-filling or saving them in the editor is meaningless.
- * Those fields are therefore removed from the rendered schema so they don't
- * appear in the connection editor.
+ * When the mode is `"none"`, passwords are always prompted at connect time —
+ * pre-filling one in the editor is meaningless, so the `password` field is
+ * removed. The `savePassword` field stays (#5186): the form renders it as a
+ * disabled row with an "Enable credential storage…" action, so the user can
+ * discover that saving exists and reach the setting.
  *
- * Returns a shallow-cloned schema with those fields removed when mode is
- * `"none"`. The original schema is never mutated. All other modes are
- * returned unchanged.
+ * In every mode the `savePassword` help text gains the paragraph describing
+ * where credentials go for that mode (see `credentialStorageCopy`), so no copy
+ * mentions a master password unless the mode is Master Password.
+ *
+ * Returns a shallow-cloned schema; the original schema is never mutated. An
+ * unknown mode (`undefined`) returns the schema unchanged.
  */
 export function filterCredentialFields(
   schema: SettingsSchema,
-  credentialMode: string | undefined
+  credentialMode: CredentialStorageMode | undefined
 ): SettingsSchema {
-  if (credentialMode !== "none") return schema;
+  if (!credentialMode) return schema;
   return {
     groups: schema.groups.map((group) => ({
       ...group,
-      fields: group.fields.filter((f) => f.key !== "password" && f.key !== "savePassword"),
+      fields: group.fields
+        .filter((f) => credentialMode !== "none" || f.key !== "password")
+        .map((f) => withModeAwareSaveHelp(f, credentialMode)),
     })),
   };
 }

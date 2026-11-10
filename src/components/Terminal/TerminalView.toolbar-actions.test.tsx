@@ -293,7 +293,7 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     const meta = { name: "deploy" } as Parameters<MacroRecordSaveDialogProps["onSave"]>[0];
     act(() => probes.save!.onSave(meta));
     expect(saveRecordedMacro).toHaveBeenCalledWith(meta);
-    act(() => probes.save!.onCancel());
+    act(() => probes.save!.onDiscard());
     expect(discardRecordedMacro).toHaveBeenCalledTimes(1);
   });
 

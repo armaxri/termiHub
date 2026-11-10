@@ -368,7 +368,7 @@ export function TerminalView() {
         open={macroSaveDialogOpen}
         stepCount={macroRecordingStepCount}
         onSave={(meta) => void saveRecordedMacro(meta)}
-        onCancel={discardRecordedMacro}
+        onDiscard={discardRecordedMacro}
       />
       <MacroPlaybackDialog
         open={macroPlaybackDialogOpen}
