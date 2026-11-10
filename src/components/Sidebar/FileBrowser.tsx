@@ -69,7 +69,7 @@ import { TransferEntryRow } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
-import { getHomeDir, localOpenFolder, sendInput } from "@/services/api";
+import { getHomeDir, localOpenFolder, localStat, sendInput } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { isLocalConnectionConfig, isWslConnectionConfig } from "@/utils/typedConnectionConfig";
@@ -87,7 +87,8 @@ import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { fileManagerActionLabel } from "@/utils/platform";
 import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
 import { frontendLog } from "@/utils/frontendLog";
-import { getBasename } from "@/utils/paths";
+import { getBasename, joinPath, normalizeDirPath } from "@/utils/paths";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
@@ -1120,17 +1121,6 @@ export function FileBrowser() {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleOsDrop = useCallback(
-    async (paths: string[]) => {
-      for (const path of paths) {
-        await uploadFileFromPath(path);
-      }
-    },
-    [uploadFileFromPath]
-  );
-
-  const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
-
   // Auto-refresh the local listing when its directory changes on disk under
   // another process (#1626). Event-driven via the backend directory watcher;
   // local transport only (remote external-change detection is #1627). The
@@ -1329,8 +1319,63 @@ export function FileBrowser() {
   // Drag-to-move / Move to… engine (PROD-006): guards, conflict prompt, and the
   // shared paste plumbing with a one-shot clipboard.
   // The plain Paste reuses the same engine with the user's clipboard (#3458).
-  const { requestTransfer, requestPaste, pendingConflict, confirmConflict, cancelConflict } =
-    useFileMoveTransfer({ mode, sessionId: sessionFileBrowserId, pasteEntry });
+  const {
+    requestTransfer,
+    requestPaste,
+    requestWrite,
+    pendingConflict,
+    confirmConflict,
+    keepBothConflict,
+    cancelConflict,
+  } = useFileMoveTransfer({ mode, sessionId: sessionFileBrowserId, pasteEntry });
+
+  // Upload (session pane) or OS drop (either pane) of one local file or
+  // folder into the current folder, through the same exists-check and
+  // "Upload and Replace?" prompt as a move/paste, with Replace / Keep Both /
+  // Skip (#5157). Resolves once that file is done, so a multi-file drop
+  // prompts one name at a time.
+  const guardedUpload = useCallback(
+    async (localPath: string) => {
+      const name = getBasename(localPath) || (mode === "local" ? "file" : "upload");
+      // Dropping a local file onto its own folder is a no-op, not a conflict.
+      if (mode === "local" && normalizeDirPath(localPath) === joinPath(currentPath, name)) return;
+      // Only shapes the "Keep Both" name; an unreadable path counts as a file.
+      const stat = await withLoggedFallback(
+        localStat(localPath),
+        null,
+        "file_browser",
+        `stat of ${localPath} before upload`,
+        "debug"
+      );
+      const isDirectory = stat?.isDirectory ?? false;
+      await requestWrite({
+        verb: "Upload",
+        destDir: currentPath,
+        name,
+        isDirectory,
+        allowKeepBoth: true,
+        // The upload legs own their progress/success/error feedback.
+        run: (destName) => uploadFileFromPath(localPath, { destName }),
+      });
+    },
+    [mode, currentPath, requestWrite, uploadFileFromPath]
+  );
+
+  const handleOsDrop = useCallback(
+    async (paths: string[]) => {
+      for (const path of paths) {
+        await guardedUpload(path);
+      }
+    },
+    [guardedUpload]
+  );
+
+  const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
+
+  const handleUploadClick = useCallback(
+    () => uploadFile(guardedUpload),
+    [uploadFile, guardedUpload]
+  );
 
   // Drag rows out of the window onto the OS file manager (#3457).
   const handleDragOut = useFileDragOut(
@@ -1481,14 +1526,21 @@ export function FileBrowser() {
       endRename(entry.path);
       const newName = rawName.trim();
       if (!newName || newName === entry.name) return;
-      renameEntry(entry.path, newName)
-        .then(() => toast.success(`Renamed to "${newName}"`))
-        .catch((err: unknown) => {
+      // Same exists-check and "Rename and Replace?" prompt as a move (#5157).
+      void requestWrite({
+        verb: "Rename",
+        destDir: parentDir(entry.path),
+        name: newName,
+        isDirectory: entry.isDirectory,
+        run: (name, overwrite) => renameEntry(entry.path, name, { overwrite }),
+        onDone: (name) => toast.success(`Renamed to "${name}"`),
+        onError: (err) => {
           frontendLog("file_browser", `Rename failed: ${errorMessage(err)}`);
           toast.error(`Rename failed: ${errorMessage(err)}`);
-        });
+        },
+      });
     },
-    [renameEntry, endRename]
+    [renameEntry, endRename, requestWrite]
   );
 
   const handleRenameCancel = useCallback(() => {
@@ -1745,15 +1797,21 @@ export function FileBrowser() {
   const handleCreateFile = useCallback(() => {
     if (newFileName && newFileName.trim()) {
       const name = newFileName.trim();
-      createFile(name)
-        .then(() => toast.success(`Created file "${name}"`))
-        .catch((err: unknown) => {
+      // Same exists-check and "Create and Replace?" prompt as a move (#5157).
+      void requestWrite({
+        verb: "Create",
+        destDir: currentPath,
+        name,
+        run: (fileName, overwrite) => createFile(fileName, { overwrite }),
+        onDone: () => toast.success(`Created file "${name}"`),
+        onError: (err) => {
           frontendLog("file_browser", `Create file failed: ${errorMessage(err)}`);
           toast.error(`Failed to create file "${name}": ${errorMessage(err)}`);
-        });
+        },
+      });
       setNewFileName(null);
     }
-  }, [newFileName, createFile]);
+  }, [newFileName, createFile, requestWrite, currentPath]);
 
   // "none" mode — show placeholder
   if (mode === "none") {
@@ -1947,7 +2005,7 @@ export function FileBrowser() {
                   variant="ghost"
                   size="sm"
                   icon={<Upload size={14} />}
-                  onClick={uploadFile}
+                  onClick={handleUploadClick}
                   aria-label="Upload file"
                   data-testid="file-browser-upload"
                 />
@@ -2261,6 +2319,7 @@ export function FileBrowser() {
       <FileMoveConflictDialog
         pending={pendingConflict}
         onConfirm={confirmConflict}
+        onKeepBoth={keepBothConflict}
         onCancel={cancelConflict}
       />
       {activeTransfers.length > 0 && (

@@ -206,8 +206,177 @@ pub fn delete_sync(path: &str, is_directory: bool) -> std::io::Result<()> {
 }
 
 /// Rename (move) a file or directory (`std::fs::rename`).
+///
+/// Silently replaces an existing `to`; see [`rename_no_replace_sync`] for the
+/// no-clobber variant the file browser's rename uses (#5157).
 pub fn rename_sync(from: &str, to: &str) -> std::io::Result<()> {
     std::fs::rename(from, to)
+}
+
+/// Rename (move) a file or directory, refusing to replace an existing `to`.
+///
+/// Fails with [`std::io::ErrorKind::AlreadyExists`] when `to` already exists,
+/// so a rename the user did not confirm as a replacement can never clobber an
+/// entry that appeared after the file browser's exists-check (#5157). The check
+/// is atomic where the OS offers it:
+///
+/// - Linux: `renameat2(RENAME_NOREPLACE)`.
+/// - macOS: `renamex_np(RENAME_EXCL)`.
+/// - Windows: `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`.
+///
+/// Elsewhere, or when the filesystem does not support the atomic flag (e.g.
+/// some network filesystems answer `EINVAL`), it falls back to a
+/// check-then-rename that leaves a small TOCTOU window.
+///
+/// A case-only rename (`notes.txt` → `Notes.txt`) on a case-insensitive
+/// filesystem resolves `to` to `from` itself; that is not a conflict and takes
+/// the plain rename.
+pub fn rename_no_replace_sync(from: &str, to: &str) -> std::io::Result<()> {
+    if is_same_entry(from, to) {
+        return std::fs::rename(from, to);
+    }
+    match rename_no_replace_atomic(from, to) {
+        Some(result) => result,
+        None => rename_no_replace_checked(from, to),
+    }
+}
+
+/// Whether `a` and `b` name the same filesystem entry (a case-only rename on a
+/// case-insensitive filesystem). `false` when either side is missing.
+#[cfg(unix)]
+fn is_same_entry(a: &str, b: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev() && ma.ino() == mb.ino(),
+        _ => false,
+    }
+}
+
+/// Whether `a` and `b` name the same filesystem entry. Windows filesystems are
+/// case-insensitive, so a case-only spelling difference is the same entry.
+#[cfg(not(unix))]
+fn is_same_entry(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b) && std::fs::symlink_metadata(a).is_ok()
+}
+
+/// The non-atomic fallback of [`rename_no_replace_sync`]: refuse when `to`
+/// exists, else rename. Racy against a concurrent creator of `to`.
+fn rename_no_replace_checked(from: &str, to: &str) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(to).is_ok() {
+        return Err(already_exists(to));
+    }
+    std::fs::rename(from, to)
+}
+
+fn already_exists(path: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("{path} already exists"),
+    )
+}
+
+#[cfg(unix)]
+fn c_path(path: &str) -> std::io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(std::ffi::OsStr::new(path).as_bytes())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+}
+
+/// Map a no-replace rename's `-1` result, or `None` when the filesystem does
+/// not support the flag (so the caller falls back to the checked rename).
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+fn no_replace_result(rc: libc::c_int, to: &str) -> Option<std::io::Result<()>> {
+    if rc == 0 {
+        return Some(Ok(()));
+    }
+    let err = std::io::Error::last_os_error();
+    match err.raw_os_error() {
+        Some(libc::EEXIST) => Some(Err(already_exists(to))),
+        Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::ENOTSUP) => None,
+        _ => Some(Err(err)),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_no_replace_atomic(from: &str, to: &str) -> Option<std::io::Result<()>> {
+    let (cf, ct) = match (c_path(from), c_path(to)) {
+        (Ok(cf), Ok(ct)) => (cf, ct),
+        (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
+    };
+    // SAFETY: both pointers are valid NUL-terminated C strings for the call.
+    let rc = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            cf.as_ptr(),
+            libc::AT_FDCWD,
+            ct.as_ptr(),
+            libc::RENAME_NOREPLACE as _,
+        )
+    };
+    no_replace_result(rc, to)
+}
+
+#[cfg(target_os = "macos")]
+fn rename_no_replace_atomic(from: &str, to: &str) -> Option<std::io::Result<()>> {
+    let (cf, ct) = match (c_path(from), c_path(to)) {
+        (Ok(cf), Ok(ct)) => (cf, ct),
+        (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
+    };
+    // SAFETY: both pointers are valid NUL-terminated C strings for the call.
+    let rc = unsafe { libc::renamex_np(cf.as_ptr(), ct.as_ptr(), libc::RENAME_EXCL) };
+    no_replace_result(rc, to)
+}
+
+#[cfg(windows)]
+fn rename_no_replace_atomic(from: &str, to: &str) -> Option<std::io::Result<()>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let wide = |p: &str| -> Vec<u16> {
+        std::ffi::OsStr::new(p)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
+    let (wf, wt) = (wide(from), wide(to));
+    // No flags: without MOVEFILE_REPLACE_EXISTING the move fails when `to`
+    // exists (and, like `std::fs::rename`, it does not copy across volumes).
+    // SAFETY: both pointers are valid NUL-terminated UTF-16 strings for the call.
+    let ok = unsafe { MoveFileExW(wf.as_ptr(), wt.as_ptr(), 0) };
+    if ok != 0 {
+        return Some(Ok(()));
+    }
+    let err = std::io::Error::last_os_error();
+    match err.raw_os_error().map(|c| c as u32) {
+        Some(ERROR_ALREADY_EXISTS) | Some(ERROR_FILE_EXISTS) => Some(Err(already_exists(to))),
+        _ => Some(Err(err)),
+    }
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    windows
+)))]
+fn rename_no_replace_atomic(_from: &str, _to: &str) -> Option<std::io::Result<()>> {
+    None
+}
+
+/// Create an empty file, refusing to replace an existing one.
+///
+/// `OpenOptions::create_new` is an atomic `O_CREAT | O_EXCL` (`CREATE_NEW` on
+/// Windows), so "New File" can never truncate an entry that appeared after the
+/// file browser's exists-check (#5157). Fails with
+/// [`std::io::ErrorKind::AlreadyExists`] when `path` exists.
+pub fn create_new_file_sync(path: &str, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(content)
 }
 
 /// Change the permission bits (chmod) of a path (Unix only).
@@ -699,6 +868,86 @@ mod tests {
         rename_sync(old.to_str().unwrap(), new.to_str().unwrap()).unwrap();
         assert!(!old.exists());
         assert_eq!(std::fs::read_to_string(&new).unwrap(), "content");
+    }
+
+    #[test]
+    fn rename_no_replace_sync_moves_file_when_target_is_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        let new = dir.path().join("new.txt");
+        std::fs::write(&old, "content").unwrap();
+        rename_no_replace_sync(old.to_str().unwrap(), new.to_str().unwrap()).unwrap();
+        assert!(!old.exists());
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "content");
+    }
+
+    #[test]
+    fn rename_no_replace_sync_refuses_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("config.yaml.bak");
+        let new = dir.path().join("config.yaml");
+        std::fs::write(&old, "backup").unwrap();
+        std::fs::write(&new, "live").unwrap();
+        let err = rename_no_replace_sync(old.to_str().unwrap(), new.to_str().unwrap())
+            .expect_err("an existing target must not be replaced");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        // Both entries are untouched.
+        assert_eq!(std::fs::read_to_string(&old).unwrap(), "backup");
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "live");
+    }
+
+    #[test]
+    fn rename_no_replace_sync_refuses_an_existing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("a");
+        let new = dir.path().join("b");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::create_dir(&new).unwrap();
+        let err = rename_no_replace_sync(old.to_str().unwrap(), new.to_str().unwrap())
+            .expect_err("an existing (even empty) directory must not be replaced");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(old.is_dir());
+    }
+
+    #[test]
+    fn rename_no_replace_sync_allows_a_case_only_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("notes.txt");
+        let new = dir.path().join("Notes.txt");
+        std::fs::write(&old, "n").unwrap();
+        // Succeeds on case-sensitive and case-insensitive filesystems alike.
+        rename_no_replace_sync(old.to_str().unwrap(), new.to_str().unwrap()).unwrap();
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["Notes.txt".to_string()]);
+    }
+
+    #[test]
+    fn rename_no_replace_checked_refuses_an_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        let new = dir.path().join("new.txt");
+        std::fs::write(&old, "a").unwrap();
+        std::fs::write(&new, "b").unwrap();
+        let err =
+            rename_no_replace_checked(old.to_str().unwrap(), new.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "b");
+    }
+
+    #[test]
+    fn create_new_file_sync_creates_and_refuses_to_truncate() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.txt");
+        let path = file.to_str().unwrap();
+        create_new_file_sync(path, b"").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"");
+        std::fs::write(&file, "keep me").unwrap();
+        let err = create_new_file_sync(path, b"").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep me");
     }
 
     #[cfg(unix)]

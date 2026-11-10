@@ -1,6 +1,7 @@
 import type { FileEntry } from "@/types/connection";
 import type { FileClipboard } from "@/store/appStore";
 import { normalizeDirPath, parentDir } from "@/utils/paths";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Pure planning helpers for moving/copying file-browser entries into another
@@ -75,6 +76,49 @@ export function planFileDrop(
 export function findNameConflicts(entries: FileEntry[], existingNames: Iterable<string>): string[] {
   const existing = new Set(existingNames);
   return entries.filter((e) => existing.has(e.name)).map((e) => e.name);
+}
+
+/**
+ * How a rename or New File treats an existing entry of the target name
+ * (#5157): `overwrite` only once the user confirmed replacing it; otherwise
+ * the transport refuses to clobber where it can.
+ */
+export interface WriteTargetOptions {
+  overwrite?: boolean;
+}
+
+/** Where an upload lands: `destName` overrides the source's basename ("Keep Both"). */
+export interface UploadTargetOptions {
+  destName?: string;
+}
+
+/**
+ * A free name for a "Keep both" upload (#5157): `report.txt` becomes
+ * `report (1).txt`, then `report (2).txt`, … — the first not in
+ * `existingNames`. A folder, a dotfile (`.bashrc`) or an extension-less name
+ * gets the suffix at the end (`docs (1)`, `.bashrc (1)`).
+ */
+export function keepBothName(
+  name: string,
+  existingNames: Iterable<string>,
+  isDirectory = false
+): string {
+  const existing = new Set(existingNames);
+  const dot = isDirectory ? -1 : name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let n = 1; ; n++) {
+    const candidate = `${stem} (${n})${ext}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+}
+
+/**
+ * Whether a backend error says the target already exists — the refusal of a
+ * no-clobber rename / exclusive create (#5157) that lost a race against
+ * another writer after the exists-check.
+ */
+export function isAlreadyExistsError(err: unknown): boolean {
+  return /already exists|file exists|EEXIST/i.test(errorMessage(err));
 }
 
 /** Human summary of the entries for toasts/dialogs ("a.txt" or "3 items"). */

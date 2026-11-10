@@ -39,6 +39,16 @@ export interface ConfirmDontAskAgain {
   "data-testid"?: string;
 }
 
+/** A third choice offered by a {@link ConfirmDialog} besides Cancel/Confirm. */
+export interface ConfirmAlternateAction {
+  /** Button label. */
+  label: string;
+  /** Invoked when chosen; a returned `Promise` drives the Button's pending state. */
+  onClick: () => void | Promise<void>;
+  /** Button variant (defaults to `"secondary"`). */
+  variant?: ButtonVariant;
+}
+
 /** Props for the shared {@link ConfirmDialog} primitive. */
 export interface ConfirmDialogProps {
   /** Whether the dialog is open (controlled). */
@@ -108,6 +118,12 @@ export interface ConfirmDialogProps {
   /** When provided, renders a "don't ask again" opt-out checkbox. */
   dontAskAgain?: ConfirmDontAskAgain;
   /**
+   * Optional third, non-default choice rendered between Cancel and Confirm
+   * (e.g. "Keep Both" on the file browser's replace prompt, #5157). Enter
+   * never triggers it; its button test id is `${testIdBase}-alternate`.
+   */
+  alternateAction?: ConfirmAlternateAction;
+  /**
    * Invoked when the user confirms. Returning a `Promise` drives the confirm
    * Button's async (pending → success/error) lifecycle.
    */
@@ -155,12 +171,14 @@ export function ConfirmDialog({
   confirmErrorToast,
   confirmOnEnter = true,
   dontAskAgain,
+  alternateAction,
   testIdBase = "confirm-dialog",
   onConfirm,
   onCancel,
   ...rest
 }: ConfirmDialogProps): React.ReactElement {
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const alternateBtnRef = useRef<HTMLButtonElement>(null);
 
   // Resolve the title accent icon: a caller-supplied `icon` wins, otherwise the
   // danger/warn variants fall back to an alert triangle. `default` has no icon.
@@ -199,6 +217,8 @@ export function ConfirmDialog({
         if (e.key === "Enter") {
           if (!confirmOnEnter) return;
           if (document.activeElement === cancelBtnRef.current) return;
+          // Enter on the focused alternate choice activates that choice only.
+          if (alternateBtnRef.current && document.activeElement === alternateBtnRef.current) return;
           // Enter on a Select in the body opens or picks in that control; it
           // must not also confirm the dialog (#3209).
           const target = e.target as HTMLElement | null;
@@ -217,6 +237,16 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </Button>
+          {alternateAction && (
+            <Button
+              ref={alternateBtnRef}
+              variant={alternateAction.variant ?? "secondary"}
+              onClick={alternateAction.onClick}
+              data-testid={`${testIdBase}-alternate`}
+            >
+              {alternateAction.label}
+            </Button>
+          )}
           <Button
             variant={confirmVariant}
             icon={confirmIcon}

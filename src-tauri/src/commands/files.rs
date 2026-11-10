@@ -71,9 +71,17 @@ pub fn local_delete(path: String, is_directory: bool) -> Result<(), TerminalErro
 }
 
 /// Rename a file or directory on the local filesystem.
+///
+/// `overwrite` defaults to `true` (replace an existing `new_path`, the
+/// cut-paste behaviour). The file browser's rename passes `false` until the
+/// user confirmed a replacement, so it fails instead of clobbering (#5157).
 #[tauri::command]
-pub fn local_rename(old_path: String, new_path: String) -> Result<(), TerminalError> {
-    crate::files::local::rename(&old_path, &new_path)
+pub fn local_rename(
+    old_path: String,
+    new_path: String,
+    overwrite: Option<bool>,
+) -> Result<(), TerminalError> {
+    crate::files::local::rename(&old_path, &new_path, overwrite.unwrap_or(true))
 }
 
 /// Change the permission bits (chmod) of a local file or directory.
@@ -121,9 +129,16 @@ pub fn local_stat(path: String) -> Result<FileEntry, TerminalError> {
 }
 
 /// Write a string to a local file.
+///
+/// With `exclusive` the file must not exist yet (the file browser's "New
+/// File", #5157); otherwise an existing file is overwritten.
 #[tauri::command]
-pub fn local_write_file(path: String, content: String) -> Result<(), TerminalError> {
-    crate::files::local::write_file_content(&path, &content)
+pub fn local_write_file(
+    path: String,
+    content: String,
+    exclusive: Option<bool>,
+) -> Result<(), TerminalError> {
+    crate::files::local::write_file_content(&path, &content, exclusive.unwrap_or(false))
 }
 
 /// Open a local folder in the OS file manager (Finder / Explorer / …).

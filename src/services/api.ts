@@ -1999,9 +1999,19 @@ export async function localDelete(path: string, isDirectory: boolean): Promise<v
   await invoke("local_delete", { path, isDirectory });
 }
 
-/** Rename a file or directory on the local filesystem. */
-export async function localRename(oldPath: string, newPath: string): Promise<void> {
-  await invoke("local_rename", { oldPath, newPath });
+/**
+ * Rename a file or directory on the local filesystem.
+ *
+ * Replaces an existing `newPath` unless `options.overwrite` is `false`; then
+ * the backend refuses atomically (where the OS supports it) with an "already
+ * exists" error instead of clobbering (#5157).
+ */
+export async function localRename(
+  oldPath: string,
+  newPath: string,
+  options?: { overwrite?: boolean }
+): Promise<void> {
+  await invoke("local_rename", { oldPath, newPath, overwrite: options?.overwrite });
 }
 
 /**
@@ -2052,9 +2062,19 @@ export async function localStat(path: string): Promise<FileEntry> {
   return await invoke<FileEntry>("local_stat", { path });
 }
 
-/** Write a string to a local file. */
-export async function localWriteFile(path: string, content: string): Promise<void> {
-  await invoke("local_write_file", { path, content });
+/**
+ * Write a string to a local file.
+ *
+ * With `options.exclusive` the file must not exist yet: it is created
+ * atomically and an existing file is left untouched with an "already exists"
+ * error (the file browser's New File, #5157).
+ */
+export async function localWriteFile(
+  path: string,
+  content: string,
+  options?: { exclusive?: boolean }
+): Promise<void> {
+  await invoke("local_write_file", { path, content, exclusive: options?.exclusive });
 }
 
 /**
