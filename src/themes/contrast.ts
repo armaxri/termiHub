@@ -86,13 +86,19 @@ function toHex([r, g, b]: [number, number, number]): string {
 /**
  * Nudge a foreground colour until it reaches `minRatio` contrast against every
  * colour in `backgrounds` (#5008: per-connection icon colours). The colour is
- * mixed in 10% steps towards white when the backgrounds are dark, or towards
- * black when they are light, so it keeps its hue as long as possible.
+ * mixed in `stepPercent` steps (10% by default) towards white when the
+ * backgrounds are dark, or towards black when they are light, so it keeps its
+ * hue as long as possible.
  *
  * Returns the input unchanged when it already passes, when it is not a hex
  * colour, or when no background is a hex colour (nothing to measure against).
  */
-export function adjustForContrast(color: string, backgrounds: string[], minRatio = 3): string {
+export function adjustForContrast(
+  color: string,
+  backgrounds: string[],
+  minRatio = 3,
+  stepPercent = 10
+): string {
   const rgb = parseHex(color);
   const bgs = backgrounds.filter((b) => relativeLuminance(b) !== null);
   if (!rgb || bgs.length === 0) return color;
@@ -102,11 +108,30 @@ export function adjustForContrast(color: string, backgrounds: string[], minRatio
   const avgLum = bgs.reduce((sum, b) => sum + (relativeLuminance(b) ?? 0), 0) / bgs.length;
   const target = avgLum < 0.5 ? 255 : 0;
   let best = color;
-  for (let step = 1; step <= 10; step++) {
-    const t = step / 10;
+  const steps = Math.ceil(100 / stepPercent);
+  for (let step = 1; step <= steps; step++) {
+    const t = Math.min(1, (step * stepPercent) / 100);
     const mixed = toHex(rgb.map((c) => c + (target - c) * t) as [number, number, number]);
     best = mixed;
     if (worst(mixed) >= minRatio) break;
   }
   return best;
+}
+
+/** WCAG 2.2 AA minimum contrast for normal-size text. */
+export const AA_NORMAL_TEXT = 4.5;
+
+/**
+ * Derive `textMutedOnSelection` (#5200): the muted text colour for hints drawn
+ * on a hovered (`bgHover`) or selected (`bgActive`) row. Those row surfaces sit
+ * closer to the muted tone than the plain backgrounds, so `textMuted` is nudged
+ * in 1% steps — keeping its hue — until it reaches AA on both. A `textMuted`
+ * that already passes is returned unchanged.
+ */
+export function deriveTextMutedOnSelection(colors: {
+  textMuted: string;
+  bgHover: string;
+  bgActive: string;
+}): string {
+  return adjustForContrast(colors.textMuted, [colors.bgHover, colors.bgActive], AA_NORMAL_TEXT, 1);
 }
