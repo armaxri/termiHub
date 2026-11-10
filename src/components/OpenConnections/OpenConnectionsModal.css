@@ -114,6 +114,15 @@
   gap: var(--spacing-xs);
 }
 
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.oc-row:hover .oc-row__title--muted,
+.oc-row:hover .oc-row__detail,
+.oc-row:hover .oc-row__window:not(:hover),
+.oc-row:hover .oc-transfer__meta {
+  color: var(--text-muted-on-selection);
+}
+
 /* Trailing action cluster for rows that expose more than one intent
    (e.g. an agent's Disconnect vs Shutdown). */
 .oc-row__actions {
