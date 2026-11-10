@@ -569,7 +569,7 @@ class TestExport(ConnectionsUi, ManualUi, SystemTest):
     def test_export_native_dialog(self):
         self.create_local_connection(unique_name("demo"))   # harness setup
         self.manual_step(                                    # the human bit
-            "Use the sidebar ⋯ menu → Export Connections and save the file.",
+            "Open Settings → Import & Migration → Export Connections… and save the file.",
             "A native Save dialog appears and writes a JSON file.",
         )
 ```
