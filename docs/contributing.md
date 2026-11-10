@@ -593,6 +593,15 @@ config that did was removed). Keep one SHA per action across the repo; `check-ac
 Workflow Lint job and `./scripts/check.sh`) fails when the same action is pinned to two different
 SHAs or to a tag/branch instead of a SHA.
 
+### apt download retries
+
+apt does not retry a failed download, so every apt download in CI is set to retry (#5152). A
+runner job adds a `uses: ./.github/actions/apt-retries` step before its first `sudo apt-get`. A
+Dockerfile writes `Acquire::Retries` into `/etc/apt/apt.conf.d/80-ci-retries` in each stage
+before its first apt call; a stage built `FROM` an earlier stage inherits it. An apt call inside
+`docker run`, or in a shell script, passes `-o Acquire::Retries=5`. `check-apt-retries.mjs` (run by
+the Workflow Lint job and `./scripts/check.sh`) fails on an apt call that is not covered.
+
 ### Git hooks
 
 Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`

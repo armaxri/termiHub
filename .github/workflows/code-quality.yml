@@ -971,6 +971,12 @@ jobs:
       - name: Check GitHub Actions pin consistency
         run: node scripts/internal/check-action-pins.mjs
 
+      # Fails on an apt-get update/install in a workflow, composite action,
+      # Dockerfile or shell script that does not retry failed downloads, so an
+      # archive.ubuntu.com outage cannot red a job on its first attempt (#5152).
+      - name: Check apt download retries
+        run: node scripts/internal/check-apt-retries.mjs
+
   # Windows .cmd smoke (#3340). The Shell Script Quality job above runs on
   # Ubuntu, so it can compare the flags a .cmd parses but never RUNS one. This
   # cheap job (no Rust/Node setup, no build) executes build-agents.cmd's

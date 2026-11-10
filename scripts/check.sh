@@ -137,6 +137,15 @@ else
 fi
 
 echo ""
+echo "=== apt download retries ==="
+# Every apt-get update/install in CI, Dockerfiles and scripts retries downloads (#5152).
+if node scripts/internal/check-apt-retries.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== Doc code-reference drift ==="
 # Symbol-based `file` -> `Symbol` references in reference docs resolve (#4369).
 if node scripts/internal/check-doc-symbols.mjs; then

@@ -1,11 +1,11 @@
 name: "Make apt retry downloads"
 description: >-
-  Write /etc/apt/apt.conf.d/80-ci-retries on the runner so every later
-  `apt-get update` / `apt-get install` in the job retries a failed download 5
-  times with a 30s connect/read timeout. apt's default is no retries, so a
+  Write /etc/apt/apt.conf.d/80-ci-retries on the runner so every later apt
+  download in the job (update, install) retries a failed fetch 5 times with a
+  30s connect/read timeout. apt's default is no retries, so a
   transient archive.ubuntu.com outage otherwise reds an unrelated job on its first
   attempt (#5152). Use it once per job, before the first apt call. It is a no-op
-  off Linux. Containers (Dockerfiles, `docker run … apt-get`) do not inherit this
+  off Linux. Containers (Dockerfiles, apt inside `docker run`) do not inherit this
   file and carry their own setting. scripts/internal/check-apt-retries.mjs fails
   on an apt call that is not covered.
 

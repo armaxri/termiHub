@@ -113,7 +113,7 @@ fi
 
 [ "$INSTALL" -eq 0 ] || install_debian_fish3
 if [ -z "$FISH" ]; then
-  FISH="$(command -v fish)" || die "no fish on PATH (apt-get install fish, or pass --fish)"
+  FISH="$(command -v fish)" || die "no fish on PATH (apt-get install fish, or pass --fish)" # apt-retries: ignore (a hint)
 fi
 [ -x "$FISH" ] || die "fish binary not executable: $FISH"
 version="$("$FISH" --version)" || die "could not run $FISH --version"
