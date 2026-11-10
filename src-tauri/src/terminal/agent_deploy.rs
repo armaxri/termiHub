@@ -425,8 +425,7 @@ pub fn install_agent_bytes(
     // A cancel that landed during the upload must not leave the temp file
     // behind — roll it back before returning (G10, #1242).
     if let Err(e) = bail_if_cancelled(cancel) {
-        rollback_partial_upload(session, &plan.upload_path);
-        return Err(e);
+        return Err(fail_with_rollback(session, &plan.upload_path, e));
     }
 
     // Install: create dir + move binary into place (POSIX also sets +x).
@@ -690,8 +689,7 @@ pub fn stage_agent_binary(
     let signature = agent_binary::read_signature_sidecar(&binary_path);
     upload_binary_or_rollback(&session, &binary_bytes, &plan.upload_path, cancel)?;
     if let Err(e) = bail_if_cancelled(cancel) {
-        rollback_partial_upload(&session, &plan.upload_path);
-        return Err(e);
+        return Err(fail_with_rollback(&session, &plan.upload_path, e));
     }
     info!(
         "Staged {} bytes to {} for coordinated update",
@@ -717,40 +715,63 @@ pub fn stage_agent_binary(
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Upload the agent binary, aborting promptly when `cancel` fires mid-transfer
-/// (#4060). A cancelled upload rolls back the partial temp file before
-/// returning [`TerminalError::Cancelled`], so the dialog reports "cancelled"
-/// rather than a generic failure and nothing lingers on the host.
+/// (#4060). A failed upload — cancelled or not — rolls back the partial temp
+/// file before returning, so no half-written binary lingers on the host
+/// (#5162; before, only a cancel was rolled back). See [`fail_with_rollback`]
+/// for how the error is reported.
 fn upload_binary_or_rollback(
     session: &termihub_core::backends::ssh::handler::SshSession,
     binary_bytes: &[u8],
     upload_path: &str,
     cancel: Option<&CancellationToken>,
 ) -> Result<u64, TerminalError> {
-    match upload_bytes_via_sftp_cancellable(session, binary_bytes, upload_path, cancel) {
-        Err(TerminalError::Cancelled) => {
-            rollback_partial_upload(session, upload_path);
-            Err(TerminalError::Cancelled)
-        }
-        other => other,
+    upload_bytes_via_sftp_cancellable(session, binary_bytes, upload_path, cancel)
+        .map_err(|e| fail_with_rollback(session, upload_path, e))
+}
+
+/// Roll back the upload at `upload_path` after `err` failed the deploy, and
+/// return the error to report.
+///
+/// - [`TerminalError::Cancelled`] stays `Cancelled` so the dialog reports
+///   "cancelled"; a failed rollback is logged.
+/// - A typed timeout (#3698) is returned as is **without** a rollback: the
+///   server stopped responding, so a remove would only wait out another
+///   deadline.
+/// - Any other error gets the rollback outcome appended when the partial
+///   upload could not be removed, so a stranded file is never silent.
+fn fail_with_rollback(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    upload_path: &str,
+    err: TerminalError,
+) -> TerminalError {
+    if err.is_timeout() {
+        warn!("Upload to {upload_path} timed out; skipping rollback on a frozen host");
+        return err;
+    }
+    match (rollback_partial_upload(session, upload_path), err) {
+        (Ok(()), err) | (Err(_), err @ TerminalError::Cancelled) => err,
+        (Err(rollback), err) => TerminalError::RemoteError(format!(
+            "{err}; the partial agent upload at {upload_path} could not be removed: {rollback}"
+        )),
     }
 }
 
-/// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
+/// Remove a partially uploaded or staged binary after a failed deploy (G10,
+/// #1242; #5162).
 ///
 /// The upload target lives at a temp path (`plan.upload_path`, a private upload
-/// dir on POSIX) that has not yet been moved into place, so removing it fully rolls back
-/// the SFTP upload. Failures are logged but not surfaced — the deploy already
-/// failed with `Cancelled` and the temp file is harmless if it lingers.
+/// dir on POSIX) that has not yet been moved into place, so removing it fully
+/// rolls back the SFTP upload. A failure is logged and returned so the caller
+/// can report it.
 fn rollback_partial_upload(
     session: &termihub_core::backends::ssh::handler::SshSession,
     upload_path: &str,
-) {
+) -> Result<(), TerminalError> {
     // SFTP remove works uniformly on POSIX and Windows hosts (the upload path is
     // a temp location that has not yet been moved into place).
-    match remove_via_sftp(session, upload_path) {
-        Ok(_) => info!("Rolled back partial agent upload at {upload_path}"),
-        Err(e) => warn!("Failed to roll back partial upload at {upload_path}: {e}"),
-    }
+    remove_via_sftp(session, upload_path)
+        .inspect(|()| info!("Rolled back partial agent upload at {upload_path}"))
+        .inspect_err(|e| warn!("Failed to roll back partial upload at {upload_path}: {e}"))
 }
 
 /// Trace one deploy/update step.
