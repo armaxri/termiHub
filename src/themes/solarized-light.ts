@@ -34,6 +34,8 @@ export const solarizedLightTheme: ThemeDefinition = {
     textPrimary: "#657b83", // base00
     textSecondary: "#93a1a1", // base1
     textMuted: "#acb0a7",
+    // Same as textMuted: the Solarized palette is tracked separately (#5190).
+    textMutedOnSelection: "#acb0a7",
     textDisabled: "#c5bfae",
     textAccent: "#268bd2",
     textLink: "#268bd2",

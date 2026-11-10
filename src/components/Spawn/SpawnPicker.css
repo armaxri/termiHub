@@ -81,6 +81,13 @@
   color: var(--text-muted);
 }
 
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.spawn-picker__row:hover .spawn-picker__row-hint,
+.spawn-picker__row--selected .spawn-picker__row-hint {
+  color: var(--text-muted-on-selection);
+}
+
 /* Inline image + mount form, shown under the selected "New container…" row. */
 .spawn-picker__container-form {
   display: grid;

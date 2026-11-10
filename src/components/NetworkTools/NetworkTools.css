@@ -356,6 +356,13 @@
   color: var(--text-muted);
 }
 
+/* #5200: muted hints switch to the row-state muted token on hover/selection,
+   where --text-muted falls below AA on --bg-hover / --bg-active. */
+.sidebar-list-item:hover .network-sidebar__monitor-meta,
+.sidebar-list-item:hover .network-sidebar__monitor-meta > * + *::before {
+  color: var(--text-muted-on-selection);
+}
+
 .network-sidebar__monitor-down {
   color: var(--color-error);
 }
