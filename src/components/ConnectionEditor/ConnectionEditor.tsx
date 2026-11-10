@@ -952,6 +952,32 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     });
   }, [name, nameError, schemaErrors]);
 
+  // Focus the field a failed connect's Edit connection action asked for
+  // (#5183). The schema form may still be loading the saved settings, so poll
+  // a few frames for the field; the request's nonce re-runs this for a repeat.
+  const focusField = meta.focusRequest?.field;
+  const focusNonce = meta.focusRequest?.nonce;
+  useEffect(() => {
+    if (!focusField) return;
+    setActiveCategory("connection");
+    let frames = 0;
+    let handle = 0;
+    const tryFocus = () => {
+      const target = containerRef.current?.querySelector<HTMLElement>(
+        `[data-testid="field-${focusField}"]`
+      );
+      if (target) {
+        target.scrollIntoView?.({ block: "center" });
+        target.focus();
+        if (target instanceof HTMLInputElement && target.value) target.select();
+        return;
+      }
+      if (++frames < 30) handle = requestAnimationFrame(tryFocus);
+    };
+    handle = requestAnimationFrame(tryFocus);
+    return () => cancelAnimationFrame(handle);
+  }, [focusField, focusNonce]);
+
   const handleTypeChange = useCallback(
     (typeId: string) => {
       setSelectedType(typeId);

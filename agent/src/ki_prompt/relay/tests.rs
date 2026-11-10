@@ -191,6 +191,10 @@ fn classified_failures() -> Vec<SessionError> {
         ),
         SessionError::classified(K::Timeout, "Connection timed out"),
         SessionError::classified(K::AgentAuthFailed, "SSH agent not reachable"),
+        // TCP connect categories (#5183).
+        SessionError::classified(K::Refused, "db:22: Connection refused (os error 61)"),
+        SessionError::classified(K::Unreachable, "db:22: No route to host (os error 65)"),
+        SessionError::classified(K::Dns, "Could not resolve host 'db': not known"),
     ]
 }
 
@@ -200,7 +204,16 @@ fn daemon_classifies_each_connect_failure_kind() {
         let report = RelayFailure::from_session_error(&error);
         assert_eq!(report.kind, None);
         assert_eq!(report.connect_failure, error.connect_failure_kind());
-        assert_eq!(report.message.as_deref(), Some(error.to_string().as_str()));
+        // Only the failure's own description, without `Spawn failed:` (#5183).
+        assert_eq!(
+            report.message.as_deref(),
+            Some(error.user_message().as_str())
+        );
+        assert!(!report
+            .message
+            .as_deref()
+            .unwrap()
+            .starts_with("Spawn failed:"));
     }
     // Prompt outcomes keep their own member; untyped failures send only
     // their message (#3436).
@@ -248,7 +261,7 @@ async fn classified_failures_reach_the_worker_as_typed_errors() {
             .downcast_ref::<ClassifiedConnectFailure>()
             .expect("a classified connect failure");
         assert_eq!(Some(classified.kind), error.connect_failure_kind());
-        assert_eq!(classified.message, error.to_string());
+        assert_eq!(classified.message, error.user_message());
     }
 }
 

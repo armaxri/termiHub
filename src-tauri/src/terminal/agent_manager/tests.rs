@@ -2160,6 +2160,9 @@ fn agent_hosted_connect_failure_kind_reaches_the_ipc_code() {
         (K::NotFound, IpcErrorCode::NotFound),
         (K::PermissionDenied, IpcErrorCode::PermissionDenied),
         (K::Busy, IpcErrorCode::Busy),
+        (K::Refused, IpcErrorCode::Refused),
+        (K::Unreachable, IpcErrorCode::Unreachable),
+        (K::Dns, IpcErrorCode::Dns),
     ];
     for (kind, code) in cases {
         let line = json!({
@@ -2186,9 +2189,11 @@ fn agent_hosted_connect_failure_kind_reaches_the_ipc_code() {
         assert_eq!(err.code(), code);
         let envelope = serde_json::to_value(&err).unwrap();
         assert_eq!(envelope["code"], kind.code());
+        // The `Remote agent error:` prefix is dropped for a typed connect
+        // failure (#5183); the agent's own text is kept.
         assert_eq!(
             envelope["message"],
-            "Remote agent error: Spawn failed: Serial port '/dev/ttyUSB0' is busy"
+            "Spawn failed: Serial port '/dev/ttyUSB0' is busy"
         );
     }
 }

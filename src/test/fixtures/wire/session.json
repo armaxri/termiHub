@@ -1,3 +1,25 @@
 {
+  "connectFailures": {
+    "dns": {
+      "code": "dns",
+      "details": null,
+      "message": "Could not resolve host 'db.internal': failed to lookup address information"
+    },
+    "refused": {
+      "code": "refused",
+      "details": null,
+      "message": "db.internal:2222: Connection refused (os error 61)"
+    },
+    "unreachable": {
+      "code": "unreachable",
+      "details": null,
+      "message": "db.internal:22: No route to host (os error 65)"
+    },
+    "untyped": {
+      "code": "spawn_failed",
+      "details": null,
+      "message": "Failed to spawn terminal: Spawn failed: pty closed"
+    }
+  },
   "createConnection": "3f2b8c1e-5a4d-4e7b-9c0a-1d2e3f4a5b6c"
 }

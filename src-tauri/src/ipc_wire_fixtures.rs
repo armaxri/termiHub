@@ -165,7 +165,40 @@ fn connections_fixture() -> Value {
 fn session_fixture() -> Value {
     // `create_connection` returns the new session id as a bare JSON string.
     let session_id: String = "3f2b8c1e-5a4d-4e7b-9c0a-1d2e3f4a5b6c".into();
-    json!({ "createConnection": wire("session id", &session_id) })
+    // A failed connect rejects with the `TerminalError` envelope: one per typed
+    // TCP connect category, through the direct-connect chokepoint (#5183).
+    use crate::utils::errors::TerminalError;
+    use termihub_core::errors::{ConnectFailureKind as K, SessionError};
+    let failure = |name: &str, kind: K, message: &str| {
+        wire(
+            name,
+            &TerminalError::from_session_spawn(SessionError::classified(kind, message)),
+        )
+    };
+    json!({
+        "createConnection": wire("session id", &session_id),
+        "connectFailures": {
+            "refused": failure(
+                "refused",
+                K::Refused,
+                "db.internal:2222: Connection refused (os error 61)",
+            ),
+            "unreachable": failure(
+                "unreachable",
+                K::Unreachable,
+                "db.internal:22: No route to host (os error 65)",
+            ),
+            "dns": failure(
+                "dns",
+                K::Dns,
+                "Could not resolve host 'db.internal': failed to lookup address information",
+            ),
+            "untyped": wire(
+                "untyped",
+                &TerminalError::from_session_spawn(SessionError::SpawnFailed("pty closed".into())),
+            ),
+        },
+    })
 }
 
 // ── agent connect / definitions ───────────────────────────────────────────────

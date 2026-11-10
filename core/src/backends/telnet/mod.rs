@@ -396,7 +396,12 @@ async fn connect_tcp_cancellable(
                 );
             }
         })
-        .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))
+        // Refused / unreachable / DNS / timeout carry a typed kind (#5183).
+        .map_err(|e| {
+            crate::net::connect_failure(&host, port, &e, |e| {
+                SessionError::SpawnFailed(format!("TCP connect failed: {e}"))
+            })
+        })
     };
     match cancel {
         None => do_connect(),

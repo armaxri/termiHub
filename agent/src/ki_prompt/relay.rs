@@ -210,10 +210,18 @@ impl RelayFailure {
                 ..Self::default()
             };
         }
+        let connect_failure = relayed_connect_failure_kind(error);
+        // A typed failure relays its own description only (#5183); an untyped
+        // one keeps the full text it is reported with.
+        let message = if connect_failure.is_some() {
+            error.user_message()
+        } else {
+            error.to_string()
+        };
         Self {
             kind: None,
-            connect_failure: relayed_connect_failure_kind(error),
-            message: Some(error.to_string()),
+            connect_failure,
+            message: Some(message),
         }
     }
 

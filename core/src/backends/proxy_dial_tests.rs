@@ -509,3 +509,44 @@ async fn direct_dial_reports_resolve_then_connect() {
         Some(format!("TCP connect to 127.0.0.1:{port}").as_str())
     );
 }
+
+/// A direct dial to a closed port fails as a typed `Refused` (#5183) whose
+/// message names the target, so the overlay can explain it instead of showing
+/// an OS error code.
+#[tokio::test]
+async fn direct_dial_to_closed_port_is_classified_refused() {
+    use crate::errors::ConnectFailureKind;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+
+    let err = connect_tcp("127.0.0.1", port, None)
+        .await
+        .expect_err("nothing listens on a just-closed port");
+    assert_eq!(
+        err.connect_failure_kind(),
+        Some(ConnectFailureKind::Refused)
+    );
+    let SessionError::Classified { message, .. } = &err else {
+        panic!("expected a classified error, got {err:?}");
+    };
+    assert!(
+        message.starts_with(&format!("127.0.0.1:{port}: ")),
+        "{message}"
+    );
+}
+
+/// A host name that does not resolve is a typed `Dns` failure (#5183).
+#[tokio::test]
+async fn direct_dial_to_unresolvable_host_is_classified_dns() {
+    use crate::errors::ConnectFailureKind;
+    let err = connect_tcp("nonexistent.host.invalid.termihub.test", 22, None)
+        .await
+        .expect_err("an unresolvable host must error");
+    assert_eq!(err.connect_failure_kind(), Some(ConnectFailureKind::Dns));
+    assert!(
+        err.to_string()
+            .contains("nonexistent.host.invalid.termihub.test"),
+        "{err}"
+    );
+}

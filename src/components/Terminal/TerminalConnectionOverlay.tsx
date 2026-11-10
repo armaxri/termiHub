@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { RefreshCw, Zap, Ban, Copy, X } from "lucide-react";
+import { RefreshCw, Zap, Ban, Copy, X, Pencil } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui";
@@ -21,7 +21,13 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
-import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
+import {
+  backendFamilyFromSessionType,
+  connectionErrorHeading,
+  connectionErrorHint,
+  isNetworkErrorKind,
+} from "@/utils/connectionErrorHints";
+import { t } from "@/i18n/catalog";
 import { formatElapsed } from "@/utils/formatters";
 import { CredentialReentry } from "./CredentialReentry";
 import { markTerminalRefocusPending } from "./terminalRefocus";
@@ -45,6 +51,11 @@ interface TerminalConnectionOverlayProps {
   target?: string;
   /** Detail chips (port, jump host, baud rate). */
   details?: string[];
+  /**
+   * Id of the saved connection the tab was opened from, when known. Enables
+   * the failure screen's **Edit connection** action (#5183).
+   */
+  connectionId?: string;
 }
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
@@ -67,6 +78,41 @@ function busyAnnouncement(heading: string, detail: string): string {
 async function copyCommand(command: string): Promise<void> {
   await writeClipboard(command);
   toast.success("Command copied to clipboard");
+}
+
+/** Copy the raw backend error so it can be pasted into a bug report (#5183). */
+async function copyError(error: string): Promise<void> {
+  await writeClipboard(error);
+  toast.success(t("connection.details.copied"));
+}
+
+/**
+ * The technical backend error of a network failure, kept available but
+ * secondary to the plain-language hint (#5183): a collapsed "Details"
+ * disclosure with a copy action.
+ */
+function ErrorDetails({ error }: { error: string }) {
+  return (
+    <details
+      className="terminal-connection-overlay__details"
+      data-testid="terminal-connection-error-details"
+    >
+      <summary>{t("connection.details.show")}</summary>
+      <div className="terminal-connection-overlay__command-row">
+        <code className="terminal-connection-overlay__hint-code">{error}</code>
+        <Button
+          variant="ghost"
+          iconOnly
+          size="sm"
+          icon={<Copy size={14} aria-hidden />}
+          aria-label={t("connection.details.copy")}
+          title={t("connection.details.copy")}
+          data-testid="terminal-connection-error-copy-btn"
+          onClick={() => copyError(error)}
+        />
+      </div>
+    </details>
+  );
 }
 
 /**
@@ -118,8 +164,10 @@ export function TerminalConnectionOverlay({
   viaAgent = false,
   target,
   details = [],
+  connectionId,
 }: TerminalConnectionOverlayProps) {
   const closeTab = useAppStore((s) => s.closeTab);
+  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const abortTerminalConnect = useAppStore((s) => s.abortTerminalConnect);
@@ -183,6 +231,16 @@ export function TerminalConnectionOverlay({
   const handleAbort = useCallback(() => {
     abortTerminalConnect(tabId);
   }, [tabId, abortTerminalConnect]);
+
+  // Edit connection: open the saved connection's editor on the field that most
+  // likely needs fixing — the port for a refused connect, else the host (#5183).
+  const handleEdit = useCallback(() => {
+    if (!connectionId) return;
+    openConnectionEditorTab(connectionId, undefined, {
+      field: errorKind === "refused" ? "port" : "host",
+      nonce: Date.now(),
+    });
+  }, [connectionId, errorKind, openConnectionEditorTab]);
 
   // Retry now (waiting-for-agent): stop parking on the agent and re-run the
   // spawn immediately. retryTerminalSpawn already clears the waiting flag.
@@ -340,10 +398,12 @@ export function TerminalConnectionOverlay({
   // Mark the stage it stopped at — only when it is actually known (a reported
   // stage, an agent session, or a single-step type).
   const failedAt: StepId | undefined = viaAgent ? "start" : reported;
+  const networkFailure = phase === "failed" && isNetworkErrorKind(errorKind) && error !== "";
   const showSteps = failedAt !== undefined || steps.length === 1;
   // Same words as the ConnectProgress defaults; spelled out for the announcement.
   const headings: Record<ConnectProgressPhase, string> = {
-    failed: "Connection failed",
+    // A refused / unreachable / unresolvable host names itself (#5183).
+    failed: connectionErrorHeading(errorKind) ?? "Connection failed",
     timeout: "Timed out",
     aborted: "Connection aborted",
     connecting: "",
@@ -357,7 +417,9 @@ export function TerminalConnectionOverlay({
         heading={headings[phase]}
         stages={showSteps ? buildStages(steps, failedAt, true) : undefined}
         // `error` is already the store's display string, not a raw IPC error.
-        error={error}
+        // A network failure leads with its hint and keeps the OS-level detail
+        // behind a disclosure below it (#5183).
+        error={networkFailure ? undefined : error}
         announcement={[`${headings[phase]}.`, `${tabTitle}:`, error].join(" ")}
         autoFocusPrimaryAction={isVisible}
         // Only the client's own deadline knows how long it waited.
@@ -377,6 +439,17 @@ export function TerminalConnectionOverlay({
             >
               Retry
             </Button>
+            {connectionId && !viaAgent && phase !== "aborted" && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Pencil size={14} />}
+                onClick={handleEdit}
+                data-testid="terminal-connection-edit-btn"
+              >
+                {t("connection.action.edit")}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -401,6 +474,7 @@ export function TerminalConnectionOverlay({
           ) : (
             <p className="terminal-connection-overlay__hint-text">{hint.text}</p>
           ))}
+        {networkFailure && <ErrorDetails error={error} />}
         {/* The server rejected the credentials (typed `auth_failed` kind):
             offer to enter new ones inline and reconnect (#3089). */}
         {errorKind === "auth" && <CredentialReentry tabId={tabId} />}

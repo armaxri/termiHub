@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.35.0        | Yes (the desktop requests 0.24.0; a refused, unreachable or unresolvable host gets its own connect hint)                              |
 | 0.24.0          | 0.34.0        | Yes (the desktop requests 0.24.0; `serialPortRescan` lets the Port field of an agent-hosted serial connection follow plug / unplug)   |
 | 0.24.0          | 0.33.0        | Yes (the desktop requests 0.24.0; `definitionIconStyle` shows the icon colour / emoji controls for agent connections)                 |
 | 0.24.0          | 0.32.0        | Yes (the desktop requests 0.24.0; `agent.logs.*` lets Export Diagnostics include the agent's log files)                               |
@@ -416,6 +417,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.35.0 (additive, minor)** — adds the `refused`, `unreachable` and `dns` values of the optional `error.data.connect_failure` of a failed [`connection.create`](#connectioncreate) (#5183): the TCP connect of an agent-hosted session was refused (nothing listens on the port), found no route to the host, or its host name did not resolve. The message of a typed failure is now its own description, without a `Connection failed: Spawn failed:` prefix. A desktop that does not know the values ignores them and shows a generic remote error.
 
 **0.34.0 (additive, minor)** — adds [`serial.list_ports`](#seriallist_ports) (#5069): a fresh enumeration of the agent host's serial ports, naturally sorted (`COM3` before `COM10`), so the connection editor's Port field of an **agent-hosted** serial connection picks up adapters plugged into / removed from the agent host while it is visible (the desktop polls it every ~1.5 s, backing off on errors). The `initialize` result gains `capabilities.serialPortRescan: true`. Negotiation is by **capability**: the desktop calls the method only on an agent that advertises the flag and keeps the `availableSerialPorts` snapshot taken at `initialize` for an older one (should such an agent still be asked, its `-32601` is read the same way). An older desktop never calls the method. The desktop still requests `0.24.0`.
 
@@ -715,6 +718,9 @@ For serial sessions:
 | `auth_failed`          | The server rejected the credentials (0.19.0, #3089)                                                         |
 | `host_key_untrusted`   | Unattended only: the host key is not already trusted (0.23.0, #3877)                                        |
 | `interaction_required` | Unattended only: a one-time code, a password or a key passphrase would have to be asked for (0.23.0, #3877) |
+| `refused`              | The host refused the TCP connection: nothing listens on that port (0.35.0, #5183)                           |
+| `unreachable`          | No route to the host or its network: it is offline, or a VPN / network link is down (0.35.0, #5183)         |
+| `dns`                  | The host name could not be resolved (0.35.0, #5183)                                                         |
 
 The member is optional: absent for an untyped failure and from agents older than 0.18.0. Clients must ignore a value they do not recognize.
 

@@ -27,7 +27,7 @@ use tokio::net::TcpStream;
 use zeroize::Zeroizing;
 
 use crate::config::{SshProxyConfig, SshProxyType};
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
 
 /// Upper bound on the HTTP proxy's `CONNECT` response (status line and
 /// headers). Anything longer is refused rather than buffered.
@@ -56,9 +56,16 @@ pub async fn connect_tcp(
         // Resolve first, then connect, so the two stages report separately
         // (#5068); together this is what `TcpStream::connect("host:port")` does.
         report(ConnectStage::Resolve, Some(format!("Resolving {host}")));
+        // A resolver failure is a DNS failure by control flow, and a refused /
+        // unreachable / timed-out connect carries its typed kind (#5183).
         let addrs: Vec<_> = tokio::net::lookup_host(format!("{host}:{port}"))
             .await
-            .map_err(|e| SessionError::ConnectionFailed(e.to_string()))?
+            .map_err(|e| {
+                SessionError::classified(
+                    ConnectFailureKind::Dns,
+                    format!("Could not resolve host '{host}': {e}"),
+                )
+            })?
             .collect();
         if let Some(first) = addrs.first() {
             report(
@@ -66,9 +73,11 @@ pub async fn connect_tcp(
                 Some(format!("TCP connect to {first}")),
             );
         }
-        return TcpStream::connect(&addrs[..])
-            .await
-            .map_err(|e| SessionError::ConnectionFailed(e.to_string()));
+        return TcpStream::connect(&addrs[..]).await.map_err(|e| {
+            crate::net::connect_failure(host, port, &e, |e| {
+                SessionError::ConnectionFailed(e.to_string())
+            })
+        });
     };
 
     let kind = proxy.proxy_type.label();
