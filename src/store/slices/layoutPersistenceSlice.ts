@@ -163,11 +163,29 @@ export interface LayoutPersistenceSlice {
   confirmRestorePrompt: (remember: boolean, selectedIndices?: readonly number[]) => Promise<void>;
 
   /**
-   * Resolve the restore prompt with "Start Fresh": optionally persist
-   * `restoreLastSessionMode: "never"` (when `remember`), then clear the stored
-   * session.
+   * Resolve the restore prompt with the explicit "Start Fresh" button:
+   * optionally persist `restoreLastSessionMode: "never"` (when `remember`) and
+   * close the prompt. The stored session is NOT cleared here — it stays on disk
+   * until the next layout save replaces it, so a crash right after Start Fresh
+   * does not lose it (#5155).
    */
   dismissRestorePrompt: (remember: boolean) => Promise<void>;
+
+  /**
+   * Passive dismissal of the restore prompt (Escape / backdrop click): close
+   * the prompt without deciding anything (#5155). The stored session is kept,
+   * "Remember my choice" is ignored, and the user is asked again on the next
+   * launch. Sets {@link lastSessionHeld} so an empty-layout auto-save cannot
+   * wipe the deferred snapshot; the first save with real tabs replaces it.
+   */
+  deferRestorePrompt: () => void;
+
+  /**
+   * True while a deferred stored session must survive empty-layout saves
+   * (see {@link deferRestorePrompt}). Cleared by the first save that persists
+   * at least one tab.
+   */
+  lastSessionHeld: boolean;
 }
 
 export const createLayoutPersistenceSlice: StateCreator<
@@ -528,6 +546,10 @@ export const createLayoutPersistenceSlice: StateCreator<
         (n, g) => n + getWorkspaceLeaves(g.layout).reduce((m, leaf) => m + leaf.tabs.length, 0),
         0
       );
+      // #5155: an empty payload clears the stored session, so never send one
+      // while that session is still undecided (prompt open) or was deferred via
+      // Escape / backdrop — the snapshot must survive until real work replaces it.
+      if (totalTabs === 0 && (get().restorePrompt !== null || get().lastSessionHeld)) return;
       try {
         await apiSaveLastSession({
           version: "1",
@@ -535,6 +557,7 @@ export const createLayoutPersistenceSlice: StateCreator<
           activeGroupIndex,
           ...(totalTabs > 0 && windows ? { windows } : {}),
         });
+        if (totalTabs > 0 && get().lastSessionHeld) set({ lastSessionHeld: false });
       } catch (err) {
         frontendLog("app_store", `Failed to save last session: ${errorMessage(err)}`);
         // Auto-save fires on every layout change (debounced); use a stable id so
@@ -678,6 +701,8 @@ export const createLayoutPersistenceSlice: StateCreator<
 
     restorePrompt: null,
 
+    lastSessionHeld: false,
+
     promptRestore: async () => {
       try {
         const session = await apiLoadLastSession();
@@ -720,8 +745,15 @@ export const createLayoutPersistenceSlice: StateCreator<
           restoreLastSessionMode: "never",
         });
       }
-      set({ restorePrompt: null });
-      await get().clearLastSession();
+      // #5155: no clear here. The snapshot is replaced by the next layout save
+      // (an empty layout saves an empty session, which the backend treats as a
+      // clear), so a crash before then keeps it; with `remember` the mode is
+      // now "never" and the next startup drops it.
+      set({ restorePrompt: null, lastSessionHeld: false });
+    },
+
+    deferRestorePrompt: () => {
+      set({ restorePrompt: null, lastSessionHeld: true });
     },
   };
 };

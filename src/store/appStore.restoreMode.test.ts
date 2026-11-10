@@ -74,6 +74,20 @@ import { saveSettings } from "@/services/storage";
 import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
 import { layoutState } from "@/test/layoutState";
+import { getAllLeaves } from "@/utils/panelTree";
+
+/** Close every open tab so the next save captures an empty layout. */
+function closeAllTabs(): void {
+  for (const leaf of getAllLeaves(layoutState().rootPanel)) {
+    for (const tab of leaf.tabs) useAppStore.getState().closeTab(tab.id, leaf.id);
+  }
+}
+
+/** Tab count of the payload passed to the most recent `saveLastSession` call. */
+function lastSavedTabGroups(): unknown[] {
+  const calls = mockSave.mock.calls;
+  return (calls[calls.length - 1][0] as LastSession).tabGroups;
+}
 
 const mockSummarize = vi.mocked(summarizeLastSession);
 
@@ -103,6 +117,7 @@ describe("startup restore mode", () => {
     useAppStore.setState({
       defaultShell: "bash",
       restorePrompt: null,
+      lastSessionHeld: false,
     });
     seedSettings({
       restoreLastSessionOnStartup: undefined,
@@ -211,11 +226,22 @@ describe("startup restore mode", () => {
       });
     });
 
-    it("clears the stored session and the prompt", async () => {
+    it("closes the prompt but keeps the stored session on disk (#5155)", async () => {
       await useAppStore.getState().dismissRestorePrompt(false);
 
       expect(useAppStore.getState().restorePrompt).toBeNull();
-      expect(mockClear).toHaveBeenCalledTimes(1);
+      expect(mockClear).not.toHaveBeenCalled();
+      expect(mockSave).not.toHaveBeenCalled();
+    });
+
+    it("lets the next save replace the snapshot, even with an empty layout", async () => {
+      await useAppStore.getState().dismissRestorePrompt(false);
+      closeAllTabs();
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(mockSave).toHaveBeenCalledTimes(1);
+      expect(lastSavedTabGroups()).toEqual([]);
     });
 
     it("persists mode=never when remember is set", async () => {
@@ -233,6 +259,62 @@ describe("startup restore mode", () => {
 
       expect(currentSettingsView().restoreLastSessionMode).toBe("ask");
       expect(mockPersistSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deferRestorePrompt (Escape / backdrop, #5155)", () => {
+    beforeEach(() => {
+      useAppStore.setState({
+        restorePrompt: { tabCount: 1, tabs: [{ title: "x", typeLabel: "Local" }] },
+      });
+    });
+
+    it("closes the prompt and keeps the stored session", () => {
+      useAppStore.getState().deferRestorePrompt();
+
+      expect(useAppStore.getState().restorePrompt).toBeNull();
+      expect(useAppStore.getState().lastSessionHeld).toBe(true);
+      expect(mockClear).not.toHaveBeenCalled();
+    });
+
+    it("never records a remembered choice", () => {
+      useAppStore.getState().deferRestorePrompt();
+
+      expect(currentSettingsView().restoreLastSessionMode).toBe("ask");
+      expect(mockPersistSettings).not.toHaveBeenCalled();
+    });
+
+    it("blocks an empty-layout save from wiping the deferred snapshot", async () => {
+      useAppStore.getState().deferRestorePrompt();
+      closeAllTabs();
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(mockSave).not.toHaveBeenCalled();
+      expect(useAppStore.getState().lastSessionHeld).toBe(true);
+    });
+
+    it("lets a save with real tabs replace the snapshot and releases the hold", async () => {
+      useAppStore.getState().deferRestorePrompt();
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(mockSave).toHaveBeenCalledTimes(1);
+      expect(lastSavedTabGroups()).toHaveLength(1);
+      expect(useAppStore.getState().lastSessionHeld).toBe(false);
+    });
+  });
+
+  describe("saveLastSession while the prompt is open (#5155)", () => {
+    it("does not send an empty payload that would clear the undecided session", async () => {
+      useAppStore.setState({
+        restorePrompt: { tabCount: 1, tabs: [{ title: "x", typeLabel: "Local" }] },
+      });
+      closeAllTabs();
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(mockSave).not.toHaveBeenCalled();
     });
   });
 });
