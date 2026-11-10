@@ -73,6 +73,15 @@ confirmCloseLiveSession?: boolean,
  */
 confirmCloseAttachedTab?: boolean, 
 /**
+ * Show a confirmation dialog before a delete that offers an Undo toast
+ * (a connection folder, a custom theme, an idle tunnel). The dialog's
+ * "Don't ask again" opt-out flips this to `false`; the Undo toast still
+ * appears. `None` → the frontend default (treated as `true`). Owned by
+ * the frontend `AppSettings.confirmUndoableDelete`; the backend only
+ * persists it so the opt-out survives a restart (#5158).
+ */
+confirmUndoableDelete?: boolean, 
+/**
  * When true (default), saving terminal content to a file shows a dialog
  * offering to open the saved file in a Monaco editor tab. When false, the
  * file is saved silently and no dialog or editor tab is opened.

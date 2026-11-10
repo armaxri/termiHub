@@ -421,6 +421,15 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub confirm_close_attached_tab: bool,
+    /// Show a confirmation dialog before a delete that offers an Undo toast
+    /// (a connection folder, a custom theme, an idle tunnel). The dialog's
+    /// "Don't ask again" opt-out flips this to `false`; the Undo toast still
+    /// appears. `None` → the frontend default (treated as `true`). Owned by
+    /// the frontend `AppSettings.confirmUndoableDelete`; the backend only
+    /// persists it so the opt-out survives a restart (#5158).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub confirm_undoable_delete: Option<bool>,
     /// When true (default), saving terminal content to a file shows a dialog
     /// offering to open the saved file in a Monaco editor tab. When false, the
     /// file is saved silently and no dialog or editor tab is opened.
@@ -742,6 +751,7 @@ impl Default for AppSettings {
             confirm_close_tab_on_shortcut: true,
             confirm_close_live_session: None,
             confirm_close_attached_tab: true,
+            confirm_undoable_delete: None,
             ask_open_saved_file_in_tab: true,
             warn_large_port_scan: true,
             warn_large_ping_sweep: true,
@@ -1905,6 +1915,21 @@ mod tests {
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.line_height, Some(1.4));
         assert_eq!(deserialized.confirm_close_live_session, Some(false));
+    }
+
+    #[test]
+    fn confirm_undoable_delete_round_trips_and_is_omitted_when_unset() {
+        // #5158: the delete-confirm opt-out must survive save→load.
+        let settings = AppSettings {
+            confirm_undoable_delete: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"confirmUndoableDelete\":false"));
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.confirm_undoable_delete, Some(false));
+        let unset = serde_json::to_string(&AppSettings::default()).unwrap();
+        assert!(!unset.contains("confirmUndoableDelete"));
     }
 
     #[test]
