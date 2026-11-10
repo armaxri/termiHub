@@ -7,7 +7,8 @@
 #   macOS    a temporary keychain becomes the default (and joins the search
 #            list) only while the prebuilt test binary runs; the original
 #            default and search list are restored and the keychain deleted on
-#            exit. The login keychain is never written.
+#            exit. The login keychain is never written. Also runs the two
+#            #[ignore]d macOS framework smoke tests (hw_key, os_auth).
 #   Linux    a private D-Bus session (dbus-run-session) with its own
 #            gnome-keyring-daemon, whose keyring files and sockets live in a
 #            temporary directory. Needs dbus-run-session and gnome-keyring.
@@ -25,7 +26,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '3,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 if (($# > 0)) && [[ -z "${TERMIHUB_REAL_KEYCHAIN_INSIDE_BUS:-}" ]]; then
@@ -43,6 +44,13 @@ EXPECTED=2
 # filter only matches tests in the termihub lib.
 CARGO_ARGS=(--workspace --all-features --lib)
 TEST_ARGS=("$FILTER" --test-threads=1)
+# The #[ignore]d tests that talk to the real macOS Security and
+# LocalAuthentication frameworks; run on macOS only (#5163).
+MACOS_IGNORED=(
+  credential::hw_key::macos::tests::unsigned_binary_probe_reports_missing_entitlement
+  credential::os_auth::macos::tests::capability_preflight_does_not_prompt
+)
+MACOS_RAN=""
 
 # Linux, inside the private session bus: start a fresh gnome-keyring there,
 # export the environment it prints (GNOME_KEYRING_CONTROL, ... as VAR=value
@@ -122,6 +130,15 @@ case "$(uname -s)" in
     security default-keychain -d user -s "$KEYCHAIN"
     echo "Using the throwaway keychain $KEYCHAIN"
     cargo test "${CARGO_ARGS[@]}" -- "${TEST_ARGS[@]}" 2>&1 | tee "$LOG"
+    # The two #[ignore]d macOS framework smoke tests (#5163), while the
+    # throwaway keychain is still the default. Neither prompts: an unsigned
+    # test binary lacks the keychain-access-groups entitlement, so the
+    # hardware-key probe reports Unavailable, and the LocalAuthentication
+    # capability preflight never shows UI.
+    cargo test "${CARGO_ARGS[@]}" -- --ignored --exact "${MACOS_IGNORED[@]}" \
+      --test-threads=1 2>&1 | tee "$WORK/macos-ignored.log"
+    MACOS_RAN="$(grep -cE "^test credential::[a-z_:]+ \.\.\. ok\$" \
+      "$WORK/macos-ignored.log" || true)"
     ;;
   Linux)
     for tool in dbus-run-session gnome-keyring-daemon; do
@@ -162,3 +179,10 @@ if [[ "$ran" != "$EXPECTED" ]]; then
   exit 1
 fi
 echo "All $EXPECTED real-keychain tests passed against the real OS credential store."
+if [[ -n "$MACOS_RAN" ]]; then
+  if [[ "$MACOS_RAN" != "${#MACOS_IGNORED[@]}" ]]; then
+    echo "error: expected ${#MACOS_IGNORED[@]} macOS framework tests to pass, $MACOS_RAN did" >&2
+    exit 1
+  fi
+  echo "All $MACOS_RAN macOS framework tests passed."
+fi

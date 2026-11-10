@@ -1120,7 +1120,12 @@ agents' dialogs (GNOME Shell, KDE) remain a manual check — MT-CRED-14 on the
 
 A backup restore into the OS-keychain store defers its credential import until
 the startup swap succeeded (#4414). Unit tests use the `keyring` mock or a fake
-store, and a unit-test `OsKeychainStore` imports right away, so the real path —
+store. The seal service is injected through `OsKeychainStore::with_index_and_seal`
+(no `cfg!(test)`, #5163), so unit tests run the shipped deferring store and cover
+both arms; the `unseal_and_write` failure branches (store or seal key unavailable,
+wrong or invalid key id, truncated seal) have named fake-store tests in
+[`backup/tests_deferred_import.rs`](../src-tauri/src/backup/tests_deferred_import.rs).
+The real path —
 the seal key in the OS credential store, the import applied after the swap, the
 key deleted afterwards, and a failed swap leaving the keychain unchanged — is
 covered by the opt-in tests in
@@ -1143,8 +1148,15 @@ scripts\internal\real-keychain-tests.cmd    # Windows
 | Linux    | a private `dbus-run-session` with its own `gnome-keyring-daemon` in a temporary directory, unlocked with a random non-empty password (an empty one creates no `default` collection) |
 | Windows  | the user's Credential Manager (no throwaway store), with the guarantees above                                                                                                       |
 
+On macOS the wrapper also runs the two `#[ignore]`d framework smoke tests,
+`credential::hw_key::macos` (an unsigned binary's hardware-key probe reports the
+missing entitlement) and `credential::os_auth::macos` (the LocalAuthentication
+preflight returns without prompting), and fails unless both ran (#5163). Neither
+shows UI, so they run headlessly on the runner.
+
 CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`; the
-`.cmd` twin on Windows),
+`.cmd` twin on Windows) — on every PR touching Rust and every push to `develop`,
+so ubuntu, macOS and Windows grade the real-keychain path continuously,
 reusing the already-built lib test binary. The end-to-end check in the real app
 (MT-CRED-18) is automated in the integration lane by
 [`test_os_credential_store.py`](../tests/system/tests/test_os_credential_store.py),
