@@ -80,20 +80,41 @@ export type FocusTarget = () => HTMLElement | null;
  * is still in the document, otherwise the row now at its old position among
  * `selector` matches in `scope` (the next row, or the last one when it was the
  * last). Capture it while `row` is still rendered.
+ *
+ * `scope` defaults to the row's `role="tree"`. Pass a resolver when the tree
+ * element itself may be re-created by the delete, so it is looked up afresh.
  */
 export function captureNeighborFocus(
   row: HTMLElement,
   selector = '[role="treeitem"]',
-  scope: Element = row.closest('[role="tree"]') ?? row.ownerDocument.body
+  scope?: Element | (() => Element | null)
 ): FocusTarget {
-  const index = Array.from(scope.querySelectorAll(selector)).indexOf(row);
+  const fixed =
+    typeof scope === "function"
+      ? null
+      : (scope ?? row.closest('[role="tree"]') ?? row.ownerDocument.body);
+  const resolve = typeof scope === "function" ? scope : () => fixed;
+  const initial = resolve();
+  const index = initial ? Array.from(initial.querySelectorAll(selector)).indexOf(row) : -1;
   return () => {
     if (row.isConnected) return row;
-    if (index < 0 || !scope.isConnected) return null;
-    const rows = scope.querySelectorAll<HTMLElement>(selector);
+    const current = resolve();
+    if (index < 0 || !current?.isConnected) return null;
+    const rows = current.querySelectorAll<HTMLElement>(selector);
     if (rows.length === 0) return null;
     return rows[Math.min(index, rows.length - 1)];
   };
+}
+
+/**
+ * Resolve the agent tree for `agentId` (its `data-agent-tree` element) — a
+ * {@link captureNeighborFocus} scope that survives the tree being re-created.
+ */
+export function agentTreeScope(agentId: string): () => Element | null {
+  return () =>
+    Array.from(document.querySelectorAll("[data-agent-tree]")).find(
+      (el) => el.getAttribute("data-agent-tree") === agentId
+    ) ?? null;
 }
 
 /** How long {@link rescueFocusAfterRemoval} keeps watching, in milliseconds. */
@@ -106,8 +127,9 @@ const FOCUS_RESCUE_POLL_MS = 25;
  * Removing the focused row drops focus to `<body>`, which strands keyboard and
  * screen-reader users. The removal may land after a dialog's close animation or
  * an async store round-trip, so this watches for a short window and moves
- * focus to `target()` the first time it finds focus on `<body>`. It never pulls
- * focus back from an element that claimed it (a dialog, a new tab).
+ * focus to `target()` whenever it finds focus on `<body>` — first back onto the
+ * row while it still exists, then onto its neighbour once it is gone. It never
+ * pulls focus back from an element that claimed it (a dialog, a new tab).
  */
 export function rescueFocusAfterRemoval(
   target: FocusTarget,
@@ -118,10 +140,7 @@ export function rescueFocusAfterRemoval(
     const active = document.activeElement;
     if (!active || active === document.body) {
       const el = target();
-      if (el && el.isConnected) {
-        el.focus();
-        return;
-      }
+      if (el && el.isConnected) el.focus();
     }
     if (Date.now() < deadline) setTimeout(check, FOCUS_RESCUE_POLL_MS);
   };
