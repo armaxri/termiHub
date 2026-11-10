@@ -115,7 +115,7 @@
 
 .zoom-overlay__hint {
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 

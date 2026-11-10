@@ -376,7 +376,7 @@
 
 .network-sidebar__monitor-status {
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
@@ -387,7 +387,7 @@
   align-items: center;
   gap: var(--spacing-xs);
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 

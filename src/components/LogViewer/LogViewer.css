@@ -95,7 +95,7 @@
 
 .log-viewer__count {
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
@@ -120,7 +120,7 @@
 }
 
 .log-viewer__timestamp {
-  color: var(--text-disabled);
+  color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -149,7 +149,7 @@
 }
 
 .log-viewer__target {
-  color: var(--text-disabled);
+  color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
   max-width: 200px;

@@ -78,7 +78,7 @@
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
 }
 
 /* Inline image + mount form, shown under the selected "New container…" row. */

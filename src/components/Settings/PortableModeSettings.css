@@ -100,7 +100,7 @@
 
 .portable-mode__file-status {
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
 }
 
 /* === Action button row === */
@@ -162,7 +162,7 @@
 
 .portable-mode__migration-absent {
   font-size: var(--font-size-xs);
-  color: var(--text-disabled);
+  color: var(--text-muted);
   font-style: italic;
 }
 

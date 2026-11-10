@@ -1040,3 +1040,130 @@ describe("Radix menu/select parts are only imported inside ui/ (#4383)", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * UI-002 of the 2026-11 UI audit (#5165): `--text-disabled` sits at ~2:1
+ * against every surface, which WCAG only tolerates for *disabled* controls.
+ * It must never colour readable information (status, timestamps, versions,
+ * section headers, empty-state titles) — those use `--text-muted` (de-emphasised
+ * but AA) or `--text-secondary`.
+ *
+ * The guard: every declaration that references `var(--text-disabled)` must sit
+ * in a rule whose selectors are *all* disabled-state selectors.
+ */
+const DISABLED_STATE_SELECTOR =
+  /:disabled\b|\[disabled\]|\[aria-disabled(?:=["']?true["']?)?\]|\[data-disabled\]|\.is-disabled\b|--disabled\b|--off\b|--absent\b/;
+
+/** One `var(--text-disabled)` declaration together with the rule it sits in. */
+interface TextDisabledUse {
+  line: number;
+  selector: string;
+  declaration: string;
+}
+
+/**
+ * Find every declaration referencing `var(--text-disabled)` and the selector
+ * of the innermost rule containing it. At-rule preludes (`@media …`) are
+ * skipped over so a nested rule reports its own selector.
+ *
+ * @param css Contents of a CSS file.
+ * @returns Each use with its 1-based line, enclosing selector and declaration.
+ */
+function findTextDisabledUses(css: string): TextDisabledUse[] {
+  const src = stripCssComments(css);
+  const uses: TextDisabledUse[] = [];
+  const stack: string[] = [];
+  let chunkStart = 0;
+  const flush = (end: number) => {
+    const chunk = src.slice(chunkStart, end);
+    if (chunk.includes("var(--text-disabled)")) {
+      const offset = chunkStart + chunk.indexOf("var(--text-disabled)");
+      uses.push({
+        line: src.slice(0, offset).split("\n").length,
+        selector: stack.length > 0 ? stack[stack.length - 1] : "",
+        declaration: chunk.trim(),
+      });
+    }
+  };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "{") {
+      stack.push(src.slice(chunkStart, i).trim().replace(/\s+/g, " "));
+      chunkStart = i + 1;
+    } else if (ch === ";") {
+      flush(i);
+      chunkStart = i + 1;
+    } else if (ch === "}") {
+      flush(i);
+      stack.pop();
+      chunkStart = i + 1;
+    }
+  }
+  return uses;
+}
+
+/**
+ * Whether every comma-separated selector in `selector` is a disabled state.
+ *
+ * @param selector A rule's selector list.
+ * @returns True when the rule only ever matches disabled/off/absent elements.
+ */
+function isDisabledStateSelector(selector: string): boolean {
+  const parts = selector.split(",").map((s) => s.trim());
+  return parts.length > 0 && parts.every((s) => s !== "" && DISABLED_STATE_SELECTOR.test(s));
+}
+
+describe("--text-disabled is reserved for disabled states (#5165)", () => {
+  const styleFiles = [
+    ...cssFiles,
+    ...collectFiles(STYLES_DIR, (name) => name.endsWith(".css") && name !== "variables.css"),
+  ];
+
+  it("uses var(--text-disabled) only inside disabled-state selectors", () => {
+    const offenders: string[] = [];
+    for (const file of styleFiles) {
+      for (const use of findTextDisabledUses(readFileSync(file, "utf8"))) {
+        if (!isDisabledStateSelector(use.selector)) {
+          offenders.push(`${toPosix(file)}:${use.line} \`${use.selector}\` → ${use.declaration}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "--text-disabled (~2:1) may only colour disabled elements (selectors with :disabled, " +
+        "[aria-disabled], .is-disabled, --disabled, --off or --absent). Use --text-muted for " +
+        "de-emphasised readable text or --text-secondary for primary info instead in:\n" +
+        offenders.join("\n")
+    ).toEqual([]);
+  });
+
+  it("still finds the legitimate disabled-state uses (guard is not vacuous)", () => {
+    const total = styleFiles.reduce(
+      (n, file) => n + findTextDisabledUses(readFileSync(file, "utf8")).length,
+      0
+    );
+    expect(total).toBeGreaterThan(0);
+  });
+
+  it("flags informational selectors and accepts disabled-state ones (guard self-check)", () => {
+    const css = [
+      ".a__status { color: var(--text-disabled); }",
+      "@media (min-width: 1px) { .b__ver { font-size: 1em; color: var(--text-disabled) } }",
+      '.c:disabled, .c[aria-disabled="true"] { color: var(--text-disabled); }',
+      ".d--off .d__icon { color: var(--text-disabled); }",
+      ".e:disabled, .e__hint { color: var(--text-disabled); }",
+      "/* .f { color: var(--text-disabled); } */",
+    ].join("\n");
+    const verdicts = findTextDisabledUses(css).map((u) => [
+      u.selector,
+      isDisabledStateSelector(u.selector),
+    ]);
+    expect(verdicts).toEqual([
+      [".a__status", false],
+      [".b__ver", false],
+      ['.c:disabled, .c[aria-disabled="true"]', true],
+      [".d--off .d__icon", true],
+      [".e:disabled, .e__hint", false],
+    ]);
+  });
+});

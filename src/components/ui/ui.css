@@ -1256,7 +1256,7 @@
 }
 
 .ui-empty--panel .ui-empty__title {
-  color: var(--text-disabled);
+  color: var(--text-secondary);
 }
 
 /* Card: large centred call-to-action (icon badge + title + description + actions). */

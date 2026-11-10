@@ -37,7 +37,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-disabled);
+  color: var(--text-secondary);
 }
 
 .plugin-manager__sep::after {
@@ -95,7 +95,7 @@
 
 .plugin-row__ver {
   margin-left: auto;
-  color: var(--text-disabled);
+  color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   flex: 0 0 auto;
