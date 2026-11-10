@@ -162,8 +162,16 @@ class TestTransferRelaunch(
 
     # -- flow --------------------------------------------------------------------
     def _connect_and_open_files(self, conn: str) -> str:
-        """Connect through the proxy and return the SFTP browser's settled path."""
-        self.connect_ssh_password(conn, port=self.proxy.port)
+        """Save a connection through the proxy, open it, return the browser's path.
+
+        Saved first and opened from the sidebar, not with the editor's Save &
+        Connect: only a tab opened from the saved connection carries its id, and
+        that id is what lets a relaunched transfer find a reopened session.
+        """
+        self.create_ssh_connection(
+            conn, host=SSH_HOST, port=self.proxy.port, username=SSH_USERNAME
+        )
+        self._open_saved(conn)
         self.switch_to_files_sidebar()
         self.wait(
             lambda: self.driver.exists("password-prompt-input")
@@ -174,13 +182,13 @@ class TestTransferRelaunch(
             self.handle_password_prompt()
         return self.wait_file_browser_settled()
 
-    def _reconnect(self, conn: str) -> None:
-        """Reopen the saved connection after the relaunch (a live session for it)."""
+    def _open_saved(self, conn: str) -> None:
+        """Open the saved connection from the sidebar and wait for its session."""
         self.switch_to_connections_sidebar()
         self.connect_connection(conn)
         self.handle_password_prompt()
         self.accept_host_key_prompt()
-        self.wait(self.has_terminal, what="the reopened SSH session")
+        self.wait(self.has_terminal, what=f"the {conn!r} SSH session")
 
     def _resume_until_completed(self, name: str) -> dict[str, Any]:
         """Click Resume on the paused row, again if it pauses once more, until done.
@@ -241,7 +249,7 @@ class TestTransferRelaunch(
         assert entry["id"] == record["transferId"], entry
         assert entry.get("transferred") == offset, entry
 
-        self._reconnect(conn)
+        self._open_saved(conn)  # a live session for the saved connection
         self._resume_until_completed(name)
         assert persisted_record(self.config_dir, name) is None, (
             "a completed transfer is pruned from transfers.json"
