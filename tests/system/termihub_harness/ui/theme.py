@@ -107,6 +107,12 @@ class ThemeUi(HarnessMixin):
         """Delete the selected custom theme (the app falls back to Dark)."""
         self.open_settings_category("appearance")
         self.driver.click("appearance-theme-delete")
+        # The delete confirms first, then offers Undo (#5158).
+        self.wait(
+            lambda: self.driver.exists("confirm-delete-confirm"),
+            what="the delete-theme confirm dialog",
+        )
+        self.driver.click("confirm-delete-confirm")
         self.wait(lambda: self.current_theme() == "dark", what="the custom theme deleted")
         self.wait_root_settled()
 
