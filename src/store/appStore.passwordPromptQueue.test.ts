@@ -83,7 +83,7 @@ describe("appStore password prompt queue (#4312)", () => {
 
   it("cancelling the first prompt does not affect the second", async () => {
     const store = useAppStore.getState();
-    track(store.requestPassword("first.example", "alice"));
+    const first = track(store.requestPassword("first.example", "alice"));
     const second = track(store.requestPassword("second.example", "bob"));
 
     useAppStore.getState().dismissPasswordPrompt();
@@ -155,7 +155,7 @@ describe("appStore password prompt queue (#4312)", () => {
   it("removes and rejects a queued request whose owner aborts", async () => {
     const store = useAppStore.getState();
     const controller = new AbortController();
-    track(store.requestPassword("first.example", "alice"));
+    const first = track(store.requestPassword("first.example", "alice"));
     const secondPromise = store.requestPassword("second.example", "bob", "", "password", {
       signal: controller.signal,
     });
@@ -186,7 +186,7 @@ describe("appStore password prompt queue (#4312)", () => {
   it("aborting the prompt on screen advances to the next one", async () => {
     const store = useAppStore.getState();
     const controller = new AbortController();
-    track(
+    const first = track(
       store.requestPassword("first.example", "alice", "", "password", {
         signal: controller.signal,
       })
