@@ -99,6 +99,8 @@ import { UpdateAgentDialog } from "./UpdateAgentDialog";
 import { AgentRunningSessionsDialog } from "./AgentRunningSessionsDialog";
 import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessionBoundDefinition";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import { agentFolderDeleteMessage, remoteAgentDeleteMessage } from "./agentDeleteMessages";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
@@ -209,6 +211,8 @@ function AgentConnectionItem({
   onRowFocus,
 }: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
+  // Every agent-side delete confirms first (#5158).
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const persistentEntry = useAppStore((s) => s.persistentSessions[`${agentId}:${definition.id}`]);
   const runState = persistentEntry?.state ?? null;
 
@@ -423,11 +427,26 @@ function AgentConnectionItem({
           onMoveToFolder={onMoveToFolder}
         />
         <MenuSeparator />
-        <MenuItem danger onSelect={() => deleteAgentDef(agentId, definition.id)}>
+        <MenuItem
+          danger
+          onSelect={() => setConfirmingDelete(true)}
+          data-testid="context-agent-def-delete"
+        >
           <Trash2 size={14} />
           Delete
         </MenuItem>
       </ContextMenuContent>
+      {confirmingDelete && (
+        <ConfirmDeleteDialog
+          open
+          message={`Delete connection “${definition.name}” from this agent? This cannot be undone.`}
+          onConfirm={() => {
+            setConfirmingDelete(false);
+            void deleteAgentDef(agentId, definition.id);
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
     </ContextMenuRoot>
   );
 }
@@ -531,6 +550,7 @@ function AgentFolderNode({
 }: AgentFolderNodeProps) {
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
   const deleteAgentFolder = useAppStore((s) => s.deleteAgentFolder);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
 
@@ -601,12 +621,27 @@ function AgentFolderNode({
             New Subfolder
           </MenuItem>
           <MenuSeparator />
-          <MenuItem danger onSelect={() => deleteAgentFolder(agentId, folder.id)}>
+          <MenuItem
+            danger
+            onSelect={() => setConfirmingDelete(true)}
+            data-testid="context-agent-folder-delete"
+          >
             <Trash2 size={14} />
             Delete Folder
           </MenuItem>
         </ContextMenuContent>
       </ContextMenuRoot>
+      {confirmingDelete && (
+        <ConfirmDeleteDialog
+          open
+          message={agentFolderDeleteMessage(folder.name, childDefinitions.length)}
+          onConfirm={() => {
+            setConfirmingDelete(false);
+            void deleteAgentFolder(agentId, folder.id);
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
 
       {expanded && (
         <div className="connection-tree__children" role="group">
@@ -771,6 +806,7 @@ export function AgentNode({
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const deleteRemoteAgent = useAppStore((s) => s.deleteRemoteAgent);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const addTab = useAppStore((s) => s.addTab);
@@ -1659,7 +1695,7 @@ export function AgentNode({
           </MenuItem>
           <MenuItem
             danger
-            onSelect={() => deleteRemoteAgent(agent.id)}
+            onSelect={() => setConfirmingDelete(true)}
             data-testid="context-agent-delete"
           >
             <Trash2 size={14} />
@@ -1672,6 +1708,17 @@ export function AgentNode({
           (the banner self-gates on the store's staged/dismissed state, #1352). */}
       {isConnected && <AgentUpdateBanner agentId={agent.id} agentName={agent.name} />}
 
+      {confirmingDelete && (
+        <ConfirmDeleteDialog
+          open
+          message={remoteAgentDeleteMessage(agent)}
+          onConfirm={() => {
+            setConfirmingDelete(false);
+            deleteRemoteAgent(agent.id);
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
       {updateDialog && desktopVersion && (
         <UpdateAgentDialog
