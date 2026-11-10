@@ -98,6 +98,8 @@ function App() {
   const { sidebarWidth, handleProps, isResizing } = useSidebarResize(layoutConfig.sidebarPosition);
   const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
+  const unlockConnectFallback = useAppStore((s) => s.unlockConnectFallback);
+  const skipUnlock = useAppStore((s) => s.skipUnlock);
   const spawnPickerVisible = useAppStore((s) => s.spawnPickerVisible);
   const spawnPickerRequest = useAppStore((s) => s.spawnPickerRequest);
   const hideSpawnPicker = useAppStore((s) => s.hideSpawnPicker);
@@ -390,7 +392,12 @@ function App() {
           <MobaxtermImportHost />
           <DiagnosticsExportDialog />
           <CrashReportViewer />
-          <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
+          <UnlockDialog
+            open={unlockDialogOpen}
+            onOpenChange={setUnlockDialogOpen}
+            connectFallback={unlockConnectFallback}
+            onConnectWithoutSaved={skipUnlock}
+          />
           <SpawnPicker
             open={spawnPickerVisible}
             location={spawnPickerRequest?.location}

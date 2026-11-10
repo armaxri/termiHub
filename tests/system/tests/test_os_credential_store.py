@@ -84,7 +84,7 @@ class TestOsCredentialStore(
 
     def reset_before_rerun(self) -> None:
         self.dismiss_modals(
-            "unlock-dialog-skip", self.RECOVERY_DIALOG, "backup-restore-title"
+            "unlock-dialog-body", self.RECOVERY_DIALOG, "backup-restore-title"
         )
         self.close_all_tabs()
 

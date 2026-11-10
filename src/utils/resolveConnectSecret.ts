@@ -28,7 +28,7 @@ import type {
   PasswordPromptOptions,
   RequestPassword,
 } from "@/store/slices/passwordPromptSlice";
-import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { ensureCredentialStoreUnlockedForConnect } from "@/utils/ensureCredentialStoreUnlocked";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { findKeyPassphrasePromptInfo, findPasswordPromptInfo } from "@/utils/schemaDefaults";
 import { withLoggedFallback } from "@/utils/loggedFallback";
@@ -127,25 +127,31 @@ export async function resolveConnectSecret({
     typeof settings.credentialRef === "string" && settings.credentialRef.trim()
       ? settings.credentialRef
       : undefined;
+  // "Connect without saved password" on the unlock dialog (#5188): the store
+  // stays locked, so the stored secret is skipped and the prompt offers no Save.
+  let storeStaysLocked = false;
   if (authMethod && (connectionId || credentialRef)) {
     const savePassword = settings.savePassword as boolean | undefined;
     // Unlock gate (G3, #1144): a locked master-password store must be unlocked
     // before the stored credential can be read.
-    const proceed = await ensureCredentialStoreUnlocked({
+    const unlock = await ensureCredentialStoreUnlockedForConnect({
       authMethod,
       savePassword,
       credentialRef,
     });
-    if (!proceed) return { status: "canceled" };
+    if (unlock === "canceled") return { status: "canceled" };
+    storeStaysLocked = unlock === "skipped";
 
-    const resolution = await resolveConnectionCredential(
-      connectionId ?? "",
-      authMethod,
-      savePassword,
-      credentialRef,
-      sourceFile
-    );
-    if (resolution.usedStoredCredential && resolution.password) {
+    const resolution = storeStaysLocked
+      ? null
+      : await resolveConnectionCredential(
+          connectionId ?? "",
+          authMethod,
+          savePassword,
+          credentialRef,
+          sourceFile
+        );
+    if (resolution?.usedStoredCredential && resolution.password) {
       return {
         status: "resolved",
         passwordKey: promptInfo.passwordKey,
@@ -159,7 +165,7 @@ export async function resolveConnectSecret({
 
   // Only pass options when there are any, so the default call shape is unchanged.
   const options: PasswordPromptOptions = {
-    ...(allowSave && !credentialRef ? {} : { allowSave: false }),
+    ...(allowSave && !credentialRef && !storeStaysLocked ? {} : { allowSave: false }),
     ...(label ? { label } : {}),
   };
   const answer =

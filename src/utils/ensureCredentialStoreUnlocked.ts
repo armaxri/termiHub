@@ -96,3 +96,34 @@ export async function ensureCredentialStoreUnlocked(opts: UnlockGateOptions): Pr
 
   return true;
 }
+
+/**
+ * How {@link ensureCredentialStoreUnlockedForConnect} settled: go on and read
+ * the stored credential (`"unlocked"`, also when no unlock was needed), go on
+ * WITHOUT it and prompt for the secret instead (`"skipped"`, the store stays
+ * locked), or stop the connect (`"canceled"`).
+ */
+export type ConnectUnlockOutcome = "unlocked" | "skipped" | "canceled";
+
+/**
+ * The unlock gate for a connect that can fall through to its interactive
+ * password prompt (#5188). Like {@link ensureCredentialStoreUnlocked}, but the
+ * dialog also offers "Connect without saved password": that settles
+ * `"skipped"`, and the caller must then skip the stored credential, prompt,
+ * and store nothing (the store is still locked). Dismissing the dialog
+ * (Escape/×) settles `"canceled"`.
+ */
+export async function ensureCredentialStoreUnlockedForConnect(
+  opts: UnlockGateOptions
+): Promise<ConnectUnlockOutcome> {
+  if (!credentialStoreNeedsUnlock(opts)) return "unlocked";
+  const { requestUnlockOutcome } = useAppStore.getState();
+  frontendLog("credential", "connect gate: store locked, requesting unlock before resolve");
+  const outcome = await requestUnlockOutcome({ connectFallback: true });
+  if (outcome === "skipped") {
+    frontendLog("credential", "connect gate: connecting without the saved credential");
+  } else if (outcome === "canceled") {
+    frontendLog("credential", "connect gate: unlock dismissed, aborting connect");
+  }
+  return outcome;
+}

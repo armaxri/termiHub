@@ -111,7 +111,7 @@ class CredentialStoreUi(HarnessMixin):
         """Open the unlock dialog from a locked store, without unlocking it.
 
         Clicks the locked status-bar indicator and waits for the dialog's input,
-        so a test can drive the dialog directly (e.g. a wrong-password or Skip
+        so a test can drive the dialog directly (e.g. a wrong-password or Cancel
         flow). Use :meth:`unlock_credential_store` when you just want it unlocked.
         """
         self._click_indicator()
