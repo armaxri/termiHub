@@ -30,6 +30,7 @@ import pytest
 from termihub_harness import (
     LIVE_CONNECT_REQUEST_TIMEOUT,
     ConnectionsUi,
+    SettingsUi,
     SidebarUi,
     SystemTest,
     TabsUi,
@@ -39,7 +40,7 @@ from termihub_harness import (
 pytestmark = pytest.mark.integration
 
 
-class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
+class TestConnectionCrud(TabsUi, SidebarUi, SettingsUi, ConnectionsUi, SystemTest):
     """One app for the whole suite; methods run in order and share its state."""
 
     # The first store read of a freshly-launched app opens its projection-region
@@ -284,18 +285,18 @@ class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
 
     # ── MT-CONN-08: export connections dialog ──────────────────────────────────
     def test_export_dialog_opens(self):
-        self.driver.click("activity-bar-settings")
-        self.wait(lambda: self.driver.exists("settings-menu-export"), what="the settings menu")
-        self.driver.click("settings-menu-export")
+        self.open_import_migration_action("import-migration-json-export-btn")
         self.wait(lambda: self.driver.exists("export-dialog-title"), what="the export dialog")
         assert "Export Connections" in self.driver.get_text("export-dialog-title")
         self.dismiss_menu()  # close the dialog
 
     # ── MT-CONN-07: import entry point (native dialog not driven) ───────────────
-    def test_import_menu_item_present(self):
-        self.driver.click("activity-bar-settings")
-        self.wait(lambda: self.driver.exists("settings-menu-import"), what="the settings menu")
+    def test_import_entry_present(self):
+        # Settings → Import & Migration is the single home for imports (#5195).
         # Clicking would open a native OS file picker that blocks the harness, so
         # we assert the entry point is reachable rather than invoking it.
-        assert self.driver.exists("settings-menu-import")
-        self.dismiss_menu()
+        self.open_settings_category("import")
+        self.wait(
+            lambda: self.driver.exists("import-migration-json-import-btn"),
+            what="the Import Connections action",
+        )

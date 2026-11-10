@@ -16,7 +16,8 @@ Divergences from the original, by design:
 * **Import dialog not driven.** Import opens through a native OS file picker that
   blocks the harness and only populates the dialog once a file is chosen, so its
   encrypted-password UI stays a manual check. The reachable part — the Import
-  menu entry — is covered by ``test_connection_crud.test_import_menu_item_present``.
+  entry on Settings → Import & Migration — is covered by
+  ``test_connection_crud.test_import_entry_present``.
   The old ``MT-CONN-15/16`` cases were compile-time selector-constant checks with
   no runtime behavior, so they are not ported.
 """
@@ -25,12 +26,12 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SettingsUi, SystemTest
 
 pytestmark = pytest.mark.integration
 
 
-class TestExportImport(SystemTest):
+class TestExportImport(SettingsUi, SystemTest):
     """One app for the whole suite; methods run in order and share its state."""
 
     TITLE = "export-dialog-title"
@@ -54,12 +55,8 @@ class TestExportImport(SystemTest):
         self.driver.press_key("Escape")
 
     def _open_export_dialog(self) -> None:
-        """Open the Export Connections dialog from the settings gear menu."""
-        self.driver.click("activity-bar-settings")
-        self.wait(
-            lambda: self.driver.exists("settings-menu-export"), what="the settings menu"
-        )
-        self.driver.click("settings-menu-export")
+        """Open the Export Connections dialog from Settings → Import & Migration."""
+        self.open_import_migration_action("import-migration-json-export-btn")
         self.wait(lambda: self.driver.exists(self.TITLE), what="the export dialog")
 
     def _select_encrypted(self) -> None:
