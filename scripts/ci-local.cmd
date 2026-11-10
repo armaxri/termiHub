@@ -78,6 +78,7 @@ call :run_gate "Package example plugins" g_package_plugins
 
 REM RDP Sidecar Quality.
 call :run_gate "RDP sidecar: fmt + clippy + tests" g_rdp_sidecar
+call :run_gate "RDP sidecar: rustdoc (-D warnings)" g_rdp_sidecar_rustdoc
 
 REM Frontend Code Quality (lint/prettier/markdownlint/IPC contract in check.cmd).
 call :run_gate "Version sources + Tauri drift" g_versions
@@ -256,6 +257,16 @@ rem The workspace-excluded sidecar has its own lockfile.
 pushd rdp-sidecar
 call cargo fmt --check && call cargo clippy --locked --all-targets -- -D warnings && call cargo test --locked
 set "RC=!errorlevel!"
+popd
+exit /b !RC!
+
+:g_rdp_sidecar_rustdoc
+rem The sidecar's intra-doc link gate (#5140): workspace-excluded, so g_rustdoc misses it.
+pushd rdp-sidecar
+set "RUSTDOCFLAGS=-D warnings"
+call cargo doc --locked --no-deps --document-private-items
+set "RC=!errorlevel!"
+set "RUSTDOCFLAGS="
 popd
 exit /b !RC!
 
