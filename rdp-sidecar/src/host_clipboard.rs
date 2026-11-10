@@ -31,8 +31,8 @@
 //! conflict risk to the main app (#1747).
 //!
 //! On **Windows** the raw `CF_HDROP` bytes (a `DROPFILES` header followed by a
-//! double-null-terminated path list) are parsed by [`parse_cf_hdrop`], and on
-//! **Linux** the raw `text/uri-list` selection is parsed by [`parse_uri_list`],
+//! double-null-terminated path list) are parsed by `parse_cf_hdrop`, and on
+//! **Linux** the raw `text/uri-list` selection is parsed by `parse_uri_list`,
 //! rather than by a platform crate's own helper: both are pure functions over the
 //! clipboard bytes, so the decode is unit-testable on any CI runner, where a live
 //! OS clipboard cannot be read.

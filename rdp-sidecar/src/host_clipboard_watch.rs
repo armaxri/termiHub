@@ -9,7 +9,7 @@
 //! [`crate::clipboard::SidecarClipboardBackend::build_local_file_offer`], #1779):
 //! files copied *before* connect — or when the server re-requests — are offered.
 //! Files copied *after* connect are invisible until the server asks again. Text has
-//! the same push seam today ([`crate::protocol::HostMessage::SetClipboard`]
+//! the same push seam today ([`HostMessage::SetClipboard`](termihub_core::backends::rdp_sidecar::protocol::HostMessage::SetClipboard)
 //! re-advertises on a local text copy); files need an equivalent trigger. This
 //! module is the file-list sibling of the shared-folder watcher (#1788): both drive
 //! the one re-advertise pipeline
