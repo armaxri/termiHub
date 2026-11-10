@@ -282,13 +282,13 @@ pub fn serve(script: Script) -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) 
 }
 
 /// The server's fixed host key (deterministic, so a test can trust it).
-fn host_key() -> russh::keys::PrivateKey {
+pub(super) fn host_key() -> russh::keys::PrivateKey {
     russh::keys::PrivateKey::from(russh::keys::ssh_key::private::Ed25519Keypair::from_seed(
         &[7u8; 32],
     ))
 }
 
-fn server_config() -> Arc<russh::server::Config> {
+pub(super) fn server_config() -> Arc<russh::server::Config> {
     Arc::new(russh::server::Config {
         keys: vec![host_key()],
         auth_rejection_time: std::time::Duration::ZERO,
