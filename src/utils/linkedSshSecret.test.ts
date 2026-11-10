@@ -77,13 +77,18 @@ describe("askLinkedSshSecret", () => {
     expect(mockedUnlock).not.toHaveBeenCalled();
   });
 
-  it("saves the secret under the linked connection when Save password is checked", async () => {
+  it("holds the secret's save for the linked connection when Save password is checked", async () => {
     const requestPassword = prompt("typed", true);
-    await askLinkedSshSecret(
+    const outcome = await askLinkedSshSecret(
       { ...REQUEST, kind: "key_passphrase", sourceFile: "/team/connections.json" },
       requestPassword
     );
     expect(requestPassword).toHaveBeenCalledWith("tiger-box", "arne", "", "key_passphrase");
+    // Held until the file channel opens with it (#5197), never written here.
+    expect(mockedStore).not.toHaveBeenCalled();
+    if (outcome.status !== "entered") throw new Error("expected an entered secret");
+    expect(outcome.secret).toBe("typed");
+    await outcome.saveOnceReady?.();
     expect(mockedStore).toHaveBeenCalledWith(
       "Lab/Tiger",
       "key_passphrase",

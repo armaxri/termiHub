@@ -51,6 +51,7 @@ import {
   isAgentTunnelledGraphicalType,
 } from "@/utils/agentGraphicalTunnel";
 import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
+import { holdTypedGraphicalSecret } from "@/utils/graphicalSecret";
 import {
   Button,
   StatusDot,
@@ -1253,12 +1254,14 @@ export function AgentNode({
             toast.info("Connect canceled");
             return;
           }
-          addTab(
+          const tabId = addTab(
             def.name,
             def.sessionType,
             agentGraphicalTabConfig(agent.id, def.sessionType, resolved.settings),
             { contentType: "remote-desktop" }
           );
+          // A typed password is saved only once the tab connects (#5197).
+          holdTypedGraphicalSecret(tabId, resolved);
         });
         return;
       }
