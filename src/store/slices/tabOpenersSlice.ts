@@ -15,6 +15,7 @@ import {
   EditorTabMeta,
   EditorSessionRef,
   ConnectionEditorMeta,
+  ConnectionEditorFocusRequest,
   TunnelEditorMeta,
   WorkspaceEditorMeta,
   NetworkDiagnosticMeta,
@@ -118,7 +119,15 @@ export interface TabOpenersSlice {
    */
   openScratchEditorTab: (title: string, fileName: string, content: string) => void;
 
-  openConnectionEditorTab: (connectionId: string, folderId?: string | null) => void;
+  /**
+   * Open (or focus) the editor for a connection. `focusRequest` focuses one of
+   * its fields once shown — a failed connect's Edit connection action (#5183).
+   */
+  openConnectionEditorTab: (
+    connectionId: string,
+    folderId?: string | null,
+    focusRequest?: ConnectionEditorFocusRequest
+  ) => void;
 
   openAgentDefinitionEditorTab: (
     agentId: string,
@@ -461,7 +470,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         };
       }),
 
-    openConnectionEditorTab: (connectionId, folderId) =>
+    openConnectionEditorTab: (connectionId, folderId, focusRequest) =>
       setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
@@ -473,12 +482,28 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
               t.connectionEditorMeta?.connectionId === connectionId
           );
           if (existing) {
+            // A focus request reaches the already-open editor through its meta.
+            const focused =
+              focusRequest && existing.connectionEditorMeta
+                ? {
+                    ...existing,
+                    connectionEditorMeta: { ...existing.connectionEditorMeta, focusRequest },
+                  }
+                : existing;
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
               ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              tabs: l.tabs.map((t) =>
+                t.id === existing.id ? { ...focused, isActive: true } : { ...t, isActive: false }
+              ),
               activeTabId: existing.id,
             }));
-            return { rootPanel, activePanelId: leaf.id };
+            return focused === existing
+              ? { rootPanel, activePanelId: leaf.id }
+              : {
+                  rootPanel,
+                  activePanelId: leaf.id,
+                  tabContent: setTabContentEntry(state.tabContent, focused),
+                };
           }
         }
 
@@ -501,6 +526,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         const meta: ConnectionEditorMeta = {
           connectionId,
           folderId: folderId ?? null,
+          ...(focusRequest ? { focusRequest } : {}),
         };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "connection-editor");
         newTab.connectionEditorMeta = meta;

@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   backendFamilyFromSessionType,
+  connectionErrorHeading,
   connectionErrorHint,
   connectionErrorKindFromCode,
+  isNetworkErrorKind,
   type BackendFamily,
   type ConnectionErrorKind,
 } from "./connectionErrorHints";
@@ -74,12 +76,16 @@ describe("connectionErrorKindFromCode", () => {
     expect(connectionErrorKindFromCode("not_found")).toBe("not-found");
     expect(connectionErrorKindFromCode("permission_denied")).toBe("permission");
     expect(connectionErrorKindFromCode("busy")).toBe("busy");
+    // TCP connect categories (#5183).
+    expect(connectionErrorKindFromCode("refused")).toBe("refused");
+    expect(connectionErrorKindFromCode("unreachable")).toBe("unreachable");
+    expect(connectionErrorKindFromCode("dns")).toBe("dns");
   });
 
   it("treats a missing or uncategorised code as 'other'", () => {
     expect(connectionErrorKindFromCode(undefined)).toBe("other");
     expect(connectionErrorKindFromCode("spawn_failed")).toBe("other");
-    expect(connectionErrorKindFromCode("unreachable")).toBe("other");
+    expect(connectionErrorKindFromCode("connection_failed")).toBe("other");
     // #3959: an agent that never answered is not a connect-transport timeout, so
     // it must not show the "check the host is reachable" timeout hint.
     expect(connectionErrorKindFromCode("agent_timeout")).toBe("other");
@@ -117,6 +123,10 @@ describe("connectionErrorHint — every kind for every family", () => {
     "not-found": ["serial", "docker"],
     permission: ["serial"],
     busy: ["serial"],
+    // Only network backends raise these; the copy is family-neutral (#5183).
+    refused: FAMILIES,
+    unreachable: FAMILIES,
+    dns: FAMILIES,
     other: [],
   };
 
@@ -175,5 +185,49 @@ describe("connectionErrorHint — every kind for every family", () => {
   it("gives container guidance for docker not-found (#3784)", () => {
     expect(hintText("docker", "not-found")).toContain("Container not found");
     expect(hintText("docker", "not-found")).toContain("docker compose up");
+  });
+});
+
+describe("network failure kinds (#5183)", () => {
+  it("explain a refused, unreachable and unresolvable host in plain language", () => {
+    expect(hintText("ssh", "refused")).toMatch(/nothing is accepting connections on this port/i);
+    expect(hintText("ssh", "refused")).toMatch(/port number/i);
+    expect(hintText("telnet", "unreachable")).toMatch(/network or VPN/i);
+    expect(hintText("ssh", "dns")).toMatch(/host name could not be resolved/i);
+  });
+
+  it("never echo an OS error code", () => {
+    for (const kind of ["refused", "unreachable", "dns"] as const) {
+      expect(hintText("ssh", kind)).not.toMatch(/os error|errno|\d{2,}/i);
+    }
+  });
+
+  it("name themselves in the failure heading; other kinds keep the generic one", () => {
+    expect(connectionErrorHeading("refused")).toBe("Connection refused");
+    expect(connectionErrorHeading("unreachable")).toBe("Host unreachable");
+    expect(connectionErrorHeading("dns")).toBe("Host not found");
+    expect(connectionErrorHeading("timeout")).toBeNull();
+    expect(connectionErrorHeading("other")).toBeNull();
+  });
+
+  it("are the only network kinds", () => {
+    expect(isNetworkErrorKind("refused")).toBe(true);
+    expect(isNetworkErrorKind("unreachable")).toBe(true);
+    expect(isNetworkErrorKind("dns")).toBe(true);
+    expect(isNetworkErrorKind("timeout")).toBe(false);
+    expect(isNetworkErrorKind("auth")).toBe(false);
+  });
+
+  // The wire shape the backend sends for a refused connect (the envelope of
+  // `TerminalError::from_session_spawn` for a core `Refused`).
+  it("classify the refused IPC envelope by its code", () => {
+    const parsed = parseBackendError({
+      code: "refused",
+      message: "db.internal:2222: Connection refused (os error 61)",
+      details: null,
+    });
+    expect(connectionErrorKindFromCode(parsed.code)).toBe("refused");
+    expect(parsed.message).toBe("db.internal:2222: Connection refused (os error 61)");
+    expect(parsed.message).not.toMatch(/failed:.*failed:/i);
   });
 });

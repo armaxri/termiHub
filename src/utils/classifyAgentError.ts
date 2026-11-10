@@ -41,6 +41,10 @@ const CODE_TO_CATEGORY: Partial<Record<IpcErrorCode, Exclude<AgentErrorCategory,
   [AUTH_FAILED_CODE]: "auth-failure",
   [SECOND_FACTOR_FAILED_CODE]: "second-factor-failure",
   unreachable: "unreachable",
+  // A refused or unresolvable host is still a host that could not be reached
+  // (#5183).
+  refused: "unreachable",
+  dns: "unreachable",
   agent_missing: "agent-missing",
   agent_outdated: "agent-outdated",
   already_connected: "already-connected",

@@ -76,6 +76,21 @@
   min-width: 0;
 }
 
+/* Credential storage off (#5186): the "storage is off" hint and its
+   "Enable credential storage…" action, wrapping in a narrow editor. */
+.settings-form__storage-off {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--spacing-sm);
+  row-gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.settings-form__storage-off > .settings-form__hint {
+  min-width: 0;
+}
+
 .settings-form__hint-action {
   background: none;
   border: none;

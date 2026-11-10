@@ -3,15 +3,10 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, Toggle, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
-import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
+import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
 import type { TunnelConfig } from "@/types/tunnel";
-import {
-  tunnelDeleteConfirmMessage,
-  tunnelPortMapping,
-  tunnelTypeFlag,
-} from "@/utils/tunnelSummary";
+import { tunnelPortMapping, tunnelTypeFlag } from "@/utils/tunnelSummary";
 import { errorMessage } from "@/utils/errorMessage";
-import { fireAndForget } from "@/utils/frontendLog";
 
 interface ConnectionPortForwardingSectionProps {
   /**
@@ -30,7 +25,8 @@ interface ConnectionPortForwardingSectionProps {
  * backend-authoritative `tunnels` projection; there is no second store. Add and
  * Edit open the regular Tunnel editor (pre-bound to this connection for a new
  * forward) so validation, run-location and chaining stay in one place; Remove
- * reuses the sidebar's delete confirmation rules; the per-row "Start with
+ * shares the sidebar's delete flow (confirm, "don't ask again" opt-out and the
+ * 10 s Undo, #5216); the per-row "Start with
  * connection" toggle binds the forward to this connection's sessions, which
  * start it when a terminal to the host connects.
  *
@@ -43,7 +39,6 @@ export function ConnectionPortForwardingSection({
   const tunnels = useAppStore((s) => s.tunnels);
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
-  const deleteTunnel = useAppStore((s) => s.deleteTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
 
   const bound = useMemo(
@@ -51,24 +46,9 @@ export function ConnectionPortForwardingSection({
     [tunnels, connectionId]
   );
 
-  const tunnelDelete = useDeleteConfirm<{ id: string; message: string }>(({ id }) => {
-    // `deleteTunnel` owns its error toast; only keep a trace here.
-    fireAndForget(deleteTunnel(id), `delete tunnel ${id}`);
-  });
-  const requestDelete = tunnelDelete.request;
-
-  const handleRemove = useCallback(
-    (tunnelId: string) => {
-      const message = tunnelDeleteConfirmMessage(tunnels, tunnelStates, tunnelId);
-      if (message) {
-        requestDelete({ id: tunnelId, message });
-        return;
-      }
-      // `deleteTunnel` owns its error toast; only keep a trace here.
-      fireAndForget(deleteTunnel(tunnelId), `delete tunnel ${tunnelId}`);
-    },
-    [tunnels, tunnelStates, deleteTunnel, requestDelete]
-  );
+  // Same confirm + opt-out + 10 s Undo as the Tunnels sidebar (#5216).
+  const tunnelDelete = useTunnelDeleteConfirm();
+  const handleRemove = tunnelDelete.requestDelete;
 
   const handleStartWithConnection = useCallback(
     (tunnel: TunnelConfig, startWithConnection: boolean) => {
@@ -173,10 +153,7 @@ export function ConnectionPortForwardingSection({
           </Button>
         </>
       )}
-      <ConfirmDeleteDialog
-        {...tunnelDelete.dialogProps}
-        message={tunnelDelete.pending?.message ?? ""}
-      />
+      <ConfirmDeleteDialog {...tunnelDelete.dialogProps} />
     </div>
   );
 }

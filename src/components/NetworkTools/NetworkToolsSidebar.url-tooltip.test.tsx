@@ -49,7 +49,7 @@ async function render() {
 }
 
 function urlEl(): HTMLElement {
-  return container.querySelector(".network-sidebar__monitor-url") as HTMLElement;
+  return container.querySelector('[data-testid="monitor-url-m1"]') as HTMLElement;
 }
 
 /** Give the URL a fake layout: `scroll` px of content in a `client` px box. */

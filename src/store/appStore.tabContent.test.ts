@@ -237,6 +237,36 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
     expect(views()[0].isActive).toBe(true);
   });
 
+  // #5183: a failed connect's Edit connection action carries a focus request
+  // into a new editor tab, and into an already-open one (with a fresh nonce).
+  it("openConnectionEditorTab carries a focus request into new and open editors", () => {
+    const editors = () => allTabs().filter((t) => t.contentType === "connection-editor");
+    useAppStore.getState().openConnectionEditorTab("conn-1", undefined, {
+      field: "port",
+      nonce: 1,
+    });
+    expect(editors()).toHaveLength(1);
+    expect(editors()[0].connectionEditorMeta?.focusRequest).toEqual({ field: "port", nonce: 1 });
+    expect(useAppStore.getState().tabContent[editors()[0].id]).toEqual(
+      extractTabContent(editors()[0])
+    );
+
+    useAppStore.getState().openConnectionEditorTab("conn-1", undefined, {
+      field: "host",
+      nonce: 2,
+    });
+    expect(editors()).toHaveLength(1);
+    expect(editors()[0].isActive).toBe(true);
+    expect(editors()[0].connectionEditorMeta?.focusRequest).toEqual({ field: "host", nonce: 2 });
+    expect(useAppStore.getState().tabContent[editors()[0].id]).toEqual(
+      extractTabContent(editors()[0])
+    );
+
+    // Without a request an open editor keeps its meta untouched.
+    useAppStore.getState().openConnectionEditorTab("conn-1");
+    expect(editors()[0].connectionEditorMeta?.focusRequest).toEqual({ field: "host", nonce: 2 });
+  });
+
   it("selectPlugin reuse re-points meta and keeps the map in sync", () => {
     useAppStore.getState().selectPlugin("p1");
     const first = allTabs().find((t) => t.contentType === "plugin-detail")!;

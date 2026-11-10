@@ -339,13 +339,25 @@ const CREDENTIAL_SCHEMA: SettingsSchema = {
 };
 
 describe("filterCredentialFields", () => {
-  it("removes password and savePassword fields when mode is 'none'", () => {
+  it("removes the password field but keeps savePassword when mode is 'none' (#5186)", () => {
     const result = filterCredentialFields(CREDENTIAL_SCHEMA, "none");
     const keys = result.groups[0].fields.map((f) => f.key);
     expect(keys).not.toContain("password");
-    expect(keys).not.toContain("savePassword");
+    // Kept so the form can show it disabled with an "Enable credential storage…" action.
+    expect(keys).toContain("savePassword");
     expect(keys).toContain("authMethod");
     expect(keys).toContain("keyPath");
+  });
+
+  it("gives savePassword the help text for the active storage mode (#5186)", () => {
+    const help = (mode: "none" | "os_keychain" | "master_password") =>
+      filterCredentialFields(CREDENTIAL_SCHEMA, mode).groups[0].fields.find(
+        (f) => f.key === "savePassword"
+      )?.helpText;
+    expect(help("none")).toContain("Credential storage is off");
+    expect(help("os_keychain")).toContain("keychain");
+    expect(help("os_keychain")).not.toMatch(/master password/i);
+    expect(help("master_password")).toContain("master password");
   });
 
   it("keeps all fields when mode is 'master_password'", () => {
@@ -355,7 +367,8 @@ describe("filterCredentialFields", () => {
     expect(keys).toContain("savePassword");
   });
 
-  it("keeps all fields when mode is undefined", () => {
+  it("returns the schema unchanged when mode is undefined", () => {
+    expect(filterCredentialFields(CREDENTIAL_SCHEMA, undefined)).toBe(CREDENTIAL_SCHEMA);
     const result = filterCredentialFields(CREDENTIAL_SCHEMA, undefined);
     const keys = result.groups[0].fields.map((f) => f.key);
     expect(keys).toContain("password");

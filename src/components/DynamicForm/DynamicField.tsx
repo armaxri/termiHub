@@ -14,6 +14,8 @@ import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/comp
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
 import { SerialPortField } from "./SerialPortField";
+import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
+import { CREDENTIAL_STORAGE_OFF_TEXT } from "@/utils/credentialStorageCopy";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { textFieldsMatchQuery } from "@/utils/searchMatching";
@@ -32,6 +34,13 @@ interface DynamicFieldProps {
   error?: string;
   /** When true, shows a "Password saved in credential store" hint below password fields. */
   credentialSaved?: boolean;
+  /**
+   * When true, credential storage is off (None mode, #5186): a boolean "save"
+   * field renders disabled and unticked, with a hint and an "Enable credential
+   * storage…" action that opens the storage setting. The stored value is left
+   * untouched.
+   */
+  credentialStorageOff?: boolean;
   /**
    * A schema secret other than `password` that is stored in the credential
    * store for this saved connection (#4431). An empty password field then
@@ -105,6 +114,7 @@ export function DynamicField({
   onBlur,
   error,
   credentialSaved,
+  credentialStorageOff: credentialStorageOffProp = false,
   storedSecret,
   availablePorts,
   serialPortAgentId,
@@ -139,10 +149,14 @@ export function DynamicField({
   // annotated (e.g. RDP audio output on Linux).
   const platformNote = fieldPlatformLimitation(field.key);
   const platformNoteId = platformNote ? `${controlId}-platform-note` : undefined;
+  // Only a boolean "save" toggle has a meaningful disabled/unticked state.
+  const credentialStorageOff = credentialStorageOffProp && field.fieldType.type === "boolean";
+  const storageOffId = credentialStorageOff ? `${controlId}-storage-off` : undefined;
   const hasError = Boolean(error);
   const describedBy =
-    [hasError ? errorId : null, descriptionId, platformNoteId].filter(Boolean).join(" ") ||
-    undefined;
+    [hasError ? errorId : null, descriptionId, platformNoteId, storageOffId]
+      .filter(Boolean)
+      .join(" ") || undefined;
   const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
 
   return (
@@ -164,13 +178,13 @@ export function DynamicField({
         {renderFieldInput(
           field,
           field.fieldType,
-          value,
+          credentialStorageOff ? false : value,
           onChange,
           a11y,
           testIdBase,
           { availablePorts, agentId: serialPortAgentId },
           onBlur,
-          platformNote != null,
+          platformNote != null || credentialStorageOff,
           containerContext,
           savedConnectionContext,
           storedSecret
@@ -188,6 +202,14 @@ export function DynamicField({
           >
             {platformNote}
           </p>
+        )}
+        {credentialStorageOff && (
+          <div className="settings-form__storage-off" data-testid={`${testIdBase}-storage-off`}>
+            <p id={storageOffId} className="settings-form__hint">
+              {CREDENTIAL_STORAGE_OFF_TEXT}
+            </p>
+            <EnableCredentialStorageButton data-testid={`${testIdBase}-enable-storage`} />
+          </div>
         )}
         {credentialSaved && (
           <p

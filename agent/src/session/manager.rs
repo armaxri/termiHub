@@ -1386,9 +1386,11 @@ impl SessionManager {
                     relayed_connect_failure_kind(&e),
                 ) {
                     (Some(kind), _) => anyhow::Error::new(KiConnectFailure(kind)),
+                    // The desktop headlines a typed failure from its kind, so
+                    // relay only its own description (#5183).
                     (None, Some(kind)) => anyhow::Error::new(ClassifiedConnectFailure {
                         kind,
-                        message: format!("Connection failed: {e}"),
+                        message: e.user_message(),
                     }),
                     (None, None) => anyhow::anyhow!("Connection failed: {e}"),
                 }

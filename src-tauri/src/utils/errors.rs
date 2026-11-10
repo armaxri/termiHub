@@ -173,6 +173,12 @@ pub enum IpcErrorCode {
     /// A single-file transfer was asked to copy a folder (#3944). Refused up
     /// front, so no empty or partial file is written at the destination.
     IsDirectory,
+    /// The host refused the TCP connection — nothing listens on that port —
+    /// from a core `ConnectFailureKind::Refused` (#5183).
+    Refused,
+    /// The host name could not be resolved, from a core
+    /// `ConnectFailureKind::Dns` (#5183).
+    Dns,
 }
 
 impl IpcErrorCode {
@@ -215,6 +221,11 @@ impl IpcErrorCode {
             K::AuthFailed => Self::AuthFailed,
             K::HostKeyUntrusted => Self::HostKeyUntrusted,
             K::InteractionRequired => Self::InteractionRequired,
+            K::Refused => Self::Refused,
+            // A typed no-route failure is the same `unreachable` category the
+            // untyped transport failures already carry.
+            K::Unreachable => Self::Unreachable,
+            K::Dns => Self::Dns,
         }
     }
 }
@@ -468,8 +479,34 @@ impl TerminalError {
     /// with any `[thub-code:*]` marker removed, so frontend paths reading
     /// `.message` are byte-for-byte unaffected while the machine signal moves to
     /// the `code` field.
+    ///
+    /// A connect failure carrying a typed category is the exception (#5183):
+    /// its message is the backend's own description alone, without the stacked
+    /// variant prefixes (`Failed to spawn terminal: Spawn failed: …`). The UI
+    /// supplies the headline and hint from the code; the `Display` text — what
+    /// the log records — keeps the prefixes.
     fn display_message(&self) -> String {
-        strip_marker(&self.to_string())
+        self.connect_failure_detail()
+            .unwrap_or_else(|| strip_marker(&self.to_string()))
+    }
+
+    /// The text after the marker of a connect failure tagged with a typed
+    /// connect category (`unreachable` or a core `ConnectFailureKind` slug), or
+    /// `None` for every other error.
+    fn connect_failure_detail(&self) -> Option<String> {
+        let msg = match self {
+            TerminalError::SpawnFailed(msg)
+            | TerminalError::SshError(msg)
+            | TerminalError::ConnectionFailed(msg)
+            | TerminalError::RemoteError(msg) => msg,
+            _ => return None,
+        };
+        let slug = marker_slug(msg)?;
+        if slug != codes::UNREACHABLE && IpcErrorCode::from_connect_failure_slug(slug).is_none() {
+            return None;
+        }
+        let tagged = &msg[msg.find(MARKER_OPEN)?..];
+        Some(strip_marker(tagged))
     }
 
     /// Map a core [`SessionError`] to a [`TerminalError`] for a **direct
@@ -489,12 +526,12 @@ impl TerminalError {
             SessionError::SecondFactorFailed => TerminalError::SecondFactorFailed,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
             // Keep the typed connect-failure kind as the envelope `code`
-            // (I18N-009); the message text is unchanged once the marker is
-            // stripped for display.
-            other => match other.connect_failure_kind() {
-                Some(kind) => TerminalError::SpawnFailed(with_code(kind.code(), other)),
-                None => TerminalError::SpawnFailed(other.to_string()),
-            },
+            // (I18N-009). Only its own description is tagged (#5183), not the
+            // `Spawn failed:` rendering of the core variant.
+            SessionError::Classified { kind, message } => {
+                TerminalError::SpawnFailed(with_code(kind.code(), message))
+            }
+            other => TerminalError::SpawnFailed(other.to_string()),
         }
     }
 
@@ -507,10 +544,10 @@ impl TerminalError {
             SessionError::AuthCancelled => TerminalError::Cancelled,
             SessionError::SecondFactorFailed => TerminalError::SecondFactorFailed,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
-            other => match other.connect_failure_kind() {
-                Some(kind) => TerminalError::SshError(with_code(kind.code(), other)),
-                None => TerminalError::SshError(other.to_string()),
-            },
+            SessionError::Classified { kind, message } => {
+                TerminalError::SshError(with_code(kind.code(), message))
+            }
+            other => TerminalError::SshError(other.to_string()),
         }
     }
 }
@@ -588,8 +625,9 @@ mod tests {
     }
 
     /// Every typed core connect-failure kind survives both connect chokepoints
-    /// as the envelope `code`, with the human message unchanged and free of the
-    /// machine marker (I18N-009).
+    /// as the envelope `code`, with the human message free of the machine
+    /// marker (I18N-009) and of the stacked variant prefixes (#5183) — which
+    /// the logged `Display` text keeps.
     #[test]
     fn connect_failure_kind_maps_to_envelope_code_on_both_chokepoints() {
         use termihub_core::errors::ConnectFailureKind as K;
@@ -617,16 +655,23 @@ mod tests {
                 IpcErrorCode::InteractionRequired,
                 "interaction_required",
             ),
+            (K::Refused, IpcErrorCode::Refused, "refused"),
+            (K::Unreachable, IpcErrorCode::Unreachable, "unreachable"),
+            (K::Dns, IpcErrorCode::Dns, "dns"),
         ];
+        // Every core kind but `AuthFailed` (its own variant) has a case.
+        assert_eq!(cases.len(), K::ALL.len() - 1);
         for (kind, code, slug) in cases {
             let spawn = TerminalError::from_session_spawn(SessionError::classified(kind, "boom"));
             assert!(matches!(spawn, TerminalError::SpawnFailed(_)));
             assert_eq!(spawn.code(), code);
             let json = serde_json::to_value(&spawn).expect("serialize");
             assert_eq!(json["code"], slug);
+            assert_eq!(json["message"], "boom");
             assert_eq!(
-                json["message"],
-                "Failed to spawn terminal: Spawn failed: boom"
+                spawn.to_string(),
+                format!("Failed to spawn terminal: [thub-code:{slug}] boom"),
+                "the log keeps the variant prefix"
             );
 
             let ssh = TerminalError::from_session_ssh(SessionError::classified(kind, "boom"));
@@ -634,8 +679,54 @@ mod tests {
             assert_eq!(ssh.code(), code);
             let json = serde_json::to_value(&ssh).expect("serialize");
             assert_eq!(json["code"], slug);
-            assert_eq!(json["message"], "SSH error: Spawn failed: boom");
+            assert_eq!(json["message"], "boom");
         }
+    }
+
+    /// The done-when of #5183: a refused connect to a closed port reaches the
+    /// frontend as the `refused` code with a message that names the target
+    /// once, and no user-visible message stacks two `failed:` prefixes.
+    #[test]
+    fn refused_connect_message_has_no_stacked_prefixes() {
+        use termihub_core::errors::ConnectFailureKind as K;
+        let core = SessionError::classified(
+            K::Refused,
+            "db.internal:2222: Connection refused (os error 61)",
+        );
+        for err in [
+            TerminalError::from_session_spawn(SessionError::classified(
+                K::Refused,
+                "db.internal:2222: Connection refused (os error 61)",
+            )),
+            TerminalError::from_session_ssh(core),
+        ] {
+            let json = serde_json::to_value(&err).expect("serialize");
+            assert_eq!(json["code"], "refused");
+            let message = json["message"].as_str().expect("message");
+            assert_eq!(
+                message,
+                "db.internal:2222: Connection refused (os error 61)"
+            );
+            assert!(!message.contains("failed:"), "{message}");
+        }
+    }
+
+    /// An agent-relayed connect failure (tagged by `into_terminal_error`) also
+    /// drops the `Remote agent error:` prefix from its message (#5183), while an
+    /// agent error with a non-connect marker keeps today's text.
+    #[test]
+    fn relayed_connect_failure_drops_the_remote_error_prefix() {
+        let relayed = TerminalError::RemoteError(with_code("refused", "h:22: Connection refused"));
+        let json = serde_json::to_value(&relayed).expect("serialize");
+        assert_eq!(json["code"], "refused");
+        assert_eq!(json["message"], "h:22: Connection refused");
+
+        let missing = TerminalError::agent_missing("termihub-agent: not found");
+        let json = serde_json::to_value(&missing).expect("serialize");
+        assert_eq!(
+            json["message"],
+            "Remote agent error: termihub-agent: not found"
+        );
     }
 
     /// A kind tagged into an agent-relayed message (text-only) still resolves
@@ -852,7 +943,8 @@ mod tests {
             (
                 TerminalError::unreachable("Connection refused"),
                 "unreachable",
-                "Connection failed: Connection refused",
+                // A typed connect failure drops the variant prefix (#5183).
+                "Connection refused",
             ),
             (
                 TerminalError::agent_missing("Exec failed"),
@@ -939,8 +1031,12 @@ mod tests {
             );
             assert!(
                 rendered.contains("Connection failed"),
-                "the substring fallback text must be preserved, got {rendered:?}"
+                "the logged text keeps the variant prefix, got {rendered:?}"
             );
+            // The user-facing envelope message drops it (#5183).
+            let json = serde_json::to_value(&terminal_err).expect("serialize");
+            assert_eq!(json["code"], "unreachable");
+            assert_eq!(json["message"], "timed out");
         }
     }
 

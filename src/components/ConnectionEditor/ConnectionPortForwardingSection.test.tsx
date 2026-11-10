@@ -5,24 +5,29 @@
  * connection (the same `tunnels` store the Tunnels sidebar renders — no second
  * store), and that add / edit / remove / "start with connection" route through
  * the shared tunnel actions: add + edit open the regular Tunnel editor (add
- * pre-bound to this connection), remove reuses the sidebar's confirm rules, and
- * the toggle upserts the same tunnel with `startWithConnection` flipped.
+ * pre-bound to this connection), remove shares the sidebar's confirm + opt-out
+ * + Undo flow (#5216), and the toggle upserts the same tunnel with
+ * `startWithConnection` flipped. The Undo itself is exercised end to end against
+ * the real store in `ConnectionPortForwardingSection.delete-undo.test.tsx`.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
+import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
 import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 
 const saveTunnel = vi.fn((_config: TunnelConfig) => Promise.resolve());
-const deleteTunnel = vi.fn((_id: string) => Promise.resolve());
+const deleteTunnel = vi.fn((_id: string, _opts?: { undoable?: boolean }) => Promise.resolve());
+const updateSettings = vi.fn((_s: unknown) => Promise.resolve());
 const openTunnelEditorTab = vi.fn();
 
 vi.mock("@/store/appStore", () => {
   const state: Record<string, unknown> = {};
   const useAppStore = (selector: (s: Record<string, unknown>) => unknown) => selector(state);
   useAppStore.setState = (patch: Record<string, unknown>) => Object.assign(state, patch);
+  useAppStore.getState = () => state;
   return { useAppStore };
 });
 
@@ -55,6 +60,7 @@ function seed(tunnels: TunnelConfig[], tunnelStates: Record<string, TunnelState>
     tunnelStates,
     saveTunnel,
     deleteTunnel,
+    updateSettings,
     openTunnelEditorTab,
   });
 }
@@ -90,6 +96,7 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    stopSettingsSubscription();
   });
 
   it("asks to save first for an unsaved connection and offers no add", async () => {
@@ -150,21 +157,92 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
     expect(byTestId("port-forward-start-with-connection-t1")).toBeNull();
   });
 
-  it("Remove deletes an idle tunnel directly", async () => {
+  it("Remove confirms an idle tunnel first, with the opt-out offered (#5216)", async () => {
+    seed([tunnel("t1", "conn-1")]);
+    await render("conn-1");
+    await click(byTestId("port-forward-remove-t1"));
+    expect(byTestId("confirm-delete-dialog")?.textContent).toContain("Tunnel t1");
+    expect(byTestId("confirm-delete-dont-ask-again")).not.toBeNull();
+    expect(deleteTunnel).not.toHaveBeenCalled();
+    await click(byTestId("confirm-delete-confirm"));
+    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("cancelling the confirm keeps the tunnel", async () => {
+    seed([tunnel("t1", "conn-1")]);
+    await render("conn-1");
+    await click(byTestId("port-forward-remove-t1"));
+    await click(byTestId("confirm-delete-cancel"));
+    expect(byTestId("confirm-delete-dialog")).toBeNull();
+    expect(byTestId("port-forward-row-t1")).not.toBeNull();
+    expect(deleteTunnel).not.toHaveBeenCalled();
+  });
+
+  it("saves the opt-out only when confirmed with the box ticked", async () => {
+    seed([tunnel("t1", "conn-1")]);
+    await render("conn-1");
+    await click(byTestId("port-forward-remove-t1"));
+    await click(byTestId("confirm-delete-dont-ask-again"));
+    await click(byTestId("confirm-delete-confirm"));
+    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmUndoableDelete: false })
+    );
+  });
+
+  it("a ticked box is dropped on cancel", async () => {
+    seed([tunnel("t1", "conn-1")]);
+    await render("conn-1");
+    await click(byTestId("port-forward-remove-t1"));
+    await click(byTestId("confirm-delete-dont-ask-again"));
+    await click(byTestId("confirm-delete-cancel"));
+    await click(byTestId("port-forward-remove-t1"));
+    await click(byTestId("confirm-delete-confirm"));
+    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("deletes an idle tunnel without asking once opted out (Undo stays)", async () => {
+    act(() =>
+      __emitSettingsViewForTest(
+        {
+          version: "1",
+          externalConnectionFiles: [],
+          powerMonitoringEnabled: true,
+          fileBrowserEnabled: true,
+          confirmUndoableDelete: false,
+        },
+        1
+      )
+    );
     seed([tunnel("t1", "conn-1")]);
     await render("conn-1");
     await click(byTestId("port-forward-remove-t1"));
     expect(byTestId("confirm-delete-dialog")).toBeNull();
-    expect(deleteTunnel).toHaveBeenCalledWith("t1");
+    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
   });
 
-  it("Remove confirms first for an active tunnel", async () => {
+  it("Remove confirms an active tunnel without an opt-out, even when opted out", async () => {
+    act(() =>
+      __emitSettingsViewForTest(
+        {
+          version: "1",
+          externalConnectionFiles: [],
+          powerMonitoringEnabled: true,
+          fileBrowserEnabled: true,
+          confirmUndoableDelete: false,
+        },
+        2
+      )
+    );
     seed([tunnel("t1", "conn-1")], { t1: state("t1", "connected") });
     await render("conn-1");
     await click(byTestId("port-forward-remove-t1"));
     expect(byTestId("confirm-delete-dialog")).not.toBeNull();
+    expect(byTestId("confirm-delete-dont-ask-again")).toBeNull();
     expect(deleteTunnel).not.toHaveBeenCalled();
     await click(byTestId("confirm-delete-confirm"));
-    expect(deleteTunnel).toHaveBeenCalledWith("t1");
+    expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
   });
 });
