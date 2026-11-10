@@ -3,12 +3,14 @@
 //! The commands run on `tauri::test::mock_app()` with the [`ScheduleManager`]
 //! managed exactly as `lib.rs::setup()` does, so each test drives the real
 //! `State` extraction, error mapping and `schedules-changed` notification.
+//! The window-scoped commands are driven through their label-based core
+//! (`report_run`), since a test must not build a window (#4024 guard).
 
 use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Utc};
 use tauri::test::{mock_app, MockRuntime};
-use tauri::{App, Listener, Manager, WebviewWindowBuilder};
+use tauri::{App, Listener, Manager};
 use tempfile::TempDir;
 
 use super::*;
@@ -46,13 +48,6 @@ impl Harness {
 
     fn changed(&self) -> usize {
         *self.changed.lock().unwrap()
-    }
-
-    fn window(&self, label: &str) -> tauri::Window<MockRuntime> {
-        let webview = WebviewWindowBuilder::new(&self.app, label, Default::default())
-            .build()
-            .unwrap();
-        webview.as_ref().window()
     }
 
     /// Save, confirm and enable a 10-minute schedule through the commands.
@@ -176,14 +171,8 @@ fn an_unknown_ack_or_report_is_ignored_without_a_notification() {
     // A late or stale run token is a no-op by design: the run already settled
     // (or never existed), so there is nothing to attribute it to.
     let h = Harness::new();
-    let main = h.window("main");
-    ack_schedule_run(
-        "nope".into(),
-        vec!["conn-a".into()],
-        main.clone(),
-        h.manager(),
-    );
-    report_schedule_run("nope".into(), completed(), main, h.handle(), h.manager()).unwrap();
+    h.manager().ack("nope", "main", &["conn-a".to_string()]);
+    report_run(&h.handle(), &h.manager(), "nope", "main", completed()).unwrap();
     assert_eq!(h.changed(), 0);
 }
 
@@ -228,18 +217,11 @@ fn a_deleted_schedule_never_fires() {
 fn report_schedule_run_settles_the_run_and_persists_it() {
     let h = Harness::new();
     h.enabled_schedule();
-    let main = h.window("main");
-    register_schedule_window(main.clone(), h.manager());
     let token = h.first_fire(15).expect("a fire");
-    ack_schedule_run(
-        token.clone(),
-        vec!["conn-a".into()],
-        main.clone(),
-        h.manager(),
-    );
+    h.manager().ack(&token, "main", &["conn-a".to_string()]);
     let before = h.changed();
 
-    report_schedule_run(token, completed(), main, h.handle(), h.manager()).unwrap();
+    report_run(&h.handle(), &h.manager(), &token, "main", completed()).unwrap();
     assert_eq!(h.changed(), before + 1, "a settled run notifies");
 
     // A fresh manager over the same directory reads the result back from disk.

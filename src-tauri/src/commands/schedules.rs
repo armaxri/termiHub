@@ -92,8 +92,20 @@ pub fn report_schedule_run<R: Runtime>(
     app: AppHandle<R>,
     manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<(), TerminalError> {
-    if manager.report(&token, window.label(), report, chrono::Utc::now())? {
-        notify(&app);
+    report_run(&app, &manager, &token, window.label(), report)
+}
+
+/// Record window `label`'s report for run `token`; notify only when it
+/// settled the run (an unknown or stale token is ignored).
+fn report_run<R: Runtime>(
+    app: &AppHandle<R>,
+    manager: &ScheduleManager,
+    token: &str,
+    label: &str,
+    report: WindowRunReport,
+) -> Result<(), TerminalError> {
+    if manager.report(token, label, report, chrono::Utc::now())? {
+        notify(app);
     }
     Ok(())
 }
