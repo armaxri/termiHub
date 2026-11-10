@@ -659,7 +659,8 @@ mod tests {
             (K::Unreachable, IpcErrorCode::Unreachable, "unreachable"),
             (K::Dns, IpcErrorCode::Dns, "dns"),
         ];
-        assert_eq!(cases.len(), K::ALL.len(), "every core kind has a case");
+        // Every core kind but `AuthFailed` (its own variant) has a case.
+        assert_eq!(cases.len(), K::ALL.len() - 1);
         for (kind, code, slug) in cases {
             let spawn = TerminalError::from_session_spawn(SessionError::classified(kind, "boom"));
             assert!(matches!(spawn, TerminalError::SpawnFailed(_)));
@@ -942,7 +943,8 @@ mod tests {
             (
                 TerminalError::unreachable("Connection refused"),
                 "unreachable",
-                "Connection failed: Connection refused",
+                // A typed connect failure drops the variant prefix (#5183).
+                "Connection refused",
             ),
             (
                 TerminalError::agent_missing("Exec failed"),
