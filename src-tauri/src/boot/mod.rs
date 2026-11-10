@@ -15,6 +15,7 @@ use super::*;
 
 pub(crate) mod builder;
 pub(crate) mod connection_id_changes;
+pub(crate) mod early_log;
 pub(crate) mod logging;
 
 pub(crate) fn init_platform_and_capture(

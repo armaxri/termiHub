@@ -470,6 +470,21 @@ pub fn run() -> anyhow::Result<()> {
         utils::macos_unthrottle::pre_launch_disable_occlusion_detection();
     }
 
+    // Portable mode: take the exclusive lock on the `data/` dir before any store
+    // is built, so the same portable folder cannot run twice and clobber its own
+    // config/session files (#3100). A contended lock shows an error and exits
+    // here; the OS releases the lock when this process exits or crashes. Bound
+    // for the whole of `run()` (the builder below runs the app to completion).
+    //
+    // ORDER (#5210): this must precede `init_tracing`, which opens the durable
+    // log file — in portable mode that is `<data>/logs/termihub.log`, so a
+    // refused second launch would otherwise still write the shared dir. The step
+    // runs under a file-less scoped subscriber (warnings/errors to stderr, so the
+    // refusal stays visible), and its buffered events are replayed once the
+    // global subscriber is live. Installed mode takes no lock and logs nothing here.
+    let (_data_dir_lock, early_lock_log) =
+        boot::early_log::run_buffered(utils::data_dir_lock::lock_portable_data_dir_or_exit);
+
     // Build and install the global tracing subscriber (ARCH-002 / TAURI-009,
     // Slice B). The ring buffer, durable file sink, reloadable per-layer filter,
     // and the load-bearing subscriber layer-attachment order all live in
@@ -503,12 +518,8 @@ pub fn run() -> anyhow::Result<()> {
         (Ok(()), None) => unreachable!("the writer opened, so a log path resolves"),
     }
 
-    // Portable mode: take the exclusive lock on the `data/` dir before any store
-    // is built, so the same portable folder cannot run twice and clobber its own
-    // config/session files (#3100). A contended lock shows an error and exits
-    // here; the OS releases the lock when this process exits or crashes. Bound
-    // for the whole of `run()` (the builder below runs the app to completion).
-    let _data_dir_lock = utils::data_dir_lock::lock_portable_data_dir_or_exit();
+    // Re-emit the data-dir lock's own log lines into the now-live sinks.
+    early_lock_log.replay();
 
     // Durable panic reporting (OBS-002). Installed right after the subscriber is
     // live so a crash lands in the ring buffer and the synchronous file sink
