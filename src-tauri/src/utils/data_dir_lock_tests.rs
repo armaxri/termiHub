@@ -104,6 +104,116 @@ fn held_message_names_the_folder() {
     assert!(msg.contains("already running"), "{msg}");
 }
 
+// ---- the refuse-dialog-exit path (#5166) -------------------------------------
+
+/// Panic payload standing in for `process::exit` in the seam tests.
+#[derive(Debug)]
+struct ExitRequested(i32);
+
+fn fake_exit(code: i32) -> ! {
+    std::panic::panic_any(ExitRequested(code))
+}
+
+/// Run [`lock_or_exit_with`] for a portable `data_dir`, recording every dialog
+/// and turning the injected exit into a returned exit code.
+fn run_seam(data_dir: &Path) -> (Result<Option<DataDirLock>, i32>, Vec<String>) {
+    let mode = AppMode::Portable {
+        data_dir: data_dir.to_path_buf(),
+    };
+    let mut dialogs = Vec::new();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut dialog = |m: &str| dialogs.push(m.to_owned());
+        lock_or_exit_with(&mode, false, &mut dialog, fake_exit)
+    }));
+    let outcome = outcome.map_err(|payload| match payload.downcast::<ExitRequested>() {
+        Ok(exit) => exit.0,
+        Err(other) => std::panic::resume_unwind(other),
+    });
+    (outcome, dialogs)
+}
+
+#[test]
+fn held_lock_shows_the_dialog_once_and_exits_with_code_1() {
+    let dir = tempfile::tempdir().unwrap();
+    let _holder = acquire(dir.path()).expect("instance A holds the data dir");
+
+    let (outcome, dialogs) = run_seam(dir.path());
+
+    match outcome {
+        Err(code) => assert_eq!(code, 1, "a refused launch must exit with code 1"),
+        Ok(_) => panic!("a held data dir must never continue startup"),
+    }
+    assert_eq!(dialogs.len(), 1, "exactly one dialog: {dialogs:?}");
+    let shown = &dialogs[0];
+    assert_eq!(shown, &held_message(dir.path()));
+    assert!(
+        shown.contains(&dir.path().display().to_string()),
+        "the dialog must name the folder: {shown}"
+    );
+}
+
+#[test]
+fn free_data_dir_is_locked_without_dialog_or_exit() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let (outcome, dialogs) = run_seam(dir.path());
+
+    let lock = outcome
+        .expect("no exit on a free data dir")
+        .expect("lock taken");
+    assert_eq!(lock.path(), dir.path().join(LOCK_FILE_NAME));
+    assert!(dialogs.is_empty(), "{dialogs:?}");
+    // The returned lock really holds the dir.
+    assert!(matches!(
+        acquire(dir.path()),
+        Err(DataDirLockError::Held { .. })
+    ));
+}
+
+#[test]
+fn io_failure_continues_unlocked_without_dialog_or_exit() {
+    // A data dir that cannot be created (its parent is a file) is the
+    // degrade-don't-die case: no dialog, no exit, no lock.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("not-a-dir");
+    std::fs::write(&file, b"").unwrap();
+
+    let (outcome, dialogs) = run_seam(&file.join("data"));
+
+    assert!(matches!(outcome, Ok(None)), "{outcome:?}");
+    assert!(dialogs.is_empty(), "{dialogs:?}");
+}
+
+#[test]
+fn installed_mode_never_shows_the_dialog() {
+    let mut dialogs = Vec::new();
+    let mut dialog = |m: &str| dialogs.push(m.to_owned());
+    assert!(lock_or_exit_with(&AppMode::Installed, false, &mut dialog, fake_exit).is_none());
+    assert!(dialogs.is_empty());
+}
+
+#[test]
+fn held_is_refused_and_never_continues_unlocked() {
+    // Pins the classification: a future refactor must not route Held into the
+    // "continue without the lock" arm that Io errors take.
+    let data_dir = PathBuf::from("/usb/termiHub/data");
+    let held = DataDirLockError::Held {
+        data_dir: data_dir.clone(),
+    };
+    assert_eq!(
+        on_lock_failure(&held),
+        LockFailureAction::Refuse {
+            message: held_message(&data_dir)
+        }
+    );
+
+    let io = DataDirLockError::Io {
+        data_dir,
+        source: std::io::Error::other("read-only medium"),
+    };
+    assert_eq!(on_lock_failure(&io), LockFailureAction::ContinueUnlocked);
+}
+
 // ---- crash release, via a real child process ---------------------------------
 
 /// Env var carrying the data dir the helper child should lock.

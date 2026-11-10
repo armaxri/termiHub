@@ -118,6 +118,42 @@ pub fn held_message(data_dir: &Path) -> String {
     )
 }
 
+/// Environment variable that suppresses the native "already running" dialog.
+///
+/// For headless process-level tests only (#5166): the message is still printed
+/// to stderr and the process still exits with code 1, so the refusal itself is
+/// unchanged — only the blocking dialog, which would hang a test with no one
+/// to click OK, is skipped. Unset in every real launch.
+pub const SUPPRESS_DIALOG_ENV: &str = "TERMIHUB_TEST_SUPPRESS_LOCK_DIALOG";
+
+/// Exit code of a launch refused because its data dir is already locked.
+pub const HELD_EXIT_CODE: i32 = 1;
+
+/// What startup does after [`acquire`] failed.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum LockFailureAction {
+    /// Another instance owns the data dir: show this message and exit. This
+    /// launch must not write the shared files.
+    Refuse {
+        /// The user-facing explanation ([`held_message`]).
+        message: String,
+    },
+    /// Any other failure: log it and continue unlocked (degrade, don't die).
+    ContinueUnlocked,
+}
+
+/// Map a lock failure to the startup action. Only [`DataDirLockError::Held`]
+/// refuses the launch; it can never fall through to "continue without the
+/// lock".
+pub(crate) fn on_lock_failure(err: &DataDirLockError) -> LockFailureAction {
+    match err {
+        DataDirLockError::Held { data_dir } => LockFailureAction::Refuse {
+            message: held_message(data_dir),
+        },
+        DataDirLockError::Io { .. } => LockFailureAction::ContinueUnlocked,
+    }
+}
+
 /// Startup entry point: in portable mode, lock the data dir before any store
 /// is built. Returns the held lock (keep it alive for the whole run).
 ///
@@ -135,7 +171,27 @@ pub fn lock_portable_data_dir_or_exit() -> Option<DataDirLock> {
         }
     };
     let override_set = std::env::var_os("TERMIHUB_CONFIG_DIR").is_some();
-    let data_dir = lock_target(&mode, override_set)?;
+    let suppress_dialog = std::env::var_os(SUPPRESS_DIALOG_ENV).is_some();
+    let mut dialog = |message: &str| {
+        if !suppress_dialog {
+            show_error_dialog(message);
+        }
+    };
+    lock_or_exit_with(&mode, override_set, &mut dialog, std::process::exit)
+}
+
+/// The testable core of [`lock_portable_data_dir_or_exit`]: the dialog and the
+/// process exit are injected so the refusal path can be exercised in-process.
+///
+/// On a held lock this prints the message to stderr, calls `dialog` exactly
+/// once with it, then calls `exit(`[`HELD_EXIT_CODE`]`)`, which never returns.
+pub(crate) fn lock_or_exit_with(
+    mode: &AppMode,
+    config_dir_env_override: bool,
+    dialog: &mut dyn FnMut(&str),
+    exit: fn(i32) -> !,
+) -> Option<DataDirLock> {
+    let data_dir = lock_target(mode, config_dir_env_override)?;
     if let Err(e) = std::fs::create_dir_all(data_dir) {
         tracing::warn!(
             "data-dir lock: cannot create {}, not locking: {e}",
@@ -143,20 +199,22 @@ pub fn lock_portable_data_dir_or_exit() -> Option<DataDirLock> {
         );
         return None;
     }
-    match acquire(data_dir) {
+    let err = match acquire(data_dir) {
         Ok(lock) => {
             tracing::info!(lock_file = %lock.path().display(), "Portable data directory locked");
-            Some(lock)
+            return Some(lock);
         }
-        Err(DataDirLockError::Held { data_dir }) => {
-            let message = held_message(&data_dir);
+        Err(err) => err,
+    };
+    match on_lock_failure(&err) {
+        LockFailureAction::Refuse { message } => {
             tracing::error!("{message}");
             eprintln!("{message}");
-            show_error_dialog(&message);
-            std::process::exit(1);
+            dialog(&message);
+            exit(HELD_EXIT_CODE)
         }
-        Err(e) => {
-            tracing::warn!("data-dir lock: {e}; continuing without the lock");
+        LockFailureAction::ContinueUnlocked => {
+            tracing::warn!("data-dir lock: {err}; continuing without the lock");
             None
         }
     }
