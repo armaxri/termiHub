@@ -136,6 +136,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -390,6 +393,9 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
+
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
 
       # The sidecar links libasound2 (cpal/rodio audio); build-essential provides
       # the C toolchain its sys-crates need. Mirrors the release build's Ubuntu
@@ -686,6 +692,9 @@ jobs:
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
+
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
 
       - name: Install system dependencies
         run: |
@@ -1575,6 +1584,10 @@ jobs:
           (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
         run: pnpm install --frozen-lockfile
 
+      - name: Make apt retry downloads
+        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.rust != 'false'
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies (Ubuntu)
         if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.rust != 'false'
         run: |
@@ -1822,6 +1835,9 @@ jobs:
           python-version: '3.12'
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
+
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
 
       # The OS credential store reader's unit test runs a private gnome-keyring
       # for real (tests/system/tests/test_os_store.py, #4929).

@@ -73,8 +73,9 @@ install_debian_fish3() {
     echo "$sum  $dir/$name" | sha256sum -c --quiet - || die "$name does not match its pinned SHA-256"
     paths+=("$dir/$name")
   done
-  sudo apt-get update -q
-  sudo apt-get install -y -q --no-install-recommends --allow-downgrades "${paths[@]}"
+  # Retry transient mirror failures (#5152).
+  sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update -q
+  sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y -q --no-install-recommends --allow-downgrades "${paths[@]}"
   rm -rf "$dir"
 }
 while [ $# -gt 0 ]; do

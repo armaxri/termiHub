@@ -91,6 +91,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies
         run: |
           sudo apt-get update

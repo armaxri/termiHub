@@ -2,6 +2,10 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Harden apt against transient mirror failures in CI (#5152).
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+    > /etc/apt/apt.conf.d/80-ci-retries
+
 RUN apt-get update && apt-get install -y \
     openssh-server \
     telnetd \

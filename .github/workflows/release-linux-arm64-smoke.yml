@@ -91,6 +91,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
+
       - name: Install headless runtime dependencies
         # Runtime WebKitGTK/GTK libs + Xvfb (as release-linux-smoke.yml), and
         # libarchive-tools for bsdtar, which reads the .rpm payload directly
