@@ -3,8 +3,9 @@
  *
  * Deleting an ACTIVE (connecting / connected / reconnecting) tunnel silently
  * killed it with no chance to reconsider. These tests pin that the sidebar
- * prompts for confirmation before deleting an active tunnel, and deletes an
- * inactive tunnel directly (no prompt).
+ * prompts for confirmation before deleting an active tunnel. Since #5158 an
+ * inactive tunnel is confirmed too (with a "don't ask again" opt-out), and every
+ * sidebar delete is undoable.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -12,14 +13,17 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
+import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
 import { TunnelSidebar } from "./TunnelSidebar";
 
-const mockDeleteTunnel = vi.fn(() => Promise.resolve());
+const mockDeleteTunnel = vi.fn((_id: string, _opts?: { undoable?: boolean }) => Promise.resolve());
+const mockUpdateSettings = vi.fn((_s: unknown) => Promise.resolve());
 
 vi.mock("@/store/appStore", () => {
   const state: Record<string, unknown> = {};
   const useAppStore = (selector: (s: Record<string, unknown>) => unknown) => selector(state);
   useAppStore.setState = (patch: Record<string, unknown>) => Object.assign(state, patch);
+  useAppStore.getState = () => state;
   return { useAppStore };
 });
 
@@ -63,6 +67,7 @@ function seedStore(tunnel: TunnelConfig, state?: TunnelState) {
     stopTunnel: vi.fn(),
     saveTunnel: vi.fn(),
     deleteTunnel: mockDeleteTunnel,
+    updateSettings: mockUpdateSettings,
     openTunnelEditorTab: vi.fn(),
   });
 }
@@ -78,6 +83,7 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    stopSettingsSubscription();
     vi.clearAllMocks();
   });
 
@@ -115,11 +121,10 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
       confirm!.click();
     });
     await flush();
-    expect(mockDeleteTunnel).toHaveBeenCalledWith("tun-1");
+    expect(mockDeleteTunnel).toHaveBeenCalledWith("tun-1", { undoable: true });
   });
 
-  it("deletes an inactive tunnel without prompting", async () => {
-    seedStore(makeTunnel("tun-2", "Idle Tunnel"), makeState("tun-2", "disconnected"));
+  async function renderAndClickDelete(id: string) {
     await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
@@ -128,16 +133,81 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
       );
     });
     await flush();
-
     const deleteBtn = container.querySelector<HTMLButtonElement>(
-      '[data-testid="tunnel-delete-tun-2"]'
+      `[data-testid="tunnel-delete-${id}"]`
     );
     await act(async () => {
       deleteBtn!.click();
     });
     await flush();
+  }
+
+  function click(testId: string) {
+    const el = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+    expect(el).not.toBeNull();
+    act(() => el!.click());
+  }
+
+  it("confirms an inactive tunnel delete, with the opt-out offered (#5158)", async () => {
+    seedStore(makeTunnel("tun-2", "Idle Tunnel"), makeState("tun-2", "disconnected"));
+    await renderAndClickDelete("tun-2");
+
+    const dialog = document.querySelector('[data-testid="confirm-delete-dialog"]');
+    expect(dialog?.textContent).toContain("Idle Tunnel");
+    expect(document.querySelector('[data-testid="confirm-delete-dont-ask-again"]')).not.toBeNull();
+    expect(mockDeleteTunnel).not.toHaveBeenCalled();
+
+    click("confirm-delete-confirm");
+    await flush();
+    expect(mockDeleteTunnel).toHaveBeenCalledWith("tun-2", { undoable: true });
+    expect(mockUpdateSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps the tunnel when the confirm is cancelled", async () => {
+    seedStore(makeTunnel("tun-2", "Idle Tunnel"), makeState("tun-2", "disconnected"));
+    await renderAndClickDelete("tun-2");
+    click("confirm-delete-cancel");
+    await flush();
+    expect(document.querySelector('[data-testid="confirm-delete-dialog"]')).toBeNull();
+    expect(mockDeleteTunnel).not.toHaveBeenCalled();
+  });
+
+  it("persists the opt-out only when confirmed with the box ticked", async () => {
+    seedStore(makeTunnel("tun-2", "Idle Tunnel"), makeState("tun-2", "disconnected"));
+    await renderAndClickDelete("tun-2");
+    click("confirm-delete-dont-ask-again");
+    click("confirm-delete-confirm");
+    await flush();
+    expect(mockDeleteTunnel).toHaveBeenCalledWith("tun-2", { undoable: true });
+    expect(mockUpdateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmUndoableDelete: false })
+    );
+  });
+
+  it("does not offer the opt-out for an active tunnel", async () => {
+    seedStore(makeTunnel("tun-1", "Active Tunnel"), makeState("tun-1", "connected"));
+    await renderAndClickDelete("tun-1");
+    expect(document.querySelector('[data-testid="confirm-delete-dialog"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="confirm-delete-dont-ask-again"]')).toBeNull();
+  });
+
+  it("deletes an inactive tunnel without prompting once opted out", async () => {
+    act(() =>
+      __emitSettingsViewForTest(
+        {
+          version: "1",
+          externalConnectionFiles: [],
+          powerMonitoringEnabled: true,
+          fileBrowserEnabled: true,
+          confirmUndoableDelete: false,
+        },
+        1
+      )
+    );
+    seedStore(makeTunnel("tun-2", "Idle Tunnel"), makeState("tun-2", "disconnected"));
+    await renderAndClickDelete("tun-2");
 
     expect(document.querySelector('[data-testid="confirm-delete-dialog"]')).toBeNull();
-    expect(mockDeleteTunnel).toHaveBeenCalledWith("tun-2");
+    expect(mockDeleteTunnel).toHaveBeenCalledWith("tun-2", { undoable: true });
   });
 });

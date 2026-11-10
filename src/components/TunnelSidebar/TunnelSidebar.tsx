@@ -7,6 +7,10 @@ import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
+import {
+  persistUndoableDeleteOptOut,
+  useUndoableDeleteOptOut,
+} from "@/hooks/useUndoableDeleteOptOut";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import {
   combinedPairStatus,
@@ -33,13 +37,18 @@ export function TunnelSidebar() {
   const deleteTunnel = useAppStore((s) => s.deleteTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
 
-  // Tunnel pending delete confirmation (active teardown, chained-pair cascade, or
-  // a direct companion delete that breaks localhost), or null when idle. The
-  // per-case `message` is derived caller-side in `handleDelete` and carried on
-  // the pending target; the confirm is fire-and-forget (no success toast).
-  const tunnelDelete = useDeleteConfirm<{ id: string; message: string }>(({ id }) => {
-    void deleteTunnel(id);
-  });
+  // Tunnel pending delete confirmation, or null when idle. The per-case
+  // `message` is derived caller-side in `handleDelete` and carried on the
+  // pending target. An active teardown, chained-pair cascade or companion delete
+  // always confirms; a plain idle delete (`undoable`) confirms with a "don't ask
+  // again" opt-out. Every sidebar delete gets an Undo toast (#5158).
+  const tunnelOptOut = useUndoableDeleteOptOut();
+  const tunnelDelete = useDeleteConfirm<{ id: string; message: string; undoable: boolean }>(
+    ({ id, undoable }) => {
+      if (undoable && tunnelOptOut.take()) persistUndoableDeleteOptOut();
+      void deleteTunnel(id, { undoable: true });
+    }
+  );
   const requestDelete = tunnelDelete.request;
   // A live tunnel pending a Stop / force-Reconnect confirmation (UX-021): both
   // drop every connection currently forwarded through it, so they are guarded
@@ -97,12 +106,18 @@ export function TunnelSidebar() {
       // (#2597, UX-021); the shared helper derives the per-case message.
       const message = tunnelDeleteConfirmMessage(tunnels, tunnelStates, tunnelId);
       if (message) {
-        requestDelete({ id: tunnelId, message });
+        requestDelete({ id: tunnelId, message, undoable: false });
         return;
       }
-      void deleteTunnel(tunnelId);
+      // An idle, unchained tunnel: confirm unless opted out (#5158).
+      if (!tunnelOptOut.shouldConfirm) {
+        void deleteTunnel(tunnelId, { undoable: true });
+        return;
+      }
+      const name = tunnels.find((t) => t.id === tunnelId)?.name ?? "this tunnel";
+      requestDelete({ id: tunnelId, message: `Delete tunnel “${name}”?`, undoable: true });
     },
-    [tunnelStates, tunnels, deleteTunnel, requestDelete]
+    [tunnelStates, tunnels, deleteTunnel, requestDelete, tunnelOptOut.shouldConfirm]
   );
 
   // Stopping a live tunnel drops every connection flowing through it — confirm
@@ -227,7 +242,12 @@ export function TunnelSidebar() {
       )}
       <ConfirmDeleteDialog
         {...tunnelDelete.dialogProps}
+        onCancel={() => {
+          tunnelOptOut.reset();
+          tunnelDelete.cancel();
+        }}
         message={tunnelDelete.pending?.message ?? ""}
+        dontAskAgain={tunnelDelete.pending?.undoable ? tunnelOptOut.dontAskAgain : undefined}
       />
       <ConfirmDialog
         open={pendingLifecycle !== null}
