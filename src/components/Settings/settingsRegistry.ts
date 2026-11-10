@@ -553,7 +553,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "confirmCloseTabOnShortcut",
     label: "Confirm before closing a tab via keyboard shortcut",
-    description: "Ask for confirmation when closing a tab via keyboard shortcut",
+    description:
+      "Ask for confirmation when a keyboard shortcut closes a tab with a live session, or a tab group",
     category: "safety-prompts",
     keywords: [
       "confirm",
