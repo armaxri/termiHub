@@ -43,7 +43,7 @@ name: Coverage (unified, ratchet)
 # gate every frontend PR via the Ubuntu "Run Tests" leg.
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   workflow_dispatch:
 
 # A blocking gate on a low-volume trigger set (main pushes, the nightly dispatch,
@@ -88,8 +88,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
-          cache: "pnpm"
+          node-version: '22'
+          cache: 'pnpm'
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -226,8 +226,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
-          cache: "pnpm"
+          node-version: '22'
+          cache: 'pnpm'
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -260,7 +260,7 @@ jobs:
       - name: Run unified coverage
         env:
           # The per-PR Windows leg's live-agent cold-start gate (code-quality.yml).
-          TERMIHUB_AGENT_TEST_MAX_CONCURRENT: "2"
+          TERMIHUB_AGENT_TEST_MAX_CONCURRENT: '2'
         # Measures only; a failure HERE means the lane is broken, not a drop.
         run: ./scripts/coverage.sh --no-ratchet --split
 
