@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useId } from "react";
 import { WifiOff, RefreshCw, X, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, ContentOverlay, Spinner, Tooltip } from "@/components/ui";
+import { Button, ContentOverlay, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
-import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import { CredentialReentry } from "./CredentialReentry";
 import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
+import { TerminalReconnectStrip } from "./TerminalReconnectStrip";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -59,84 +59,6 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
 }
 
 /**
- * Auto-reconnect countdown variant (#1962): shown while the agentless resilient-
- * reconnect loop is waiting to make its next attempt. Renders a live countdown,
- * the attempt progress, an honest note that server-side state is not preserved
- * without an agent, and a Cancel affordance that stops the loop.
- */
-function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
-  // The loop detail is sourced from the authoritative `session-lifecycle` region
-  // (#2204).
-  const auto = useSessionAutoReconnect(tabId);
-  const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
-  // Tick once a second so the countdown stays live.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(id);
-  }, []);
-
-  const handleCancel = useCallback(() => {
-    cancelAutoReconnect(tabId);
-  }, [tabId, cancelAutoReconnect]);
-
-  // Guard: the loop may have advanced out of "waiting" between the parent's
-  // render and ours.
-  if (!auto) return null;
-
-  const secondsLeft = Math.max(0, Math.ceil((auto.nextAttemptAt - now) / 1000));
-  // `attempt` counts the attempts already started; the countdown is for the next.
-  const attemptLabel = reconnectAttemptLabel(auto.attempt + 1, auto.maxAttempts);
-
-  return (
-    <div
-      className="terminal-disconnect-overlay terminal-disconnect-overlay--reconnecting"
-      data-testid="terminal-disconnect-overlay"
-    >
-      <ContentOverlay
-        className="terminal-disconnect-overlay__body"
-        icon={<WifiOff size={32} className="terminal-disconnect-overlay__icon" />}
-        heading={RECONNECTING_HEADING}
-        // Announce the state once; the ticking countdown below stays silent.
-        announce="polite"
-        announcement={RECONNECTING_HEADING}
-        actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleCancel}
-            data-testid="terminal-auto-reconnect-cancel-btn"
-          >
-            Cancel
-          </Button>
-        }
-      >
-        <p
-          className="terminal-disconnect-overlay__subheading"
-          data-testid="terminal-auto-reconnect-countdown"
-        >
-          {secondsLeft > 0
-            ? `Retrying in ${secondsLeft}s · ${attemptLabel}`
-            : `Reconnecting… · ${attemptLabel}`}
-        </p>
-        <p className="terminal-disconnect-overlay__subheading terminal-disconnect-overlay__note">
-          Local scrollback is preserved. Without an agent, the remote shell state (running commands,
-          working directory) is not restored — a fresh shell opens.
-        </p>
-        {auto.onReconnectCommand && (
-          <p
-            className="terminal-disconnect-overlay__subheading terminal-disconnect-overlay__note"
-            data-testid="terminal-auto-reconnect-command"
-          >
-            Will run <code>{auto.onReconnectCommand}</code> on reconnect.
-          </p>
-        )}
-      </ContentOverlay>
-    </div>
-  );
-}
-
-/**
  * Shown as an absolute overlay on top of the terminal content when the session
  * exits unexpectedly or while a reconnect is in progress.
  *
@@ -146,12 +68,14 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
  *   - "plugin-exit"    — the sandboxed plugin process crashed / hung / ran out of
  *                        memory / sent invalid data: restart session + close tab
  *                        (#4188, {@link TerminalPluginExitOverlay})
- *   - "auto-reconnect" — agentless resilient-reconnect countdown + Cancel (#1962)
- *   - "reconnecting"   — spinner, optional trigger error, Stop button
+ *   - "reconnecting"   — non-blocking top strip, not an overlay (#5179): the
+ *                        agentless countdown + attempt n/N + Cancel (#1962), or
+ *                        a spinner + Stop ({@link TerminalReconnectStrip})
  *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
  *   - "disconnected"   — standard disconnect, reconnect + view-scrollback buttons
  *
- * The scrollback buffer is always preserved below the overlay.
+ * The scrollback buffer is always preserved below the overlay; while
+ * reconnecting it stays readable and selectable under the strip.
  */
 export function TerminalDisconnectOverlay({
   tabId,
@@ -159,7 +83,6 @@ export function TerminalDisconnectOverlay({
 }: TerminalDisconnectOverlayProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
-  const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
   const startFreshShellForTab = useAppStore((s) => s.startFreshShellForTab);
   // The disconnect error, reconnect flag and the reconnect-trigger error are all
   // sourced from the authoritative `session-lifecycle` region (#2205). #2442 added the
@@ -179,7 +102,7 @@ export function TerminalDisconnectOverlay({
   const sessionLostError = lifecycle.sessionLostError;
   // The auto-reconnect gate reads the same projected-with-fallback loop detail as
   // the countdown overlay itself, so the region drives which variant shows (#2204).
-  const autoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
+  const autoReconnectActive = useSessionAutoReconnect(tabId) !== undefined;
   // Exit-cause render cut (#2615 / #2625): the clean/dropped heading + subheading
   // are derived purely from the region's `exit` metadata (the per-client
   // `appStore.terminalExitInfo` slice was deleted).
@@ -197,13 +120,6 @@ export function TerminalDisconnectOverlay({
   const handleDismiss = useCallback(() => {
     dismissTerminalDisconnect(tabId);
   }, [tabId, dismissTerminalDisconnect]);
-
-  // Stop the reconnecting loop (#2205 PR-B): fold the region out of reconnecting
-  // via `session.cancelReconnect` (a clean user cancel → disconnected, `endReason:
-  // user`), landing the tab on the standard disconnect overlay.
-  const handleStop = useCallback(() => {
-    cancelAutoReconnect(tabId);
-  }, [tabId, cancelAutoReconnect]);
 
   const handleStartNewShell = useCallback(() => {
     markTerminalRefocusPending(tabId);
@@ -292,55 +208,13 @@ export function TerminalDisconnectOverlay({
     );
   }
 
-  // Agentless resilient reconnect (#1962) takes precedence: while the backoff
-  // loop is counting down, show the countdown/Cancel variant instead of the
-  // manual disconnect prompt.
-  if (autoReconnectWaiting) {
-    return <AutoReconnectingOverlay tabId={tabId} />;
-  }
-
-  if (isReconnecting) {
-    return (
-      <div
-        className="terminal-disconnect-overlay terminal-disconnect-overlay--reconnecting"
-        data-testid="terminal-disconnect-overlay"
-      >
-        <ContentOverlay
-          className="terminal-disconnect-overlay__body"
-          icon={
-            <Spinner
-              size={32}
-              label={null}
-              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--busy"
-            />
-          }
-          busy
-          heading="Reconnecting…"
-          subheading="Connection lost. Attempting to reconnect automatically."
-          actions={
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleStop}
-              data-testid="terminal-disconnect-stop-btn"
-            >
-              Stop
-            </Button>
-          }
-        >
-          {reconnectTriggerError && (
-            <div
-              className="terminal-disconnect-overlay__error-box"
-              data-testid="terminal-disconnect-trigger-error-box"
-            >
-              <span className="terminal-disconnect-overlay__error-text">
-                {reconnectTriggerError}
-              </span>
-            </div>
-          )}
-        </ContentOverlay>
-      </div>
-    );
+  // A running reconnect — the agentless backoff loop (#1962, waiting or
+  // connecting) or a plain in-flight reconnect — is not a terminal state, so it
+  // renders as a non-blocking strip at the top of the terminal (#5179): the
+  // scrollback stays readable and selectable while the attempts run. Only the
+  // terminal states below keep the full overlay.
+  if (autoReconnectActive || isReconnecting) {
+    return <TerminalReconnectStrip tabId={tabId} reconnectTriggerError={reconnectTriggerError} />;
   }
 
   if (disconnectError) {

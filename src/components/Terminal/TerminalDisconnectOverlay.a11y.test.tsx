@@ -91,7 +91,8 @@ describe("TerminalDisconnectOverlay announcements (#4331)", () => {
     await renderWith(reconnecting(idleReconnect()), true);
     records.push(...observer.takeRecords());
     observer.disconnect();
-    const region = liveRegion();
+    // The reconnecting state is the non-blocking strip (#5179), with its own region.
+    const region = byTestId("terminal-reconnect-strip-announcement");
     expect(region?.getAttribute("role")).toBe("status");
     expect(region?.textContent).toBe(
       "Reconnecting… Connection lost. Attempting to reconnect automatically."
@@ -100,11 +101,7 @@ describe("TerminalDisconnectOverlay announcements (#4331)", () => {
     expect(
       records.some((r) => r.target === region && r.type === "childList" && r.addedNodes.length > 0)
     ).toBe(true);
-    // The heading no longer announces itself, so nothing is spoken twice.
-    const heading = container.querySelector(".ui-content-overlay__heading");
-    expect(heading?.textContent).toBe("Reconnecting…");
-    expect(heading?.getAttribute("role")).toBeNull();
-    expect(heading?.getAttribute("aria-live")).toBeNull();
+    // Exactly one live region, so nothing is spoken twice.
     expect(container.querySelectorAll("[role='status'], [role='alert'], [aria-live]")).toHaveLength(
       1
     );

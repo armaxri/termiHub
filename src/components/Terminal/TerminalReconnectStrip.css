@@ -1,0 +1,70 @@
+/* Non-blocking reconnect strip (#5179): pinned to the top edge of the terminal
+   slot instead of covering it, so the scrollback stays scrollable and selectable
+   while the reconnect runs. Sits beside the view-mode banner's look (which pins
+   to the bottom) so the two read as the same family of notices. */
+.terminal-reconnect-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-float);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xxs) var(--spacing-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--terminal-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.terminal-reconnect-strip__icon {
+  color: var(--color-warning);
+  flex-shrink: 0;
+  margin-top: var(--spacing-xxs);
+}
+
+.terminal-reconnect-strip__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  line-height: 1.5;
+}
+
+.terminal-reconnect-strip__line {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--spacing-sm);
+}
+
+.terminal-reconnect-strip__heading {
+  color: var(--text-primary);
+}
+
+.terminal-reconnect-strip__status {
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-reconnect-strip__note {
+  display: block;
+  color: var(--text-muted);
+}
+
+/* The input note turns to the warning tone once the user types into the
+   paused terminal — the "your keys are going nowhere" nudge. No motion. */
+.terminal-reconnect-strip__input--typed {
+  color: var(--color-warning);
+}
+
+.terminal-reconnect-strip__error {
+  color: var(--color-error);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.terminal-reconnect-strip .ui-btn {
+  flex-shrink: 0;
+}
