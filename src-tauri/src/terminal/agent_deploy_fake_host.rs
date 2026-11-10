@@ -431,7 +431,11 @@ impl russh_sftp::server::Handler for HostSftp {
             // Hold the write back so the client observes the cancel mid-transfer.
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
-        let path = self.handles.get(&handle).ok_or(StatusCode::Failure)?.clone();
+        let path = self
+            .handles
+            .get(&handle)
+            .ok_or(StatusCode::Failure)?
+            .clone();
         let mut st = self.state.lock().expect("host");
         let start = usize::try_from(offset).map_err(|_| StatusCode::Failure)?;
         let fail_after = st.faults.fail_write_after;
@@ -454,7 +458,10 @@ impl russh_sftp::server::Handler for HostSftp {
 
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let st = self.state.lock().expect("host");
-        let file = st.files.get(&resolve(&path)).ok_or(StatusCode::NoSuchFile)?;
+        let file = st
+            .files
+            .get(&resolve(&path))
+            .ok_or(StatusCode::NoSuchFile)?;
         let attrs = FileAttributes {
             size: Some(file.len() as u64),
             ..Default::default()

@@ -49,7 +49,12 @@ async fn install(
 }
 
 fn installed(state: &Arc<Mutex<HostState>>) -> Option<Vec<u8>> {
-    state.lock().expect("host").files.get(DEFAULT_INSTALLED).cloned()
+    state
+        .lock()
+        .expect("host")
+        .files
+        .get(DEFAULT_INSTALLED)
+        .cloned()
 }
 
 fn ran(state: &Arc<Mutex<HostState>>, prefix: &str) -> bool {
@@ -94,7 +99,10 @@ async fn fresh_deploy_installs_and_verifies_the_binary() {
     );
     assert_eq!(installed(&state), Some(bytes));
     let st = state.lock().expect("host");
-    assert!(st.staged_files().is_empty(), "the upload was moved into place");
+    assert!(
+        st.staged_files().is_empty(),
+        "the upload was moved into place"
+    );
     assert!(
         !st.dirs.iter().any(|d| d.contains("/updates/upload.")),
         "the emptied private upload dir is removed: {:?}",
@@ -251,7 +259,10 @@ async fn permission_denied_on_upload_installs_nothing() {
         .await
         .expect_err("a refused create must fail the deploy");
 
-    assert!(err.to_string().contains("create remote file failed"), "{err}");
+    assert!(
+        err.to_string().contains("create remote file failed"),
+        "{err}"
+    );
     assert!(!ran(&state, "mkdir -p "), "nothing may be installed");
     assert_old_binary_intact(&state, &old);
 }
@@ -265,9 +276,16 @@ async fn unwritable_config_dir_fails_before_any_upload() {
         .await
         .expect_err("no private upload dir must fail the deploy");
 
-    assert!(err.to_string().contains("private upload directory"), "{err}");
+    assert!(
+        err.to_string().contains("private upload directory"),
+        "{err}"
+    );
     let st = state.lock().expect("host");
-    assert!(st.files.is_empty(), "nothing may be uploaded: {:?}", st.files);
+    assert!(
+        st.files.is_empty(),
+        "nothing may be uploaded: {:?}",
+        st.files
+    );
 }
 
 // ── Install interrupted between staging and the final rename ───────────
