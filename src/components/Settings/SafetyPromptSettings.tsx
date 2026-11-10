@@ -78,6 +78,24 @@ export function SafetyPromptSettings({
         </div>
       )}
 
+      {show("confirmUndoableDelete") && (
+        <div className="settings-panel__category">
+          <h3 className="settings-panel__category-title">Delete confirmations</h3>
+          <SettingsField
+            label="Confirm before deletes that can be undone"
+            hint="Ask for confirmation before deleting a connection folder, a custom theme, or an idle tunnel. The Undo toast appears either way."
+          >
+            <Toggle
+              checked={settings.confirmUndoableDelete ?? true}
+              onCheckedChange={(checked) =>
+                onChange((prev) => ({ ...prev, confirmUndoableDelete: checked }))
+              }
+              data-testid="settings-confirm-undoable-delete"
+            />
+          </SettingsField>
+        </div>
+      )}
+
       {(show("warnLargePortScan") || show("warnLargePingSweep")) && (
         <div className="settings-panel__category">
           <h3 className="settings-panel__category-title">Network operation warnings</h3>
