@@ -269,6 +269,17 @@
   outline: none;
 }
 
+.connection-tree__inline-input[aria-invalid="true"] {
+  border-color: var(--color-error);
+}
+
+.connection-tree__inline-error {
+  padding-right: var(--spacing-xs);
+  padding-bottom: var(--spacing-xs);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
 /* Drag-and-drop feedback */
 .connection-tree__item--dragging {
   opacity: 0.4;
