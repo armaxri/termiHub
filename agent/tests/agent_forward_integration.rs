@@ -28,7 +28,11 @@
 //! For each, a desktop with no ssh-agent must still connect cleanly: it answers
 //! `open` with `close`, and the remote shell keeps working with no keys.
 //!
-//! Unix only (the relay endpoint and the test's ssh-agent are Unix sockets).
+//! Unix only (#5160 reviewed it): the test's ssh-agent and its relay endpoint
+//! are Unix sockets here, and the target is the `ssh-jumphost-bastion` *Linux
+//! container*, which a Windows runner cannot host. The Windows relay (a named
+//! pipe, `agent/src/session/agent_forward.rs`) is covered by that module's unit
+//! tests; a live Windows run needs a native sshd with `AllowAgentForwarding`.
 //! Skips without the fixture; `TERMIHUB_REQUIRE_DOCKER=1` makes that a failure.
 //!
 //! ```sh

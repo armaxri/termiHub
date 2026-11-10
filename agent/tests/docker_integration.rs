@@ -6,8 +6,12 @@
 //! Each test creates a real Docker container, spawns a daemon process
 //! with `TERMIHUB_COMMAND=docker`, and exercises the full frame protocol.
 //!
-//! Because the daemon requires a real PTY (fork + openpty), these tests
-//! are Unix-only.
+//! Unix only (#5160 reviewed it): the frame client speaks to the daemon over
+//! a Unix socket, and the sessions are `docker exec` into Linux images
+//! (`alpine`, `/bin/sh`) — GitHub's Windows runners run Windows containers
+//! only. The Windows half of an agent-hosted Docker session is the guided
+//! manual test in `tests/system/tests/test_real_hardware.py`; the Windows
+//! engine reach is `native_sshd_agent_backends.rs` (MT-AGENT-28).
 
 #![cfg(unix)]
 
