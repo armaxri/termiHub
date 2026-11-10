@@ -196,6 +196,15 @@ const DEFAULT_STORAGE_FILE = "__default__";
  */
 const SHARED_CREDENTIAL_HIDDEN_FIELDS = ["password", "savePassword"] as const;
 
+/**
+ * What {@link ConnectionEditor}'s save step returns: the saved entry and the id
+ * the backend stored it under (`null` when the persist failed).
+ */
+interface SavedEntry {
+  entry: SavedConnection | RemoteAgentDefinition;
+  persistedId: Promise<string | null>;
+}
+
 interface ConnectionEditorProps {
   tabId: string;
   meta: ConnectionEditorMeta;
@@ -1046,10 +1055,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     updateAgentDef,
   ]);
 
-  /** Save the connection (or agent transport) and return the saved entry. */
-  const saveConnection = useCallback(async (): Promise<
-    SavedConnection | RemoteAgentDefinition | null
-  > => {
+  /**
+   * Save the connection (or agent transport) and return the saved entry, with
+   * the id the backend stores it under (`persistedId`, #5257): it is
+   * recomputed from folder + name, so a new connection's optimistic `conn-<ulid>`
+   * id and a renamed connection's old id are not it. Resolves `null` when the
+   * persist failed (the store already toasted it).
+   */
+  const saveConnection = useCallback(async (): Promise<SavedEntry | null> => {
     if (!name.trim()) return null;
     if (nameError) return null;
     if (jumpHostValidation.errors.length > 0) return null;
@@ -1064,7 +1077,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           agentSettings,
         };
         updateRemoteAgent(updated);
-        return updated;
+        return { entry: updated, persistedId: Promise.resolve(updated.id) };
       } else {
         const newAgent: RemoteAgentDefinition = {
           id: newId("agent"),
@@ -1075,7 +1088,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           connectionState: "disconnected",
         };
         addRemoteAgent(newAgent);
-        return newAgent;
+        return { entry: newAgent, persistedId: Promise.resolve(newAgent.id) };
       }
     }
 
@@ -1125,11 +1138,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // connection lands in the target exactly once, with the edit (#3590).
       const originalSource = existingConnection.sourceFile ?? null;
       if (originalSource !== sourceFile) {
-        return await saveConnectionToFile(saved, originalSource);
+        const moved = await saveConnectionToFile(saved, originalSource);
+        return moved ? { entry: moved, persistedId: Promise.resolve(moved.id) } : null;
       }
 
-      updateConnection(saved);
-      return saved;
+      return { entry: saved, persistedId: updateConnection(saved) };
     } else {
       const saved: SavedConnection = {
         id: newId("conn"),
@@ -1142,8 +1155,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         iconEmoji,
         sourceFile,
       };
-      addConnection(saved);
-      return saved;
+      return { entry: saved, persistedId: addConnection(saved) };
     }
   }, [
     currentTypeInfo?.schema,
@@ -1308,6 +1320,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             ...connSettings,
             persistent,
             title: name.trim(),
+            // Link the session to the saved definition, as the sidebar's
+            // connect does, so reattach finds it (#5257). A new definition's
+            // id is not known here yet.
+            ...(existingAgentDef ? { definitionId: existingAgentDef.id } : {}),
           },
         },
         { terminalOptions }
@@ -1316,8 +1332,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
 
-    const saved = await saveConnection();
-    if (!saved || "connectionState" in saved) return;
+    const result = await saveConnection();
+    if (!result || "connectionState" in result.entry) return;
+    const saved = result.entry;
+    // Bind the tab to the saved connection the way a sidebar connect does
+    // (#5257, #5258): schedules find their targets and a transfer's resume
+    // finds its connection by this id. It is the *persisted* id, so wait for the
+    // save to land; a failed save connects without one, like an unsaved tab.
+    const connectionId = (await result.persistedId) ?? undefined;
 
     let config: ConnectionConfig = saved.config;
     const savedSourceFile = "sourceFile" in saved ? (saved.sourceFile ?? null) : null;
@@ -1327,7 +1349,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     const fieldSecrets = await resolveFieldSecrets({
       schema: currentTypeInfo?.schema,
       settings: connSettings,
-      connectionId: saved.id,
+      connectionId: connectionId ?? saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
       // The connection's name titles each prompt (#4475).
@@ -1347,7 +1369,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         ? AGENT_SCHEMA
         : withoutFieldSecretFields(currentTypeInfo?.schema),
       settings: fieldSecrets.settings,
-      connectionId: saved.id,
+      connectionId: connectionId ?? saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
       label: saved.name,
@@ -1375,7 +1397,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             (c.sourceFile ?? null) === savedSourceFile
         );
         await storeCredential(
-          storeConn?.id ?? saved.id,
+          connectionId ?? storeConn?.id ?? saved.id,
           secret.credentialType,
           secret.secret,
           savedSourceFile
@@ -1392,6 +1414,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // Open the same tab the sidebar would: a graphical type (VNC/RDP) gets its
     // canvas, a terminal-less type (FTP) its browser — not a terminal (#4017).
     addTab(saved.name, saved.config.type, config, {
+      connectionId,
       terminalOptions: saved.terminalOptions,
       contentType: connectionTabContentType(
         useAppStore.getState().connectionTypes,
