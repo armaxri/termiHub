@@ -397,6 +397,7 @@ describe("authFailed overlay — credential re-entry", () => {
         fingerprint: "SHA256:NEW",
         changed: true,
         previous_fingerprints: ["SHA256:OLD"],
+        owner: null,
       })
     );
     expect(q("ssh-hostkey-mitm-warning")).not.toBeNull();
