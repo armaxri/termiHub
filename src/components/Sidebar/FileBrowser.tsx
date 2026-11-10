@@ -113,6 +113,7 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { parentDir } from "@/utils/paths";
+import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 
 /**
@@ -530,21 +531,6 @@ function RenameRow({
   );
 }
 
-/**
- * Whether a keydown on a file row is the "open row actions" shortcut (#4559):
- * the ContextMenu (Menu) key, or Shift+F10 with no other modifier.
- */
-function isRowMenuShortcut(e: {
-  key: string;
-  shiftKey: boolean;
-  ctrlKey: boolean;
-  metaKey: boolean;
-  altKey: boolean;
-}): boolean {
-  if (e.key === "ContextMenu") return true;
-  return e.key === "F10" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
-}
-
 function FileRow({
   entry,
   vscodeAvailable,
@@ -592,17 +578,9 @@ function FileRow({
    * key from firing a second, native `contextmenu`.
    */
   const openRowMenuFromKeyboard = (e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!isRowMenuShortcut(e)) return;
+    if (!isContextMenuShortcut(e)) return;
     e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    e.currentTarget.dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        clientX: rect.left + Math.min(16, rect.width / 2),
-        clientY: rect.bottom,
-      })
-    );
+    openContextMenuFromKeyboard(e.currentTarget);
   };
 
   // Files show a real byte size; directories show none. `formatBytes` returns an

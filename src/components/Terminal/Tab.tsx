@@ -52,6 +52,7 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
 import { macroReceivingLabel, type MacroReceivingInfo } from "@/utils/macroTabMarker";
+import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
 
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
@@ -80,7 +81,13 @@ const STATUS_ICON: Record<TabStatus, LucideIcon> = {
 
 interface TabProps {
   tab: TerminalTab;
+  /** Select this tab (mouse click; also Enter/Space unless `onKeyboardActivate` is set). */
   onActivate: () => void;
+  /**
+   * Select this tab from the keyboard (Enter/Space, #5182). Lets the strip also
+   * move focus into the activated tab's content. Falls back to `onActivate`.
+   */
+  onKeyboardActivate?: () => void;
   onClose: () => void;
   onClear?: () => void;
   onSave?: () => void;
@@ -187,6 +194,7 @@ function TabMoveItems({
 export function Tab({
   tab,
   onActivate,
+  onKeyboardActivate,
   onClose,
   onClear,
   onSave,
@@ -257,19 +265,34 @@ export function Tab({
                   : null;
   const isTerminalTab = tab.contentType === "terminal";
 
-  // Keyboard close (A11Y2-011): the close glyph is a pointer-only affordance
-  // (a nested button inside `role="tab"` is invalid), so Delete/Backspace on the
-  // focused tab closes it through the same guarded path as the X. The dnd-kit
-  // keyboard listener still runs for every other key.
+  // Keyboard handling on the focused tab itself (`e.target === e.currentTarget`,
+  // no modifiers), so keys typed inside a descendant are never swallowed:
+  // - Enter/Space activate it (#5182) — the WAI-ARIA tabs pattern with manual
+  //   activation: arrows (TabBar) only move focus. No dnd-kit KeyboardSensor is
+  //   registered, so these keys are not a drag gesture; they stop here so they
+  //   never reach the terminal or a global shortcut handler.
+  // - Delete/Backspace close it (A11Y2-011): the close glyph is a pointer-only
+  //   affordance (a nested button inside `role="tab"` is invalid), so this goes
+  //   through the same guarded path as the X.
+  // - Shift+F10 / the ContextMenu key open its context menu (#5182), which
+  //   WKWebView does not do natively.
+  // The dnd-kit keyboard listener still runs for every other key.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (
-      (e.key === "Delete" || e.key === "Backspace") &&
-      e.target === e.currentTarget &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey &&
-      !e.shiftKey
-    ) {
+    const onTabItself = e.target === e.currentTarget;
+    if (onTabItself && isContextMenuShortcut(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      openContextMenuFromKeyboard(e.currentTarget);
+      return;
+    }
+    const plain = onTabItself && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+    if (plain && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      e.stopPropagation();
+      (onKeyboardActivate ?? onActivate)();
+      return;
+    }
+    if (plain && (e.key === "Delete" || e.key === "Backspace")) {
       e.preventDefault();
       e.stopPropagation();
       onClose();
@@ -313,7 +336,7 @@ export function Tab({
       role="tab"
       aria-selected={tab.isActive}
       tabIndex={tab.isActive ? 0 : -1}
-      aria-keyshortcuts="Delete"
+      aria-keyshortcuts="Enter Space Delete"
       onKeyDown={handleKeyDown}
     >
       {NonTerminalIcon ? (
@@ -433,7 +456,8 @@ export function Tab({
       {/* Pointer-only close glyph (A11Y2-011). A focusable button nested in
           `role="tab"` is invalid and folded its label into the tab's name, so
           it is hidden from assistive tech; keyboard users close the focused
-          tab with Delete/Backspace or the "Close Tab" context-menu item. */}
+          tab with Delete/Backspace or the "Close Tab" context-menu item
+          (Shift+F10 / ContextMenu key). */}
       <Tooltip content="Close" side="bottom">
         <span
           className="tab__close"
