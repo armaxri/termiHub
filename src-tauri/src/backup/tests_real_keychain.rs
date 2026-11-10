@@ -2,11 +2,10 @@
 //! restore (#4414) against the **real** OS credential store (#4659): the
 //! macOS Keychain, the Windows Credential Manager or the Linux Secret Service.
 //!
-//! Every other test uses the `keyring` mock or a fake store, and a unit-test
-//! `OsKeychainStore` imports right away, so these are the only tests that run
-//! the real path: the seal key written to the OS keychain, the sealed import
-//! promoted by the startup swap and applied once the store is available, and
-//! the key deleted afterwards.
+//! Every other test uses the `keyring` mock or a fake store, so these are the
+//! only tests that run the real path: the seal key written to the OS keychain,
+//! the sealed import promoted by the startup swap and applied once the store
+//! is available, and the key deleted afterwards.
 //!
 //! They touch the keyring only when `TERMIHUB_REAL_KEYCHAIN_TESTS=1` is set;
 //! otherwise they return immediately. Every entry lives under a service name
