@@ -25,7 +25,7 @@ use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
     detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
-    run_remote_command, upload_bytes_via_sftp_cancellable,
+    run_remote_command, run_remote_command_checked, upload_bytes_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 #[cfg(test)]
@@ -430,13 +430,18 @@ pub fn install_agent_bytes(
 
     // Install: create dir + move binary into place (POSIX also sets +x).
     progress("installing", "Installing agent binary…", 0.7);
-    run_remote_command(session, &plan.install_command).map_err(|e| {
+    // The exit status is checked: a failed `mkdir`/`mv` used to be ignored, so
+    // the verify step ran the *previous* binary and reported its version as a
+    // successful update (#5162). A failure now fails the deploy and removes the
+    // staged upload; the previous binary is untouched.
+    run_remote_command_checked(session, &plan.install_command).map_err(|e| {
         // Keep a timeout typed so the UI reports the frozen server (#3698).
-        if e.is_timeout() {
+        let e = if e.is_timeout() {
             e
         } else {
             TerminalError::RemoteError(format!("Install command failed: {e}"))
-        }
+        };
+        fail_with_rollback(session, &plan.upload_path, e)
     })?;
 
     // Verify
