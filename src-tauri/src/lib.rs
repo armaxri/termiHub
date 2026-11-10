@@ -217,29 +217,24 @@ fn handle_spawn_command(request: spawn::SpawnRequest) -> Option<spawn::SpawnRequ
 }
 
 /// Handle the pre-init `install-shell-integration` / `uninstall-shell-integration`
-/// subcommands (#1368). Loads the persisted shell-integration settings without a
-/// Tauri `AppHandle`, applies the OS context-menu (un)registration, persists the
-/// updated registration facts, and exits. Never returns — the process terminates
-/// with a status code reflecting success or failure.
+/// subcommands (#1368). In portable mode the data-dir lock is taken first; if a
+/// running instance holds it, the command changes nothing and exits non-zero
+/// (#5245). Otherwise it applies the OS context-menu (un)registration, persists
+/// the updated registration facts, and exits. Never returns — the process
+/// terminates with a status code reflecting success or failure.
 fn handle_shell_integration_command(install: bool) -> ! {
-    let result = (|| -> anyhow::Result<()> {
-        let storage = connection::settings::SettingsStorage::new_standalone()?;
-        let mut settings = storage.load_with_recovery()?.data;
-        if install {
-            spawn::registry::register(&mut settings.shell_integration)?;
-        } else {
-            spawn::registry::unregister(&mut settings.shell_integration)?;
-        }
-        storage.save(&settings)
-    })();
-
-    match result {
+    use spawn::shell_integration_cli::ShellIntegrationCliError;
+    match spawn::shell_integration_cli::run(install) {
         Ok(()) => {
             let action = if install { "installed" } else { "removed" };
             println!("Shell integration {action}.");
             std::process::exit(0);
         }
-        Err(e) => {
+        Err(ShellIntegrationCliError::Refused(message)) => {
+            eprintln!("{message}");
+            std::process::exit(utils::data_dir_lock::HELD_EXIT_CODE);
+        }
+        Err(ShellIntegrationCliError::Failed(e)) => {
             eprintln!("Shell integration command failed: {e:#}");
             std::process::exit(1);
         }

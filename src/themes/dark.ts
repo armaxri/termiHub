@@ -42,6 +42,10 @@ export const darkTheme: ThemeDefinition = {
     // Text
     textPrimary: "#dde1ec",
     textSecondary: "#808a9c",
+    // #5249: secondary labels on hovered/selected rows. #808a9c measures
+    // 4.44:1 on bgHover and 4.06:1 on bgActive; deriveTextSecondaryOnSelection
+    // nudges it towards white (4.93:1 / 4.51:1). Locked by contrast.test.ts.
+    textSecondaryOnSelection: "#8992a3",
     // A11Y-007 / #2070: the raw design-system muted (#656e80) fails WCAG AA
     // (~3.4:1 on the sidebar surface). Lightened within the same modern
     // bluish-gray family to meet AA (5.0:1 on #161b24, 5.5:1 on #0f1117) —

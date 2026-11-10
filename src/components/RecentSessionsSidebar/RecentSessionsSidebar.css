@@ -65,6 +65,8 @@
 
 .recent-sessions__autocomplete-item:hover,
 .recent-sessions__autocomplete-item--active {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background: var(--bg-hover);
 }
 

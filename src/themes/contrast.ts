@@ -135,3 +135,23 @@ export function deriveTextMutedOnSelection(colors: {
 }): string {
   return adjustForContrast(colors.textMuted, [colors.bgHover, colors.bgActive], AA_NORMAL_TEXT, 1);
 }
+
+/**
+ * Derive `textSecondaryOnSelection` (#5249): the secondary text colour for row
+ * labels drawn on a hovered (`bgHover`) or selected (`bgActive`) row. Same
+ * approach as {@link deriveTextMutedOnSelection}: `textSecondary` is nudged in
+ * 1% steps, keeping its hue, until it reaches AA on both row backgrounds. A
+ * `textSecondary` that already passes is returned unchanged.
+ */
+export function deriveTextSecondaryOnSelection(colors: {
+  textSecondary: string;
+  bgHover: string;
+  bgActive: string;
+}): string {
+  return adjustForContrast(
+    colors.textSecondary,
+    [colors.bgHover, colors.bgActive],
+    AA_NORMAL_TEXT,
+    1
+  );
+}

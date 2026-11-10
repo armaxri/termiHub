@@ -34,6 +34,7 @@ use termihub_core::backends::ssh::host_key::{
 use tokio::sync::oneshot;
 use tracing::warn;
 
+use super::ssh_keyboard_interactive::current_prompt_owner;
 use super::ssh_trust_store::{SshTrustStore, TrustLookup};
 
 /// `ssh-host-key-prompt` payload: a server presented an untrusted host key that
@@ -61,6 +62,11 @@ pub struct SshHostKeyPromptEvent {
     pub fingerprint: String,
     pub changed: bool,
     pub previous_fingerprints: Option<Vec<String>>,
+    /// The `connect_id` of the connect that raised this prompt (for a terminal
+    /// tab `${tabId}:${retryCount}`), when known (#5243). The frontend pauses
+    /// that tab's own connect deadline while the prompt is open. `null` for a
+    /// prompt with no owning connect.
+    pub owner: Option<String>,
 }
 
 /// `ssh-host-key-prompt-closed` payload: the connect that raised prompt
@@ -222,6 +228,7 @@ impl SshHostKeyVerifier {
             fingerprint: info.fingerprint.clone(),
             changed,
             previous_fingerprints,
+            owner: current_prompt_owner(),
         });
 
         let decision = rx.await.unwrap_or(Decision {
@@ -321,6 +328,7 @@ impl HostKeyVerifier for SshHostKeyVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::ssh_keyboard_interactive::with_prompt_owner;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Records emitted prompts and returns the last `prompt_id` so a test can
@@ -483,6 +491,34 @@ mod tests {
             1,
             "no re-prompt after remember"
         );
+    }
+
+    /// The prompt names the connect that raised it (#5243), so the frontend
+    /// pauses that tab's own connect deadline; unscoped, it names none.
+    #[tokio::test]
+    async fn prompt_carries_the_connects_owner() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let v = verifier.clone();
+        let owned = tokio::spawn(async move {
+            with_prompt_owner(Some("tab-a:2"), v.verify(&info("h", 22, "SHA256:O"))).await
+        });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert!(owned.await.unwrap());
+
+        let v = verifier.clone();
+        let unowned = tokio::spawn(async move { v.verify(&info("h", 22, "SHA256:O")).await });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert!(unowned.await.unwrap());
+
+        let prompts = sink.prompts.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0].owner.as_deref(), Some("tab-a:2"));
+        assert_eq!(prompts[1].owner, None);
+        let wire = serde_json::to_value(&prompts[0]).unwrap();
+        assert_eq!(wire["owner"], "tab-a:2", "the owner is on the wire");
     }
 
     /// A changed key prompts with `changed=true` and is NOT persisted unless

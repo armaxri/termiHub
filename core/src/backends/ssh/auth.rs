@@ -166,13 +166,14 @@ where
     // The host-key check runs on russh's session task, so hand it what only
     // this task knows (#3527, #5185): whether the connect is unattended (verify
     // without prompting), the connect deadline (paused while a trust prompt is
-    // open), and a signal that fires if this task stops waiting — an abort or
-    // a connect timeout drops this future, the drop guard cancels the token,
-    // and the open prompt is dismissed instead of lingering for a connect that
-    // no longer exists. A refusal is recorded so it surfaces typed below.
+    // open), the prompt owner the trust prompt names (#5243), and a signal
+    // that fires if this task stops waiting — an abort or a connect timeout
+    // drops this future, the drop guard cancels the token, and the open prompt
+    // is dismissed instead of lingering for a connect that no longer exists. A refusal is recorded so it surfaces typed below.
     let handshake = HandshakeContext {
         unattended: super::unattended::is_unattended(),
         clock: PromptClock::capture(),
+        owner: super::prompt_owner::current_prompt_owner(),
         verifier,
         ..HandshakeContext::default()
     };

@@ -145,10 +145,14 @@
 }
 
 .file-browser__row-wrapper:hover {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 
 .file-browser__row-wrapper--selected {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-active);
 }
 
@@ -677,6 +681,8 @@
 
 .file-bookmarks__row:hover,
 .file-bookmarks__row:focus-within {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
   background-color: var(--bg-hover);
 }
 

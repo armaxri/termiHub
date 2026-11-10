@@ -3,6 +3,7 @@ import { TrustPrompt, type TrustFact } from "@/components/ui";
 import { onSshHostKeyPrompt, onSshHostKeyPromptClosed } from "@/services/events";
 import { sshHostKeyDecision } from "@/services/api";
 import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
+import { useAppStore } from "@/store/appStore";
 
 /**
  * Global interactive SSH host-key trust dialog (#1959) — the terminal analogue
@@ -25,6 +26,10 @@ import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
  * `ssh-host-key-prompt-closed` and the prompt is dropped from the queue — open
  * or still waiting — so nobody is asked to trust a key for a connect that no
  * longer exists (#5185).
+ *
+ * The prompt names its connect (`owner`); while it is open, that tab's
+ * client-side connect deadline is paused, and it resumes once the prompt is
+ * decided or closed (#5243).
  */
 export function SshHostKeyPrompt() {
   const [queue, setQueue] = useState<SshHostKeyPromptPayload[]>([]);
@@ -38,9 +43,12 @@ export function SshHostKeyPrompt() {
       else fn();
     };
     void onSshHostKeyPrompt((payload) => {
+      // The owning tab's connect deadline waits while the user decides (#5243).
+      useAppStore.getState().pauseConnectDeadlineForPrompt(payload.prompt_id, payload.owner);
       setQueue((q) => [...q, payload]);
     }).then(keep);
     void onSshHostKeyPromptClosed(({ prompt_id }) => {
+      useAppStore.getState().resumeConnectDeadlineForPrompt(prompt_id);
       setQueue((q) => q.filter((p) => p.prompt_id !== prompt_id));
     }).then(keep);
     return () => {
@@ -52,6 +60,8 @@ export function SshHostKeyPrompt() {
   const decide = useCallback(
     (accept: boolean, remember: boolean) => {
       if (!current) return;
+      // Decided: the connect's own deadline runs again (#5243).
+      useAppStore.getState().resumeConnectDeadlineForPrompt(current.prompt_id);
       void sshHostKeyDecision(current.prompt_id, accept, remember);
       setQueue((q) => q.slice(1));
     },

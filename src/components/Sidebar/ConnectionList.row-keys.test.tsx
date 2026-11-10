@@ -1,7 +1,8 @@
 /**
  * Keyboard access to the Connections tree's context actions (#5181): on a
  * focused connection or folder row, Shift+F10 / the ContextMenu key open its
- * context menu, F2 opens a connection's editor (where it is renamed), and
+ * context menu, F2 opens a connection's editor (where it is renamed) or renames
+ * a folder in place (#5233), and
  * Delete / Backspace start the same confirmed delete as the menu. Focus
  * returns to the row when the menu or dialog closes, and moves to the
  * neighbouring row once the row is deleted. A focused terminal never sees
@@ -158,11 +159,12 @@ describe("ConnectionList — row action keys (#5181)", () => {
       expect(openConnectionEditorTab).toHaveBeenCalledWith("b");
     });
 
-    it("does nothing on a folder (folders have no rename)", async () => {
+    it("renames a folder in place instead of opening an editor (#5233)", async () => {
       await render();
       press(focused(folderRow("work")), "F2");
       expect(openConnectionEditorTab).not.toHaveBeenCalled();
       expect(q("confirm-delete-dialog")).toBeNull();
+      expect((q("inline-folder-name-input") as HTMLInputElement).value).toBe("Work");
     });
   });
 
@@ -240,7 +242,7 @@ describe("ConnectionList — row action keys (#5181)", () => {
   it("announces the keys via aria-keyshortcuts", async () => {
     await render();
     expect(connRow("b").getAttribute("aria-keyshortcuts")).toBe("Shift+F10 F2 Delete");
-    expect(folderRow("work").getAttribute("aria-keyshortcuts")).toBe("Shift+F10 Delete");
+    expect(folderRow("work").getAttribute("aria-keyshortcuts")).toBe("Shift+F10 F2 Delete");
   });
 
   it("does not act on the keys while a terminal has focus", async () => {

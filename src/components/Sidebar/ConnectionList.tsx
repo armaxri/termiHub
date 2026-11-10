@@ -91,6 +91,10 @@ import {
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
+import {
+  useConnectionFolderRename,
+  type ConnectionFolderRenameActions,
+} from "./useConnectionFolderRename";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 import { SidebarGroupHeader } from "./SidebarGroupHeader";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -146,6 +150,8 @@ interface TreeNavProps {
   onRowFocus: (index: number) => void;
   /** Keyboard / menu move commands for connection rows (#4528). */
   moveActions: ConnectionMoveActions;
+  /** Inline rename for folder rows (#5233). */
+  folderRename: ConnectionFolderRenameActions;
 }
 
 interface TreeNodeProps extends TreeNavProps {
@@ -196,6 +202,7 @@ function TreeNode({
   onTreeKeyDown,
   onRowFocus,
   moveActions,
+  folderRename,
 }: TreeNodeProps) {
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   // Under an active filter, matched folders are force-expanded regardless of
@@ -231,53 +238,70 @@ function TreeNode({
 
   return (
     <div className="connection-tree__node" role="none">
-      <ContextMenuRoot>
-        <ContextMenuTrigger asChild>
-          <TreeFolderRow
-            buttonRef={setRowNode}
-            label={folder.name}
-            icon={<FolderIcon iconColor={folder.iconColor} iconEmoji={folder.iconEmoji} />}
-            expanded={expanded}
-            indentPx={treeRowPaddingLeft(depth)}
-            ariaLevel={depth + 1}
-            tabIndex={rowIndex === activeIndex ? 0 : -1}
-            dropOver={isConnectionOver}
-            testId={`folder-toggle-${folder.id}`}
-            onClick={() => onToggle(folder.id)}
-            onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
-            onFocus={() => onRowFocus(rowIndex)}
-            aria-keyshortcuts={treeRowKeyShortcuts({ delete: true })}
-          />
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <MenuItem
-            onSelect={() => onNewConnectionInFolder(folder.id)}
-            data-testid="context-folder-new-connection"
-          >
-            <Plus size={14} /> New Connection
-          </MenuItem>
-          <MenuItem
-            onSelect={() => setCreatingSubfolder(true)}
-            data-testid="context-folder-new-subfolder"
-          >
-            <FolderPlus size={14} /> New Subfolder
-          </MenuItem>
-          <MenuItem
-            onSelect={() => onFolderAppearance(folder.id)}
-            data-testid="context-folder-appearance"
-          >
-            <Palette size={14} /> Appearance…
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem
-            danger
-            onSelect={() => onDeleteFolder(folder.id)}
-            data-testid="context-folder-delete"
-          >
-            <Trash2 size={14} /> Delete Folder
-          </MenuItem>
-        </ContextMenuContent>
-      </ContextMenuRoot>
+      {folderRename.renamingId === folder.id ? (
+        <InlineFolderInput
+          depth={depth}
+          initialName={folder.name}
+          ariaLabel={`Rename folder ${folder.name}`}
+          validate={(name) => folderRename.validate(folder, name)}
+          onConfirm={(name) => folderRename.commit(folder, name)}
+          onCancel={(reason) => folderRename.cancel(folder, reason)}
+        />
+      ) : (
+        <ContextMenuRoot>
+          <ContextMenuTrigger asChild>
+            <TreeFolderRow
+              buttonRef={setRowNode}
+              label={folder.name}
+              icon={<FolderIcon iconColor={folder.iconColor} iconEmoji={folder.iconEmoji} />}
+              expanded={expanded}
+              indentPx={treeRowPaddingLeft(depth)}
+              ariaLevel={depth + 1}
+              tabIndex={rowIndex === activeIndex ? 0 : -1}
+              dropOver={isConnectionOver}
+              testId={`folder-toggle-${folder.id}`}
+              onClick={() => onToggle(folder.id)}
+              onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
+              onFocus={() => onRowFocus(rowIndex)}
+              aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <MenuItem
+              onSelect={() => onNewConnectionInFolder(folder.id)}
+              data-testid="context-folder-new-connection"
+            >
+              <Plus size={14} /> New Connection
+            </MenuItem>
+            <MenuItem
+              onSelect={() => setCreatingSubfolder(true)}
+              data-testid="context-folder-new-subfolder"
+            >
+              <FolderPlus size={14} /> New Subfolder
+            </MenuItem>
+            <MenuItem
+              onSelect={() => onFolderAppearance(folder.id)}
+              data-testid="context-folder-appearance"
+            >
+              <Palette size={14} /> Appearance…
+            </MenuItem>
+            <MenuItem
+              onSelect={() => folderRename.start(folder.id)}
+              data-testid="context-folder-rename"
+            >
+              <Pencil size={14} /> Rename
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              danger
+              onSelect={() => onDeleteFolder(folder.id)}
+              data-testid="context-folder-delete"
+            >
+              <Trash2 size={14} /> Delete Folder
+            </MenuItem>
+          </ContextMenuContent>
+        </ContextMenuRoot>
+      )}
       {expanded && (
         <div className="connection-tree__children" role="group">
           {creatingSubfolder && (
@@ -318,6 +342,7 @@ function TreeNode({
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
               moveActions={moveActions}
+              folderRename={folderRename}
             />
           ))}
           {visibleConnections.map((conn) => (
@@ -1230,9 +1255,19 @@ export function ConnectionList() {
     [deleteFolderWithUndo, confirmFolderDelete, takeFolderOptOut, folders, allConnections]
   );
 
+  // Inline folder rename (#5233): the menu's Rename item and F2 on a folder row.
+  const folderRename = useConnectionFolderRename({
+    folders,
+    connections: allConnections,
+    updateFolder,
+    getNodeIndex,
+    focusRow,
+  });
+
   // Row-action keys on a focused tree row (#5181): Shift+F10 / the Menu key
   // open its context menu, F2 opens a connection's editor (where it is
-  // renamed), Delete / Backspace start the same confirmed delete as the menu.
+  // renamed) or renames a folder in place (#5233), Delete / Backspace start the
+  // same confirmed delete as the menu.
   // Focus moves to the neighbouring row once the deleted row is gone. Every
   // other key falls through to the tree navigation handler.
   const handleRowKeyDown = useCallback(
@@ -1247,11 +1282,22 @@ export function ConnectionList() {
                 onRename: () => handleEdit(node.id),
                 onDelete: (row) => handleDelete(node.id, captureNeighborFocus(row)),
               }
-            : { onDelete: (row) => handleDeleteFolder(node.id, captureNeighborFocus(row)) }
+            : {
+                onRename: () => folderRename.start(node.id),
+                onDelete: (row) => handleDeleteFolder(node.id, captureNeighborFocus(row)),
+              }
         );
       if (!handled) handleTreeKeyDown(event, nodeId);
     },
-    [treeNodes, getNodeIndex, handleEdit, handleDelete, handleDeleteFolder, handleTreeKeyDown]
+    [
+      treeNodes,
+      getNodeIndex,
+      handleEdit,
+      handleDelete,
+      handleDeleteFolder,
+      handleTreeKeyDown,
+      folderRename,
+    ]
   );
 
   const handleCreateFolder = useCallback(
@@ -1633,6 +1679,7 @@ export function ConnectionList() {
               getRowRef={getRowRef}
               onTreeKeyDown={handleRowKeyDown}
               onRowFocus={handleRowFocus}
+              folderRename={folderRename}
               moveActions={moveActions}
             />
           )}
@@ -1870,6 +1917,7 @@ function RootDropZone({
   onTreeKeyDown,
   onRowFocus,
   moveActions,
+  folderRename,
 }: RootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "root",
@@ -1939,6 +1987,7 @@ function RootDropZone({
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
               moveActions={moveActions}
+              folderRename={folderRename}
             />
           ))}
           {visibleRootConnections.map((conn) => (

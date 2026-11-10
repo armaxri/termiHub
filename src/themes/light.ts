@@ -33,6 +33,10 @@ export const lightTheme: ThemeDefinition = {
     // Text
     textPrimary: "#383a42",
     textSecondary: "#5e6670",
+    // #5249: secondary labels on hovered/selected rows. #5e6670 measures
+    // 4.00:1 on bgActive; deriveTextSecondaryOnSelection nudges it towards
+    // black (5.37:1 on bgHover, 4.53:1 on bgActive). Locked by contrast.test.ts.
+    textSecondaryOnSelection: "#565e67",
     textMuted: "#686d74",
     // #5200: muted hints on hovered/selected rows. #686d74 measures 4.25:1 on
     // bgHover and 3.59:1 on bgActive; deriveTextMutedOnSelection nudges it 14%
