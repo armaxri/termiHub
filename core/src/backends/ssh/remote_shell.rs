@@ -664,9 +664,12 @@ pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
 ///   command ran without the configured environment (#4604).
 /// - cmd.exe, when it has env or X11 setup to type (#4610): it starts under
 ///   the same Windows ConPTY, so the same early-input window applies to its
-///   `set` line. It gets no integration line, so the gate waits for the
-///   setup's answer to settle ([`SetupDone::OutputSettled`]). A cmd.exe host
-///   with nothing to set up is left ungated, as before.
+///   `set` line. Without the hook it gets no integration line, so the gate
+///   waits for the setup's answer to settle ([`SetupDone::OutputSettled`]).
+///   The hold is also what makes the Alt+F7 history clear of the joined
+///   cmd.exe line safe (#5109, #5131): no input of the user's reaches the
+///   console before it. A cmd.exe host with nothing to set up is left
+///   ungated, as before.
 /// - POSIX shells never: they read the LF-ended lines fine from the cooked
 ///   tty, and their behaviour stays unchanged. A POSIX shell on Windows
 ///   (#5015) keeps that pre-#5009 behaviour too: ungated and unfiltered.
@@ -1091,9 +1094,10 @@ pub struct SetupGate {
     /// Whether the terminal's answers to the shell's queries pass while
     /// holding ([`pass_terminal_replies`](Self::pass_terminal_replies)).
     pass_replies: bool,
-    /// The terminal's width when the setup is joined into one cmd.exe line
-    /// at the first prompt ([`join_cmd_setup`](Self::join_cmd_setup)).
-    cmd_join: Option<u16>,
+    /// The terminal's width, and whether the hook's `PROMPT` is part of it,
+    /// when the setup is joined into one cmd.exe line at the first prompt
+    /// ([`join_cmd_setup`](Self::join_cmd_setup)).
+    cmd_join: Option<(u16, bool)>,
     /// The output before the first prompt settled, kept (up to
     /// [`CMD_PROMPT_OUTPUT_CAP`] bytes) to find the prompt's column.
     before_prompt: Vec<u8>,
@@ -1131,9 +1135,16 @@ impl SetupGate {
     /// Join the setup lines into one cmd.exe line when they are typed, at a
     /// terminal `cols` wide (#5109): the first prompt's column, read from the
     /// output so far, says how many rows the line's echo will take, which the
-    /// line then erases ([`join_cmd_setup`]).
-    pub fn join_cmd_setup(&mut self, cols: u16) {
-        self.cmd_join = Some(cols);
+    /// line then erases ([`join_cmd_setup`]). `hook` says whether the line
+    /// sets the Command Marks `PROMPT`; without it (#5131) the env / X11
+    /// lines are still joined, hidden and taken out of the history.
+    ///
+    /// The line's Alt+F7 clears the console's whole command history, which
+    /// is safe only because this gate holds the user's input from the start
+    /// until the setup has run: build the gate holding (see
+    /// [`defers_setup_until_prompt`]), with either [`SetupDone`].
+    pub fn join_cmd_setup(&mut self, cols: u16, hook: bool) {
+        self.cmd_join = Some((cols, hook));
     }
 
     /// Let the terminal's answers to the shell's own queries through while
@@ -1264,7 +1275,7 @@ impl SetupGate {
                     last_output: None,
                     marks: PromptMarkDetector::new(),
                 };
-                if let Some(cols) = self.cmd_join.take() {
+                if let Some((cols, hook)) = self.cmd_join.take() {
                     let lines: Vec<String> = self
                         .setup
                         .iter()
@@ -1272,7 +1283,8 @@ impl SetupGate {
                         .collect();
                     let col = cursor_column(&self.before_prompt, usize::from(cols));
                     self.before_prompt = Vec::new();
-                    self.setup = vec![join_cmd_setup(&lines, col, usize::from(cols)).into_bytes()];
+                    let joined = join_cmd_setup(&lines, hook, col, usize::from(cols));
+                    self.setup = vec![joined.into_bytes()];
                 }
                 self.setup.clone()
             }
@@ -1903,7 +1915,7 @@ mod tests {
             SetupDone::PromptMark,
             t0,
         );
-        gate.join_cmd_setup(40);
+        gate.join_cmd_setup(40, true);
         assert_eq!(gate.setup(b"set \"V=x\"\r".to_vec()), None);
         assert_eq!(gate.setup(cmd_hook_line().into_bytes()), None);
         assert_eq!(gate.write(b"dir\r".to_vec()), None);
@@ -1924,6 +1936,58 @@ mod tests {
         assert!(gate.poll(t0 + SETUP_GATE_SETTLE).is_empty());
         gate.on_output(t0 + SETUP_GATE_SETTLE, b"\x1b]133;A\x1b\\C:\\>");
         assert_eq!(gate.poll(t0 + SETUP_GATE_SETTLE), vec![b"dir\r".to_vec()]);
+    }
+
+    /// #5131: without the hook, a cmd.exe gate with env / X11 setup types it
+    /// as ONE line too — no PROMPT, the echo erase, CR and Alt+F7 — and opens
+    /// once the setup's output settles. The user's input, held from the
+    /// start, follows the Alt+F7, so the clear cannot take a line of theirs.
+    #[test]
+    fn cmd_setup_without_the_hook_is_joined_and_settles() {
+        use super::super::cmd_hook::CMD_CLEAR_HISTORY;
+        let mut env_vars = HashMap::new();
+        env_vars.insert("V".to_string(), "x".to_string());
+        let env_line = env_setup_line(RemoteShell::Cmd, &env_vars).unwrap();
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(
+            defers_setup_until_prompt(RemoteShell::Cmd, true),
+            SetupDone::OutputSettled,
+            t0,
+        );
+        gate.join_cmd_setup(40, false);
+        assert_eq!(gate.setup(env_line.into_bytes()), None);
+        for line in x11_setup_lines(RemoteShell::Cmd, 10, None) {
+            assert_eq!(gate.setup(line.into_bytes()), None);
+        }
+        // Typed before the first prompt: held, behind the setup.
+        assert_eq!(gate.write(b"dir\r".to_vec()), None);
+        gate.on_output(t0, b"\x1b[2J\x1b[HBanner\r\n\x1b[3;1HC:\\Users\\abcdefghi>");
+        let t1 = t0 + SETUP_GATE_SETTLE;
+        let typed = gate.poll(t1);
+        assert_eq!(typed.len(), 1, "one joined line");
+        let line = String::from_utf8(typed[0].clone()).unwrap();
+        let (body, tail) = line.split_once('\r').unwrap();
+        assert_eq!(tail, CMD_CLEAR_HISTORY, "Alt+F7 in the same write");
+        assert!(
+            body.starts_with("set \"V=x\"&set \"DISPLAY=localhost:10.0\"&\"%SystemRoot%"),
+            "{body}"
+        );
+        assert!(!body.contains("PROMPT"), "{body}");
+        let up = (20 + body.chars().count()).div_ceil(40) + 1;
+        assert!(
+            body.contains(&format!("prompt $E[{up}A$E[J$E[A<nul")),
+            "{body}"
+        );
+        // The user's input waits for the setup's answer to settle.
+        assert!(gate.poll(t1 + SETUP_GATE_SETTLE).is_empty());
+        let answered = t1 + ms(40);
+        gate.on_output(answered, b"\x1b[3;1H\x1b[J\r\nC:\\Users\\abcdefghi>");
+        assert!(gate.poll(answered + SETUP_GATE_SETTLE - ms(1)).is_empty());
+        assert_eq!(
+            gate.poll(answered + SETUP_GATE_SETTLE),
+            vec![b"dir\r".to_vec()]
+        );
+        assert!(!gate.is_holding());
     }
 
     // ── Env-var fallback per shell (#4147) ──────────────────────────────

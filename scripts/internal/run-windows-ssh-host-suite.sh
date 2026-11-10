@@ -24,7 +24,8 @@
 #    under PowerShell 7 (DefaultShell switched to pwsh.exe and back).
 # 5. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
 #    (#5109): with the opt-in hook on, a cd is reported, no setup text is
-#    left on screen and nothing of it is in the console's command history.
+#    left on screen and nothing of it is in the console's command history --
+#    and with the hook off an env var's setup leaves neither (#5131).
 #
 # Steps: build the agent, set HKLM\SOFTWARE\OpenSSH\DefaultShell, bring up the
 # native sshd fixture (native-sshd-fixture.sh, which hands over to its
