@@ -36,6 +36,10 @@ import { ThemePreview } from "./ThemePreview";
 import { SettingsField } from "./SettingsField";
 import { WorkspaceOverrideNotice } from "./WorkspaceOverrideNotice";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
+import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
+import { useUndoableDeleteOptOut } from "@/hooks/useUndoableDeleteOptOut";
+import { showUndoToast } from "@/utils/undoableDelete";
+import { restoreTheme } from "./restoreTheme";
 import "./AppearanceSettings.css";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -65,6 +69,10 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
 
   /** The theme currently open in the editor (new or a copy of an existing one). */
   const [editing, setEditing] = useState<ThemeDefinition | null>(null);
+
+  /** The custom theme awaiting delete confirmation (#5158). */
+  const [pendingDelete, setPendingDelete] = useState<ThemeDefinition | null>(null);
+  const themeOptOut = useUndoableDeleteOptOut();
 
   /** Themes contributed by active theme plugins (#1996), shown under a separator. */
   const pluginThemes = useAppStore((s) => s.pluginThemes);
@@ -110,14 +118,35 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     toast.success(`Theme "${saved.name}" saved`);
   };
 
-  const handleDeleteTheme = () => {
-    if (!selectedCustom) return;
-    const deleted = selectedCustom;
+  /** Delete `deleted`, then offer a 10 s Undo that restores it (#5158). */
+  const deleteTheme = (deleted: ThemeDefinition, optOut: boolean) => {
+    const index = customThemes.findIndex((t) => t.id === deleted.id);
     const nextThemes = customThemes.filter((t) => t.id !== deleted.id);
     // Fall back to Dark when the theme being deleted is the active one.
-    const nextTheme = isCustomThemeSetting(settings.theme) ? "dark" : settings.theme;
-    onChange({ ...settings, customThemes: nextThemes, theme: nextTheme });
-    toast.success(`Theme "${deleted.name}" deleted`);
+    const previousTheme = settings.theme;
+    const nextTheme = isCustomThemeSetting(previousTheme) ? "dark" : previousTheme;
+    onChange({
+      ...settings,
+      customThemes: nextThemes,
+      theme: nextTheme,
+      ...(optOut ? { confirmUndoableDelete: false } : {}),
+    });
+    showUndoToast(`Theme "${deleted.name}" deleted`, {
+      testId: "theme-delete-undo-toast",
+      onUndo: () => {
+        restoreTheme(deleted, index, previousTheme, nextTheme);
+        toast.success(`Theme "${deleted.name}" restored`);
+      },
+    });
+  };
+
+  const handleDeleteTheme = () => {
+    if (!selectedCustom) return;
+    if (themeOptOut.shouldConfirm) {
+      setPendingDelete(selectedCustom);
+      return;
+    }
+    deleteTheme(selectedCustom, false);
   };
 
   const handleExportTheme = async () => {
@@ -286,6 +315,20 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           </div>
         </>
       )}
+      <ConfirmDeleteDialog
+        open={pendingDelete !== null}
+        message={pendingDelete ? `Delete theme “${pendingDelete.name}”?` : ""}
+        dontAskAgain={themeOptOut.dontAskAgain}
+        onConfirm={() => {
+          const target = pendingDelete;
+          setPendingDelete(null);
+          if (target) deleteTheme(target, themeOptOut.take());
+        }}
+        onCancel={() => {
+          themeOptOut.reset();
+          setPendingDelete(null);
+        }}
+      />
       {editing && (
         <ThemeEditor
           open={editing !== null}
