@@ -1102,7 +1102,12 @@ describe("useRemoteDesktopSession — typed password saved only once connected (
     const { persist, outcome } = hold(tabId);
     renderSession(tabId);
     await flush();
-    act(() => useAppStore.getState().closeTab(tabId, useAppStore.getState().activePanelId!));
+    const panel = useAppStore
+      .getState()
+      .getAllPanels()
+      .find((l) => l.tabs.some((t) => t.id === tabId));
+    if (!panel) throw new Error("tab has no panel");
+    act(() => useAppStore.getState().closeTab(tabId, panel.id));
     act(() => root.render(<></>));
     await flush();
     await expect(outcome).resolves.toBe("discarded");
