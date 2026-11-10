@@ -152,6 +152,34 @@ describe("ConfirmSessionCloseDialog", () => {
     );
   });
 
+  it("Don't ask again from the shortcut clears confirmCloseTabOnShortcut only (#5189)", () => {
+    const updateSettings = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ updateSettings });
+    useAppStore.getState().addTab("w", "local");
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
+    render();
+
+    act(() =>
+      useAppStore.getState().setPendingSessionCloseConfirm({
+        kind: "tab",
+        tabId: panel.tabs[0].id,
+        panelId: panel.id,
+        label: "w",
+        reopen: null,
+        optOutSetting: "confirmCloseTabOnShortcut",
+      })
+    );
+
+    act(() => q("confirm-dialog-dont-ask-again").click());
+    act(() => q("confirm-dialog-confirm").click());
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ confirmCloseTabOnShortcut: false })
+    );
+    expect(updateSettings).not.toHaveBeenCalledWith(
+      expect.objectContaining({ confirmCloseLiveSession: false })
+    );
+  });
+
   it("Don't ask again then Cancel does NOT persist the preference", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });

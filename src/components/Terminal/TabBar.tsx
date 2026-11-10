@@ -3,8 +3,6 @@ import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortabl
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
-import { currentSettingsView } from "@/store/settingsBridge";
-import { currentSessionView, effectiveExitedMap } from "@/store/sessionBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { TerminalTab } from "@/types/terminal";
@@ -19,7 +17,7 @@ import { deriveTabStatus } from "@/utils/tabStatus";
 import { macroReceivingInfo } from "@/utils/macroTabMarker";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
-import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
+import { continueTabClose, requestTabClose } from "@/utils/tabCloseFlow";
 import { ConfirmDialog } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
@@ -49,8 +47,6 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
-  const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
-  const setPendingAttachedTabCloseConfirm = useAppStore((s) => s.setPendingAttachedTabCloseConfirm);
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
   // Render cut (#2205 PR-A / #2625): the session-lifecycle maps (connecting /
   // reconnecting / disconnect errors / exited) are sourced purely from the projected
@@ -131,66 +127,31 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // dirty tabs whose editor does not render its own prompt, see `routeDirtyTabClose`).
   const [unsavedCloseTabId, setUnsavedCloseTabId] = useState<string | null>(null);
 
-  // Continue the close flow once any unsaved-changes gate has been cleared:
-  // warn before tearing down a live session, otherwise close and offer Undo.
+  // Continue the close once any unsaved-changes gate has cleared, through the
+  // close decision every single-tab close path shares (#5189).
   const finishCloseTab = (tabId: string) => {
-    const state = useAppStore.getState();
     const tab = tabs.find((t) => t.id === tabId);
-
     if (!tab) {
       closeTab(tabId, panelId);
       return;
     }
-
-    // A tab attached to a persistent background session is not torn down by
-    // closing it — it merely detaches, leaving the process running. Show a
-    // one-time reassuring notice (unless opted out) instead of the live-session
-    // warning, which would wrongly imply the session ends (#1930).
-    if (tab.persistentConnectionId && currentSettingsView().confirmCloseAttachedTab !== false) {
-      setPendingAttachedTabCloseConfirm({ tabId, panelId, label: tab.title });
-      return;
-    }
-
-    // Warn before the X / middle-click tears down a live session — unless the
-    // user opted out via "Don't ask again". The keyboard close path is gated
-    // separately by `confirmCloseTabOnShortcut`.
-    const isLive = tabHasLiveSession(tab, {
-      // #2625: region-only exited map, read synchronously here since this is an
-      // imperative close handler, not render.
-      terminalExitedTabs: effectiveExitedMap(currentSessionView()),
-      terminalSpawnErrors: state.terminalSpawnErrors,
-    });
-    if (isLive && currentSettingsView().confirmCloseLiveSession !== false) {
-      setPendingSessionCloseConfirm({
-        kind: "tab",
-        tabId,
-        panelId,
-        label: tab.title,
-        reopen: reopenPayloadForTab(tab),
-      });
-      return;
-    }
-
-    closeTab(tabId, panelId);
-    showReopenToast(reopenPayloadForTab(tab));
+    continueTabClose(tab, panelId, "pointer");
   };
 
   const handleCloseTab = (tabId: string) => {
-    // The shared single-tab guard (#4410), also used by the close-tab shortcut.
-    // It reads editorDirtyTabs fresh from the store, since the render-time
-    // snapshot may lag behind a setEditorDirty call that hasn't re-rendered yet.
-    // Self-prompting editors show their own unsaved-changes dialog off
-    // pendingCloseRequest; any other dirty tab gets the shared confirm below,
-    // and the actual close is deferred to `finishCloseTab`.
+    // The shared single-tab close decision (#4410, #5189), also used by the
+    // close-tab shortcut. Self-prompting editors show their own unsaved-changes
+    // dialog off pendingCloseRequest; any other dirty tab gets the shared
+    // confirm below, and the actual close is deferred to `finishCloseTab`.
     const tab = tabs.find((t) => t.id === tabId);
-    const route = routeDirtyTabClose(tab ?? { id: tabId }, panelId);
-    if (route === "self-prompt") return;
-    if (route === "generic-prompt") {
-      setUnsavedCloseTabId(tabId);
+    if (!tab) {
+      if (routeDirtyTabClose({ id: tabId }, panelId) === "clean") closeTab(tabId, panelId);
+      else setUnsavedCloseTabId(tabId);
       return;
     }
-
-    finishCloseTab(tabId);
+    if (requestTabClose(tab, panelId, "pointer") === "generic-prompt") {
+      setUnsavedCloseTabId(tabId);
+    }
   };
 
   const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;

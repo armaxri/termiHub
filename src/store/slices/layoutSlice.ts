@@ -136,11 +136,12 @@ export interface LayoutSlice {
   setPendingCloseRequest: (req: { tabId: string; panelId: string } | null) => void;
 
   /**
-   * Confirmation request shown when the user closes a tab (or tab group) via
-   * keyboard shortcut while `settings.confirmCloseTabOnShortcut` is enabled.
-   * A `tab` request with `unsaved: true` is the generic unsaved-changes prompt
-   * for a dirty tab without a prompt of its own, raised whatever that setting
-   * is (#4410). Null when no dialog is open.
+   * Confirmation request raised by the close-tab / close-tab-group shortcuts.
+   * A `tab` request is the generic unsaved-changes prompt for a dirty tab
+   * without a prompt of its own (#4410; `unsaved` is always true) — a clean
+   * tab goes through the shared close decision instead (#5189). A `tab-group`
+   * request is the plain group confirm while
+   * `settings.confirmCloseTabOnShortcut` is enabled. Null when no dialog is open.
    */
   pendingShortcutCloseConfirm:
     | { kind: "tab"; tabId: string; panelId: string; label: string; unsaved?: boolean }

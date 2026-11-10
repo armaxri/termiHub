@@ -8,7 +8,7 @@ import {
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import { requestTabGroupCloseConfirm } from "@/utils/tabGroupCloseGuard";
-import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
+import { requestTabClose } from "@/utils/tabCloseFlow";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { getCommandMarkTracker } from "@/services/commandMarks";
 
@@ -59,9 +59,11 @@ function activeTerminalHasCommandMarks(): boolean {
 }
 
 /**
- * Close the active tab, first routing a dirty tab through the shared
- * unsaved-changes guard (#4410) exactly as the tab X does, then honouring the
- * confirm-on-shortcut setting for a clean tab.
+ * Close the active tab through the close decision the tab X uses (#5189): an
+ * unsaved tab prompts (#4410), a live session gets the live-session confirm,
+ * a persistent session the background notice, and anything else (exited,
+ * settings, clean editor) closes at once with a Reopen toast. The shortcut's
+ * prompts are gated by `confirmCloseTabOnShortcut`.
  */
 function closeActiveTab(): void {
   const panel = activeLeaf();
@@ -69,28 +71,18 @@ function closeActiveTab(): void {
   const tabId = panel.activeTabId;
   const activeTab = panel.tabs.find((t) => t.id === tabId);
   const state = useAppStore.getState();
-  const label = activeTab?.title ?? "this tab";
-  if (activeTab) {
-    // Unsaved edits always prompt, whatever confirmCloseTabOnShortcut says:
-    // the setting only gates the plain "close this tab?" confirm.
-    const route = routeDirtyTabClose(activeTab, panel.id);
-    if (route === "self-prompt") return;
-    if (route === "generic-prompt") {
-      state.setPendingShortcutCloseConfirm({
-        kind: "tab",
-        tabId,
-        panelId: panel.id,
-        label,
-        unsaved: true,
-      });
-      return;
-    }
-  }
-  const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
-  if (confirmEnabled) {
-    state.setPendingShortcutCloseConfirm({ kind: "tab", tabId, panelId: panel.id, label });
-  } else {
+  if (!activeTab) {
     state.closeTab(tabId, panel.id);
+    return;
+  }
+  if (requestTabClose(activeTab, panel.id, "shortcut") === "generic-prompt") {
+    state.setPendingShortcutCloseConfirm({
+      kind: "tab",
+      tabId,
+      panelId: panel.id,
+      label: activeTab.title,
+      unsaved: true,
+    });
   }
 }
 
