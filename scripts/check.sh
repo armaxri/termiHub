@@ -191,6 +191,15 @@ else
 fi
 
 echo ""
+echo "=== No cfg!(test) in non-test Rust code ==="
+# The tested binary must be the shipped one: inject a flag/trait instead (#5163).
+if node scripts/internal/check-no-cfg-test.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1
