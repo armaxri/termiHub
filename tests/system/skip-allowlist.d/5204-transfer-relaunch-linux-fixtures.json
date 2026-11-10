@@ -1,0 +1,4 @@
+{
+  "why": "#5204: the two transfer-relaunch cases need the Linux ssh-password container, which the hosted macOS and Windows runners cannot run; they skip there under the existing no-container-runtime / Windows-containers entries",
+  "max_skips": { "bulk-macos": 2, "bulk-windows": 2 }
+}
