@@ -4,6 +4,8 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox } from "@/components/ui";
 import "./PasswordPrompt.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
+import { CREDENTIAL_STORAGE_OFF_TEXT } from "@/utils/credentialStorageCopy";
 
 /**
  * Global dialog that prompts the user for an SSH password at connect time.
@@ -13,6 +15,11 @@ import { isImeComposing } from "@/utils/imeComposition";
  * for future connections without having to re-enter it. A caller that never
  * persists the secret (Test Connection, #3316) opts out via
  * `requestPassword(..., { allowSave: false })`, which hides the checkbox.
+ *
+ * With credential storage off (None mode, #5186) the row still shows, disabled,
+ * with an "Enable credential storage…" action: it closes the prompt (the
+ * connect is cancelled) and opens the storage setting, so saving stays
+ * discoverable.
  *
  * Saving happens only after the connect succeeds (#5156): a ticked box asks the
  * caller to persist the secret once the session is established, so a typo is
@@ -43,6 +50,9 @@ export function PasswordPrompt() {
 
   const storeActive = credentialStoreStatus != null && credentialStoreStatus.mode !== "none";
   const showSave = storeActive && allowSave;
+  // Storage off (#5186): show the save row disabled with a way to enable
+  // storage, so the user can discover that saving exists.
+  const showStorageOff = credentialStoreStatus?.mode === "none" && allowSave;
 
   // A key passphrase unlocks a private key file — it is not the remote account
   // password, so label the prompt accordingly (UX-010).
@@ -157,6 +167,36 @@ export function PasswordPrompt() {
             />
             <span>{saveLabel}</span>
           </label>
+        )}
+        {showStorageOff && (
+          <>
+            <label
+              className="password-prompt__save-label password-prompt__save-label--disabled"
+              data-testid="password-prompt-save-label"
+            >
+              <Checkbox
+                checked={false}
+                disabled
+                aria-label={saveLabel}
+                aria-describedby={saveHintId}
+                data-testid="password-prompt-save-checkbox"
+              />
+              <span>{saveLabel}</span>
+            </label>
+            <div className="password-prompt__storage-off">
+              <p
+                id={saveHintId}
+                className="password-prompt__save-hint"
+                data-testid="password-prompt-storage-off"
+              >
+                {CREDENTIAL_STORAGE_OFF_TEXT}
+              </p>
+              <EnableCredentialStorageButton
+                onBeforeOpen={dismissPasswordPrompt}
+                data-testid="password-prompt-enable-storage"
+              />
+            </div>
+          </>
         )}
         {showSave && (
           <p

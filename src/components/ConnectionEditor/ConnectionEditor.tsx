@@ -1832,6 +1832,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               : undefined
           }
           credentialSavedHint={credentialSavedHint}
+          credentialStorageOff={credentialStoreStatus?.mode === "none"}
           storedFieldSecrets={storedSecrets.fields}
           availablePorts={
             isAgentDefinitionMode

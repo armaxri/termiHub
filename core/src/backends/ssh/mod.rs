@@ -447,14 +447,16 @@ impl ConnectionType for Ssh {
                             key: "savePassword".to_string(),
                             label: "Save credentials".to_string(),
                             description: Some("Store credentials for automatic login".to_string()),
+                            // Mode-neutral (#5186): where the secret goes depends on
+                            // the credential storage mode, which the frontend knows
+                            // and appends (`src/utils/credentialStorageCopy.ts`).
                             help_text: Some(concat!(
-                                "When enabled, termiHub stores your credentials in an encrypted vault ",
-                                "on disk so you are not prompted on every connection.\n\n",
+                                "When enabled, termiHub saves your credentials in the credential ",
+                                "store chosen under Settings ▸ Security, so you are not prompted ",
+                                "on every connection.\n\n",
                                 "For password authentication, the SSH password is saved.\n",
                                 "For key authentication, the passphrase protecting your private key is saved ",
-                                "(not the key file itself — keys are never stored by termiHub).\n\n",
-                                "The vault is protected by your master password using AES-256-GCM encryption. ",
-                                "You will be asked for the master password once per session to unlock the vault.",
+                                "(not the key file itself — keys are never stored by termiHub).",
                             ).to_string()),
                             field_type: FieldType::Boolean,
                             required: false,
@@ -1417,6 +1419,28 @@ mod tests {
             keys,
             vec!["authMethod", "password", "keyPath", "savePassword"]
         );
+    }
+
+    /// #5186: the save-credentials help is mode-neutral — the frontend appends
+    /// the storage-mode paragraph, so the schema must not assume a master
+    /// password vault (wrong in the default None mode and for OS Keychain).
+    #[test]
+    fn save_password_help_is_storage_mode_neutral() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .find(|f| f.key == crate::connection::SAVE_PASSWORD_KEY)
+            .expect("the save-credentials field");
+        let help = field.help_text.as_deref().expect("help text");
+        let lower = help.to_lowercase();
+        for banned in ["master password", "vault", "aes-256", "keychain"] {
+            assert!(!lower.contains(banned), "{banned:?} in {help:?}");
+        }
+        assert!(help.contains("Settings ▸ Security"), "{help:?}");
+        assert!(help.contains("passphrase protecting your private key"), "{help:?}");
     }
 
     /// #5028: the hook's help says which hosts are followed without it, and
