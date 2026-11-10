@@ -1,6 +1,8 @@
 #!/bin/sh
-# Start both RDP servers of the fixture:
+# Start the RDP servers of the fixture:
 #   * xrdp (port 3389): xrdp-sesman (session manager, PAM auth) + xrdp.
+#   * a second xrdp (port 3391) on the same sesman that advertises no fast-path
+#     input, so clients must send slow-path input (#5138).
 #   * FreeRDP shadow server (port 3390): NLA/CredSSP against /etc/winpr/SAM,
 #     sharing a headless Xvfb :1 whose root is painted solid pure blue.
 set -e
@@ -23,4 +25,5 @@ done
 DISPLAY=:1 freerdp-shadow-cli3 /port:3390 /sam-file:/etc/winpr/SAM &
 
 /usr/sbin/xrdp-sesman
+/usr/sbin/xrdp --nodaemon --config /etc/xrdp/xrdp-slowpath.ini &
 exec /usr/sbin/xrdp --nodaemon

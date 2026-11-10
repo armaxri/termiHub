@@ -62,6 +62,13 @@ RUN useradd -m -s /bin/bash testuser \
 # in (autologon) without any session selection. Allow the Xorg wrapper to start
 # the X server for a non-console user.
 COPY xrdp.ini /etc/xrdp/xrdp.ini
+# A second xrdp listener (port 3391) that advertises no fast-path input, so the
+# client must fall back to slow-path Input Event PDUs (#5138, RDP-19). Same
+# config otherwise; `use_fastpath=output` keeps fast-path output only.
+RUN sed -e 's/^port=3389$/port=3391/' -e 's/^use_fastpath=both$/use_fastpath=output/' \
+        /etc/xrdp/xrdp.ini > /etc/xrdp/xrdp-slowpath.ini \
+    && grep -qx 'port=3391' /etc/xrdp/xrdp-slowpath.ini \
+    && grep -qx 'use_fastpath=output' /etc/xrdp/xrdp-slowpath.ini
 COPY startwm.sh /etc/xrdp/startwm.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /etc/xrdp/startwm.sh /usr/local/bin/entrypoint.sh \

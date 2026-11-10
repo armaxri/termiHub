@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-16, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-19, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -28,7 +28,7 @@ mod common;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use common::{port_rdp, port_rdp_nla, require_docker};
+use common::{port_rdp, port_rdp_nla, port_rdp_slow_path, require_docker};
 use termihub_core::backends::rdp_sidecar::{SidecarRdp, HELPER_PATH_ENV};
 use termihub_core::connection::{
     ClipboardImage, ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, InputEvent,
@@ -1114,16 +1114,22 @@ async fn input_until(
 async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
     let _serial = SERIAL.lock().await;
     require_rdp!();
-    assert_no_helpers("RDP-12");
+    assert_input_reaches_the_server(port_rdp(), "RDP-12").await;
+}
+
+/// Connect to `port`, then send a pointer move, a left click and the `a` key
+/// and wait for each to reach the session's X server (RDP-12, RDP-19).
+async fn assert_input_reaches_the_server(port: u16, label: &str) {
+    assert_no_helpers(label);
 
     let mut rdp = SidecarRdp::new();
-    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+    rdp.connect(rdp_settings(port, RDP_PASSWORD))
         .await
-        .expect("RDP-12: connect");
-    let pid = spawned_helper_pid("RDP-12");
-    let graphical = rdp.graphical().expect("RDP-12: graphical backend present");
+        .unwrap_or_else(|e| panic!("{label}: connect: {e}"));
+    let pid = spawned_helper_pid(label);
+    let graphical = rdp.graphical().expect("graphical backend present");
     let mut frames = graphical.subscribe_frames();
-    wait_for_xrdp_session(&mut frames, "RDP-12").await;
+    wait_for_xrdp_session(&mut frames, label).await;
     let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
 
     let target = (123, 77);
@@ -1134,16 +1140,16 @@ async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
             y: target.1,
             buttons: 0,
         }],
-        || xrdp_pointer("RDP-12 pointer") == Some(target),
+        || xrdp_pointer(label) == Some(target),
     )
     .await;
     assert!(
         moved,
-        "RDP-12: the session pointer never reached {target:?} (last {:?})",
-        xrdp_pointer("RDP-12 pointer")
+        "{label}: the session pointer never reached {target:?} (last {:?})",
+        xrdp_pointer(label)
     );
 
-    let buttons_before = xrdp_input_events("ButtonPress", "button 1,", "RDP-12 click");
+    let buttons_before = xrdp_input_events("ButtonPress", "button 1,", label);
     let clicked = input_until(
         graphical,
         &[
@@ -1158,12 +1164,12 @@ async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
                 buttons: 0,
             },
         ],
-        || xrdp_input_events("ButtonPress", "button 1,", "RDP-12 click") > buttons_before,
+        || xrdp_input_events("ButtonPress", "button 1,", label) > buttons_before,
     )
     .await;
-    assert!(clicked, "RDP-12: the left click never reached the session");
+    assert!(clicked, "{label}: the left click never reached the session");
 
-    let keys_before = xrdp_input_events("KeyPress", "keysym 0x61, a)", "RDP-12 key");
+    let keys_before = xrdp_input_events("KeyPress", "keysym 0x61, a)", label);
     let typed = input_until(
         graphical,
         &[
@@ -1176,14 +1182,29 @@ async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
                 pressed: false,
             },
         ],
-        || xrdp_input_events("KeyPress", "keysym 0x61, a)", "RDP-12 key") > keys_before,
+        || xrdp_input_events("KeyPress", "keysym 0x61, a)", label) > keys_before,
     )
     .await;
-    assert!(typed, "RDP-12: the `a` key press never reached the session");
+    assert!(
+        typed,
+        "{label}: the `a` key press never reached the session"
+    );
 
     rdp.disconnect().await.expect("disconnect should succeed");
     drain.abort();
-    assert_helper_gone(pid, "RDP-12").await;
+    assert_helper_gone(pid, label).await;
+}
+
+/// The same input reaches a server that advertises no fast-path input: the
+/// fixture's second xrdp listener (`use_fastpath=output`) clears
+/// `INPUT_FLAG_FASTPATH_INPUT`/`_INPUT2`, so the sidecar sends slow-path Input
+/// Event PDUs (MS-RDPBCGR 2.2.8.1.1.3) instead (#5138).
+#[tokio::test]
+async fn rdp_19_input_without_fast_path_reaches_the_server() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    require_docker!(port_rdp_slow_path());
+    assert_input_reaches_the_server(port_rdp_slow_path(), "RDP-19").await;
 }
 
 // ── RDP-13: clipboard images (CLIPRDR CF_DIB) both ways (PROD-021) ──

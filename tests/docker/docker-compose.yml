@@ -462,6 +462,8 @@ services:
     ports:
       - "127.0.0.1:${TERMIHUB_TEST_RDP_PORT:-2601}:3389"
       - "127.0.0.1:${TERMIHUB_TEST_RDP_NLA_PORT:-2602}:3390"
+      # xrdp without fast-path input: slow-path input fallback (#5138, RDP-19).
+      - "127.0.0.1:${TERMIHUB_TEST_RDP_SLOWPATH_PORT:-2603}:3391"
     # xrdp chansrv's FUSE mount (~testuser/thinclient_drives) serves RDPDR
     # drive redirection and CLIPRDR file serve (#4086, rdp.rs RDP-15/16): it
     # needs the FUSE device, CAP_SYS_ADMIN for the setuid fusermount's
@@ -479,7 +481,12 @@ services:
       - all
     healthcheck:
       test:
-        ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/3389 && echo > /dev/tcp/localhost/3390"]
+        [
+          "CMD",
+          "bash",
+          "-c",
+          "echo > /dev/tcp/localhost/3389 && echo > /dev/tcp/localhost/3390 && echo > /dev/tcp/localhost/3391",
+        ]
       interval: 5s
       timeout: 3s
       retries: 5
