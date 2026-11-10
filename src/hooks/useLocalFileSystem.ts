@@ -25,7 +25,13 @@ import {
   seedTransferQueueRow,
 } from "./transferFeedback";
 import { toast } from "@/components/ui";
-import { describeEntries, pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
+import {
+  describeEntries,
+  pasteVerbLabels,
+  type PasteOptions,
+  type UploadTargetOptions,
+  type WriteTargetOptions,
+} from "@/utils/fileDragMove";
 import { getBasename, joinPath, normalizeDirPath, parentDir } from "@/utils/paths";
 
 /** How many skipped paths a toast names before summarising the rest. */
@@ -108,9 +114,11 @@ export function useLocalFileSystem() {
     [currentPath, refreshLocal]
   );
 
+  // New File is an atomic exclusive create unless the user confirmed replacing
+  // an existing file (#5157), so it can never truncate one silently.
   const createFile = useCallback(
-    async (name: string) => {
-      await localWriteFile(joinPath(currentPath, name), "");
+    async (name: string, options?: WriteTargetOptions) => {
+      await localWriteFile(joinPath(currentPath, name), "", { exclusive: !options?.overwrite });
       refreshLocal();
     },
     [currentPath, refreshLocal]
@@ -124,9 +132,13 @@ export function useLocalFileSystem() {
     [refreshLocal]
   );
 
+  // A no-replace rename (atomic where the OS supports it) unless the user
+  // confirmed replacing the existing entry (#5157).
   const renameEntry = useCallback(
-    async (oldPath: string, newName: string) => {
-      await localRename(oldPath, joinPath(parentDir(oldPath), newName));
+    async (oldPath: string, newName: string, options?: WriteTargetOptions) => {
+      await localRename(oldPath, joinPath(parentDir(oldPath), newName), {
+        overwrite: options?.overwrite ?? false,
+      });
       refreshLocal();
     },
     [refreshLocal]
@@ -161,8 +173,8 @@ export function useLocalFileSystem() {
   }, []);
 
   const uploadFileFromPath = useCallback(
-    async (localPath: string) => {
-      const fileName = getBasename(localPath) || "file";
+    async (localPath: string, options?: UploadTargetOptions) => {
+      const fileName = options?.destName ?? (getBasename(localPath) || "file");
       const destPath = joinPath(currentPath, fileName);
       if (normalizeDirPath(localPath) === destPath) return;
       // An OS drop onto the local pane: a large file is a queued copy whose event

@@ -201,6 +201,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
       oldPath: "/home/report.pdf",
       newPath: "/home/renamed.pdf",
+      overwrite: false,
     });
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(String(toastSuccess.mock.calls[0][0])).toContain("renamed.pdf");
@@ -281,6 +282,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("local_write_file", {
       path: "/home/notes.txt",
       content: "",
+      exclusive: true,
     });
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(String(toastSuccess.mock.calls[0][0])).toContain("notes.txt");

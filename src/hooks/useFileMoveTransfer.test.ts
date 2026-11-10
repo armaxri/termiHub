@@ -31,6 +31,7 @@ import type { PasteOptions } from "@/utils/fileDragMove";
 import {
   useFileMoveTransfer,
   type FileMoveTransfer,
+  type FileWriteRequest,
   type UseFileMoveTransferArgs,
 } from "./useFileMoveTransfer";
 
@@ -342,6 +343,143 @@ describe("useFileMoveTransfer", () => {
       });
       expect(localListDir).not.toHaveBeenCalled();
       expect(pasteEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("requestWrite — rename / upload / New File (#5157)", () => {
+    type Run = (name: string, overwrite: boolean) => Promise<void>;
+    let run: ReturnType<typeof vi.fn<Run>>;
+
+    beforeEach(() => {
+      run = vi.fn<Run>(() => Promise.resolve());
+    });
+
+    /** Start a request without awaiting it (a conflict keeps it pending). */
+    async function start(
+      req: Partial<FileWriteRequest> & Pick<FileWriteRequest, "verb" | "name">
+    ): Promise<{ done: Promise<void>; settled: () => boolean }> {
+      let settled = false;
+      let done!: Promise<void>;
+      await act(async () => {
+        done = api
+          .requestWrite({ destDir: "/home/u", run, ...req } as FileWriteRequest)
+          .then(() => {
+            settled = true;
+          });
+      });
+      return { done, settled: () => settled };
+    }
+
+    for (const verb of ["Rename", "Upload", "Create"] as const) {
+      it(`${verb}: runs at once without a prompt when the name is free`, async () => {
+        vi.mocked(localListDir).mockResolvedValueOnce([entry("/home/u/other.txt")]);
+        await mount();
+        const onDone = vi.fn();
+        const { done } = await start({ verb, name: "a.txt", onDone });
+        await done;
+        expect(run).toHaveBeenCalledWith("a.txt", false);
+        expect(onDone).toHaveBeenCalledWith("a.txt");
+        expect(api.pendingConflict).toBeNull();
+      });
+
+      it(`${verb}: asks before replacing an existing name, then replaces on confirm`, async () => {
+        vi.mocked(localListDir).mockResolvedValueOnce([entry("/home/u/a.txt")]);
+        await mount();
+        const { done, settled } = await start({ verb, name: "a.txt" });
+        expect(run).not.toHaveBeenCalled();
+        expect(api.pendingConflict).toMatchObject({
+          kind: "write",
+          verb,
+          name: "a.txt",
+          conflicts: ["a.txt"],
+          destDir: "/home/u",
+        });
+        expect(settled()).toBe(false);
+        await act(async () => {
+          await api.confirmConflict();
+        });
+        await done;
+        expect(run).toHaveBeenCalledWith("a.txt", true);
+        expect(api.pendingConflict).toBeNull();
+      });
+
+      it(`${verb}: Cancel / Skip writes nothing`, async () => {
+        vi.mocked(localListDir).mockResolvedValueOnce([entry("/home/u/a.txt")]);
+        await mount();
+        const { done } = await start({ verb, name: "a.txt" });
+        act(() => api.cancelConflict());
+        await done;
+        expect(run).not.toHaveBeenCalled();
+        expect(api.pendingConflict).toBeNull();
+      });
+    }
+
+    it("Upload: Keep Both writes under a free name without overwriting", async () => {
+      vi.mocked(localListDir).mockResolvedValueOnce([
+        entry("/home/u/report.txt"),
+        entry("/home/u/report (1).txt"),
+      ]);
+      await mount();
+      const { done } = await start({ verb: "Upload", name: "report.txt", allowKeepBoth: true });
+      expect(api.pendingConflict).toMatchObject({ keepBothName: "report (2).txt" });
+      await act(async () => {
+        await api.keepBothConflict();
+      });
+      await done;
+      expect(run).toHaveBeenCalledWith("report (2).txt", false);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers no Keep Both name unless the request allows it", async () => {
+      vi.mocked(localListDir).mockResolvedValueOnce([entry("/home/u/a.txt")]);
+      await mount();
+      await start({ verb: "Rename", name: "a.txt" });
+      expect(api.pendingConflict).toMatchObject({ keepBothName: null });
+    });
+
+    it("checks a session pane's folder through the session listing", async () => {
+      vi.mocked(sessionListFiles).mockResolvedValueOnce([entry("/srv/a.txt")]);
+      await mount({ mode: "session", sessionId: "s1" });
+      await start({ verb: "Upload", name: "a.txt", destDir: "/srv" });
+      expect(sessionListFiles).toHaveBeenCalledWith("s1", "/srv");
+      expect(api.pendingConflict).toMatchObject({ verb: "Upload", conflicts: ["a.txt"] });
+    });
+
+    it("asks when the folder cannot be listed", async () => {
+      vi.mocked(localListDir).mockRejectedValueOnce(new Error("EACCES"));
+      await mount();
+      await start({ verb: "Create", name: "a.txt" });
+      expect(run).not.toHaveBeenCalled();
+      expect(api.pendingConflict).toMatchObject({ verb: "Create", conflicts: null });
+    });
+
+    it("re-opens the prompt when the no-clobber write loses a race", async () => {
+      vi.mocked(localListDir).mockResolvedValueOnce([]);
+      run.mockRejectedValueOnce("IO error: /home/u/a.txt already exists");
+      await mount();
+      const onError = vi.fn();
+      const { done, settled } = await start({ verb: "Rename", name: "a.txt", onError });
+      expect(onError).not.toHaveBeenCalled();
+      expect(api.pendingConflict).toMatchObject({ verb: "Rename", conflicts: ["a.txt"] });
+      expect(settled()).toBe(false);
+      await act(async () => {
+        await api.confirmConflict();
+      });
+      await done;
+      expect(run).toHaveBeenLastCalledWith("a.txt", true);
+    });
+
+    it("reports any other failure through onError", async () => {
+      vi.mocked(localListDir).mockResolvedValueOnce([]);
+      run.mockRejectedValueOnce(new Error("permission denied"));
+      await mount();
+      const onError = vi.fn();
+      const onDone = vi.fn();
+      const { done } = await start({ verb: "Create", name: "a.txt", onError, onDone });
+      await done;
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onDone).not.toHaveBeenCalled();
+      expect(api.pendingConflict).toBeNull();
     });
   });
 });

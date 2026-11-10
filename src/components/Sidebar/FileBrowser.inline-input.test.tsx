@@ -160,6 +160,7 @@ describe("FileBrowser — inline editors use the shared Input primitive (#1390)"
     expect(mockedInvoke).toHaveBeenCalledWith("local_write_file", {
       path: "/home/notes.txt",
       content: "",
+      exclusive: true,
     });
     expect(container.querySelector('[data-testid="file-browser-new-file-input"]')).toBeNull();
   });

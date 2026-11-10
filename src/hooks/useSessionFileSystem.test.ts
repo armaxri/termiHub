@@ -936,6 +936,83 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
     );
   });
 
+  describe("renameEntry — confirmed replacement (#5157)", () => {
+    const fileEntry = (name: string, isDirectory = false) => ({
+      name,
+      path: `/remote/dir/${name}`,
+      isDirectory,
+      size: 1,
+      modified: "",
+      permissions: null,
+      writable: null,
+    });
+
+    it("does not retry an unconfirmed rename that fails", async () => {
+      vi.mocked(sessionRenameFile).mockRejectedValueOnce(new Error("Failure"));
+      const api = await mountHook();
+      await expect(api.renameEntry("/remote/dir/a.txt", "b.txt")).rejects.toThrow("Failure");
+      expect(sessionRenameFile).toHaveBeenCalledTimes(1);
+      expect(sessionDeleteFile).not.toHaveBeenCalled();
+    });
+
+    it("moves an existing file aside, renames, then deletes the set-aside copy", async () => {
+      // SFTP's rename refuses an existing target.
+      vi.mocked(sessionRenameFile).mockRejectedValueOnce(new Error("Failure"));
+      vi.mocked(sessionListFiles).mockResolvedValueOnce([fileEntry("b.txt")]);
+      const api = await mountHook();
+      await act(async () => {
+        await api.renameEntry("/remote/dir/a.txt", "b.txt", { overwrite: true });
+      });
+      const calls = vi.mocked(sessionRenameFile).mock.calls;
+      expect(calls).toHaveLength(3);
+      const aside = calls[1][2];
+      expect(calls[1]).toEqual(["ssh-1", "/remote/dir/b.txt", aside]);
+      expect(aside).toMatch(/^\/remote\/dir\/b\.txt\.termihub-replaced-\d+$/);
+      expect(calls[2]).toEqual(["ssh-1", "/remote/dir/a.txt", "/remote/dir/b.txt"]);
+      expect(sessionDeleteFile).toHaveBeenCalledWith("ssh-1", aside);
+    });
+
+    it("restores the set-aside file when the retried rename fails too", async () => {
+      vi.mocked(sessionRenameFile)
+        .mockRejectedValueOnce(new Error("Failure"))
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("permission denied"));
+      vi.mocked(sessionListFiles).mockResolvedValueOnce([fileEntry("b.txt")]);
+      const api = await mountHook();
+      await expect(
+        api.renameEntry("/remote/dir/a.txt", "b.txt", { overwrite: true })
+      ).rejects.toThrow("permission denied");
+      const calls = vi.mocked(sessionRenameFile).mock.calls;
+      const aside = calls[1][2];
+      expect(calls[3]).toEqual(["ssh-1", aside, "/remote/dir/b.txt"]);
+      expect(sessionDeleteFile).not.toHaveBeenCalled();
+    });
+
+    it("never moves an existing folder aside", async () => {
+      vi.mocked(sessionRenameFile).mockRejectedValueOnce(new Error("Failure"));
+      vi.mocked(sessionListFiles).mockResolvedValueOnce([fileEntry("b", true)]);
+      const api = await mountHook();
+      await expect(api.renameEntry("/remote/dir/a", "b", { overwrite: true })).rejects.toThrow(
+        "Failure"
+      );
+      expect(sessionRenameFile).toHaveBeenCalledTimes(1);
+      expect(sessionDeleteFile).not.toHaveBeenCalled();
+    });
+  });
+
+  it("uploadFileFromPath writes under a Keep Both name (#5157)", async () => {
+    const api = await mountHook("/remote/dir");
+    await act(async () => {
+      await api.uploadFileFromPath("/local/report.txt", { destName: "report (1).txt" });
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/local/report.txt",
+      "/remote/dir/report (1).txt",
+      expect.any(Function)
+    );
+  });
+
   it("setPermissions forwards session id, path and mode", async () => {
     const api = await mountHook();
     await act(async () => {

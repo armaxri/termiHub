@@ -7,6 +7,7 @@ import {
   sessionWriteFile,
   sessionDeleteFile,
   sessionRenameFile,
+  sessionListFiles,
   sessionMkdir,
   sessionSetPermissions,
   sessionSetOwner,
@@ -27,7 +28,12 @@ import {
   pickPathOrReport,
 } from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
-import { pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
+import {
+  pasteVerbLabels,
+  type PasteOptions,
+  type UploadTargetOptions,
+  type WriteTargetOptions,
+} from "@/utils/fileDragMove";
 import {
   pasteFileLeg,
   pasteFolderRecorded,
@@ -301,10 +307,15 @@ export function useSessionFileSystem() {
   // `session_upload` of the folder path. If the local stat fails, the path
   // takes the single-file upload, and the backend guard refuses a folder
   // there with a clear error (#3944).
+  //
+  // The conflict check happens before this is called (the file browser's
+  // `requestWrite`, #5157); `options.destName` is its "Keep Both" name. The
+  // session transports overwrite an existing target, so an entry created
+  // remotely between that check and the upload is still replaced (TOCTOU).
   const uploadFileFromPath = useCallback(
-    async (localPath: string) => {
+    async (localPath: string, options?: UploadTargetOptions) => {
       if (!sessionFileBrowserId) return;
-      const fileName = getBasename(localPath) || "upload";
+      const fileName = options?.destName ?? (getBasename(localPath) || "upload");
       const remote = { sessionId: sessionFileBrowserId, queueCapable: transferQueueCapable };
       let entry: FileEntry | null = null;
       try {
@@ -338,15 +349,20 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable]
   );
 
-  const uploadFile = useCallback(async () => {
-    if (!sessionFileBrowserId) return;
-    const localPath = await pickPathOrReport("Upload", async () => {
-      const { open } = await import("@/services/nativeDialog");
-      return open({ title: "Select file to upload", multiple: false });
-    });
-    if (!localPath) return;
-    await uploadFileFromPath(localPath);
-  }, [sessionFileBrowserId, uploadFileFromPath]);
+  // `upload` replaces the direct upload of the picked file — the file browser
+  // passes its conflict-checked upload (#5157).
+  const uploadFile = useCallback(
+    async (upload?: (localPath: string) => Promise<void>) => {
+      if (!sessionFileBrowserId) return;
+      const localPath = await pickPathOrReport("Upload", async () => {
+        const { open } = await import("@/services/nativeDialog");
+        return open({ title: "Select file to upload", multiple: false });
+      });
+      if (!localPath) return;
+      await (upload ?? uploadFileFromPath)(localPath);
+    },
+    [sessionFileBrowserId, uploadFileFromPath]
+  );
 
   const createDirectory = useCallback(
     async (name: string) => {
@@ -358,8 +374,12 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, sessionCurrentPath, refreshSession]
   );
 
+  // The session write truncates an existing file, so New File relies on the
+  // file browser's exists-check (#5157); a file created remotely between that
+  // check and this write is still replaced (TOCTOU — no exclusive-create
+  // primitive crosses the session file-browser API yet).
   const createFile = useCallback(
-    async (name: string) => {
+    async (name: string, _options?: WriteTargetOptions) => {
       if (!sessionFileBrowserId) return;
       const filePath = sessionCurrentPath === "/" ? `/${name}` : `${sessionCurrentPath}/${name}`;
       await sessionWriteFile(sessionFileBrowserId, filePath, []);
@@ -377,11 +397,45 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, refreshSession]
   );
 
+  // Rename relies on the file browser's exists-check (#5157). Transports
+  // differ on an existing target: SFTP's rename refuses to replace it (OpenSSH
+  // answers "Failure"), the agent / Docker / FTP ones replace it. So a
+  // confirmed replacement whose rename fails moves the existing target aside
+  // (only a file, never a folder), retries, then deletes the set-aside copy —
+  // or moves it back if the retry fails too, so nothing is lost. Without
+  // confirmation an entry created remotely between the check and the rename
+  // may still be replaced on the clobbering transports (TOCTOU).
   const renameEntry = useCallback(
-    async (oldPath: string, newName: string) => {
+    async (oldPath: string, newName: string, options?: WriteTargetOptions) => {
       if (!sessionFileBrowserId) return;
-      const newPath = joinPath(parentDir(oldPath), newName);
-      await sessionRenameFile(sessionFileBrowserId, oldPath, newPath);
+      const sessionId = sessionFileBrowserId;
+      const dir = parentDir(oldPath);
+      const newPath = joinPath(dir, newName);
+      try {
+        await sessionRenameFile(sessionId, oldPath, newPath);
+      } catch (err) {
+        if (!options?.overwrite) throw err;
+        const target = (await sessionListFiles(sessionId, dir)).find((e) => e.name === newName);
+        if (!target || target.isDirectory) throw err;
+        frontendLog(
+          "session_file_browser",
+          `rename onto ${newPath} failed (${errorMessage(err)}); replacing the existing file`
+        );
+        const aside = `${newPath}.termihub-replaced-${Date.now()}`;
+        await sessionRenameFile(sessionId, newPath, aside);
+        try {
+          await sessionRenameFile(sessionId, oldPath, newPath);
+        } catch (retryErr) {
+          await sessionRenameFile(sessionId, aside, newPath);
+          throw retryErr;
+        }
+        await sessionDeleteFile(sessionId, aside).catch((deleteErr: unknown) =>
+          frontendLog(
+            "session_file_browser",
+            `could not delete the replaced ${aside}: ${errorMessage(deleteErr)}`
+          )
+        );
+      }
       refreshSession();
     },
     [sessionFileBrowserId, refreshSession]

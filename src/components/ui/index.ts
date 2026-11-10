@@ -80,6 +80,7 @@ export type {
   ConfirmDialogProps,
   ConfirmDialogVariant,
   ConfirmDontAskAgain,
+  ConfirmAlternateAction,
 } from "./ConfirmDialog";
 
 export { Toggle } from "./Toggle";

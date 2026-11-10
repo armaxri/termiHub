@@ -178,6 +178,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
       oldPath: "/home/report.pdf",
       newPath: "/home/renamed.pdf",
+      overwrite: false,
     });
     // Input dismissed after commit.
     expect(container.querySelector('[data-testid="file-row-rename-input"]')).toBeNull();
@@ -254,6 +255,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
       oldPath: "/home/report.pdf",
       newPath: "/home/renamed.pdf",
+      overwrite: false,
     });
     expect(document.activeElement).toBe(
       container.querySelector('[data-testid="file-row-report.pdf"]')
@@ -316,6 +318,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
       oldPath: "/home/mydir",
       newPath: "/home/otherdir",
+      overwrite: false,
     });
     expect(mockedInvoke).not.toHaveBeenCalledWith("local_list_dir", { path: "/home/mydir" });
   });

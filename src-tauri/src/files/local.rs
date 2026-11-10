@@ -30,9 +30,17 @@ pub fn delete(path: &str, is_directory: bool) -> Result<(), TerminalError> {
 
 /// Rename a file or directory.
 ///
-/// Delegates to `termihub_core::files::local::rename_sync()`.
-pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
-    termihub_core::files::local::rename_sync(old_path, new_path)?;
+/// With `overwrite` it delegates to `termihub_core::files::local::rename_sync()`,
+/// which silently replaces an existing `new_path`. Without it, it delegates to
+/// `rename_no_replace_sync()` and fails when `new_path` already exists, so a
+/// file-browser rename the user did not confirm as a replacement can never
+/// clobber an entry that appeared after its exists-check (#5157).
+pub fn rename(old_path: &str, new_path: &str, overwrite: bool) -> Result<(), TerminalError> {
+    if overwrite {
+        termihub_core::files::local::rename_sync(old_path, new_path)?;
+    } else {
+        termihub_core::files::local::rename_no_replace_sync(old_path, new_path)?;
+    }
     Ok(())
 }
 
@@ -137,7 +145,15 @@ pub fn stat(path: &str) -> Result<FileEntry, TerminalError> {
 }
 
 /// Write a string to a file, creating or overwriting it.
-pub fn write_file_content(path: &str, content: &str) -> Result<(), TerminalError> {
+///
+/// With `exclusive` the file must not exist yet: it is created atomically
+/// (`O_CREAT | O_EXCL`) and an existing file is left untouched with an
+/// "already exists" error — the file browser's "New File" (#5157).
+pub fn write_file_content(path: &str, content: &str, exclusive: bool) -> Result<(), TerminalError> {
+    if exclusive {
+        return termihub_core::files::local::create_new_file_sync(path, content.as_bytes())
+            .map_err(TerminalError::Io);
+    }
     std::fs::write(path, content).map_err(TerminalError::Io)
 }
 
@@ -160,6 +176,36 @@ pub fn write_file_bytes(path: &str, bytes: &[u8]) -> Result<(), TerminalError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_without_overwrite_keeps_an_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("a.txt");
+        let new = dir.path().join("b.txt");
+        std::fs::write(&old, "a").unwrap();
+        std::fs::write(&new, "b").unwrap();
+        let (o, n) = (old.to_str().unwrap(), new.to_str().unwrap());
+        assert!(rename(o, n, false).is_err());
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "b");
+        // The confirmed replacement goes through.
+        rename(o, n, true).unwrap();
+        assert!(!old.exists());
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "a");
+    }
+
+    #[test]
+    fn exclusive_write_refuses_to_truncate_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.txt");
+        let path = file.to_str().unwrap();
+        write_file_content(path, "", true).unwrap();
+        std::fs::write(&file, "keep").unwrap();
+        assert!(write_file_content(path, "", true).is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep");
+        // A plain write still overwrites (the editor's save path).
+        write_file_content(path, "new", false).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+    }
 
     #[test]
     fn file_bytes_round_trip_exactly() {
@@ -264,7 +310,7 @@ mod tests {
         let new_path = dir.path().join("new.txt");
         std::fs::write(&old, "content").unwrap();
 
-        rename(old.to_str().unwrap(), new_path.to_str().unwrap()).unwrap();
+        rename(old.to_str().unwrap(), new_path.to_str().unwrap(), true).unwrap();
         assert!(!old.exists());
         assert!(new_path.exists());
         assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "content");
@@ -346,7 +392,7 @@ mod tests {
         let file = dir.path().join("roundtrip.txt");
         let path = file.to_str().unwrap();
 
-        write_file_content(path, "Hello, World!").unwrap();
+        write_file_content(path, "Hello, World!", false).unwrap();
         let content = read_file_content(path).unwrap();
         assert_eq!(content, "Hello, World!");
     }
