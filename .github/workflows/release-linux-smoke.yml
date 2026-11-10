@@ -100,6 +100,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Make apt retry downloads
+        uses: ./.github/actions/apt-retries
+
       - name: Install headless runtime dependencies
         # Runtime WebKitGTK/GTK libs the app links against plus Xvfb for a virtual
         # display. Mirrors the runtime-relevant subset of system-integration.yml's

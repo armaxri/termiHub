@@ -90,6 +90,12 @@ node scripts\internal\check-action-pins.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === apt download retries ===
+REM Every apt-get update/install in CI, Dockerfiles and scripts retries downloads (#5152).
+node scripts\internal\check-apt-retries.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === Doc code-reference drift ===
 REM Symbol-based file-to-symbol references in reference docs resolve (#4369).
 node scripts\internal\check-doc-symbols.mjs

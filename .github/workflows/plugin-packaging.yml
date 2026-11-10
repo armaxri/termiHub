@@ -245,8 +245,10 @@ jobs:
           scripts/internal/registry-mirror.sh pull "rust:${version}-bookworm"
           docker run --rm "${docker_opts[@]}" -e "TERMIHUB_EXPECT_USERNS=$EXPECT_USERNS" \
             -v "$PWD:/src:ro" "rust:${version}-bookworm" bash -euo pipefail -c '
-            apt-get update -qq
-            apt-get install -y -qq pkg-config libudev-dev libssl-dev libdbus-1-dev >/dev/null
+            # apt retries: the container does not inherit the runner apt config (#5152).
+            apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update -qq
+            apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y -qq \
+              pkg-config libudev-dev libssl-dev libdbus-1-dev >/dev/null
             useradd -m -s /bin/bash probe
             cp -r /src /home/probe/src
             chown -R probe /home/probe/src /usr/local/cargo

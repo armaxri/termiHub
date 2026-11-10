@@ -528,6 +528,10 @@ jobs:
         with:
           key: release-${{ matrix.platform }}
 
+      - name: Make apt retry downloads
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |

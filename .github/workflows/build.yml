@@ -104,6 +104,10 @@ jobs:
           # ever saving its own dead, PR-scoped cache against the 10 GB budget.
           save-if: false
 
+      - name: Make apt retry downloads
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |

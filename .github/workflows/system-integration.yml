@@ -368,6 +368,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
 
+      - name: Make apt retry downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies (Tauri + headless display)
         # Linux only: the Tauri webview build/runtime deps (mirrors dev-build.yml)
         # plus xvfb, so the app has a virtual X display to launch into. socat backs
@@ -892,6 +896,10 @@ jobs:
           python-version: '3.12'
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
+
+      - name: Make apt retry downloads
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/apt-retries
 
       - name: Install system dependencies (Tauri + headless display)
         # Linux only: Tauri webview build deps + xvfb to give the app a display.

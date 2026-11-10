@@ -135,6 +135,10 @@ jobs:
               || matrix.rust_target == 'aarch64-apple-darwin'
               || matrix.rust_target == 'x86_64-pc-windows-msvc' }}
 
+      - name: Make apt retry downloads
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: ./.github/actions/apt-retries
+
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
