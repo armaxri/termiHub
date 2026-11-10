@@ -17,6 +17,11 @@ import { currentConnectionsView } from "@/store/connectionsBridge";
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import {
+  connected,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { PasswordPrompt } from "@/components/PasswordPrompt/PasswordPrompt";
@@ -391,6 +396,10 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
  * opens must offer no Save control — while Save & Connect's prompt still does.
  * Uses the real store `requestPassword` and the real `PasswordPrompt`.
  */
+/** The tab the mocked `addTab` opens for Save & Connect. */
+const SAVE_CONNECT_TAB = "tab-save-connect";
+const sessions = installSessionLifecycleHarness();
+
 describe("ConnectionEditor — password prompt Save control (#3316)", () => {
   const saveBox = () => document.querySelector('[data-testid="password-prompt-save-checkbox"]');
   const promptInput = () => document.querySelector('[data-testid="password-prompt-input"]');
@@ -400,7 +409,7 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    addTab = vi.fn<AppState["addTab"]>();
+    addTab = vi.fn<AppState["addTab"]>(() => SAVE_CONNECT_TAB);
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [SSH_TYPE],
@@ -448,8 +457,13 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
     // The connection's name titles the prompt (#4475).
     expect(useAppStore.getState().passwordPromptLabel).toBe("Key Server");
 
-    // That prompt's own Save choice decides the store (#4474).
+    // That prompt's own Save choice decides the store (#4474), once the
+    // connect succeeds (#5156).
     act(() => useAppStore.getState().submitPassword("key-pass", true));
+    await flush();
+    expect(commandCalls("store_credential")).toHaveLength(0);
+    sessions.transport.setSession(SAVE_CONNECT_TAB, connected());
+    await flushSessionRegion();
     await flush();
     expect(commandCalls("store_credential")).toHaveLength(1);
   });
