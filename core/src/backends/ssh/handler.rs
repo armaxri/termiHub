@@ -5,12 +5,15 @@
 //! used throughout the SSH subsystem.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
+
+use super::host_key::{HostKeyDecision, HostKeyVerifier, HOST_KEY_PROMPT_TIMEOUT};
+use super::prompt_clock::PromptClock;
 
 /// Convenience alias for the connected session handle.
 ///
@@ -81,6 +84,47 @@ pub struct IncomingChannel {
 /// is owned by the corresponding `RemoteForwarder` or X11 event loop.
 pub type ForwardedChannelRegistry = Arc<Mutex<HashMap<u32, UnboundedSender<IncomingChannel>>>>;
 
+/// Why the handshake refused the server's host key (#5185), recorded by the
+/// handler (on russh's session task) for the connecting task to classify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HostKeyRefusal {
+    /// Not trusted, and nobody was asked: an unattended connect (#3527) or the
+    /// strict headless default policy.
+    NotTrusted,
+    /// The user was shown the trust prompt and rejected the key.
+    RejectedByUser,
+    /// The trust prompt was left unanswered for
+    /// [`HOST_KEY_PROMPT_TIMEOUT`].
+    PromptTimedOut,
+    /// The connect was aborted or timed out while the prompt was open; the
+    /// prompt was dismissed and any later answer is ignored.
+    Abandoned,
+}
+
+/// The slot the handler records a [`HostKeyRefusal`] in.
+pub(crate) type HostKeyOutcome = Arc<Mutex<Option<HostKeyRefusal>>>;
+
+/// What the connecting task hands the handler for the host-key check (#5185).
+///
+/// `check_server_key` runs on russh's spawned session task, which can see
+/// neither the connecting task's unattended scope nor its connect deadline, nor
+/// notice that the connecting task gave up. This carries all three across.
+#[derive(Clone, Default)]
+pub(crate) struct HandshakeContext {
+    /// Unattended (#3527): verify without prompting.
+    pub unattended: bool,
+    /// Where a refusal is recorded.
+    pub outcome: HostKeyOutcome,
+    /// The connect deadline, paused while the trust prompt is open.
+    pub clock: PromptClock,
+    /// Cancelled when the connecting task stops waiting for the handshake
+    /// (abort, connect timeout): the open prompt is then dropped — dismissed.
+    pub abandoned: CancellationToken,
+    /// A verifier to use instead of the process-wide one (tests only; the
+    /// global verifier is set-once per process).
+    pub verifier: Option<Arc<dyn HostKeyVerifier>>,
+}
+
 /// termiHub's russh client handler.
 ///
 /// One instance is created per connection (passed to `russh::client::connect`).
@@ -105,12 +149,11 @@ pub struct TermiHubHandler {
     /// The TCP port this connection targets, paired with `host` for host-key
     /// verification (#1959).
     port: u16,
-    /// Set for an **unattended** connect (#3527): the host key is then checked
-    /// without prompting, and a refusal is recorded here so the connecting task
-    /// can report the typed `HostKeyUntrusted` instead of a bare handshake
-    /// error. The check runs on russh's session task, which cannot see the
-    /// connecting task's unattended scope, so the handler carries the mode.
-    unattended_host_key_refused: Option<Arc<AtomicBool>>,
+    /// The connecting task's context for the host-key check (#3527, #5185):
+    /// unattended mode, the refusal slot, the pausable connect deadline and the
+    /// abandon signal. The check runs on russh's session task, which cannot see
+    /// the connecting task, so the handler carries them.
+    handshake: HandshakeContext,
     /// The server's SSH identification line, set at the first key exchange
     /// and shared with the [`LivenessWatch`] (#5134).
     server_id: Arc<OnceLock<String>>,
@@ -144,7 +187,7 @@ impl TermiHubHandler {
             forward_agent,
             host,
             port,
-            unattended_host_key_refused: None,
+            handshake: HandshakeContext::default(),
             server_id: server_id.clone(),
         };
         let liveness = LivenessWatch {
@@ -154,11 +197,43 @@ impl TermiHubHandler {
         (handler, registry, liveness)
     }
 
-    /// Make this an **unattended** connect's handler (#3527): the host key is
-    /// verified without prompting, and `refused` is set when it is not trusted.
-    pub fn unattended(mut self, refused: Arc<AtomicBool>) -> Self {
-        self.unattended_host_key_refused = Some(refused);
+    /// Attach the connecting task's [`HandshakeContext`] (#3527, #5185).
+    pub(crate) fn with_handshake(mut self, handshake: HandshakeContext) -> Self {
+        self.handshake = handshake;
         self
+    }
+
+    /// Record why the host key was refused, for the connecting task.
+    fn refuse(&self, why: HostKeyRefusal) -> bool {
+        *self
+            .handshake
+            .outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(why);
+        false
+    }
+
+    /// The interactive trust decision (#5185): the prompt's wait is excluded
+    /// from the connect deadline and bounded by [`HOST_KEY_PROMPT_TIMEOUT`]
+    /// instead, and the prompt is dropped — dismissed — the moment the
+    /// connecting task abandons the handshake.
+    async fn decide_attended(&self, info: &super::host_key::HostKeyInfo) -> bool {
+        let ctx = &self.handshake;
+        let decision = super::host_key::decide_host_key(info, ctx.verifier.clone());
+        let bounded = ctx
+            .clock
+            .exclude(tokio::time::timeout(HOST_KEY_PROMPT_TIMEOUT, decision));
+        let answer = tokio::select! {
+            biased;
+            _ = ctx.abandoned.cancelled() => return self.refuse(HostKeyRefusal::Abandoned),
+            answer = bounded => answer,
+        };
+        match answer {
+            Ok(HostKeyDecision::Accepted) => true,
+            Ok(HostKeyDecision::Refused) => self.refuse(HostKeyRefusal::NotTrusted),
+            Ok(HostKeyDecision::RejectedByUser) => self.refuse(HostKeyRefusal::RejectedByUser),
+            Err(_) => self.refuse(HostKeyRefusal::PromptTimedOut),
+        }
     }
 }
 
@@ -237,18 +312,13 @@ impl russh::client::Handler for TermiHubHandler {
                 server_public_key,
             ),
         };
-        match &self.unattended_host_key_refused {
+        if self.handshake.unattended {
             // Unattended (#3527): never prompt — only an already-trusted key
             // passes, and a refusal is recorded for the typed error.
-            Some(refused) => {
-                let trusted = super::host_key::verify_host_key_unattended(&info).await;
-                if !trusted {
-                    refused.store(true, Ordering::SeqCst);
-                }
-                Ok(trusted)
-            }
-            None => Ok(super::host_key::verify_host_key(&info).await),
+            let trusted = super::host_key::verify_host_key_unattended(&info).await;
+            return Ok(trusted || self.refuse(HostKeyRefusal::NotTrusted));
         }
+        Ok(self.decide_attended(&info).await)
     }
 
     /// Route an incoming server-initiated forwarded channel to the registered
