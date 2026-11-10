@@ -1575,9 +1575,16 @@ component starts gating once its baseline is recorded.
   code, so the tolerance absorbs noise without hiding a real drop. The per-component table
   lands in `coverage-unified/ratchet.md` and in the CI job summary.
 - **Per platform:** baselines are keyed by `process.platform` (`linux`, `darwin`, `win32`)
-  because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux`; the
-  release check grades the machine it runs on. A platform with no baseline fails with the
-  command that records one.
+  because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux` and, in
+  the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
+  the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
+  Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
+  tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
+  heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
+  live-agent-TCP tests keep their thread caps. The heartbeat names the failing job, so a
+  Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
+  The release check grades the machine it runs on. A platform with no baseline fails with
+  the command that records one.
 - **What `plugin-runner` counts:** its own unit tests (including the session server's
   teardown-order tests) and `plugin-runner/tests/runner_process.rs`, which drives the
   instrumented runner binary. The runner that `core/tests/plugin_runner_*` spawn is built
@@ -1594,8 +1601,8 @@ component starts gating once its baseline is recorded.
 
   and commit the updated `scripts/coverage-baseline.json`. It raises each value to the
   measured one (rounded down to 2 decimals) and **never lowers** one, so a bump on a worse
-  tree cannot loosen the gate. For the CI (`linux`) values, take the numbers from the
-  nightly `develop` Coverage run's job summary. An intentional decrease is a deliberate, reviewed
+  tree cannot loosen the gate. For the CI (`linux`, `win32`) values, take the numbers from
+  the nightly `develop` Coverage run's job summaries. An intentional decrease is a deliberate, reviewed
   edit of the JSON (or `node scripts/internal/coverage-ratchet.mjs --update --allow-decrease`).
 
 - **Truncated profiles:** the Rust tests run with `--no-report` and the report is produced by
