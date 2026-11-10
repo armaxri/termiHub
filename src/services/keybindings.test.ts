@@ -374,9 +374,17 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("zoom-in");
   });
 
-  it("finds show-shortcuts for F1 (relocated off Ctrl+K Ctrl+S chord)", () => {
-    const event = makeKeyEvent("F1");
+  it("finds show-shortcuts for Ctrl+F1 (relocated off Ctrl+K Ctrl+S chord)", () => {
+    const event = makeKeyEvent("F1", { ctrl: true });
     expect(findMatchingAction(event)).toBe("show-shortcuts");
+  });
+
+  it("finds the terminal-yielding overlay action for bare F1 (#5194)", () => {
+    expect(findMatchingAction(makeKeyEvent("F1"))).toBe("show-shortcuts-outside-terminal");
+    expect(getActionScope("show-shortcuts-outside-terminal")).toBe("yields-to-terminal");
+    expect(getActionScope("show-shortcuts")).toBe("global");
+    expect(checkConflict({ key: "F1" }, "show-shortcuts-outside-terminal")).toBeNull();
+    expect(checkConflict({ key: "F1", ctrl: true }, "show-shortcuts")).toBeNull();
   });
 
   it("finds focus-up for Alt+Shift+ArrowUp (relocated off Ctrl+Alt+Arrow)", () => {
@@ -777,7 +785,7 @@ describe("getEffectiveCombo (macOS context)", () => {
 
 describe("processKeyEvent (chord support, macOS context)", () => {
   // The Cmd+K Cmd+S chord for "Keyboard Shortcuts" is retained on macOS where
-  // Cmd does not collide with shell readline. Win/Linux uses a non-chord F1.
+  // Cmd does not collide with shell readline. Win/Linux uses a non-chord Ctrl+F1.
   let originalAgent: PropertyDescriptor | undefined;
 
   beforeEach(() => {
@@ -964,6 +972,25 @@ describe("isEventFromTerminal", () => {
     expect(isEventFromTerminal(event)).toBe(false);
 
     document.body.removeChild(outside);
+  });
+});
+
+describe("bare function keys yield to terminal programs (#5194)", () => {
+  // Maintainer decision (F6, 2026-10-15): terminal programs keep plain
+  // function keys; a shortcut needs a modifier variant inside terminals.
+  const isFunctionKey = (key: string) => /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
+  const combos = (c: KeyCombo | KeyCombo[] | null | undefined): KeyCombo[] =>
+    c == null ? [] : Array.isArray(c) ? c : [c];
+
+  it("scopes every default bound to an unmodified (or Shift-only) F-key as yields-to-terminal", () => {
+    const offenders = DEFAULT_BINDINGS.filter((b) =>
+      [b.macDefault, b.winLinuxDefault, ...(b.macAlternates ?? []), ...(b.winLinuxAlternates ?? [])]
+        .flatMap(combos)
+        .some((c) => isFunctionKey(c.key) && !c.ctrl && !c.alt && !c.meta)
+    )
+      .filter((b) => b.scope !== "yields-to-terminal")
+      .map((b) => b.action);
+    expect(offenders).toEqual([]);
   });
 });
 
