@@ -111,6 +111,26 @@ export function UpdateAgentDialog({
       return;
     }
 
+    // The new binary refused to start, so the previous one was restored and
+    // proven to run (#5207). The update did not happen: keep the dialog open and
+    // say so, rather than reporting success.
+    if (result.kind === "rolledBack") {
+      onUpdated?.(result);
+      throw new Error(
+        `Update failed on ${agentName}: ${result.reason}. ` +
+          `The previous agent v${result.restoredVersion} was restored and is still running.`
+      );
+    }
+
+    // The binary was installed but does not run, and there was no working
+    // previous agent to restore.
+    if (!result.success) {
+      onUpdated?.(result);
+      throw new Error(
+        `Update failed on ${agentName}: the new agent was installed but does not start.`
+      );
+    }
+
     toast.success(`Updating agent on ${agentName}…`);
     onUpdated?.(result);
     onOpenChange(false);

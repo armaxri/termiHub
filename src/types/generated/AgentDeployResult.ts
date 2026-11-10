@@ -5,7 +5,8 @@ import type { ConnectedHost } from "./ConnectedHost";
  * Outcome of an agent deploy/update.
  *
  * `Deployed` is the normal outcome (of both deploy and a proceeding update);
- * `OtherHostsConnected` is returned only by the update path when the
+ * `RolledBack` means the new binary failed to start and the previous one was
+ * restored (#5207); `OtherHostsConnected` is returned only by the update path when the
  * connected-host guard blocks an unforced update because other hosts are
  * connected. The desktop then shows the Update dialog's warning and may retry
  * via `update_agent_force`.
@@ -17,6 +18,18 @@ export type AgentDeployResult = { "kind": "deployed", success: boolean, installe
  * Useful for Windows hosts, where the install location
  * (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) differs from the
  * POSIX default and should be stored as the connection's agent path.
+ */
+installedPath?: string, } | { "kind": "rolledBack", 
+/**
+ * Why the new binary was rejected, for the user.
+ */
+reason: string, 
+/**
+ * Version the restored previous binary reported after the restore.
+ */
+restoredVersion: string, 
+/**
+ * Absolute path of the restored agent on the remote host.
  */
 installedPath?: string, } | { "kind": "otherHostsConnected", hosts: Array<ConnectedHost>, } | { "kind": "coordinated", 
 /**
