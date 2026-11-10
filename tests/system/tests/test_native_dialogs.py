@@ -124,46 +124,27 @@ class TestNativeDialogs(
         """Set up a master-password store holding one saved SSH password.
 
         An unlocked master-password store is what makes credentials savable. The
-        password is saved through the SSH prompt's "Save password" box, which
-        persists it the moment the prompt is answered — before the (server-less,
-        port-1) connect runs and fails. Returns the connection name.
+        password is typed into the connection editor's Password field with
+        **Save credentials** on, so saving the connection stores it, with no
+        connect. A password typed into the connect prompt is saved only once
+        its connect succeeds (#5156), and this server-less port-1 connection
+        never connects (#5262). Returns the connection name.
         """
         self.setup_master_password_store(_MASTER_PASSWORD)
         name = unique_name(prefix)
         self.create_ssh_connection(
             name,
             host="127.0.0.1",
-            port=1,  # unroutable: the connect fails, but the credential is saved first
+            port=1,  # unroutable: never connected, the save stores the password
             username="harness",
             auth_method="password",
+            password=_STORED_SSH_PASSWORD,
+            save_password=True,
         )
+        # The password is stored under the connection's persisted id.
+        self.require_stable_connection(name)
         self.switch_to_connections_sidebar()
-        self.connect_connection(name)
-        self.wait(
-            lambda: self.driver.exists("password-prompt-input"),
-            what="the SSH password prompt",
-        )
-        self.driver.type("password-prompt-input", _STORED_SSH_PASSWORD)
-        self.wait(
-            lambda: self.driver.exists("password-prompt-save-checkbox"),
-            what="the password-prompt Save checkbox",
-        )
-        # The box defaults to *checked* whenever a credential store is active, so
-        # a blind click toggled it OFF and nothing was ever saved — the export then
-        # carried no `$encrypted` section and the vault held only the shared
-        # credential (every OS, nightly 37431203434). Make sure it ends up checked.
-        if not self._save_box_checked():
-            self.driver.click("password-prompt-save-checkbox")
-        self.wait(self._save_box_checked, what="the password-prompt Save box to be checked")
-        self.driver.click("password-prompt-connect")
-        # The connect to port 1 fails; close any error tab it produced.
-        self.close_all_tabs()
         return name
-
-    def _save_box_checked(self) -> bool:
-        """Whether the password prompt's "Save password" box is checked."""
-        state = self.driver.get_attribute("password-prompt-save-checkbox", "aria-checked")
-        return state == "true"
 
     def _import_connections_doc(self, name: str) -> dict:
         """A minimal valid export-format document with one local connection.
