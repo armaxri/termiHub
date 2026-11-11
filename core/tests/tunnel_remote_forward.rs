@@ -171,11 +171,18 @@ async fn remote_forward_relays_bytes_and_reports_stats() {
     let forwarder = RemoteForwarder::start(&forward_to(target), session, registry)
         .expect("server accepts the -R request");
     let bound = forwarder.bound_port();
-    assert_ne!(bound, 0, "the server must report the ephemeral port it bound");
+    assert_ne!(
+        bound, 0,
+        "the server must report the ephemeral port it bound"
+    );
 
     let fresh = forwarder.get_stats();
     assert_eq!(
-        (fresh.bytes_sent, fresh.bytes_received, fresh.active_connections),
+        (
+            fresh.bytes_sent,
+            fresh.bytes_received,
+            fresh.active_connections
+        ),
         (0, 0, 0),
         "a new forward has moved no traffic"
     );
@@ -186,7 +193,10 @@ async fn remote_forward_relays_bytes_and_reports_stats() {
     let stats = wait_for_stats(&forwarder, |s| s.bytes_sent > 0).await;
     let len = first.len() as u64;
     assert_eq!(stats.bytes_sent, len, "bytes target -> channel: {stats:?}");
-    assert_eq!(stats.bytes_received, len, "bytes channel -> target: {stats:?}");
+    assert_eq!(
+        stats.bytes_received, len,
+        "bytes channel -> target: {stats:?}"
+    );
 
     // A second connection accumulates on top of the first and its relay task
     // ends, so no connection is left counted as active.
@@ -221,7 +231,10 @@ async fn remote_forward_stop_closes_the_server_listener() {
     );
 
     let (driver, _driver_registry) = connect().await;
-    assert_eq!(round_trip(&driver, bound, b"before-stop").await, b"before-stop");
+    assert_eq!(
+        round_trip(&driver, bound, b"before-stop").await,
+        b"before-stop"
+    );
 
     forwarder.stop();
     tokio::time::timeout(STEP, death)
@@ -250,7 +263,10 @@ async fn remote_forward_drop_closes_the_server_listener() {
     let death = forwarder.take_death_signal().expect("death signal");
 
     let (driver, _driver_registry) = connect().await;
-    assert!(server_listens_on(&driver, bound).await, "listening while up");
+    assert!(
+        server_listens_on(&driver, bound).await,
+        "listening while up"
+    );
 
     drop(forwarder);
     tokio::time::timeout(STEP, death)
