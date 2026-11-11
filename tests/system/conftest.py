@@ -535,6 +535,7 @@ def _ensure_ssh_services(services_and_ports):
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_fixtures():
     """Password- and key-auth SSH containers (ports 2201 / 2203)."""
     return _ensure_ssh_services(
@@ -543,6 +544,7 @@ def ssh_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_password_fixtures():
     """Password-auth SSH container only (port 2201).
 
@@ -554,6 +556,7 @@ def ssh_password_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_x11_fixtures():
     """X11-forwarding SSH container (port 2208).
 
@@ -567,12 +570,14 @@ def ssh_x11_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_banner_fixtures():
     """Pre-auth-banner / MOTD SSH container (port 2206)."""
     return _ensure_ssh_services([(SSH_BANNER_SERVICE, SSH_BANNER_PORT)])
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_bastion_fixtures():
     """Jump-host bastion (port 2204) plus its internal target (no host port).
 
@@ -593,12 +598,14 @@ def ssh_bastion_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_tunnel_fixtures():
     """Tunnel-target SSH container with internal HTTP (port 2207)."""
     return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_mfa_fixtures():
     """Two-factor SSH container (port 2216) plus the key-auth ``ssh-keys`` (2203).
 
@@ -613,6 +620,7 @@ def ssh_mfa_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_permission_fixtures():
     """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
     password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
@@ -627,6 +635,7 @@ def ssh_permission_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def telnet_fixtures():
     """Telnet container (in.telnetd via xinetd, published on port 2301)."""
     return _ensure_services(
@@ -653,12 +662,14 @@ def _ensure_vnc_service(service, port):
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def vnc_fixtures():
     """Classic-VncAuth VNC server (x11vnc + Xvfb, profile ``vnc``, port 2501)."""
     return _ensure_vnc_service(VNC_SERVICE, VNC_PORT)
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def vnc_jpeg_fixtures():
     """Tight-JPEG VNC server (TigerVNC Xvnc, profile ``vnc``, port 2504, #4821).
 
@@ -669,6 +680,7 @@ def vnc_jpeg_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def vnc_vencrypt_fixtures():
     """VeNCrypt X509 VNC server (TigerVNC Xvnc, profile ``vnc``, port 2502).
 
@@ -679,6 +691,7 @@ def vnc_vencrypt_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def rdp_fixtures():
     """xrdp (TLS, port 2601) + FreeRDP shadow (NLA, port 2602), profile ``rdp``.
 
@@ -724,6 +737,7 @@ def rdp_fixtures():
 
 
 @pytest.fixture
+@tool_preflight.fixture_needs("socat")
 def serial_echo_pair():
     """A host ``socat`` PTY pair with an echo loop on one end (#3682).
 
@@ -745,6 +759,7 @@ def serial_echo_pair():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def traceroute_fixtures():
     """Two routers + a target (compose profile ``traceroute``, #4964).
 
@@ -761,6 +776,7 @@ def traceroute_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def remote_agent_fixtures():
     """Deployed-agent SSH container (compose profile ``agent``, port 2211).
 
@@ -784,6 +800,7 @@ def remote_agent_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def remote_agent_pending_fixtures():
     """Armed deployed-agent container (compose profile ``agent``, port 2214).
 
@@ -809,6 +826,7 @@ def remote_agent_pending_fixtures():
 
 
 @pytest.fixture
+@tool_preflight.fixture_needs("docker")
 def remote_agent_update_swap_fixtures():
     """Armed agent container that can REALLY apply its staged update (port 2218).
 
@@ -840,6 +858,7 @@ def remote_agent_update_swap_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def remote_agent_kbdint_fixtures():
     """Deployed-agent container behind a keyboard-interactive-only sshd (port 2217).
 
