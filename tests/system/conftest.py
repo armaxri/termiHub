@@ -60,6 +60,8 @@ from termihub_harness import (
     SSH_PASSWORD_SERVICE,
     SSH_NOSUDO_PORT,
     SSH_NOSUDO_SERVICE,
+    SSH_SFTP_ONLY_PORT,
+    SSH_SFTP_ONLY_SERVICE,
     SSH_SUDO_PORT,
     SSH_SUDO_SERVICE,
     SSH_TUNNEL_PORT,
@@ -92,6 +94,7 @@ from termihub_harness import (
     native_pending_variant,
     native_kbdint_variant,
     native_swap_host,
+    native_system_hosts,
     wait_for_banner,
     wait_for_rdp,
 )
@@ -671,8 +674,26 @@ def ssh_x11_fixtures():
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def ssh_banner_fixtures():
-    """Pre-auth-banner / MOTD SSH container (port 2206)."""
+    """Pre-auth-banner / MOTD SSH container (port 2206), or on the macOS
+    native target the fixture's ``banner`` host (#5423)."""
+    native = _native_system_hosts("ssh_banner_fixtures")
+    if native is not None:
+        return native
     return _ensure_ssh_services([(SSH_BANNER_SERVICE, SSH_BANNER_PORT)])
+
+
+def _native_system_hosts(fixture):
+    """The native target's hosts for ``fixture`` on macOS (#5423), else None.
+
+    Off CI a host that cannot come up (no root ``--password-login`` fixture)
+    skips the suite; on CI it errors, like the container fixtures.
+    """
+    if NATIVE_SSH_TARGET is None or not native_ssh.serves_hosts():
+        return None
+    try:
+        return native_system_hosts(NATIVE_SSH_TARGET, fixture)
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"native SSH host unavailable: {exc}")
 
 
 @pytest.fixture(scope="session")
@@ -726,13 +747,29 @@ def ssh_permission_fixtures():
     """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
     password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
     ``sudo``). Both ship the root-owned ``/etc/termihub-elevated-target.txt``.
+    On the macOS native target: the fixture's ``sudo`` host (a sudoers drop-in
+    for its user) and ``nosudo`` host (its second user), with that file (#5423).
     """
+    native = _native_system_hosts("ssh_permission_fixtures")
+    if native is not None:
+        return native
     return _ensure_ssh_services(
         [
             (SSH_SUDO_SERVICE, SSH_SUDO_PORT),
             (SSH_NOSUDO_SERVICE, SSH_NOSUDO_PORT),
         ]
     )
+
+
+@pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
+def ssh_sftp_only_fixtures():
+    """The SFTP-only SSH container (2215, ``ForceCommand internal-sftp``), or
+    on the macOS native target the fixture's ``sftponly`` host (#5423)."""
+    native = _native_system_hosts("ssh_sftp_only_fixtures")
+    if native is not None:
+        return native
+    return _ensure_ssh_services([(SSH_SFTP_ONLY_SERVICE, SSH_SFTP_ONLY_PORT)])
 
 
 @pytest.fixture(scope="session")

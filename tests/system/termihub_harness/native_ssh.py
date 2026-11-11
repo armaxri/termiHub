@@ -62,7 +62,41 @@ AGENT_FIXTURES = frozenset(
 #: (#5444). Fixed, because the suites import the ports as module constants
 #: before any fixture runs; the jump-host bastion takes the first free port
 #: above the main one, well below these.
-VARIANT_PORT_OFFSETS: Mapping[str, int] = {"pending": 10, "swap": 11, "kbdint": 12}
+VARIANT_PORT_OFFSETS: Mapping[str, int] = {
+    "pending": 10,
+    "swap": 11,
+    "kbdint": 12,
+    # #5423: the fixture-specific SSH hosts.
+    "sudo": 13,
+    "nosudo": 14,
+    "banner": 15,
+    "sftponly": 16,
+}
+
+#: The fixture-specific SSH hosts the native target serves on macOS (#5423):
+#: conftest fixture -> the variants it brings up.
+HOST_FIXTURES: Mapping[str, tuple[str, ...]] = {
+    "ssh_permission_fixtures": ("sudo", "nosudo"),
+    "ssh_banner_fixtures": ("banner",),
+    "ssh_sftp_only_fixtures": ("sftponly",),
+}
+
+#: The ``variant-up`` flags of each fixture-specific host (#5423). ``sudo``,
+#: ``nosudo`` and the root-owned file change system config, so the fixture
+#: script runs them only on CI, with the ``--password-login`` root sshd.
+HOST_VARIANT_FLAGS: Mapping[str, tuple[str, ...]] = {
+    "sudo": ("--sudoer", "--elevated-target"),
+    "nosudo": ("--second-user", "--elevated-target"),
+    "banner": ("--banner",),
+    "sftponly": ("--sftp-only",),
+}
+
+#: Where the native target serves :data:`HOST_FIXTURES`: the macOS fixture.
+HOST_PLATFORMS: tuple[str, ...] = ("darwin",)
+
+#: The ``nosudo`` host's login user: the fixture's second dedicated user,
+#: with the same password and keys and no sudo rule (``--second-user``).
+SECOND_USER = "termihubnosudo"
 
 #: Where the native target serves :data:`AGENT_FIXTURES`: the agent is built
 #: for the host and installed over a POSIX ``sh`` exec, so macOS only (the
@@ -75,9 +109,23 @@ def serves_agent(platform: str = sys.platform) -> bool:
     return platform in AGENT_PLATFORMS
 
 
+def serves_hosts(platform: str = sys.platform) -> bool:
+    """Whether the native target stands in for :data:`HOST_FIXTURES` here.
+
+    macOS only, like the agent: the hosts are variants of the macOS fixture's
+    root sshd, and the suites type POSIX shell commands.
+    """
+    return platform in HOST_PLATFORMS
+
+
 def served_fixtures(platform: str = sys.platform) -> frozenset[str]:
     """The fixtures the native target replaces on ``platform``."""
-    return SSH_FIXTURES | AGENT_FIXTURES if serves_agent(platform) else SSH_FIXTURES
+    served = set(SSH_FIXTURES)
+    if serves_agent(platform):
+        served |= AGENT_FIXTURES
+    if serves_hosts(platform):
+        served |= set(HOST_FIXTURES)
+    return frozenset(served)
 
 
 #: Skip reason of a suite that still needs a Docker SSH fixture on this lane.
@@ -593,13 +641,16 @@ def variant_port(target: NativeSshTarget, name: str) -> int:
 
 
 class NativeAgentVariant:
-    """One agent-host variant sshd of the fixture (``variant-up``, #5444).
+    """One variant sshd of the fixture (``variant-up``, #5444, #5423).
 
     The same login user and keys on its own port, with its own ``HOME`` /
     XDG dirs and agent registry, and the ``env`` the variant needs (the
     pending-update test hook), all through sshd ``SetEnv``. Server-side files
     are written through the main sshd's :class:`NativeSshServerControl`, so a
     keyboard-interactive-only variant needs no key login of its own.
+
+    The fixture-specific SSH hosts (#5423) are variants too, told apart by
+    their ``variant-up`` flags (:data:`HOST_VARIANT_FLAGS`).
     """
 
     def __init__(self, target: NativeSshTarget, name: str) -> None:
@@ -640,26 +691,40 @@ class NativeAgentVariant:
         except OSError as exc:
             raise NativeSshExecError(f"variant {self.name} is not up: {exc}") from exc
 
-    def up(self, env: Optional[Mapping[str, str]] = None, *, kbdint: bool = False) -> str:
+    def up(
+        self,
+        env: Optional[Mapping[str, str]] = None,
+        *,
+        kbdint: bool = False,
+        flags: Sequence[str] = (),
+    ) -> str:
         """Start, or restart with a fresh config, the variant; return its home.
 
-        A restart drops every session the variant was serving.
+        A restart drops every session the variant was serving. ``flags`` are
+        more ``variant-up`` flags (:data:`HOST_VARIANT_FLAGS`).
         """
         args = ["variant-up", "--variant", self.name, "--port", str(self.port)]
         for key, value in (env or {}).items():
             args += ["--setenv", f"{key}={value}"]
         if kbdint:
             args.append("--kbdint")
+        args += list(flags)
         lines = self._fixture(*args).strip().splitlines()
         if not lines:
             raise NativeSshExecError(f"variant-up {self.name} printed no home")
         return lines[-1].strip()
 
-    def ensure(self, env: Optional[Mapping[str, str]] = None, *, kbdint: bool = False) -> str:
+    def ensure(
+        self,
+        env: Optional[Mapping[str, str]] = None,
+        *,
+        kbdint: bool = False,
+        flags: Sequence[str] = (),
+    ) -> str:
         """:meth:`up` unless it already runs (parallel workers share it)."""
         if self.running() and (self._dir / "home_path").is_file():
             return self.home()
-        return self.up(env, kbdint=kbdint)
+        return self.up(env, kbdint=kbdint, flags=flags)
 
     def logs(self) -> str:
         """The variant sshd's log (``LogLevel VERBOSE``)."""

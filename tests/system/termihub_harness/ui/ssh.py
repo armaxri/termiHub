@@ -27,7 +27,9 @@ class SshUi(HarnessMixin):
         def accept_host_key_prompt(self, *, remember: bool = ..., timeout: float = ...) -> bool: ...
         def has_terminal(self) -> bool: ...
 
-    def connect_ssh_password(self, name: str, *, port: int = SSH_PASSWORD_PORT) -> None:
+    def connect_ssh_password(
+        self, name: str, *, port: int = SSH_PASSWORD_PORT, username: str = SSH_USERNAME
+    ) -> None:
         """Create + Save & Connect a password SSH connection, answer the prompt,
         and wait for its terminal — the sequence nearly every SSH suite repeats.
 
@@ -36,7 +38,7 @@ class SshUi(HarnessMixin):
         connection hangs and no session is ever established (#2398 / #2447).
         """
         self.create_ssh_connection(
-            name, host=SSH_HOST, port=port, username=SSH_USERNAME, connect=True
+            name, host=SSH_HOST, port=port, username=username, connect=True
         )
         self.handle_password_prompt()
         self.accept_host_key_prompt()
