@@ -524,6 +524,59 @@ always stale and would recompile that crate, and every crate above it, on each c
 invocation (#3909). To see why cargo rebuilds a crate, run the same command again with
 `CARGO_LOG=cargo::core::compiler::fingerprint=info`.
 
+#### Ignored tests: every `#[ignore]` is bound (#5177)
+
+An `#[ignore]` is a claim that someone runs the test somewhere. The reason string
+must say who, with at least one binding that
+[`scripts/internal/check-ignored-tests.mjs`](../scripts/internal/check-ignored-tests.mjs)
+verifies (in _Rust Code Quality_, _Workflow Lint_ and `scripts/check.sh`):
+
+| Binding                      | Meaning                                                                                                                                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lane: <workflow>.yml#<job>` | A CI job that runs it. The lane must be in the script's `LANES` registry, the job must exist, its run steps (or the script it calls) must pass `--ignored`, `--include-ignored` or `--run-ignored`, and must name the test or its `--test <binary>`. |
+| `manual: MT-<AREA>-<n>`      | A manual test defined in this document.                                                                                                                                                                                                              |
+| `quarantine: #<n>`           | The open issue tracking a quarantined test (for example a `cfg_attr(windows, ignore = …)` flake).                                                                                                                                                    |
+| `helper: <test fn>`          | Not a test: a child-process helper that the named test in the same file runs with `--ignored`.                                                                                                                                                       |
+
+Example: `#[ignore = "needs a public HTTPS host (#4818); lane: plugin-sandbox-nightly.yml#plugin-tls-handshake"]`.
+
+The check also keeps the inventory below in sync: a new ignored test needs a row, and a
+removed one must lose its row. To add a lane, add the job to `LANES` in the script.
+
+<!-- ignored-tests:begin -->
+
+| File                                                 | Test                                                          | Why it is ignored                                         | Binding                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `agent/tests/docker_deferred_update_integration.rs`  | `deferred_update_applies_on_last_docker_disconnect`           | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_basic`                                   | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_recovery`                                | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_resize`                                          | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_kill`                                            | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_monitoring_distroless_uses_docker_stats` | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_monitoring_proc_container_uses_proc`     | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_browses_inside_the_container`            | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/self_update_integration.rs`             | `active_docker_session_is_never_interrupted`                  | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/parent_death_guard.rs`                  | `parent_death_guard_helper`                                   | child-process helper                                      | helper of `killed_harness_parent_takes_its_agent_worker_down`                          |
+| `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_honours_docker_context`                   | live Docker daemon + Podman API socket (#1600)            | `integration-fixtures.yml#core-integration` (Podman step)                              |
+| `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_reaches_macos_podman_machine`             | macOS host with a running Podman machine (#1622)          | manual MT-RUST-01                                                                      |
+| `core/src/backends/local_shell.rs`                   | `windows_shell_start_keeps_profile_output_and_follows_cd`     | needs a profile that prints a marker (#5017)              | `integration-fixtures.yml#native-sshd` (Windows leg)                                   |
+| `core/src/backends/local_shell_side_effect_tests.rs` | `audit_injected_setup_side_effects`                           | audit report, asserts nothing (#5009)                     | `integration-fixtures.yml#native-sshd` (macOS/Linux legs)                              |
+| `core/tests/plugin_runner_installed.rs`              | `echo_backend_loads_in_its_lpac_from_a_per_machine_install`   | per-machine MSI install + standard user (#4252)           | `plugin-lpac-per-machine.yml#per-machine-lpac` (called by `release-windows-smoke.yml`) |
+| `core/tests/plugin_runner_perf.rs`                   | `out_of_process_echo_stays_within_the_budget`                 | performance gate, optimised build                         | `plugin-sandbox-nightly.yml#plugin-sandbox-perf`                                       |
+| `core/tests/plugin_runner_tls_handshake.rs`          | `a_sandboxed_plugin_verifies_tls_with_only_the_root_snapshot` | public HTTPS host (#4818)                                 | `plugin-sandbox-nightly.yml#plugin-tls-handshake`                                      |
+| `src-tauri/src/credential/hw_key/macos.rs`           | `unsigned_binary_probe_reports_missing_entitlement`           | real macOS keychain (#5163)                               | `code-quality.yml#tests` via `real-keychain-tests.sh` (macOS leg, per PR)              |
+| `src-tauri/src/credential/os_auth/macos.rs`          | `capability_preflight_does_not_prompt`                        | real macOS LocalAuthentication (#5163)                    | `code-quality.yml#tests` via `real-keychain-tests.sh` (macOS leg, per PR)              |
+| `src-tauri/src/session/agent_port_forward_tests.rs`  | `live_vnc_through_a_real_agent_binary`                        | real agent binary + VNC server, `TERMIHUB_LIVE_*` (#5169) | `integration-fixtures.yml#core-integration`                                            |
+| `src-tauri/src/utils/data_dir_lock_tests.rs`         | `lock_holder_child_process`                                   | child-process helper                                      | helper of `lock_is_released_when_the_holder_crashes`                                   |
+
+<!-- ignored-tests:end -->
+
+**MT-RUST-01 — Podman machine routing on macOS (#1622).** CI cannot run it: the macOS
+runners have no Podman machine. On a Mac, run `podman machine start`, then
+`cargo test -p termihub-core --features docker --lib -- --ignored --exact --nocapture backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine`.
+Expected: `test result: ok. 1 passed`, and the output names the machine's
+`…-api.sock` socket. Run it before a release that touches `core/src/backends/docker/`.
+
 ## 4. Rendered Visual Checks (#4712)
 
 **What it does**: renders the real frontend in headless Chromium at several
