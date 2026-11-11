@@ -493,6 +493,33 @@ describe("retryInterruptedFolderPaste — remote → local (#3912)", () => {
   });
 });
 
+describe("pasteFileLeg — a file pasted onto itself across sessions (#5355)", () => {
+  it("is refused before it is read, written or deleted", async () => {
+    vi.mocked(sessionCheckPaste).mockRejectedValueOnce(
+      new Error("copy /d/f to /d/f refused: source and destination are the same file")
+    );
+    const cut: PasteTransport = { ...byteTransport, operation: "cut" };
+
+    await expect(pasteFileLeg(cut, "/d/f", "/d/f", true)).rejects.toThrow("same file");
+
+    expect(vi.mocked(sessionCheckPaste)).toHaveBeenCalledWith(
+      "agent-dst",
+      "/d/f",
+      "/d/f",
+      "agent-src"
+    );
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
+  });
+
+  it("is not asked again for each file of a folder", async () => {
+    await pasteFileLeg(byteTransport, "/d/f", "/e/f", false);
+
+    expect(vi.mocked(sessionCheckPaste)).not.toHaveBeenCalled();
+  });
+});
+
 describe("probeRemoteCopy (#4520)", () => {
   it("a failed probe means no remote copy, and leaves a DEBUG trace", async () => {
     vi.mocked(sessionSupportsRemoteCopy).mockRejectedValueOnce(new Error("session gone"));
@@ -535,10 +562,31 @@ describe("pasteFolderTree — a same-session paste into itself (#5330)", () => {
     expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
   });
 
-  it("does not ask when the two ends are different sessions", async () => {
+  it("asks with the source session when the two ends are different sessions (#5355)", async () => {
     await pasteFolderTree(byteTransport, "/src/f", "/dst/f");
 
-    expect(vi.mocked(sessionCheckPaste)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionCheckPaste)).toHaveBeenCalledWith(
+      "agent-dst",
+      "/src/f",
+      "/dst/f",
+      "agent-src"
+    );
+  });
+
+  it("stops a cross-session folder paste the backend refuses before creating anything (#5355)", async () => {
+    vi.mocked(sessionCheckPaste).mockRejectedValueOnce(
+      new Error("copy /d to /d/sub/copy refused: the destination is inside the source folder")
+    );
+    vi.mocked(sessionListFiles).mockResolvedValue([entry("a.txt", "/d/a.txt", 3)]);
+    const cut: PasteTransport = { ...byteTransport, operation: "cut" };
+
+    await expect(pasteFolderTree(cut, "/d", "/d/sub/copy")).rejects.toThrow(
+      "the destination is inside the source folder"
+    );
+
+    expect(vi.mocked(sessionMkdir)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
   });
 
   it("copies the source as it was, even when the backend cannot see the alias", async () => {
