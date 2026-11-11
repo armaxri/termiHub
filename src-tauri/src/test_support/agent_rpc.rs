@@ -23,7 +23,9 @@ use serde_json::{json, Value};
 use termihub_core::monitoring::MonitoringSender;
 use termihub_core::protocol::methods::{TOOL_RUN, TOOL_START};
 
+use super::session_host::SessionHost;
 use crate::connection::config::AgentSettings;
+use crate::terminal::agent_manager::files_only::FilesOnlyRoutes;
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
     AgentFolderInfo, AgentRpcClient, AgentSessionInfo, ToolRunSender,
@@ -34,6 +36,11 @@ use crate::utils::errors::TerminalError;
 /// Builds the error a failing [`Step`] answers with (`TerminalError` is not
 /// `Clone`, so a step that may fire repeatedly keeps a factory).
 type ErrorFactory = Arc<dyn Fn() -> TerminalError + Send + Sync>;
+
+/// Answers the agent requests it handles (`Some`) before any `send_request`
+/// script; `None` falls through (#5372).
+pub(crate) type Responder =
+    dyn Fn(&str, &Value) -> Option<Result<Value, TerminalError>> + Send + Sync;
 
 /// A latch a [`Step::Hang`] blocks on until the test opens it.
 #[derive(Clone, Default)]
@@ -51,12 +58,27 @@ impl Gate {
         cvar.notify_all();
     }
 
+    /// A guard that opens the gate when dropped — also when the test panics,
+    /// so a call still hanging on it cannot keep the runtime from shutting down.
+    pub(crate) fn open_on_drop(&self) -> OpenOnDrop {
+        OpenOnDrop(self.clone())
+    }
+
     fn wait(&self) {
         let (open, cvar) = &*self.0;
         let mut guard = open.lock().unwrap();
         while !*guard {
             guard = cvar.wait(guard).unwrap();
         }
+    }
+}
+
+/// Opens its [`Gate`] when dropped (see [`Gate::open_on_drop`]).
+pub(crate) struct OpenOnDrop(Gate);
+
+impl Drop for OpenOnDrop {
+    fn drop(&mut self) {
+        self.0.open();
     }
 }
 
@@ -78,6 +100,12 @@ pub(crate) enum Step {
     /// Block the calling thread until the gate opens, then answer with the
     /// inner step.
     Hang(Gate, Box<Step>),
+    /// Block the calling thread on a oneshot that a separately spawned tokio
+    /// task fills shortly after, then answer with the inner step. This is how
+    /// the real agent I/O task delivers a response across tasks, so a caller
+    /// that blocks a runtime worker instead of using `spawn_blocking` can
+    /// deadlock on the wake-up. Needs a tokio runtime context.
+    CrossTask(Box<Step>),
 }
 
 impl Step {
@@ -93,6 +121,12 @@ impl Step {
     pub(crate) fn error(make: impl Fn() -> TerminalError + Send + Sync + 'static) -> Self {
         Self::Fail(Arc::new(make))
     }
+}
+
+/// Who answered a [`FakeAgent::hosted`] call: its script, or the session host.
+enum Routed<T> {
+    Scripted(Result<Answer, TerminalError>),
+    Hosted(Result<T, TerminalError>),
 }
 
 /// What a scripted step resolved to, before the method shapes it.
@@ -153,6 +187,21 @@ pub(crate) struct FakeAgent {
     /// Per-method scripts (set them through [`on`](Self::on) /
     /// [`always`](Self::always)).
     pub(crate) scripts: Mutex<HashMap<&'static str, Script>>,
+    /// A stateful session host (#5372): when set, the transport calls and the
+    /// unscripted `create_session` / `list_sessions` answer from it (see
+    /// [`session_host`](Self::session_host)).
+    pub(crate) host: Option<SessionHost>,
+    /// The capabilities `get_capabilities` reports when set, over the built-in
+    /// ones and over `disconnected` (set through
+    /// [`capabilities_mut`](Self::capabilities_mut)).
+    pub(crate) capabilities: Option<AgentCapabilities>,
+    /// Answers `send_request` for the methods it handles, after a script for
+    /// that RPC method and before a `"send_request"` script.
+    pub(crate) responder: Option<Box<Responder>>,
+    /// The agent manager's real files-only routing (#4081): `register_files_only`
+    /// registers here and `unregister_session_output` removes the route, so a
+    /// test can deliver `connection.filesOnly` notifications through it.
+    pub(crate) files_only_routes: Mutex<FilesOnlyRoutes>,
 }
 
 impl FakeAgent {
@@ -170,6 +219,55 @@ impl FakeAgent {
             offline: true,
             ..Self::default()
         }
+    }
+
+    /// An agent backed by a [`SessionHost`]: its transport goes down and comes
+    /// back through the host's flags, `create_session` mints `remote-{n}`
+    /// while it is up, and `list_sessions` reports the minted sessions while
+    /// they are recoverable. It reports no capabilities, and the rest of the
+    /// session plumbing succeeds (each call recorded), so a test scripts only
+    /// what it wants to break.
+    pub(crate) fn session_host() -> Self {
+        let mut agent = Self {
+            disconnected: true,
+            host: Some(SessionHost::default()),
+            ..Self::default()
+        };
+        for method in [
+            "disconnect_agent",
+            "retain_agent_config",
+            "send_request",
+            "attach_session",
+            "close_session",
+            "register_session_output",
+            "unregister_session_output",
+            "send_session_input",
+            "resize_session",
+            "shutdown_agent",
+            "apply_agent_settings",
+            "list_connections_and_folders",
+            "delete_definition",
+            "delete_folder",
+        ] {
+            agent = agent.always(method, Step::Ok);
+        }
+        agent
+    }
+
+    /// The capabilities to report, starting from a minimal set (no connection
+    /// types, ten sessions, every flag off) on first use.
+    pub(crate) fn capabilities_mut(&mut self) -> &mut AgentCapabilities {
+        self.capabilities.get_or_insert_with(|| {
+            serde_json::from_value(json!({ "connectionTypes": [], "maxSessions": 10 }))
+                .expect("minimal capabilities parse")
+        })
+    }
+
+    /// The [`SessionHost`] of a [`session_host`](Self::session_host) agent.
+    pub(crate) fn host(&self) -> &SessionHost {
+        self.host
+            .as_ref()
+            .expect("FakeAgent: not a session_host agent")
     }
 
     /// Queue a one-shot answer for `method`; queued answers are used in order
@@ -298,16 +396,23 @@ impl FakeAgent {
             .unwrap_or_else(|| panic!("FakeAgent: unscripted call to {method}"))
     }
 
-    fn strict_unit(&self, method: &'static str, args: &[&str]) -> Result<(), TerminalError> {
-        self.strict(method, args).map(|_| ())
-    }
-
-    fn strict_typed<T: serde::de::DeserializeOwned>(
+    /// Like [`strict`](Self::strict), but an unscripted call to a
+    /// [`session_host`](Self::session_host) agent answers from `host`.
+    fn hosted<T>(
         &self,
         method: &'static str,
         args: &[&str],
-    ) -> Result<T, TerminalError> {
-        self.strict(method, args).map(|a| typed(method, a))
+        host: impl FnOnce(&SessionHost) -> Result<T, TerminalError>,
+    ) -> Routed<T> {
+        match (self.scripted(method, args), &self.host) {
+            (Some(answer), _) => Routed::Scripted(answer),
+            (None, Some(h)) => Routed::Hosted(host(h)),
+            (None, None) => panic!("FakeAgent: unscripted call to {method}"),
+        }
+    }
+
+    fn strict_unit(&self, method: &'static str, args: &[&str]) -> Result<(), TerminalError> {
+        self.strict(method, args).map(|_| ())
     }
 }
 
@@ -323,6 +428,16 @@ fn run_step(step: Step) -> Result<Answer, TerminalError> {
         }
         Step::Hang(gate, then) => {
             gate.wait();
+            run_step(*then)
+        }
+        Step::CrossTask(then) => {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                let _ = tx.send(());
+            });
+            rx.blocking_recv()
+                .map_err(|_| TerminalError::RemoteError("oneshot dropped".to_string()))?;
             run_step(*then)
         }
     }
@@ -348,7 +463,20 @@ impl AgentRpcClient for FakeAgent {
         config: &RemoteAgentConfig,
         agent_settings: Option<&AgentSettings>,
     ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
+        self.record("connect_agent", &[agent_id]);
+        let Some(host) = &self.host else {
+            unimplemented!()
+        };
+        host.connect();
+        Ok(AgentConnectResult {
+            capabilities: serde_json::from_value(json!({
+                "connection_types": [],
+                "max_sessions": 10
+            }))
+            .expect("minimal capabilities parse"),
+            agent_version: "test".into(),
+            protocol_version: "1".into(),
+        })
     }
     fn cancel_connect(&self, agent_id: &str) -> bool {
         false
@@ -357,10 +485,19 @@ impl AgentRpcClient for FakeAgent {
         self.strict_unit("disconnect_agent", &[agent_id])
     }
     fn is_connected(&self, agent_id: &str) -> bool {
-        !self.offline
+        match &self.host {
+            Some(host) => host.is_connected(),
+            None => !self.offline,
+        }
     }
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
-        if self.disconnected || self.offline {
+        if self.offline {
+            return None;
+        }
+        if let Some(caps) = &self.capabilities {
+            return Some(caps.clone());
+        }
+        if self.disconnected {
             return None;
         }
         Some(AgentCapabilities {
@@ -396,8 +533,24 @@ impl AgentRpcClient for FakeAgent {
     fn clear_retained_agent_config(&self, agent_id: &str) {
         self.record("clear_retained_agent_config", &[agent_id]);
     }
+    fn reconnect_retained_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
+        // Unscripted and without a host: the trait default (no reattach).
+        match (
+            self.scripted("reconnect_retained_agent", &[agent_id]),
+            &self.host,
+        ) {
+            (Some(answer), _) => answer.map(|_| ()),
+            (None, Some(host)) => host.reconnect(),
+            (None, None) => Err(TerminalError::RemoteError(format!(
+                "Agent {agent_id} reattach not supported"
+            ))),
+        }
+    }
     fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
+        match self.strict("shutdown_agent", &[agent_id, opt(reason)])? {
+            Answer::Value(Value::Null) => Ok(0),
+            answer => Ok(typed("shutdown_agent", answer)),
+        }
     }
     fn send_request(
         &self,
@@ -409,10 +562,15 @@ impl AgentRpcClient for FakeAgent {
             .lock()
             .unwrap()
             .push((method.to_string(), params.clone()));
-        // A script for this RPC method wins, then one for every request.
-        let scripted = self
-            .next_step(method)
-            .or_else(|| self.next_step("send_request"));
+        // A script for this RPC method wins, then the responder, then a script
+        // for every request.
+        let mut scripted = self.next_step(method);
+        if scripted.is_none() {
+            if let Some(reply) = self.responder.as_ref().and_then(|r| r(method, &params)) {
+                return reply;
+            }
+            scripted = self.next_step("send_request");
+        }
         if let Some(step) = scripted {
             return run_step(step).map(|answer| match answer {
                 Answer::Value(value) => value,
@@ -468,7 +626,11 @@ impl AgentRpcClient for FakeAgent {
         definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
         let args = [agent_id, session_type, opt(title), opt(definition_id)];
-        match self.strict("create_session", &args)? {
+        let answer = match self.hosted("create_session", &args, |h| h.create(session_type)) {
+            Routed::Scripted(answer) => answer?,
+            Routed::Hosted(result) => return result,
+        };
+        match answer {
             Answer::NewSession => Ok(AgentSessionInfo {
                 session_id: uuid::Uuid::new_v4().to_string(),
                 title: title.unwrap_or("mock").to_string(),
@@ -539,13 +701,21 @@ impl AgentRpcClient for FakeAgent {
         self.strict_unit("close_session", &[agent_id, remote_session_id])
     }
     fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        self.strict_typed("list_sessions", &[agent_id])
+        match self.hosted("list_sessions", &[agent_id], |h| Ok(h.list())) {
+            Routed::Scripted(answer) => answer.map(|a| typed("list_sessions", a)),
+            Routed::Hosted(result) => result,
+        }
     }
     fn list_connections_and_folders(
         &self,
         agent_id: &str,
     ) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
+        // Scriptable as succeed / fail only: the data has no wire form here.
+        self.strict("list_connections_and_folders", &[agent_id])?;
+        Ok(AgentConnectionsData {
+            connections: vec![],
+            folders: vec![],
+        })
     }
     fn save_definition(
         &self,
@@ -562,7 +732,7 @@ impl AgentRpcClient for FakeAgent {
         unimplemented!()
     }
     fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError> {
-        unimplemented!()
+        self.strict_unit("delete_definition", &[agent_id, def_id])
     }
     fn create_folder(
         &self,
@@ -580,7 +750,7 @@ impl AgentRpcClient for FakeAgent {
         unimplemented!()
     }
     fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError> {
-        unimplemented!()
+        self.strict_unit("delete_folder", &[agent_id, folder_id])
     }
     fn register_session_output(
         &self,
@@ -597,7 +767,24 @@ impl AgentRpcClient for FakeAgent {
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
-        self.strict_unit("unregister_session_output", &[agent_id, remote_session_id])
+        self.strict_unit("unregister_session_output", &[agent_id, remote_session_id])?;
+        self.files_only_routes
+            .lock()
+            .unwrap()
+            .remove(remote_session_id);
+        Ok(())
+    }
+    fn register_files_only(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        files_only_tx: tokio::sync::watch::Sender<bool>,
+    ) -> Result<(), TerminalError> {
+        self.files_only_routes
+            .lock()
+            .unwrap()
+            .register(remote_session_id.to_string(), files_only_tx);
+        Ok(())
     }
     fn register_monitoring_output(
         &self,
@@ -609,6 +796,7 @@ impl AgentRpcClient for FakeAgent {
             !self.offline,
             "FakeAgent: monitoring route on an offline agent"
         );
+        self.record("register_monitoring_output", &[agent_id, remote_session_id]);
         let mut routes = self.monitoring_routes.lock().unwrap();
         routes.retain(|(host, _)| host != remote_session_id);
         routes.push((remote_session_id.to_string(), monitoring_tx));
@@ -666,7 +854,7 @@ impl AgentRpcClient for FakeAgent {
         agent_id: &str,
         settings: &AgentSettings,
     ) -> Result<(), TerminalError> {
-        unimplemented!()
+        self.strict_unit("apply_agent_settings", &[agent_id])
     }
 }
 

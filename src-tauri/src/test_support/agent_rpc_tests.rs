@@ -83,3 +83,106 @@ fn new_session_mints_a_running_attached_session() {
     assert_eq!(b.definition_id.as_deref(), Some("def-1"));
     assert!(a.attached);
 }
+
+#[test]
+fn a_session_host_mints_sessions_and_lists_them_while_recoverable() {
+    let agent = FakeAgent::session_host();
+    let a = agent
+        .create_session("a", "shell", json!({}), None, None)
+        .unwrap();
+    let b = agent
+        .create_session("a", "shell", json!({}), None, None)
+        .unwrap();
+    assert_eq!(
+        (a.session_id.as_str(), b.session_id.as_str()),
+        ("remote-0", "remote-1")
+    );
+    assert!(!a.attached);
+    let listed: Vec<String> = agent
+        .list_sessions("a")
+        .unwrap()
+        .into_iter()
+        .map(|s| s.session_id)
+        .collect();
+    assert_eq!(listed, agent.host().minted());
+    agent
+        .host()
+        .session_recoverable
+        .store(false, Ordering::SeqCst);
+    assert!(agent.list_sessions("a").unwrap().is_empty());
+}
+
+#[test]
+fn a_session_host_refuses_creates_while_down_and_reattaches_only_when_allowed() {
+    let agent = FakeAgent::session_host();
+    assert!(agent.is_connected("a"));
+    assert!(agent.get_capabilities("a").is_none());
+    agent.host().connected.store(false, Ordering::SeqCst);
+    agent.host().reattach_ok.store(false, Ordering::SeqCst);
+    assert!(!agent.is_connected("a"));
+    assert!(agent
+        .create_session("a", "shell", json!({}), None, None)
+        .is_err());
+    assert!(agent.reconnect_retained_agent("a").is_err());
+    assert!(!agent.is_connected("a"));
+    agent.host().reattach_ok.store(true, Ordering::SeqCst);
+    agent.reconnect_retained_agent("a").unwrap();
+    assert!(agent.is_connected("a"));
+    assert!(
+        agent.host().minted().is_empty(),
+        "a refused create mints nothing"
+    );
+}
+
+#[test]
+fn a_scripted_create_wins_over_the_session_host() {
+    let agent =
+        FakeAgent::session_host().on("create_session", Step::fail("agent refused the create"));
+    assert!(agent
+        .create_session("a", "shell", json!({}), None, None)
+        .is_err());
+    assert!(agent.host().minted().is_empty());
+}
+
+#[test]
+fn without_a_host_reconnect_keeps_the_trait_default() {
+    assert!(FakeAgent::default().reconnect_retained_agent("a").is_err());
+}
+
+#[test]
+fn a_gate_guard_opens_its_gate_on_drop() {
+    let gate = Gate::new();
+    let agent = Arc::new(FakeAgent::default().on(
+        "attach_session",
+        Step::Hang(gate.clone(), Box::new(Step::Ok)),
+    ));
+    let worker = {
+        let agent = agent.clone();
+        std::thread::spawn(move || agent.attach_session("a", "r"))
+    };
+    let guard = gate.open_on_drop();
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(
+        !worker.is_finished(),
+        "the attach hangs while the guard lives"
+    );
+    drop(guard);
+    worker.join().unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_cross_task_step_answers_once_the_spawned_task_wakes_it() {
+    let agent = Arc::new(FakeAgent::default().on(
+        "close_session",
+        Step::CrossTask(Box::new(Step::fail("woken, then refused"))),
+    ));
+    let answer = tokio::task::spawn_blocking({
+        let agent = agent.clone();
+        move || agent.close_session("a", "r")
+    });
+    let answer = tokio::time::timeout(Duration::from_secs(5), answer)
+        .await
+        .expect("the spawned task wakes the blocked call")
+        .unwrap();
+    assert!(answer.is_err(), "the inner step answers after the wake");
+}
