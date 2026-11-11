@@ -170,24 +170,6 @@ describe("AgentNode — row action keys (#5181)", () => {
     await flushAsync();
   }
 
-  /**
-   * Confirm a delete whose row stays (the store mock removes nothing) and drain
-   * the 2 s focus-rescue poll it starts. Left on real timers, that poll outlives
-   * the test and, on a slow runner, focuses the next test's agent header the
-   * moment a closing dialog leaves focus on `body`.
-   */
-  function confirmAndDrainFocusRescue() {
-    vi.useFakeTimers();
-    try {
-      act(() => q("confirm-delete-confirm")!.click());
-      act(() => {
-        vi.runAllTimers();
-      });
-    } finally {
-      vi.useRealTimers();
-    }
-  }
-
   describe("context menu", () => {
     it("Shift+F10 on a saved connection opens its menu", async () => {
       await render();
@@ -266,7 +248,7 @@ describe("AgentNode — row action keys (#5181)", () => {
       await render();
       await openWith(folderRow(), "Delete");
       expect(q("confirm-delete-dialog")?.textContent).toContain("Servers");
-      confirmAndDrainFocusRescue();
+      act(() => q("confirm-delete-confirm")!.click());
       expect(deleteAgentFolder).toHaveBeenCalledWith(AGENT_ID, "f1");
     });
 
@@ -274,7 +256,7 @@ describe("AgentNode — row action keys (#5181)", () => {
       await render();
       await openWith(headerToggle(), "Delete");
       expect(q("confirm-delete-dialog")?.textContent).toContain("Keys Agent");
-      confirmAndDrainFocusRescue();
+      act(() => q("confirm-delete-confirm")!.click());
       expect(deleteRemoteAgent).toHaveBeenCalledWith(AGENT_ID);
     });
 
@@ -304,6 +286,80 @@ describe("AgentNode — row action keys (#5181)", () => {
       await vi.waitFor(() => {
         expect(defRow("d1")).toBeNull();
         expect(document.activeElement).toBe(defRow("d2"));
+      });
+    });
+
+    // #5248: the focus rescue acts only for the removal it was started for.
+    describe("focus rescue scope", () => {
+      /** Drop focus to <body>, as a closing dialog or a re-render can. */
+      function strand() {
+        act(() => (document.activeElement as HTMLElement | null)?.blur());
+        expect(document.activeElement).toBe(document.body);
+      }
+
+      it("a failed delete does not move focus later", async () => {
+        // The delete settles without removing the row (the store toasts the error).
+        deleteAgentDef.mockImplementation(() => Promise.resolve());
+        await render();
+        const row = defRow("d1");
+        await openWith(row, "Delete");
+        act(() => q("confirm-delete-confirm")!.click());
+        await settleFocus();
+        await settleFocus();
+        strand();
+        await settleFocus();
+        expect(defRow("d1")).toBe(row);
+        expect(document.activeElement).toBe(document.body);
+      });
+
+      it("focusing elsewhere cancels it", async () => {
+        let removeRow!: () => void;
+        deleteAgentDef.mockImplementation(
+          (_agentId, defId) =>
+            new Promise<void>((resolve) => {
+              removeRow = () => {
+                seed(DEFINITIONS.filter((d) => d.id !== defId));
+                resolve();
+              };
+            })
+        );
+        await render();
+        await openWith(defRow("d1"), "Delete");
+        act(() => q("confirm-delete-confirm")!.click());
+        await settleFocus();
+        const other = document.createElement("input");
+        document.body.appendChild(other);
+        try {
+          act(() => other.focus());
+          strand();
+          await act(async () => removeRow());
+          await settleFocus();
+          expect(defRow("d1")).toBeNull();
+          expect(document.activeElement).toBe(document.body);
+        } finally {
+          other.remove();
+        }
+      });
+
+      it("an agent delete never lands on a header outside its list", async () => {
+        const stray = document.createElement("div");
+        stray.innerHTML =
+          '<div class="connection-list__group-header connection-list__group-header--agent">' +
+          '<button class="connection-list__group-toggle">other</button></div>';
+        document.body.appendChild(stray);
+        try {
+          await render();
+          await openWith(headerToggle(), "Delete");
+          act(() => q("confirm-delete-confirm")!.click());
+          // The agent goes (the mock store does not remove it, so drop the tree).
+          act(() => root.unmount());
+          root = createRoot(container);
+          strand();
+          await settleFocus();
+          expect(stray.contains(document.activeElement)).toBe(false);
+        } finally {
+          stray.remove();
+        }
       });
     });
   });

@@ -237,6 +237,23 @@ describe("ConnectionList — row action keys (#5181)", () => {
       expect(folderRow("work")).toBeNull();
       expect((document.activeElement as HTMLElement).getAttribute("role")).toBe("treeitem");
     });
+
+    it("an undo of the folder delete does not pull focus back into the tree (#5248)", async () => {
+      await render();
+      press(focused(folderRow("work")), "Delete");
+      await flushAsync();
+      act(() => q("confirm-delete-confirm").click());
+      // The Undo toast is clicked straight away; the toast then closes, leaving
+      // focus on <body> while the folder comes back.
+      const undo = document.createElement("button");
+      document.body.appendChild(undo);
+      act(() => undo.focus());
+      act(() => seedConnectionsRegion({ folders: [work], connections: CONNECTIONS }));
+      act(() => undo.remove());
+      await settleFocus();
+      expect(folderRow("work")).not.toBeNull();
+      expect(document.activeElement).toBe(document.body);
+    });
   });
 
   it("announces the keys via aria-keyshortcuts", async () => {

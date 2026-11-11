@@ -1746,6 +1746,7 @@ export function ConnectionList() {
                   <div
                     className="connection-list__agents-scroll"
                     data-testid="remote-agents-scroll"
+                    data-agent-list
                   >
                     {/*
                       Every agent renders at its natural content height so the
