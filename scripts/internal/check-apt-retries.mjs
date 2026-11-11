@@ -37,6 +37,12 @@ const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 /** The composite action that writes the runner's apt retry config. */
 export const RETRY_ACTION = "./.github/actions/apt-retries";
 
+/** The action file that every host apt call depends on. */
+export const RETRY_ACTION_FILE = ".github/actions/apt-retries/action.yml";
+
+/** The script the action runs to route apt around unreachable mirrors (#5385). */
+export const MIRROR_FALLBACK_SCRIPT = "mirror-fallback.sh";
+
 /** apt sub-commands that download from a mirror. */
 const DOWNLOAD_VERBS = new Set([
   "update",
@@ -238,6 +244,27 @@ export function kindOf(file) {
 }
 
 /**
+ * The apt-retries action must keep running the mirror fallback (#5385): every
+ * host apt call is already required to sit behind the action, so this is what
+ * keeps a *.ubuntu.com outage from failing those calls.
+ *
+ * @param {string} text - contents of the apt-retries action.yml.
+ * @returns {string[]}
+ */
+export function checkMirrorFallback(text) {
+  const runsScript = logicalLines(text).some(
+    ({ text: logical }) =>
+      !logical.trim().startsWith("#") &&
+      logical.includes(`$GITHUB_ACTION_PATH/${MIRROR_FALLBACK_SCRIPT}`)
+  );
+  if (runsScript) return [];
+  return [
+    `${RETRY_ACTION_FILE}: does not run ${MIRROR_FALLBACK_SCRIPT} — keep the step that routes ` +
+      `apt around unreachable Ubuntu mirrors (#5385)`,
+  ];
+}
+
+/**
  * Run every rule against an in-memory view of the repo.
  *
  * @param {Record<string, string>} files - repo-relative path -> contents.
@@ -251,6 +278,7 @@ export function findProblems(files) {
     else if (kind === "action") problems.push(...checkYaml(name, text, false));
     else if (kind === "dockerfile") problems.push(...checkDockerfile(name, text));
     else if (kind === "shell") problems.push(...checkShell(name, text));
+    if (name === RETRY_ACTION_FILE) problems.push(...checkMirrorFallback(text));
   }
   return problems;
 }
