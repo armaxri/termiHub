@@ -887,6 +887,14 @@ anything.
 - **Props interfaces** always defined (e.g., `interface MyComponentProps { ... }`)
 - **JSDoc** for public functions
 
+### User-facing copy
+
+Dialog titles, buttons, menu items, Settings labels and messages follow the
+[copy style guide](copy-style.md): sentence case, one primary button per footer with Cancel on
+the left, "Close" to acknowledge, "Discard changes" to discard, Delete vs Remove, `…` only and
+US spelling. ESLint enforces the checkable parts; today's violations sit in a baseline that only
+shrinks (see [Enforcement](copy-style.md#enforcement)).
+
 ### Rust
 
 - **No `.unwrap()` in production code** — Use `?` with `anyhow::Result`. Every first-party crate
