@@ -168,21 +168,47 @@ describe("FileTypeSettings", () => {
     expect(resetBtn).not.toBeUndefined();
   });
 
-  it("reset all button removes all custom mappings", async () => {
+  it("reset all asks first, with a summary, and removes all custom mappings on confirm (#5375)", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" } });
     await render();
 
-    const resetBtn = Array.from(container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Reset All")
-    ) as HTMLButtonElement;
+    click("file-type-reset-all");
+    // Nothing changes until the user confirms.
+    expect(currentSettingsView().fileLanguageMappings).toEqual({
+      Jenkinsfile: "groovy",
+      ".conf": "nginx",
+    });
+    expect(
+      document.querySelector('[data-testid="confirm-file-type-reset-dialog"]')?.textContent
+    ).toContain("2 custom mappings will be removed.");
+
     act(() => {
-      resetBtn.click();
+      document
+        .querySelector<HTMLElement>('[data-testid="confirm-file-type-reset-confirm"]')!
+        .click();
     });
     await act(async () => {});
     await render();
 
     const settings = currentSettingsView();
     expect(settings.fileLanguageMappings).toBeUndefined();
+  });
+
+  it("cancelling reset all keeps every custom mapping (#5375)", async () => {
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
+    await render();
+
+    click("file-type-reset-all");
+    act(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="confirm-file-type-reset-cancel"]')!
+        .click();
+    });
+    await act(async () => {});
+
+    expect(currentSettingsView().fileLanguageMappings).toEqual({ Jenkinsfile: "groovy" });
+    expect(document.querySelector('[data-testid="confirm-file-type-reset-dialog"]')).toBeNull();
+    expect(query("file-type-remove-Jenkinsfile")).not.toBeNull();
   });
 
   it("shows the built-in defaults reference section", async () => {

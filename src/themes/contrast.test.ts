@@ -27,17 +27,41 @@ import { parsePluginTheme } from "./pluginThemes";
  * background — the two backgrounds these tokens actually render on across the
  * app's 18 consuming CSS files.
  *
- * Note: the Solarized themes are intentionally excluded — Solarized is a
- * fixed, well-known palette whose muted tones do not meet AA by design, and
- * #2070 scopes the fix to the built-in dark/light themes only.
+ * All four built-in themes are graded. The Solarized themes used to be
+ * excluded; #5190 remapped their text roles within the canonical Solarized
+ * palette so they meet AA too (see "solarized text tokens" below).
  */
 
 const AA_NORMAL_TEXT = 4.5;
+/** WCAG 2.2 SC 1.4.11: non-text UI components and indicators. */
+const UI_COMPONENT_MIN = 3;
+
+const BUILT_IN_THEMES = [darkTheme, lightTheme, solarizedDarkTheme, solarizedLightTheme];
+const SOLARIZED_THEMES = [solarizedDarkTheme, solarizedLightTheme];
+
+/** Ethan Schoonover's canonical 16 Solarized colours (base03…base3 + 8 accents). */
+const SOLARIZED_PALETTE: Record<string, string> = {
+  base03: "#002b36",
+  base02: "#073642",
+  base01: "#586e75",
+  base00: "#657b83",
+  base0: "#839496",
+  base1: "#93a1a1",
+  base2: "#eee8d5",
+  base3: "#fdf6e3",
+  yellow: "#b58900",
+  orange: "#cb4b16",
+  red: "#dc322f",
+  magenta: "#d33682",
+  violet: "#6c71c4",
+  blue: "#268bd2",
+  cyan: "#2aa198",
+  green: "#859900",
+};
 
 describe("theme text contrast (WCAG 2.2 AA)", () => {
   const cases = [
-    { theme: darkTheme, token: "textMuted" as const },
-    { theme: lightTheme, token: "textMuted" as const },
+    ...BUILT_IN_THEMES.map((theme) => ({ theme, token: "textMuted" as const })),
     { theme: lightTheme, token: "colorWarning" as const },
   ];
 
@@ -67,12 +91,9 @@ describe("theme text contrast (WCAG 2.2 AA)", () => {
  * 4.31:1 on `tabBg` (#4956) before it was lightened to `#808a9c` (4.61:1).
  */
 describe("secondary chrome text contrast (WCAG 2.2 AA)", () => {
-  const cases = [
-    { theme: darkTheme, surface: "bgSecondary" as const },
-    { theme: darkTheme, surface: "tabBg" as const },
-    { theme: lightTheme, surface: "bgSecondary" as const },
-    { theme: lightTheme, surface: "tabBg" as const },
-  ];
+  const cases = BUILT_IN_THEMES.flatMap((theme) =>
+    (["bgSecondary", "tabBg"] as const).map((surface) => ({ theme, surface }))
+  );
 
   for (const { theme, surface } of cases) {
     const fg = theme.colors.textSecondary;
@@ -88,11 +109,11 @@ describe("secondary chrome text contrast (WCAG 2.2 AA)", () => {
  * paint `--bg-hover` / `--bg-active`, which sit closer to `--text-muted` than
  * the plain surfaces: Dark measured 4.17:1 selected, Light 4.25:1 hovered and
  * 3.59:1 selected. Row hints switch to `--text-muted-on-selection` in those
- * states, and this locks it at AA on both row backgrounds. (Solarized is
- * tracked separately in #5190 and keeps its palette value.)
+ * states, and this locks it at AA on both row backgrounds. Dark and Light pin
+ * the derived value; Solarized pins a canonical palette tone instead (#5190).
  */
 describe("muted text on hovered/selected rows (WCAG 2.2 AA, #5200)", () => {
-  for (const theme of [darkTheme, lightTheme]) {
+  for (const theme of BUILT_IN_THEMES) {
     const fg = theme.colors.textMutedOnSelection;
     for (const surface of ["bgHover", "bgActive"] as const) {
       const bg = theme.colors[surface];
@@ -100,9 +121,11 @@ describe("muted text on hovered/selected rows (WCAG 2.2 AA, #5200)", () => {
         expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
       });
     }
+  }
 
+  for (const theme of [darkTheme, lightTheme]) {
     it(`${theme.id} pins the derived value, so a custom copy renders the same`, () => {
-      expect(fg).toBe(deriveTextMutedOnSelection(theme.colors));
+      expect(theme.colors.textMutedOnSelection).toBe(deriveTextMutedOnSelection(theme.colors));
     });
   }
 
@@ -113,12 +136,6 @@ describe("muted text on hovered/selected rows (WCAG 2.2 AA, #5200)", () => {
         contrastRatio(theme.colors.textMuted, theme.colors.bgActive)
       );
       expect(worst).toBeLessThan(AA_NORMAL_TEXT);
-    }
-  });
-
-  it("keeps the Solarized palette value untouched (#5190)", () => {
-    for (const theme of [solarizedDarkTheme, solarizedLightTheme]) {
-      expect(theme.colors.textMutedOnSelection).toBe(theme.colors.textMuted);
     }
   });
 
@@ -170,10 +187,10 @@ describe("muted text on hovered/selected rows (WCAG 2.2 AA, #5200)", () => {
  * row states measured Dark 4.44:1 (bgHover) / 4.06:1 (bgActive) and Light
  * 4.00:1 (bgActive). Row states redirect it to `--text-secondary-on-selection`
  * (pinned by src/styles/secondaryOnSelection.test.ts), and this locks that
- * token at AA on both row backgrounds. Solarized is tracked in #5190.
+ * token at AA on both row backgrounds in all four themes (Solarized since #5190).
  */
 describe("secondary text on hovered/selected rows (WCAG 2.2 AA, #5249)", () => {
-  for (const theme of [darkTheme, lightTheme]) {
+  for (const theme of BUILT_IN_THEMES) {
     const fg = theme.colors.textSecondaryOnSelection;
     for (const surface of ["bgHover", "bgActive"] as const) {
       const bg = theme.colors[surface];
@@ -181,9 +198,13 @@ describe("secondary text on hovered/selected rows (WCAG 2.2 AA, #5249)", () => {
         expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
       });
     }
+  }
 
+  for (const theme of [darkTheme, lightTheme]) {
     it(`${theme.id} pins the derived value, so a custom copy renders the same`, () => {
-      expect(fg).toBe(deriveTextSecondaryOnSelection(theme.colors));
+      expect(theme.colors.textSecondaryOnSelection).toBe(
+        deriveTextSecondaryOnSelection(theme.colors)
+      );
     });
   }
 
@@ -194,12 +215,6 @@ describe("secondary text on hovered/selected rows (WCAG 2.2 AA, #5249)", () => {
         contrastRatio(theme.colors.textSecondary, theme.colors.bgActive)
       );
       expect(worst).toBeLessThan(AA_NORMAL_TEXT);
-    }
-  });
-
-  it("keeps the Solarized palette value untouched (#5190)", () => {
-    for (const theme of [solarizedDarkTheme, solarizedLightTheme]) {
-      expect(theme.colors.textSecondaryOnSelection).toBe(theme.colors.textSecondary);
     }
   });
 
@@ -268,7 +283,88 @@ describe("adjustForContrast (#5008)", () => {
   });
 });
 
-const BUILT_IN_THEMES = [darkTheme, lightTheme, solarizedDarkTheme, solarizedLightTheme];
+/**
+ * Primary text (#5190). `--text-primary` labels every row, including the
+ * selected one (`--bg-active`). Solarized Dark measured 4.11:1 on the sidebar
+ * and 3.16:1 on a selected row; Solarized Light 3.64:1 on the sidebar.
+ */
+describe("primary text contrast (WCAG 2.2 AA, #5190)", () => {
+  const surfaces = ["bgPrimary", "sidebarBg", "bgDropdown", "bgHover", "bgActive"] as const;
+  for (const theme of BUILT_IN_THEMES) {
+    const fg = theme.colors.textPrimary;
+    for (const surface of surfaces) {
+      const bg = theme.colors[surface];
+      it(`${theme.id} textPrimary (${fg}) meets AA on ${surface} (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+
+    it(`${theme.id} primary text stays at least as strong as secondary and muted`, () => {
+      const bg = theme.colors.bgPrimary;
+      const primary = contrastRatio(fg, bg);
+      expect(primary).toBeGreaterThanOrEqual(contrastRatio(theme.colors.textSecondary, bg));
+      expect(primary).toBeGreaterThanOrEqual(contrastRatio(theme.colors.textMuted, bg));
+    });
+  }
+});
+
+/**
+ * Solarized text tokens stay Solarized (#5190). The maintainer decision was to
+ * remap the failing text roles *within* the canonical 16-colour palette rather
+ * than introduce foreign tones, so both themes stay recognisable.
+ */
+describe("solarized text tokens are canonical palette colours (#5190)", () => {
+  const TEXT_TOKENS = [
+    "textPrimary",
+    "textSecondary",
+    "textSecondaryOnSelection",
+    "textMuted",
+    "textMutedOnSelection",
+  ] as const;
+  const canonical = new Set(Object.values(SOLARIZED_PALETTE));
+  for (const theme of SOLARIZED_THEMES) {
+    for (const token of TEXT_TOKENS) {
+      const value = theme.colors[token];
+      it(`${theme.id} ${token} (${value}) is a canonical Solarized colour`, () => {
+        expect(canonical.has(value.toLowerCase())).toBe(true);
+      });
+    }
+  }
+});
+
+/**
+ * Text on the accent (#5164). Primary buttons draw 13px/500 `--text-on-accent`
+ * labels on `--accent-color` (and `--accent-hover` while hovered), so SC 1.4.3's
+ * 4.5:1 applies. White on the old Dark accent measured 3.96:1 (hover 3.03:1),
+ * on the Solarized blue 3.68:1. The accents were darkened along their hue.
+ */
+describe("text on accent (WCAG 2.2 AA, #5164)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    const { textOnAccent, accentColor, accentHover } = theme.colors;
+    for (const [name, bg] of [
+      ["accentColor", accentColor],
+      ["accentHover", accentHover],
+    ] as const) {
+      it(`${theme.id} textOnAccent (${textOnAccent}) meets AA on ${name} (${bg})`, () => {
+        expect(contrastRatio(textOnAccent, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+
+    it(`${theme.id} hover stays visibly distinct from the base accent`, () => {
+      expect(contrastRatio(accentColor, accentHover)).toBeGreaterThanOrEqual(1.2);
+    });
+
+    it(`${theme.id} accent indicators still reach 3:1 on their surfaces`, () => {
+      // --tab-active-border is var(--accent-color) on the active tab.
+      expect(contrastRatio(accentColor, theme.colors.tabActiveBg)).toBeGreaterThanOrEqual(
+        UI_COMPONENT_MIN
+      );
+      expect(
+        contrastRatio(theme.colors.focusBorder, theme.colors.bgPrimary)
+      ).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+    });
+  }
+});
 
 /**
  * Inactive activity-bar icons (#5192, WCAG 1.4.11 non-text 3:1). The icons are

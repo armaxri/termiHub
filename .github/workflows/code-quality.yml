@@ -1607,6 +1607,16 @@ jobs:
           # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
+      # cargo-nextest runs the Rust tests with a per-test timeout (#5345). The
+      # action checks the release archive's SHA-256 against its manifest;
+      # `fallback: none` forbids an unverified cargo-binstall/cargo install.
+      - name: Install cargo-nextest
+        if: needs.changes.outputs.rust != 'false'
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
+
       - name: Install frontend dependencies
         if: >-
           needs.changes.outputs.frontend != 'false' &&
@@ -1693,6 +1703,16 @@ jobs:
           CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
           TERMIHUB_REQUIRE_LOCAL_SSHD: ${{ matrix.os != 'windows-latest' && '1' || '' }}
         run: ./scripts/internal/ci-rust-tests.sh heavy --workspace
+
+      # The per-phase nextest JUnit reports (bulk, heavy), kept only when a test
+      # step failed: they name every failed and timed-out test with its output.
+      - name: Upload Rust test JUnit reports
+        if: failure() && needs.changes.outputs.rust != 'false'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-junit-${{ matrix.os }}
+          path: target/nextest/ci/junit-*.xml
+          if-no-files-found: ignore
 
       # Opt-in real-keychain tests of the deferred backup-restore credential
       # import (#4659): the real OsKeychainStore path end to end (seal key in
@@ -1811,6 +1831,15 @@ jobs:
           # here, so this job adds nothing to the repo cache budget.
           key: x86_64-pc-windows-msvc
           save-if: false
+
+      # cargo-nextest runs the Rust tests with a per-test timeout (#5345). The
+      # action checks the release archive's SHA-256 against its manifest;
+      # `fallback: none` forbids an unverified cargo-binstall/cargo install.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
 
       # Compile first so build time is not counted against the test step.
       - name: Build agent test binaries

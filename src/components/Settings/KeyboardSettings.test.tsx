@@ -205,7 +205,7 @@ describe("KeyboardSettings", () => {
       bindingCell.click();
     });
 
-    expect(container.textContent).toContain("Press a key combination...");
+    expect(container.textContent).toContain("Press a key combination…");
   });
 
   it("shows an unbind button for a bound action and clears it on click", async () => {
@@ -278,12 +278,12 @@ describe("KeyboardSettings", () => {
     act(() => {
       bindingCell.click();
     });
-    expect(container.textContent).toContain("Press a key combination...");
+    expect(container.textContent).toContain("Press a key combination…");
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
-    expect(container.textContent).not.toContain("Press a key combination...");
+    expect(container.textContent).not.toContain("Press a key combination…");
   });
 
   it("captures a two-combo chord and persists it in the engine's chord shape", async () => {

@@ -164,7 +164,7 @@ export function StatusBar() {
       <div className="status-bar__section status-bar__section--center">
         {chordPending && (
           <span className="status-bar__item" data-testid="chord-pending-indicator">
-            ({chordPending}) was pressed. Waiting for second key...
+            ({chordPending}) was pressed. Waiting for second key…
           </span>
         )}
       </div>
@@ -802,7 +802,7 @@ function MonitoringStatus() {
               data-testid="monitoring-loading"
             >
               <Spinner size="xs" label={null} />
-              Connecting...
+              Connecting…
             </span>
             {/*
               Cancel aborts the in-flight connect and tears the entry down so a
@@ -1388,7 +1388,7 @@ function LanguageSelector({
         <div className="lang-menu__search-wrapper">
           <SearchInput
             size="sm"
-            placeholder="Search languages..."
+            placeholder="Search languages…"
             aria-label="Search languages"
             value={search}
             onValueChange={setSearch}

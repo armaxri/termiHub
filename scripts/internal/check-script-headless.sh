@@ -651,11 +651,14 @@ tb_marker="$(sed -n 's/^pub const TEST_BRIDGE_BUILD_MARKER: &str = "\(.*\)";$/\1
   src-tauri/src/utils/test_bridge.rs)"
 printf 'release\0binary\0' >"$TB/release-app"
 printf 'test\0%s\0binary' "$tb_marker" >"$TB/test-bridge-app"
+tb_http_env="$(sed -n 's/^pub const TEST_HTTP_BASE_ENV: &str = "\(.*\)";$/\1/p' \
+  src-tauri/src/utils/test_bridge.rs)"
+printf 'seam\0%s\0binary' "$tb_http_env" >"$TB/http-base-app"
 guard_run() { # <label> <expected exit> <binary...>
   local label="$1" want="$2" out rc=0
   shift 2
   out="$(bash "$GUARD" "$@" 2>&1)" || rc=$?
-  if [ -n "$tb_marker" ] && [ "$rc" -eq "$want" ]; then
+  if [ -n "$tb_marker" ] && [ -n "$tb_http_env" ] && [ "$rc" -eq "$want" ]; then
     echo "ok    test-bridge guard: ${label} (exit ${rc})"
   else
     echo "::error file=${GUARD}::test-bridge guard: ${label}: expected exit ${want}, got ${rc}"
@@ -665,6 +668,7 @@ guard_run() { # <label> <expected exit> <binary...>
 }
 guard_run "passes a binary without the marker" 0 "$TB/release-app"
 guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
+guard_run "fails a binary reading TERMIHUB_TEST_HTTP_BASE" 1 "$TB/http-base-app"
 guard_run "refuses a missing binary" 2 "$TB/missing"
 
 # --- Release agent test-hook guard (#4362) ---

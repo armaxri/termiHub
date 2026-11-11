@@ -12,9 +12,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use super::*;
-use crate::projection::{
-    apply_ops, DiffFrame, ProjectionError, ProjectionFrame, ProjectionSink, Projector,
-};
+use crate::projection::{apply_ops, Projector};
+use crate::test_support::RecordingSink;
 use crate::tunnel::config::{
     LocalForwardConfig, TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelType,
 };
@@ -296,37 +295,6 @@ fn an_unreadable_connection_file_is_not_a_delete() {
 
 // ── The `tunnels` projection ─────────────────────────────────────────────────
 
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 #[test]
 fn a_second_subscriber_sees_the_unresolved_state_and_its_repair() {
     let refs = ConnectionRefs::default();
@@ -335,8 +303,8 @@ fn a_second_subscriber_sees_the_unresolved_state_and_its_repair() {
 
     let projector = Arc::new(Projector::new());
     projector.register_region(TUNNELS_REGION, control.view(&refs));
-    let deleting_client = Arc::new(VecSink::new());
-    let other_client = Arc::new(VecSink::new());
+    let deleting_client = Arc::new(RecordingSink::new());
+    let other_client = Arc::new(RecordingSink::new());
     projector.subscribe(TUNNELS_REGION, "sub-a", "A", deleting_client);
     let snap = projector.subscribe(TUNNELS_REGION, "sub-b", "B", other_client.clone());
     assert_eq!(snap.view["states"]["t1"]["status"], json!("connected"));
