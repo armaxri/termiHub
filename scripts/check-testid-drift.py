@@ -438,6 +438,8 @@ def analyze(config: "dict | None" = None) -> dict:
         "unclassified": unclassified,
         "problems": list(cls["problems"]),
         "classification": cls,
+        "literal_refs": literal_refs,
+        "prefix_refs": prefix_refs,
     }
 
 
@@ -506,7 +508,8 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    literal_refs, prefix_refs = harness_references()
+    result = analyze()
+    literal_refs, prefix_refs = result["literal_refs"], result["prefix_refs"]
     if args.list:
         print(f"Resolved {len(literal_refs)} literal + {len(prefix_refs)} prefix refs:")
         for tid in sorted(literal_refs):
@@ -515,7 +518,6 @@ def main(argv: "list[str] | None" = None) -> int:
             print(f"  prefix   {pref}*")
         print()
 
-    result = analyze()
     _print_notes(result)
     if result["literal_drift"] or result["prefix_drift"]:
         _print_drift(
