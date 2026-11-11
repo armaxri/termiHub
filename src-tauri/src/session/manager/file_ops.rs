@@ -176,8 +176,9 @@ impl SessionManager {
     /// Refuse a same-session paste of `src` onto itself, or of the folder
     /// `src` into its own subtree, before anything is written (#5330). Both
     /// paths are resolved on the session's backend (SFTP `realpath`, the
-    /// container's `readlink -f`, or a `.`/`..` normalisation), so a symlink
-    /// alias or a respelled path is caught. See
+    /// container's `readlink -f`, the local `canonicalize`, FTP's `CWD` +
+    /// `PWD`, an agent's `connection.files.realpath` (#5333), or a `.`/`..`
+    /// normalisation), so a symlink alias or a respelled path is caught. See
     /// [`termihub_core::files::paste_guard`].
     pub async fn ensure_paste_allowed(
         &self,

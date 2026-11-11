@@ -28,7 +28,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
-use termihub_core::files::paste_guard::PathResolver;
+use termihub_core::files::paste_guard;
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 
 use crate::files::sftp::{
@@ -279,8 +279,10 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
 
     /// Refuse a same-session paste of `src` onto itself, or of the folder
     /// `src` into its own subtree, with both paths resolved on the session's
-    /// backend (#5330). A source that cannot be stat'ed, or a path that does
-    /// not resolve, is not a refusal: the paste then reports its own error.
+    /// backend (#5330): SFTP, Docker, the local filesystem, FTP (`CWD` +
+    /// `PWD`) and an agent's `connection.files.realpath` (#5333). A source
+    /// that cannot be stat'ed is not a refusal: the paste then reports its own
+    /// error. A path the backend cannot resolve falls back to the lexical check.
     pub(super) async fn ensure_paste_allowed(
         &self,
         session_id: &str,
@@ -289,7 +291,7 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
-        let resolver = PathResolver::of_browser(browser);
+        let resolver = paste_guard::BrowserResolver::of(browser);
         let Ok(entry) = browser.stat(src).await else {
             return Ok(());
         };

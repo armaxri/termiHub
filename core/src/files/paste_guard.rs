@@ -319,62 +319,97 @@ impl PathResolver {
     }
 }
 
+/// Everything [`ensure_paste_allowed`] and [`real_path`] need from a
+/// browser, taken up front: the owned [`PathResolver`] and the borrowed
+/// [`PathCanonicalizer`]. It never holds `browser` itself, so its futures are
+/// `Send` even for a browser that is not `Sync`, and a caller can still use
+/// the browser (to `stat` the source) before it awaits the check.
+pub struct BrowserResolver<'a> {
+    resolver: PathResolver,
+    canon: Option<&'a dyn PathCanonicalizer>,
+}
+
+impl<'a> BrowserResolver<'a> {
+    /// The resolver of the backend behind `browser`: SFTP and Docker through
+    /// [`PathResolver::of_browser`], a browser with a [`PathCanonicalizer`]
+    /// through it, every other browser lexically.
+    pub fn of(browser: &'a dyn FileBrowser) -> Self {
+        let resolver = PathResolver::of_browser(browser);
+        let canon = if matches!(resolver, PathResolver::Lexical) {
+            browser.path_canonicalizer()
+        } else {
+            None
+        };
+        Self { resolver, canon }
+    }
+
+    /// Refuse a same-session paste of `src` onto itself, or of the folder
+    /// `src` into its own subtree. A canonicalizer resolves both paths with
+    /// the lexical check as the floor ([`check_real_or_lexical`], #5333).
+    pub async fn ensure_copy_allowed(
+        &self,
+        src: &str,
+        dest: &str,
+        src_is_dir: bool,
+    ) -> Result<(), FileError> {
+        match self.canon {
+            Some(canon) => {
+                check_real_or_lexical(src, dest, src_is_dir, |p| async move {
+                    canon.realpath(&p).await
+                })
+                .await
+            }
+            None => {
+                self.resolver
+                    .ensure_copy_allowed(src, dest, src_is_dir)
+                    .await
+            }
+        }
+    }
+
+    /// The real spelling of `path`, a missing final name resolved through its
+    /// parent folder (#5333). [`FileError::NotSupported`] when the backend
+    /// has no way to resolve a path; [`FileError::NotFound`] when neither the
+    /// path nor its parent resolves.
+    pub async fn real_path(&self, path: &str) -> Result<String, FileError> {
+        if let Some(canon) = self.canon {
+            return canon.realpath(path).await;
+        }
+        if matches!(self.resolver, PathResolver::Lexical) {
+            return Err(FileError::NotSupported);
+        }
+        self.resolver
+            .resolve(path)
+            .await
+            .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")))
+    }
+}
+
 /// Refuse a same-session paste of `src` onto itself, or of the folder `src`
-/// into its own subtree, with both paths resolved on `browser`'s backend.
-///
-/// SFTP and Docker resolve through [`PathResolver::of_browser`]. A browser
-/// with a [`PathCanonicalizer`] resolves through it, with the lexical check as
-/// the floor ([`check_real_or_lexical`], #5333). Every other browser compares
-/// lexically.
-///
-/// The returned future borrows only the canonicalizer, never `browser`
-/// itself, so it is `Send` even for a browser that is not `Sync`.
+/// into its own subtree, with both paths resolved on `browser`'s backend. See
+/// [`BrowserResolver::ensure_copy_allowed`]. Like [`real_path`], the
+/// returned future does not borrow `browser`.
 pub fn ensure_paste_allowed<'a>(
     browser: &'a dyn FileBrowser,
     src: &'a str,
     dest: &'a str,
     src_is_dir: bool,
 ) -> impl Future<Output = Result<(), FileError>> + Send + 'a {
-    let resolver = PathResolver::of_browser(browser);
-    let canon = browser.path_canonicalizer();
-    async move {
-        if let (PathResolver::Lexical, Some(canon)) = (&resolver, canon) {
-            return check_real_or_lexical(src, dest, src_is_dir, |p| async move {
-                canon.realpath(&p).await
-            })
-            .await;
-        }
-        resolver.ensure_copy_allowed(src, dest, src_is_dir).await
-    }
+    let resolver = BrowserResolver::of(browser);
+    async move { resolver.ensure_copy_allowed(src, dest, src_is_dir).await }
 }
 
-/// The real spelling of `path` on `browser`'s backend, a missing final name
-/// resolved through its parent folder (#5333). What an agent answers
-/// `connection.files.realpath` with.
+/// The real spelling of `path` on `browser`'s backend: what an agent answers
+/// `connection.files.realpath` with. See [`BrowserResolver::real_path`].
 ///
-/// [`FileError::NotSupported`] when the backend has no way to resolve a path
-/// (WSL, for example), so the caller falls back to its lexical check;
-/// [`FileError::NotFound`] when neither the path nor its parent resolves.
-///
-/// Like [`ensure_paste_allowed`], the future does not borrow `browser`.
+/// The returned future does not borrow `browser`, so it is `Send` even for a
+/// browser that is not `Sync`.
 pub fn real_path<'a>(
     browser: &'a dyn FileBrowser,
     path: &'a str,
 ) -> impl Future<Output = Result<String, FileError>> + Send + 'a {
-    let resolver = PathResolver::of_browser(browser);
-    let canon = browser.path_canonicalizer();
-    async move {
-        if !matches!(resolver, PathResolver::Lexical) {
-            return resolver
-                .resolve(path)
-                .await
-                .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")));
-        }
-        match canon {
-            Some(canon) => canon.realpath(path).await,
-            None => Err(FileError::NotSupported),
-        }
-    }
+    let resolver = BrowserResolver::of(browser);
+    async move { resolver.real_path(path).await }
 }
 
 #[cfg(test)]
