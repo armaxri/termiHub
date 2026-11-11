@@ -72,7 +72,7 @@ class TestExportImport(SettingsUi, SystemTest):
     # ── EXP-ENC-01 / MT-CONN-11: default plain state ───────────────────────────
     def test_default_plain_mode_hides_password_fields(self):
         self._open_export_dialog()
-        assert "Export Connections" in self.driver.get_text(self.TITLE)
+        assert "Export connections" in self.driver.get_text(self.TITLE)
         # Plain is the default mode, so the encrypted password section is absent.
         assert not self.driver.exists(self.PASSWORD)
         assert not self.driver.exists(self.CONFIRM)

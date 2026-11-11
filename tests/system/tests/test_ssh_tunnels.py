@@ -206,10 +206,10 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             what="the local-forward fields",
         )
         diagram = self.driver.get_text("tunnel-diagram")
-        for token in ("Your PC", "SSH Server", "Target"):
+        for token in ("Your PC", "SSH server", "Target"):
             assert token in diagram, token
         form = self.driver.get_text("tunnel-editor-form")
-        for label in ("Local Host", "Local Port", "Remote Host", "Remote Port"):
+        for label in ("Local host", "Local port", "Remote host", "Remote port"):
             assert label in form, label
 
     def test_remote_type_shows_reverse_diagram_and_fields(self):
@@ -217,14 +217,14 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         self._open_new_tunnel_editor()
         self.driver.click("tunnel-type-remote")
         self.wait(
-            lambda: "Remote Clients" in self.driver.get_text("tunnel-diagram"),
+            lambda: "Remote clients" in self.driver.get_text("tunnel-diagram"),
             what="the reverse-forward diagram",
         )
         diagram = self.driver.get_text("tunnel-diagram")
-        for token in ("Local Target", "SSH Server", "Remote Clients"):
+        for token in ("Local target", "SSH server", "Remote clients"):
             assert token in diagram, token
         form = self.driver.get_text("tunnel-editor-form")
-        for label in ("Local Host", "Local Port", "Remote Host", "Remote Port"):
+        for label in ("Local host", "Local port", "Remote host", "Remote port"):
             assert label in form, label
 
     def test_dynamic_type_hides_remote_fields(self):
@@ -237,12 +237,12 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             what="the dynamic-forward diagram",
         )
         diagram = self.driver.get_text("tunnel-diagram")
-        for token in ("Your PC", "SSH Server", "Internet"):
+        for token in ("Your PC", "SSH server", "Internet"):
             assert token in diagram, token
         form = self.driver.get_text("tunnel-editor-form")
-        assert "Local Host" in form and "Local Port" in form
-        assert "Remote Host" not in form
-        assert "Remote Port" not in form
+        assert "Local host" in form and "Local port" in form
+        assert "Remote host" not in form
+        assert "Remote port" not in form
 
     def test_diagram_updates_on_local_port_change(self):
         """TUNNEL-06: the diagram reacts to the local-port input."""

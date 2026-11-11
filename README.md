@@ -221,7 +221,7 @@ termiHub uses a VS Code-inspired three-column layout:
 └──────────┴────────────────┴──────────────────────────────────────────┘
 ```
 
-- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File Browser, Recent Sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow Experimental Features** on, it also shows SSH Tunnels, Services (embedded servers), Network Tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard Shortcuts, Customize Layout, Open Connections, connection import/export, Updates, **Export Diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
+- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow Experimental Features** on, it also shows SSH tunnels, Services (embedded servers), Network tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
 - **Terminal View** — The main area with a tab bar, terminal content, toolbar (New Terminal, Split, Close Panel), and status bar.
 
