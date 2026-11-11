@@ -660,6 +660,13 @@ impl FileBrowser for SftpFileBrowser {
         Some(self)
     }
 
+    /// The server, user and route of this browser's config (#5355). A
+    /// browser riding a borrowed session ([`from_session`](Self::from_session))
+    /// has no config, so no id.
+    fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
+        crate::files::shared_fs::FilesystemId::ssh(&self.config)
+    }
+
     /// SFTP `setstat` / `symlink` back chmod, chown and symlink creation.
     fn attribute_ops(&self) -> crate::files::FileAttributeOps {
         crate::files::FileAttributeOps::ALL

@@ -191,6 +191,22 @@ impl SessionManager {
             .await
     }
 
+    /// Refuse a paste from `src_session` to the other session `dest_session`
+    /// of a file onto itself, or of a folder into its own subtree, when both
+    /// sessions reach one filesystem (#5355). See
+    /// [`termihub_core::files::paste_guard::ensure_paste_across_allowed`].
+    pub async fn ensure_paste_across_allowed(
+        &self,
+        src_session: &str,
+        dest_session: &str,
+        src: &str,
+        dest: &str,
+    ) -> Result<(), TerminalError> {
+        self.file_ops()
+            .ensure_paste_across_allowed(src_session, dest_session, src, dest)
+            .await
+    }
+
     // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
     //
     // These reach the SSH-specific SFTP capabilities that do not fit on the shared

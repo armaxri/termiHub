@@ -208,12 +208,14 @@ pub async fn session_copy_remote(
     let src = resolve_copy_endpoint(&manager, &src_session).await?;
     let dst = resolve_copy_endpoint(&manager, &dst_session).await?;
     // The executor truncates the destination before it reads the source, so a
-    // copy of a file onto itself on one end must never start (#5330).
-    if same_copy_end((&src_session, &src), (&dst_session, &dst)) {
-        transfer::remote_copy::ensure_copy_within_allowed(&src.endpoint, &src_path, &dst_path)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-    }
+    // copy of a file onto itself must never start: on one session (#5330), or
+    // across two sessions that reach one filesystem (#5355).
+    ensure_remote_copy_allowed(
+        (&src_session, &src.endpoint, &src_path),
+        (&dst_session, &dst.endpoint, &dst_path),
+    )
+    .await
+    .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
     // Named/pathed for the *destination* (where the file lands), mirroring the
@@ -256,20 +258,21 @@ pub async fn session_copy_remote(
     Ok(transfer_id)
 }
 
-/// Whether both ends of a remote-to-remote copy are one filesystem: the same
-/// session, or two sessions on the same container (#5330).
-fn same_copy_end(
-    (src_session, src): (&str, &CopyEnd),
-    (dst_session, dst): (&str, &CopyEnd),
-) -> bool {
+/// Refuse a remote-to-remote copy of a file onto itself before anything is
+/// opened: on one session, with that end resolving both paths (#5330), or
+/// between two sessions that reach one filesystem — two sessions on one
+/// agent host or container, two SFTP sessions to one server as one user —
+/// with each end resolving its own path (#5355). Ends on different hosts
+/// are never refused.
+pub(crate) async fn ensure_remote_copy_allowed(
+    (src_session, src, src_path): (&str, &RemoteCopyEndpoint, &str),
+    (dst_session, dst, dst_path): (&str, &RemoteCopyEndpoint, &str),
+) -> Result<(), termihub_core::errors::FileError> {
+    use crate::files::transfer::remote_copy;
     if src_session == dst_session {
-        return true;
-    }
-    match (&src.endpoint, &dst.endpoint) {
-        (RemoteCopyEndpoint::Docker(a), RemoteCopyEndpoint::Docker(b)) => {
-            a.container_id() == b.container_id()
-        }
-        _ => false,
+        remote_copy::ensure_copy_within_allowed(src, src_path, dst_path).await
+    } else {
+        remote_copy::ensure_copy_across_allowed(src, src_path, dst, dst_path).await
     }
 }
 

@@ -458,6 +458,21 @@ impl FileBrowser for FtpFileBrowser {
     fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
         Some(self)
     }
+
+    /// The server and login of this browser's config (#5355).
+    fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
+        use crate::files::shared_fs::{host_key, FilesystemId};
+        let user = if self.config.anonymous {
+            "anonymous"
+        } else {
+            self.config.username.as_str()
+        };
+        (!self.config.host.trim().is_empty()).then(|| FilesystemId::Ftp {
+            host: host_key(&self.config.host),
+            port: self.config.port,
+            user: user.to_string(),
+        })
+    }
 }
 
 /// The server's real spelling of a path (#5333): a folder through `CWD` +

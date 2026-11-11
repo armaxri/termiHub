@@ -10,6 +10,7 @@ use std::any::Any;
 
 use crate::errors::FileError;
 use crate::files::paste_guard::PathCanonicalizer;
+use crate::files::shared_fs::FilesystemId;
 use crate::files::{FileAttributeOps, FileEntry, RangedFileAccess};
 
 /// Async file browsing capability exposed by connection types.
@@ -169,6 +170,18 @@ pub trait FileBrowser: Send {
     /// and Docker resolve through their own downcast
     /// ([`PathResolver::of_browser`](crate::files::paste_guard::PathResolver::of_browser)).
     fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        None
+    }
+
+    /// The filesystem this browser reaches, when the backend can tell
+    /// (#5355): the desktop's own disk, an SSH or FTP server as one login
+    /// sees it, a container, or one of these on an agent.
+    ///
+    /// A paste between two **different** sessions with the same id is a
+    /// paste within one filesystem, so it runs the same-file guard of
+    /// [`paste_guard`](crate::files::paste_guard). The default is `None`:
+    /// such a browser is never taken for another session's filesystem.
+    fn filesystem_id(&self) -> Option<FilesystemId> {
         None
     }
 }

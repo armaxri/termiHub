@@ -301,6 +301,35 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
 
+    /// Refuse a paste of `src` on `src_session` to `dest` on the **other**
+    /// session `dest_session` when both reach one filesystem (#5355): two
+    /// sessions on one agent host, one server as one user, one container.
+    /// Each path resolves on its own session; sessions on different hosts,
+    /// or that cannot tell, are never refused. A source that cannot be
+    /// stat'ed is not a refusal either.
+    pub(super) async fn ensure_paste_across_allowed(
+        &self,
+        src_session: &str,
+        dest_session: &str,
+        src: &str,
+        dest: &str,
+    ) -> Result<(), TerminalError> {
+        let src_handle = self.resolve(src_session).await?;
+        let dest_handle = self.resolve(dest_session).await?;
+        let src_browser = src_handle.browser()?;
+        let guard = paste_guard::CrossSessionGuard::of(src_browser, dest_handle.browser()?);
+        if !guard.shares_filesystem() {
+            return Ok(());
+        }
+        let Ok(entry) = src_browser.stat(src).await else {
+            return Ok(());
+        };
+        guard
+            .ensure_allowed(src, dest, entry.is_directory)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
     /// Resolve an **owned** [`Arc<SftpFileBrowser>`] for a session, so a caller
     /// can drop the sessions lock before driving a (potentially slow) SFTP
     /// operation or move the handle into a background transfer task.

@@ -708,6 +708,11 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     fn path_canonicalizer(&self) -> Option<&dyn super::paste_guard::PathCanonicalizer> {
         Some(self)
     }
+
+    /// This host's own disk (#5355).
+    fn filesystem_id(&self) -> Option<super::shared_fs::FilesystemId> {
+        Some(super::shared_fs::FilesystemId::Local)
+    }
 }
 
 /// The local filesystem's real spelling of a path (#5333).

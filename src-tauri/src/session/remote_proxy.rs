@@ -50,6 +50,7 @@ use tracing::{debug, warn};
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::paste_guard::PathCanonicalizer;
+use termihub_core::files::shared_fs::FilesystemId;
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 use termihub_core::monitoring::{
     agent_recovery_budget, CollectLoopState, KillSignal, MonitorStatus, MonitorStatusReason,
@@ -727,6 +728,7 @@ impl RemoteProxy {
                         agent_outdated,
                         file_ranges,
                         definition_id: definition_id.clone(),
+                        filesystem: hosted_filesystem(&self.agent_id, &session_type, &config),
                         attribute_ops: hosted_attribute_ops(
                             &session_type,
                             agent_outdated,
@@ -821,10 +823,39 @@ pub struct RemoteFileBrowserProxy {
     /// from, if any — with `agent_id`, the identity a queued transfer records
     /// so a relaunch after a restart can find the reopened session (#4114).
     definition_id: Option<String>,
+    /// The filesystem the hosted session browses, when the desktop can tell
+    /// (#5355; [`hosted_filesystem`]): what lets a paste between two
+    /// sessions on one agent host run the same-file guard.
+    filesystem: Option<FilesystemId>,
     /// Which of chmod / chown / symlink the hosted backend performs (#4353),
     /// resolved from the hosted session type and the agent's reported host
     /// support (#4601) by [`hosted_attribute_ops`].
     attribute_ops: FileAttributeOps,
+}
+
+/// The filesystem an agent-hosted session of `session_type` with `config`
+/// browses, when the desktop can tell (#5355): a local session browses the
+/// agent host itself; an SSH session the server, user and route its inline
+/// config names, as dialled from that agent. Anything else (Docker, FTP,
+/// WSL, an SSH session opened from a saved definition without an inline
+/// host) has no id, so it is never taken for another session's filesystem.
+pub(crate) fn hosted_filesystem(
+    agent_id: &str,
+    session_type: &str,
+    config: &Value,
+) -> Option<FilesystemId> {
+    let backend = match session_type {
+        "local" => FilesystemId::Local,
+        "ssh" => {
+            let ssh = serde_json::from_value::<termihub_core::config::SshConfig>(config.clone());
+            FilesystemId::ssh(&ssh.ok()?)?
+        }
+        _ => return None,
+    };
+    Some(FilesystemId::Agent {
+        agent_id: agent_id.to_string(),
+        backend: Box::new(backend),
+    })
 }
 
 /// The attribute operations (chmod / chown / symlink) an agent-hosted session
@@ -1163,6 +1194,11 @@ impl FileBrowser for RemoteFileBrowserProxy {
     /// too old to browse the session is not asked at all.
     fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
         (!self.agent_outdated).then_some(self as &dyn PathCanonicalizer)
+    }
+
+    /// The agent host, or the server an SSH session reaches (#5355).
+    fn filesystem_id(&self) -> Option<FilesystemId> {
+        self.filesystem.clone()
     }
 }
 

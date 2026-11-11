@@ -386,6 +386,13 @@ impl FileBrowser for DockerFileBrowser {
     fn ranged(&self) -> Option<&dyn crate::files::RangedFileAccess> {
         Some(self)
     }
+
+    /// The container (#5355): every session on it sees the same files.
+    fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
+        (!self.container_id.is_empty()).then(|| crate::files::shared_fs::FilesystemId::Docker {
+            container_id: self.container_id.clone(),
+        })
+    }
 }
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---

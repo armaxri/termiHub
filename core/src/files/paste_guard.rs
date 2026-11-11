@@ -182,6 +182,49 @@ where
     }
 }
 
+/// Refuse a copy of `src` on one session to `dest` on **another** session
+/// that reaches the same filesystem (#5355): the same entry, or the folder
+/// `src` into its own subtree. Each path resolves through its own end.
+///
+/// The lexical check is the floor: on one filesystem, two spellings that
+/// normalise alike name one entry whatever the ends resolve. Beyond it, a
+/// refusal needs both paths resolved; a path an end cannot resolve is not a
+/// refusal. Call this only for ends whose
+/// [`FilesystemId`](crate::files::shared_fs::FilesystemId)s match: on two
+/// hosts, the same path is two files.
+pub async fn check_across<FS, FutS, FD, FutD>(
+    src: &str,
+    dest: &str,
+    src_is_dir: bool,
+    resolve_src: FS,
+    resolve_dest: FD,
+) -> Result<(), FileError>
+where
+    FS: FnOnce(String) -> FutS,
+    FutS: Future<Output = Option<String>>,
+    FD: FnOnce(String) -> FutD,
+    FutD: Future<Output = Option<String>>,
+{
+    let lexical = copy_conflict(
+        &normalize_lexically(src),
+        &normalize_lexically(dest),
+        src_is_dir,
+    );
+    if let Some(reason) = lexical {
+        return Err(copy_refused(src, dest, reason));
+    }
+    let Some(src_resolved) = resolve_src(src.to_string()).await else {
+        return Ok(());
+    };
+    let Some(dest_resolved) = resolve_dest(dest.to_string()).await else {
+        return Ok(());
+    };
+    match copy_conflict(&src_resolved, &dest_resolved, src_is_dir) {
+        Some(reason) => Err(copy_refused(src, dest, reason)),
+        None => Ok(()),
+    }
+}
+
 /// The real spelling of the local `path` (#5333): `~` expanded, symlinks,
 /// `.` and `..` resolved, a missing final name through its parent folder.
 ///
@@ -367,6 +410,22 @@ impl<'a> BrowserResolver<'a> {
         }
     }
 
+    /// The real spelling of `path` for a comparison (#5355): the
+    /// canonicalizer's answer, else its lexical spelling, or the owned
+    /// resolver's ([`PathResolver::resolve`]). `None` when an SFTP or Docker
+    /// end cannot resolve it.
+    pub async fn resolve(&self, path: &str) -> Option<String> {
+        match self.canon {
+            Some(canon) => Some(
+                canon
+                    .realpath(path)
+                    .await
+                    .unwrap_or_else(|_| normalize_lexically(path)),
+            ),
+            None => self.resolver.resolve(path).await,
+        }
+    }
+
     /// The real spelling of `path`, a missing final name resolved through its
     /// parent folder (#5333). [`FileError::NotSupported`] when the backend
     /// has no way to resolve a path; [`FileError::NotFound`] when neither the
@@ -397,6 +456,61 @@ pub fn ensure_paste_allowed<'a>(
 ) -> impl Future<Output = Result<(), FileError>> + Send + 'a {
     let resolver = BrowserResolver::of(browser);
     async move { resolver.ensure_copy_allowed(src, dest, src_is_dir).await }
+}
+
+/// The guard of a paste from one session's browser to **another**
+/// session's (#5355): when the two reach one filesystem
+/// ([`FileBrowser::filesystem_id`]), a file pasted onto itself or a folder
+/// into its own subtree is refused, each path resolved on its own end.
+/// Browsers whose ids differ, or that cannot tell, are never refused.
+///
+/// Like [`BrowserResolver`], it never holds the browsers, so a caller can
+/// still use them (to `stat` the source) before it awaits the check.
+pub struct CrossSessionGuard<'a> {
+    shared: bool,
+    src: BrowserResolver<'a>,
+    dest: BrowserResolver<'a>,
+}
+
+impl<'a> CrossSessionGuard<'a> {
+    /// The guard of a paste from `src_browser` to `dest_browser`.
+    pub fn of(src_browser: &'a dyn FileBrowser, dest_browser: &'a dyn FileBrowser) -> Self {
+        Self {
+            shared: crate::files::shared_fs::same_filesystem(
+                src_browser.filesystem_id().as_ref(),
+                dest_browser.filesystem_id().as_ref(),
+            ),
+            src: BrowserResolver::of(src_browser),
+            dest: BrowserResolver::of(dest_browser),
+        }
+    }
+
+    /// Whether both browsers surely reach one filesystem.
+    pub fn shares_filesystem(&self) -> bool {
+        self.shared
+    }
+
+    /// Refuse a paste of `src` onto itself at `dest`, or of the folder `src`
+    /// into its own subtree, when both ends share a filesystem. See
+    /// [`check_across`].
+    pub async fn ensure_allowed(
+        &self,
+        src: &str,
+        dest: &str,
+        src_is_dir: bool,
+    ) -> Result<(), FileError> {
+        if !self.shared {
+            return Ok(());
+        }
+        check_across(
+            src,
+            dest,
+            src_is_dir,
+            |p| async move { self.src.resolve(&p).await },
+            |p| async move { self.dest.resolve(&p).await },
+        )
+        .await
+    }
 }
 
 /// The real spelling of `path` on `browser`'s backend: what an agent answers
