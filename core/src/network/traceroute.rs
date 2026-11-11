@@ -414,6 +414,199 @@ mod tests {
         assert!(!icmp_reply_matches_probe(&[3, 0, 0, 0], true, 33434));
     }
 
+    // ── Raw-socket reply fixtures (#5288) ─────────────────────────────────────
+    //
+    // termiHub does not shell out to `traceroute(8)` / `tracert.exe`: every
+    // platform traces with its own probes, and on macOS and Windows the
+    // "output" it parses is the raw ICMP socket's bytes. These fixtures spell
+    // those bytes out field by field, as a raw socket delivers them, for the
+    // hop shapes a real trace meets. Checksums are plausible but not
+    // verified, matching the parser, which does not check them.
+
+    /// Decode a whitespace-separated hex fixture into bytes.
+    fn hex(fixture: &str) -> Vec<u8> {
+        let digits: String = fixture.split_whitespace().collect();
+        assert_eq!(digits.len() % 2, 0, "odd-length hex fixture");
+        (0..digits.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&digits[i..i + 2], 16).expect("hex digit"))
+            .collect()
+    }
+
+    /// Our probe as a router quotes it back: IPv4 header (TTL 1, UDP,
+    /// 192.168.1.23 -> 8.8.8.8, total 48) + the 8-byte UDP header
+    /// (54321 -> 33434, length 28).
+    const QUOTED_V4_PROBE: &str = "
+        45 00 00 30  ab cd 00 00  01 11 3c 2e  c0 a8 01 17  08 08 08 08
+        d4 31 82 9a  00 1c 00 00";
+
+    /// A home router's ICMP Time Exceeded (type 11, code 0) for TTL 1:
+    /// outer IPv4 header (192.168.1.1 -> 192.168.1.23, total 56), ICMP
+    /// header + 4 unused bytes, then the classic RFC 792 quote.
+    fn v4_time_exceeded_from_gateway() -> Vec<u8> {
+        hex(&format!(
+            "45 c0 00 38  1a 2b 00 00  40 01 dc 9e  c0 a8 01 01  c0 a8 01 17
+             0b 00 f4 ff  00 00 00 00  {QUOTED_V4_PROBE}"
+        ))
+    }
+
+    #[test]
+    fn v4_gateway_time_exceeded_fixture_matches_its_probe() {
+        let reply = v4_time_exceeded_from_gateway();
+        assert_eq!(reply.len(), 56);
+        assert_eq!(quoted_udp_dst_port_v4(&reply), Some(33434));
+        assert!(icmp_reply_matches_probe(&reply, false, 33434));
+        assert!(!icmp_reply_matches_probe(&reply, false, 33435));
+    }
+
+    #[test]
+    fn v4_port_unreachable_from_the_destination_matches() {
+        // The last hop: the target answers the probe with Destination
+        // Unreachable / Port Unreachable (type 3, code 3).
+        let reply = hex(&format!(
+            "45 00 00 38  00 00 00 00  79 01 a9 4f  08 08 08 08  c0 a8 01 17
+             03 03 fc fc  00 00 00 00  {QUOTED_V4_PROBE}"
+        ));
+        assert!(icmp_reply_matches_probe(&reply, false, 33434));
+    }
+
+    #[test]
+    fn v4_router_with_ip_options_in_the_outer_header_matches() {
+        // IHL 6: a 4-byte option (NOP padding) sits between the outer header
+        // and the ICMP message, so the ICMP offset must follow the IHL.
+        let reply = hex(&format!(
+            "46 c0 00 3c  1a 2b 00 00  40 01 00 00  0a 00 00 01  c0 a8 01 17
+             01 01 01 00
+             0b 00 f4 ff  00 00 00 00  {QUOTED_V4_PROBE}"
+        ));
+        assert!(icmp_reply_matches_probe(&reply, false, 33434));
+    }
+
+    #[test]
+    fn v4_quote_with_inner_ip_options_matches() {
+        // The quoted original header carries a 4-byte option (IHL 6), so the
+        // UDP header starts at byte 24 of the quote, not 20.
+        let reply = hex(
+            "45 c0 00 3c  1a 2b 00 00  40 01 00 00  0a 00 00 01  c0 a8 01 17
+             0b 00 f4 ff  00 00 00 00
+             46 00 00 34  ab cd 00 00  01 11 00 00  c0 a8 01 17  08 08 08 08
+             01 01 01 00
+             d4 31 82 a0  00 1c 00 00",
+        );
+        assert!(icmp_reply_matches_probe(&reply, false, 33440));
+    }
+
+    #[test]
+    fn v4_quote_with_a_bogus_inner_ihl_is_rejected() {
+        // An inner IHL below 5 cannot be a real header; nothing to correlate.
+        let reply = hex(
+            "45 c0 00 38  1a 2b 00 00  40 01 00 00  0a 00 00 01  c0 a8 01 17
+             0b 00 f4 ff  00 00 00 00
+             44 00 00 30  ab cd 00 00  01 11 00 00  c0 a8 01 17  08 08 08 08
+             d4 31 82 9a  00 1c 00 00",
+        );
+        assert_eq!(quoted_udp_dst_port_v4(&reply), None);
+    }
+
+    #[test]
+    fn v4_quote_cut_inside_the_udp_ports_is_rejected() {
+        // The quote ends after the UDP source port: no destination port.
+        let mut reply = v4_time_exceeded_from_gateway();
+        reply.truncate(20 + 8 + 20 + 2);
+        assert_eq!(quoted_udp_dst_port_v4(&reply), None);
+    }
+
+    #[test]
+    fn v4_darwin_host_order_ip_len_still_matches() {
+        // BSD-derived raw IPv4 sockets (Darwin among them) can deliver the
+        // outer `ip_len` in host byte order with the header length already
+        // subtracted: 56 - 20 = 36 is `24 00` on a little-endian Mac.
+        let mut reply = v4_time_exceeded_from_gateway();
+        reply[2..4].copy_from_slice(&36u16.to_le_bytes());
+        assert!(icmp_reply_matches_probe(&reply, false, 33434));
+    }
+
+    #[test]
+    fn v4_darwin_host_order_ip_len_of_an_extended_reply_still_matches() {
+        // RFC 4884 extended Time Exceeded (an MPLS-labelled path): the quote
+        // is padded to 128 bytes and followed by an extension structure,
+        // 276 bytes in all. With that quirk `ip_len` as 276 - 20 = 256 in host
+        // order, `00 01`, which reads as 1 in network order. The parser must
+        // not trust that field to find the ICMP message.
+        let mut reply = v4_time_exceeded_from_gateway();
+        reply[20 + 5] = 32; // RFC 4884 length: 32 words (128 bytes) of quote.
+        reply.resize(20 + 8 + 128, 0);
+        reply.extend_from_slice(&hex("20 00 00 00")); // extension header
+        reply.resize(276, 0); // extension objects (contents irrelevant here)
+        reply[2..4].copy_from_slice(&256u16.to_le_bytes());
+        assert!(icmp_reply_matches_probe(&reply, false, 33434));
+    }
+
+    #[test]
+    fn v4_unrelated_icmp_on_the_shared_socket_is_ignored() {
+        // Another app's `ping`: an Echo Request (type 8) arriving on the raw
+        // socket. Not a hop reply.
+        let echo_request = hex(
+            "45 00 00 54  00 00 40 00  40 01 00 00  c0 a8 01 32  c0 a8 01 17
+             08 00 f7 ff  12 34 00 01  00 00 00 00  00 00 00 00",
+        );
+        assert_eq!(quoted_udp_dst_port_v4(&echo_request), None);
+
+        // A Time Exceeded for someone else's ICMP-based trace quotes an ICMP
+        // echo (protocol 1), not one of our UDP probes.
+        let foreign_trace = hex(
+            "45 c0 00 38  1a 2b 00 00  40 01 00 00  c0 a8 01 01  c0 a8 01 17
+             0b 00 f4 ff  00 00 00 00
+             45 00 00 54  00 00 40 00  01 01 00 00  c0 a8 01 17  01 01 01 01
+             08 00 82 9a  12 34 00 01",
+        );
+        assert!(!icmp_reply_matches_probe(&foreign_trace, false, 33434));
+    }
+
+    /// The IPv6 probe as quoted: fixed header (payload 28, UDP, hop limit 1,
+    /// 2001:db8::23 -> 2001:4860:4860::8888) + the 8-byte UDP header.
+    const QUOTED_V6_PROBE: &str = "
+        60 00 00 00  00 1c 11 01
+        20 01 0d b8  00 00 00 00  00 00 00 00  00 00 00 23
+        20 01 48 60  48 60 00 00  00 00 00 00  00 00 88 88
+        d4 31 82 9a  00 1c 00 00";
+
+    #[test]
+    fn v6_router_time_exceeded_fixture_matches_its_probe() {
+        // ICMPv6 Time Exceeded (type 3, code 0) + 4 unused bytes + the quote.
+        // A raw ICMPv6 socket delivers no outer IPv6 header.
+        let reply = hex(&format!("03 00 7a 1c  00 00 00 00  {QUOTED_V6_PROBE}"));
+        assert!(icmp_reply_matches_probe(&reply, true, 33434));
+        assert!(!icmp_reply_matches_probe(&reply, true, 33436));
+    }
+
+    #[test]
+    fn v6_port_unreachable_from_the_destination_matches() {
+        // ICMPv6 Destination Unreachable / Port Unreachable (type 1, code 4).
+        let reply = hex(&format!("01 04 3b 9e  00 00 00 00  {QUOTED_V6_PROBE}"));
+        assert!(icmp_reply_matches_probe(&reply, true, 33434));
+    }
+
+    #[test]
+    fn v6_neighbor_discovery_on_the_shared_socket_is_ignored() {
+        // Neighbor Solicitation (135) and Router Advertisement (134) arrive on
+        // every raw ICMPv6 socket on a live link. Neither is a hop reply.
+        for nd_type in ["87", "86"] {
+            let nd = hex(&format!(
+                "{nd_type} 00 00 00  00 00 00 00
+                 fe 80 00 00  00 00 00 00  00 00 00 00  00 00 00 01"
+            ));
+            assert_eq!(quoted_udp_dst_port_v6(&nd), None, "type 0x{nd_type}");
+        }
+    }
+
+    #[test]
+    fn v6_quote_cut_before_the_udp_header_is_rejected() {
+        let mut reply = hex(&format!("03 00 7a 1c  00 00 00 00  {QUOTED_V6_PROBE}"));
+        reply.truncate(8 + 40);
+        assert_eq!(quoted_udp_dst_port_v6(&reply), None);
+    }
+
     // ── Existing tests ────────────────────────────────────────────────────────
 
     #[test]
