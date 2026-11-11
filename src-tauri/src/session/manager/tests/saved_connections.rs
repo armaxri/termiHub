@@ -106,6 +106,7 @@ fn retain_for_tab(manager: &SessionManager, session_id: &str, tab_id: &str) {
             agent_session_id: None,
             saved_connection_id: None,
             resilient: true,
+            serial_identity: None,
         },
     );
 }

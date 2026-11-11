@@ -44,6 +44,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::Value;
+use termihub_core::session::serial_reconnect::SerialDeviceIdentity;
 use zeroize::Zeroize;
 
 /// A retained connection request for one tab's resilient-reconnect loop
@@ -85,6 +86,12 @@ pub(crate) struct RetainedConnectionRequest {
     /// reconnect redrive (#2454) reads to decide it owns the transport
     /// re-establishment for this tab.
     pub(crate) resilient: bool,
+    /// The USB identity of the device a resilient **serial** tab had open
+    /// before the drop (#5390), when the platform can read it. The redrive
+    /// reopens a port only when the device on it carries this identity, so a
+    /// different adapter under the same name is never opened. `None` for every
+    /// other type, for agent-hosted tabs and where no identity is readable.
+    pub(crate) serial_identity: Option<SerialDeviceIdentity>,
 }
 
 impl Drop for RetainedConnectionRequest {
@@ -239,6 +246,7 @@ mod tests {
                 agent_session_id: None,
                 saved_connection_id: None,
                 resilient: true,
+                serial_identity: None,
             },
         );
         assert!(store.contains("tab-1"));
@@ -275,6 +283,7 @@ mod tests {
                 agent_session_id: None,
                 saved_connection_id: None,
                 resilient: true,
+                serial_identity: None,
             },
         );
 
@@ -315,6 +324,7 @@ mod tests {
                 agent_session_id: None,
                 saved_connection_id: None,
                 resilient: true,
+                serial_identity: None,
             },
         );
         store.retain(
@@ -326,6 +336,7 @@ mod tests {
                 agent_session_id: None,
                 saved_connection_id: None,
                 resilient: true,
+                serial_identity: None,
             },
         );
         assert_eq!(
@@ -348,6 +359,7 @@ mod tests {
                 agent_session_id: None,
                 saved_connection_id: None,
                 resilient: true,
+                serial_identity: None,
             },
         );
         store.retain(
@@ -359,6 +371,7 @@ mod tests {
                 agent_session_id: None,
                 saved_connection_id: None,
                 resilient: true,
+                serial_identity: None,
             },
         );
 
@@ -380,6 +393,7 @@ mod tests {
             agent_session_id: None,
             saved_connection_id: None,
             resilient: true,
+            serial_identity: None,
         };
         store.retain("tab-a", agent_req("agent-1"));
         store.retain("tab-b", agent_req("agent-1"));

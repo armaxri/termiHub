@@ -22,6 +22,7 @@ pub mod registry;
 pub mod remote_desktop_frames;
 pub mod remote_proxy;
 pub mod retained_request;
+pub(crate) mod serial_reconnect;
 pub mod session_log;
 pub mod ssh_host_key_verifier;
 pub mod ssh_keyboard_interactive;
