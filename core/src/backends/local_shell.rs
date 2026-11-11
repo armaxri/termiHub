@@ -2974,3 +2974,7 @@ mod env_bootstrap_tests;
 #[cfg(all(test, windows))]
 #[path = "local_shell_git_bash_tests.rs"]
 mod git_bash_tests;
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_startup_prompt_tests.rs"]
+mod startup_prompt_tests;
