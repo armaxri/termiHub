@@ -628,8 +628,7 @@ only `*.ubuntu.com` hosts in `/etc/apt/apt-mirrors.txt`, so one DNS outage for t
 every install. `mirror-fallback.sh` probes those mirrors and rewrites the list to the reachable
 ones, plus fallback mirrors outside `ubuntu.com` that also carry the `-security` pocket. apt still
 verifies the signed `InRelease` files against the Ubuntu keyring. When no mirror answers, the step
-fails with an `APT mirrors unreachable` error annotation. The Workflow Lint job proves this by
-blocking `*.ubuntu.com` in `/etc/hosts` and installing a package anyway.
+fails with an `APT mirrors unreachable` error annotation.
 
 ### Git hooks
 

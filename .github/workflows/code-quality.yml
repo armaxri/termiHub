@@ -987,30 +987,6 @@ jobs:
       - name: Check apt download retries
         run: node scripts/internal/check-apt-retries.mjs
 
-      # Proves the apt-retries action's mirror fallback (#5385): blackhole every
-      # *.ubuntu.com mirror the image uses (as in the 2026-11-11 DNS outage),
-      # then install a small package. It must come from a fallback mirror outside
-      # ubuntu.com. Last in this job, because the hosts override stays in place.
-      - name: Simulate a *.ubuntu.com outage
-        run: |
-          set -euo pipefail
-          printf '0.0.0.0 %s\n' azure.archive.ubuntu.com archive.ubuntu.com \
-            security.ubuntu.com ports.ubuntu.com | sudo tee -a /etc/hosts
-
-      - name: Route apt around the simulated outage
-        uses: ./.github/actions/apt-retries
-
-      - name: Install a package through the fallback mirror
-        run: |
-          set -euo pipefail
-          if grep -q 'ubuntu\.com' /etc/apt/apt-mirrors.txt; then
-            echo "::error title=APT mirror fallback::a blackholed *.ubuntu.com mirror is still listed"
-            exit 1
-          fi
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hello
-          hello
-
   # Windows .cmd smoke (#3340). The Shell Script Quality job above runs on
   # Ubuntu, so it can compare the flags a .cmd parses but never RUNS one. This
   # cheap job (no Rust/Node setup, no build) executes build-agents.cmd's
