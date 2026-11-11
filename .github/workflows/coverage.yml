@@ -23,6 +23,8 @@ name: Coverage (unified, ratchet)
 # per-PR Windows leg's partition (`coverage.sh --split`): the contention-
 # sensitive suites with capped threads and the live-agent-TCP tests one at a
 # time, which is what keeps that leg green on a 4-core runner (#2495, #3615).
+# The phases run under `cargo llvm-cov nextest` with the per-PR legs' nextest
+# `ci` profile (#5349): per-test timeouts and the same serial test groups.
 # Same triggers as the Linux job, so it adds one Windows runner per night.
 #
 # NIGHTLY LANE (#4119; post-merge since #3325): this no longer runs on every
@@ -272,6 +274,16 @@ jobs:
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-llvm-cov@0.9.1
+
+      # The split run's phases run under `cargo llvm-cov nextest` (#5349): the
+      # same per-test timeouts and test groups as the per-PR Windows leg, so a
+      # hung test fails by name instead of eating the job's timeout. Same pin
+      # and the same verified-archive-only install as code-quality.yml (#5345).
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
 
       # core/tests/sideloaded_conpty.rs runs a real PTY on the pinned sideloaded
       # ConPTY host and fails, never skips, on a runner without it (#4130) —

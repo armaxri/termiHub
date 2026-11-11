@@ -1815,7 +1815,9 @@ component starts gating once its baseline is recorded.
   Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
   tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
   heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
-  live-agent-TCP tests keep their thread caps. The heartbeat names the failing job, so a
+  live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
+  with the nextest `ci` profile (#5349), so a hung test fails by name within its per-test
+  timeout and the `#[serial(key)]` test groups hold there too. The heartbeat names the failing job, so a
   Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
   The release check grades the machine it runs on. A platform with no baseline fails with
   the command that records one.
