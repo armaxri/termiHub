@@ -257,14 +257,25 @@ class AgentUi(HarnessMixin):
         return self._agent_keyed_dicts("definitions", agent_id)
 
     def create_agent_definition(
-        self, agent_name: str, def_name: str, *, persistent: bool = False
+        self,
+        agent_name: str,
+        def_name: str,
+        *,
+        persistent: bool = False,
+        session_type: Optional[str] = None,
+        fields: Optional[dict[str, str]] = None,
     ) -> dict[str, Any]:
         """Create a saved connection definition under a connected agent.
 
-        Opens the agent-definition editor via "New Connection", keeps the default
-        session type (the agent's first reported type — a shell on a Linux agent),
-        optionally toggles the persistent switch, saves, and returns the saved
-        definition once it lands in ``agentDefinitions``.
+        Opens the agent-definition editor via "New Connection". Without
+        ``session_type`` it keeps the default session type (the agent's first
+        reported type — a shell on a Linux agent); with one (e.g. ``"serial"``)
+        it selects that type, waiting for the option to load from the agent's
+        capabilities. ``fields`` are typed into the type's ``field-<key>``
+        inputs (e.g. ``{"port": "/dev/ttyUSB0"}``; the serial port field is an
+        editable combobox, so any device path can be typed). It optionally
+        toggles the persistent switch, saves, and returns the saved definition
+        once it lands in ``agentDefinitions``.
         """
         agent = self.require_agent(agent_name)
         self.agent_menu_action(agent_name, self.CTX_NEW_CONNECTION)
@@ -272,6 +283,21 @@ class AgentUi(HarnessMixin):
             lambda: self.driver.exists(self.DEF_EDITOR_NAME), what="the agent-definition editor"
         )
         self.driver.type(self.DEF_EDITOR_NAME, def_name)
+        if session_type is not None:
+
+            def selected() -> bool:
+                # Raises (and so retries) until the option has loaded.
+                self.driver.select(self.DEF_EDITOR_TYPE, session_type)
+                return True
+
+            self.wait(selected, what=f"the agent's {session_type!r} session type option")
+        for key, value in (fields or {}).items():
+            field = f"field-{key}"
+            self.wait(
+                lambda field=field: self.driver.exists(field),
+                what=f"the agent-definition {key!r} field",
+            )
+            self.driver.type(field, value)
         if persistent:
             self.driver.click(self.DEF_EDITOR_PERSISTENT)
         self.driver.click(self.DEF_EDITOR_SAVE)
@@ -316,7 +342,11 @@ class AgentUi(HarnessMixin):
         )
 
     def open_persistent_definition(self, def_id: str) -> None:
-        """Double-click a persistent definition's sidebar row (start + attach a tab)."""
+        """Double-click a persistent definition's sidebar row (start + attach a tab).
+
+        A non-persistent definition opens the same way: the double-click opens
+        a plain tab on a new agent session.
+        """
         self.driver.double_click(f"agent-definition-{def_id}")
 
     def persistent_dot_is_green(self, def_id: str) -> bool:
