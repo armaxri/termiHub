@@ -174,3 +174,13 @@ pub const CURRENT_PLUGIN_ABI_VERSION: AbiVersion = AbiVersion::new(1, 1);
 /// [`PluginHostContext`] only for a plugin whose ABI
 /// [`supports`](AbiVersion::supports) this.
 pub const ABI_1_1: AbiVersion = AbiVersion::new(1, 1);
+
+// TEMPORARY (#5345): hangs on purpose so the PR's CI log proves that nextest's
+// slow-timeout kills a hung test and names it. Reverted in the next commit.
+#[cfg(test)]
+mod nextest_timeout_proof {
+    #[test]
+    fn deliberate_hang_proves_the_nextest_timeout_5345() {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
+}
