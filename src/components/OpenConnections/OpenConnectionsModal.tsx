@@ -531,9 +531,21 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   // Disconnect (detach) — drop the transport but leave persistent daemon-backed
   // remote sessions running so they re-list on the next connect (G9, #1237).
-  // Mirrors the agent header's Disconnect intent.
+  // Mirrors the agent header's Disconnect intent. The store action rejects on
+  // failure and leaves the toast to us (#5278): report it once here, keep the
+  // session rows (the transport is still up), and re-throw so the Button —
+  // rendered with `errorToast={false}` — lands in its error state.
   const handleKillAgent = async (agentId: string) => {
-    await disconnectRemoteAgent(agentId);
+    try {
+      await disconnectRemoteAgent(agentId);
+    } catch (err) {
+      frontendError(
+        "open_connections",
+        `Failed to disconnect agent ${agentId}: ${errorMessage(err)}`
+      );
+      toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
+      throw err;
+    }
     clearAgentSessionCache(agentId);
   };
 
@@ -994,6 +1006,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                         size="sm"
                         icon={<Unplug size={14} />}
                         onClick={() => handleKillAgent(a.id)}
+                        errorToast={false}
                         aria-label={`Disconnect (detach) ${a.name}`}
                         data-testid={`oc-agent-disconnect-${a.id}`}
                       >

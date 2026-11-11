@@ -1279,14 +1279,24 @@ export function AgentNode({
   const handleForceReconnect = useCallback(async () => {
     // A reconnect follows at once, so the hosted tabs wait to resume their
     // sessions instead of ending (#4309).
-    await disconnectRemoteAgent(agent.id, { endHostedSessions: false });
+    try {
+      await disconnectRemoteAgent(agent.id, { endHostedSessions: false });
+    } catch (err) {
+      // The store action rejects and leaves the feedback to us (#5278). The
+      // reconnect still runs: it is what the user asked for, and it reports its
+      // own outcome.
+      toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
+    }
     void handleConnect();
   }, [agent.id, disconnectRemoteAgent, handleConnect]);
 
   // Disconnect (detach) — drop the transport but leave persistent daemon-backed
   // remote sessions running so they re-list on the next connect (G9, #1237).
+  // The store action rejects on failure without toasting (#5278); report it here.
   const handleDisconnect = useCallback(() => {
-    disconnectRemoteAgent(agent.id);
+    disconnectRemoteAgent(agent.id).catch((err: unknown) => {
+      toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
+    });
   }, [agent.id, disconnectRemoteAgent]);
 
   // Shutdown (stop remote) — stop the remote sessions and disconnect, reporting
