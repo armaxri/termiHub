@@ -494,6 +494,21 @@ suite flakes only under load, add its module path to `HEAVY_FILTERS` in the scri
 then run `scripts/internal/ci-rust-tests.sh list` to confirm the partition is still
 exact.
 
+The phases run under [cargo-nextest](https://nexte.st) with the `ci` profile in
+[`.config/nextest.toml`](../.config/nextest.toml) (#5345). Every test gets a per-test
+timeout: it is reported SLOW after 60s and killed after 180s, which fails the run with the
+test's name (`TIMEOUT`) instead of a hung test eating the whole job. A few tests whose own
+deadline is longer get a longer kill there. The run never stops at the first failure, and
+each phase writes a JUnit report to `target/nextest/ci/junit-<phase>.xml` (uploaded as an
+artifact when the leg fails). Doc-tests still run under `cargo test --doc`. Nextest runs
+every test in its own process, so serial_test's in-process `#[serial(key)]` lock no longer
+serializes anything across tests: each key needs a nextest test group of the same name
+with `max-threads = 1` in `.config/nextest.toml`, and `ci-rust-tests.sh list` fails when one
+is missing. To run the suite the CI way locally, install the version pinned in
+[`.github/cargo-tools.json`](../.github/cargo-tools.json) (`cargo install --locked
+cargo-nextest@<version>`) and run `cargo nextest run --profile ci --workspace --all-features`.
+Without nextest the script falls back to `cargo test`.
+
 The Windows legs (Code Quality's `Run Tests (windows-latest)` and `agent.yml`'s
 post-merge `build-windows`) also stage the sideloaded ConPTY host (#4121) with
 `scripts/internal/fetch-conpty.sh --dest` and export its directory as
