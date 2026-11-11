@@ -557,7 +557,7 @@ workflow's Linux legs (which run on any change to the pin file) prove it. Develo
 ### Cargo tool versions
 
 CI installs its cargo tools (cargo-deny, cargo-audit, cargo-about, cargo-cyclonedx, cargo-llvm-cov,
-cargo-machete, cargo-fuzz) with `taiki-e/install-action`. The action is SHA-pinned like every other
+cargo-machete, cargo-fuzz, cargo-nextest) with `taiki-e/install-action`. The action is SHA-pinned like every other
 action, but a bare `tool: cargo-deny` would install whatever release is newest on the day, so an
 upstream release could change a gate with no commit here. Every step therefore names an exact
 version, `tool: cargo-deny@X.Y.Z`, and the **one** source of truth for those versions is
@@ -622,6 +622,13 @@ Dockerfile writes `Acquire::Retries` into `/etc/apt/apt.conf.d/80-ci-retries` in
 before its first apt call; a stage built `FROM` an earlier stage inherits it. An apt call inside
 `docker run`, or in a shell script, passes `-o Acquire::Retries=5`. `check-apt-retries.mjs` (run by
 the Workflow Lint job and `./scripts/check.sh`) fails on an apt call that is not covered.
+
+The same action also routes apt around unreachable Ubuntu mirrors (#5385). The runner image lists
+only `*.ubuntu.com` hosts in `/etc/apt/apt-mirrors.txt`, so one DNS outage for that domain fails
+every install. `mirror-fallback.sh` probes those mirrors and rewrites the list to the reachable
+ones, plus fallback mirrors outside `ubuntu.com` that also carry the `-security` pocket. apt still
+verifies the signed `InRelease` files against the Ubuntu keyring. When no mirror answers, the step
+fails with an `APT mirrors unreachable` error annotation.
 
 ### Git hooks
 

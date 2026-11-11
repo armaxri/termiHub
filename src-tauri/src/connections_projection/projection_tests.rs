@@ -7,8 +7,7 @@
 //! #2831) → one coalesced diff per change that the client cache converges on, a
 //! dead subscriber is reaped, and no `connection.*` intent can write the region.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::Manager;
@@ -20,11 +19,9 @@ use crate::connections_projection::projection::{
     fold_connections_from_manager, publish_connections, CONNECTIONS_REGION,
 };
 use crate::connections_projection::store::ConnectionsStore;
-use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
-};
+use crate::projection::{Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector};
 use crate::terminal::backend::ConnectionConfig;
+use crate::test_support::{ClientCache, RecordingSink};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -69,65 +66,6 @@ fn seeded_store() -> Arc<ConnectionsStore> {
     store
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/tunnel/session/monitor test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-    }
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -136,8 +74,18 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(CONNECTIONS_REGION, store.snapshot());
 
-    let snap_a = projector.subscribe(CONNECTIONS_REGION, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(CONNECTIONS_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(
+        CONNECTIONS_REGION,
+        "sub-a",
+        "A",
+        Arc::new(RecordingSink::new()),
+    );
+    let snap_b = projector.subscribe(
+        CONNECTIONS_REGION,
+        "sub-b",
+        "B",
+        Arc::new(RecordingSink::new()),
+    );
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -169,7 +117,7 @@ fn test_manager() -> (ConnectionManager, tempfile::TempDir) {
 
 /// Wire a mock app with the managed state `setup()` builds for the connections
 /// region: the manager, the store, and a `ProjectionState` whose `connections`
-/// region is registered and has one `VecSink` subscribed. Returns the app, the
+/// region is registered and has one `RecordingSink` subscribed. Returns the app, the
 /// store, the sink, and the subscribe-time client cache.
 #[allow(clippy::type_complexity)]
 fn wire_app(
@@ -177,7 +125,7 @@ fn wire_app(
 ) -> (
     tauri::App<tauri::test::MockRuntime>,
     Arc<ConnectionsStore>,
-    Arc<VecSink>,
+    Arc<RecordingSink>,
     ClientCache,
 ) {
     let app = tauri::test::mock_app();
@@ -190,7 +138,7 @@ fn wire_app(
     projection
         .projector
         .register_region(CONNECTIONS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(CONNECTIONS_REGION, "sub", "C", sink.clone());
@@ -529,13 +477,13 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     let projector = Arc::new(Projector::new());
     projector.register_region(CONNECTIONS_REGION, store.snapshot());
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(CONNECTIONS_REGION, "live", "A", live.clone());
     projector.subscribe(CONNECTIONS_REGION, "dead", "B", dead.clone());
     assert_eq!(projector.subscriber_count(CONNECTIONS_REGION), 2);
 
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
     store.replace(vec![folder("Work", "Work", None, false)], Vec::new());
     publish_connections(&projector, &store);
 

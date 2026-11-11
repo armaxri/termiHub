@@ -9,6 +9,7 @@ import json
 import pytest
 
 from termihub_harness import deadlines, timing
+from termihub_harness.bridge import BridgeError
 from termihub_harness.systemtest import SystemTest
 
 from fake_app import FakeApp, dispatcher_like
@@ -302,15 +303,25 @@ class _RowDriver:
 
 
 class _HostKeyDriver:
-    """Driver double for the host-key loop: an optional prompt, an optional shell."""
+    """Driver double for the host-key loop: an optional prompt, an optional shell.
 
-    def __init__(self, *, prompt=False, output=""):
+    ``state`` is the prompt modal's Radix ``data-state``: an answered prompt stays
+    in the DOM as ``"closed"`` while its exit animation runs (#5413).
+    """
+
+    def __init__(self, *, prompt=False, output="", state="open"):
         self.prompt = prompt
         self.output = output
+        self.state = state
         self.clicked = []
 
     def exists(self, test_id):
         return self.prompt and test_id == "ssh-hostkey-prompt"
+
+    def get_attribute(self, test_id, attribute):
+        if not self.exists(test_id):
+            raise BridgeError(f"no element with data-testid={test_id!r}")
+        return self.state if attribute == "data-state" else None
 
     def click(self, test_id):
         self.clicked.append(test_id)
@@ -366,3 +377,17 @@ def test_host_key_loop_records_an_expired_wait(monkeypatch):
     assert prompt.accept_host_key_prompt(timeout=0.05) is False
     row = {r["op"]: r for r in timing.summarize()}[deadlines.HOST_KEY_PROMPT_OP]
     assert (row["n"], row["timeouts"]) == (1, 1)
+
+
+def test_host_key_loop_ignores_a_prompt_that_is_animating_out(monkeypatch):
+    # #5413: right after "Accept", the answered prompt stays in the DOM as
+    # data-state="closed" for its exit animation. A jump-host connect asks twice
+    # (bastion, then target); counting the closing bastion prompt as the second
+    # one left the target's real prompt unanswered and the connect hung.
+    from termihub_harness.ui.passwordprompt import PasswordPromptUi
+
+    monkeypatch.setattr(deadlines, "CONTENDED", False)
+    monkeypatch.setattr(deadlines, "DEBUG_SCALE", 1.0)
+    driver = _HostKeyDriver(prompt=True, state="closed")
+    assert _bound(PasswordPromptUi, driver).accept_host_key_prompt(timeout=0.3) is False
+    assert driver.clicked == []

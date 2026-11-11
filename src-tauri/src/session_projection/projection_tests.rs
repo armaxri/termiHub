@@ -11,22 +11,21 @@
 //! versions, rejection paths advance nothing, a dead subscriber is reaped, and
 //! the client cache converges on the store's authority across a full lifecycle.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::Manager;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
-    ProjectionError, ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, compute_ops, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
 };
 use crate::session::manager::{DropFold, EventEmitter};
 use crate::session_projection::projection::{
     fold_session_transition, publish_sessions, SESSION_LIFECYCLE_REGION,
 };
 use crate::session_projection::store::{SessionLifecycleStore, TerminalExit, TerminalExitReason};
+use crate::test_support::{ClientCache, RecordingSink};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -157,65 +156,6 @@ fn required_exit(intent: &Intent) -> Result<TerminalExit, (String, String)> {
     })
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/tunnel/layout test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-    }
-}
-
 fn intent(kind: &str, payload: Value) -> Intent {
     Intent {
         intent_id: format!("01J-{kind}"),
@@ -237,13 +177,13 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
         SESSION_LIFECYCLE_REGION,
         "sub-a",
         "A",
-        Arc::new(VecSink::new()),
+        Arc::new(RecordingSink::new()),
     );
     let snap_b = projector.subscribe(
         SESSION_LIFECYCLE_REGION,
         "sub-b",
         "B",
-        Arc::new(VecSink::new()),
+        Arc::new(RecordingSink::new()),
     );
 
     assert_eq!(snap_a.version, 0);
@@ -260,8 +200,8 @@ fn a_lifecycle_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub-a", "A", sink_a.clone());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "sub-b", "B", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -300,7 +240,7 @@ fn a_full_reconnect_loop_advances_monotonically_and_converges() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -345,7 +285,7 @@ fn a_reconnect_trigger_intent_projects_the_cause_and_a_clear_removes_it() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -388,7 +328,7 @@ fn a_clean_session_exited_intent_folds_status_disconnected() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -429,7 +369,7 @@ fn a_dropped_session_exited_intent_is_pure_metadata() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -459,7 +399,7 @@ fn a_session_exited_intent_with_an_invalid_reason_is_rejected() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent(
@@ -479,7 +419,7 @@ fn an_intent_missing_the_session_id_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent("session.connect", json!({ "wrong": "field" })));
@@ -497,7 +437,7 @@ fn a_no_op_intent_advances_nothing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent("session.connected", json!({ "sessionId": "s2" })));
@@ -514,13 +454,13 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "live", "A", live.clone());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "dead", "B", dead.clone());
     assert_eq!(projector.subscriber_count(SESSION_LIFECYCLE_REGION), 2);
 
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
     dispatcher.dispatch(intent("session.connected", json!({ "sessionId": "s1" })));
 
     assert_eq!(
@@ -558,7 +498,7 @@ fn server_side_connect_fold_creates_the_tab_keyed_entry_without_client_dispatch(
     projection
         .projector
         .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
@@ -599,7 +539,7 @@ fn server_side_connected_fold_settles_the_session_live() {
     projection
         .projector
         .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
@@ -663,7 +603,7 @@ fn server_side_connect_failed_fold_settles_the_session_failed() {
     projection
         .projector
         .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
@@ -747,7 +687,7 @@ fn server_side_kill_disconnect_fold_settles_the_session_disconnected() {
     projection
         .projector
         .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
@@ -821,7 +761,7 @@ fn server_side_resilient_drop_fold_starts_reconnecting() {
     projection
         .projector
         .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
@@ -865,7 +805,7 @@ fn server_side_nonresilient_drop_fold_settles_disconnected() {
     projection
         .projector
         .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
@@ -960,7 +900,7 @@ fn agent_transport_reconnecting_projects_reconnecting_without_arming_the_loop() 
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -1012,7 +952,7 @@ fn agent_transport_reconnecting_projects_reconnecting_without_arming_the_loop() 
 fn assert_incremental_equals_full(
     projector: &Projector,
     store: &SessionLifecycleStore,
-    sink: &VecSink,
+    sink: &RecordingSink,
     prev: &mut Value,
     label: &str,
 ) {
@@ -1066,7 +1006,7 @@ fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
 
     let projector = Projector::new();
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
 
     // Clear the seed dirty set; the region baseline already equals the store, so
@@ -1123,7 +1063,7 @@ fn incremental_publish_coalesces_multi_entry_changes_identically() {
     }
     let projector = Projector::new();
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
     assert!(publish_sessions(&projector, &store).is_empty());
 

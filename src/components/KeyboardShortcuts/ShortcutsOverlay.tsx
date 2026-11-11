@@ -3,6 +3,8 @@ import { Pencil } from "lucide-react";
 import { Modal, Button, SearchInput } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { isShortcutCategoryVisible } from "@/utils/experimentalTypes";
 import { ShortcutCategory, ShortcutScope, KeyBinding } from "@/types/keybindings";
 import { getDefaultBindings, formatActionBindings } from "@/services/keybindings";
 import "./ShortcutsOverlay.css";
@@ -69,6 +71,8 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   const bindings = getDefaultBindings();
+  // Remote Desktop shortcuts are listed only while VNC/RDP are ungated (#5365).
+  const experimental = useExperimentalFeatures();
   const { query, setQuery, filtered: filteredBindings } = useListFilter(bindings, shortcutFields);
 
   /**
@@ -85,7 +89,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
     category: cat,
     label: CATEGORY_LABELS[cat],
     bindings: filteredBindings.filter((b) => b.category === cat),
-  })).filter((g) => g.bindings.length > 0);
+  })).filter((g) => g.bindings.length > 0 && isShortcutCategoryVisible(g.category, experimental));
 
   return (
     <Modal

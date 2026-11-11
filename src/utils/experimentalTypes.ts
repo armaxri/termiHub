@@ -51,3 +51,15 @@ export function buildGatedTypeOptions(
         : ct.displayName,
     }));
 }
+
+/**
+ * Keyboard-shortcut categories that only apply to experimental connection types
+ * (#5365). While experimental features are off, the shortcut lists hide these
+ * groups; the bindings and any user overrides stay registered and stored.
+ */
+const EXPERIMENTAL_SHORTCUT_CATEGORIES: ReadonlySet<string> = new Set(["remote-desktop"]);
+
+/** Whether a shortcut category is listed under the current experimental gate. */
+export function isShortcutCategoryVisible(category: string, experimental: boolean): boolean {
+  return experimental || !EXPERIMENTAL_SHORTCUT_CATEGORIES.has(category);
+}

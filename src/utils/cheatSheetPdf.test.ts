@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildCheatSheetHtml, exportCheatSheet } from "./cheatSheetPdf";
-import { setOverride, clearOverrides } from "@/services/keybindings";
+import { setOverride, clearOverrides, RELEASE_CHORD_ACTION } from "@/services/keybindings";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn() }));
@@ -127,5 +127,41 @@ describe("exportCheatSheet", () => {
     vi.mocked(save).mockResolvedValue(null);
     await exportCheatSheet();
     expect(writeTextFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildCheatSheetHtml experimental gate (#5403)", () => {
+  it("omits the Remote Desktop group while experimental features are off", () => {
+    for (const html of [
+      buildCheatSheetHtml(),
+      buildCheatSheetHtml("all", { experimental: false }),
+    ]) {
+      expect(html).not.toContain("<h3>Remote Desktop</h3>");
+      expect(html).not.toContain("Release Remote Desktop Keyboard");
+      expect(html).toContain("<h3>General</h3>");
+    }
+  });
+
+  it("includes the Remote Desktop group while experimental features are on", () => {
+    const html = buildCheatSheetHtml("current", { experimental: true });
+    expect(html).toContain("<h3>Remote Desktop</h3>");
+    expect(html).toContain("Release Remote Desktop Keyboard");
+  });
+
+  it("passes the gate through when exporting", async () => {
+    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+    await exportCheatSheet("current", { experimental: true });
+    expect(vi.mocked(writeTextFile).mock.calls[0][1]).toContain("<h3>Remote Desktop</h3>");
+    vi.mocked(writeTextFile).mockClear();
+    await exportCheatSheet();
+    expect(vi.mocked(writeTextFile).mock.calls[0][1]).not.toContain("<h3>Remote Desktop</h3>");
+  });
+
+  it("keeps a Remote Desktop override stored while the group is hidden", () => {
+    setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
+    expect(buildCheatSheetHtml()).not.toContain("Release Remote Desktop Keyboard");
+    expect(buildCheatSheetHtml("current", { experimental: true })).toContain(
+      "Release Remote Desktop Keyboard"
+    );
   });
 });

@@ -7,7 +7,7 @@
  */
 
 import type { TerminalTab } from "@/types/terminal";
-import { isAutoReconnectEnabled } from "@/utils/autoReconnect";
+import { isAutoReconnectEnabled, TERMINAL_AUTO_RECONNECT_TYPES } from "@/utils/autoReconnect";
 import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -33,9 +33,11 @@ export const ABORTED_CONNECT_MESSAGE = "Connection aborted.";
  * Whether a tab is eligible for resilient reconnect. Two distinct populations,
  * both excluding persistent sessions (those have their own continuity machinery):
  *
- * - **Agentless direct SSH (#1962):** a plain SSH terminal whose connection has the
- *   unified "Auto-Reconnect" setting enabled — on by default (PARITY-008), so only
- *   an explicit opt-out excludes it. Backend-driven backoff loop.
+ * - **Direct SSH, serial and telnet (#1962, #5390):** a terminal whose connection
+ *   has the unified "Auto-Reconnect" setting enabled. The default is per type: on
+ *   for SSH (PARITY-008) and serial (reopen the port after a USB adapter drops),
+ *   off for telnet. Backend-driven backoff loop; a serial attempt reopens the
+ *   port only when the configured device is back.
  * - **Agent-hosted (#2476):** a shell session on a remote agent — always
  *   resilient. The agent reconnect is backend-driven (park + retry + new-sessionId
  *   re-attach), and backend-reattach is now unconditional (#2560), so every
@@ -54,8 +56,8 @@ export function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
     // reconnect authority and backend-reattach is unconditional (#2560).
     return true;
   }
-  if (tab.connectionType !== "ssh") return false;
-  return isAutoReconnectEnabled(cfg);
+  if (!TERMINAL_AUTO_RECONNECT_TYPES.includes(tab.connectionType)) return false;
+  return isAutoReconnectEnabled(cfg, tab.connectionType);
 }
 
 /**
