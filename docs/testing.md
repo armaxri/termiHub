@@ -775,6 +775,48 @@ Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#per-feature-walkthrough-triage-3695) (the live tunnel UI tests run
 on macOS against the native loopback sshd instead, #4005) and ADR-5.
 
+### Runner-tool preflight (#5340)
+
+A lane missing a runner tool used to show it as one setup error per test that
+needed the tool, each retried by the rerun policy. Now, right after collection,
+[`termihub_harness/tool_preflight.py`](../tests/system/termihub_harness/tool_preflight.py)
+works out which tools the **selected** tests need and checks each one once:
+`openbox`, `xprop`, `xdotool` and `xsettingsd` on Linux, `socat` and `sshd` on
+Linux and macOS, `docker` on Linux, and the harness's `code` PATH shim
+everywhere. A tool counts only on the platforms where its absence is a
+provisioning error. A test that its own `skip`/`skipif` marks already skip does
+not count.
+
+Tests declare their tools where they need them, never in a per-lane list:
+
+- A test, class or module uses `@pytest.mark.requires_tools("xdotool",
+platforms=("linux",))`. `platforms` narrows the tool's own platforms.
+- A fixture is decorated with `@tool_preflight.fixture_needs("docker")` under
+  `@pytest.fixture`. Every test that pulls in the fixture counts. All Docker
+  compose fixtures in `conftest.py` and `serial_echo_pair` (socat) do this.
+- A `SystemTest` class whose `external_app_shims` includes `code` needs the
+  `code` shim.
+
+In **strict** mode, a missing tool stops the session before any test runs. The
+session exits with code `6` and prints one message. The message names the
+missing tools, the lane, an example test that needs each tool, and the step in
+`.github/workflows/system-integration.yml` that should have installed it. The
+`INSTALL_STEPS` table maps tools to steps. Nothing is skipped or retried. Under
+xdist, the worker hands the message to the controller, which exits.
+
+The mode comes from `TERMIHUB_TOOL_PREFLIGHT`:
+
+| Value    | Behaviour                                                          |
+| -------- | ------------------------------------------------------------------ |
+| `strict` | Stop the session on a missing tool                                 |
+| `warn`   | Print the message in the terminal summary; tests skip on their own |
+| `off`    | Disable the preflight                                              |
+
+The default is `strict` on a skip-guard lane or a GitHub runner, and `warn` on a
+developer machine. Local paths such as `TERMIHUB_OS_INPUT_GLOBAL=1` therefore
+keep working, and the output still says what to install. `--collect-only`
+never probes.
+
 ### Adding an allowlisted skip (#5033)
 
 The skip allowlist is a directory of small JSON **fragments**, one per file, so
