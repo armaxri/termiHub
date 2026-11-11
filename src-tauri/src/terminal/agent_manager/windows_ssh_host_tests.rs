@@ -80,8 +80,9 @@ use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
 use crate::utils::ssh_auth::connect_and_authenticate;
 use termihub_core::ipc::ndjson::LineSplitter;
 
-/// Update rollback through each `DefaultShell` (#5219).
-mod rollback;
+/// Update rollback through each `DefaultShell` (#5219). Its host `reset` is
+/// shared with the cross-platform deploy journey (#5208).
+pub(super) mod rollback;
 
 /// Update while a session daemon holds the installed exe (#5254).
 mod daemon_update;
@@ -227,7 +228,7 @@ fn live_fixture() -> Option<Fixture> {
 
 /// Trust the fixture's sshd host key (process-wide, set-once): it is a
 /// loopback fixture with a key generated per `up`, never in `known_hosts`.
-fn trust_all_host_keys() {
+pub(super) fn trust_all_host_keys() {
     use termihub_core::backends::ssh::host_key::{
         set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
     };
@@ -565,7 +566,7 @@ async fn wait_for_text(
 }
 
 /// Send keyboard input to a session (`connection.write` is fire-and-forget).
-async fn write_input(
+pub(super) async fn write_input(
     channel: &mut russh::Channel<russh::client::Msg>,
     request_id: &mut u64,
     session_id: &str,
@@ -585,7 +586,7 @@ async fn write_input(
 }
 
 /// Establish the agent over SSH exec `--stdio` (connect, exec, `initialize`).
-async fn establish(
+pub(super) async fn establish(
     config: &RemoteAgentConfig,
     request_id: &mut u64,
 ) -> (
@@ -611,7 +612,7 @@ async fn establish(
 }
 
 /// Create + attach a persistent PowerShell session; returns its id.
-async fn create_powershell_session(
+pub(super) async fn create_powershell_session(
     channel: &mut russh::Channel<russh::client::Msg>,
     request_id: &mut u64,
     title: &str,

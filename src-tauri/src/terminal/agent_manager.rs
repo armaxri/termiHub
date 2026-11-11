@@ -3780,3 +3780,11 @@ mod live_channel_support;
 // `Windows SSH Host` nightly lane provides the fixture.
 #[cfg(test)]
 mod windows_ssh_host_tests;
+
+// ── Live deploy → probe → update → reattach on the native sshd (#5208) ──────
+//
+// Cross-platform: the native sshd fixture on Linux, macOS and Windows. Skips
+// (with a stated reason) unless the integration-fixtures lane's recipe
+// provides the fixture and two agent builds.
+#[cfg(test)]
+mod native_sshd_deploy_journey_tests;

@@ -136,7 +136,7 @@ fn reset_diagnostics(shell: WindowsShell, path: &str) -> String {
 /// Start from a host with no file at the install or backup path and no staged
 /// upload. A killed agent can hold its exe for a moment, so the reset is
 /// retried a few times; the running agents are logged first.
-pub(super) fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
+pub(in crate::terminal::agent_manager) fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
     const ATTEMPTS: u32 = 5;
     eprintln!(
         "{shell:?}: running agents before the reset:\n  => {}",
