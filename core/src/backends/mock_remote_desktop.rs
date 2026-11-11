@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use crate::connection::{
     AuthKind, Capabilities, ClipboardImage, ClipboardTextReceiver, ConnectionType, CursorReceiver,
     CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
-    InputEvent, MonitorLayout, MonitorRect, OutputReceiver, SettingsSchema,
+    InputEvent, MonitorLayout, MonitorRect, OutputReceiver, RemoteClipboardFile, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -76,6 +76,114 @@ struct MockConfig {
     /// (#4836), so tests can drive a server-originated clipboard change.
     #[serde(default)]
     remote_copy: Option<String>,
+    /// Files the mock "server" copies to its clipboard right after connect
+    /// (#5170), surfaced through [`GraphicalBackend::remote_clipboard_files`] and
+    /// staged on demand by [`GraphicalBackend::fetch_remote_clipboard_file`], so
+    /// the host's delayed-render clipboard owners can be driven end to end
+    /// without a live RDP server.
+    #[serde(default)]
+    remote_copy_files: Vec<MockRemoteFile>,
+}
+
+/// One file (or directory) in the mock's [`MockConfig::remote_copy_files`].
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MockRemoteFile {
+    /// The file's basename. Only the final path component is ever staged.
+    name: String,
+    /// The file's bytes, as UTF-8 text.
+    #[serde(default)]
+    content: String,
+    /// Whether this entry is a directory (surfaced, never fetchable).
+    #[serde(default)]
+    is_dir: bool,
+}
+
+/// The mock's remote-clipboard file state (#5170): what the "server" copied,
+/// where fetches are staged, and how many fetches have run.
+struct MockRemoteFiles {
+    files: Vec<MockRemoteFile>,
+    /// Private staging root, removed when the session ends ([`Self::close`]).
+    staging: StdMutex<Option<tempfile::TempDir>>,
+    /// Fetches served so far. Each fetch stages into its own `fetch-<n>`
+    /// directory, so a reader can tell from the returned path how many fetches
+    /// ran and that every paste was a fresh delayed render.
+    fetches: AtomicU64,
+}
+
+impl MockRemoteFiles {
+    fn new(files: Vec<MockRemoteFile>) -> Result<Self, SessionError> {
+        let staging = if files.is_empty() {
+            None
+        } else {
+            Some(
+                tempfile::Builder::new()
+                    .prefix("termihub-mock-clipboard-")
+                    .tempdir()
+                    .map_err(|e| {
+                        SessionError::SpawnFailed(format!("mock clipboard staging dir: {e}"))
+                    })?,
+            )
+        };
+        Ok(Self {
+            files,
+            staging: StdMutex::new(staging),
+            fetches: AtomicU64::new(0),
+        })
+    }
+
+    /// The surfaced entries, indexed by their position in the copied list.
+    fn surfaced(&self) -> Vec<RemoteClipboardFile> {
+        self.files
+            .iter()
+            .enumerate()
+            .map(|(index, f)| RemoteClipboardFile {
+                name: f.name.clone(),
+                relative_path: None,
+                size: (!f.is_dir).then_some(f.content.len() as u64),
+                is_dir: f.is_dir,
+                index: index as u32,
+            })
+            .collect()
+    }
+
+    /// Stage file `index` into a fresh `fetch-<n>` directory and return its path.
+    fn fetch(&self, index: u32) -> Result<std::path::PathBuf, SessionError> {
+        let file = self
+            .files
+            .get(index as usize)
+            .filter(|f| !f.is_dir)
+            .ok_or_else(|| {
+                SessionError::InvalidConfig(format!("no fetchable remote clipboard file {index}"))
+            })?;
+        let name = std::path::Path::new(&file.name)
+            .file_name()
+            .filter(|n| !n.is_empty())
+            .ok_or_else(|| {
+                SessionError::InvalidConfig(format!("unusable remote file name {:?}", file.name))
+            })?;
+        let staging = self
+            .staging
+            .lock()
+            .map_err(|_| SessionError::NotRunning("mock clipboard lock poisoned".to_string()))?;
+        let root = staging.as_ref().ok_or_else(|| {
+            SessionError::NotRunning("mock clipboard staging dir is closed".to_string())
+        })?;
+        let n = self.fetches.fetch_add(1, Ordering::SeqCst) + 1;
+        let dir = root.path().join(format!("fetch-{n}"));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(name);
+        std::fs::write(&path, file.content.as_bytes())?;
+        Ok(path)
+    }
+
+    /// Remove the staging root now (the session ended), rather than whenever the
+    /// last runtime reference happens to drop.
+    fn close(&self) {
+        if let Ok(mut staging) = self.staging.lock() {
+            staging.take();
+        }
+    }
 }
 
 /// Shared, interior-mutable state of a connected mock session.
@@ -96,6 +204,8 @@ struct MockRuntime {
     monitors: StdMutex<Vec<MonitorRect>>,
     /// Count of accepted input events — lets tests assert view-only suppression.
     input_count: AtomicU64,
+    /// Files the mock "server" copied (#5170).
+    remote_files: MockRemoteFiles,
     cancel: CancellationToken,
 }
 
@@ -138,6 +248,7 @@ impl Drop for MockRemoteDesktop {
     fn drop(&mut self) {
         if let Some(rt) = &self.runtime {
             rt.cancel.cancel();
+            rt.remote_files.close();
         }
         if let Some(task) = self.task.take() {
             task.abort();
@@ -336,6 +447,7 @@ impl ConnectionType for MockRemoteDesktop {
             dims: Mutex::new((width, height)),
             monitors: StdMutex::new(monitors),
             input_count: AtomicU64::new(0),
+            remote_files: MockRemoteFiles::new(cfg.remote_copy_files)?,
             cancel: CancellationToken::new(),
         });
 
@@ -363,6 +475,7 @@ impl ConnectionType for MockRemoteDesktop {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(rt) = self.runtime.take() {
             rt.cancel.cancel();
+            rt.remote_files.close();
         }
         if let Some(task) = self.task.take() {
             task.abort();
@@ -551,6 +664,23 @@ impl GraphicalBackend for MockRemoteDesktop {
         *rt.clipboard_image.lock().await = Some(image);
         Ok(())
     }
+
+    async fn remote_clipboard_files(&self) -> Vec<RemoteClipboardFile> {
+        self.runtime
+            .as_ref()
+            .map(|rt| rt.remote_files.surfaced())
+            .unwrap_or_default()
+    }
+
+    async fn fetch_remote_clipboard_file(
+        &self,
+        index: u32,
+    ) -> Result<std::path::PathBuf, SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("mock not connected".to_string()));
+        };
+        rt.remote_files.fetch(index)
+    }
 }
 
 #[cfg(test)]
@@ -582,6 +712,63 @@ mod tests {
         let schema = connected().settings_schema();
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
         assert_eq!(keys, vec!["connection", "display", "features"]);
+    }
+
+    #[tokio::test]
+    async fn remote_copy_files_surface_and_stage_on_demand() {
+        let mut m = connected();
+        m.connect(serde_json::json!({
+            "remoteCopyFiles": [
+                { "name": "a.txt", "content": "alpha" },
+                { "name": "folder", "isDir": true },
+                { "name": "../evil/b é.txt", "content": "beta" },
+            ]
+        }))
+        .await
+        .unwrap();
+        let g = m.graphical().unwrap();
+        let files = g.remote_clipboard_files().await;
+        let summary: Vec<(String, Option<u64>, bool, u32)> = files
+            .iter()
+            .map(|f| (f.name.clone(), f.size, f.is_dir, f.index))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("a.txt".to_string(), Some(5), false, 0),
+                ("folder".to_string(), None, true, 1),
+                ("../evil/b é.txt".to_string(), Some(4), false, 2),
+            ]
+        );
+
+        // Each fetch stages into its own numbered directory.
+        let a = g.fetch_remote_clipboard_file(0).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "alpha");
+        assert!(a.ends_with("fetch-1/a.txt"), "{}", a.display());
+        // Only the basename is ever staged: no escape from the staging root.
+        let b = g.fetch_remote_clipboard_file(2).await.unwrap();
+        assert!(b.ends_with("fetch-2/b é.txt"), "{}", b.display());
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "beta");
+        let again = g.fetch_remote_clipboard_file(0).await.unwrap();
+        assert!(again.ends_with("fetch-3/a.txt"), "{}", again.display());
+
+        // Directories and unknown indices are not fetchable.
+        assert!(g.fetch_remote_clipboard_file(1).await.is_err());
+        assert!(g.fetch_remote_clipboard_file(9).await.is_err());
+
+        // The staging root goes away with the session.
+        let root = a.parent().unwrap().parent().unwrap().to_path_buf();
+        m.disconnect().await.unwrap();
+        assert!(!root.exists(), "staging root survived disconnect");
+    }
+
+    #[tokio::test]
+    async fn no_remote_copy_files_by_default() {
+        let mut m = connected();
+        m.connect(serde_json::json!({})).await.unwrap();
+        let g = m.graphical().unwrap();
+        assert!(g.remote_clipboard_files().await.is_empty());
+        assert!(g.fetch_remote_clipboard_file(0).await.is_err());
     }
 
     #[test]
