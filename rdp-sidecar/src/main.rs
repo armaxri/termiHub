@@ -45,6 +45,7 @@ mod pdu_fork_tests;
 mod rdp;
 #[cfg(test)]
 mod rdpsnd_fork_tests;
+mod redirect;
 mod resize_gate;
 mod sandbox;
 

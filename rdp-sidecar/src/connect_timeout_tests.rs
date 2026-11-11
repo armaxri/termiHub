@@ -9,8 +9,9 @@ use termihub_core::backends::rdp_sidecar::config::RdpConfig;
 use termihub_core::backends::rdp_sidecar::protocol::SidecarFailureKind;
 use tokio::net::TcpListener;
 
-use super::connect_session;
+use super::{connect_session, Hop};
 use crate::failure;
+use termihub_core::backends::rdp_sidecar::protocol::MessageReader;
 
 fn config_for(port: u16, timeout_secs: u64) -> RdpConfig {
     RdpConfig {
@@ -26,7 +27,8 @@ fn config_for(port: u16, timeout_secs: u64) -> RdpConfig {
 async fn connect_error(cfg: &RdpConfig) -> anyhow::Error {
     let mut ipc_in = tokio::io::empty();
     let mut ipc_out = tokio::io::sink();
-    match connect_session(cfg, &mut ipc_in, &mut ipc_out).await {
+    let mut host_in = MessageReader::new(&mut ipc_in);
+    match connect_session(cfg, &Hop::origin(cfg), &mut host_in, &mut ipc_out).await {
         Ok(_) => panic!("connecting to a non-RDP peer must fail"),
         Err(e) => e,
     }

@@ -21,8 +21,8 @@
 //! `ironrdp-async` 0.12's `connect_finalize` / `perform_credssp_step` — with its
 //! multitransport requests declined with `E_ABORT`, as its default
 //! `connect_finalize` does — plus one hook: a Server Redirection ends the
-//! connect with a typed [`ServerRedirected`](failure::ServerRedirected) error,
-//! since the sidecar does not follow redirections (#5117). The client monitor
+//! connect with [`Finalized::Redirected`], which the caller follows
+//! ([`crate::redirect`], #5137). The client monitor
 //! layout (#3696) needs no hook: the connector sends it from its `Config`
 //! (#5141).
 
@@ -42,6 +42,18 @@ use ironrdp_tokio::{
 use tracing::{debug, info, trace, warn};
 
 use crate::failure::{self, CredsspPhase, CredsspRejected};
+use crate::redirect;
+
+/// How the connection sequence ended.
+// Built once per connect and moved straight out; boxing the active result
+// would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum Finalized {
+    /// The session is active.
+    Connected(ConnectionResult),
+    /// The server sent a Server Redirection PDU: reconnect elsewhere (#5137).
+    Redirected(Box<ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu>),
+}
 
 /// Finish the connection after the TLS upgrade: CredSSP/NLA (when negotiated),
 /// then channel join, capability exchange and finalization.
@@ -52,7 +64,7 @@ pub async fn connect_finalize<S, N>(
     network_client: &mut N,
     server_name: ServerName,
     server_public_key: Vec<u8>,
-) -> Result<ConnectionResult>
+) -> Result<Finalized>
 where
     S: FramedRead + FramedWrite,
     N: NetworkClient,
@@ -107,16 +119,16 @@ where
     match outcome {
         ConnectionOutcome::Connected(result) => {
             info!("Connected with success");
-            Ok(result)
+            Ok(Finalized::Connected(result))
         }
         ConnectionOutcome::Redirected(redirection) => {
-            let redirected = failure::ServerRedirected::from_pdu(&redirection);
+            // The PDU's `Debug` withholds its password cookie; log the target only.
             warn!(
                 session_id = redirection.session_id,
-                target = ?redirected.target,
+                target = %redirect::target_name(&redirection),
                 "rdp server redirected the connection"
             );
-            Err(redirected.into())
+            Ok(Finalized::Redirected(redirection))
         }
     }
 }

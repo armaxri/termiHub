@@ -43,9 +43,12 @@ use std::fmt;
 use ironrdp_connector::sspi;
 use ironrdp_connector::{ConnectorError, ConnectorErrorKind};
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
+use ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu;
 use ironrdp_session::GracefulDisconnectReason;
 use termihub_core::backends::rdp_sidecar::protocol::SidecarFailureKind;
 use termihub_core::connection::GraphicalState;
+
+use crate::redirect::RedirectRefused;
 
 /// NTSTATUS codes a CredSSP server returns in `TSRequest.errorCode` when it
 /// rejects the supplied credentials or the account behind them.
@@ -293,63 +296,13 @@ impl fmt::Display for ConnectTimedOut {
 
 impl std::error::Error for ConnectTimedOut {}
 
-/// The server sent a Server Redirection PDU (MS-RDPBCGR 2.2.13), during the
-/// connection sequence or later: it wants the client to reconnect to another
-/// server, which a connection broker or load balancer does (#5117). The
-/// sidecar does not follow redirections yet, and a re-dial of the same host
-/// would be redirected again, so it is a terminal
-/// [`SidecarFailureKind::Protocol`] failure rather than a retryable connect
-/// failure. Carries only the target's name, never the redirection's
-/// credentials or cookies.
-#[derive(Debug)]
-pub struct ServerRedirected {
-    /// The target server's FQDN, NetBIOS name or address, when the PDU names one.
-    pub target: Option<String>,
-}
-
-impl ServerRedirected {
-    /// The non-secret target name of a Server Redirection PDU.
-    pub fn from_pdu(pdu: &ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu) -> Self {
-        let target = [
-            pdu.target_fqdn.as_ref(),
-            pdu.target_netbios_name.as_ref(),
-            pdu.target_net_address.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .find(|name| !name.trim().is_empty())
-        .cloned();
-        Self { target }
-    }
-}
-
-impl fmt::Display for ServerRedirected {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.target {
-            Some(target) => write!(
-                f,
-                "The RDP server redirected the connection to {target} (a connection broker or \
-                 load balancer); termiHub does not follow RDP server redirections yet. Connect \
-                 to that server directly"
-            ),
-            None => write!(
-                f,
-                "The RDP server redirected the connection to another server (a connection broker \
-                 or load balancer); termiHub does not follow RDP server redirections yet"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ServerRedirected {}
-
 /// Classify a fatal sidecar error (the whole `anyhow` chain) as auth vs
 /// timeout vs redirection vs any other connect failure.
 pub fn classify(error: &anyhow::Error) -> SidecarFailureKind {
     if error.chain().any(|cause| cause.is::<ConnectTimedOut>()) {
         return SidecarFailureKind::Timeout;
     }
-    if error.chain().any(|cause| cause.is::<ServerRedirected>()) {
+    if error.chain().any(|cause| cause.is::<RedirectRefused>()) {
         return SidecarFailureKind::Protocol;
     }
     let auth = error.chain().any(|cause| {
@@ -389,6 +342,10 @@ pub enum SessionEnd {
     Server(GracefulDisconnectReason),
     /// A typed failure ended the session.
     Failed(SidecarFailureKind, String),
+    /// The server redirected the session to another server, mid-session or
+    /// during a reactivation (#5137): the caller follows it
+    /// ([`crate::redirect`]). Its `Debug` withholds the password cookie.
+    Redirected(Box<ServerRedirectionPdu>),
 }
 
 /// The typed [`SidecarMessage::Failure`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::Failure)
@@ -411,6 +368,8 @@ pub fn end_failure(end: &SessionEnd) -> Option<(SidecarFailureKind, String)> {
             )
         }),
         SessionEnd::Failed(kind, message) => Some((*kind, message.clone())),
+        // The caller follows a redirection before it asks for a failure.
+        SessionEnd::Redirected(_) => None,
     }
 }
 
@@ -428,12 +387,6 @@ pub fn process_error_end(error: &dyn fmt::Display) -> SessionEnd {
 /// (#4509): an I/O error anywhere in the chain is a transport drop (retried);
 /// anything else is the server's protocol behaviour, terminal with its reason.
 pub fn reactivation_end(error: &anyhow::Error) -> SessionEnd {
-    if let Some(redirected) = error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<ServerRedirected>())
-    {
-        return redirected_end(redirected);
-    }
     if error
         .chain()
         .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
@@ -444,11 +397,6 @@ pub fn reactivation_end(error: &anyhow::Error) -> SessionEnd {
         SidecarFailureKind::Protocol,
         format!("The RDP server's display reconfiguration failed: {error:#}"),
     )
-}
-
-/// The end of a session the server redirected to another server (#5117).
-pub fn redirected_end(redirected: &ServerRedirected) -> SessionEnd {
-    SessionEnd::Failed(SidecarFailureKind::Protocol, redirected.to_string())
 }
 
 /// Whether an IronRDP connector error is a credential rejection.
@@ -504,7 +452,6 @@ fn is_auth_error_info_description(text: &str) -> bool {
 mod tests {
     use super::*;
     use anyhow::Context;
-    use ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu;
 
     fn credssp(error: sspi::Error) -> ConnectorError {
         ConnectorError::new("CredSSP", ConnectorErrorKind::Credssp(error))
@@ -906,58 +853,20 @@ mod tests {
         assert!(message.contains("unexpected capability set"), "{message}");
     }
 
-    fn redirection(fqdn: Option<&str>, address: Option<&str>) -> ServerRedirectionPdu {
-        ServerRedirectionPdu {
-            session_id: 7,
-            target_fqdn: fqdn.map(str::to_owned),
-            target_net_address: address.map(str::to_owned),
-            username: Some("alice".to_owned()),
-            password: Some(b"cookie-secret".to_vec()),
-            load_balance_info: Some(b"tsv://broker".to_vec()),
-            ..ServerRedirectionPdu::default()
-        }
-    }
-
     #[test]
-    fn a_server_redirection_names_the_target_and_never_its_secrets() {
-        let redirected =
-            ServerRedirected::from_pdu(&redirection(Some("rdsh2.example.com"), Some("10.0.0.2")));
-        assert_eq!(redirected.target.as_deref(), Some("rdsh2.example.com"));
-        let message = redirected.to_string();
-        assert!(message.contains("rdsh2.example.com"), "{message}");
-        for secret in ["cookie-secret", "alice", "tsv://broker"] {
-            assert!(!message.contains(secret), "{message}");
-            assert!(!format!("{redirected:?}").contains(secret));
-        }
-
-        let by_address = ServerRedirected::from_pdu(&redirection(Some("  "), Some("10.0.0.2")));
-        assert_eq!(by_address.target.as_deref(), Some("10.0.0.2"));
-        let unnamed = ServerRedirected::from_pdu(&redirection(None, None));
-        assert_eq!(unnamed.target, None);
-        assert!(unnamed
-            .to_string()
-            .contains("redirected the connection to another server"));
-    }
-
-    #[test]
-    fn a_server_redirection_is_a_terminal_protocol_failure() {
-        let redirected = ServerRedirected::from_pdu(&redirection(Some("rdsh2"), None));
-        let err =
-            anyhow::Error::new(redirected).context("RDP CredSSP / capability exchange failed");
+    fn a_refused_redirection_is_a_terminal_protocol_failure() {
+        let refused = RedirectRefused::Loop {
+            target: "rdsh2".to_string(),
+        };
+        let err = anyhow::Error::new(refused).context("RDP server redirection not followed");
         assert_eq!(classify(&err), SidecarFailureKind::Protocol);
+        assert_eq!(failure_state(classify(&err)), GraphicalState::Disconnected);
+        assert!(format!("{err:#}").contains("rdsh2"));
+    }
 
-        // During a reactivation too, with the redirection's own message.
-        let SessionEnd::Failed(kind, message) = reactivation_end(&err) else {
-            panic!("a redirection must be typed");
-        };
-        assert_eq!(kind, SidecarFailureKind::Protocol);
-        assert!(message.contains("rdsh2"), "{message}");
-
-        let SessionEnd::Failed(kind, _) =
-            redirected_end(&ServerRedirected::from_pdu(&redirection(None, None)))
-        else {
-            panic!("a mid-session redirection must be typed");
-        };
-        assert_eq!(kind, SidecarFailureKind::Protocol);
+    #[test]
+    fn a_followed_redirection_reports_no_failure() {
+        let end = SessionEnd::Redirected(Box::default());
+        assert!(end_failure(&end).is_none());
     }
 }
