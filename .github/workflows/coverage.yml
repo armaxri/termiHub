@@ -126,6 +126,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libasound2-dev
+          # The Linux clipboard owners' second-client tests (#4087, #4004, #5170)
+          # start their own Xvfb / headless sway and paste with xclip / wl-paste;
+          # without these they skip and src-tauri/src/linux_clipboard reads as
+          # ~5-8 % covered. No recommends: nothing here needs Xwayland.
+          sudo apt-get install -y --no-install-recommends xvfb xclip sway wl-clipboard
 
       # Prebuilt binary download (~seconds) instead of `cargo install`, matching
       # the cargo-audit/cargo-deny pattern already used in code-quality.yml.
