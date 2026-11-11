@@ -50,6 +50,9 @@
 }
 
 .transfer-pane--drop-target {
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
+  --text-secondary: var(--text-secondary-on-selection);
+  --text-muted: var(--text-muted-on-selection);
   border-color: var(--focus-border);
   background-color: var(--bg-selected);
 }
@@ -128,6 +131,9 @@
 }
 
 .transfer-pane__row--selected {
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
+  --text-secondary: var(--text-secondary-on-selection);
+  --text-muted: var(--text-muted-on-selection);
   background-color: var(--bg-selected);
 }
 
