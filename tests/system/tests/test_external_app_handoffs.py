@@ -112,13 +112,35 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _browse_workspace(self) -> None:
-        """A local terminal ``cd``'d into the workspace, with Files showing it."""
-        self.open_cwd_following_terminal()
+        """A local terminal ``cd``'d into the workspace, with Files showing it.
+
+        The workspace is class-scoped, so the browser may still show it from an
+        earlier test's tab when this one's new terminal becomes active. Seeing the
+        workspace name is therefore not enough: on Windows the new PowerShell has
+        not reported its ``cd`` yet, the browser briefly falls back to the home
+        folder, and a click in that window acts on home (#5290: the app was asked
+        to open ``C:/Users/runneradmin``). So wait for *this* tab's reported cwd,
+        then for the browser to settle (no listing in flight) on the workspace.
+        """
+        tab_id = self.open_cwd_following_terminal()
         self.switch_to_connections_sidebar()
         # Forward slashes: valid in PowerShell, Git Bash and POSIX shells (#2683).
         self.run_command(f'cd "{str(self.workspace).replace(chr(92), "/")}"')
         self.switch_to_files_sidebar()
-        self.wait_for_path_contains(self.workspace.name)
+        name = self.workspace.name
+        if tab_id is not None:
+            self.wait(
+                lambda: name in str((self.driver.get_state("tabCwds") or {}).get(tab_id, "")),
+                what=f"the new terminal to report its cd into {name}",
+            )
+        deadline = time.monotonic() + 30
+        shown = ""
+        while time.monotonic() < deadline:
+            shown = self.wait_file_browser_settled()
+            if name in shown:
+                return
+            time.sleep(0.5)
+        raise AssertionError(f"the file browser settled on {shown!r}, not the workspace {name}")
 
     def _vscode_detected(self) -> None:
         self.wait(
