@@ -62,6 +62,11 @@
       "source": "src/components/Terminal/ColorPickerDialog.tsx",
       "extract": { "kind": "array", "const": "PRESET_COLORS" },
       "transform": "strip-hash"
+    },
+    {
+      "globs": ["workflow-editor-add-step-*"],
+      "source": "src/components/WorkflowSidebar/workflowStepMeta.tsx",
+      "extract": { "kind": "array", "const": "WORKFLOW_STEP_KINDS" }
     }
   ],
   "dynamic": {
@@ -72,6 +77,7 @@
     "x-server-setup-*": "dialog parts, stem forwarded via testIdPrefix",
     "general-settings-*": "nested settings fields, stem forwarded via testIdPrefix",
     "backup-export-section-*": "section ids reported by the backend at runtime",
+    "backup-restore-include-*": "section ids read from the backup file at runtime",
     "lang-*": "editor languages registered at runtime",
     "plugin-widget-*": "widget ids contributed by installed plugins",
     "field-*": "connection-type schema field keys (backend-supplied)",
@@ -80,6 +86,7 @@
     "port-scanner-result-*": "result row index",
     "http-monitor-entry-*": "entry index",
     "jump-host-source-saved-*": "jump-host row index",
+    "jump-host-connection-*": "jump-host row index",
     "macro-editor-step-*": "step index",
     "macro-editor-step-data-*": "step index",
     "workflow-editor-step-*": "step index",

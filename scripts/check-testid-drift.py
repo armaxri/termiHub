@@ -22,6 +22,14 @@ no Docker, stdlib only):
 3. **Drift** — a referenced literal that is neither an exact source literal nor a
    match for any source ``*``-glob is drift; a referenced builder-prefix that no
    source testid begins with is drift. Either fails the guard.
+4. **Registry-backed templates** (#5341) — ``tests/system/testid-templates.json``
+   names the globs whose interpolated value comes from a literal union or const
+   array (``settings-nav-*`` over ``CATEGORIES``). ``scripts/testid_templates.py``
+   expands their members, so such a glob covers only ``settings-nav-<member>``:
+   a typo'd or removed member is drift. Globs declared ``dynamic`` (file names,
+   indexes) and ``*``-leading caller stems still match any suffix. A harness id
+   that relies on any *other* glob, and a registry entry that cannot be
+   resolved, are reported (plain glob fallback) — never passed silently.
 
 Only selector-call arguments are treated as references, so a fabricated testid in
 a harness *unit* test (e.g. a ``scan_testids`` snippet in
@@ -54,6 +62,8 @@ REPO_ROOT = Path(
 )
 HARNESS_DIR = REPO_ROOT / "tests" / "system"
 CATALOG_SCRIPT = REPO_ROOT / "scripts" / "build-testid-catalog.py"
+TEMPLATES_SCRIPT = REPO_ROOT / "scripts" / "testid_templates.py"
+TEMPLATES_CONFIG = HARNESS_DIR / "testid-templates.json"
 
 # ``Driver`` methods (tests/system/termihub_harness/bridge.py) whose FIRST
 # positional argument is a ``data-testid`` selector. ``drag_to`` takes two
@@ -104,14 +114,29 @@ _MIN_PREFIX = 3
 # ---------------------------------------------------------------------------
 
 
-def _load_catalog_module():
-    spec = importlib.util.spec_from_file_location(
-        "build_testid_catalog", CATALOG_SCRIPT
-    )
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def _load_catalog_module():
+    return _load_module("build_testid_catalog", CATALOG_SCRIPT)
+
+
+templates = _load_module("testid_templates", TEMPLATES_SCRIPT)
+builder_calls = _load_module(
+    "testid_builder_calls", REPO_ROOT / "scripts" / "testid_builder_calls.py"
+)
+
+
+def classify_globs(dynamic_globs: "list[str]", config: "dict | None" = None) -> dict:
+    """Classify source globs per ``testid-templates.json`` (see module docstring)."""
+    if config is None:
+        config = templates.load_config(TEMPLATES_CONFIG)
+    return templates.classify(dynamic_globs, config, REPO_ROOT)
 
 
 def source_testids() -> "tuple[set[str], list[str], list[str]]":
@@ -285,9 +310,13 @@ def harness_references():
     """Aggregate ``(literal_refs, prefix_refs)`` across all harness files.
 
     Each maps ``value -> sorted list of referencing files`` for reporting.
+    Literal refs include the concrete ids built by helper calls with a literal
+    argument (``open_settings_category("appearance")`` →
+    ``settings-nav-appearance``, see ``scripts/testid_builder_calls.py``).
     """
     literal_refs: "dict[str, set[str]]" = {}
     prefix_refs: "dict[str, set[str]]" = {}
+    parsed = []
     for path in iter_harness_files():
         rel = path.relative_to(REPO_ROOT).as_posix()
         lits, prefs = extract_references(path)
@@ -295,6 +324,19 @@ def harness_references():
             literal_refs.setdefault(lit, set()).add(rel)
         for pref in prefs:
             prefix_refs.setdefault(pref, set()).add(rel)
+        parsed.append((rel, ast.parse(path.read_text(encoding="utf-8"))))
+    helpers = builder_calls.merge(
+        [
+            builder_calls.function_templates(
+                tree, _SELECTOR_METHODS_ARG0, _SELECTOR_METHODS_TWO
+            )
+            for _, tree in parsed
+        ]
+    )
+    for rel, tree in parsed:
+        for lit in builder_calls.call_literals(tree, helpers, _const_map(tree)):
+            if _TESTID_SHAPE.match(lit):
+                literal_refs.setdefault(lit, set()).add(rel)
     return literal_refs, prefix_refs
 
 
@@ -315,12 +357,28 @@ def _specific_glob(glob: str) -> bool:
     return any(ch.isalnum() for ch in static)
 
 
+def _covering_globs(testid: str, specific_globs: "list[str]") -> "list[str]":
+    return [g for g in specific_globs if fnmatch.fnmatchcase(testid, g)]
+
+
 def _literal_covered(
-    testid: str, literals: "set[str]", specific_globs: "list[str]"
+    testid: str,
+    literals: "set[str]",
+    specific_globs: "list[str]",
+    expanded: "dict[str, set[str]] | None" = None,
 ) -> bool:
+    """Whether some source id can render ``testid``.
+
+    ``expanded`` maps registry-backed globs to their concrete ids: such a glob
+    covers only those ids, not every suffix.
+    """
     if testid in literals:
         return True
-    return any(fnmatch.fnmatchcase(testid, glob) for glob in specific_globs)
+    expanded = expanded or {}
+    for glob in _covering_globs(testid, specific_globs):
+        if glob not in expanded or testid in expanded[glob]:
+            return True
+    return False
 
 
 def _prefix_covered(prefix: str, static_prefixes: "list[str]") -> bool:
@@ -336,27 +394,61 @@ def _prefix_covered(prefix: str, static_prefixes: "list[str]") -> bool:
     return False
 
 
+def analyze(config: "dict | None" = None) -> dict:
+    """Run the whole guard and return every finding.
+
+    Keys: ``literal_drift`` / ``prefix_drift`` (sorted ``(value, [files])``),
+    ``registry_misses`` (``{testid: [registry globs it is not a member of]}``,
+    explains literal drift), ``unclassified`` (``{glob: [harness ids that only
+    it covers]}``, plain-glob fallback) and ``problems`` (config entries that
+    could not be resolved or are stale), plus ``classification`` itself.
+    """
+    literals, dynamic_globs, static_prefixes = source_testids()
+    literal_refs, prefix_refs = harness_references()
+    cls = classify_globs(dynamic_globs, config)
+    expanded = templates.expansions(cls["members"])
+
+    specific_globs = [g for g in dynamic_globs if _specific_glob(g)]
+    literal_drift = []
+    registry_misses: "dict[str, list[str]]" = {}
+    unclassified: "dict[str, list[str]]" = {}
+    for tid, files in sorted(literal_refs.items()):
+        if not _literal_covered(tid, literals, specific_globs, expanded):
+            literal_drift.append((tid, sorted(files)))
+            misses = [g for g in _covering_globs(tid, specific_globs) if g in expanded]
+            if misses:
+                registry_misses[tid] = misses
+            continue
+        if tid in literals:
+            continue
+        covering = _covering_globs(tid, specific_globs)
+        classified = [g for g in covering if cls["kind"][g] != templates.UNCLASSIFIED]
+        if not classified:
+            for glob in covering:
+                unclassified.setdefault(glob, []).append(tid)
+    prefix_drift = sorted(
+        (pref, sorted(files))
+        for pref, files in prefix_refs.items()
+        if not _prefix_covered(pref, static_prefixes)
+    )
+    return {
+        "literal_drift": literal_drift,
+        "prefix_drift": prefix_drift,
+        "registry_misses": registry_misses,
+        "unclassified": unclassified,
+        "problems": list(cls["problems"]),
+        "classification": cls,
+    }
+
+
 def find_drift():
     """Return ``(literal_drift, prefix_drift)`` — the uncovered harness references.
 
     Each is a sorted list of ``(value, [files])`` tuples. Empty lists mean no
     drift. This is the importable core the pytest guard and the CLI both use.
     """
-    literals, dynamic_globs, static_prefixes = source_testids()
-    literal_refs, prefix_refs = harness_references()
-
-    specific_globs = [g for g in dynamic_globs if _specific_glob(g)]
-    literal_drift = sorted(
-        (tid, sorted(files))
-        for tid, files in literal_refs.items()
-        if not _literal_covered(tid, literals, specific_globs)
-    )
-    prefix_drift = sorted(
-        (pref, sorted(files))
-        for pref, files in prefix_refs.items()
-        if not _prefix_covered(pref, static_prefixes)
-    )
-    return literal_drift, prefix_drift
+    result = analyze()
+    return result["literal_drift"], result["prefix_drift"]
 
 
 # ---------------------------------------------------------------------------
@@ -364,12 +456,17 @@ def find_drift():
 # ---------------------------------------------------------------------------
 
 
-def _print_drift(literal_drift, prefix_drift) -> None:
+def _print_drift(literal_drift, prefix_drift, registry_misses=None, cls=None) -> None:
+    registry_misses = registry_misses or {}
     print("testid drift detected — the harness references ids absent from src/**:")
     if literal_drift:
         print("\n  Missing literal test IDs:")
         for tid, files in literal_drift:
             print(f"    - {tid}")
+            for glob in registry_misses.get(tid, []):
+                members = ", ".join((cls or {}).get("members", {}).get(glob, []))
+                source = (cls or {}).get("source", {}).get(glob, "?")
+                print(f"        {glob} is registry-backed by {source}; members: {members}")
             for f in files:
                 print(f"        referenced in {f}")
     if prefix_drift:
@@ -384,6 +481,20 @@ def _print_drift(literal_drift, prefix_drift) -> None:
     )
 
 
+def _print_notes(result: dict) -> None:
+    """Report the plain-glob fallbacks (#5341): never let them pass silently."""
+    for problem in result["problems"]:
+        print(f"WARNING: {problem} — falling back to plain glob matching.")
+    unclassified = result["unclassified"]
+    if unclassified:
+        print(
+            "NOTE: these harness ids match only a plain glob that is neither "
+            "registry-backed nor declared dynamic in tests/system/testid-templates.json:"
+        )
+        for glob in sorted(unclassified):
+            print(f"  {glob}: {', '.join(sorted(unclassified[glob]))}")
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         description="Static data-testid drift guard for the system-test harness."
@@ -395,8 +506,8 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    literal_refs, prefix_refs = harness_references()
     if args.list:
-        literal_refs, prefix_refs = harness_references()
         print(f"Resolved {len(literal_refs)} literal + {len(prefix_refs)} prefix refs:")
         for tid in sorted(literal_refs):
             print(f"  literal  {tid}")
@@ -404,15 +515,22 @@ def main(argv: "list[str] | None" = None) -> int:
             print(f"  prefix   {pref}*")
         print()
 
-    literal_drift, prefix_drift = find_drift()
-    if literal_drift or prefix_drift:
-        _print_drift(literal_drift, prefix_drift)
+    result = analyze()
+    _print_notes(result)
+    if result["literal_drift"] or result["prefix_drift"]:
+        _print_drift(
+            result["literal_drift"],
+            result["prefix_drift"],
+            result["registry_misses"],
+            result["classification"],
+        )
         return 1
 
-    literal_refs, prefix_refs = harness_references()
+    expanded = len(result["classification"]["members"])
     print(
         f"OK — {len(literal_refs)} literal + {len(prefix_refs)} builder-prefix "
-        "harness testid references all present in src/**."
+        f"harness testid references all present in src/** "
+        f"({expanded} registry-backed templates expanded)."
     )
     return 0
 
