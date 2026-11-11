@@ -989,6 +989,9 @@ export function AgentNode({
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  // The menu's New Folder input opens only once the menu has closed, or the
+  // menu's focus return blurs (and so cancels) it (#5337).
+  const newFolderMenu = useOpenAfterMenuClose(() => setCreatingFolder(true));
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
   const isConnecting = agent.connectionState === "connecting";
@@ -1784,7 +1787,7 @@ export function AgentNode({
           </div>
         </ContextMenuTrigger>
 
-        <ContextMenuContent>
+        <ContextMenuContent onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}>
           {isConnecting ? (
             // A connecting agent is no longer a dead-end: offer Cancel, which
             // aborts the in-flight handshake (G1, #1235).
@@ -1856,7 +1859,11 @@ export function AgentNode({
                 New Connection
               </MenuItem>
               <MenuItem
-                onSelect={() => setCreatingFolder(true)}
+                onSelect={() => {
+                  newFolderMenu.request();
+                  // The input renders inside the agent's children, so open it.
+                  if (!agent.isExpanded) toggleRemoteAgent(agent.id);
+                }}
                 data-testid="context-agent-new-folder"
               >
                 <FolderPlus size={14} />
