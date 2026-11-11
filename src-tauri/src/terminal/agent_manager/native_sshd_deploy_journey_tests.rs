@@ -49,12 +49,13 @@ use std::time::{Duration, Instant};
 
 use super::live_channel_support::{channel_rpc, read_counter_until};
 use super::windows_ssh_host_tests::{
-    create_powershell_session, establish, rollback, trust_all_host_keys, write_input,
+    create_powershell_session, establish, trust_all_host_keys, write_input,
 };
 use crate::terminal::agent_binary::is_windows_os;
 use crate::terminal::agent_deploy::{install_agent_bytes, probe_remote_agent, AgentDeployResult};
 use crate::terminal::agent_install::{
-    detect_windows_shell, windows_install_plan, POSIX_BACKUP_SUFFIX,
+    detect_windows_shell, windows_free_slot_command, windows_install_plan, WindowsShell,
+    POSIX_BACKUP_SUFFIX,
 };
 use crate::terminal::backend::{RemoteAgentConfig, SshConfig};
 use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
@@ -300,7 +301,7 @@ fn prepare_host(journey: &Journey, session: &SshSession) -> Host {
     if is_windows_os(&remote_os) {
         let shell = detect_windows_shell(session);
         let plan = windows_install_plan(shell);
-        rollback::reset(session, shell, &plan);
+        clear_windows_install(session, shell, &plan);
         Host {
             remote_os,
             // Ignored for Windows hosts (the plan installs to %LOCALAPPDATA%).
@@ -321,6 +322,33 @@ fn prepare_host(journey: &Journey, session: &SshSession) -> Host {
             remote_path,
         }
     }
+}
+
+/// Best-effort removal of an install and backup on a Windows host, with the
+/// production free-slot and discard commands; the result is logged only.
+///
+/// Not `windows_ssh_host_tests::rollback::reset`: that one (kill every agent,
+/// assert a `RESET` marker) printed nothing at all on the integration-fixtures
+/// Windows leg (run 42949921287), and the journey needs no clean host. The
+/// native fixture's user is fresh on each runner. When an agent is already
+/// installed, the first deploy is an update, and every assert still holds.
+fn clear_windows_install(
+    session: &SshSession,
+    shell: WindowsShell,
+    plan: &crate::terminal::agent_install::InstallPlan,
+) {
+    let free = windows_free_slot_command(shell, &plan.install_path);
+    let discard = &plan.discard_backup_command;
+    let command = match shell {
+        WindowsShell::Cmd => format!("{free} & {discard} & echo CLEARED"),
+        WindowsShell::PowerShell => {
+            format!("try {{ {free} }} catch {{ }}; try {{ {discard} }} catch {{ }}; 'CLEARED'")
+        }
+    };
+    eprintln!(
+        "{shell:?}: clearing the install: {:?}",
+        run_remote_command(session, &command)
+    );
 }
 
 /// Run `f` with a fresh SSH session on a blocking thread (the remote-exec

@@ -80,9 +80,8 @@ use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
 use crate::utils::ssh_auth::connect_and_authenticate;
 use termihub_core::ipc::ndjson::LineSplitter;
 
-/// Update rollback through each `DefaultShell` (#5219). Its host `reset` is
-/// shared with the cross-platform deploy journey (#5208).
-pub(super) mod rollback;
+/// Update rollback through each `DefaultShell` (#5219).
+mod rollback;
 
 /// Update while a session daemon holds the installed exe (#5254).
 mod daemon_update;

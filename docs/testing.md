@@ -1037,7 +1037,7 @@ macOS and Windows against the native sshd fixture with two real agent builds:
 
 A and B are the same source built with different `TERMIHUB_BUILD_BRANCH`
 labels, so their `--version` lines differ. On Windows the test reuses the
-Windows SSH-host helpers (host reset, PowerShell session).
+Windows SSH-host helpers (connect, PowerShell session).
 [`scripts/internal/run-native-sshd-deploy-journey.sh`](../scripts/internal/run-native-sshd-deploy-journey.sh)
 builds both agents, brings the fixture up with `--scratch-home`, and runs the
 test with `TERMIHUB_REQUIRE_NATIVE_SSHD_DEPLOY=1`. A missing fixture fails
