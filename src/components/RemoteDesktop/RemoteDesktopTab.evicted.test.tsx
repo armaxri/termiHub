@@ -57,6 +57,8 @@ function fakeSession(state: GraphicalSessionState): RemoteDesktopSession {
     state,
     reconnectAttempt: 1,
     message: null,
+    errorKind: "other",
+    aborted: false,
     remoteClipboard: null,
     certPrompt: {
       session_id: SID,

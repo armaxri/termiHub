@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
+import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -13,11 +14,19 @@ function query(testId: string): HTMLElement | null {
 
 function render(
   state: GraphicalSessionState,
-  overrides: Partial<{ reconnectAttempt: number; message: string | null }> = {}
+  overrides: Partial<{
+    reconnectAttempt: number;
+    message: string | null;
+    errorKind: ConnectionErrorKind;
+    aborted: boolean;
+    editable: boolean;
+  }> = {}
 ) {
   const onCancel = vi.fn();
   const onCancelConnect = vi.fn();
   const onReconnect = vi.fn();
+  const onCloseTab = vi.fn();
+  const onEditConnection = vi.fn();
   act(() => {
     root.render(
       <RemoteDesktopOverlay
@@ -28,10 +37,15 @@ function render(
         onCancel={onCancel}
         onCancelConnect={onCancelConnect}
         onReconnect={onReconnect}
+        onCloseTab={onCloseTab}
+        onEditConnection={overrides.editable === false ? undefined : onEditConnection}
+        errorKind={overrides.errorKind}
+        aborted={overrides.aborted}
+        credentialReentry={<div data-testid="fake-credential-reentry" />}
       />
     );
   });
-  return { onCancel, onCancelConnect, onReconnect };
+  return { onCancel, onCancelConnect, onReconnect, onCloseTab, onEditConnection };
 }
 
 describe("RemoteDesktopOverlay", () => {
@@ -100,19 +114,69 @@ describe("RemoteDesktopOverlay", () => {
     expect(query("remote-desktop-overlay-reconnecting")?.textContent).toContain("Attempt 2 of 10");
   });
 
-  it("shows the auth-failed error overlay with a Reconnect action and guidance", () => {
-    const { onReconnect } = render("authFailed", { message: "bad password" });
-    const el = query("remote-desktop-overlay-error");
-    expect(el?.textContent).toContain("Authentication failed");
-    expect(el?.textContent).toContain("bad password");
-    expect(el?.textContent).toContain("Check the credentials");
-    act(() => query("remote-desktop-reconnect")?.click());
-    expect(onReconnect).toHaveBeenCalledOnce();
-  });
+  describe("failed or aborted connect rests on the terminal's failure screen (#5377)", () => {
+    it("auth failure: humanised hint, credential re-entry, Retry / Edit / Close tab", () => {
+      const { onReconnect, onCloseTab, onEditConnection } = render("authFailed", {
+        message: "bad password",
+      });
+      const el = query("remote-desktop-overlay-error");
+      expect(el?.querySelector(".ui-connect-progress")?.getAttribute("data-phase")).toBe("failed");
+      expect(el?.textContent).toContain("Connection failed");
+      expect(el?.textContent).toContain("bad password");
+      expect(el?.textContent).toContain("The server rejected the credentials");
+      expect(query("fake-credential-reentry")).not.toBeNull();
+      // No Reconnect loop: the primary action is Retry, beside Close tab.
+      expect(query("remote-desktop-reconnect")).toBeNull();
+      expect(query("remote-desktop-retry")?.textContent).toBe("Retry");
+      expect(query("remote-desktop-close-tab")?.textContent).toBe("Close tab");
+      act(() => query("remote-desktop-retry")?.click());
+      expect(onReconnect).toHaveBeenCalledOnce();
+      act(() => query("remote-desktop-edit")?.click());
+      expect(onEditConnection).toHaveBeenCalledOnce();
+      act(() => query("remote-desktop-close-tab")?.click());
+      expect(onCloseTab).toHaveBeenCalledOnce();
+    });
 
-  it("shows a connect-failed heading", () => {
-    render("connectFailed");
-    expect(query("remote-desktop-overlay-error")?.textContent).toContain("Could not connect");
+    it("connect failure without a typed code: generic heading and the backend reason", () => {
+      render("connectFailed", { message: "sidecar exited" });
+      const el = query("remote-desktop-overlay-error");
+      expect(el?.textContent).toContain("Connection failed");
+      expect(el?.textContent).toContain("sidecar exited");
+      expect(query("fake-credential-reentry")).toBeNull();
+      expect(query("remote-desktop-retry")).not.toBeNull();
+    });
+
+    it("refused connect names itself and tucks the OS error behind Details", () => {
+      render("connectFailed", { message: "os error 61", errorKind: "refused" });
+      const el = query("remote-desktop-overlay-error");
+      expect(el?.textContent).toContain("Connection refused");
+      expect(query("terminal-connection-error-details")?.textContent).toContain("os error 61");
+    });
+
+    it("timeout rests on the timed-out phase", () => {
+      render("connectFailed", { message: "timed out", errorKind: "timeout" });
+      const el = query("remote-desktop-overlay-error");
+      expect(el?.querySelector(".ui-connect-progress")?.getAttribute("data-phase")).toBe("timeout");
+      expect(el?.textContent).toContain("Timed out");
+    });
+
+    it("user abort: Connection aborted with Retry and Close tab, no Edit", () => {
+      const { onReconnect, onCloseTab } = render("closed", { aborted: true });
+      const el = query("remote-desktop-overlay-error");
+      expect(el?.querySelector(".ui-connect-progress")?.getAttribute("data-phase")).toBe("aborted");
+      expect(el?.textContent).toContain("Connection aborted");
+      expect(el?.textContent).not.toContain("Disconnected");
+      expect(query("remote-desktop-edit")).toBeNull();
+      act(() => query("remote-desktop-retry")?.click());
+      expect(onReconnect).toHaveBeenCalledOnce();
+      act(() => query("remote-desktop-close-tab")?.click());
+      expect(onCloseTab).toHaveBeenCalledOnce();
+    });
+
+    it("hides Edit connection for a tab without a saved connection", () => {
+      render("connectFailed", { message: "x", editable: false });
+      expect(query("remote-desktop-edit")).toBeNull();
+    });
   });
 
   it("shows a server-ended session with its reason and a manual Reconnect", () => {
@@ -130,9 +194,12 @@ describe("RemoteDesktopOverlay", () => {
     expect(onReconnect).toHaveBeenCalledOnce();
   });
 
-  it("shows a Disconnected heading for a closed session", () => {
-    render("closed");
+  it("shows a Disconnected heading with Reconnect and Close tab for a closed session", () => {
+    const { onCloseTab } = render("closed");
     expect(query("remote-desktop-overlay-error")?.textContent).toContain("Disconnected");
+    expect(query("remote-desktop-reconnect")).not.toBeNull();
+    act(() => query("remote-desktop-close-tab")?.click());
+    expect(onCloseTab).toHaveBeenCalledOnce();
   });
 
   it("shows a dropped session with no retry running as the manual reconnect prompt", () => {
@@ -164,8 +231,10 @@ describe("RemoteDesktopOverlay", () => {
   });
 
   it("omits the error message block when none is given", () => {
-    render("connectFailed", { message: null });
+    render("disconnected", { message: null });
     expect(container.querySelector(".rd-overlay__error")).toBeNull();
+    render("connectFailed", { message: null });
+    expect(container.querySelector(".ui-connect-progress__error")).toBeNull();
   });
 
   describe("busy states announce through the live region (#4512)", () => {
