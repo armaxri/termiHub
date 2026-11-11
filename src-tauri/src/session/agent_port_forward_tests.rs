@@ -1058,7 +1058,8 @@ mod live {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    #[ignore = "needs a real agent binary and VNC server (TERMIHUB_LIVE_* env)"]
+    #[ignore = "needs a real agent binary and VNC server (TERMIHUB_LIVE_* env); \
+                runs in integration-fixtures.yml"]
     async fn live_vnc_through_a_real_agent_binary() {
         let bin = std::env::var("TERMIHUB_LIVE_AGENT_BIN").expect("TERMIHUB_LIVE_AGENT_BIN");
         let port: u16 = std::env::var("TERMIHUB_LIVE_VNC_PORT")

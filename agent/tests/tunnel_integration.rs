@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use termihub_agent::tunnel::AgentTunnelRegistry;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
+use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::backends::ssh::host_key::{set_host_key_verifier, HostKeyInfo, HostKeyVerifier};
 use termihub_core::config::SshConfig;
 use termihub_core::test_fixtures;
@@ -97,6 +98,7 @@ async fn start_local_forwards_http_over_ssh() {
     let Some(port) = tunnel_fixture_port().await else {
         return;
     };
+    let _serial = serialize().await;
 
     trust_fixture_host_key();
 
@@ -184,6 +186,7 @@ async fn start_remote_forwards_over_ssh() {
     let Some(port) = tunnel_fixture_port().await else {
         return;
     };
+    let _serial = serialize().await;
 
     trust_fixture_host_key();
 
@@ -274,9 +277,189 @@ async fn start_remote_forwards_over_ssh() {
         "bytes should relay server -> agent target and back"
     );
 
-    // Stopping removes the forward and the server tears down its listener.
+    // Close the channel so the relay ends and records its byte counts, then
+    // read them back through the registry's status snapshot.
+    stream
+        .shutdown()
+        .await
+        .expect("half-close the forwarded channel");
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+        .await
+        .expect("channel closes before timeout")
+        .expect("drain the forwarded channel");
+    let stats = wait_for_remote_stats(&registry, "t-remote", 14).await;
+    assert_eq!(stats.bytes_received, 14, "bytes server -> agent: {stats:?}");
+    assert_eq!(stats.total_connections, 1, "{stats:?}");
+
+    // Stopping removes the forward, ends the forward loop and the server tears
+    // down its listener (#5169: stop used to leave it accepting).
+    let death = registry
+        .take_death_signal("t-remote")
+        .await
+        .expect("death signal");
     assert!(registry.stop("t-remote").await);
     assert_eq!(registry.active_count().await, 0);
+    tokio::time::timeout(Duration::from_secs(5), death)
+        .await
+        .expect("forward loop should end after stop")
+        .expect_err("the death signal resolves by its sender dropping");
+    assert_server_listener_closes(&driver, bound_port).await;
+}
+
+/// Poll a running remote tunnel's stats until `bytes_sent` reaches `expected`
+/// (the relay records its counts only once both copy directions ended).
+async fn wait_for_remote_stats(
+    registry: &AgentTunnelRegistry,
+    tunnel_id: &str,
+    expected: u64,
+) -> termihub_core::tunnel::config::TunnelStats {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let stats = registry
+            .status(tunnel_id)
+            .await
+            .expect("tunnel still running")
+            .stats;
+        if stats.bytes_sent >= expected && stats.active_connections == 0 {
+            assert_eq!(
+                stats.bytes_sent, expected,
+                "bytes agent -> server: {stats:?}"
+            );
+            return stats;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "stats never recorded the relayed bytes: {stats:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// Wait until the SSH server no longer accepts on its `127.0.0.1:<port>`.
+///
+/// The server opens a `direct-tcpip` channel only after its own TCP connect to
+/// the target succeeded, so a refused open means the listener is gone. It is
+/// torn down asynchronously, so poll instead of probing once.
+async fn assert_server_listener_closes(driver: &SshSession, port: u16) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while driver
+        .channel_open_direct_tcpip("127.0.0.1", port as u32, "127.0.0.1", 0)
+        .await
+        .is_ok()
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the server-side -R listener on 127.0.0.1:{port} must close"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Kill, on the fixture, every `testuser` sshd process except the one serving
+/// `driver` — i.e. the agent tunnel's own connection — so the **server** ends
+/// that connection. sshd marks its children non-dumpable, so their fds (and
+/// with them which one holds the listener) are not inspectable as `testuser`;
+/// [`serialize`] instead guarantees no other test's connection is open.
+async fn kill_other_sshd_connections(driver: &SshSession) {
+    use russh::ChannelMsg;
+
+    const SCRIPT: &str = r#"for p in $(pgrep -u testuser -x sshd); do
+  if [ "$p" != "$PPID" ]; then kill -TERM "$p" && echo "killed $p"; fi
+done"#;
+    let mut channel = driver
+        .channel_open_session()
+        .await
+        .expect("open a session channel on the driver connection");
+    channel
+        .exec(true, SCRIPT)
+        .await
+        .expect("run the kill script");
+    let mut output = Vec::new();
+    while let Some(msg) = tokio::time::timeout(std::time::Duration::from_secs(10), channel.wait())
+        .await
+        .expect("kill script finishes before timeout")
+    {
+        if let ChannelMsg::Data { data } = msg {
+            output.extend_from_slice(&data);
+        }
+    }
+    let output = String::from_utf8_lossy(&output);
+    // At least the tunnel's own connection; a just-closed connection of an
+    // earlier test may still be winding down, and killing it is harmless.
+    assert!(
+        output.contains("killed"),
+        "the tunnel's own sshd connection must be killed: {output:?}"
+    );
+}
+
+/// Serializes the tests in this binary: they share one fixture, and
+/// [`remote_forward_dies_when_the_server_closes_the_connection`] kills every
+/// other `testuser` connection on it.
+async fn serialize() -> tokio::sync::MutexGuard<'static, ()> {
+    static FIXTURE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    FIXTURE.lock().await
+}
+
+/// When the SSH **server** ends an agent-hosted `-R` tunnel's connection, the
+/// forwarder's death signal fires (#5169) — before the fix the forwarder kept
+/// its forwarded-channel sender alive and never noticed — and the server-side
+/// listener is gone.
+#[tokio::test]
+async fn remote_forward_dies_when_the_server_closes_the_connection() {
+    use std::time::Duration;
+
+    let Some(port) = tunnel_fixture_port().await else {
+        return;
+    };
+    let _serial = serialize().await;
+
+    trust_fixture_host_key();
+
+    let ssh_config = SshConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        username: "testuser".to_string(),
+        auth_method: "password".to_string(),
+        password: Some("testpass".to_string()),
+        ..Default::default()
+    };
+    let forward = RemoteForwardConfig {
+        remote_host: "127.0.0.1".to_string(),
+        remote_port: 0,
+        local_host: "127.0.0.1".to_string(),
+        // Never connected to: the test only watches the tunnel's lifecycle.
+        local_port: 9,
+    };
+
+    let registry = AgentTunnelRegistry::new();
+    let outcome = registry
+        .start_remote("t-remote-drop", &ssh_config, &forward)
+        .await
+        .expect("agent-hosted remote forward should start");
+    let bound_port = reported_port(&outcome.bound_address);
+    let mut death = registry
+        .take_death_signal("t-remote-drop")
+        .await
+        .expect("death signal");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), &mut death)
+            .await
+            .is_err(),
+        "the death signal must not fire while the connection is up"
+    );
+
+    let (driver, _reg) = connect_and_authenticate(&ssh_config)
+        .await
+        .expect("second SSH session to drive the fixture");
+    kill_other_sshd_connections(&driver).await;
+
+    tokio::time::timeout(Duration::from_secs(10), death)
+        .await
+        .expect("the death signal should fire once the server closed the connection")
+        .expect_err("the death signal resolves by its sender dropping");
+    assert_server_listener_closes(&driver, bound_port).await;
+    assert!(registry.stop("t-remote-drop").await);
 }
 
 /// Full end-to-end start of an agent-hosted **dynamic** (`-D`, SOCKS5)
@@ -301,6 +484,7 @@ async fn start_dynamic_socks_forwards_http_over_ssh() {
     let Some(port) = tunnel_fixture_port().await else {
         return;
     };
+    let _serial = serialize().await;
 
     trust_fixture_host_key();
 

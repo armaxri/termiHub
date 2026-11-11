@@ -10,7 +10,8 @@
 //! #2139). See `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -35,6 +36,14 @@ fn lock_registry(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// How long a stop waits for the server to acknowledge `cancel-tcpip-forward`
+/// before giving up; the session is released (closing the connection, and with
+/// it the listener) either way.
+const CANCEL_FORWARD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The registry's map type, for the forwarder's non-owning handle on it.
+type RegistryMap = Mutex<HashMap<u32, UnboundedSender<IncomingChannel>>>;
+
 /// Manages a remote port forwarding tunnel.
 ///
 /// Registers a `tcpip_forward` on the SSH server and receives incoming channels
@@ -43,9 +52,20 @@ fn lock_registry(
 pub struct RemoteForwarder {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
-    registry: ForwardedChannelRegistry,
+    /// A **weak** handle on the session's forwarded-channel registry (#5169).
+    ///
+    /// The session's handler owns the registry, and with it this forward's
+    /// channel sender. Holding it weakly here means that when the server ends
+    /// the connection — and the handler is dropped with russh's session task —
+    /// the sender drops, the forward loop's receiver closes and the death
+    /// signal fires. A strong handle kept the sender alive forever, so a
+    /// server-side disconnect was never observed.
+    registry: Weak<RegistryMap>,
     bound_port: u32,
-    _session: SshSession,
+    /// The address the forward was requested on, for `cancel-tcpip-forward`.
+    remote_host: String,
+    /// Shared so a stop can send `cancel-tcpip-forward` from a spawned task.
+    session: Arc<SshSession>,
     /// Fires when the forward loop exits (the server-side channel source closed),
     /// so the tunnel supervisor can observe forwarder death (#1243, GAP 2).
     death: Option<tokio::sync::oneshot::Receiver<()>>,
@@ -90,7 +110,7 @@ impl RemoteForwarder {
 
         tracing::info!(
             "Remote forward listening on {}:{} (bound port {})",
-            config.remote_host,
+            remote_host,
             config.remote_port,
             bound_port
         );
@@ -112,9 +132,10 @@ impl RemoteForwarder {
         Ok(Self {
             task_handle: Some(task_handle),
             stats,
-            registry,
+            registry: Arc::downgrade(&registry),
             bound_port,
-            _session: session,
+            remote_host,
+            session: Arc::new(session),
             death: Some(death_rx),
         })
     }
@@ -136,14 +157,37 @@ impl RemoteForwarder {
         self.death.take()
     }
 
-    /// Stop the forwarder and deregister from the channel registry.
+    /// Stop the forwarder: abort the forward loop, deregister from the channel
+    /// registry, and ask the server to close its listener.
+    ///
+    /// The server-side listener belongs to the SSH connection, so aborting the
+    /// local loop alone left it accepting until the session ended (#5169). The
+    /// `cancel-tcpip-forward` request is sent from a spawned task (this is
+    /// synchronous and runs from `Drop`); without a runtime it is skipped and the
+    /// listener closes with the session instead. Idempotent.
     pub fn stop(&mut self) {
-        if let Some(handle) = self.task_handle.take() {
-            handle.abort();
-        }
+        let Some(handle) = self.task_handle.take() else {
+            return;
+        };
+        handle.abort();
         // Recover the guard on poison so deregistration still runs even after a
         // sibling forwarder panicked while holding the lock (CORE-028).
-        lock_registry(&self.registry).remove(&self.bound_port);
+        if let Some(registry) = self.registry.upgrade() {
+            lock_registry(&registry).remove(&self.bound_port);
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let session = Arc::clone(&self.session);
+            let host = self.remote_host.clone();
+            let port = self.bound_port;
+            runtime.spawn(async move {
+                let cancel = session.cancel_tcpip_forward(host, port);
+                match tokio::time::timeout(CANCEL_FORWARD_TIMEOUT, cancel).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => tracing::debug!("cancel-tcpip-forward for port {port}: {e}"),
+                    Err(_) => tracing::debug!("cancel-tcpip-forward for port {port} timed out"),
+                }
+            });
+        }
     }
 
     async fn forward_loop(
