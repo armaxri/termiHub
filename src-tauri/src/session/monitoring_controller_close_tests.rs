@@ -101,7 +101,10 @@ async fn a_close_whose_agent_stop_fails_still_tears_everything_down() {
     let ended = tokio::time::timeout(Duration::from_secs(3), stats.recv())
         .await
         .expect("the status driver ends promptly");
-    assert!(ended.is_none(), "the status driver's stats channel is closed");
+    assert!(
+        ended.is_none(),
+        "the status driver's stats channel is closed"
+    );
 
     // The agent's own collect loop is not left running: the stop is retried
     // in the background until the agent confirms it.

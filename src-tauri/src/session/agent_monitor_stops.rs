@@ -152,7 +152,10 @@ async fn retry_stop(
         }
 
         if send_unsubscribe(&client, &agent_id, &host).await {
-            info!(agent_id, host, "Agent confirmed the deferred monitoring stop");
+            info!(
+                agent_id,
+                host, "Agent confirmed the deferred monitoring stop"
+            );
             finish(&state);
             return;
         }

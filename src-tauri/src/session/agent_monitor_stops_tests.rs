@@ -82,7 +82,11 @@ async fn a_retry_waits_for_a_subscribe_in_flight() {
     // it lands it has superseded the stop, so the retry sends nothing.
     let gate = begin_subscribe("stops-gate", "self").await;
     agent
-        .send_request("stops-gate", CONNECTION_MONITORING_SUBSCRIBE, serde_json::json!({}))
+        .send_request(
+            "stops-gate",
+            CONNECTION_MONITORING_SUBSCRIBE,
+            serde_json::json!({}),
+        )
         .unwrap();
     advance(5).await;
     assert_eq!(unsubscribes(&agent), 0, "the retry waited on the gate");
@@ -106,7 +110,11 @@ async fn stops_are_tracked_per_agent_host() {
         .filter(|(m, _)| m == CONNECTION_MONITORING_UNSUBSCRIBE)
         .map(|(_, p)| p["host"].as_str().unwrap_or_default().to_string())
         .collect();
-    assert_eq!(hosts, ["sess-a"], "another host's subscribe does not cancel it");
+    assert_eq!(
+        hosts,
+        ["sess-a"],
+        "another host's subscribe does not cancel it"
+    );
 }
 
 #[tokio::test(start_paused = true)]
