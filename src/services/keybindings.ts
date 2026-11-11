@@ -398,8 +398,11 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Close Tab Group",
     category: "tab-groups",
     macDefault: { key: "w", meta: true, shift: true },
-    // Ctrl+Shift+W is now Close Tab on Win/Linux — relocate Close Tab Group to Ctrl+Shift+Q.
-    winLinuxDefault: { key: "Q", ctrl: true, shift: true },
+    // Ctrl+Shift+W is Close Tab on Win/Linux. Ctrl+Shift+Q is the usual Linux
+    // "quit" chord, so a user expecting quit would lose a whole group (#5316).
+    // Ctrl+Shift+F4 follows the Windows Ctrl+F4 "close document" convention and
+    // carries modifiers, so it also works from inside a terminal.
+    winLinuxDefault: { key: "F4", ctrl: true, shift: true },
     configurable: true,
   },
   {

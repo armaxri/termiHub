@@ -33,7 +33,7 @@ single-modifier readline / tmux range.
 | ------------------ | -------------------- | -------------------------------------------------------------------------------- |
 | Toggle Sidebar     | `Ctrl+Shift+B`       | `Ctrl+B` — tmux default prefix                                                   |
 | Close Tab          | `Ctrl+Shift+W`       | `Ctrl+W` — readline `delete-word-backward`, vim `<C-w>` window prefix            |
-| Close Tab Group    | `Ctrl+Shift+Q`       | (relocated to free `Ctrl+Shift+W` for Close Tab)                                 |
+| Close Tab Group    | `Ctrl+Shift+F4`      | `Ctrl+Shift+Q` — quits many Linux apps; `Ctrl+Shift+W` is Close Tab              |
 | Split Right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
 | Split Down         | `Alt+Shift+-`        | (paired with Split Right)                                                        |
 | Focus Panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
@@ -43,6 +43,21 @@ single-modifier readline / tmux range.
 macOS keeps the more conventional single-modifier forms (`Cmd+B`, `Cmd+W`,
 `Cmd+\`, `Cmd+K Cmd+S`, `Cmd+Alt+<Arrow>`) because `Cmd` does not appear in the
 shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
+
+### Chords termiHub keeps clear of
+
+- **Close Tab Group** moved from `Ctrl+Shift+Q` to `Ctrl+Shift+F4` (#5316).
+  `Ctrl+Shift+Q` is the usual Linux "quit" chord, so pressing it out of habit
+  closed a whole tab group. If you saved your own binding for Close Tab Group,
+  it keeps working; only the default changed. macOS keeps `Cmd+Shift+W`.
+- **`Cmd+W` on macOS is Close Tab only.** The stock macOS menu's
+  File ▸ Close Window and Window ▸ Close Window items no longer carry `Cmd+W`.
+  Close a window with the red title-bar button or either Close Window menu
+  item.
+- **`Alt+T` reaches the terminal** (readline `transpose-words`). The
+  notification list no longer grabs focus on `Alt+T`; jump into it with
+  `Cmd+Option+T` (macOS) or `Ctrl+Shift+F8` (Windows/Linux), or `Tab` to a
+  toast's close button.
 
 ## Function keys belong to the terminal program
 
