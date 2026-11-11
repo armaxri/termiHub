@@ -16,6 +16,10 @@ reached the server, not just what the app showed.
   editor asks the user to review it; accepting carries the probe through the
   logon to an established session, rejecting ends it before any credential
   leaves the client, and an unreachable port fails without a review.
+* **A live session (#5426).** An editor-created connection opens a tab that
+  goes active, the canvas paints the scripted desktop's solid colour, and a
+  click and a key typed into the canvas reach the server as RDP input events —
+  on WKWebView and WebView2 too, which the xrdp suite never reaches.
 * **Helper integrity (#1762, #5098).** ``build-system-test-app.sh`` embeds the
   built sidecar's SHA-256 into the test app, as a release build embeds the
   bundled one's. Without the ``$TERMIHUB_RDP_HELPER`` override the app resolves
@@ -146,6 +150,87 @@ class TestRdpSidecarTestConnection(_ProbeSuite):
     def find_tab_of_type(self, content_type: str) -> Optional[dict]:
         tab = self.active_tab() or {}
         return tab if tab.get("contentType") == content_type else None
+
+
+class TestRdpSidecarSession(_ProbeSuite):
+    """RDP-SC-03: a live RDP tab against the scripted server, on every OS.
+
+    The methods share one app and one tab and run in order.
+    """
+
+    def test_editor_created_connection_goes_active(self, rdp_test_server: RdpTestServer):
+        self.enable_experimental_features()
+        self.close_all_tabs()
+        before = len(rdp_test_server.client_infos())
+        name = unique_name("rdp-sidecar-session")
+        # The editor ticks "Ignore Certificate Errors" by default here; the
+        # certificate review is graded by RDP-SC-01.
+        self.create_rdp_connection(
+            name, host=HOST, port=rdp_test_server.port, username=USERNAME
+        )
+        self.handle_password_prompt(PASSWORD)
+        self.wait(lambda: self.find_tab(name), what="the RDP tab to open")
+        self.wait(
+            lambda: self.remote_desktop_phase() == "active",
+            timeout=PROBE_TIMEOUT,
+            what="the RDP session to become active",
+        )
+        assert self.driver.exists(self.CANVAS)
+        assert rdp_test_server.client_infos()[before:] == [USERNAME]
+
+    def test_canvas_paints_the_scripted_desktop(self, rdp_test_server: RdpTestServer):
+        size, color = rdp_test_server.desktop()
+        assert self.wait_for_solid_desktop(
+            color,
+            "fit",
+            fb_size=size,
+            timeout=PROBE_TIMEOUT,
+            what="the canvas to show the scripted desktop's colour",
+        ) == size
+
+    def test_click_reaches_the_server(self, rdp_test_server: RdpTestServer):
+        (width, height), _ = rdp_test_server.desktop()
+        before = len(rdp_test_server.inputs())
+
+        def presses() -> list[str]:
+            return [
+                e for e in rdp_test_server.inputs()[before:] if e.startswith("button left down ")
+            ]
+
+        def clicked() -> bool:
+            # The bridge clicks the canvas centre, which shows the desktop
+            # centre under Fit scaling; re-click until a press is reported.
+            self.driver.click(self.CANVAS)
+            return bool(presses())
+
+        self.wait(
+            clicked, timeout=PROBE_TIMEOUT, interval=1.0, what="a left click to reach the server"
+        )
+        x, y = (int(v) for v in presses()[0].rsplit(" ", 1)[1].split(","))
+        assert abs(x - width // 2) <= 2 and abs(y - height // 2) <= 2, presses()
+        self.wait(
+            lambda: any(
+                e.startswith("button left up ") for e in rdp_test_server.inputs()[before:]
+            ),
+            what="the button release to reach the server",
+        )
+        assert self.remote_desktop_phase() == "active"
+
+    def test_typed_key_reaches_the_server(self, rdp_test_server: RdpTestServer):
+        before = len(rdp_test_server.inputs())
+
+        def typed() -> bool:
+            self.driver.press_key("a", self.CANVAS)
+            # 0x1e is the `a` key's scan code (set 1).
+            return "key 0x1e down" in rdp_test_server.inputs()[before:]
+
+        self.wait(
+            typed, timeout=PROBE_TIMEOUT, interval=1.0, what="the `a` key to reach the server"
+        )
+        self.wait(
+            lambda: "key 0x1e up" in rdp_test_server.inputs()[before:],
+            what="the key release to reach the server",
+        )
 
 
 def _file_contains(path: Path, needle: bytes) -> bool:

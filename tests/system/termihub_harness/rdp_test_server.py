@@ -17,7 +17,8 @@ session paints), ``listening <port>``, ``dial #<n>`` per accepted connection,
 ``client-info #<n> <username>`` once a connection's Client Info PDU arrived —
 which the sidecar only sends after the certificate trust gate passed — and
 ``input #<n> <event>`` per key or button event a session received
-(``key 0x1e down``, ``button left up 512,384``). The process exits when its stdin closes, so it cannot outlive the run.
+(``key 0x1e down``, ``button left up 512,384``). The process exits when its
+stdin closes, so it cannot outlive the run.
 
 The line parsing and process lifecycle are unit-tested in the normal lane
 (``tests/test_rdp_test_server.py``) against a stand-in script.
