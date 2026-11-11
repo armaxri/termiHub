@@ -29,6 +29,9 @@ pub(crate) struct FakeAgent {
     pub(crate) disconnected: bool,
     /// Refuse `tool.start` (e.g. the per-connection run limit).
     pub(crate) refuse_start: bool,
+    /// Methods every request to which fails with a remote error, e.g.
+    /// `service.start` refused by the agent (#5288).
+    pub(crate) refuse: Vec<&'static str>,
     /// The reply to a `tool.run` request; `None` answers `-32601`-style failure.
     pub(crate) tool_run_reply: Option<Value>,
     pub(crate) route: Mutex<Option<ToolRunSender>>,
@@ -144,6 +147,9 @@ impl AgentRpcClient for FakeAgent {
             .lock()
             .unwrap()
             .push((method.to_string(), params.clone()));
+        if self.refuse.contains(&method) {
+            return Err(TerminalError::RemoteError(format!("{method} refused")));
+        }
         if method == TOOL_START && self.refuse_start {
             return Err(TerminalError::RemoteError("too many runs".to_string()));
         }

@@ -1372,3 +1372,7 @@ mod tests {
 #[cfg(test)]
 #[path = "server_manager_e2e_tests.rs"]
 mod e2e_tests;
+
+#[cfg(test)]
+#[path = "server_manager_failure_tests.rs"]
+mod failure_tests;
