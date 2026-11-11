@@ -261,6 +261,54 @@ describe("secondary text on hovered/selected rows (WCAG 2.2 AA, #5249)", () => {
   });
 });
 
+/**
+ * Text on accent-tinted selected rows (#5398). `--bg-selected` is
+ * `color-mix(in srgb, var(--accent-color) 18%, transparent)`, so the row the
+ * user sees is 18% accent composited over whatever sits behind it: the sidebar
+ * (connection tree, file-browser drop targets) or the transfer view
+ * (`bgSecondary` panes on a `bgPrimary` view). Plain `textSecondary` /
+ * `textMuted` fall below AA there; those rows redirect both to the
+ * `*-on-selection` tokens (pinned by src/styles/selectedOnSelection.test.ts),
+ * and this grades the tokens on the blended surface in all four themes.
+ */
+describe("text on accent-tinted --bg-selected rows (WCAG 2.2 AA, #5398)", () => {
+  /** sRGB-composite `fg` at `alpha` over the opaque `bg` (what color-mix + transparent paints). */
+  const composite = (fg: string, bg: string, alpha: number): string => {
+    const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+    return `#${[0, 1, 2]
+      .map((i) =>
+        Math.round(ch(fg, i) * alpha + ch(bg, i) * (1 - alpha))
+          .toString(16)
+          .padStart(2, "0")
+      )
+      .join("")}`;
+  };
+  const BG_SELECTED_ALPHA = 0.18;
+
+  for (const theme of BUILT_IN_THEMES) {
+    for (const base of ["sidebarBg", "bgSecondary", "bgPrimary"] as const) {
+      const bg = composite(theme.colors.accentColor, theme.colors[base], BG_SELECTED_ALPHA);
+      for (const token of ["textSecondaryOnSelection", "textMutedOnSelection"] as const) {
+        const fg = theme.colors[token];
+        it(`${theme.id} ${token} (${fg}) meets AA on --bg-selected over ${base} (${bg})`, () => {
+          expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+        });
+      }
+    }
+  }
+
+  it("documents the gap the redirect closes: plain secondary/muted fail on the sidebar", () => {
+    for (const theme of [darkTheme, lightTheme, solarizedDarkTheme]) {
+      const bg = composite(theme.colors.accentColor, theme.colors.sidebarBg, BG_SELECTED_ALPHA);
+      const worst = Math.min(
+        contrastRatio(theme.colors.textSecondary, bg),
+        contrastRatio(theme.colors.textMuted, bg)
+      );
+      expect(worst).toBeLessThan(AA_NORMAL_TEXT);
+    }
+  });
+});
+
 describe("adjustForContrast (#5008)", () => {
   it("returns a passing colour unchanged", () => {
     expect(adjustForContrast("#ffffff", ["#000000"])).toBe("#ffffff");
