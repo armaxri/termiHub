@@ -278,3 +278,195 @@ fn sysfs_identity_walks_up_to_the_usb_device() {
     );
     assert_eq!(usb_identity_from_sysfs(&class_tty, "ttyS0"), None);
 }
+
+// --- macOS and Windows port names (#5394) ---
+
+#[test]
+fn macos_style_names_match_by_identity() {
+    let ports = FakePorts::default();
+    let configured = "/dev/cu.usbserial-A10K3Z";
+    let original = ftdi(Some("A10K3Z"));
+    // A different FTDI adapter (another serial) under the configured name.
+    ports.plug(configured, Some(ftdi(Some("B20L4Y"))));
+    assert_eq!(
+        resolve_reconnect_port(configured, Some(&original), &ports),
+        ReconnectPortResolution::DifferentDevice {
+            found: ftdi(Some("B20L4Y"))
+        }
+    );
+    // The dial-in twin of the configured device is not a rename target for it:
+    // only the full identity may move the session, and it is not present.
+    ports.plug("/dev/tty.usbserial-B20L4Y", Some(ftdi(Some("B20L4Y"))));
+    assert!(matches!(
+        resolve_reconnect_port(configured, Some(&original), &ports),
+        ReconnectPortResolution::DifferentDevice { .. }
+    ));
+    // The original adapter is back under its own name.
+    ports.unplug("/dev/tty.usbserial-B20L4Y");
+    ports.plug(configured, Some(original.clone()));
+    assert_eq!(
+        resolve_reconnect_port(configured, Some(&original), &ports),
+        reopen(configured)
+    );
+}
+
+#[test]
+fn macos_style_rename_is_followed_only_with_a_unique_serial() {
+    let ports = FakePorts::default();
+    let original = ftdi(Some("A10K3Z"));
+    // macOS lists the callout and dial-in device of one adapter; following a
+    // rename must pick exactly one name. A pair of names with the same identity
+    // is ambiguous, so the session does not move.
+    ports.plug("/dev/cu.usbserial-1420", Some(original.clone()));
+    ports.plug("/dev/tty.usbserial-1420", Some(original.clone()));
+    assert_eq!(
+        resolve_reconnect_port("/dev/cu.usbserial-1410", Some(&original), &ports),
+        ReconnectPortResolution::Absent
+    );
+    ports.unplug("/dev/tty.usbserial-1420");
+    assert_eq!(
+        resolve_reconnect_port("/dev/cu.usbserial-1410", Some(&original), &ports),
+        reopen("/dev/cu.usbserial-1420")
+    );
+    // Without a serial number nothing moves.
+    let anon = ch340();
+    ports.plug("/dev/cu.wchusbserial1420", Some(anon.clone()));
+    assert_eq!(
+        resolve_reconnect_port("/dev/cu.wchusbserial1410", Some(&anon), &ports),
+        ReconnectPortResolution::Absent
+    );
+}
+
+#[test]
+fn windows_style_names_match_by_identity() {
+    let ports = FakePorts::default();
+    let original = ftdi(Some("A10K3Z"));
+    // A CH340 got COM3 after the FTDI adapter was unplugged: not opened.
+    ports.plug("COM3", Some(ch340()));
+    assert_eq!(
+        resolve_reconnect_port("COM3", Some(&original), &ports),
+        ReconnectPortResolution::DifferentDevice { found: ch340() }
+    );
+    // The FTDI adapter came back as COM7: followed by its serial number.
+    ports.plug("COM7", Some(original.clone()));
+    assert_eq!(
+        resolve_reconnect_port("COM3", Some(&original), &ports),
+        reopen("COM7")
+    );
+    // COM3 present but unidentifiable while the original could be identified.
+    ports.unplug("COM7");
+    ports.plug("COM3", None);
+    assert_eq!(
+        resolve_reconnect_port("COM3", Some(&original), &ports),
+        ReconnectPortResolution::Unverified
+    );
+    ports.plug("COM3", Some(original.clone()));
+    assert_eq!(
+        resolve_reconnect_port("COM3", Some(&original), &ports),
+        reopen("COM3")
+    );
+}
+
+#[test]
+fn from_usb_ids_is_the_canonical_form() {
+    assert_eq!(
+        SerialDeviceIdentity::from_usb_ids(0x0403, 0x6001, Some(" A10K3Z ")),
+        ftdi(Some("A10K3Z"))
+    );
+    assert_eq!(
+        SerialDeviceIdentity::from_usb_ids(0x1A86, 0x7523, Some("")),
+        ch340()
+    );
+    assert_eq!(
+        SerialDeviceIdentity::from_usb_ids(0x1a86, 0x7523, None),
+        ch340()
+    );
+}
+
+#[test]
+fn windows_device_id_of_a_usb_device_with_a_serial_number() {
+    assert_eq!(
+        usb_identity_from_windows_device_id(r"USB\VID_0403&PID_6001\A10K3Z"),
+        Some(ftdi(Some("A10K3Z")))
+    );
+    // Lowercase / mixed-case ids parse to the same canonical identity.
+    assert_eq!(
+        usb_identity_from_windows_device_id(r"usb\vid_0403&pid_6001\A10K3Z"),
+        Some(ftdi(Some("A10K3Z")))
+    );
+}
+
+#[test]
+fn windows_device_id_with_a_generated_instance_id_has_no_serial() {
+    assert_eq!(
+        usb_identity_from_windows_device_id(r"USB\VID_1A86&PID_7523\5&2F1B3C4D&0&2"),
+        Some(ch340())
+    );
+}
+
+#[test]
+fn windows_device_ids_that_are_not_a_whole_usb_device_are_skipped() {
+    for id in [
+        // One interface of a composite device; its parent is the device.
+        r"USB\VID_2341&PID_0043&MI_00\6&1234ABCD&0&0000",
+        // FTDI's vendor bus below the USB device.
+        r"FTDIBUS\VID_0403+PID_6001+A10K3ZA\0000",
+        // A legacy on-board port.
+        r"ACPI\PNP0501\1",
+        r"USB\ROOT_HUB30\4&1A2B3C4D&0&0",
+        // Malformed ids.
+        r"USB\VID_0403\A10K3Z",
+        r"USB\VID_04031&PID_6001\A10K3Z",
+        r"USB\VID_XYZW&PID_6001\A10K3Z",
+        r"USB\VID_0403&PID_6001",
+        r"USB\VID_0403&PID_6001\A\B",
+        "",
+    ] {
+        assert_eq!(usb_identity_from_windows_device_id(id), None, "{id}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_reader_has_no_identity_for_a_missing_port() {
+    assert_eq!(
+        SystemSerialPortProbe.identity("/dev/cu.termihub-no-such-port-5394"),
+        None
+    );
+}
+
+/// The IOKit enumeration reads every port's device files (only lists, never
+/// opens): each callout / dial-in name it reports exists under `/dev`.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_registry_names_existing_device_files() {
+    for port in macos_usb::serial_ports() {
+        for name in [&port.callout, &port.dialin].into_iter().flatten() {
+            assert!(name.starts_with("/dev/"), "{name}");
+            assert!(std::path::Path::new(name).exists(), "{name}");
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_reader_has_no_identity_for_a_missing_port() {
+    assert_eq!(SystemSerialPortProbe.identity("COM255"), None);
+}
+
+/// Manual sanity check of the platform reader (#5394): list every serial port
+/// with its USB identity. It only enumerates; no port is opened. Run with
+/// `cargo test -p termihub-core --features serial -- --ignored --nocapture
+/// list_serial_ports_with_usb_identity`.
+#[test]
+#[ignore = "manual: lists the machine's real serial ports"]
+fn list_serial_ports_with_usb_identity() {
+    let probe = SystemSerialPortProbe;
+    for port in probe.list_ports() {
+        let identity = probe.identity(&port);
+        println!(
+            "{port}: {}",
+            identity.map_or_else(|| "no USB identity".to_string(), |i| i.describe())
+        );
+    }
+}
