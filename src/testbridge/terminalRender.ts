@@ -105,7 +105,8 @@ function measureScrollbar(element: HTMLElement): TerminalScrollbarMeasurement | 
  * edge of the visible text area (the rows' screen, clipped to the scroll
  * viewport in horizontal-scroll mode) and the bottom of the last row, both
  * relative to the container; the container's and xterm theme's background;
- * and, in horizontal-scroll mode, the native horizontal bar's laid-out height.
+ * and, in horizontal-scroll mode, the native horizontal bar's laid-out height
+ * and the bottom strip reserved for it (`.xterm` padding-bottom, #5280).
  */
 function measurePaint(element: HTMLElement, xterm: TerminalHandles["xterm"]): TerminalPaint {
   const box = element.getBoundingClientRect();
@@ -128,7 +129,14 @@ function measurePaint(element: HTMLElement, xterm: TerminalHandles["xterm"]): Te
     viewportClientBottom:
       viewport && viewportRect ? viewportRect.top - box.top + viewport.clientHeight : null,
     hscrollBarHeight: viewport && horizontal ? viewport.offsetHeight - viewport.clientHeight : 0,
+    hscrollReserve: horizontal ? bottomPaddingOf(element.querySelector<HTMLElement>(".xterm")) : 0,
   };
+}
+
+/** An element's computed `padding-bottom` in CSS px (`0` when missing). */
+function bottomPaddingOf(el: HTMLElement | null): number {
+  if (!el) return 0;
+  return parseFloat(getComputedStyle(el).paddingBottom) || 0;
 }
 
 /**
