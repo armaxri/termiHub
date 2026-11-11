@@ -1866,7 +1866,7 @@ export function FileBrowser() {
           <EmptyState
             variant="panel"
             loading
-            title="Loading files..."
+            title="Loading files…"
             data-testid="file-browser-session-connecting"
           />
         ) : error ? (
@@ -1887,7 +1887,7 @@ export function FileBrowser() {
         ) : (
           <EmptyState
             variant="panel"
-            title="Waiting for session..."
+            title="Waiting for session…"
             data-testid="file-browser-session-connecting"
           />
         )}
@@ -2196,7 +2196,7 @@ export function FileBrowser() {
             {isLoading && fileEntries.length === 0 ? (
               <div className="file-browser__loading">
                 <Spinner size="md" label={null} />
-                <span>Loading...</span>
+                <span>Loading…</span>
               </div>
             ) : (
               <div

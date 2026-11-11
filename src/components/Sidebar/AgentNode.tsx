@@ -1806,7 +1806,7 @@ export function AgentNode({
               </MenuItem>
               <MenuItem onSelect={() => setSetupDialogOpen(true)} data-testid="context-agent-setup">
                 <Upload size={14} />
-                Setup Agent...
+                Setup Agent…
               </MenuItem>
             </>
           ) : (
@@ -1828,7 +1828,7 @@ export function AgentNode({
                 data-testid="context-agent-running-sessions"
               >
                 <Terminal size={14} />
-                Running Sessions...
+                Running Sessions…
               </MenuItem>
               {isConnected && canUpdateAgent && (
                 <MenuItem
@@ -1836,7 +1836,7 @@ export function AgentNode({
                   data-testid="context-agent-update"
                 >
                   <ArrowUpCircle size={14} />
-                  Update Agent...
+                  Update Agent…
                 </MenuItem>
               )}
               <MenuSeparator />

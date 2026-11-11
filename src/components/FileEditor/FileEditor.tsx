@@ -1602,7 +1602,7 @@ export function FileEditor({
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
         <div className="file-editor__loading">
           <Spinner size="md" label={null} />
-          <span>Loading {fileName}...</span>
+          <span>Loading {fileName}…</span>
         </div>
       </div>
     );
@@ -1715,7 +1715,7 @@ export function FileEditor({
             icon={<ShieldCheck size={14} />}
             onClick={handleSaveClick}
             disabled={!isDirty}
-            pendingLabel="Saving..."
+            pendingLabel="Saving…"
             errorToast={false}
             title="Save this read-only file with sudo"
             data-testid="file-editor-edit-with-sudo"
@@ -1729,18 +1729,18 @@ export function FileEditor({
             icon={<Save size={14} />}
             onClick={handleSaveClick}
             disabled={!isDirty || sftpOnlyReadonly || listingReadonly}
-            pendingLabel="Saving..."
+            pendingLabel="Saving…"
             errorToast={false}
             title={
               sftpOnlyReadonly
                 ? "This file is read-only — use “Save a copy…” or Download"
                 : listingReadonly
                   ? "This file is read-only on the server — saving is disabled"
-                  : `${isUnsavedScratch ? "Save As..." : "Save"} (${modKeyAccelerator("S")})`
+                  : `${isUnsavedScratch ? "Save As…" : "Save"} (${modKeyAccelerator("S")})`
             }
             data-testid="file-editor-save"
           >
-            {isUnsavedScratch ? "Save As..." : "Save"}
+            {isUnsavedScratch ? "Save As…" : "Save"}
           </Button>
         )}
       </div>

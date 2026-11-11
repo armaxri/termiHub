@@ -168,7 +168,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   data-testid="settings-menu-customize-layout"
                 >
                   <LayoutDashboard size={14} />
-                  Customize Layout...
+                  Customize Layout…
                 </MenuItem>
                 <MenuItem
                   onSelect={() => setConnectionsModalOpen(true)}

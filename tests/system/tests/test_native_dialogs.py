@@ -393,7 +393,7 @@ class TestNativeDialogs(
 
         Bridge-automatable (#1004): produce known scrollback, open it in the
         editor (MT-TAB-17 — asserts the scratch/Unsaved buffer mounts), click
-        **Save As...** and assert the chosen file holds the buffer + the unsaved
+        **Save As…** and assert the chosen file holds the buffer + the unsaved
         state clears (MT-TAB-18), and that closing a *second* unsaved capture
         raises the unsaved-changes dialog whose **Cancel** keeps the tab and
         **Just Close** discards it (MT-TAB-19). The Save dialog is stubbed.
@@ -422,7 +422,7 @@ class TestNativeDialogs(
         )
         assert self.editor_tab_dirty(editor_tab["id"]), "scratch capture should be dirty"
 
-        # MT-TAB-18: Save As... → native Save dialog → file holds the buffer and
+        # MT-TAB-18: Save As… → native Save dialog → file holds the buffer and
         # the unsaved state clears.
         target = self._scratch("openineditor", "captured-output.txt")
         self.driver.stub_native_dialog("save", target)
