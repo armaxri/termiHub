@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from termihub_harness.guided import (
+    PODMAN_MACHINE_SMOKE_TEST,
     REAL_AGENT_HOST_ENV,
     HostSpec,
     host_from_env,
@@ -16,7 +17,10 @@ from termihub_harness.guided import (
     missing_env_reason,
     other_termihub_pids,
     parse_host_spec,
+    podman_machine_smoke_command,
+    podman_machine_smoke_problem,
     running_other_termihub_pids,
+    running_podman_machines,
 )
 
 
@@ -94,3 +98,68 @@ class TestOtherTermihubInstances:
         import os
 
         assert os.getpid() not in running_other_termihub_pids([os.getpid()])
+
+
+class TestPodmanMachineSmoke:
+    """MT-RUST-01 (#5415): the guided walk's machine probe and output grade."""
+
+    def test_command_runs_the_one_ignored_test_exactly(self):
+        cmd = podman_machine_smoke_command()
+        assert cmd[:6] == ["cargo", "test", "-p", "termihub-core", "--features", "docker"]
+        after = cmd[cmd.index("--") + 1 :]
+        assert {"--ignored", "--exact"} <= set(after)
+        assert after[-1] == PODMAN_MACHINE_SMOKE_TEST
+
+    def test_command_matches_the_ignored_test_and_the_docs(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        module, _, name = PODMAN_MACHINE_SMOKE_TEST.rpartition("::")
+        assert module == "backends::docker::tests"
+        source = (root / "core/src/backends/docker/mod.rs").read_text(encoding="utf-8")
+        assert f"async fn {name}()" in source
+        assert "manual: MT-RUST-01" in source
+        docs = (root / "docs/testing.md").read_text(encoding="utf-8")
+        assert " ".join(podman_machine_smoke_command()) in docs
+
+    def test_running_machines_are_listed(self):
+        out = (
+            '[{"Name": "podman-machine-default*", "Running": true},'
+            ' {"Name": "spare", "Running": false}]'
+        )
+        assert running_podman_machines(out) == ["podman-machine-default*"]
+
+    @pytest.mark.parametrize("out", ["", "  \n", "[]", "{}", '[{"Name": "m", "Running": false}]'])
+    def test_no_running_machine(self, out):
+        assert running_podman_machines(out) == []
+
+    def test_non_json_output_fails_loudly(self):
+        with pytest.raises(ValueError, match="no JSON"):
+            running_podman_machines("NAME  VM TYPE  CREATED")
+
+    def test_passing_output_is_graded_ok(self):
+        out = (
+            "running 1 test\n"
+            "runtime=Podman -> resolved socket "
+            "unix:///Users/me/.local/share/containers/podman/machine/"
+            "podman-machine-default-api.sock\n"
+            "runtime=Podman -> podman=true server=Some(\"5.2.0\")\n"
+            "test backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine ... ok\n"
+            "\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
+        )
+        assert podman_machine_smoke_problem(out) is None
+
+    def test_zero_tests_run_is_not_a_pass(self):
+        out = "resolved socket unix:///x-api.sock\ntest result: ok. 0 passed; 0 failed\n"
+        assert "1 passed" in podman_machine_smoke_problem(out)
+
+    def test_failure_is_not_a_pass(self):
+        out = "test result: FAILED. 0 passed; 1 failed\n"
+        assert "1 passed" in podman_machine_smoke_problem(out)
+
+    def test_a_socket_other_than_the_machine_api_socket_is_not_a_pass(self):
+        out = (
+            "runtime=Podman -> resolved socket unix:///run/podman/podman.sock\n"
+            "test result: ok. 1 passed; 0 failed\n"
+        )
+        assert "-api.sock" in podman_machine_smoke_problem(out)

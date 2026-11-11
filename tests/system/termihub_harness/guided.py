@@ -125,3 +125,69 @@ def running_other_termihub_pids(own_pids: Iterable[int]) -> list[int]:
         info = proc.info
         rows.append((int(info.get("pid") or 0), str(info.get("name") or "")))
     return other_termihub_pids(rows, own_pids)
+
+
+# ── MT-RUST-01: ignored Rust live smokes walked by an operator (#5415) ───────
+#: The ignored core test MT-RUST-01 runs (``#[ignore = "…; manual: MT-RUST-01"]``).
+PODMAN_MACHINE_SMOKE_TEST = (
+    "backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine"
+)
+
+
+def podman_machine_smoke_command() -> list[str]:
+    """The cargo invocation docs/testing.md gives for MT-RUST-01, run from the repo root."""
+    return [
+        "cargo",
+        "test",
+        "-p",
+        "termihub-core",
+        "--features",
+        "docker",
+        "--lib",
+        "--",
+        "--ignored",
+        "--exact",
+        "--nocapture",
+        PODMAN_MACHINE_SMOKE_TEST,
+    ]
+
+
+def running_podman_machines(list_json: str) -> list[str]:
+    """Names of the running machines in ``podman machine list --format json`` output.
+
+    Podman prints a JSON array of objects with ``Name`` and ``Running``; blank
+    output (no machine at all) or a non-array is treated as "none running".
+    Raises ``ValueError`` on output that is not JSON, so a changed Podman CLI
+    fails loudly instead of reading as "no machine".
+    """
+    import json
+
+    text = (list_json or "").strip()
+    if not text:
+        return []
+    try:
+        rows = json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"`podman machine list --format json` printed no JSON: {err}") from err
+    if not isinstance(rows, list):
+        return []
+    return [
+        str(row.get("Name", ""))
+        for row in rows
+        if isinstance(row, dict) and row.get("Running") is True
+    ]
+
+
+def podman_machine_smoke_problem(output: str) -> Optional[str]:
+    """Why MT-RUST-01's cargo output is not a pass, or ``None`` when it is.
+
+    A pass runs exactly the one test (``test result: ok. 1 passed`` — a renamed
+    test would filter to ``0 passed``) and prints the machine's ``-api.sock``
+    socket, which shows the run reached the Podman machine rather than some
+    other socket.
+    """
+    if not re.search(r"test result: ok\. 1 passed\b", output):
+        return "cargo did not report `test result: ok. 1 passed`"
+    if not re.search(r"resolved socket \S*-api\.sock", output):
+        return "the output does not name the Podman machine's `-api.sock` socket"
+    return None
