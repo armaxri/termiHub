@@ -1,3 +1,4 @@
+pub(crate) mod agent_monitor_stops;
 pub mod agent_port_forward;
 pub mod connect_progress;
 mod file_ops;
