@@ -471,3 +471,69 @@ async fn a_refused_redirection_reports_a_protocol_failure_state() {
         Some(crate::failure::failure_state(SidecarFailureKind::Protocol))
     );
 }
+
+/// The plain server the system lane serves on every OS (#5175,
+/// `examples/rdp_test_server.rs`): the session goes active behind the
+/// certificate gate and stays up, with the Client Info carrying the user.
+#[tokio::test]
+async fn an_activating_server_brings_the_session_up_and_keeps_it() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let events: Log = Arc::default();
+    let server = spawn_server(
+        listener,
+        "server",
+        BROKER_CERT,
+        BROKER_KEY,
+        vec![Act::Activate; 4],
+        Arc::clone(&events),
+    );
+    let cfg = RdpConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        username: "alice".to_string(),
+        password: "saved-password".to_string(),
+        connect_timeout_secs: Some(5),
+        ..RdpConfig::default()
+    };
+    let (host_writer, mut sidecar_in) = tokio::io::duplex(64 * 1024);
+    let (mut sidecar_out, host_reader) = tokio::io::duplex(1024 * 1024);
+    let host = tokio::spawn(host(
+        host_reader,
+        host_writer,
+        Arc::clone(&events),
+        trust_all,
+    ));
+    let session = super::run_session(cfg, &mut sidecar_in, &mut sidecar_out);
+    let watch = async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        while !events.lock().unwrap().iter().any(|e| e == "active") {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "never active: {:?}",
+                events.lock().unwrap()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // Still up a moment later: the server holds the session.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    tokio::select! {
+        result = session => panic!("the session ended on its own: {result:?}"),
+        () = watch => {}
+    }
+    drop(sidecar_out);
+    drop(sidecar_in);
+    let _ = host.await;
+
+    let events = events.lock().unwrap().clone();
+    let prompt = events.iter().position(|e| e == "prompt origin");
+    let active = events.iter().position(|e| e == "active");
+    assert!(
+        prompt.expect("a certificate prompt") < active.unwrap(),
+        "{events:?}"
+    );
+    let conns = server.conns();
+    let session_conn = conns.last().expect("a connection");
+    assert_eq!(session_conn.username.as_deref(), Some("alice"));
+}

@@ -55,6 +55,9 @@ pub(super) const SHARE_ID: u32 = 0x0001_03EA;
 pub(super) enum Act {
     /// Hang up.
     HangUp,
+    /// Activate the session and keep it up until the client hangs up: a
+    /// plain, healthy RDP server (the system lane's scripted server, #5175).
+    Activate,
     /// Send a Server Redirection where the Demand Active belongs.
     Redirect(ServerRedirectionPdu),
     /// Activate the session, then redirect it.
@@ -268,6 +271,7 @@ pub(super) fn answer(act: &Act) -> Option<Vec<u8>> {
     let mut reply = io_pdu(encode_vec(&valid_client).unwrap());
     match act {
         Act::HangUp => return None,
+        Act::Activate => reply.extend(activation()),
         Act::Redirect(pdu) => reply.extend(redirection(pdu.clone())),
         Act::RedirectMidSession(pdu) => {
             reply.extend(activation());
