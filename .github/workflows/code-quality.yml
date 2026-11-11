@@ -114,6 +114,13 @@ jobs:
       - name: Check first-party crate policy
         run: node scripts/internal/check-crate-policy.mjs
 
+      # Fails if an `#[ignore]` reason names no `lane:` (a registered job that
+      # runs ignored tests and names the test), `manual:` MT id, `quarantine:`
+      # issue or `helper:` parent, or the docs/testing.md inventory drifted
+      # (#5177). Plain Node. Also in Workflow Lint below, for lane renames.
+      - name: Check every ignored test is bound
+        run: node scripts/internal/check-ignored-tests.mjs
+
       # Fails if Cargo.lock or rdp-sidecar/Cargo.lock locks a pre-release crate
       # version (e.g. `-rc.N`) that is not in the reviewed set
       # .github/prerelease-allowlist.json, or the list has a stale entry
@@ -986,6 +993,11 @@ jobs:
       # archive.ubuntu.com outage cannot red a job on its first attempt (#5152).
       - name: Check apt download retries
         run: node scripts/internal/check-apt-retries.mjs
+
+      # A renamed or removed job can orphan an `#[ignore]` bound to it
+      # (`lane: <workflow>.yml#<job>`, #5177); same check as Rust Code Quality.
+      - name: Check every ignored test is bound
+        run: node scripts/internal/check-ignored-tests.mjs
 
   # Windows .cmd smoke (#3340). The Shell Script Quality job above runs on
   # Ubuntu, so it can compare the flags a .cmd parses but never RUNS one. This

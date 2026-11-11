@@ -138,6 +138,12 @@ node scripts\internal\check-no-cfg-test.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === Every #[ignore] is bound to a lane, manual id or issue ===
+REM An ignored test must name what runs it; see docs/testing.md (#5177).
+node scripts\internal\check-ignored-tests.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1

@@ -209,6 +209,15 @@ else
 fi
 
 echo ""
+echo "=== Every #[ignore] is bound to a lane, manual id or issue ==="
+# An ignored test must name what runs it; see docs/testing.md (#5177).
+if node scripts/internal/check-ignored-tests.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1
