@@ -349,12 +349,15 @@ case "$phase" in
       echo "  also skipping the serial set (runs in its own job): ${SERIAL_FILTERS[*]}"
     fi
     check_build_script_watches
-    run_tests "" 0 "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
+    # A failed run still reaches the doc-tests (no fail-fast), then fails.
+    status=0
+    run_tests "" 0 "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} || status=$?
     if [ "$COVERAGE" = "1" ]; then
       echo "  doc-tests skipped (coverage run; see the header)"
     else
-      cargo test "${selection[@]}" --all-features --doc
+      cargo test "${selection[@]}" --all-features --doc || status=$?
     fi
+    exit "$status"
     ;;
   heavy)
     echo "runner cores: $(cores); runner: ${runner}; heavy phase: --test-threads=${HEAVY_TEST_THREADS}"
