@@ -345,6 +345,19 @@ pub(crate) fn init_network(
     config_dir: std::path::PathBuf,
     recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
 ) {
+    init_network_with(app, config_dir, recovery_warnings, |network_manager| {
+        network_manager.attach_app_handle(app.handle().clone())
+    });
+}
+
+/// [`init_network`] with the `AppHandle`-bound wiring (handing the manager the
+/// app handle) injected as `attach`, so the phase runs on a mock app (#5313).
+pub(crate) fn init_network_with<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    config_dir: std::path::PathBuf,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+    attach: impl FnOnce(&NetworkManager),
+) {
     // Construct the network manager fully-initialised, then hand it to
     // Tauri as shared managed state. Building it here (rather than in the
     // builder chain, then mutating it through a `*const → *mut` cast on the
@@ -352,7 +365,11 @@ pub(crate) fn init_network(
     // TAURI-001 / ARCH-011: `init` takes `&mut self` on this still-owned
     // value, before any shared reference to it can exist.
     let mut network_manager = NetworkManager::new();
-    recovery_warnings.extend(network_manager.init(config_dir.clone(), app.handle().clone()));
+    let tasks = app
+        .try_state::<app_tasks::AppTasks>()
+        .map(|tasks| tasks.inner().clone());
+    attach(&network_manager);
+    recovery_warnings.extend(network_manager.load_persisted(config_dir, tasks));
     // Managed behind an `Arc` so background tasks (port scan, ping,
     // traceroute) can hold an owned, lifetime-checked handle to the
     // manager instead of laundering a `State` reference through a
@@ -553,6 +570,78 @@ pub(crate) fn init_session_managers(
     x_server_consent_registry: &std::sync::Arc<crate::terminal::xserver::ConnectConsentRegistry>,
     recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
 ) {
+    init_session_managers_with(app, recovery_warnings, |trust_stores| {
+        wire_session_managers(
+            app,
+            connection_registry,
+            x_server_manager,
+            x_server_consent_registry,
+            trust_stores,
+        )
+    });
+}
+
+/// The RDP certificate and SSH host-key trust stores the session phase opens
+/// before it wires the session managers over them.
+pub(crate) struct SessionTrustStores {
+    pub(crate) rdp: Arc<crate::session::rdp_trust_store::RdpTrustStore>,
+    pub(crate) ssh: Arc<crate::session::ssh_trust_store::SshTrustStore>,
+}
+
+/// [`init_session_managers`] with the `AppHandle`-bound wiring (the agent,
+/// session and graphical managers, the process-wide SSH verifier and prompter,
+/// the X server provisioner) injected as `attach`, so the trust-store loads and
+/// their warning branches run on a mock app (#5313).
+pub(crate) fn init_session_managers_with<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+    attach: impl FnOnce(SessionTrustStores),
+) {
+    // The RDP certificate trust store (#1767) is persisted in the config dir
+    // (portable-aware); a failure to resolve it degrades to in-memory.
+    let rdp = Arc::new(
+        match crate::utils::config_paths::resolve_app_config_dir(app.handle()) {
+            Ok(dir) => crate::session::rdp_trust_store::RdpTrustStore::open(dir),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not resolve config dir for RDP trust store; using in-memory");
+                crate::session::rdp_trust_store::RdpTrustStore::in_memory()
+            }
+        },
+    );
+    // A newer-format, unreadable or corrupt trust store is reported at startup
+    // rather than only logged (#2745).
+    recovery_warnings.extend(rdp.take_load_warnings());
+
+    // The SSH host-key trust store (#1959) persists trust-on-first-use
+    // decisions to the config dir (portable-aware; in-memory on failure).
+    let ssh = Arc::new(
+        match crate::utils::config_paths::resolve_app_config_dir(app.handle()) {
+            Ok(dir) => crate::session::ssh_trust_store::SshTrustStore::open(dir),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not resolve config dir for SSH trust store; using in-memory");
+                crate::session::ssh_trust_store::SshTrustStore::in_memory()
+            }
+        },
+    );
+    recovery_warnings.extend(ssh.take_load_warnings());
+
+    attach(SessionTrustStores { rdp, ssh });
+}
+
+/// The `AppHandle`-bound part of [`init_session_managers`].
+fn wire_session_managers(
+    app: &tauri::App,
+    connection_registry: std::sync::Arc<
+        std::sync::Mutex<termihub_core::connection::ConnectionTypeRegistry>,
+    >,
+    x_server_manager: &std::sync::Arc<crate::terminal::xserver::XServerManager>,
+    x_server_consent_registry: &std::sync::Arc<crate::terminal::xserver::ConnectConsentRegistry>,
+    trust_stores: SessionTrustStores,
+) {
+    let SessionTrustStores {
+        rdp: rdp_trust_store,
+        ssh: ssh_trust_store,
+    } = trust_stores;
     let agent_manager: Arc<dyn AgentRpcClient> =
         Arc::new(AgentConnectionManager::new(app.handle().clone()));
 
@@ -580,20 +669,7 @@ pub(crate) fn init_session_managers(
     // Graphical (remote-desktop) session manager. Uses its own copy of
     // the same registry so it can create graphical connections by
     // type_id, independently of the terminal SessionManager. Its RDP
-    // certificate trust store (#1767) is persisted in the config dir
-    // (portable-aware); a failure to resolve it degrades to in-memory.
-    let rdp_trust_store = std::sync::Arc::new(
-        match crate::utils::config_paths::resolve_config_dir(Some(app.handle())) {
-            Ok(dir) => crate::session::rdp_trust_store::RdpTrustStore::open(dir),
-            Err(e) => {
-                tracing::warn!(error = %e, "could not resolve config dir for RDP trust store; using in-memory");
-                crate::session::rdp_trust_store::RdpTrustStore::in_memory()
-            }
-        },
-    );
-    // A newer-format, unreadable or corrupt trust store is reported at startup
-    // rather than only logged (#2745).
-    recovery_warnings.extend(rdp_trust_store.take_load_warnings());
+    // certificate trust store (#1767) was opened by the caller.
     // An automatic reconnect of a saved VNC connection's session resumes the
     // side-channel transfers waiting for it (#4230), like a fresh connect does.
     let resume_app = app.handle().clone();
@@ -628,19 +704,9 @@ pub(crate) fn init_session_managers(
 
     // SSH host-key verification (#1959): register the process-wide
     // verifier so the core SSH handshake stops blindly accepting host
-    // keys. It persists trust-on-first-use decisions to the config dir
-    // (portable-aware; in-memory on failure) and prompts the UI via the
-    // app handle for unknown or changed keys.
-    let ssh_trust_store = std::sync::Arc::new(
-        match crate::utils::config_paths::resolve_config_dir(Some(app.handle())) {
-            Ok(dir) => crate::session::ssh_trust_store::SshTrustStore::open(dir),
-            Err(e) => {
-                tracing::warn!(error = %e, "could not resolve config dir for SSH trust store; using in-memory");
-                crate::session::ssh_trust_store::SshTrustStore::in_memory()
-            }
-        },
-    );
-    recovery_warnings.extend(ssh_trust_store.take_load_warnings());
+    // keys. It persists trust-on-first-use decisions to the trust store the
+    // caller opened and prompts the UI via the app handle for unknown or
+    // changed keys.
     let ssh_host_key_verifier = std::sync::Arc::new(
         crate::session::ssh_host_key_verifier::SshHostKeyVerifier::new(
             ssh_trust_store,
@@ -682,26 +748,41 @@ pub(crate) fn init_tunnels(
     app: &tauri::App,
     recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
 ) {
+    init_tunnels_with(app, recovery_warnings, |loaded| {
+        let manager = tunnel::tunnel_manager::TunnelManager::from_loaded(app.handle(), loaded);
+
+        // Auto-start tunnels on a blocking-pool thread. The SSH
+        // handshake uses `block_in_place` internally, which needs a
+        // Tokio runtime context — a raw `std::thread` has none and
+        // would abort the process (#828).
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if let Some(mgr) = handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>() {
+                mgr.start_auto_tunnels();
+            }
+        });
+
+        app.manage(Arc::new(manager));
+    });
+}
+
+/// [`init_tunnels`] with the `AppHandle`-bound part — building the
+/// [`TunnelManager`](tunnel::tunnel_manager::TunnelManager) over the loaded
+/// tunnels, scheduling the auto-start and managing it — injected as `attach`,
+/// so the load and its warning branches run on a mock app (#5313). `attach`
+/// runs only when the tunnels loaded, after their recovery warnings are taken.
+pub(crate) fn init_tunnels_with<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+    attach: impl FnOnce(tunnel::tunnel_manager::LoadedTunnels),
+) {
     // Initialize tunnel manager with recovery loading.
     // On failure, the app still starts but tunnels are unavailable.
-    match tunnel::tunnel_manager::TunnelManager::new(app.handle()) {
-        Ok(manager) => {
-            recovery_warnings.extend(manager.take_recovery_warnings());
-
-            // Auto-start tunnels on a blocking-pool thread. The SSH
-            // handshake uses `block_in_place` internally, which needs a
-            // Tokio runtime context — a raw `std::thread` has none and
-            // would abort the process (#828).
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if let Some(mgr) = handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
-                {
-                    mgr.start_auto_tunnels();
-                }
-            });
-
-            app.manage(Arc::new(manager));
+    match tunnel::tunnel_manager::LoadedTunnels::load(app.handle()) {
+        Ok(mut loaded) => {
+            recovery_warnings.extend(std::mem::take(&mut loaded.warnings));
+            attach(loaded);
         }
         Err(e) => {
             tracing::error!("Failed to initialize tunnel manager: {e}");
@@ -1187,6 +1268,19 @@ pub(crate) fn init_secondary_managers(
     app: &tauri::App,
     recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
 ) {
+    init_secondary_managers_with(app, recovery_warnings, || {
+        schedules::runner::start(app.handle())
+    });
+}
+
+/// [`init_secondary_managers`] with the one `AppHandle`-bound step — starting
+/// the scheduler loop once the schedule manager is managed — injected as
+/// `start_schedule_runner`, so the phase runs on a mock app (#5313).
+pub(crate) fn init_secondary_managers_with<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+    start_schedule_runner: impl FnOnce(),
+) {
     // Initialize workspace manager with recovery loading.
     // On failure, the app still starts but workspaces are unavailable.
     match workspace::manager::WorkspaceManager::new(app.handle()) {
@@ -1278,7 +1372,7 @@ pub(crate) fn init_secondary_managers(
         Ok(manager) => {
             recovery_warnings.extend(manager.take_recovery_warnings());
             app.manage(Arc::new(manager));
-            schedules::runner::start(app.handle());
+            start_schedule_runner();
         }
         Err(e) => {
             tracing::error!("Failed to initialize schedule manager: {e}");
@@ -1396,7 +1490,7 @@ pub(crate) fn init_secondary_managers(
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if let Some(mgr) =
-                    handle.try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+                    handle.try_state::<embedded_servers::server_manager::EmbeddedServerManager<R>>()
                 {
                     mgr.start_auto_servers();
                 }
@@ -1420,8 +1514,8 @@ pub(crate) fn init_secondary_managers(
 /// effect before the first window reads them — no global-theme flash. In "ask"
 /// mode the frontend re-activates it once the user accepts the restore; in
 /// "never" mode the stored session is discarded, so nothing is re-activated.
-fn restore_active_workspace(
-    app: &tauri::App,
+fn restore_active_workspace<R: tauri::Runtime>(
+    app: &tauri::App<R>,
     last_session: &workspace::last_session::LastSessionManager,
 ) {
     let Some(connections) = app.try_state::<ConnectionManager>() else {
@@ -1507,8 +1601,8 @@ pub(crate) fn init_spawn_ipc(app: &tauri::App, pending_spawn: Option<crate::spaw
     }
 }
 
-pub(crate) fn finalize(
-    app: &tauri::App,
+pub(crate) fn finalize<R: tauri::Runtime>(
+    app: &tauri::App<R>,
     recovery_warnings: Vec<crate::connection::recovery::RecoveryWarning>,
     connections_file: std::path::PathBuf,
 ) {
@@ -1557,3 +1651,7 @@ pub(crate) fn finalize(
 #[cfg(test)]
 #[path = "phases_tests.rs"]
 mod phases_tests;
+
+#[cfg(test)]
+#[path = "later_phases_tests.rs"]
+mod later_phases_tests;

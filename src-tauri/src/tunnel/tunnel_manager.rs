@@ -479,6 +479,32 @@ impl AgentHosted for AgentTunnelHandle {
     }
 }
 
+/// The saved tunnels read from disk, before a [`TunnelManager`] is built over
+/// them. Loading needs no `AppHandle` of a particular runtime (#5313).
+pub struct LoadedTunnels {
+    storage: TunnelStorage,
+    store: TunnelStore,
+    /// Recovery warnings from the load (a corrupt or newer-version file).
+    pub warnings: Vec<RecoveryWarning>,
+}
+
+impl LoadedTunnels {
+    /// Resolve the tunnel storage and load it with recovery: a corrupt file is
+    /// backed up and salvaged into a warning rather than failing.
+    pub fn load<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
+        let storage =
+            TunnelStorage::new(app_handle).context("Failed to initialize tunnel storage")?;
+        let result = storage
+            .load_with_recovery()
+            .context("Failed to load tunnels")?;
+        Ok(Self {
+            storage,
+            store: result.data,
+            warnings: result.warnings,
+        })
+    }
+}
+
 /// Central manager for SSH tunnels.
 ///
 /// Handles CRUD operations on tunnel configurations, starting/stopping tunnels,
@@ -515,7 +541,6 @@ pub struct TunnelManager {
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
     endpoint_pool: Arc<RefPool<Arc<LiveEndpoint>>>,
     app_handle: AppHandle,
-    recovery_warnings: Mutex<Vec<RecoveryWarning>>,
     /// Handle to the single periodic live-stats emitter task (GAP 6, #1248).
     /// `Some` while at least one tunnel is active; the task self-reaps and clears
     /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
@@ -539,18 +564,17 @@ pub struct TunnelManager {
 }
 
 impl TunnelManager {
-    /// Create a new TunnelManager, loading saved tunnels from disk.
-    /// Uses recovery loading to handle corrupt files gracefully.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let storage =
-            TunnelStorage::new(app_handle).context("Failed to initialize tunnel storage")?;
-        let result = storage
-            .load_with_recovery()
-            .context("Failed to load tunnels")?;
+    /// Build the manager over the tunnels [`LoadedTunnels::load`] read from
+    /// disk (with recovery, so a corrupt file is handled gracefully). The
+    /// `AppHandle`-bound half of startup, split from the load so the boot phase
+    /// loads the file on a mock app (#5313). The caller reports
+    /// `loaded.warnings` first; they are not kept on the manager.
+    pub fn from_loaded(app_handle: &AppHandle, loaded: LoadedTunnels) -> Self {
+        let LoadedTunnels { storage, store, .. } = loaded;
         let tasks = AppTasks::for_app(app_handle);
 
-        Ok(Self {
-            tunnel_configs: Mutex::new(result.data),
+        Self {
+            tunnel_configs: Mutex::new(store),
             storage,
             active_tunnels: Arc::new(Mutex::new(HashMap::new())),
             last_errors: Arc::new(Mutex::new(HashMap::new())),
@@ -559,20 +583,11 @@ impl TunnelManager {
             agent_tunnels: AgentInstances::new(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
-            recovery_warnings: Mutex::new(result.warnings),
             stats_emitter: Arc::new(Mutex::new(None)),
             agent_stats_poller: AgentStatusPoller::with_tasks(tasks.clone()),
             tasks,
             connection_refs: ConnectionRefs::default(),
-        })
-    }
-
-    /// Drain and return any recovery warnings collected during initialization.
-    pub fn take_recovery_warnings(&self) -> Vec<RecoveryWarning> {
-        self.recovery_warnings
-            .lock()
-            .map(|mut w| w.drain(..).collect())
-            .unwrap_or_default()
+        }
     }
 
     /// Get all saved tunnel configurations.
