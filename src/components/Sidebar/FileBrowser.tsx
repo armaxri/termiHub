@@ -38,6 +38,7 @@ import {
   FolderInput,
   CopyPlus,
   Columns2,
+  Plus,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
@@ -94,6 +95,10 @@ import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { useLocalDirWatch } from "@/hooks/useLocalDirWatch";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import {
+  fileBrowserPlaceholderTitle,
+  resolveFileBrowserPlaceholder,
+} from "./fileBrowserPlaceholder";
 import { PermissionsDialog } from "./PermissionsDialog";
 import { OwnerDialog } from "./OwnerDialog";
 import { SymlinkDialog } from "./SymlinkDialog";
@@ -1012,7 +1017,39 @@ function useFileBrowserSync() {
   const canCd =
     !!activeTab?.sessionId && fileBrowserMode !== "none" && activeTab?.contentType !== "editor";
 
-  return { navigateToCwd, hasCwd: !!cwd, cdToCurrentPath, canCd };
+  // Why there is no browser while the mode is "none" (#5299).
+  const placeholder = useMemo(() => {
+    const agentId = activeTab ? readConfigString(activeTab.config, "agentId") : undefined;
+    const agent = agentId ? remoteAgents.find((a) => a.id === agentId) : undefined;
+    const agentTypeInfo = agent
+      ? findAgentConnectionType(
+          agent.capabilities?.connectionTypes ?? [],
+          (activeTab && readConfigString(activeTab.config, "sessionType")) ?? "local"
+        )
+      : undefined;
+    return resolveFileBrowserPlaceholder({
+      hasActiveTab: !!activeTab,
+      contentType: activeTabContentType,
+      connectionType: activeTabConnectionType,
+      sessionId: activeTab?.sessionId ?? null,
+      fileBrowserEnabled:
+        activeTabConnectionType === "remote-session"
+          ? globalFileBrowserEnabled
+          : !!fileBrowserEnabled,
+      connectionTypes,
+      agentTypeInfo,
+    });
+  }, [
+    activeTab,
+    activeTabContentType,
+    activeTabConnectionType,
+    remoteAgents,
+    globalFileBrowserEnabled,
+    fileBrowserEnabled,
+    connectionTypes,
+  ]);
+
+  return { navigateToCwd, hasCwd: !!cwd, cdToCurrentPath, canCd, placeholder };
 }
 
 /** Props for {@link FileBrowserErrorActions}. */
@@ -1061,7 +1098,8 @@ function FileBrowserErrorActions({
 }
 
 export function FileBrowser() {
-  const { navigateToCwd, hasCwd, cdToCurrentPath, canCd } = useFileBrowserSync();
+  const { navigateToCwd, hasCwd, cdToCurrentPath, canCd, placeholder } = useFileBrowserSync();
+  const addTab = useAppStore((s) => s.addTab);
   // The refresh spinner is static under reduced motion (#4039); the refresh
   // button then carries a steady "Refreshing…" label instead.
   const reducedMotion = usePrefersReducedMotion();
@@ -1798,7 +1836,22 @@ export function FileBrowser() {
         <EmptyState
           variant="card"
           icon={<MonitorOff size={28} strokeWidth={1.5} aria-hidden />}
-          title="No filesystem available for this connection type"
+          title={fileBrowserPlaceholderTitle(placeholder)}
+          action={
+            placeholder.kind === "no-tab" ? (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
+                onClick={() => {
+                  addTab("Terminal", "local");
+                }}
+                data-testid="file-browser-placeholder-new-terminal"
+              >
+                New Terminal
+              </Button>
+            ) : undefined
+          }
           data-testid="file-browser-placeholder"
         />
       </div>
