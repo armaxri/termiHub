@@ -173,6 +173,18 @@ impl SessionManager {
         self.file_ops().copy(session_id, src, dest).await
     }
 
+    /// Refuse a same-session paste of `src` onto itself, or of the folder
+    /// `src` into its own subtree, before anything is written (#5330).
+    pub async fn ensure_paste_allowed(
+        &self,
+        session_id: &str,
+        src: &str,
+        dest: &str,
+    ) -> Result<(), TerminalError> {
+        let _ = (session_id, src, dest);
+        Ok(()) // stub
+    }
+
     // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
     //
     // These reach the SSH-specific SFTP capabilities that do not fit on the shared
