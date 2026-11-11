@@ -176,7 +176,7 @@ pub async fn ensure_copy_within_allowed(
 /// Two agent-hosted local sessions on one agent, two SSH sessions to one
 /// server as one user, two sessions on one container: the executor would
 /// truncate the source through the destination end. Each path is resolved
-/// by its own end ([`check_across`](crate::files::paste_guard::check_across)).
+/// by its own end ([`check_across`]).
 /// Ends that do not surely share a filesystem (another host, an end that
 /// cannot tell) are never refused.
 pub async fn ensure_copy_across_allowed(
