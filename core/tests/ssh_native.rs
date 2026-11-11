@@ -712,7 +712,9 @@ async fn native_05h_powershell_hook_keeps_the_login_banner() {
 /// PowerShell 5.1 and PowerShell 7.
 #[tokio::test]
 async fn native_05j_powershell_profile_runs_once_per_session() {
-    let sshd = require_native_sshd!();
+    // The profile is the fixture user's, so no other test may log in while
+    // it is counted (#5289).
+    let sshd = require_native_sshd!(exclusive);
     if !cfg!(windows) || fixture_shell() != RemoteShell::PowerShell {
         eprintln!("this grade is for a Windows PowerShell SSH host; skipping");
         return;
@@ -742,7 +744,7 @@ async fn native_05j_powershell_profile_runs_once_per_session() {
         "the test profile was not set up: {set:?}"
     );
     // Run the grade as its own task so a failure still reaches the cleanup.
-    let grade = tokio::spawn(powershell_profile_grade(sshd)).await;
+    let grade = tokio::spawn(powershell_profile_grade(sshd.clone())).await;
     let cleanup = ssh_exec(
         &session,
         &format!(
@@ -848,11 +850,15 @@ async fn powershell_profile_grade(sshd: common::NativeSshd) {
 /// setup is hidden and kept out of the history too (#5131). Both
 /// need the login shell, and on a Win32-OpenSSH host it is told from cmd.exe's
 /// banner, not from an exec channel that would run as `cmd.exe /c` (#5134).
-/// The AutoRun is removed afterwards, also when the grade fails.
+/// The AutoRun is removed afterwards, also when the grade fails. The test
+/// holds the fixture user to itself while it counts (#5289).
 /// The `cmd` leg of the Windows SSH Host lane runs it.
 #[tokio::test]
 async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
-    let sshd = require_native_sshd!();
+    // The AutoRun is the fixture user's: every other test's login shell and
+    // exec channel would run it too, so none may run while it is counted
+    // (#5289).
+    let sshd = require_native_sshd!(exclusive);
     if !cfg!(windows) || fixture_shell() != RemoteShell::Cmd {
         eprintln!("this grade is for a cmd.exe Windows SSH host; skipping");
         return;
@@ -861,17 +867,21 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
         .await
         .expect("key auth");
     // The value is expanded by this exec's cmd.exe, so it names the path.
-    ssh_exec(
+    // Both AutoRun values are read back in the same exec (its own AutoRun ran
+    // before the marker was set), for the grade's failure message (#5289).
+    let keys = ssh_exec(
         &session,
         &format!(
             "del /q {AUTORUN_MARKER} 2>nul & reg add \"{AUTORUN_KEY}\" /v AutoRun /t REG_SZ \
-             /d \"echo th5109-autorun>>{AUTORUN_MARKER}\" /f"
+             /d \"echo th5109-autorun>>{AUTORUN_MARKER}\" /f & reg query \"{AUTORUN_KEY}\" \
+             /v AutoRun 2>&1 & reg query \"{AUTORUN_MACHINE_KEY}\" /v AutoRun 2>&1 & (call )"
         ),
     )
     .await
     .expect("set the test AutoRun");
+    eprintln!("[5289] AutoRun values (HKCU, then HKLM):\n{}", keys.trim());
     // Run the grade as its own task so a failure still reaches the cleanup.
-    let grade = tokio::spawn(cmd_hook_grade(sshd)).await;
+    let grade = tokio::spawn(cmd_hook_grade(sshd.clone(), keys)).await;
     let cleanup = ssh_exec(
         &session,
         &format!("reg delete \"{AUTORUN_KEY}\" /v AutoRun /f & del /q {AUTORUN_MARKER}"),
@@ -885,11 +895,15 @@ async fn native_05i_cmd_hook_follows_cd_and_leaves_no_history() {
 
 /// The test AutoRun's registry key and marker file (#5109).
 const AUTORUN_KEY: &str = r"HKCU\Software\Microsoft\Command Processor";
+/// The machine-wide AutoRun key, read only for the grade's message (#5289):
+/// its command, if any, cannot write [`AUTORUN_MARKER`].
+const AUTORUN_MACHINE_KEY: &str = r"HKLM\Software\Microsoft\Command Processor";
 const AUTORUN_MARKER: &str = r"%USERPROFILE%\th5109-autorun.log";
 
 /// How often the test AutoRun has run so far, read in `ssh`'s shell with the
 /// `type` builtin (no child process, so no AutoRun of its own).
-async fn autorun_runs(ssh: &mut Ssh) -> usize {
+/// Also returns what the read showed, for a failure message.
+async fn autorun_runs(ssh: &mut Ssh) -> (usize, String) {
     let (done, seen) = type_and_wait(
         ssh,
         &format!("type {AUTORUN_MARKER}\recho th5109-%OS%-counted\r"),
@@ -897,10 +911,13 @@ async fn autorun_runs(ssh: &mut Ssh) -> usize {
     )
     .await;
     assert!(done, "could not read the AutoRun marker: {seen:?}");
-    seen.matches("th5109-autorun").count() - seen.matches("th5109-autorun.log").count()
+    let runs = seen.matches("th5109-autorun").count() - seen.matches("th5109-autorun.log").count();
+    (runs, seen)
 }
 
-async fn cmd_hook_grade(sshd: common::NativeSshd) {
+/// `keys` is what `reg query` showed for the HKCU and HKLM AutoRun, for the
+/// failure message.
+async fn cmd_hook_grade(sshd: common::NativeSshd, keys: String) {
     let (cols, rows) = (100usize, 60usize);
     let mut ssh = Ssh::new();
     let mut settings = sshd.key_settings();
@@ -957,7 +974,7 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
     .await;
     let text = screen::render(all.as_bytes(), cols, rows);
     eprintln!("---- rendered terminal ----\n{text}\n---------------------------");
-    let hooked_runs = autorun_runs(&mut ssh).await;
+    let (hooked_runs, hooked_read) = autorun_runs(&mut ssh).await;
     if all.contains("Microsoft Windows") {
         assert!(
             text.contains("Microsoft Windows"),
@@ -1014,15 +1031,17 @@ async fn cmd_hook_grade(sshd: common::NativeSshd) {
     // Each session ran the AutoRun once, for its own shell (#5134): no
     // login-shell probe on an exec channel, and the hooked session's echo
     // erase runs its child cmd.exe with `/d` (the `cmd /d` above skips it too).
-    let all_runs = autorun_runs(&mut ssh).await;
+    let (all_runs, all_read) = autorun_runs(&mut ssh).await;
     eprintln!("[5134] AutoRun runs: hooked session {hooked_runs}, both sessions {all_runs}");
     assert_eq!(
         hooked_runs, 1,
-        "the hooked session ran the AutoRun other than once, for its shell"
+        "the hooked session ran the AutoRun other than once, for its shell; \
+         marker read: {hooked_read:?}; AutoRun values: {keys:?}"
     );
     assert_eq!(
         all_runs, 2,
-        "the hook-free session with an env var ran the AutoRun other than once"
+        "the hook-free session with an env var ran the AutoRun other than once; \
+         marker read: {all_read:?}; AutoRun values: {keys:?}"
     );
     ssh.disconnect().await.ok();
 }
