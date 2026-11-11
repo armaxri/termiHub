@@ -61,6 +61,8 @@ from termihub_harness.ui.os_input_ui import linux_window_manager
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="X11 XDND is Linux-only"),
+    # openbox for activation, xdotool for the real drag (#5340).
+    pytest.mark.requires_tools("openbox", "xprop", "xdotool", platforms=("linux",)),
 ]
 
 FB_LIST = "file-browser-list"

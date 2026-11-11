@@ -49,7 +49,12 @@ from termihub_harness import (
 )
 from termihub_harness.local_agent import LocalAgentSshd, LocalAgentUnavailable
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # macOS: a loopback sshd; Linux: the Docker SSH fixture, pulled in dynamically (#5340).
+    pytest.mark.requires_tools("sshd", platforms=("darwin",)),
+    pytest.mark.requires_tools("docker", platforms=("linux",)),
+]
 
 #: Skip reason on Windows (allowlisted for ``bulk-windows``).
 WINDOWS_SKIP = (
