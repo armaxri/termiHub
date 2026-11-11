@@ -162,6 +162,9 @@ struct VncRuntime {
     /// The file-transfer side channel the tunnel offers (#4191): `Some` only
     /// with a tunnel, the connection's File Transfer opt-in, and not view-only.
     file_channel: Option<FileSideChannel>,
+    /// The filesystem the tunnel's server is (#5439), from the config it
+    /// dialled: `Some` exactly when there is a tunnel.
+    tunnel_identity: Option<crate::files::shared_fs::FilesystemIdentity>,
 }
 
 /// VNC/RFB graphical remote-desktop connection.
@@ -842,6 +845,9 @@ impl ConnectionType for Vnc {
             shared,
             cancel,
             file_channel: tunnel_file_channel(&cfg, tunnel.is_some()),
+            tunnel_identity: tunnel.is_some().then(|| {
+                crate::files::shared_fs::FilesystemIdentity::ssh(&cfg.tunnel_ssh_config())
+            }),
             tunnel,
         }));
         self.task = Some(task);
@@ -1093,6 +1099,13 @@ impl GraphicalBackend for Vnc {
         let rt = self.runtime.as_ref()?;
         rt.file_channel.as_ref()?;
         rt.tunnel.as_ref()?.ssh_session()
+    }
+
+    /// The tunnel server's filesystem, alongside an opted-in side channel.
+    fn file_side_channel_identity(&self) -> Option<crate::files::shared_fs::FilesystemIdentity> {
+        let rt = self.runtime.as_ref()?;
+        rt.file_channel.as_ref()?;
+        rt.tunnel_identity.clone()
     }
 }
 

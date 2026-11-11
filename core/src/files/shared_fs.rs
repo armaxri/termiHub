@@ -199,6 +199,28 @@ fn hint_host(host: &str) -> String {
     }
 }
 
+/// What a browser reports about the filesystem it reaches (#5439): its exact
+/// id and its hint, derived once from the config it was dialled with, so a
+/// browser riding a borrowed SSH session (a VNC tunnel's) keeps no secret.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilesystemIdentity {
+    /// The exact id ([`FilesystemId`]).
+    pub id: Option<FilesystemId>,
+    /// The weaker hint ([`FilesystemHint`]).
+    pub hint: Option<FilesystemHint>,
+}
+
+impl FilesystemIdentity {
+    /// The SSH server `config` dials: the server as that login, and the
+    /// server under any login.
+    pub fn ssh(config: &SshConfig) -> Self {
+        Self {
+            id: FilesystemId::ssh(config),
+            hint: FilesystemHint::ssh(config),
+        }
+    }
+}
+
 /// How surely two ends of a cross-session paste reach one filesystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sharing {

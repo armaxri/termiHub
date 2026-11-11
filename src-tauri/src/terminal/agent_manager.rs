@@ -568,6 +568,19 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         None
     }
 
+    /// The SSH server a **connected** agent's transport was dialled to, as a
+    /// [`FilesystemHint`](termihub_core::files::shared_fs::FilesystemHint)
+    /// (#5439): an agent-hosted local session browses that host, so it may
+    /// share files with a direct SSH session to the same server. A hint, not
+    /// an exact id: the paste guard confirms it by the entry itself. Default
+    /// `None` so mock clients need not implement it.
+    fn agent_host_hint(
+        &self,
+        _agent_id: &str,
+    ) -> Option<termihub_core::files::shared_fs::FilesystemHint> {
+        None
+    }
+
     /// Retain a **connected** agent's SSH transport config for backend-driven
     /// reconnect reattach (#2472), so it survives a transport reap. Called when a
     /// resilient agent tab connects (#3661); returns whether a live connection's
@@ -3247,6 +3260,23 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
             .map(|c| {
                 let config = &c.reattach_config.config;
                 (config.host.clone(), config.username.clone())
+            })
+    }
+
+    /// The agent's transport is dialled directly with `to_ssh_config` (no
+    /// jump host or proxy), so that config names the server exactly.
+    fn agent_host_hint(
+        &self,
+        agent_id: &str,
+    ) -> Option<termihub_core::files::shared_fs::FilesystemHint> {
+        let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        agents
+            .get(agent_id)
+            .filter(|c| c.alive.is_alive())
+            .and_then(|c| {
+                termihub_core::files::shared_fs::FilesystemHint::ssh(
+                    &c.reattach_config.config.to_ssh_config(),
+                )
             })
     }
 

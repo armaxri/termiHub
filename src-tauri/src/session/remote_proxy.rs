@@ -734,7 +734,14 @@ impl RemoteProxy {
                             &session_type,
                             &config,
                             definition_id.as_deref(),
-                        ),
+                        )
+                        .or_else(|| {
+                            // A local session browses the agent host itself
+                            // (#5439): the server the agent was dialled to.
+                            (session_type == "local")
+                                .then(|| self.agent_manager.agent_host_hint(self.agent_id()))
+                                .flatten()
+                        }),
                         attribute_ops: hosted_attribute_ops(
                             &session_type,
                             agent_outdated,
@@ -2088,6 +2095,9 @@ mod tests {
         /// The agent manager's files-only routing (#4081), driven by the real
         /// routes so a test can deliver `connection.filesOnly` notifications.
         files_only_routes: Mutex<crate::terminal::agent_manager::files_only::FilesOnlyRoutes>,
+        /// What `agent_host_hint` answers: the server the agent was dialled
+        /// to (#5439).
+        agent_host_hint: Option<termihub_core::files::shared_fs::FilesystemHint>,
     }
 
     impl MockAgentRpcClient {
@@ -2107,6 +2117,7 @@ mod tests {
                 responder: None,
                 created_unattended: Mutex::new(Vec::new()),
                 files_only_routes: Mutex::default(),
+                agent_host_hint: None,
             }
         }
 
@@ -2126,6 +2137,7 @@ mod tests {
                 responder: None,
                 created_unattended: Mutex::new(Vec::new()),
                 files_only_routes: Mutex::default(),
+                agent_host_hint: None,
             }
         }
     }
@@ -2174,6 +2186,13 @@ mod tests {
 
         fn is_connected(&self, _agent_id: &str) -> bool {
             !self.created_sessions.lock().unwrap().is_empty()
+        }
+
+        fn agent_host_hint(
+            &self,
+            _agent_id: &str,
+        ) -> Option<termihub_core::files::shared_fs::FilesystemHint> {
+            self.agent_host_hint.clone()
         }
 
         fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {

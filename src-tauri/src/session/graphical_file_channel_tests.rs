@@ -766,7 +766,12 @@ mod live {
         let g = vnc.graphical().expect("graphical");
         let backend = BackendSideChannel {
             channel: g.file_side_channel(),
-            session: g.file_side_channel_ssh_session(),
+            session: g
+                .file_side_channel_ssh_session()
+                .map(|session| SideChannelSsh {
+                    session,
+                    identity: g.file_side_channel_identity(),
+                }),
         };
 
         let result = resolve_file_channel(&ctx(settings, None), backend, None).await;
@@ -851,7 +856,10 @@ mod live {
             resolve_file_channel_routed(&context, BackendSideChannel::default(), None, Some(&link))
                 .await;
         assert!(
-            Arc::ptr_eq(&first.expect("session"), &second.expect("session")),
+            Arc::ptr_eq(
+                &first.expect("session").session,
+                &second.expect("session").session
+            ),
             "the linked session is reused"
         );
     }

@@ -62,6 +62,7 @@ async fn sftp_end(config: SshConfig) -> RemoteCopyEndpoint {
             _gateway: None,
             sftp,
         }))),
+        identity: None,
     };
     RemoteCopyEndpoint::Sftp(Arc::new(browser))
 }
