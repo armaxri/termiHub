@@ -113,6 +113,11 @@ export interface ProjectedSessionLifecycle {
    * are reconnecting" note shown while a session is reconnecting (#2442). Twin of
    * the Rust `reconnect_error`. Distinct from `error` (the terminal failure msg). */
   reconnectError?: string;
+  /** Why the last attempt of the running backoff loop failed (#5395), kept while
+   * the loop waits for (and runs) the next attempt. Twin of the Rust
+   * `last_attempt_error`; cleared on success, cancel, give-up and every other
+   * resolution. */
+  lastAttemptError?: string;
   /** How this session ended (#2615): the exit cause + code the disconnect overlay
    * derives its heading / subheading wording from. Twin of the Rust
    * `SessionLifecycle.exit` (`TerminalExit` — `{ reason, code }`), structurally
@@ -707,6 +712,7 @@ export function projectedToAutoReconnect(
 ): TerminalAutoReconnectState | null {
   const { phase, attempt, delayMs } = projected.reconnect;
   const cmd = onReconnectCommand ? { onReconnectCommand } : {};
+  const reason = projected.lastAttemptError ? { lastAttemptError: projected.lastAttemptError } : {};
   if (phase === "waiting") {
     return {
       phase: "waiting",
@@ -715,6 +721,7 @@ export function projectedToAutoReconnect(
       delayMs,
       nextAttemptAt: now + delayMs,
       ...cmd,
+      ...reason,
     };
   }
   if (phase === "connecting") {
@@ -725,6 +732,7 @@ export function projectedToAutoReconnect(
       delayMs: 0,
       nextAttemptAt: 0,
       ...cmd,
+      ...reason,
     };
   }
   return null;
