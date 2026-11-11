@@ -11,22 +11,29 @@
 use std::path::Path;
 
 use base64::Engine;
+#[cfg(unix)]
 use termihub_core::files::transfer::remote_copy::{ensure_copy_within_allowed, RemoteCopyEndpoint};
 
-use super::ranged_tests::{mock_agent, owned_proxy};
+use super::ranged_tests::mock_agent;
+#[cfg(unix)]
+use super::ranged_tests::owned_proxy;
 use super::*;
+#[cfg(unix)]
 use crate::session::manager::SessionManager;
+#[cfg(unix)]
 use termihub_core::connection::ConnectionTypeRegistry;
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
 /// `<root>/data/f` (and the folder `<root>/data/sub`), reachable through
-/// the symlinked folder `<root>/link`.
+/// the symlinked folder `<root>/link`. Unix-only, like the symlink tests.
+#[cfg(unix)]
 struct Tree {
     _dir: tempfile::TempDir,
     root: String,
 }
 
+#[cfg(unix)]
 impl Tree {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -36,7 +43,6 @@ impl Tree {
             .into_owned();
         std::fs::create_dir_all(format!("{root}/data/sub")).expect("mkdir");
         std::fs::write(format!("{root}/data/f"), b"payload").expect("write");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(format!("{root}/data"), format!("{root}/link")).expect("link");
         Self { _dir: dir, root }
     }
@@ -105,6 +111,7 @@ fn serve_host(realpath: bool) -> Box<Responder> {
     })
 }
 
+#[cfg(unix)]
 async fn agent(realpath: bool) -> (Arc<MockAgentRpcClient>, RemoteProxy) {
     let mut mock = mock_agent(true, true);
     mock.responder = Some(serve_host(realpath));
