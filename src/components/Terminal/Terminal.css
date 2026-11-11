@@ -17,10 +17,18 @@
      viewport is inset by the same amount so the scrollbar never overlaps text.
      In normal mode the gutter overlays the strip FitAddon already reserves. */
   --vscroll-gutter: 12px;
-  /* Height of the horizontal scrollbar shown in horizontal-scroll mode, and the
-     gap between the content edges and the container in that mode (matches the
-     8 px text inset used in normal mode). */
-  --hscroll-bar: 10px;
+  /* Height of the horizontal scrollbar shown in horizontal-scroll mode, which
+     sizes the bottom reserve below. --hscroll-bar-styled is the height asked of
+     engines that still size the bar from ::-webkit-scrollbar. --hscroll-bar is
+     what the bar really takes: the terminal measures it (hscrollBar.ts, #5280)
+     and sets it inline on this element, because engines that honour the
+     standard scrollbar-width (WebView2, WKWebView on WebKit 18.2+) ignore the
+     ::-webkit-scrollbar height and lay out their own bar (13 px on the macOS
+     runner). Overlay bars take no layout space, so they keep this default.
+     --terminal-edge-gap is the gap between the content edges and the container
+     in that mode (matches the 8 px text inset used in normal mode). */
+  --hscroll-bar-styled: 10px;
+  --hscroll-bar: var(--hscroll-bar-styled);
   --terminal-edge-gap: var(--spacing-sm);
 }
 
@@ -104,17 +112,38 @@
   overflow: hidden;
 }
 
-/* Part of the terminal scrollbar exception (#4585): pin the horizontal bar's
-   height to --hscroll-bar so the bottom reserve above matches exactly, and keep
-   the track transparent so it blends with the terminal background. The thumb
+/* Part of the terminal scrollbar exception (#4585): ask engines that size the
+   bar from ::-webkit-scrollbar (WebKit before 18.2, e.g. older WebKitGTK) for
+   --hscroll-bar-styled, and keep the track transparent so it blends with the
+   terminal background. Engines that honour the standard scrollbar-width ignore
+   these rules once it is set (it is, globally), so this is a request, not a
+   pin: the bottom reserve follows the measured bar instead (#5280). The thumb
    colours come from the global scrollbar rules in global.css (persistently
-   visible, brightening on hover, #3144). */
-.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar {
-  height: var(--hscroll-bar);
+   visible, brightening on hover, #3144). The probe gets the same rules, so it
+   measures the bar the viewport shows. */
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar,
+.terminal-hscroll-probe::-webkit-scrollbar {
+  height: var(--hscroll-bar-styled);
 }
 
-.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-track {
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-track,
+.terminal-hscroll-probe::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Hidden probe that measures the horizontal bar the engine lays out (#5280):
+   an always-on bar (overflow-x: scroll) whose height is offsetHeight minus
+   clientHeight. It never paints and never takes input. */
+.terminal-hscroll-probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 64px;
+  height: 64px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Fixed gutter on the right that hosts the vertical scrollbar thumb in every

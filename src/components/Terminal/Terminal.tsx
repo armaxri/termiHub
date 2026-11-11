@@ -20,6 +20,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { applyCombineEmoji } from "./unicodeWidth";
 import { waitForUsableDimensions } from "./waitForUsableDimensions";
+import { createHscrollProbe, syncHscrollBar } from "./hscrollBar";
 import { abortableDelay } from "@/utils/abortableDelay";
 import { ConnectionConfig } from "@/types/terminal";
 import {
@@ -332,6 +333,7 @@ export function Terminal({
   const terminalElRef = useRef<HTMLDivElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
+  const hscrollProbeRef = useRef<HTMLDivElement | null>(null);
   const thumbRef = useRef<HTMLDivElement | null>(null);
   const scrollbarRef = useRef<TerminalScrollbarController | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
@@ -1495,6 +1497,12 @@ export function Terminal({
     gutterRef.current = gutter;
     thumbRef.current = thumb;
 
+    // Hidden probe that measures the horizontal bar the engine really lays out,
+    // so the horizontal-scroll bottom reserve follows it (#5280, hscrollBar.ts).
+    const hscrollProbe = createHscrollProbe();
+    el.appendChild(hscrollProbe);
+    hscrollProbeRef.current = hscrollProbe;
+
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
 
@@ -1936,6 +1944,31 @@ export function Terminal({
     // mode the viewport fills `el`, so a container resize still fires once.
     resizeObserver.observe(scrollViewport);
 
+    // The scrollbar style can change under a live terminal (macOS turns overlay
+    // bars into classic ones when a mouse is plugged in). The probe's content
+    // box shrinks or grows with its bar, so observing it catches that. Re-size
+    // the reserve and, in horizontal mode, re-fit the rows to it (#5280).
+    const hscrollProbeObserver = new ResizeObserver(() => {
+      if (!syncHscrollBar(el, hscrollProbe) || !horizontalScrollingRef.current) return;
+      if (!isOnScreenRef.current) {
+        hiddenFitPendingRef.current = true;
+        return;
+      }
+      try {
+        const dims = fitAddon.proposeDimensions();
+        if (dims && dims.rows !== xterm.rows) xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
+        updateHorizontalScrollWidth(xterm, fitAddon, el);
+        scrollbar.update();
+      } catch (err) {
+        // Once per scrollbar-style change; the next ResizeObserver fit re-fits.
+        frontendLog(
+          "terminal",
+          `re-fit after a scrollbar change failed tab=${tabId}: ${errorMessage(err)}`
+        );
+      }
+    });
+    hscrollProbeObserver.observe(hscrollProbe);
+
     // A device-pixel-ratio change (monitor move, display scale, the WebView
     // settling on its scale at start-up) leaves the container's CSS size alone,
     // so the observer above never fires — but the WebGL cell is floored to whole
@@ -1989,6 +2022,7 @@ export function Terminal({
         );
       }
       resizeObserver.disconnect();
+      hscrollProbeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
       onScrollDisposable.dispose();
       osc7Disposable.dispose();
@@ -2062,6 +2096,7 @@ export function Terminal({
       terminalElRef.current = null;
       scrollViewportRef.current = null;
       gutterRef.current = null;
+      hscrollProbeRef.current = null;
       thumbRef.current = null;
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -2247,7 +2282,10 @@ export function Terminal({
     if (horizontalScrolling) {
       // The viewport (not el) becomes the horizontal scroll container and is
       // inset on the right (CSS) to reserve the gutter the vertical scrollbar
-      // already occupies in normal mode.
+      // already occupies in normal mode. Size the bottom reserve from the bar
+      // the engine really lays out before fitting to it (#5280).
+      const probe = hscrollProbeRef.current;
+      if (probe) syncHscrollBar(el, probe);
       scrollViewport.classList.add("terminal-horizontal-scroll");
       try {
         applyHorizontalScrollResize(xterm, fitAddon, el);
