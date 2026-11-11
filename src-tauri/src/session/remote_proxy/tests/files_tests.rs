@@ -10,8 +10,8 @@ use super::*;
 
 /// Mock agent whose `connection.types` reply marks `type_id` browsable and
 /// whose `initialize` capabilities carry `session_files`.
-fn mock_agent(type_id: &str, session_files: bool) -> Arc<MockAgentRpcClient> {
-    let mut mock = MockAgentRpcClient::with_capabilities(json!({
+fn mock_agent(type_id: &str, session_files: bool) -> Arc<FakeAgent> {
+    let mut mock = proxy_agent(json!({
         "types": [{
             "typeId": type_id,
             "displayName": type_id,
@@ -25,11 +25,11 @@ fn mock_agent(type_id: &str, session_files: bool) -> Arc<MockAgentRpcClient> {
             }
         }]
     }));
-    mock.session_files = Some(session_files);
+    mock.capabilities_mut().session_files = session_files;
     Arc::new(mock)
 }
 
-async fn connected_proxy(mock: &Arc<MockAgentRpcClient>, session_type: &str) -> RemoteProxy {
+async fn connected_proxy(mock: &Arc<FakeAgent>, session_type: &str) -> RemoteProxy {
     let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
     proxy
         .connect(json!({ "type": session_type, "config": {"host": "server"} }))
@@ -38,8 +38,8 @@ async fn connected_proxy(mock: &Arc<MockAgentRpcClient>, session_type: &str) -> 
     proxy
 }
 
-fn file_requests(mock: &MockAgentRpcClient) -> Vec<(String, serde_json::Value)> {
-    mock.sent_requests
+fn file_requests(mock: &FakeAgent) -> Vec<(String, serde_json::Value)> {
+    mock.requests
         .lock()
         .unwrap()
         .iter()
@@ -182,7 +182,7 @@ async fn a_local_session_on_a_windows_agent_host_offers_no_attribute_ops() {
         ("local", FileAttributeOps::NONE),
         ("ssh", FileAttributeOps::ALL),
     ] {
-        let mut mock = MockAgentRpcClient::with_capabilities(json!({
+        let mut mock = proxy_agent(json!({
             "types": [{
                 "typeId": session_type,
                 "displayName": session_type,
@@ -196,8 +196,8 @@ async fn a_local_session_on_a_windows_agent_host_offers_no_attribute_ops() {
                 }
             }]
         }));
-        mock.session_files = Some(true);
-        mock.host_file_attribute_ops = Some(FileAttributeOps::NONE);
+        mock.capabilities_mut().session_files = true;
+        mock.capabilities_mut().host_file_attribute_ops = Some(FileAttributeOps::NONE);
         let mock = Arc::new(mock);
         let mut proxy = connected_proxy(&mock, session_type).await;
         let browser = proxy.file_browser().expect("file browser");
