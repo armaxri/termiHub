@@ -67,6 +67,44 @@ pub fn auto_reconnect_enabled(settings: &Value) -> bool {
         .unwrap_or(AUTO_RECONNECT_DEFAULT)
 }
 
+/// The connection types whose terminal tabs can auto-reconnect into the same
+/// tab after a drop (#5390). The graphical types (RDP/VNC) run their own
+/// reconnect loop and read [`auto_reconnect_enabled`] directly.
+pub const TERMINAL_AUTO_RECONNECT_TYPES: &[&str] = &["ssh", "serial", "telnet"];
+
+/// The per-type default for [`AUTO_RECONNECT_KEY`] (#5390): what an absent key
+/// means for a connection of `type_id`.
+///
+/// - **`telnet` is off** — telnet is usually a short, interactive hop to a
+///   network device, so retrying a closed session unasked is surprising. It is
+///   opt-in per connection.
+/// - **Every other type is on** ([`AUTO_RECONNECT_DEFAULT`]): SSH and the
+///   graphical types as before (PARITY-008), and **`serial`**, which reopens its
+///   port after a USB adapter drops — Tera Term's COM-port auto-reconnect.
+///
+/// Telnet never auto-reconnected before #5390, so its new default keeps every
+/// existing telnet connection's behaviour; SSH keeps its default, and an
+/// explicit choice always wins over the default.
+pub fn auto_reconnect_default_for(type_id: &str) -> bool {
+    match type_id {
+        "telnet" => false,
+        _ => AUTO_RECONNECT_DEFAULT,
+    }
+}
+
+/// Whether auto-reconnect is enabled for a connection of `type_id` with
+/// `settings`: the explicit [`AUTO_RECONNECT_KEY`] (or the legacy key) when it
+/// is a boolean, else [`auto_reconnect_default_for`] the type (#5390).
+///
+/// Twin of the frontend's `isAutoReconnectEnabled(settings, type)`.
+pub fn auto_reconnect_enabled_for(type_id: &str, settings: &Value) -> bool {
+    settings
+        .get(AUTO_RECONNECT_KEY)
+        .or_else(|| settings.get(LEGACY_RESILIENT_RECONNECT_KEY))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| auto_reconnect_default_for(type_id))
+}
+
 /// `#[serde(with = "...")]` module for a connection settings bag field
 /// (`serde_json::Value`): serializes unchanged and applies
 /// [`normalize_auto_reconnect`] and
@@ -167,6 +205,43 @@ mod tests {
         ));
         assert!(auto_reconnect_enabled(&json!({})));
         assert!(auto_reconnect_enabled(&json!({ "autoReconnect": "x" })));
+    }
+
+    #[test]
+    fn per_type_defaults_serial_on_telnet_off_ssh_unchanged() {
+        assert!(auto_reconnect_default_for("serial"));
+        assert!(!auto_reconnect_default_for("telnet"));
+        assert!(auto_reconnect_default_for("ssh"));
+        assert!(auto_reconnect_enabled_for(
+            "serial",
+            &json!({ "port": "/dev/ttyUSB0" })
+        ));
+        assert!(!auto_reconnect_enabled_for(
+            "telnet",
+            &json!({ "host": "h" })
+        ));
+        assert!(auto_reconnect_enabled_for("ssh", &json!({ "host": "h" })));
+    }
+
+    #[test]
+    fn explicit_choice_wins_over_the_per_type_default() {
+        assert!(auto_reconnect_enabled_for(
+            "telnet",
+            &json!({ "autoReconnect": true })
+        ));
+        assert!(!auto_reconnect_enabled_for(
+            "serial",
+            &json!({ "autoReconnect": false })
+        ));
+        // An existing SSH connection keeps its choice, legacy key included.
+        assert!(!auto_reconnect_enabled_for(
+            "ssh",
+            &json!({ "autoReconnect": false })
+        ));
+        assert!(!auto_reconnect_enabled_for(
+            "ssh",
+            &json!({ "resilientReconnect": false })
+        ));
     }
 
     #[derive(serde::Deserialize, serde::Serialize)]

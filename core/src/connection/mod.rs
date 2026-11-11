@@ -41,8 +41,9 @@ pub mod shell_hook;
 pub mod validation;
 
 pub use auto_reconnect::{
-    auto_reconnect_enabled, normalize_auto_reconnect, AUTO_RECONNECT_DEFAULT, AUTO_RECONNECT_KEY,
-    LEGACY_RESILIENT_RECONNECT_KEY,
+    auto_reconnect_default_for, auto_reconnect_enabled, auto_reconnect_enabled_for,
+    normalize_auto_reconnect, AUTO_RECONNECT_DEFAULT, AUTO_RECONNECT_KEY,
+    LEGACY_RESILIENT_RECONNECT_KEY, TERMINAL_AUTO_RECONNECT_TYPES,
 };
 pub use clipboard_image::{
     check_clipboard_image_size, ClipboardImage, ClipboardImageInfo, ClipboardImageViolation,
