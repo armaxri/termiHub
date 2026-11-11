@@ -396,6 +396,9 @@ describe("live lane path filters (#4618)", () => {
       "src-tauri/src/spawn/**",
       "src/components/Spawn/**",
       "tests/system/tests/test_external_spawn.py",
+      // The WSL install itself (#5317).
+      ".github/actions/setup-wsl-debian/**",
+      "scripts/internal/fetch-wsl-distro.sh",
       ".github/workflows/wsl-live.yml",
     ],
   };
