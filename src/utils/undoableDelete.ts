@@ -12,7 +12,7 @@ export interface UndoToastOptions {
   onUndo: () => void;
   /** Reuse an existing toast id, e.g. to resolve a "Deleting…" loading toast. */
   id?: string | number;
-  /** `data-testid` for the toast element. */
+  /** `data-testid` for the toast element; its Undo button gets `<testId>-undo`. */
   testId?: string;
 }
 
@@ -28,6 +28,7 @@ export function showUndoToast(message: string, opts: UndoToastOptions): string |
     testId: opts.testId,
     action: {
       label: "Undo",
+      testId: opts.testId ? `${opts.testId}-undo` : undefined,
       onClick: () => {
         if (used) return;
         used = true;

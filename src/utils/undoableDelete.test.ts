@@ -27,6 +27,7 @@ describe("undoableDelete (#5158)", () => {
     const opts = toastSuccess.mock.calls[0][1]!;
     expect(opts).toMatchObject({ id: "loading-1", duration: UNDO_WINDOW_MS, testId: "tid" });
     expect(opts.action?.label).toBe("Undo");
+    expect(opts.action?.testId).toBe("tid-undo");
     opts.action!.onClick();
     opts.action!.onClick();
     expect(onUndo).toHaveBeenCalledTimes(1);
