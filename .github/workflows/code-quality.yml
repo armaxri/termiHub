@@ -974,6 +974,13 @@ jobs:
       - name: Check GitHub Actions pin consistency
         run: node scripts/internal/check-action-pins.mjs
 
+      # Fails if a cache-saving step (rust-cache, actions/cache[/save], setup-uv,
+      # setup-node's cache:) can save on a ref other than develop/main (#5328).
+      # Feature-branch and proof-run entries crowd develop's out of the 10 GB
+      # Actions cache budget; #3328 made develop/main the only writers.
+      - name: Check cache saves are gated to develop/main
+        run: node scripts/internal/check-cache-save-gates.mjs
+
       # Fails on an apt-get update/install in a workflow, composite action,
       # Dockerfile or shell script that does not retry failed downloads, so an
       # archive.ubuntu.com outage cannot red a job on its first attempt (#5152).
