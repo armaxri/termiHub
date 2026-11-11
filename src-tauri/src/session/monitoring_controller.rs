@@ -174,6 +174,13 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
             .resolve(session_id, Locality::LocalOrAgent, &run_location)
             .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
+        // A start replaces whatever this session was monitoring before — on
+        // another run-location or the same one. Tear that down first rather
+        // than relying on the frontend to stop in between (#5305): otherwise a
+        // local→agent switch leaves the session provider's loop running, and
+        // an agent→local switch leaves the agent's.
+        self.teardown_previous(session_id).await;
+
         let subscription = match &resolved {
             ResolvedLocation::Local => {
                 // Clone the provider handle out from under the `sessions` lock,
@@ -188,9 +195,10 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
 
                 // Apply the caller's chosen refresh interval to the now-running
                 // loop (#1233). Takes effect on the next tick; omitted → provider
-                // default.
+                // default. Applied to the provider just subscribed, so a session
+                // removed meanwhile cannot fail the start with a live loop.
                 if let Some(ms) = interval_ms {
-                    self.set_session_monitoring_interval(session_id, ms).await?;
+                    provider.set_interval(Duration::from_millis(ms.max(1))).await;
                 }
                 subscription
             }
@@ -274,6 +282,36 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
 
         self.spawn_and_register(session_id, push_task).await;
         Ok(())
+    }
+
+    /// Tear down the monitor a new start replaces (#5305).
+    ///
+    /// A session is monitoring when it has a push task registered. Its
+    /// provider is the agent override, if one is recorded, otherwise the
+    /// session's own provider; either is unsubscribed, and the push task
+    /// aborted, before the new subscription is made. Best-effort: a failure is
+    /// logged, not returned — the start goes ahead, and an agent that did not
+    /// confirm the stop is retried in the background (see
+    /// [`agent_monitor_stops`](super::agent_monitor_stops)).
+    async fn teardown_previous(&self, session_id: &str) {
+        let previous_task = self.monitoring_tasks.lock().await.remove(session_id);
+        let override_proxy = self.monitoring_overrides.lock().await.remove(session_id);
+        let provider = match (override_proxy, &previous_task) {
+            (Some(proxy), _) => Some(proxy),
+            (None, Some(_)) => self.optional_session_provider(session_id).await,
+            // Nothing started (or it was stopped): nothing to tear down.
+            (None, None) => None,
+        };
+        if let Some(task) = previous_task {
+            task.abort();
+        }
+        let Some(provider) = provider else {
+            return;
+        };
+        info!(session_id, "Replacing a running session monitor");
+        if let Err(e) = provider.unsubscribe().await {
+            warn!(session_id, error = %e, "Previous session monitor did not confirm its stop");
+        }
     }
 
     /// Spawn the monitoring push task and register its [`AbortHandle`]

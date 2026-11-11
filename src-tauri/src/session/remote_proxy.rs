@@ -1638,17 +1638,37 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // (#1233); the frontend may later change it via `set_interval`. The
         // gate supersedes any stop still owed for this agent host and keeps a
         // late retry of it from racing this subscribe (#5301).
-        let _gate =
+        let gate =
             super::agent_monitor_stops::begin_subscribe(&self.agent_id, &self.monitoring_host)
                 .await;
-        self.rpc(
-            termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-            MonitoringSubscribeParams {
-                host: self.monitoring_host.clone(),
-                interval_ms: Some(self.interval_ms.load(Ordering::SeqCst)),
-            },
-        )
-        .await?;
+        if let Err(e) = self
+            .rpc(
+                termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
+                MonitoringSubscribeParams {
+                    host: self.monitoring_host.clone(),
+                    interval_ms: Some(self.interval_ms.load(Ordering::SeqCst)),
+                },
+            )
+            .await
+        {
+            // The open failed, but the agent may have acted on the request —
+            // a timed-out subscribe can still have started its collect loop.
+            // Drop the output route (nothing will consume it) and stop the
+            // agent half in the background until the agent confirms (#5305).
+            // Deferred while still holding the gate, so the stop targets this
+            // failed generation: a reopen waiting on the gate supersedes it.
+            let _ = self
+                .agent_manager
+                .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
+            super::agent_monitor_stops::defer_stop(
+                &self.agent_id,
+                &self.monitoring_host,
+                self.agent_manager.clone(),
+            );
+            drop(gate);
+            return Err(e);
+        }
+        drop(gate);
 
         // Consumer-facing channels. The driver forwards each fresh agent sample
         // onto `stats_tx` and drives `status_tx` from a `CollectLoopState`: a
@@ -1694,6 +1714,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             .agent_manager
             .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
 
+        // Hold the host gate across the request and a possible deferred stop,
+        // so a reopen racing this close cannot be stopped by it (#5305).
+        let _gate =
+            super::agent_monitor_stops::hold_host(&self.agent_id, &self.monitoring_host).await;
         let result = self
             .rpc(
                 termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,

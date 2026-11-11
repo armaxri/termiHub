@@ -99,6 +99,17 @@ pub(crate) async fn begin_subscribe(
     guard
 }
 
+/// Hold `agent_id`'s `host` gate without starting a new subscription (#5305).
+///
+/// Taken across an unsubscribe request and the [`defer_stop`] that may follow
+/// it, so a reopen of the same host cannot slip in between: were it to bump the
+/// generation first, the deferred stop would target — and later stop — the
+/// reopened monitor. Holding the gate makes the reopen wait, so its
+/// [`begin_subscribe`] always supersedes the stop.
+pub(crate) async fn hold_host(agent_id: &str, host: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    host_state(agent_id, host).gate.clone().lock_owned().await
+}
+
 /// Whether a stop is still owed for `agent_id`'s `host` (test observability).
 #[cfg(test)]
 pub(crate) fn stop_pending(agent_id: &str, host: &str) -> bool {
@@ -107,8 +118,13 @@ pub(crate) fn stop_pending(agent_id: &str, host: &str) -> bool {
 
 /// Keep retrying `connection.monitoring.unsubscribe` for `agent_id`'s `host`
 /// in the background until the agent confirms it or a newer subscription
-/// supersedes it. Called after the inline unsubscribe failed. Idempotent: at
-/// most one retry task runs per host.
+/// supersedes it. Called after the inline unsubscribe failed, or after a
+/// subscribe failed once the agent may already have started its loop (#5305).
+/// Idempotent: at most one retry task runs per host.
+///
+/// The caller must hold the host's gate ([`begin_subscribe`] or
+/// [`hold_host`]), so the stop targets the generation that actually failed and
+/// not a reopen that raced it.
 pub(crate) fn defer_stop(agent_id: &str, host: &str, client: Arc<dyn AgentRpcClient>) {
     let state = host_state(agent_id, host);
     {
