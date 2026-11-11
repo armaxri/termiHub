@@ -70,7 +70,8 @@ import { TransferEntryRow } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
-import { getHomeDir, localOpenFolder, localStat, sendInput } from "@/services/api";
+import { getHomeDir, localOpenFolder, localStat } from "@/services/api";
+import { sendInputDetached } from "@/services/detachedSessionInput";
 import { FileEntry } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { isLocalConnectionConfig, isWslConnectionConfig } from "@/utils/typedConnectionConfig";
@@ -1011,7 +1012,7 @@ function useFileBrowserSync() {
     const cdCmd = /^[A-Za-z]:/.test(path)
       ? `cd "${path.replace(/"/g, '\\"')}"` // Windows path: double quotes
       : `cd -- '${path.replace(/'/g, "'\\''")}'`; // Unix path: single quotes
-    await sendInput(sessionId, cdCmd + "\n");
+    await sendInputDetached(sessionId, cdCmd + "\n", "cd to browsed folder");
   }, [activeTab?.sessionId, localCurrentPath, sessionCurrentPath, wslDistro]);
 
   const canCd =
