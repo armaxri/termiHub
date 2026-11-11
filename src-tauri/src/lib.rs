@@ -1210,3 +1210,6 @@ mod startup_storage_tests;
 
 #[cfg(test)]
 mod ipc_wire_fixtures;
+
+#[cfg(test)]
+mod test_support;

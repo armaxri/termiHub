@@ -81,6 +81,7 @@ import { NativePluginGateSettings } from "./NativePluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { useAppInfo } from "@/hooks/useAppInfo";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./SettingsPanel.css";
 
 /**
@@ -129,6 +130,8 @@ interface SettingsPanelProps {
  */
 export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const settings = useProjectedSettings();
+  // Gates settings that belong to experimental connection types (RDP, #5365).
+  const experimental = useExperimentalFeatures();
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
@@ -383,14 +386,14 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   // Search filtering
   const isSearchActive = searchQuery.trim().length > 0;
   const highlightedCategories = useMemo(
-    () => (isSearchActive ? getMatchingCategories(searchQuery) : undefined),
-    [isSearchActive, searchQuery]
+    () => (isSearchActive ? getMatchingCategories(searchQuery, { experimental }) : undefined),
+    [isSearchActive, searchQuery, experimental]
   );
   const visibleFields = useMemo(() => {
     if (!isSearchActive) return undefined;
-    const matched = filterSettings(searchQuery);
+    const matched = filterSettings(searchQuery, { experimental });
     return new Set(matched.map((s) => s.id));
-  }, [isSearchActive, searchQuery]);
+  }, [isSearchActive, searchQuery, experimental]);
 
   /**
    * Every settings section, keyed by its category. This single table drives both
@@ -443,7 +446,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     security: (fields) => (
       <>
         <SecuritySettings visibleFields={fields} />
-        <RdpTrustSettings visibleFields={fields} />
+        {/* RDP is gated off with the other graphical types (#5365). */}
+        {experimental && <RdpTrustSettings visibleFields={fields} />}
         <SshTrustSettings visibleFields={fields} />
       </>
     ),

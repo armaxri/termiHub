@@ -18,9 +18,9 @@ use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
 use super::{EmbeddedServerManager, SERVER_STATUS_EVENT};
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState, ServerStatus};
 use crate::embedded_servers::secrets::tests::{http, FakeStore, LOCKED, UNLOCKED};
-use crate::network::test_support::FakeAgent;
 use crate::run_location::RunLocation;
 use crate::terminal::agent_manager::AgentRpcClient;
+use crate::test_support::FakeAgent;
 use crate::utils::config_paths::ConfigDirOverride;
 
 /// How long a stopped listener may take to release its port.

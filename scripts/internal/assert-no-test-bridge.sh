@@ -9,7 +9,10 @@
 # TEST_BRIDGE_BUILD_MARKER (src-tauri/src/utils/test_bridge.rs), which the bridge
 # logs when it activates and which therefore stays in the binary's read-only
 # data. The marker appearing in a binary means the build enabled test-bridge,
-# and that binary must never ship.
+# and that binary must never ship. The guard also fails a binary that carries
+# the name of the TERMIHUB_TEST_HTTP_BASE env var (TEST_HTTP_BASE_ENV in the
+# same file, #5388), the seam that sends update and plugin-index fetches to a
+# local fixture server: a release build must not read it.
 #
 # Usage:
 #   scripts/internal/assert-no-test-bridge.sh <binary>...
@@ -25,7 +28,7 @@ set -euo pipefail
 export LC_ALL=C
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-    sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0
 fi
 
@@ -45,6 +48,13 @@ if [ -z "$marker" ]; then
     exit 2
 fi
 
+# The test-only env names whose read a release binary must not carry.
+http_base_env="$(sed -n 's/^pub const TEST_HTTP_BASE_ENV: &str = "\(.*\)";$/\1/p' "$MARKER_SOURCE")"
+if [ -z "$http_base_env" ]; then
+    echo "assert-no-test-bridge: TEST_HTTP_BASE_ENV not found in $MARKER_SOURCE" >&2
+    exit 2
+fi
+
 found=0
 for bin in "$@"; do
     if [ ! -f "$bin" ]; then
@@ -54,6 +64,10 @@ for bin in "$@"; do
     if grep -qaF -- "$marker" "$bin"; then
         echo "::error::$bin was built with the test-bridge feature (it carries" \
             "TEST_BRIDGE_BUILD_MARKER) and must never ship (SEC-005)" >&2
+        found=1
+    elif grep -qaF -- "$http_base_env" "$bin"; then
+        echo "::error::$bin reads the test-only env var $http_base_env (#5388)" \
+            "and must never ship" >&2
         found=1
     else
         echo "ok: $bin carries no test-bridge code"

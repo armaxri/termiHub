@@ -10,6 +10,7 @@ import {
 } from "@/services/api";
 import { open as openFileDialog } from "@/services/nativeDialog";
 import { toast } from "@/components/ui";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { ImportMigrationSettings } from "./ImportMigrationSettings";
 
 vi.mock("@/services/api", async (importOriginal) => ({
@@ -47,6 +48,8 @@ async function renderSettings() {
 function q(testid: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testid}"]`);
 }
+
+setupSettingsRegion();
 
 describe("ImportMigrationSettings", () => {
   beforeEach(() => {
@@ -86,6 +89,30 @@ describe("ImportMigrationSettings", () => {
     expect(q("import-migration-mobaxterm-hint")?.textContent).toContain(
       "No MobaXterm configuration was found"
     );
+  });
+
+  function mobaxtermDescription(): string {
+    return (
+      container.querySelector(
+        '[data-testid="import-migration-mobaxterm"] .settings-panel__description'
+      )?.textContent ?? ""
+    );
+  }
+
+  it("does not name RDP or VNC while experimental features are off (#5365)", async () => {
+    mockedDiscover.mockResolvedValue([]);
+    seedSettings({ experimentalFeaturesEnabled: false });
+    await renderSettings();
+    const text = mobaxtermDescription();
+    expect(text).toContain("Telnet, Serial, FTP, local shell and WSL");
+    expect(text).not.toMatch(/RDP|VNC/);
+  });
+
+  it("names RDP and VNC while experimental features are on (#5365)", async () => {
+    mockedDiscover.mockResolvedValue([]);
+    seedSettings({ experimentalFeaturesEnabled: true });
+    await renderSettings();
+    expect(mobaxtermDescription()).toContain("Telnet, Serial, RDP, VNC, FTP, local shell and WSL");
   });
 
   it("opens the MobaXterm import dialog through the store", async () => {

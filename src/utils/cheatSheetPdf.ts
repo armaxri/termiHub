@@ -11,6 +11,7 @@ import {
 import { KeyBinding, KeyCombo, ShortcutCategory } from "@/types/keybindings";
 import { resolveUiLocale } from "@/utils/locale";
 import { isMac } from "@/utils/platform";
+import { isShortcutCategoryVisible } from "@/utils/experimentalTypes";
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   general: "General",
@@ -39,6 +40,16 @@ const CHEAT_SHEET_FILENAME = "termihub-shortcuts.html";
  */
 export type CheatSheetPlatforms = "current" | "all";
 
+/** Options for {@link buildCheatSheetHtml} and {@link exportCheatSheet}. */
+export interface CheatSheetOptions {
+  /**
+   * Whether experimental features are enabled (the caller passes
+   * `useExperimentalFeatures()`). When false (the default), shortcut groups for
+   * gated connection types, such as Remote Desktop, are left out (#5403).
+   */
+  experimental?: boolean;
+}
+
 /** Display text for a combo, or "Unbound" for none / an explicit unbind. */
 function bindingText(combo: KeyCombo | KeyCombo[] | null, mac: boolean): string {
   return combo && !isUnboundCombo(combo) ? formatBindingForDisplay(combo, mac) : "Unbound";
@@ -62,16 +73,21 @@ function platformBindingText(binding: KeyBinding, mac: boolean): string {
  *
  * @param platforms - `"current"` (default) for the running platform only, or
  *   `"all"` for a Win / Linux and a macOS column.
+ * @param options - see {@link CheatSheetOptions}.
  */
-export function buildCheatSheetHtml(platforms: CheatSheetPlatforms = "current"): string {
+export function buildCheatSheetHtml(
+  platforms: CheatSheetPlatforms = "current",
+  { experimental = false }: CheatSheetOptions = {}
+): string {
   const bindings = getDefaultBindings();
   const overriddenActions = new Set(getOverrides().map((o) => o.action));
   const allPlatforms = platforms === "all";
 
   const groups = CATEGORY_ORDER.map((cat) => ({
     label: CATEGORY_LABELS[cat],
+    category: cat,
     bindings: bindings.filter((b) => b.category === cat),
-  })).filter((g) => g.bindings.length > 0);
+  })).filter((g) => g.bindings.length > 0 && isShortcutCategoryVisible(g.category, experimental));
 
   const tableHead = allPlatforms
     ? '<thead><tr><th class="action">Action</th><th class="key">Win / Linux</th><th class="key">macOS</th></tr></thead>'
@@ -222,8 +238,12 @@ export function buildCheatSheetHtml(platforms: CheatSheetPlatforms = "current"):
  * Opens a native save dialog so the user can choose the location.
  *
  * @param platforms - which platforms to list (see {@link CheatSheetPlatforms}).
+ * @param options - see {@link CheatSheetOptions}.
  */
-export async function exportCheatSheet(platforms: CheatSheetPlatforms = "current"): Promise<void> {
+export async function exportCheatSheet(
+  platforms: CheatSheetPlatforms = "current",
+  options: CheatSheetOptions = {}
+): Promise<void> {
   const filePath = await save({
     title: "Save Keyboard Shortcuts Cheat Sheet",
     defaultPath: CHEAT_SHEET_FILENAME,
@@ -231,5 +251,5 @@ export async function exportCheatSheet(platforms: CheatSheetPlatforms = "current
   });
   if (!filePath) return;
 
-  await writeTextFile(filePath, buildCheatSheetHtml(platforms));
+  await writeTextFile(filePath, buildCheatSheetHtml(platforms, options));
 }
