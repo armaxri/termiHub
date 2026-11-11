@@ -362,10 +362,16 @@ fn finalize_manages_the_accumulated_warnings_and_watches_connections() {
         vec!["tunnels.json", "macros.json"]
     );
 
-    // Another instance writing connections.json is announced.
-    std::fs::write(&connections_file, "{}").unwrap();
+    // Another instance writing connections.json is announced. The watcher arms
+    // on its own thread, so a single early write can land before it watches (a
+    // loaded Windows runner missed it, #5345): write again until it is seen.
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut next_write = Instant::now();
     while !*changed.lock().unwrap() && Instant::now() < deadline {
+        if Instant::now() >= next_write {
+            std::fs::write(&connections_file, "{}").unwrap();
+            next_write = Instant::now() + Duration::from_millis(500);
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(*changed.lock().unwrap(), "no connections-changed event");
