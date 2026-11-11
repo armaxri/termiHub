@@ -44,11 +44,25 @@ DEFAULT_PLATFORMS: tuple[str, ...] = ("darwin", "win32")
 #: The conftest fixtures that the native target replaces.
 SSH_FIXTURES = frozenset({"ssh_fixtures", "ssh_password_fixtures", "ssh_bastion_fixtures"})
 
-#: The deployed-agent fixture the native target also serves (#5424): it
-#: installs a host-OS ``termihub-agent`` for the fixture user instead of
-#: baking a Linux agent into a container. The armed, keyboard-interactive and
-#: real-swap variants stay container-only.
-AGENT_FIXTURES = frozenset({"remote_agent_fixtures"})
+#: The deployed-agent fixtures the native target also serves (#5424, #5444):
+#: they install a host-OS ``termihub-agent`` for the fixture user instead of
+#: baking a Linux agent into a container.
+AGENT_FIXTURES = frozenset(
+    {
+        "remote_agent_fixtures",
+        # #5444: the variants run on their own sshd of the fixture
+        # (``variant-up``), so their env never reaches the plain agent suites.
+        "remote_agent_pending_fixtures",
+        "remote_agent_update_swap_fixtures",
+        "remote_agent_kbdint_fixtures",
+    }
+)
+
+#: Each agent-host variant's port, as an offset from the fixture's main port
+#: (#5444). Fixed, because the suites import the ports as module constants
+#: before any fixture runs; the jump-host bastion takes the first free port
+#: above the main one, well below these.
+VARIANT_PORT_OFFSETS: Mapping[str, int] = {"pending": 10, "swap": 11, "kbdint": 12}
 
 #: Where the native target serves :data:`AGENT_FIXTURES`: the agent is built
 #: for the host and installed over a POSIX ``sh`` exec, so macOS only (the
@@ -375,7 +389,7 @@ class NativeSshServerControl:
             'printf "%s" "$c/termihub-agent/logs/crash-reports"'
         )
 
-    def install_agent(self, binary: Path) -> str:
+    def install_agent(self, binary: Path, *, home: Optional[str] = None) -> str:
         """Install ``binary`` as the login user's ``$HOME/.local/bin/termihub-agent``.
 
         Skipped when the installed one already has the same SHA-256. Otherwise
@@ -385,7 +399,7 @@ class NativeSshServerControl:
         """
         data = Path(binary).read_bytes()
         digest = hashlib.sha256(data).hexdigest()
-        dest = f"{self.env_home()}/.local/bin/termihub-agent"
+        dest = f"{home or self.env_home()}/.local/bin/termihub-agent"
         if self.path_exists(dest) and self.sha256(dest) == digest:
             return dest
         self._run(
@@ -484,6 +498,18 @@ class NativeSshServerControl:
         """Remove ``path`` (file or directory tree), if present."""
         self._run('rm -rf -- "$1"', path)
 
+    def write_bytes(self, path: str, data: bytes, *, mode: str = "644") -> None:
+        """Write ``data`` to ``path`` as the login user, then ``chmod mode``."""
+        if not re.fullmatch(r"[0-7]{3,4}", mode):
+            raise ValueError(f"not an octal mode: {mode!r}")
+        self._run(
+            'mkdir -p "$(dirname "$1")" && cat > "$1" && chmod "$2" "$1"',
+            path,
+            mode,
+            stdin=data,
+            timeout=300.0,
+        )
+
     # -- plumbing --------------------------------------------------------------
     def _check_user(self, user: str) -> None:
         if user != self._target.username:
@@ -558,3 +584,83 @@ class NativeSshServerControl:
                 f"{script!r}: {err}"
             )
         return result.stdout.decode("utf-8") if text else result.stdout
+
+
+# ── Agent-host variants (#5444) ───────────────────────────────────────────────
+def variant_port(target: NativeSshTarget, name: str) -> int:
+    """The port the ``name`` agent-host variant listens on."""
+    return target.port + VARIANT_PORT_OFFSETS[name]
+
+
+class NativeAgentVariant:
+    """One agent-host variant sshd of the fixture (``variant-up``, #5444).
+
+    The same login user and keys on its own port, with its own ``HOME`` /
+    XDG dirs and agent registry, and the ``env`` the variant needs (the
+    pending-update test hook), all through sshd ``SetEnv``. Server-side files
+    are written through the main sshd's :class:`NativeSshServerControl`, so a
+    keyboard-interactive-only variant needs no key login of its own.
+    """
+
+    def __init__(self, target: NativeSshTarget, name: str) -> None:
+        self.target = target
+        self.name = name
+        self.port = variant_port(target, name)
+        self.control = NativeSshServerControl(target)
+        self._dir = Path(target.state_dir) / "variants" / name
+
+    def _fixture(self, *args: str, timeout: float = 120.0) -> str:
+        result = subprocess.run(
+            ["bash", str(_FIXTURE_SH), *args, "--dir", self.target.state_dir],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            raise NativeSshExecError(
+                f"native sshd fixture {args[0]} {self.name} failed ({result.returncode}): "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        return result.stdout
+
+    def running(self) -> bool:
+        """Whether this variant's sshd answers on its port."""
+        import socket
+
+        try:
+            with socket.create_connection(("127.0.0.1", self.port), timeout=2):
+                return True
+        except OSError:
+            return False
+
+    def home(self) -> str:
+        """The variant's home (the ``HOME`` its sessions get)."""
+        try:
+            return (self._dir / "home_path").read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise NativeSshExecError(f"variant {self.name} is not up: {exc}") from exc
+
+    def up(self, env: Optional[Mapping[str, str]] = None, *, kbdint: bool = False) -> str:
+        """Start, or restart with a fresh config, the variant; return its home.
+
+        A restart drops every session the variant was serving.
+        """
+        args = ["variant-up", "--variant", self.name, "--port", str(self.port)]
+        for key, value in (env or {}).items():
+            args += ["--setenv", f"{key}={value}"]
+        if kbdint:
+            args.append("--kbdint")
+        lines = self._fixture(*args).strip().splitlines()
+        if not lines:
+            raise NativeSshExecError(f"variant-up {self.name} printed no home")
+        return lines[-1].strip()
+
+    def ensure(self, env: Optional[Mapping[str, str]] = None, *, kbdint: bool = False) -> str:
+        """:meth:`up` unless it already runs (parallel workers share it)."""
+        if self.running() and (self._dir / "home_path").is_file():
+            return self.home()
+        return self.up(env, kbdint=kbdint)
+
+    def logs(self) -> str:
+        """The variant sshd's log (``LogLevel VERBOSE``)."""
+        return self._fixture("variant-log", "--variant", self.name)

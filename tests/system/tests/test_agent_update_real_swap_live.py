@@ -55,7 +55,7 @@ from termihub_harness import (
     SSH_PASSWORD,
     SSH_USERNAME,
     AgentUi,
-    ContainerControl,
+    AgentSwapHost,
     PasswordPromptUi,
     SettingsUi,
     SidebarUi,
@@ -67,27 +67,20 @@ from termihub_harness import (
 
 pytestmark = pytest.mark.integration
 
-#: Where the image installs the agent the desktop launches (POSIX default path).
-INSTALLED_AGENT = "/home/testuser/.local/bin/termihub-agent"
-#: The signed update the ``update-swap`` image stages (inside the agent's own
-#: ``<config>/updates`` staging root, so AGT-003 confinement accepts it).
-STAGED_AGENT = "/home/testuser/.config/termihub-agent/updates/termihub-agent-swap-test"
-#: The agent's shared state file (holds ``update.pending_update``).
-AGENT_STATE = "/home/testuser/.config/termihub-agent/state.json"
+# The installed agent, the staged signed update (inside the agent's own
+# ``<config>/updates`` staging root, so AGT-003 confinement accepts it) and the
+# agent's ``state.json`` are paths on the fixture's :class:`AgentSwapHost`: the
+# ``update-swap`` container, or the native ``swap`` variant on macOS (#5444).
 
 
-def _sha256(container: ContainerControl, path: str) -> str:
-    """SHA-256 (hex) of ``path`` inside the container."""
-    return container.exec("sha256sum", path).split()[0]
-
-
-def _pending_update(container: ContainerControl) -> object:
+def _pending_update(host: AgentSwapHost) -> object:
     """``update.pending_update`` from the agent's ``state.json`` (``None`` if absent)."""
-    raw = container.exec("cat", AGENT_STATE)
+    raw = host.read_text(host.agent_state)
     return (json.loads(raw).get("update") or {}).get("pending_update")
 
 
 @pytest.mark.usefixtures("remote_agent_update_swap_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestAgentUpdateRealSwapLive(
     AgentUi,
     PasswordPromptUi,
@@ -151,11 +144,11 @@ class TestAgentUpdateRealSwapLive(
         return self.wait(version, what=f"connected agent {name!r} to report its agentVersion")
 
     def test_apply_now_then_last_tab_close_really_swaps_and_reattaches(
-        self, remote_agent_update_swap_fixtures: ContainerControl
+        self, remote_agent_update_swap_fixtures: AgentSwapHost
     ):
-        container = remote_agent_update_swap_fixtures
-        installed_before = _sha256(container, INSTALLED_AGENT)
-        staged = _sha256(container, STAGED_AGENT)
+        host = remote_agent_update_swap_fixtures
+        installed_before = host.sha256(host.installed_agent)
+        staged = host.sha256(host.staged_agent)
         assert staged != installed_before, (
             "the staged update must differ from the installed agent — the image stages "
             "a trailer-appended copy, so equal digests mean the container was already "
@@ -198,7 +191,7 @@ class TestAgentUpdateRealSwapLive(
             what="the deferred Apply Now to dismiss the banner",
         )
         assert self.has_terminal(), "the deferred request must not tear down the busy session"
-        assert _sha256(container, INSTALLED_AGENT) == installed_before, (
+        assert host.sha256(host.installed_agent) == installed_before, (
             "a deferred update must not swap while a session is busy"
         )
 
@@ -208,7 +201,7 @@ class TestAgentUpdateRealSwapLive(
         self._disconnect(holder["name"])
         self.close_all_tabs()
         self.wait(
-            lambda: _sha256(container, INSTALLED_AGENT) == staged,
+            lambda: host.sha256(host.installed_agent) == staged,
             what="the agent to swap the staged binary in on the last tab close",
             timeout=60.0,
         )
@@ -228,7 +221,7 @@ class TestAgentUpdateRealSwapLive(
         # armed hook stands down instead of re-staging the installed binary — it
         # announced nothing on the reconnect, or the dismissed banner would be
         # re-armed (see the dismissal after the holder's first connect).
-        assert _pending_update(container) is None
+        assert _pending_update(host) is None
         assert self.agent_update_dismissed(holder["id"]), (
             "the swapped agent must not re-announce the applied update on attach"
         )

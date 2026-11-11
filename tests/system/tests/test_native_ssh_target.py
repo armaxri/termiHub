@@ -313,11 +313,27 @@ def test_unmarked_agent_suite_is_not_ported_on_macos_only():
     assert marked is None
 
 
-def test_agent_variants_keep_their_container_reason():
-    containers = {"remote_agent_fixtures", "remote_agent_pending_fixtures"}
-    names = ["remote_agent_fixtures", "remote_agent_pending_fixtures"]
+def test_agent_variants_are_served_on_macos_too():
+    """#5444: the armed, real-swap and keyboard-interactive agent hosts run as
+    variant sshds of the fixture, so unmarked they skip as not ported on macOS;
+    a test that also needs another container keeps that container's reason."""
+    containers = {"remote_agent_pending_fixtures", "remote_agent_update_swap_fixtures", "vnc_fixtures"}
+    for name in ("remote_agent_pending_fixtures", "remote_agent_update_swap_fixtures"):
+        assert (
+            skip_reason([name], None, target=TARGET, platform="darwin", container_fixtures=containers)
+            == NOT_PORTED_REASON
+        )
+        assert (
+            skip_reason([name], ("darwin",), target=TARGET, platform="darwin", container_fixtures=containers)
+            is None
+        )
+        assert (
+            skip_reason([name], None, target=TARGET, platform="win32", container_fixtures=containers)
+            is None
+        )
+    both = ["remote_agent_pending_fixtures", "vnc_fixtures"]
     assert (
-        skip_reason(names, None, target=TARGET, platform="darwin", container_fixtures=containers)
+        skip_reason(both, None, target=TARGET, platform="darwin", container_fixtures=containers)
         is None
     )
 
@@ -406,3 +422,73 @@ def test_agent_service_control_is_native_on_macos(monkeypatch):
     control = fixtures.ssh_server_control(fixtures.REMOTE_AGENT_SERVICE)
     assert isinstance(control, fixtures.SshServerControl)
     assert control.agent_crash_dir() == "/home/testuser/.config/termihub-agent/logs/crash-reports"
+
+
+# ── Agent-host variants (#5444) ───────────────────────────────────────────────
+def test_variant_ports_are_fixed_offsets_above_the_main_sshd():
+    ports = {name: native_ssh.variant_port(TARGET, name) for name in ("pending", "swap", "kbdint")}
+    assert ports == {"pending": 22410, "swap": 22411, "kbdint": 22412}
+    assert TARGET.jump_port not in ports.values()
+
+
+def test_variant_up_passes_its_port_env_and_kbdint(monkeypatch, tmp_path):
+    target = NativeSshTarget(port=1000, username="u", password="p", state_dir=str(tmp_path))
+    calls = []
+
+    class _Done:
+        returncode = 0
+        stdout = "log line\n/home/v/pending\n"
+        stderr = ""
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return _Done()
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    variant = native_ssh.NativeAgentVariant(target, "kbdint")
+    assert variant.up({"A": "1", "B": "two"}, kbdint=True) == "/home/v/pending"
+    (cmd,) = calls
+    assert cmd[2:7] == ["variant-up", "--variant", "kbdint", "--port", "1012"]
+    assert cmd[7:11] == ["--setenv", "A=1", "--setenv", "B=two"]
+    assert "--kbdint" in cmd and cmd[-2:] == ["--dir", str(tmp_path)]
+
+
+def test_variant_up_failure_is_an_error_not_a_skip(monkeypatch, tmp_path):
+    target = NativeSshTarget(port=1000, username="u", password="p", state_dir=str(tmp_path))
+
+    class _Failed:
+        returncode = 1
+        stdout = ""
+        stderr = "--kbdint needs a --password-login fixture"
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", lambda *_a, **_k: _Failed())
+    with pytest.raises(native_ssh.NativeSshExecError, match="password-login"):
+        native_ssh.NativeAgentVariant(target, "kbdint").up(kbdint=True)
+
+
+def test_ed25519_matches_the_rfc8032_vector():
+    from termihub_harness import ed25519
+
+    # RFC 8032 section 7.1, TEST 2 (one-byte message 0x72).
+    seed = bytes.fromhex("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
+    assert ed25519.public_key(seed).hex() == (
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+    )
+    assert ed25519.sign(seed, b"\x72").hex() == (
+        "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da"
+        "085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+    )
+
+
+def test_ed25519_reads_the_committed_test_only_key():
+    from termihub_harness import ed25519
+    from termihub_harness.fixtures import TEST_ONLY_UPDATE_KEY
+
+    seed = ed25519.seed_from_pem(TEST_ONLY_UPDATE_KEY.read_text(encoding="utf-8"))
+    assert len(seed) == 32
+    signature = ed25519.sign_agent_update(b"agent bytes", TEST_ONLY_UPDATE_KEY)
+    import base64
+
+    assert len(base64.b64decode(signature)) == 64
+    with pytest.raises(ValueError):
+        ed25519.seed_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")

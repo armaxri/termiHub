@@ -43,6 +43,7 @@ from termihub_harness import (
     REMOTE_AGENT_PORT,
     REMOTE_AGENT_SERVICE,
     REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX,
+    REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX,
     REMOTE_AGENT_UPDATE_SWAP_PORT,
     REMOTE_AGENT_UPDATE_SWAP_SERVICE,
     SSH_BANNER_PORT,
@@ -87,6 +88,10 @@ from termihub_harness import (
     find_rdp_helper,
     stage_remote_agent_binary,
     install_native_agent,
+    container_swap_host,
+    native_pending_variant,
+    native_kbdint_variant,
+    native_swap_host,
     wait_for_banner,
     wait_for_rdp,
 )
@@ -917,6 +922,12 @@ def remote_agent_pending_fixtures():
     binary staging, and skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5444): the fixture's armed agent-host variant.
+        try:
+            return native_pending_variant(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"armed deployed-agent native host unavailable: {exc}")
     try:
         stage_remote_agent_binary()
         fixture = ComposeFixture()
@@ -944,11 +955,18 @@ def remote_agent_update_swap_fixtures():
     session-scoped container stays swapped after the first attempt, so every
     rerun failed up front on "the staged update must differ from the installed
     agent" and masked the first attempt's real failure. The image build is
-    cached, so the recreate costs only a container restart. Returns a
-    :class:`ContainerControl` for server-side evidence (installed binary digest,
-    ``state.json``). Skips cleanly on the same contract as
+    cached, so the recreate costs only a container restart. Returns an
+    :class:`AgentSwapHost` for server-side evidence (installed binary digest,
+    ``state.json``); on the macOS native target it is the ``swap`` variant,
+    reset the same way per attempt (#5444). Skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5444): the swap variant, reset per attempt.
+        try:
+            return native_swap_host(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"real-swap deployed-agent native host unavailable: {exc}")
     try:
         stage_remote_agent_binary()
         ComposeFixture().ensure(
@@ -959,7 +977,7 @@ def remote_agent_update_swap_fixtures():
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"real-swap deployed-agent container fixture unavailable: {exc}")
-    return ContainerControl(REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX)
+    return container_swap_host()
 
 
 @pytest.fixture(scope="session")
@@ -971,19 +989,27 @@ def remote_agent_kbdint_fixtures():
     password as a keyboard-interactive prompt, so an agent whose auth method is
     "Keyboard-Interactive" connects only once the in-app dialog is answered
     (#3377 / #4005). Reuses the shared agent binary staging, and skips cleanly on
-    the same contract as :func:`remote_agent_fixtures`.
+    the same contract as :func:`remote_agent_fixtures`. Returns what the suite
+    reads sshd's accept lines from (``logs()``): the container, or on the
+    macOS native target the ``kbdint`` variant (#5444).
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5444): the keyboard-interactive variant (CI's
+        # root sshd only). Its ``logs()`` carry sshd's accept lines.
+        try:
+            return native_kbdint_variant(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"keyboard-interactive deployed-agent native host unavailable: {exc}")
     try:
         stage_remote_agent_binary()
-        fixture = ComposeFixture()
-        fixture.ensure(
+        ComposeFixture().ensure(
             REMOTE_AGENT_KBDINT_SERVICE,
             ports=[(SSH_HOST, REMOTE_AGENT_KBDINT_PORT)],
             build=True,
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"keyboard-interactive deployed-agent fixture unavailable: {exc}")
-    return fixture
+    return ContainerControl(REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX)
 
 
 #: Attempts of an item whose failure text was already saved this session, so a

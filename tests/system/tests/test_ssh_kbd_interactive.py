@@ -53,11 +53,11 @@ ACCEPTED_KI = f"Accepted keyboard-interactive/pam for {SSH_USERNAME}"
 #: by its compose service name on the shared ``test-net``, on its in-container port.
 JUMP_TARGET_HOST = "ssh-keys"
 JUMP_TARGET_PORT = 22
-#: ``container_name`` suffix of the keyboard-interactive-only agent fixture.
-REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX = "remote-agent-kbdint"
 
 
-def _accepted_ki_count(container: ContainerControl) -> int:
+def _accepted_ki_count(container) -> int:
+    """Accept lines in an sshd's log: a :class:`ContainerControl`, or the native
+    fixture's ``kbdint`` agent-host variant (#5444) — both offer ``logs()``."""
     return container.logs().count(ACCEPTED_KI)
 
 
@@ -199,6 +199,7 @@ class TestSshKeyboardInteractive(
 
 
 @pytest.mark.usefixtures("remote_agent_kbdint_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestRemoteAgentKeyboardInteractive(
     AgentUi,
     PasswordPromptUi,
@@ -222,11 +223,11 @@ class TestRemoteAgentKeyboardInteractive(
         self.close_all_tabs()
         self.switch_to_connections_sidebar()
 
-    def test_agent_connect_via_keyboard_interactive(self):
+    def test_agent_connect_via_keyboard_interactive(self, remote_agent_kbdint_fixtures):
         """KI-04: connecting an agent with the "Keyboard-Interactive" method raises
         the dialog with the server's ``Password:`` question (no password prompt
         first); answering it connects the agent and its shells come up."""
-        container = ContainerControl(REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX)
+        container = remote_agent_kbdint_fixtures
         before = _accepted_ki_count(container)
         name = unique_name("agent-ki")
         self.create_remote_agent(

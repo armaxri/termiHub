@@ -18,6 +18,8 @@ TCP port** — the same signal the Rust integration tests use.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import os
 import platform
 import re
@@ -27,7 +29,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Sequence, Union
+from typing import Callable, Iterable, Mapping, Optional, Sequence, Union
 
 from . import dev_local, native_ssh
 
@@ -266,10 +268,6 @@ def wait_for_rdp(host: str, port: int, *, timeout: float) -> None:
 #: running the setup wizard (see :func:`stage_remote_agent_binary` and #995).
 REMOTE_AGENT_SERVICE = "remote-agent"
 REMOTE_AGENT_PORT = dev_local.service_port("TERMIHUB_TEST_REMOTE_AGENT_PORT", 2211)
-#: On the macOS native target the plain deployed-agent suites log in to the
-#: native sshd, where :func:`install_native_agent` put a host-OS agent (#5424).
-if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
-    REMOTE_AGENT_PORT = NATIVE_SSH_TARGET.port
 #: Service + host port for the *armed* deployed-agent container (compose profile
 #: ``agent``). Built from the same context as ``remote-agent`` but with
 #: ``PENDING_UPDATE_VERSION`` set, so the agent it launches holds a
@@ -301,9 +299,20 @@ REMOTE_AGENT_UPDATE_SWAP_PORT = dev_local.service_port(
 #: ``container_name`` suffix of that service (``<project>-<suffix>``), for
 #: :class:`ContainerControl`.
 REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX = "remote-agent-update-swap"
+#: ``container_name`` suffix of the keyboard-interactive agent service.
+REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX = "remote-agent-kbdint"
 #: Version the armed image advertises (mirrors the compose build arg), so the test
 #: can assert the banner names it.
 REMOTE_AGENT_PENDING_VERSION = "9.9.9"
+#: On the macOS native target the deployed-agent suites log in to the native
+#: sshd, where :func:`install_native_agent` put a host-OS agent (#5424), and
+#: the armed, real-swap and keyboard-interactive suites to its agent-host
+#: variants on fixed ports above it (#5444).
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    REMOTE_AGENT_PORT = NATIVE_SSH_TARGET.port
+    REMOTE_AGENT_PENDING_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "pending")
+    REMOTE_AGENT_UPDATE_SWAP_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "swap")
+    REMOTE_AGENT_KBDINT_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "kbdint")
 #: Build context the harness stages the per-arch agent binary into before the
 #: image is built (git-ignored — see the sibling ``.gitignore``). Shared by both
 #: the plain and the armed deployed-agent images (same context, different build
@@ -1121,6 +1130,121 @@ def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
             "the native sshd fixture exported no client key to install the agent with"
         )
     return control.install_agent(binary)
+
+
+#: The agent test hook's env (``agent/src/update/test_hook.rs``): arm it with a
+#: version, point it at a staged binary and carry that binary's digest.
+PENDING_UPDATE_ENV = "TERMIHUB_AGENT_TEST_PENDING_UPDATE"
+PENDING_UPDATE_BINARY_ENV = "TERMIHUB_AGENT_TEST_PENDING_UPDATE_BINARY"
+PENDING_UPDATE_SHA256_ENV = "TERMIHUB_AGENT_TEST_PENDING_UPDATE_SHA256"
+#: Appended to the agent to make the staged swap binary distinguishable, as the
+#: ``update-swap`` image does (``tests/docker/remote-agent/Dockerfile``).
+SWAP_TRAILER = b"\nTERMIHUB-TEST-SWAPPED-AGENT-BUILD (#4083)\n"
+#: The committed TEST-ONLY update-signing key only a ``test-hooks`` agent trusts.
+TEST_ONLY_UPDATE_KEY = REPO_ROOT / "agent" / "keys" / "test-only" / "update-signing-TEST-ONLY.key.pem"
+
+
+@dataclasses.dataclass(frozen=True)
+class AgentSwapHost:
+    """Server-side evidence for the real-swap suite, on either agent host.
+
+    The paths of the installed agent, the staged signed update and the agent's
+    ``state.json``, plus how to hash and read files there: the
+    ``remote-agent-update-swap`` container, or the native ``swap`` variant.
+    """
+
+    installed_agent: str
+    staged_agent: str
+    agent_state: str
+    sha256: Callable[[str], str]
+    read_text: Callable[[str], str]
+
+
+def container_swap_host() -> AgentSwapHost:
+    """The ``remote-agent-update-swap`` container as an :class:`AgentSwapHost`."""
+    control = ContainerControl(REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX)
+    config = f"{CONTAINER_SSH_HOME}/.config/termihub-agent"
+    return AgentSwapHost(
+        installed_agent=f"{CONTAINER_SSH_HOME}/.local/bin/termihub-agent",
+        staged_agent=f"{config}/updates/termihub-agent-swap-test",
+        agent_state=f"{config}/state.json",
+        sha256=lambda path: control.exec("sha256sum", path).split()[0],
+        read_text=lambda path: control.exec("cat", path),
+    )
+
+
+def native_pending_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.NativeAgentVariant":
+    """The armed agent host on the native sshd (#5444).
+
+    The ``pending`` variant: its sessions carry the pending-update hook, so
+    every agent it launches stages an update and announces it on attach. It
+    has its own home, so the plain agent suites never see the announcement.
+    """
+    binary = build_host_test_agent()
+    variant = native_ssh.NativeAgentVariant(target, "pending")
+    home = variant.ensure({PENDING_UPDATE_ENV: REMOTE_AGENT_PENDING_VERSION})
+    variant.control.install_agent(binary, home=home)
+    return variant
+
+
+def native_kbdint_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.NativeAgentVariant":
+    """The keyboard-interactive-only agent host on the native sshd (#5444).
+
+    Needs the root sshd of a ``--password-login`` fixture (PAM), so it only
+    comes up on CI; elsewhere ``variant-up --kbdint`` refuses.
+    """
+    binary = build_host_test_agent()
+    variant = native_ssh.NativeAgentVariant(target, "kbdint")
+    home = variant.ensure(kbdint=True)
+    variant.control.install_agent(binary, home=home)
+    return variant
+
+
+def native_swap_host(target: "native_ssh.NativeSshTarget") -> AgentSwapHost:
+    """A pristine real-swap agent host on the native sshd, per test attempt (#5444).
+
+    The ``swap`` variant's home is wiped, the variant restarted (dropping its
+    sessions) with a fresh agent registry and the hook armed with the staged
+    binary's path and digest, the agent reinstalled, and the signed update
+    staged in the agent's own ``<config>/updates`` (AGT-003 confinement), as
+    the ``update-swap`` image does.
+    """
+    from . import ed25519
+
+    binary = build_host_test_agent()
+    staged_bytes = binary.read_bytes() + SWAP_TRAILER
+    digest = hashlib.sha256(staged_bytes).hexdigest()
+    variant = native_ssh.NativeAgentVariant(target, "swap")
+    variant.control.remove_path(variant.ensure())
+    config = "{home}/.config/termihub-agent"
+    staged_tpl = config + "/updates/termihub-agent-swap-test"
+    home_guess = variant.home()
+    nonce = f"{os.getpid()}-{time.monotonic_ns()}"
+    home = variant.up(
+        {
+            PENDING_UPDATE_ENV: REMOTE_AGENT_PENDING_VERSION,
+            PENDING_UPDATE_BINARY_ENV: staged_tpl.format(home=home_guess),
+            PENDING_UPDATE_SHA256_ENV: digest,
+            "TERMIHUB_REGISTRY_ENDPOINT": f"/tmp/thub-nsv-{variant.port}-{nonce}/registry",
+        }
+    )
+    if home != home_guess:
+        raise native_ssh.NativeSshExecError(f"swap variant home moved: {home_guess} -> {home}")
+    control = variant.control
+    installed = control.install_agent(binary, home=home)
+    staged = staged_tpl.format(home=home)
+    control.write_bytes(staged, staged_bytes, mode="755")
+    control.write_bytes(
+        f"{staged}.sig", ed25519.sign_agent_update(staged_bytes, TEST_ONLY_UPDATE_KEY).encode()
+    )
+    control.write_bytes(f"{staged}.sha256", f"{digest}  termihub-agent-swap-test\n".encode())
+    return AgentSwapHost(
+        installed_agent=installed,
+        staged_agent=staged,
+        agent_state=config.format(home=home) + "/state.json",
+        sha256=control.sha256,
+        read_text=control.read_file,
+    )
 
 
 def stage_remote_agent_binary(*, build_timeout: float = 1500.0) -> Path:
