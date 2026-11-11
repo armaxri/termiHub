@@ -81,6 +81,7 @@ ALLOWLIST=(
   "scripts/internal/native-sshd-fixture.sh"   # fixture up/stop/start/down (-> .ps1 on Windows)
   "scripts/internal/run-native-sshd-suites.sh" # CI suite runner (bash on every runner)
   "scripts/internal/run-native-sshd-fish3-suite.sh" # Linux CI fish 3 login-shell leg (#5115)
+  "scripts/internal/run-native-sshd-deploy-journey.sh" # agent deploy journey, bash on every runner (#5208)
   # Windows SSH-host agent lane (#3684): run by the nightly Windows leg under
   # Git Bash only (drives native-sshd-fixture.sh -> .ps1); a .cmd adds nothing.
   "scripts/internal/run-windows-ssh-host-suite.sh" # Windows CI suite runner (Git Bash)
