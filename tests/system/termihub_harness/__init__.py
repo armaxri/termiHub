@@ -137,6 +137,7 @@ from .local_agent import (
 from .dns_stub import STUB_EXPECTED_VALUES, StubDnsServer
 from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
+from .rdp_test_server import RdpTestServer, RdpTestServerUnavailable, find_rdp_test_server
 from .serial_echo import SerialEchoPair, SerialEchoUnavailable
 from .ssh_agent import (
     PrivateSshAgent,
@@ -275,6 +276,9 @@ __all__ = [
     "RDP_USERNAME",
     "RdpSessionProbe",
     "find_rdp_helper",
+    "find_rdp_test_server",
+    "RdpTestServer",
+    "RdpTestServerUnavailable",
     "wait_for_rdp",
     "TRACEROUTE_NEEDS_LINUX",
     "TracerouteFixtureUnavailable",
