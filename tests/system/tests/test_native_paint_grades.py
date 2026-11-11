@@ -50,7 +50,11 @@ from termihub_harness.window_capture import (
     encode_png,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # The Linux window capture finds the app window with xdotool (#5340).
+    pytest.mark.requires_tools("xdotool", platforms=("linux",)),
+]
 
 _WIN = sys.platform.startswith("win")
 _ZOOM_MOD = {"meta": True} if sys.platform == "darwin" else {"ctrl": True}
