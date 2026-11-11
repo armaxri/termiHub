@@ -617,6 +617,10 @@ function AgentFolderNode({
   const deleteFocusRef = useRef<FocusTarget | null>(null);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
+  // Set by the menu's New Subfolder item. The input opens only once the menu
+  // has closed: opened earlier, the menu's focus handling takes focus back,
+  // which blurs (and so cancels) the input that just appeared (#5322).
+  const subfolderAfterMenuRef = useRef(false);
 
   // Under an active filter, matched folders are force-expanded regardless of
   // their stored state (auto-expand matches).
@@ -740,12 +744,25 @@ function AgentFolderNode({
               aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
             />
           </ContextMenuTrigger>
-          <ContextMenuContent>
+          <ContextMenuContent
+            onCloseAutoFocus={(e) => {
+              if (!subfolderAfterMenuRef.current) return;
+              subfolderAfterMenuRef.current = false;
+              e.preventDefault();
+              setCreatingSubfolder(true);
+            }}
+          >
             <MenuItem onSelect={() => onNewConnection(folder.id)}>
               <Plus size={14} />
               New Connection
             </MenuItem>
-            <MenuItem onSelect={() => setCreatingSubfolder(true)}>
+            <MenuItem
+              onSelect={() => {
+                subfolderAfterMenuRef.current = true;
+                // The input renders inside the children, so open the folder.
+                if (!expanded) onToggleFolder(folder.id);
+              }}
+            >
               <FolderPlus size={14} />
               New Subfolder
             </MenuItem>
