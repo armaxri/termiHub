@@ -1115,7 +1115,7 @@ function FilePathField({
           title="Browse"
           data-testid={`${testIdBase}-browse`}
         >
-          ...
+          …
         </Button>
       </div>
     </>
@@ -1272,7 +1272,7 @@ function ObjectListField({
                     title="Browse"
                     data-testid={`${testIdBase}-${subField.key}-browse-${index}`}
                   >
-                    ...
+                    …
                   </Button>
                 </span>
               );

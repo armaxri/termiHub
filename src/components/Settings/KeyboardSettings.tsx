@@ -261,7 +261,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
       <div className="keyboard-settings__search">
         <SearchInput
-          placeholder="Search shortcuts..."
+          placeholder="Search shortcuts…"
           value={query}
           onValueChange={setQuery}
           clearLabel="Clear shortcut search"
@@ -670,9 +670,9 @@ function recordingLabel(modifierOnly: boolean, preview: string): string {
   if (modifierOnly) {
     return preview
       ? `${preview} … (release to set)`
-      : "Hold 2+ modifier keys, then release... (Esc cancels)";
+      : "Hold 2+ modifier keys, then release… (Esc cancels)";
   }
   return preview
     ? `${preview} … (press another key to chord)`
-    : "Press a key combination... (Esc cancels, Backspace clears)";
+    : "Press a key combination… (Esc cancels, Backspace clears)";
 }

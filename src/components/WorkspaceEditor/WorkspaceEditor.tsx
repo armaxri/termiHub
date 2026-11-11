@@ -333,7 +333,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   if (loading) {
     return (
       <div className="workspace-editor" data-testid="workspace-editor">
-        <div className="workspace-editor__loading">Loading workspace...</div>
+        <div className="workspace-editor__loading">Loading workspace…</div>
       </div>
     );
   }
