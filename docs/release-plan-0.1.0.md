@@ -416,12 +416,14 @@ Needs Docker for the SSH / X11 fixtures (the starter script starts it).
 
 #### Session 3: real hardware and remote hosts (~3 h)
 
-A USB-serial adapter with TX and RX bridged, a Raspberry Pi or Windows
+A USB-serial adapter with TX and RX bridged (plus a second, different
+adapter for the agent-hosted serial test), a Raspberry Pi or Windows
 notebook, and a Windows host with Docker Desktop and RDP:
 
 ```bash
 export TERMIHUB_SERIAL_DEVICE=/dev/ttyUSB0
 export TERMIHUB_REAL_AGENT_HOST=pi@raspberrypi.local:22
+export TERMIHUB_AGENT_SERIAL_DEVICE=/dev/ttyUSB0  # the adapter, moved to the Pi
 export TERMIHUB_WINDOWS_AGENT_HOST=me@winbox:22
 export TERMIHUB_RDP_HOST='CORP\alice@winbox:3389'
 ./scripts/run-guided-manual.sh -k "real_hardware or guided_remote_desktop"
