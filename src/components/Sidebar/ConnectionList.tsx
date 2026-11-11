@@ -1939,6 +1939,8 @@ function RootDropZone({
     ? rootConnections.filter((c) => filter.matchingConnectionIds.has(c.id))
     : rootConnections;
   const hasVisibleResults = visibleRootFolders.length + visibleRootConnections.length > 0;
+  // As for New Subfolder: open the input only once the menu has closed (#5323).
+  const newFolderMenu = useOpenAfterMenuClose(onNewFolder);
   const { active } = useDndContext();
   const isConnectionOver =
     isOver &&
@@ -2021,11 +2023,11 @@ function RootDropZone({
           ))}
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent>
+      <ContextMenuContent onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}>
         <MenuItem onSelect={onNewConnection} data-testid="context-root-new-connection">
           <Plus size={14} /> New Connection
         </MenuItem>
-        <MenuItem onSelect={onNewFolder} data-testid="context-root-new-folder">
+        <MenuItem onSelect={newFolderMenu.request} data-testid="context-root-new-folder">
           <FolderPlus size={14} /> New Folder
         </MenuItem>
       </ContextMenuContent>
