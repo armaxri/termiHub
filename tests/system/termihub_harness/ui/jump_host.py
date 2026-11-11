@@ -32,6 +32,7 @@ class JumpHostUi(HarnessMixin):
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
         def create_ssh_connection(self, name: str, *, host: str, port: int, username: str,
                                   auth_method: str = ..., key_path=...,
+                                  password: Optional[str] = ...,
                                   save_password: bool = ..., auto_reconnect: bool = ...,
                                   connect: bool = ...,
                                   before_save: Optional[Callable[[], None]] = ...) -> None: ...
