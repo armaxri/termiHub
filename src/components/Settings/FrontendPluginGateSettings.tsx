@@ -35,7 +35,7 @@ export function FrontendPluginGateSettings() {
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-frontend-plugin-gate">
         <h3 className="settings-panel__section-title">
-          <ShieldAlert size={16} aria-hidden="true" /> Frontend Plugins (Experimental)
+          <ShieldAlert size={16} aria-hidden="true" /> Frontend plugins (experimental)
         </h3>
         <p className="settings-panel__description">
           Frontend plugins run untrusted JavaScript inside termiHub with full access to the app and
@@ -45,7 +45,7 @@ export function FrontendPluginGateSettings() {
         </p>
 
         <SettingsField
-          label="Enable Frontend (JavaScript) Plugins"
+          label="Enable frontend (JavaScript) plugins"
           hint="Experimental. Runs plugin-provided JavaScript (protocol parsers and status-bar widgets). Theme-only and backend plugins are unaffected by this setting."
           hintVariant="warning"
         >

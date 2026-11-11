@@ -91,7 +91,7 @@ export function CredentialVaultExportDialog({
         filters: [{ name: "termiHub credential vault", extensions: ["json"] }],
       });
       if (!filePath) {
-        toast.info("Export cancelled — no file was written.");
+        toast.info("Export canceled — no file was written.");
         return;
       }
       await writeTextFile(filePath, json);
@@ -107,7 +107,7 @@ export function CredentialVaultExportDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={<span data-testid="vault-export-title">Export Credential Vault</span>}
+      title={<span data-testid="vault-export-title">Export credential vault</span>}
       footer={
         <>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>

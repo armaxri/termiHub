@@ -25,7 +25,7 @@ export function AccessibilitySettings({
       <h3 className="settings-panel__category-title">Accessibility</h3>
       {show("screenReaderMode") && (
         <SettingsField
-          label="Screen Reader Mode"
+          label="Screen reader mode"
           hint="Expose terminal output to assistive technology (screen readers such as VoiceOver, NVDA, JAWS). Adds some rendering overhead — enable only if you use a screen reader."
         >
           <Toggle

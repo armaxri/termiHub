@@ -71,9 +71,9 @@ const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   general: "General",
   clipboard: "Clipboard",
   terminal: "Terminal",
-  navigation: "Navigation / Split",
-  "tab-groups": "Tab Groups",
-  "remote-desktop": "Remote Desktop",
+  navigation: "Navigation / split",
+  "tab-groups": "Tab groups",
+  "remote-desktop": "Remote desktop",
 };
 
 const CATEGORY_ORDER: ShortcutCategory[] = [
@@ -257,7 +257,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const handleCancelRecording = useCallback((binding: KeyBinding) => {
     setRecordingAction(null);
     setConflictWarning(null);
-    setAnnouncement(`Recording cancelled. ${binding.label} shortcut unchanged.`);
+    setAnnouncement(`Recording canceled. ${binding.label} shortcut unchanged.`);
   }, []);
 
   const handleRecordComplete = useCallback(
@@ -312,7 +312,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">Keyboard Shortcuts</h3>
+      <h3 className="settings-panel__category-title">Keyboard shortcuts</h3>
 
       <div className="keyboard-settings__search">
         <SearchInput
@@ -420,7 +420,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           data-testid="keyboard-settings-reset-all"
           title="Restore the built-in defaults, which are chosen to avoid common shell, tmux, vim, and SSH conflicts on Windows and Linux."
         >
-          Reset to Safer Defaults
+          Reset to safer defaults
         </Button>
         <Button
           variant="secondary"
@@ -432,7 +432,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           data-testid="keyboard-settings-export-pdf"
           title="Save a one-page HTML cheat sheet of all shortcuts"
         >
-          Save HTML Cheat Sheet
+          Save HTML cheat sheet
         </Button>
         <Field
           label="All platforms"
@@ -454,7 +454,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           data-testid="keyboard-settings-export-json"
           title="Export your custom keyboard shortcuts to a JSON file"
         >
-          Export Shortcuts
+          Export shortcuts
         </Button>
         <Button
           variant="secondary"
@@ -464,7 +464,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           data-testid="keyboard-settings-import-json"
           title="Import keyboard shortcuts from a JSON file, replacing your custom bindings"
         >
-          Import Shortcuts
+          Import shortcuts
         </Button>
       </div>
       <ConfirmDialog

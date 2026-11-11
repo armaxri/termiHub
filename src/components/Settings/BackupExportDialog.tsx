@@ -187,7 +187,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
         filters: [{ name: "termiHub backup", extensions: ["json"] }],
       });
       if (!filePath) {
-        toast.info("Backup cancelled — no file was written.");
+        toast.info("Backup canceled — no file was written.");
         return;
       }
       await writeTextFile(filePath, result.json);
@@ -226,7 +226,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={<span data-testid="backup-export-title">Back Up Everything</span>}
+      title={<span data-testid="backup-export-title">Back up everything</span>}
       footer={
         <>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>

@@ -145,7 +145,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
         {show("defaultUser") && (
           <SettingsField
-            label="Default User"
+            label="Default user"
             hint="Default username pre-filled for new SSH connections."
           >
             <Input
@@ -161,7 +161,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
         {show("defaultSshKeyPath") && (
           <SettingsField
-            label="Default SSH Key Path"
+            label="Default SSH key path"
             hint="Default private key path for SSH key authentication."
           >
             <KeyPathInput
@@ -177,7 +177,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
         {show("defaultShell") && (
           <SettingsField
-            label="Default Shell"
+            label="Default shell"
             hint="Default shell for new local terminal sessions."
           >
             <Select
@@ -235,11 +235,11 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
       {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">New Connection Defaults</h3>
+          <h3 className="settings-panel__category-title">New connection defaults</h3>
 
           {show("defaultShellIntegration") && (
             <SettingsField
-              label="Command Marks (Shell Hook) by Default"
+              label="Command marks (shell hook) by default"
               hint="Pre-enable command marks for new local, SSH and WSL connections. Off by default: the hook is typed into the shell, so nothing is typed unless you turn this on."
             >
               <Toggle
@@ -254,8 +254,8 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
           {show("defaultX11Forwarding") && (
             <SettingsField
-              label="X11 Forwarding by Default"
-              hint="Pre-enable X11 Forwarding for new SSH connections."
+              label="X11 forwarding by default"
+              hint="Pre-enable X11 forwarding for new SSH connections."
             >
               <Toggle
                 checked={settings.defaultX11Forwarding ?? true}
@@ -276,7 +276,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("fileLogLevel") && (
             <>
               <SettingsField
-                label="Log File Verbosity"
+                label="Log file verbosity"
                 hint={
                   "How much detail termiHub writes to its log file. Raise it to Debug when reporting a bug, then attach or paste the file. " +
                   "Info is the default; changes apply immediately and persist across restarts. " +
@@ -301,7 +301,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               </SettingsField>
 
               <SettingsField
-                label="Debug Info"
+                label="Debug info"
                 hint={
                   "Copy a consolidated diagnostics summary (app version, build, platform, log file path, and credential store mode) " +
                   "for pasting into a bug report. Secrets are redacted before the text leaves the app."

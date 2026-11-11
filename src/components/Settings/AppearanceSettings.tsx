@@ -47,7 +47,9 @@ import { errorMessage } from "@/utils/errorMessage";
 const BUILTIN_THEME_OPTIONS: SelectOption[] = [
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
+  // eslint-disable-next-line copy/copy-style -- "Solarized Dark" is the theme's name
   { value: "solarized-dark", label: "Solarized Dark" },
+  // eslint-disable-next-line copy/copy-style -- "Solarized Light" is the theme's name
   { value: "solarized-light", label: "Solarized Light" },
   { value: "system", label: "System" },
 ];
@@ -90,7 +92,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
 
   const openNewTheme = () => {
     const baseId = settings.theme && BUILTIN_BASE_IDS.has(settings.theme) ? settings.theme : "dark";
-    const fresh = createCustomTheme(baseId, dedupeThemeName("Custom Theme", customThemes));
+    const fresh = createCustomTheme(baseId, dedupeThemeName("Custom theme", customThemes));
     setEditing(fresh);
   };
 
@@ -153,7 +155,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     if (!selectedCustom) return;
     try {
       const filePath = await save({
-        title: "Export Theme",
+        title: "Export theme",
         defaultPath: themeFileName(selectedCustom.name),
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
@@ -170,7 +172,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     try {
       filePath = await open({
         multiple: false,
-        title: "Import Theme",
+        title: "Import theme",
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
     } catch {
@@ -275,7 +277,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               onClick={openNewTheme}
               data-testid="appearance-theme-new"
             >
-              New Theme
+              New theme
             </Button>
             <Button
               variant="secondary"
@@ -342,7 +344,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       )}
       {show("fontFamily") && (
         <SettingsField
-          label="Font Family"
+          label="Font family"
           hint="Terminal font family. Leave empty to use the default Nerd Font chain."
         >
           <Input
@@ -354,7 +356,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       )}
       {show("fontSize") && <WorkspaceOverrideNotice settingKey="fontSize" label="Font size" />}
       {show("fontSize") && (
-        <SettingsField label="Font Size" hint="Terminal font size in pixels (8–32).">
+        <SettingsField label="Font size" hint="Terminal font size in pixels (8–32).">
           <NumberInput
             min={8}
             max={32}
@@ -365,7 +367,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       )}
       {show("lineHeight") && (
         <SettingsField
-          label="Line Height"
+          label="Line height"
           hint="Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters."
         >
           <NumberInput

@@ -7,7 +7,7 @@ import {
 } from "@/services/keybindings";
 
 /**
- * Recorder for modifier-only key chords in Settings → Keyboard Shortcuts
+ * Recorder for modifier-only key chords in Settings → Keyboard shortcuts
  * (#4524). Used by the remote-desktop release chord, the only keyboard way out
  * of a focused remote-desktop canvas, so it refuses anything that would leave
  * the user without a usable escape.

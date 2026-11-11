@@ -101,9 +101,9 @@ export function SyntaxHighlightingSettings({
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">Syntax Highlighting</h3>
+      <h3 className="settings-panel__category-title">Syntax highlighting</h3>
       <SettingsField
-        label="Enable Syntax Highlighting"
+        label="Enable syntax highlighting"
         hint="Colorize recognizable patterns (errors, URLs, paths, IPs, …) in plain terminal output. Colors the remote server already set via ANSI are never overridden."
       >
         <Toggle
@@ -152,7 +152,7 @@ export function SyntaxHighlightingSettings({
             disabled={editor !== null}
             data-testid="syntax-custom-rule-add"
           >
-            Add Rule
+            Add rule
           </Button>
         </div>
 

@@ -18,7 +18,7 @@ export function CrashDiagnosticsFields({ settings, onChange }: CrashDiagnosticsF
   return (
     <>
       <SettingsField
-        label="Crash Report Notice"
+        label="Crash report notice"
         hint="After termiHub closes unexpectedly, show a notice on the next start offering to view or export the local crash report. Crash reports never leave this computer unless you export them."
       >
         <Toggle
@@ -30,7 +30,7 @@ export function CrashDiagnosticsFields({ settings, onChange }: CrashDiagnosticsF
         />
       </SettingsField>
       <SettingsField
-        label="Export Diagnostics"
+        label="Export diagnostics"
         hint="Save a zip with the recent redacted logs, crash reports and version/platform info to a location you choose — for attaching to a bug report. Nothing is sent anywhere."
       >
         <Button

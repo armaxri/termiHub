@@ -98,7 +98,7 @@ export function IndexSignatureNotice({ status }: { status: PluginIndexSignatureS
 }
 
 /**
- * Settings → Plugins → Browse Plugins (PROD-048).
+ * Settings → Plugins → Browse plugins (PROD-048).
  *
  * Lists the curated plugin index with each plugin's compatibility on this
  * computer, and installs a listed (or pasted-URL) plugin. The index is fetched
@@ -170,7 +170,7 @@ export function PluginCatalogSettings() {
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-plugin-catalog">
         <h3 className="settings-panel__section-title">
-          <PackageSearch size={16} aria-hidden="true" /> Browse Plugins
+          <PackageSearch size={16} aria-hidden="true" /> Browse plugins
         </h3>
         <p className="settings-panel__description">
           termiHub can list plugins from a curated plugin index. The index is only fetched when you
@@ -180,7 +180,7 @@ export function PluginCatalogSettings() {
         </p>
 
         <SettingsField
-          label="Plugin Index URL"
+          label="Plugin index URL"
           hint={
             savedUrl
               ? "A custom index. Only use indexes you trust."

@@ -162,7 +162,7 @@ export function CredentialVaultImportDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={<span data-testid="vault-import-title">Import Credential Vault</span>}
+      title={<span data-testid="vault-import-title">Import credential vault</span>}
       footer={footer}
     >
       {!preview ? (

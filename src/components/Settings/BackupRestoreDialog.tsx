@@ -207,7 +207,7 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={<span data-testid="backup-restore-title">Restore Backup</span>}
+      title={<span data-testid="backup-restore-title">Restore backup</span>}
       footer={footer}
     >
       {!preview ? (

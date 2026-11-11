@@ -213,7 +213,7 @@ export function PortableModeSettings() {
 
   return (
     <div className="settings-panel__category" data-testid="portable-mode-settings">
-      <h3 className="settings-panel__category-title">Portable Mode</h3>
+      <h3 className="settings-panel__category-title">Portable mode</h3>
 
       <div className="portable-mode__kv-row">
         <span className="portable-mode__kv-label">Status</span>
@@ -248,7 +248,7 @@ export function PortableModeSettings() {
           </div>
 
           <div className="settings-panel__section">
-            <h4 className="settings-panel__section-title">Config Files</h4>
+            <h4 className="settings-panel__section-title">Config files</h4>
             <ul className="portable-mode__file-list">
               {configFiles.map((f) => (
                 <li key={f.name} className="portable-mode__file-item">
@@ -290,7 +290,7 @@ export function PortableModeSettings() {
       )}
 
       <div className="settings-panel__section">
-        <h4 className="settings-panel__section-title">Config Migration</h4>
+        <h4 className="settings-panel__section-title">Config migration</h4>
         <p className="settings-panel__description">
           Copy configuration between installed and portable mode. Use Export to move your config to
           a portable drive, or Import to bring it back.
@@ -302,7 +302,7 @@ export function PortableModeSettings() {
             onClick={handleExport}
             data-testid="export-config-btn"
           >
-            Export to Directory
+            Export to directory
           </Button>
           <Button
             variant="secondary"
@@ -310,14 +310,14 @@ export function PortableModeSettings() {
             onClick={handleImport}
             data-testid="import-config-btn"
           >
-            Import from Directory
+            Import from directory
           </Button>
         </div>
       </div>
 
       {exportDialog && (
         <MigrationDialog
-          title="Export Config to Portable"
+          title="Export config to portable"
           description="Copy the current config files to a portable data directory."
           targetDirLabel="Destination"
           targetDir={migrationTarget}
@@ -333,7 +333,7 @@ export function PortableModeSettings() {
 
       {importDialog && (
         <MigrationDialog
-          title="Import Config from Portable"
+          title="Import config from portable"
           description="Copy config files from a portable data directory into the current config location."
           targetDirLabel="Source"
           targetDir={migrationTarget}

@@ -51,7 +51,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
           <h3 className="settings-panel__category-title">Restore</h3>
 
           <SettingsField
-            label="Restore Last Session on Startup"
+            label="Restore last session on startup"
             hint="Choose how the tabs and panel layout from your previous session are handled when the app starts. Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
           >
             <Select
@@ -78,11 +78,11 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
         show("sessionHistoryLimit") ||
         show("showRecentSessions")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Session History</h3>
+          <h3 className="settings-panel__category-title">Session history</h3>
 
           {show("sessionHistoryEnabled") && (
             <SettingsField
-              label="Auto-Save Sessions to History"
+              label="Auto-save sessions to history"
               hint="Record every session you open so it can be reconnected from the Recent Sessions panel. Passwords are never stored in history."
             >
               <Toggle
@@ -97,7 +97,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           {show("sessionHistoryLimit") && (
             <SettingsField
-              label="Session History Limit"
+              label="Session history limit"
               hint="Maximum number of recent sessions to keep (10–500). When the limit is reached, the least-recently-used unpinned entry is removed."
             >
               <NumberInput
@@ -117,7 +117,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           {show("showRecentSessions") && (
             <SettingsField
-              label="Show Recent Sessions Panel"
+              label="Show recent sessions panel"
               hint="Show the Recent Sessions sidebar panel and its activity-bar icon."
             >
               <Toggle
@@ -132,7 +132,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           {show("sessionHistoryEnabled") && (
             <SettingsField
-              label="Clear Session History"
+              label="Clear session history"
               hint="Remove all recorded sessions, including pinned entries."
             >
               <Button
@@ -145,7 +145,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
                   toast.success("Cleared session history");
                 }}
               >
-                Clear All History
+                Clear all history
               </Button>
             </SettingsField>
           )}
@@ -154,10 +154,10 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
       {show("networkToolHistoryEnabled") && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Network Tool History</h3>
+          <h3 className="settings-panel__category-title">Network tool history</h3>
 
           <SettingsField
-            label="Record Network Tool History"
+            label="Record network tool history"
             hint="Keep finished ping, traceroute, port scan, ping sweep, DNS, open-ports and Wake-on-LAN runs so they can be revisited, re-run and exported from each tool's History section, and keep each HTTP monitor's checks so its chart survives a stop or restart. Results can contain hostnames and IP addresses; they are stored only on this computer. The newest 50 runs per tool are kept for up to 30 days, and the newest 1,000 checks per monitor for up to 7 days."
           >
             <Toggle
@@ -170,7 +170,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
           </SettingsField>
 
           <SettingsField
-            label="Clear Network Tool History"
+            label="Clear network tool history"
             hint="Remove every recorded network tool run for all tools and every recorded HTTP monitor check."
           >
             <Button
@@ -182,7 +182,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
                 toast.success("Cleared network tool history");
               }}
             >
-              Clear Network Tool History
+              Clear network tool history
             </Button>
           </SettingsField>
         </div>
