@@ -172,3 +172,28 @@ describe("release-windows-smoke.yml keeps the per-machine LPAC check (#4264)", (
     expect(body).toContain("release_tag: ${{ needs.resolve-tag.outputs.tag }}");
   });
 });
+
+describe("release-candidate.yml runs the linux-arm64 install smoke (#5178)", () => {
+  const text = read(`${WORKFLOWS}/release-candidate.yml`);
+  const jobs = parseWorkflowJobs(text);
+
+  it("calls the arm64 smoke on the candidate's own Dev Build pre-release", () => {
+    const body = jobBody(text, "linux-arm64-smoke");
+    expect(body).toMatch(/^ {4}uses: \.\/\.github\/workflows\/release-linux-arm64-smoke\.yml\s*$/m);
+    expect(body).toContain("tag: ${{ needs.arm64-smoke-tag.outputs.tag }}");
+    expect(jobs.get("linux-arm64-smoke").needs).toEqual(["arm64-smoke-tag"]);
+    // Neither job may be skipped or tolerated: the release gate reads this
+    // run's conclusion.
+    for (const id of ["arm64-smoke-tag", "linux-arm64-smoke"]) {
+      expect(jobs.get(id).if, id).toBeUndefined();
+      expect(jobs.get(id).continueOnError, id).toBe(false);
+    }
+  });
+
+  it("only accepts a pre-release built from the candidate sha", () => {
+    const body = jobBody(text, "arm64-smoke-tag");
+    expect(body).toContain("SHA: ${{ github.sha }}");
+    expect(body).toMatch(/targetCommitish/);
+    expect(body).toMatch(/if \[ "\$target" = "\$SHA" \]/);
+  });
+});
