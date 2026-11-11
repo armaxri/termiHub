@@ -66,7 +66,12 @@ from termihub_harness.local_agent import LocalAgentUnavailable
 #: Local-forward listen ports are offset per checkout (parallel isolation).
 _TUNNEL_OFFSET = dev_local.port_offset()
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # macOS: a loopback sshd; Linux: the Docker SSH fixture, pulled in dynamically (#5340).
+    pytest.mark.requires_tools("sshd", platforms=("darwin",)),
+    pytest.mark.requires_tools("docker", platforms=("linux",)),
+]
 
 HOST = "127.0.0.1"
 #: What the forwarded HTTP service answers (the ssh-tunnel-target container's
