@@ -446,12 +446,6 @@ pub fn list_serial_ports_with_enabled_prefixes(enabled_prefixes: &[&str]) -> Vec
     list_serial_ports_with_dev_and_prefixes(std::path::Path::new("/dev"), enabled_prefixes)
 }
 
-/// Inner implementation used by Linux tests to inject a custom `/dev` directory.
-#[cfg(all(target_os = "linux", test))]
-pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<String> {
-    list_serial_ports_with_dev_and_prefixes(dev_dir, DEFAULT_EXTRA_LINUX_PREFIXES)
-}
-
 fn list_serial_ports_with_dev_and_prefixes(
     dev_dir: &std::path::Path,
     extra_prefixes: &[&str],
@@ -461,7 +455,20 @@ fn list_serial_ports_with_dev_and_prefixes(
         .into_iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+    combine_serial_ports(crate_ports, dev_dir, extra_prefixes)
+}
 
+/// Combine `serial2`'s enumeration (`crate_ports`) with the Linux `dev_dir` scan.
+///
+/// Split from [`list_serial_ports_with_dev_and_prefixes`] so tests can pass a
+/// fixed enumeration instead of the host's real ports: a host with real UARTs
+/// (e.g. the `ttyAMA*` ports of an arm64 CI runner) must not leak into them
+/// (#5178).
+fn combine_serial_ports(
+    crate_ports: Vec<String>,
+    dev_dir: &std::path::Path,
+    extra_prefixes: &[&str],
+) -> Vec<String> {
     #[cfg(target_os = "linux")]
     {
         let scanned = scan_extra_linux_serial_ports(dev_dir, extra_prefixes);
@@ -909,6 +916,27 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
+        /// The full listing for a fake `/dev` with a fixed `serial2` enumeration,
+        /// so the host's real serial ports never leak into a test (#5178).
+        fn list_with(
+            dev_dir: &std::path::Path,
+            crate_ports: &[String],
+            prefixes: &[&str],
+        ) -> Vec<String> {
+            combine_serial_ports(crate_ports.to_vec(), dev_dir, prefixes)
+        }
+
+        fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<String> {
+            list_with(dev_dir, &[], DEFAULT_EXTRA_LINUX_PREFIXES)
+        }
+
+        fn list_serial_ports_with_dev_and_prefixes(
+            dev_dir: &std::path::Path,
+            prefixes: &[&str],
+        ) -> Vec<String> {
+            list_with(dev_dir, &[], prefixes)
+        }
+
         fn make_dev_entries(dir: &std::path::Path, names: &[&str]) {
             for name in names {
                 fs::write(dir.join(name), b"").unwrap();
@@ -981,11 +1009,14 @@ mod tests {
 
         #[test]
         fn list_serial_ports_with_dev_deduplicates_ports() {
+            // `serial2` and the `/dev` scan both report the same UART: it is
+            // listed once. The enumeration is fixed, so a host with a real
+            // `/dev/ttyAMA1` (the arm64 CI runner) cannot add a second entry.
             let dir = TempDir::new().unwrap();
             make_dev_entries(dir.path(), &["ttyAMA1"]);
-            let ports = list_serial_ports_with_dev(dir.path());
-            let count = ports.iter().filter(|p| p.ends_with("ttyAMA1")).count();
-            assert_eq!(count, 1, "ttyAMA1 must not appear twice");
+            let path = dir.path().join("ttyAMA1").to_string_lossy().into_owned();
+            let ports = list_with(dir.path(), &[path.clone()], DEFAULT_EXTRA_LINUX_PREFIXES);
+            assert_eq!(ports, vec![path], "ttyAMA1 must not appear twice");
         }
 
         #[test]
