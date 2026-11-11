@@ -414,10 +414,15 @@ tokens. Only overridden colors need to be present. See
 [`solarized-night.json`](../examples/plugins/solarized-night-theme/themes/solarized-night.json)
 for a complete example.
 
-The terminal keeps every ANSI colour readable: when it renders, each of the 16
-`ansi*` colours is darkened or lightened (lightness only, hue kept) until it
-reaches 3:1 contrast against `terminalBg`. A colour that already passes is used
-as-is, so pick ANSI colours that pass and what you ship is what users see.
+The terminal keeps text readable: it enforces a 3:1 minimum contrast between
+each glyph and the background of its own cell, at render time (xterm.js
+`minimumContrastRatio`). Only the text colour of a cell that falls below 3:1 is
+adjusted; your theme's colours are never rewritten. ANSI colours are therefore
+used exactly as you ship them for backgrounds — so `ansiBlack` can equal
+`terminalBg`, and powerline segments or TUI panels painted in ANSI black blend
+into the terminal. Any pair that already reaches 3:1 renders exactly as
+authored. Powerline and box-drawing glyphs are exempt, and dim text is held to
+half the ratio.
 
 ### `protocolParser` and `statusBarWidget`
 

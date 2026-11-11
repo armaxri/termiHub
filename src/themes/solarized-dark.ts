@@ -69,11 +69,8 @@ export const solarizedDarkTheme: ThemeDefinition = {
     terminalCursor: "#839496",
     terminalSelection: "rgba(38, 139, 210, 0.3)",
 
-    // ANSI 16 — canonical Solarized mapping, except that every entry reaches
-    // 3:1 on terminalBg (#5191, locked by contrast.test.ts). Canonically
-    // brblack = base03 = the background, which printed text invisibly; the
-    // failing tones were lifted in OKLCH lightness only (hue and chroma kept).
-    ansiBlack: "#4b7683", // base02, lifted to 3:1 (#5191)
+    // ANSI 16 — canonical Solarized mapping
+    ansiBlack: "#073642", // base02
     ansiRed: "#dc322f",
     ansiGreen: "#859900",
     ansiYellow: "#b58900",
@@ -81,9 +78,9 @@ export const solarizedDarkTheme: ThemeDefinition = {
     ansiMagenta: "#d33682",
     ansiCyan: "#2aa198",
     ansiWhite: "#eee8d5", // base2
-    ansiBrightBlack: "#4e7682", // base03, lifted to 3:1 (#5191)
+    ansiBrightBlack: "#002b36", // base03
     ansiBrightRed: "#cb4b16", // orange
-    ansiBrightGreen: "#5d737a", // base01, lifted to 3:1 (#5191)
+    ansiBrightGreen: "#586e75", // base01
     ansiBrightYellow: "#657b83", // base00
     ansiBrightBlue: "#839496", // base0
     ansiBrightMagenta: "#6c71c4", // violet
