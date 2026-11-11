@@ -1,5 +1,5 @@
-//! Real-shell tests: a startup prompt never gets termiHub's typed setup as its
-//! answer (#5452).
+//! Real-shell tests: a startup prompt never gets termiHub's typed setup (#5452)
+//! or a connection's initial command (#5455) as its answer.
 //!
 //! A startup file can ask a question before the first prompt: zsh's
 //! `compinit` asks "Ignore insecure directories and continue [y]?", and
@@ -56,6 +56,11 @@ struct Session {
 
 impl Session {
     async fn start(shell_name: &str) -> Session {
+        Self::start_with(shell_name, serde_json::json!({ "shellIntegration": true })).await
+    }
+
+    /// Start with the settings in `extra` on top of the scratch environment.
+    async fn start_with(shell_name: &str, extra: serde_json::Value) -> Session {
         let home = tempfile::tempdir().expect("temp HOME");
         startup_files(home.path());
         let dir = |name: &str| {
@@ -69,9 +74,8 @@ impl Session {
             .join(".th_history")
             .to_string_lossy()
             .to_string();
-        let settings = serde_json::json!({
+        let mut settings = serde_json::json!({
             "shell": shell_name,
-            "shellIntegration": true,
             "envVars": [
                 { "key": "HOME", "value": home_str },
                 { "key": "ZDOTDIR", "value": home_str },
@@ -86,6 +90,9 @@ impl Session {
                 { "key": "BASH_SILENCE_DEPRECATION_WARNING", "value": "1" },
             ],
         });
+        if let (Some(settings), Some(extra)) = (settings.as_object_mut(), extra.as_object()) {
+            settings.extend(extra.clone());
+        }
         let mut shell = LocalShell::new();
         shell.connect(settings).await.expect("connect failed");
         let rx = shell.subscribe_output();
@@ -186,4 +193,70 @@ async fn bash_startup_question_is_not_answered_by_the_setup() {
         return;
     }
     assert_question_waits_for_the_user("bash").await;
+}
+
+/// A connection's initial command without the integration (#5455): the
+/// session manager types it once [`wait_for_prompt`] sees the backend's probe
+/// report the prompt. A startup question must not count as that prompt.
+async fn assert_initial_command_waits_for_the_user(shell_name: &str) {
+    use crate::session::prompt_ready::{wait_for_prompt, PromptSignal};
+    const INITIAL: &str = "echo INIT_$((6*7))";
+    let mut s = Session::start_with(
+        shell_name,
+        serde_json::json!({ "shellIntegration": false, "initialCommand": INITIAL }),
+    )
+    .await;
+    s.read_until("the startup question", |t| t.contains(QUESTION))
+        .await;
+    let probe = s
+        .shell
+        .prompt_probe()
+        .expect("a local bash/zsh has a probe");
+    let early = tokio::time::timeout(
+        Duration::from_millis(2500),
+        wait_for_prompt(None, Some(&probe)),
+    )
+    .await;
+    assert!(
+        !matches!(early, Ok(PromptSignal::Probe)),
+        "{shell_name}: the probe took the startup question for the prompt: {:?}",
+        s.text()
+    );
+
+    // The user answers the question; then the prompt is reported.
+    s.shell.write(b"y").expect("write");
+    let signal = wait_for_prompt(None, Some(&probe)).await;
+    assert_eq!(signal, PromptSignal::Probe, "{shell_name}: {:?}", s.text());
+    s.shell
+        .write(format!("{INITIAL}\r").as_bytes())
+        .expect("write");
+    s.read_until("the initial command's output", |t| t.contains("INIT_42"))
+        .await;
+    let text = s.text();
+    assert!(
+        (text.contains("ANSWER-y") || text.contains("ANSWER-Y"))
+            && !text.contains("command not found"),
+        "{shell_name}: {text:?}"
+    );
+    s.close().await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn zsh_startup_question_is_not_answered_by_the_initial_command() {
+    if !installed("zsh") {
+        eprintln!("zsh not installed — skipping");
+        return;
+    }
+    assert_initial_command_waits_for_the_user("zsh").await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn bash_startup_question_is_not_answered_by_the_initial_command() {
+    if !installed("bash") {
+        eprintln!("bash not installed — skipping");
+        return;
+    }
+    assert_initial_command_waits_for_the_user("bash").await;
 }
