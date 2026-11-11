@@ -316,10 +316,96 @@ describe("ConnectionEditor top-level fields — Save gate (zod)", () => {
     expect(addConnection).not.toHaveBeenCalled();
   });
 
-  it("does not render an inline error for a merely-blank name (gate only)", async () => {
+  it("does not render the blank-name error before the field is touched", async () => {
     renderEditor("new");
     await flush();
     expect(q("connection-editor-name-error")).toBeNull();
+    expect(nameInput().getAttribute("aria-invalid")).toBeNull();
+  });
+});
+
+// #5284 (UX-018): a blank name blocked Save with no visible reason and no
+// required marker. It now reveals "Name is required." once the field is touched
+// or a save is attempted, and Save moves focus to the Name field.
+describe("ConnectionEditor top-level fields — blank-name validation (#5284)", () => {
+  /** Wait out the requestAnimationFrame the focus-first-invalid step defers to. */
+  async function settleFrame(): Promise<void> {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+  }
+
+  it("marks Name as required like the other required fields", async () => {
+    renderEditor("new");
+    await flush();
+    const label = container.querySelector(`label[for="${nameInput().id}"]`);
+    expect(label?.textContent).toContain("Name");
+    expect(label?.querySelector(".settings-form__required")).not.toBeNull();
+    expect(nameInput().getAttribute("aria-required")).toBe("true");
+  });
+
+  it("shows 'Name is required.' once the blank Name field is touched", async () => {
+    renderEditor("new");
+    await flush();
+    act(() => {
+      nameInput().focus();
+      nameInput().blur();
+    });
+    await flush();
+    expect(q("connection-editor-name-error")?.textContent).toBe("Name is required.");
+    expect(nameInput().getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("shows the error when a typed name is cleared, and drops it once named", async () => {
+    renderEditor("new");
+    await flush();
+    setInput(nameInput(), "x");
+    setInput(nameInput(), "   ");
+    await flush();
+    expect(q("connection-editor-name-error")?.textContent).toBe("Name is required.");
+
+    setInput(nameInput(), "Named");
+    await flush();
+    expect(q("connection-editor-name-error")).toBeNull();
+  });
+
+  it("does not save on Save while blank, reveals the error and focuses Name", async () => {
+    const addConnection = vi.fn();
+    useAppStore.setState({ addConnection });
+    renderEditor("new");
+    await flush();
+
+    const save = q("connection-editor-save") as HTMLButtonElement;
+    // aria-disabled, not disabled: the button stays keyboard-reachable.
+    expect(save.disabled).toBe(false);
+    expect(save.getAttribute("aria-disabled")).toBe("true");
+    act(() => save.focus());
+    expect(document.activeElement).toBe(save);
+
+    act(() => save.click());
+    await flush();
+    await settleFrame();
+
+    expect(addConnection).not.toHaveBeenCalled();
+    expect(q("connection-editor-name-error")?.textContent).toBe("Name is required.");
+    expect(document.activeElement).toBe(nameInput());
+  });
+
+  it("does not save on Save & Connect while blank and focuses Name", async () => {
+    const addConnection = vi.fn();
+    useAppStore.setState({ addConnection });
+    renderEditor("new");
+    await flush();
+
+    const saveConnect = q("connection-editor-save-connect") as HTMLButtonElement;
+    act(() => saveConnect.focus());
+    act(() => saveConnect.click());
+    await flush();
+    await settleFrame();
+
+    expect(addConnection).not.toHaveBeenCalled();
+    expect(q("connection-editor-name-error")?.textContent).toBe("Name is required.");
+    expect(document.activeElement).toBe(nameInput());
   });
 });
 

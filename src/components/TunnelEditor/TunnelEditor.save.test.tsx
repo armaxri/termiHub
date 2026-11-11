@@ -1,7 +1,7 @@
 /**
  * Save-feedback tests for the TunnelEditor (UX-022): a plain Save now confirms
  * with a success toast (matching Duplicate/Delete/Start) instead of only closing
- * the tab, and Save is disabled while the name is blank rather than silently
+ * the tab, and Save is blocked while the name is blank rather than silently
  * persisting the tunnel as "Untitled Tunnel". Save & Start defers its feedback to
  * `startTunnel`, so it must NOT also raise the "Saved tunnel" toast.
  */
@@ -120,23 +120,23 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     vi.clearAllMocks();
   });
 
-  it("disables both save actions while the name is blank", async () => {
+  it("marks both save actions aria-disabled while the name is blank", async () => {
     await render();
-    expect(saveButton().disabled).toBe(true);
-    expect(saveStartButton().disabled).toBe(true);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    expect(saveStartButton().getAttribute("aria-disabled")).toBe("true");
   });
 
   it("enables Save once a non-blank name is entered", async () => {
     await render();
     setValue(nameInput(), "Dev DB");
-    expect(saveButton().disabled).toBe(false);
-    expect(saveStartButton().disabled).toBe(false);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("false");
+    expect(saveStartButton().getAttribute("aria-disabled")).toBe("false");
   });
 
-  it("keeps Save disabled for a whitespace-only name", async () => {
+  it("keeps Save aria-disabled for a whitespace-only name", async () => {
     await render();
     setValue(nameInput(), "   ");
-    expect(saveButton().disabled).toBe(true);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
   });
 
   it("confirms a plain Save with a success toast and does not start", async () => {
@@ -164,11 +164,11 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     const nameError = () => document.getElementById(`tunnel-name-${TAB_ID}-error`);
     expect(nameError()?.textContent).toBe("Name is required.");
     expect(nameInput().getAttribute("aria-invalid")).toBe("true");
-    expect(saveButton().disabled).toBe(true);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
 
     setValue(nameInput(), "Dev DB");
     expect(nameError()).toBeNull();
-    expect(saveButton().disabled).toBe(false);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("false");
   });
 
   it("shows the SSH-connection error when there is no SSH connection to pick", async () => {
@@ -177,6 +177,64 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     setValue(nameInput(), "Dev DB");
     const sshField = container.querySelector('[data-testid="tunnel-editor-ssh-connection-field"]');
     expect(sshField?.textContent).toContain("An SSH connection is required.");
-    expect(saveButton().disabled).toBe(true);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+  });
+  // #5284: Save is aria-disabled, not disabled, so it stays keyboard-reachable;
+  // activating it while invalid saves nothing and focuses the first invalid field.
+  it("keeps Save focusable while invalid and focuses the blank name on activation", async () => {
+    await render();
+    const save = saveButton();
+    expect(save.disabled).toBe(false);
+    act(() => save.focus());
+    expect(document.activeElement).toBe(save);
+
+    click(save);
+    await flush();
+    expect(useAppStore.getState().saveTunnel).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(nameInput());
+  });
+
+  it("does not save on Save & Start while invalid and focuses the first invalid field", async () => {
+    await render();
+    act(() => saveStartButton().focus());
+    click(saveStartButton());
+    await flush();
+    expect(useAppStore.getState().saveTunnel).not.toHaveBeenCalled();
+    expect(useAppStore.getState().startTunnel).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(nameInput());
+  });
+
+  it("focuses the SSH connection picker when it is the first invalid field", async () => {
+    seedConnectionsRegion({ connections: [] });
+    await render();
+    setValue(nameInput(), "Dev DB");
+    click(saveButton());
+    await flush();
+    expect(useAppStore.getState().saveTunnel).not.toHaveBeenCalled();
+    const ssh = container.querySelector('[data-testid="tunnel-editor-ssh-connection"]');
+    expect(document.activeElement).toBe(ssh);
+  });
+
+  it("focuses a blank port, with its inline reason, when the name is valid", async () => {
+    await render();
+    setValue(nameInput(), "Dev DB");
+    const remotePort = container.querySelector<HTMLInputElement>(
+      '[data-testid="tunnel-editor-remote-port"]'
+    )!;
+    setValue(remotePort, "");
+    expect(remotePort.getAttribute("aria-invalid")).toBe("true");
+    expect(document.getElementById(`${remotePort.id}-error`)?.textContent).toBeTruthy();
+
+    // Enter from another single-line field goes through the same guard.
+    const localHost = container.querySelector<HTMLInputElement>(`#tunnel-local-host-${TAB_ID}`)!;
+    act(() => localHost.focus());
+    act(() => {
+      localHost.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+      );
+    });
+    await flush();
+    expect(useAppStore.getState().saveTunnel).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(remotePort);
   });
 });
