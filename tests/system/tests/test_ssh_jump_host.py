@@ -7,6 +7,10 @@ both tabs, starts it again, and asserts that both tabs reconnect on their own
 (Auto-Reconnect is on by default) and that the re-established chains share one
 new gateway session — counted on the bastion itself by :class:`BastionControl`.
 
+On the macOS lane (#5176) the bastion is the native sshd fixture's second sshd
+(``--jump-host``) and the target is its first one; :func:`bastion_control`
+returns the matching controller.
+
 The pooling and eviction rules underneath are also covered headlessly against the
 same fixture by ``core/tests/ssh_advanced.rs`` (SSH-JUMP-03 and SSH-JUMP-07).
 """
@@ -24,7 +28,7 @@ from termihub_harness import (
     SSH_JUMP_TARGET_HOST,
     SSH_JUMP_TARGET_PORT,
     SSH_KEY_PATH,
-    BastionControl,
+    bastion_control,
     BridgeError,
     ConnectionsUi,
     ComposeFixtureFailed,
@@ -52,6 +56,7 @@ RECONNECT_TIMEOUT = 150.0
 
 
 @pytest.mark.usefixtures("ssh_bastion_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshJumpHostReconnect(
     JumpHostUi, TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest
 ):
@@ -111,7 +116,7 @@ class TestSshJumpHostReconnect(
 
         self.wait(live, timeout=timeout, interval=2.0, what=f"{marker!r} in tab {tab_id}")
 
-    def _wait_for_gateway_sessions(self, bastion: BastionControl, expected: int, why: str) -> None:
+    def _wait_for_gateway_sessions(self, bastion: Any, expected: int, why: str) -> None:
         self.wait(
             lambda: bastion.gateway_sessions() == expected,
             timeout=30.0,
@@ -121,7 +126,7 @@ class TestSshJumpHostReconnect(
     def test_both_tabs_reconnect_through_one_new_gateway(self):
         if not SSH_KEY_PATH.exists():
             pytest.skip(f"SSH key fixture missing: {SSH_KEY_PATH}")
-        bastion = BastionControl()
+        bastion = bastion_control()
         if not bastion.available:
             pytest.skip("no container runtime to stop/start the bastion")
         try:

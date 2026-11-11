@@ -43,6 +43,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshPasswordAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-01: password authentication opens a working terminal tab."""
 
@@ -87,6 +88,7 @@ class TestSshPasswordAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, S
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshPasswordPromptFlow(TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-PASSWORD: the password-prompt modal gates the connection."""
 
@@ -139,6 +141,7 @@ class TestSshPasswordPromptFlow(TabsUi, ConnectionsUi, PasswordPromptUi, SystemT
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshKeyAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-02: key-based authentication connects without a password prompt."""
 
@@ -187,6 +190,7 @@ class TestSshConnectionFailure(ConnectionsUi, PasswordPromptUi, SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-05: the SSH terminal is interactive and streams command output."""
 
@@ -211,6 +215,7 @@ class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTe
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, MonitoringUi, SystemTest):
     """SSH-08: monitoring follows the active tab between an SSH and a local tab.
 

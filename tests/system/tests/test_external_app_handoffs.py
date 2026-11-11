@@ -351,6 +351,7 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSftpVscodeHandoff(
     TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, SftpUi, FilesUi,
     SystemTest,

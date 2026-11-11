@@ -40,6 +40,7 @@ FILES = ("toggle-file-browser", "fileBrowserEnabled")
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshMonitoringSettings(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, MonitoringUi, SftpUi, SettingsUi, SystemTest):
     @pytest.fixture(autouse=True)
     def _restore_settings(self):

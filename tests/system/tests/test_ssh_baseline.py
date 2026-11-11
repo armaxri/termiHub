@@ -28,6 +28,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshBaseline(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi, SystemTest):
     def test_key_auth_connects_without_password_prompt(self):
         name = unique_name("ssh-key-baseline")

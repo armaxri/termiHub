@@ -26,6 +26,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshExtended(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     def test_connects_without_x11(self):
         name = unique_name("ssh-no-x11")
