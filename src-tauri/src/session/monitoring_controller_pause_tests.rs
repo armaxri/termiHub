@@ -64,7 +64,12 @@ async fn pause_and_resume_stop_and_restart_the_agent_loop() {
     let app = app_with(&agent);
 
     controller
-        .start_session_monitoring("sess", Some(3000), on_agent("pause-ok"), app.handle().clone())
+        .start_session_monitoring(
+            "sess",
+            Some(3000),
+            on_agent("pause-ok"),
+            app.handle().clone(),
+        )
         .await
         .expect("agent start");
     assert_eq!(count(&agent, CONNECTION_MONITORING_SUBSCRIBE), 1);
@@ -259,7 +264,10 @@ async fn an_interval_change_after_a_stop_does_not_resurrect_the_monitor() {
     let proxy = override_proxy(&overrides).await;
 
     assert!(controller.stop_session_monitoring("sess").await.is_err());
-    assert!(agent_monitor_stops::stop_pending("interval-stopped", "self"));
+    assert!(agent_monitor_stops::stop_pending(
+        "interval-stopped",
+        "self"
+    ));
 
     proxy.set_interval(Duration::from_millis(4000)).await;
     assert_eq!(
@@ -274,7 +282,10 @@ async fn an_interval_change_after_a_stop_does_not_resurrect_the_monitor() {
 
     advance(5).await;
     assert_eq!(count(&agent, CONNECTION_MONITORING_UNSUBSCRIBE), 2);
-    assert!(!agent_monitor_stops::stop_pending("interval-stopped", "self"));
+    assert!(!agent_monitor_stops::stop_pending(
+        "interval-stopped",
+        "self"
+    ));
     assert_eq!(
         last_verb(&agent).as_deref(),
         Some(CONNECTION_MONITORING_UNSUBSCRIBE)
