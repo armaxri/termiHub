@@ -13,7 +13,10 @@ fn the_same_entry_is_the_same_file() {
 #[test]
 fn a_folder_into_its_own_subtree_is_inside_the_source() {
     assert_eq!(copy_conflict("/a/d", "/a/d/sub", true), Some(INSIDE_SOURCE));
-    assert_eq!(copy_conflict("/a/d", "/a/d/x/y/z", true), Some(INSIDE_SOURCE));
+    assert_eq!(
+        copy_conflict("/a/d", "/a/d/x/y/z", true),
+        Some(INSIDE_SOURCE)
+    );
     assert_eq!(copy_conflict("/", "/x", true), Some(INSIDE_SOURCE));
 }
 
@@ -85,7 +88,12 @@ async fn a_missing_destination_resolves_through_its_parent() {
 
 #[tokio::test]
 async fn a_file_onto_itself_is_refused_whatever_the_spelling() {
-    for dest in ["/data/dir/f", "/data/dir/./f", "/data/dir/sub/../f", "/link/f"] {
+    for dest in [
+        "/data/dir/f",
+        "/data/dir/./f",
+        "/data/dir/sub/../f",
+        "/link/f",
+    ] {
         let err = check("/data/dir/f", dest, false)
             .await
             .expect_err(&format!("{dest} is the source"));
@@ -118,8 +126,12 @@ async fn a_folder_into_itself_or_a_descendant_is_refused() {
 
 #[tokio::test]
 async fn a_different_target_or_an_unresolvable_path_is_allowed() {
-    check("/data/dir/f", "/data/g", false).await.expect("other file");
-    check("/data/dir", "/data/dir2", true).await.expect("sibling");
+    check("/data/dir/f", "/data/g", false)
+        .await
+        .expect("other file");
+    check("/data/dir", "/data/dir2", true)
+        .await
+        .expect("sibling");
     check("/missing/f", "/data/dir/f", false)
         .await
         .expect("unresolvable source is left to the copy");

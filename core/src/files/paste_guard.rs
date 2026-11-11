@@ -204,8 +204,7 @@ impl PathResolver {
             #[cfg(feature = "ssh")]
             PathResolver::Sftp(sftp) => {
                 use crate::backends::ssh::SftpAdvancedOps;
-                resolve_through_parent(path, |p| async move { sftp.realpath(&p).await.ok() })
-                    .await
+                resolve_through_parent(path, |p| async move { sftp.realpath(&p).await.ok() }).await
             }
             #[cfg(feature = "docker")]
             PathResolver::Docker(target) => target.resolve_path(path).await,
@@ -221,9 +220,12 @@ impl PathResolver {
         dest: &str,
         src_is_dir: bool,
     ) -> Result<(), FileError> {
-        check_resolved(src, dest, src_is_dir, |p| async move {
-            self.resolve(&p).await
-        })
+        check_resolved(
+            src,
+            dest,
+            src_is_dir,
+            |p| async move { self.resolve(&p).await },
+        )
         .await
     }
 }
