@@ -36,6 +36,7 @@ pub mod session_pool;
 pub mod sftp;
 #[cfg(any(test, feature = "ssh-test-support"))]
 pub mod sftp_only_test_server;
+mod sftp_mutation;
 pub mod sftp_ops;
 mod terminal_reply;
 pub mod unattended;
