@@ -668,6 +668,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::session_set_owner,
             commands::session::session_create_symlink,
             commands::session::session_copy,
+            commands::session::session_check_paste,
             // Session-scoped SFTP advanced ops & transfers (#2312)
             commands::session::session_realpath,
             commands::session::session_check_writable,

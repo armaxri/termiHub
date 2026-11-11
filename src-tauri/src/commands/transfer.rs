@@ -207,6 +207,13 @@ pub async fn session_copy_remote(
     );
     let src = resolve_copy_endpoint(&manager, &src_session).await?;
     let dst = resolve_copy_endpoint(&manager, &dst_session).await?;
+    // The executor truncates the destination before it reads the source, so a
+    // copy of a file onto itself on one end must never start (#5330).
+    if same_copy_end((&src_session, &src), (&dst_session, &dst)) {
+        transfer::remote_copy::ensure_copy_within_allowed(&src.endpoint, &src_path, &dst_path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+    }
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
     // Named/pathed for the *destination* (where the file lands), mirroring the
@@ -247,6 +254,23 @@ pub async fn session_copy_remote(
         .await;
     });
     Ok(transfer_id)
+}
+
+/// Whether both ends of a remote-to-remote copy are one filesystem: the same
+/// session, or two sessions on the same container (#5330).
+fn same_copy_end(
+    (src_session, src): (&str, &CopyEnd),
+    (dst_session, dst): (&str, &CopyEnd),
+) -> bool {
+    if src_session == dst_session {
+        return true;
+    }
+    match (&src.endpoint, &dst.endpoint) {
+        (RemoteCopyEndpoint::Docker(a), RemoteCopyEndpoint::Docker(b)) => {
+            a.container_id() == b.container_id()
+        }
+        _ => false,
+    }
 }
 
 /// Persist a remote-to-remote copy for the durable queue (PROD-0011): metadata

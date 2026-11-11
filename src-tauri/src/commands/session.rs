@@ -988,6 +988,21 @@ pub async fn session_copy(
     manager.copy_file(&session_id, &src, &dest).await
 }
 
+/// Refuse a same-session paste of a file onto itself, or of a folder into its
+/// own subtree, before the frontend writes anything (#5330). Both paths are
+/// resolved on the session's backend, so a symlink alias or a respelled path
+/// is caught where the frontend's textual check is not.
+#[tauri::command]
+pub async fn session_check_paste(
+    session_id: String,
+    src: String,
+    dest: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, src, dest, "Session paste check");
+    manager.ensure_paste_allowed(&session_id, &src, &dest).await
+}
+
 // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
 //
 // Session-path mirrors of the standalone `sftp_*` commands, routed through the

@@ -516,3 +516,29 @@ fn a_ranged_end_debug_prints_its_kind() {
     let end = RemoteCopyEndpoint::Ranged(MemRanged::new());
     assert_eq!(format!("{end:?}"), "Ranged");
 }
+
+/// A same-session copy of a file onto itself (#5330): refused before the
+/// destination is opened, whatever the spelling, and the bytes stay intact.
+#[tokio::test]
+async fn a_copy_onto_itself_on_one_end_is_refused_and_keeps_the_bytes() {
+    let target = MemRanged::new();
+    target.put("/d/f", content(3 * SLICE as usize, 7), 1);
+    let end = RemoteCopyEndpoint::Ranged(target.clone());
+    for dest in ["/d/f", "/d/./f", "/d/x/../f", "//d//f"] {
+        let err = ensure_copy_within_allowed(&end, "/d/f", dest)
+            .await
+            .expect_err(&format!("{dest} is the source"));
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Operation failed: copy /d/f to {dest} refused: \
+                 source and destination are the same file"
+            )
+        );
+    }
+    assert_eq!(target.get("/d/f"), Some(content(3 * SLICE as usize, 7)));
+    assert!(target.writes().is_empty(), "nothing may be written");
+    ensure_copy_within_allowed(&end, "/d/f", "/d/g")
+        .await
+        .expect("a different file copies");
+}
