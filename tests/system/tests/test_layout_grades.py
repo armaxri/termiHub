@@ -181,10 +181,14 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
         try:
             m = self._measure_when(
                 tab,
+                # Rows settled too (#5121): the row count follows the layout of
+                # the mode on screen, which can land a frame after the toggle. A
+                # grid that never drops the row the bar covers times out here.
                 lambda m: m["paint"]["horizontalScroll"]
                 and m.get("proposed")
-                and m["grid"]["cols"] > m["proposed"]["cols"],
-                "the long lines to overflow the viewport horizontally",
+                and m["grid"]["cols"] > m["proposed"]["cols"]
+                and m["grid"]["rows"] == m["proposed"]["rows"],
+                "the long lines to overflow the viewport horizontally, rows fitted",
             )
             bar, paint = m["scrollbar"], m["paint"]
             assert bar["thumbVisible"], bar
