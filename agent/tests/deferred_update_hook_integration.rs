@@ -53,7 +53,7 @@
 //! fails harmlessly and — per #1401 — keeps the record. `close_session` in the
 //! busy case takes the agent to zero sessions and therefore fires exactly that
 //! path; `deferred_hook_does_not_swap_the_agent_binary` pins the outcome by
-//! inode.
+//! inode and content hash, on a private copy no other test can touch.
 //!
 //! ## Platforms
 //!
@@ -65,7 +65,8 @@
 //! #3615, #5218).
 //!
 //! The apply guarantee splits by platform. The real binary swap is Unix-only,
-//! so `deferred_hook_does_not_swap_the_agent_binary` pins it by inode there.
+//! so `deferred_hook_does_not_swap_the_agent_binary` pins it by inode and
+//! content hash there.
 //! On Windows the last-disconnect apply hits the non-Unix `apply_update_binary`
 //! stub, and `live_agent_tcp_windows_last_disconnect_apply_fails_closed` pins
 //! that it fails closed and keeps the pending record.
@@ -131,15 +132,18 @@ const SHARED_COPY_PREFIX: &str = "deferred-hook-agent-";
 /// removes it: the n-th agent no longer waits on n-1 others.
 ///
 /// **Why it is still a copy.** A regression that did apply an update would
-/// clobber the copy, not cargo's artifact, and
-/// `deferred_hook_does_not_swap_the_agent_binary` would catch it by inode.
+/// clobber the copy, not cargo's artifact. The one test that checks for that,
+/// `deferred_hook_does_not_swap_the_agent_binary`, runs from a private copy of
+/// its own (see [`LiveAgent::spawn_private`]), so nothing a sibling test does
+/// to the shared one can fail it (#5434).
 ///
 /// **Where it lives.** In `CARGO_TARGET_TMPDIR`, named by the artifact's size
 /// and mtime. A later run of the same build reuses the copy, which the OS has
 /// already assessed. A rebuild gets a fresh name and sweeps the old copies. The
-/// copy is written under a unique name and renamed into place. That way a
-/// concurrent run of this suite in the same target dir never executes a
-/// half-written file. `cargo clean` removes it with the rest of `target/`.
+/// copy is written under a unique name and linked into place without replacing
+/// an existing one (see [`publish_warm_copy`]). That way a concurrent test
+/// process never executes a half-written file, and never has the file it runs
+/// replaced under it. `cargo clean` removes it with the rest of `target/`.
 fn shared_agent_binary() -> &'static Path {
     static SHARED: OnceLock<PathBuf> = OnceLock::new();
     SHARED.get_or_init(|| {
@@ -158,8 +162,6 @@ fn shared_agent_binary() -> &'static Path {
             meta.len(),
             std::env::consts::EXE_SUFFIX
         );
-        let path = dir.join(&name);
-
         // Best effort: sweep copies left by earlier builds. A sibling run still
         // executing one keeps its open inode, so unlinking it is harmless.
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -171,33 +173,65 @@ fn shared_agent_binary() -> &'static Path {
             }
         }
 
-        // The copy and the warm-up exec both run under the fork lock. A fork
-        // during the copy would leak our write fd into the child and break our
-        // own execve with ETXTBSY (#1597). See `common::fork_guard`.
-        let _fork_guard = common::fork_guard();
-        if !path.exists() {
-            let staging = dir.join(format!(".{name}.{}", std::process::id()));
-            std::fs::copy(&source, &staging).expect("copy agent binary");
-            // `fs::copy` keeps the mode on unix; set it anyway so the copy is
-            // executable whatever the artifact's mode. Windows has no exec bit.
-            #[cfg(unix)]
-            std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod agent copy");
-            std::fs::rename(&staging, &path).expect("move agent copy into place");
-        }
-        // Pay the first-exec assessment here, with no deadline, not inside a
-        // test's startup budget. `--version` prints and exits without touching
-        // config or the network.
-        let status = Command::new(&path)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("run agent copy --version");
-        assert!(status.success(), "agent copy --version failed: {status}");
-        path
+        publish_warm_copy(&source, dir, &name)
     })
+}
+
+/// Make `dir/name` an executed copy of `source`, without ever replacing a copy
+/// that is already there.
+///
+/// **No clobbering.** Nextest runs each test in its own process, so every test
+/// process of this binary runs its own [`shared_agent_binary`] initialisation.
+/// The copy used to be published with `rename`, which replaces an existing
+/// file: a process that saw no copy yet would rename its own over the one a
+/// sibling test was already running from, and that test saw its binary change
+/// inode mid-run (#5434). The copy is now published with `hard_link`, which
+/// fails if the name exists, so the first writer wins and nobody replaces a
+/// published copy. Readers never see a half-written file: the staging file is
+/// complete before it is linked.
+///
+/// The copy and the warm-up exec both run under the fork lock. A fork during
+/// the copy would leak our write fd into the child and break our own execve
+/// with ETXTBSY (#1597). See `common::fork_guard`.
+fn publish_warm_copy(source: &Path, dir: &Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    let _fork_guard = common::fork_guard();
+    if !path.exists() {
+        let staging = dir.join(format!(".{name}.{}", std::process::id()));
+        std::fs::copy(source, &staging).expect("copy agent binary");
+        // `fs::copy` keeps the mode on unix; set it anyway so the copy is
+        // executable whatever the artifact's mode. Windows has no exec bit.
+        #[cfg(unix)]
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod agent copy");
+        match std::fs::hard_link(&staging, &path) {
+            // Ours, or a sibling's that won the race: either is a complete copy
+            // of the same build, and the published one is left in place.
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => panic!("publish agent copy at {}: {e}", path.display()),
+        }
+        let _ = std::fs::remove_file(&staging);
+    }
+    // Pay the first-exec assessment here, with no deadline, not inside a
+    // test's startup budget. `--version` prints and exits without touching
+    // config or the network.
+    let status = Command::new(&path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run agent copy --version");
+    assert!(status.success(), "agent copy --version failed: {status}");
+    path
+}
+
+/// SHA-256 of the file at `path`, or `None` if it cannot be read.
+#[cfg(unix)]
+fn content_hash(path: &Path) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    std::fs::read(path).ok().map(|b| Sha256::digest(b).into())
 }
 
 #[cfg(unix)]
@@ -217,6 +251,9 @@ struct LiveAgent {
     bin_path: PathBuf,
     stderr_path: PathBuf,
     config_home: TempDir,
+    /// Holds a private binary copy for the agent's lifetime (see
+    /// [`LiveAgent::spawn_private`]); `None` when it runs the shared copy.
+    _private_bin_dir: Option<TempDir>,
 }
 
 impl Drop for LiveAgent {
@@ -240,7 +277,32 @@ impl LiveAgent {
     /// same port and win the re-bind, killing this agent at startup. Letting the
     /// OS assign the port to the process that keeps it closes that window.
     fn spawn(gate: Option<&str>) -> Self {
-        let bin_path = shared_agent_binary().to_path_buf();
+        Self::spawn_from(shared_agent_binary().to_path_buf(), None, gate)
+    }
+
+    /// Like [`LiveAgent::spawn`], but the agent runs a copy of the binary that
+    /// only it uses.
+    ///
+    /// For a test that asserts on the binary file itself. The shared copy is
+    /// one path for every test process of this suite, so a check on it also
+    /// observes whatever those processes do to it; under nextest they run in
+    /// parallel, and one of them republishing the shared copy made
+    /// `deferred_hook_does_not_swap_the_agent_binary` see a new inode (#5434).
+    /// This copy pays its own first-exec assessment up front, like the shared
+    /// one, so it costs no startup budget.
+    #[cfg(unix)]
+    fn spawn_private(gate: Option<&str>) -> Self {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        std::fs::create_dir_all(dir).expect("create target tmp dir");
+        let bin_dir = tempfile::Builder::new()
+            .prefix("deferred-hook-private-")
+            .tempdir_in(dir)
+            .expect("private binary dir");
+        let bin_path = publish_warm_copy(&agent_binary(), bin_dir.path(), "termihub-agent");
+        Self::spawn_from(bin_path, Some(bin_dir), gate)
+    }
+
+    fn spawn_from(bin_path: PathBuf, private_bin_dir: Option<TempDir>, gate: Option<&str>) -> Self {
         let config_home = TempDir::new().expect("config home");
 
         let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
@@ -291,6 +353,7 @@ impl LiveAgent {
             bin_path,
             stderr_path,
             config_home,
+            _private_bin_dir: private_bin_dir,
         }
     }
 
@@ -625,8 +688,11 @@ fn live_agent_tcp_armed_hook_makes_the_deferred_busy_path_reachable() {
 #[cfg(unix)]
 #[test]
 fn deferred_hook_does_not_swap_the_agent_binary() {
-    let agent = LiveAgent::spawn(Some("1"));
+    // A private copy: the shared one is also seen by every other test process
+    // of this suite, and this test must observe only its own agent (#5434).
+    let agent = LiveAgent::spawn_private(Some("1"));
     let inode_before = inode(&agent.bin_path).expect("binary present at start");
+    let hash_before = content_hash(&agent.bin_path).expect("binary readable at start");
 
     let mut client = Client::connect(&agent);
     client
@@ -649,6 +715,13 @@ fn deferred_hook_does_not_swap_the_agent_binary() {
         inode(&agent.bin_path),
         Some(inode_before),
         "the agent binary must not be swapped by the test hook"
+    );
+    // The content too: a swap that kept the inode (rewrite in place) or the
+    // size must still fail.
+    assert_eq!(
+        content_hash(&agent.bin_path),
+        Some(hash_before),
+        "the agent binary's content must not change under the test hook"
     );
     // #1401: a failed apply keeps the record for a later retry.
     assert_eq!(
