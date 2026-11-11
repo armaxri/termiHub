@@ -35,15 +35,15 @@ use super::*;
 use crate::network::test_support::FakeAgent;
 use crate::session::agent_monitor_stops;
 
-type Sessions = Mutex<HashMap<String, SessionEntry>>;
-type Tasks = Mutex<HashMap<String, AbortHandle>>;
-type Overrides = Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>;
+pub(super) type Sessions = Mutex<HashMap<String, SessionEntry>>;
+pub(super) type Tasks = Mutex<HashMap<String, AbortHandle>>;
+pub(super) type Overrides = Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>;
 
 /// The session's own ("This computer") monitoring provider: counts subscribes
 /// and unsubscribes and keeps each live subscription's senders, so its
 /// channels stay open until it is unsubscribed — like a real collect loop.
 #[derive(Default)]
-struct CountingProvider {
+pub(super) struct CountingProvider {
     subscribes: AtomicUsize,
     unsubscribes: AtomicUsize,
     live: StdMutex<Vec<Box<dyn std::any::Any + Send>>>,
@@ -135,7 +135,7 @@ impl ConnectionType for MonitoredConnection {
 }
 
 /// The maps plus a `sess` session backed by a fresh [`CountingProvider`].
-async fn maps_with_session() -> (Sessions, Tasks, Overrides, Arc<CountingProvider>) {
+pub(super) async fn maps_with_session() -> (Sessions, Tasks, Overrides, Arc<CountingProvider>) {
     let (sessions, tasks, overrides): (Sessions, Tasks, Overrides) = Default::default();
     let provider = Arc::new(CountingProvider::default());
     sessions.lock().await.insert(
@@ -162,35 +162,35 @@ async fn maps_with_session() -> (Sessions, Tasks, Overrides, Arc<CountingProvide
 }
 
 /// A mock app (no windows) whose managed agent RPC client is `agent`.
-fn app_with(agent: &Arc<FakeAgent>) -> tauri::App<tauri::test::MockRuntime> {
+pub(super) fn app_with(agent: &Arc<FakeAgent>) -> tauri::App<tauri::test::MockRuntime> {
     let app = tauri::test::mock_app();
     app.manage(agent.clone() as Arc<dyn AgentRpcClient>);
     app
 }
 
-fn agent_refusing(times: Vec<(&'static str, usize)>) -> Arc<FakeAgent> {
+pub(super) fn agent_refusing(times: Vec<(&'static str, usize)>) -> Arc<FakeAgent> {
     Arc::new(FakeAgent {
         refuse_times: StdMutex::new(times),
         ..FakeAgent::default()
     })
 }
 
-fn count(agent: &FakeAgent, method: &str) -> usize {
+pub(super) fn count(agent: &FakeAgent, method: &str) -> usize {
     agent.requests().iter().filter(|(m, _)| m == method).count()
 }
 
-fn routes(agent: &FakeAgent) -> usize {
+pub(super) fn routes(agent: &FakeAgent) -> usize {
     agent.monitoring_routes.lock().unwrap().len()
 }
 
 /// Let background tasks run through `secs` seconds of (paused) virtual time.
-async fn advance(secs: u64) {
+pub(super) async fn advance(secs: u64) {
     for _ in 0..secs * 10 {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-fn on_agent(agent_id: &str) -> RunLocation {
+pub(super) fn on_agent(agent_id: &str) -> RunLocation {
     RunLocation::Agent(agent_id.to_string())
 }
 
