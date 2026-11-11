@@ -33,6 +33,7 @@ use super::local::{run_local_transfer, should_queue_local_copy};
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferStateTag;
 use super::ProgressSink;
+use crate::files::copy_guard::resolve_maybe_missing;
 
 /// Most entries (files, folders, symlinks, skipped items) one folder copy may
 /// hold. Planning keeps one small record per entry, so this bounds its memory.
@@ -222,35 +223,6 @@ pub fn check_not_into_itself(src: &Path, dest: &Path) -> Result<(), FolderCopyEr
         return Err(FolderCopyError::IntoItself);
     }
     Ok(())
-}
-
-/// Resolve `path` via its nearest existing ancestor, appending the missing
-/// tail with `.` / `..` applied lexically. Falls back to `path` unchanged.
-fn resolve_maybe_missing(path: &Path) -> PathBuf {
-    let mut existing = path;
-    let mut tail = Vec::new();
-    loop {
-        if let Ok(resolved) = std::fs::canonicalize(existing) {
-            let mut out = resolved;
-            for part in tail.iter().rev() {
-                match part {
-                    std::path::Component::ParentDir => {
-                        out.pop();
-                    }
-                    std::path::Component::Normal(name) => out.push(name),
-                    _ => {}
-                }
-            }
-            return out;
-        }
-        match (existing.parent(), existing.components().next_back()) {
-            (Some(parent), Some(last)) => {
-                tail.push(last);
-                existing = parent;
-            }
-            _ => return path.to_path_buf(),
-        }
-    }
 }
 
 /// Recreate `plan`'s directories and symlinks under `dest` and copy its small

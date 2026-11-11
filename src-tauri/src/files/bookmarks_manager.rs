@@ -96,7 +96,7 @@ pub struct FileBookmarkManager {
 
 impl FileBookmarkManager {
     /// Initialize from disk, with recovery on corruption.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage = FileBookmarkStorage::new(app_handle)
             .context("Failed to initialize file bookmark storage")?;
         Self::with_storage(storage)

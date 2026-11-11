@@ -352,8 +352,7 @@ where
         .map_err(|e| SessionError::SpawnFailed(format!("FTP STOR: {e}")))?;
 
     // Local file reads keep the plain `?` (`SessionError::Io`) mapping; the
-    // data-connection write/flush carry the "FTP data write/flush" prefixes. On
-    // a stop the data stream is left to drop, as before; the caller cleans up.
+    // data-connection write/flush carry the "FTP data write/flush" prefixes.
     let outcome = run_chunked_copy(
         &mut local,
         &mut data,
@@ -373,10 +372,13 @@ where
         ChunkedCopyOutcome::Stopped {
             transferred,
             reason,
-        } => Ok(AttemptOutcome::Stopped {
-            transferred,
-            reason,
-        }),
+        } => {
+            close_stopped_upload(stream, data).await;
+            Ok(AttemptOutcome::Stopped {
+                transferred,
+                reason,
+            })
+        }
         ChunkedCopyOutcome::Completed { transferred } => {
             stream
                 .finalize_put_stream(data)
@@ -384,6 +386,32 @@ where
                 .map_err(|e| SessionError::SpawnFailed(format!("FTP STOR finalize: {e}")))?;
             Ok(AttemptOutcome::Completed { transferred })
         }
+    }
+}
+
+/// How long a stopped upload waits for the server to confirm the closed file.
+const STOPPED_UPLOAD_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Close a stopped upload's data connection and wait for the server's reply,
+/// so the partial file holds every byte written before the attempt reports.
+///
+/// Dropping the stream instead left the server still receiving (or the bytes
+/// unsent) when the stop was reported: a `SIZE` straight after could read 0,
+/// and a resume then restarted from a smaller offset. Best effort and bounded:
+/// a failure or timeout only costs resume progress, never data.
+async fn close_stopped_upload<W>(stream: &mut super::AsyncRustlsFtpStream, data: W)
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    match tokio::time::timeout(
+        STOPPED_UPLOAD_CLOSE_TIMEOUT,
+        stream.finalize_put_stream(data),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => debug!("FTP stopped upload close: {e}"),
+        Err(_) => debug!("FTP stopped upload close timed out"),
     }
 }
 

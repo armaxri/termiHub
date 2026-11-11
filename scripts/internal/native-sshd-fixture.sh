@@ -48,8 +48,11 @@
 # and HISTFILE into a `home` dir in the state dir, plus a private agent
 # registry endpoint and a bounded detached-daemon lifetime. A deployed agent
 # and its session daemons then never write into the login user's real home or
-# share its agent registry (#5208). The session's working directory stays the
-# real home (sshd changes into the passwd home), so tests use absolute paths.
+# share its agent registry (#5208). The login shell reads its dotfiles from,
+# and writes its history to, that scratch home; it gets an empty .zshrc, so a
+# zsh login shell starts at a prompt, not at zsh-newuser-install (#5296). The
+# session's working directory stays the real home (sshd changes into the
+# passwd home), so tests use absolute paths below TERMIHUB_NATIVE_SSHD_HOME.
 #
 # Default --dir: $RUNNER_TEMP/termihub-native-sshd on CI, else
 # ${TMPDIR:-/tmp}/termihub-native-sshd-<user>. Default port: first free of
@@ -63,7 +66,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,61p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,64p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -356,6 +359,9 @@ cmd_up() {
   if [ "$SCRATCH_HOME" -eq 1 ]; then
     mkdir -p "$SESSION_HOME"
     chmod 700 "$SESSION_HOME"
+    # A zsh login shell with no dotfiles in HOME starts the interactive
+    # zsh-newuser-install menu instead of a prompt; an empty .zshrc skips it.
+    echo "# native-sshd-fixture scratch home (#5296)" >"$SESSION_HOME/.zshrc"
     echo "$SESSION_HOME" >"$SESSION_HOME_FILE"
   fi
 

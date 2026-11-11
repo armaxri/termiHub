@@ -6,6 +6,7 @@ vi.mock("@/services/api", () => ({
   folderPasteLinkTransfer: vi.fn(() => Promise.resolve()),
   localListDir: vi.fn(() => Promise.resolve([])),
   localMkdir: vi.fn(() => Promise.resolve()),
+  sessionCheckPaste: vi.fn(() => Promise.resolve()),
   sessionCopy: vi.fn(() => Promise.resolve()),
   sessionCopyRemote: vi.fn(() => Promise.resolve(0)),
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
@@ -35,6 +36,7 @@ import {
   folderPasteLinkTransfer,
   localListDir,
   localMkdir,
+  sessionCheckPaste,
   sessionCopyRemote,
   sessionDeleteFile,
   sessionDownload,
@@ -501,5 +503,64 @@ describe("probeRemoteCopy (#4520)", () => {
     const trace = entries.find((e) => e.message.includes("remote-copy support of session s1"));
     expect(trace?.level).toBe("DEBUG");
     expect(trace?.message).toContain("session gone");
+  });
+});
+
+describe("pasteFolderTree — a same-session paste into itself (#5330)", () => {
+  const sameSession: PasteTransport = { ...byteTransport, srcSession: "agent-dst" };
+
+  it("asks the backend before creating anything and stops when it refuses", async () => {
+    vi.mocked(sessionCheckPaste).mockRejectedValueOnce(
+      new Error("copy /src/f to /src/f/copy refused: the destination is inside the source folder")
+    );
+    vi.mocked(sessionListFiles).mockResolvedValue([entry("a.txt", "/src/f/a.txt", 3)]);
+
+    await expect(pasteFolderTree(sameSession, "/src/f", "/link/copy")).rejects.toThrow(
+      "the destination is inside the source folder"
+    );
+
+    expect(vi.mocked(sessionCheckPaste)).toHaveBeenCalledWith("agent-dst", "/src/f", "/link/copy");
+    expect(vi.mocked(sessionMkdir)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
+  });
+
+  it("checks a same-session move copied file by file, so it never deletes its own copy", async () => {
+    vi.mocked(sessionCheckPaste).mockRejectedValueOnce(new Error("refused"));
+    const move: PasteTransport = { ...sameSession, operation: "cut", continueExisting: true };
+
+    await expect(pasteFolderTree(move, "/src/f", "/src/f/sub")).rejects.toThrow("refused");
+
+    expect(vi.mocked(sessionRenameFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
+  });
+
+  it("does not ask when the two ends are different sessions", async () => {
+    await pasteFolderTree(byteTransport, "/src/f", "/dst/f");
+
+    expect(vi.mocked(sessionCheckPaste)).not.toHaveBeenCalled();
+  });
+
+  it("copies the source as it was, even when the backend cannot see the alias", async () => {
+    // An FTP-like backend: `/link` is a symlink to `/src`, which it cannot
+    // resolve, so the check passes. Every created folder shows up in the
+    // source listing, as it would on the server.
+    const dirs = new Map<string, FileEntry[]>([["/src", [entry("a.txt", "/src/a.txt", 3)]]]);
+    vi.mocked(sessionListFiles).mockImplementation(async (_id, path) => [
+      ...(dirs.get(path) ?? []),
+    ]);
+    vi.mocked(sessionMkdir).mockImplementation(async (_id, path) => {
+      if (path.split("/").length > 6) throw new Error(`recursed into its own copy: ${path}`);
+      const real = path.replace(/^\/link/, "/src");
+      const parent = real.slice(0, real.lastIndexOf("/"));
+      const name = real.slice(real.lastIndexOf("/") + 1);
+      dirs.set(parent, [...(dirs.get(parent) ?? []), entry(name, real, 0, true)]);
+      dirs.set(real, []);
+    });
+
+    await pasteFolderTree(sameSession, "/src", "/link/copy");
+
+    expect(vi.mocked(sessionMkdir).mock.calls).toEqual([["agent-dst", "/link/copy"]]);
+    expect(vi.mocked(sessionWriteFile).mock.calls.map((c) => c[1])).toEqual(["/link/copy/a.txt"]);
   });
 });

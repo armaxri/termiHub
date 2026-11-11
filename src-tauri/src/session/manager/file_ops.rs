@@ -173,6 +173,23 @@ impl SessionManager {
         self.file_ops().copy(session_id, src, dest).await
     }
 
+    /// Refuse a same-session paste of `src` onto itself, or of the folder
+    /// `src` into its own subtree, before anything is written (#5330). Both
+    /// paths are resolved on the session's backend (SFTP `realpath`, the
+    /// container's `readlink -f`, or a `.`/`..` normalisation), so a symlink
+    /// alias or a respelled path is caught. See
+    /// [`termihub_core::files::paste_guard`].
+    pub async fn ensure_paste_allowed(
+        &self,
+        session_id: &str,
+        src: &str,
+        dest: &str,
+    ) -> Result<(), TerminalError> {
+        self.file_ops()
+            .ensure_paste_allowed(session_id, src, dest)
+            .await
+    }
+
     // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
     //
     // These reach the SSH-specific SFTP capabilities that do not fit on the shared

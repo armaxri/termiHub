@@ -116,6 +116,13 @@ autoformat hook refresh it after a `.ts`/`.tsx` edit.
 - **Dynamic** ids show a `*` glob for the interpolated part — a row keyed by name
   renders `file-row-*`, a prefixed action renders `*-download`. Build the real id
   from the static part (`file-row-${entry.name}` → `file-row-myfile.txt`).
+  The _values_ column says how the drift guard (`scripts/check-testid-drift.py`)
+  matches the glob. A `registry` glob accepts only the listed members, read from
+  a TypeScript union or const array: `settings-nav-apperance` fails per PR. A
+  `dynamic` glob (file names, indexes) or a `caller stem` accepts any suffix.
+  When you add a templated id that the harness uses, classify it in
+  [`testid-templates.json`](testid-templates.json). Otherwise the guard reports
+  it as `unclassified` (#5341).
 - **Indirect** ids are passed in by a prop at the call site; the real id is
   defined where the component is used, not at the `data-testid`.
 

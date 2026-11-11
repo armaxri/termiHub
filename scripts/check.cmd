@@ -90,6 +90,12 @@ node scripts\internal\check-action-pins.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === GitHub Actions cache save gates ===
+REM Every cache save in CI is gated to develop/main (#5328, #3328 reader/writer split).
+node scripts\internal\check-cache-save-gates.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === apt download retries ===
 REM Every apt-get update/install in CI, Dockerfiles and scripts retries downloads (#5152).
 node scripts\internal\check-apt-retries.mjs
