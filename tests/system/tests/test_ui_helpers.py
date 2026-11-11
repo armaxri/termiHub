@@ -17,6 +17,7 @@ from termihub_harness.ui import (
 )
 from termihub_harness.ui.base import HarnessMixin
 from termihub_harness.ui.connections import ConnectionsUi
+from termihub_harness.ui.settings import SettingsUi
 from termihub_harness.ui.tabs import TabsUi
 
 
@@ -452,3 +453,61 @@ def test_active_leaf_is_none_when_unresolved():
     assert active_leaf(StubDriver({"activePanelId": None, "rootPanel": _SPLIT_TREE})) is None
     assert active_leaf(StubDriver({"rootPanel": _SPLIT_TREE})) is None
     assert active_leaf(StubDriver({"activePanelId": "p1"})) is None
+
+
+class SettingsMountDriver:
+    """Driver stub for ``open_settings_tab``: the Settings panel mounts a few
+    polls *after* the gear-menu click, like the real app on a slow runner."""
+
+    def __init__(self, mount_after: int):
+        self.mount_after = mount_after
+        self.menu_open = False
+        self.polls_since_open = None
+        self.clicks: list[str] = []
+
+    @property
+    def mounted(self) -> bool:
+        return self.polls_since_open is not None and self.polls_since_open >= self.mount_after
+
+    def click(self, test_id: str) -> None:
+        if test_id.startswith("settings-nav-") and not self.mounted:
+            raise BridgeError("click", f'no element with data-testid="{test_id}"')
+        self.clicks.append(test_id)
+        if test_id == "activity-bar-settings":
+            self.menu_open = True
+        elif test_id == "settings-menu-open":
+            self.polls_since_open = 0
+
+    def exists(self, test_id: str) -> bool:
+        if test_id == "settings-menu-open":
+            return self.menu_open
+        if test_id.startswith("settings-nav-"):
+            if self.polls_since_open is not None:
+                self.polls_since_open += 1
+            return self.mounted
+        return False
+
+
+class FakeSettings(SettingsUi, FakeHarness):
+    pass
+
+
+def test_open_settings_tab_returns_only_once_the_panel_mounted():
+    # #5167 (TST-004): it used to return right after the menu click, so the
+    # caller's settings-nav click raced the mount on every OS.
+    driver = SettingsMountDriver(mount_after=3)
+    FakeSettings(driver).open_settings_tab()
+    assert driver.mounted
+    assert driver.clicks == ["activity-bar-settings", "settings-menu-open"]
+
+
+def test_open_settings_category_clicks_the_nav_after_the_mount():
+    driver = SettingsMountDriver(mount_after=5)
+    FakeSettings(driver).open_settings_category("appearance")
+    assert driver.clicks[-1] == "settings-nav-appearance"
+
+
+def test_open_settings_tab_times_out_when_the_panel_never_mounts():
+    driver = SettingsMountDriver(mount_after=10_000)
+    with pytest.raises(AssertionError, match="the settings panel to mount"):
+        FakeSettings(driver).open_settings_tab()
