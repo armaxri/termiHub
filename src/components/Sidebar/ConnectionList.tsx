@@ -91,6 +91,7 @@ import {
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
+import { useOpenAfterMenuClose } from "./useOpenAfterMenuClose";
 import {
   useConnectionFolderRename,
   type ConnectionFolderRenameActions,
@@ -208,6 +209,9 @@ function TreeNode({
   // Under an active filter, matched folders are force-expanded regardless of
   // their stored state (auto-expand matches).
   const expanded = filter ? filter.visibleFolderIds.has(folder.id) : folder.isExpanded;
+  // The input opens only once the menu has closed, or the menu's focus return
+  // blurs (and so cancels) it (#5323).
+  const subfolderMenu = useOpenAfterMenuClose(() => setCreatingSubfolder(true));
   const visibleChildFolders = filter
     ? childFolders.filter((f) => filter.visibleFolderIds.has(f.id))
     : childFolders;
@@ -266,7 +270,7 @@ function TreeNode({
               aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
             />
           </ContextMenuTrigger>
-          <ContextMenuContent>
+          <ContextMenuContent onCloseAutoFocus={subfolderMenu.onCloseAutoFocus}>
             <MenuItem
               onSelect={() => onNewConnectionInFolder(folder.id)}
               data-testid="context-folder-new-connection"
@@ -274,7 +278,11 @@ function TreeNode({
               <Plus size={14} /> New Connection
             </MenuItem>
             <MenuItem
-              onSelect={() => setCreatingSubfolder(true)}
+              onSelect={() => {
+                subfolderMenu.request();
+                // The input renders inside the children, so open the folder.
+                if (!expanded) onToggle(folder.id);
+              }}
               data-testid="context-folder-new-subfolder"
             >
               <FolderPlus size={14} /> New Subfolder
