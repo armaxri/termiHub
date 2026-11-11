@@ -205,7 +205,11 @@ mod tests {
         assert!(storage_choice_made(false, true, &StorageMode::None));
         // Existing users that already keep credentials somewhere are never asked.
         assert!(storage_choice_made(false, false, &StorageMode::OsKeychain));
-        assert!(storage_choice_made(false, false, &StorageMode::MasterPassword));
+        assert!(storage_choice_made(
+            false,
+            false,
+            &StorageMode::MasterPassword
+        ));
     }
 
     #[test]
