@@ -32,6 +32,13 @@ sftp_stress = { max-threads = 1 }
 ssh_bastion = { max-threads = 1 }
 # Docker sudo fixture's one root-owned file: files::sftp + log_secrecy.
 elevated_save = { max-threads = 1 }
+# Windows only, not a `#[serial]` key: the real-runner plugin tests create,
+# reuse and delete one AppContainer profile per plugin id (the same ids across
+# binaries). The runner's PROFILE_LOCK is per process, so in parallel processes
+# CreateAppContainerProfile failed (0x8000ffff) and a runner spawned while
+# another test deleted its profile failed with "file not found" (#5345).
+# `cargo test` never overlapped two binaries, so this restores that.
+appcontainer = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(termihub-core) & kind(lib) & test(/^backends::local_shell::/)'
@@ -56,6 +63,11 @@ test-group = 'ssh_bastion'
 [[profile.default.overrides]]
 filter = 'package(termihub) & kind(lib) & (test(/^files::sftp::tests::/) | test(/^session::manager::tests::log_secrecy::sudo_password_/))'
 test-group = 'elevated_save'
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'binary_id(/^termihub-core::plugin_/) | binary_id(termihub-plugin-runner::runner_process) | (package(termihub-plugin-runner) & kind(lib) & test(/^appcontainer::/))'
+test-group = 'appcontainer'
 
 # ── CI profile ───────────────────────────────────────────────────────────────
 [profile.ci]
