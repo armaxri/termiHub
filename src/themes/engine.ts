@@ -10,7 +10,6 @@ import {
   resolveCustomTheme,
 } from "./customThemes";
 import { findRegisteredPluginTheme, isPluginThemeSetting } from "./pluginThemes";
-import { applyAnsiContrastFloor } from "./contrast";
 
 /**
  * Maps camelCase ThemeColors keys to their corresponding CSS custom
@@ -246,12 +245,13 @@ export function previewTheme(theme: ThemeDefinition): void {
 
 /**
  * Returns an xterm.js-compatible `ITheme` object derived from the
- * current theme's terminal and ANSI colors. The ANSI colours pass through
- * {@link applyAnsiContrastFloor} (#5191) so no theme — built-in, custom or
- * plugin — can print text that is invisible on its own terminal background.
+ * current theme's terminal and ANSI colors, passed through unchanged. The ANSI
+ * palette is used for both foreground and background cells, so it is never
+ * nudged here: text readability is enforced per cell at render time by the
+ * terminal's `minimumContrastRatio` (#5191, #5309).
  */
 export function getXtermTheme(): Record<string, string> {
-  const c = { ...currentTheme.colors, ...applyAnsiContrastFloor(currentTheme.colors) };
+  const c = currentTheme.colors;
   return {
     background: c.terminalBg,
     foreground: c.terminalFg,
