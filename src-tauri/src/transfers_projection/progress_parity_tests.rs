@@ -13,8 +13,6 @@
 //!    prior row and on top of each kind of prior row (so the `prev`-dependent
 //!    speed / ETA / path / retry-counter carry-over is covered too).
 
-use std::time::Instant;
-
 use crate::files::transfer::state::TransferStateTag;
 use crate::files::transfer::{
     TransferDirection as WireDirection, TransferPhase as WirePhase,
@@ -169,46 +167,4 @@ fn direct_conversion_yields_the_identical_store_transition() {
             );
         }
     }
-}
-
-/// Rough before/after cost of producing the store event per progress sample.
-/// Informational only — run with
-/// `cargo test -p termihub --lib progress_parity -- --ignored --nocapture`.
-#[test]
-#[ignore = "micro-benchmark; run manually"]
-fn bench_direct_conversion_vs_round_trip() {
-    let wire = WireProgress {
-        transfer_id: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0".to_string(),
-        session_id: "sess-1234".to_string(),
-        direction: WireDirection::Upload,
-        file_name: "backup-2026-09-30.tar.gz".to_string(),
-        path: "/srv/backups/backup-2026-09-30.tar.gz".to_string(),
-        transferred: 734_003_200,
-        total: 2_147_483_648,
-        phase: WirePhase::Transferring,
-        message: None,
-        state: TransferStateTag::Active,
-        speed: 12_582_912,
-        total_bytes: 2_147_483_648,
-        eta_secs: Some(112),
-        attempt: 0,
-        max_attempts: 5,
-    };
-    const N: u32 = 200_000;
-    let t = Instant::now();
-    for _ in 0..N {
-        std::hint::black_box(oracle(std::hint::black_box(&wire)));
-    }
-    let before = t.elapsed();
-    let t = Instant::now();
-    for _ in 0..N {
-        std::hint::black_box(TransferProgress::from(std::hint::black_box(&wire)));
-    }
-    let after = t.elapsed();
-    println!(
-        "round-trip: {:?}/sample, direct: {:?}/sample ({:.1}x)",
-        before / N,
-        after / N,
-        before.as_secs_f64() / after.as_secs_f64()
-    );
 }

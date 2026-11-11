@@ -208,7 +208,8 @@ mod tests {
     /// without prompting or crashing. Ignored by default because it talks to
     /// the real LocalAuthentication framework; run with `--ignored` on a Mac.
     #[test]
-    #[ignore = "talks to the real macOS LocalAuthentication framework"]
+    #[ignore = "talks to the real macOS LocalAuthentication framework; \
+                lane: code-quality.yml#tests"]
     fn capability_preflight_does_not_prompt() {
         for purpose in [OsAuthPurpose::ReauthExport, OsAuthPurpose::BiometricUnlock] {
             let capability = MacVerifier.capability(purpose);

@@ -76,7 +76,7 @@ fn snapshot_file(root: &Path, id: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "needs a public HTTPS host: plugin-sandbox nightly lane only (#4818)"]
+#[ignore = "needs a public HTTPS host (#4818); lane: plugin-sandbox-nightly.yml#plugin-tls-handshake"]
 async fn a_sandboxed_plugin_verifies_tls_with_only_the_root_snapshot() {
     let host = std::env::var("TERMIHUB_TLS_PROBE_HOST").unwrap_or_else(|_| DEFAULT_HOST.into());
     let work = tempfile::TempDir::new().unwrap();

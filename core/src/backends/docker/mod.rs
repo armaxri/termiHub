@@ -2403,9 +2403,12 @@ mod tests {
         assert!(cancellable.is_err());
     }
 
-    /// Manual, host-dependent diagnostic for #1600. Requires a live host where
-    /// Docker Desktop and Podman both run and `/var/run/docker.sock` points at
-    /// Podman (the exact misconfiguration the bug describes). Run with:
+    /// Live-host smoke for #1600: needs a reachable Docker daemon, and checks
+    /// Podman too when a Podman API socket is discoverable (`CONTAINER_HOST`).
+    /// The integration-fixtures lane runs it on ubuntu, where Docker and a
+    /// rootless Podman service run side by side (#5177). By hand, ideally on a
+    /// host where `/var/run/docker.sock` points at Podman (the misconfiguration
+    /// the bug describes):
     /// `cargo test -p termihub-core --features docker -- --ignored --nocapture
     ///  connect_to_runtime_honours_docker_context`.
     ///
@@ -2415,7 +2418,8 @@ mod tests {
     /// for the real I/O path (WA-RS-013).
     #[cfg(unix)]
     #[tokio::test]
-    #[ignore = "requires a live Docker+Podman host with docker.sock -> Podman"]
+    #[ignore = "needs a live Docker daemon and a Podman API socket; \
+                lane: integration-fixtures.yml#core-integration"]
     async fn connect_to_runtime_honours_docker_context() {
         // BEFORE: the platform default socket (what the old `Docker` path used
         // via connect_with_local_defaults) — on this host it is Podman.
@@ -2473,7 +2477,8 @@ mod tests {
         );
     }
 
-    /// Manual, host-dependent diagnostic for #1622. Requires a macOS host with
+    /// Manual, host-dependent diagnostic for #1622 (MT-RUST-01 in
+    /// docs/testing.md). Requires a macOS host with
     /// a **running Podman machine** (`podman machine start`). Proves that
     /// explicit `runtime: Podman` resolves the machine's API socket and reaches
     /// the Podman daemon, where before this fix `podman_socket_uri()` returned
@@ -2486,7 +2491,7 @@ mod tests {
     /// `podman_machine_socket_in` fixtures; this stays as a live smoke (WA-RS-013).
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    #[ignore = "requires a macOS host with a running Podman machine"]
+    #[ignore = "needs a macOS host with a running Podman machine; manual: MT-RUST-01"]
     async fn connect_to_runtime_reaches_macos_podman_machine() {
         let uri = podman_socket_uri()
             .expect("a running Podman machine's API socket must be resolvable on macOS");

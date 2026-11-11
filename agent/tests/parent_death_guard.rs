@@ -70,7 +70,7 @@ fn wait_for<T>(deadline: Duration, mut probe: impl FnMut() -> Option<T>) -> Opti
 /// The helper role. Ignored in normal runs, and a no-op when run without the
 /// helper env (e.g. by a blanket `cargo test -- --ignored`).
 #[test]
-#[ignore = "helper process for killed_harness_parent_takes_its_agent_worker_down; not a test"]
+#[ignore = "helper process, not a test; helper: killed_harness_parent_takes_its_agent_worker_down"]
 fn parent_death_guard_helper() {
     let Some(out) = std::env::var_os(HELPER_OUT_ENV).map(PathBuf::from) else {
         return;

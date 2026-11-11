@@ -225,7 +225,7 @@ const CHILD_READY: &str = "DATA_DIR_LOCK_HELD";
 /// it acquires the lock, announces it, then blocks until killed. Ignored in
 /// normal runs; without the env var it is a no-op.
 #[test]
-#[ignore = "helper spawned as a child process by the crash-release test"]
+#[ignore = "child process, not a test; helper: lock_is_released_when_the_holder_crashes"]
 fn lock_holder_child_process() {
     let Some(dir) = std::env::var_os(CHILD_DIR_ENV) else {
         return;

@@ -494,7 +494,7 @@ fn sha256_hex_of_file(path: &Path) -> String {
 ///    answers again on the listener its new incarnation announces.
 /// 3. The successful apply leaves **no `pending_update`** (#1551).
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn deferred_update_applies_on_last_docker_disconnect() {
     if !docker_ready() {
         return;
