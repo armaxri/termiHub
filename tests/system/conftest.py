@@ -10,6 +10,7 @@ from termihub_harness import (
     app_leaks,
     hang_guard,
     js_errors,
+    rerun_budget,
     skip_guard,
     timing,
     tool_preflight,
@@ -147,6 +148,7 @@ def pytest_configure(config):
         config._termihub_js_gate = js_errors.Gate.from_env()
     except (js_errors.GateConfigError, ValueError) as exc:
         raise pytest.UsageError(f"JS error gate (#5364): {exc}") from exc
+    config._termihub_reruns = rerun_budget.Gate(skip_guard.lane_from_env())
 
 
 def pytest_collection_modifyitems(config, items):
@@ -386,6 +388,7 @@ def pytest_runtest_logreport(report):
     config = _SESSION_CONFIG.get("config")
     if config is not None and not hasattr(config, "workerinput"):
         _skip_recorder(config).add_test_report(report)
+        config._termihub_reruns.recorder.add_report(report)
 
 
 def pytest_collectreport(report):
@@ -440,6 +443,29 @@ def _report_skips(terminalreporter, config):
             pass
 
 
+# ── Rerun report + rerun budget (#5167) ──────────────────────────────────────
+# A test that passed only on a --reruns retry is green; the controller lists
+# every retried test (artifact reruns/<lane>.json + step-summary table) and a
+# lane fails when its absorbed reruns exceed rerun-budget.d/. See rerun_budget.py.
+def _enforce_rerun_budget(session):
+    config = session.config
+    if hasattr(config, "workerinput"):
+        return
+    if (getattr(config, "_termihub_preflight", None) or {}).get("stop"):
+        return  # the preflight already failed the lane, before any test ran
+    verdict = config._termihub_reruns.finish()
+    if verdict is not None and not verdict.ok and session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def _report_reruns(terminalreporter, config):
+    gate = config._termihub_reruns
+    if gate.lane is None and not gate.recorder.tests:
+        return
+    terminalreporter.section("termihub pytest reruns (#5167)")
+    gate.report(ARTIFACT_ROOT, terminalreporter.write_line)
+
+
 # ── Per-operation timing summary (#3660) ─────────────────────────────────────
 _TIMING_KEY = "termihub_timing"
 
@@ -468,6 +494,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     _report_skips(terminalreporter, config)
     _report_leaks(terminalreporter)
     _report_js_errors(terminalreporter, config)
+    _report_reruns(terminalreporter, config)
     if not timing.enabled():
         return
     lines = timing.format_lines(timing.summarize(timing.os_name()))
@@ -484,6 +511,7 @@ def pytest_sessionfinish(session, exitstatus):
     hang_guard.close()
     _LEAKS.extend(app_leaks.reap_leaks("the session"))
     _enforce_skip_guard(session)
+    _enforce_rerun_budget(session)
     config = session.config
     if hasattr(config, "workeroutput"):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()

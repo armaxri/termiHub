@@ -1,0 +1,7 @@
+{
+  "why": "seed budget for os-input-windows (#5167): the reruns this lane absorbed on the last five develop nightlies, plus headroom",
+  "max_reruns": {
+    "os-input-windows": 5
+  },
+  "_seed": "absorbed reruns per night 0, 0, 2, 2 (the 11-08 leg failed before pytest ran); max 2 + 3 headroom. Counted from the -r aR RERUN lines of scheduled nightlies 42368897634 (11-07), 42477332768 (11-08), 42627985212 (11-09), 42823759467 (11-10), 43021288870 (11-11); a retry of a test that still failed is not counted."
+}
