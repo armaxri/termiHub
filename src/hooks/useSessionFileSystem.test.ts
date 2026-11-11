@@ -50,6 +50,7 @@ vi.mock("@/services/api", () => ({
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
   sessionRenameFile: vi.fn(() => Promise.resolve()),
   sessionMkdir: vi.fn(() => Promise.resolve()),
+  sessionCheckPaste: vi.fn(() => Promise.resolve()),
   sessionCopy: vi.fn(() => Promise.resolve()),
   sessionSetPermissions: vi.fn(() => Promise.resolve()),
   sessionDownload: vi.fn(() => Promise.resolve(0)),
