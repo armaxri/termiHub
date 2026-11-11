@@ -25,7 +25,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
             <span className="tunnel-diagram__arrow-label">encrypted</span>
           </div>
           <div className="tunnel-diagram__box">
-            <span className="tunnel-diagram__box-title">SSH Server</span>
+            <span className="tunnel-diagram__box-title">SSH server</span>
             <span className="tunnel-diagram__box-detail">relay</span>
           </div>
           <div className="tunnel-diagram__arrow">
@@ -44,7 +44,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
       return (
         <div className="tunnel-diagram" data-testid="tunnel-diagram">
           <div className="tunnel-diagram__box tunnel-diagram__box--highlight">
-            <span className="tunnel-diagram__box-title">Local Target</span>
+            <span className="tunnel-diagram__box-title">Local target</span>
             <span className="tunnel-diagram__box-detail">
               {tunnelType.config.localHost}:{tunnelType.config.localPort}
             </span>
@@ -54,7 +54,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
             <span className="tunnel-diagram__arrow-label">encrypted</span>
           </div>
           <div className="tunnel-diagram__box">
-            <span className="tunnel-diagram__box-title">SSH Server</span>
+            <span className="tunnel-diagram__box-title">SSH server</span>
             <span className="tunnel-diagram__box-detail">relay</span>
           </div>
           <div className="tunnel-diagram__arrow">
@@ -62,7 +62,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
             <span className="tunnel-diagram__arrow-label">listen</span>
           </div>
           <div className="tunnel-diagram__box tunnel-diagram__box--highlight">
-            <span className="tunnel-diagram__box-title">Remote Clients</span>
+            <span className="tunnel-diagram__box-title">Remote clients</span>
             <span className="tunnel-diagram__box-detail">
               {tunnelType.config.remoteHost}:{tunnelType.config.remotePort}
             </span>
@@ -83,7 +83,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
             <span className="tunnel-diagram__arrow-label">encrypted</span>
           </div>
           <div className="tunnel-diagram__box">
-            <span className="tunnel-diagram__box-title">SSH Server</span>
+            <span className="tunnel-diagram__box-title">SSH server</span>
             <span className="tunnel-diagram__box-detail">proxy</span>
           </div>
           <div className="tunnel-diagram__arrow">

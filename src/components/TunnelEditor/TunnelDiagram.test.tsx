@@ -57,9 +57,9 @@ describe("TunnelDiagram", () => {
       config: { localHost: "127.0.0.1", localPort: 3000, remoteHost: "0.0.0.0", remotePort: 9000 },
     });
     const text = boxes().join(" | ");
-    expect(text).toContain("Local Target");
+    expect(text).toContain("Local target");
     expect(text).toContain("127.0.0.1:3000");
-    expect(text).toContain("Remote Clients");
+    expect(text).toContain("Remote clients");
     expect(text).toContain("0.0.0.0:9000");
     // Remote forward flows inward: "← SSH ←".
     expect(container.textContent).toContain("← SSH ←");

@@ -222,9 +222,9 @@ export function MacroSidebar() {
         actions={[
           {
             id: "new",
-            label: "New Macro",
+            label: "New macro",
             shortLabel: "New",
-            tooltip: "New Macro (author by hand)",
+            tooltip: "New macro (author by hand)",
             icon: <Plus size={12} />,
             onClick: handleNew,
             primary: true,
@@ -232,8 +232,8 @@ export function MacroSidebar() {
           },
           {
             id: "record",
-            label: "Record New Macro",
-            shortLabel: "Record New",
+            label: "Record new macro",
+            shortLabel: "Record new",
             icon: <Circle size={12} />,
             onClick: handleRecord,
             testId: "macro-record-btn",
@@ -241,8 +241,8 @@ export function MacroSidebar() {
           ...exportImportActions({
             onExport: handleExportAll,
             onImport: handleImport,
-            exportLabel: "Export All Macros",
-            importLabel: "Import Macros",
+            exportLabel: "Export all macros",
+            importLabel: "Import macros",
             exportDisabled: macros.length === 0,
             exportTestId: "macro-export-all-btn",
             importTestId: "macro-import-btn",

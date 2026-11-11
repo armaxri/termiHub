@@ -276,7 +276,7 @@ function TreeNode({
               onSelect={() => onNewConnectionInFolder(folder.id)}
               data-testid="context-folder-new-connection"
             >
-              <Plus size={14} /> New Connection
+              <Plus size={14} /> New connection
             </MenuItem>
             <MenuItem
               onSelect={() => {
@@ -286,7 +286,7 @@ function TreeNode({
               }}
               data-testid="context-folder-new-subfolder"
             >
-              <FolderPlus size={14} /> New Subfolder
+              <FolderPlus size={14} /> New subfolder
             </MenuItem>
             <MenuItem
               onSelect={() => onFolderAppearance(folder.id)}
@@ -306,7 +306,7 @@ function TreeNode({
               onSelect={() => onDeleteFolder(folder.id)}
               data-testid="context-folder-delete"
             >
-              <Trash2 size={14} /> Delete Folder
+              <Trash2 size={14} /> Delete folder
             </MenuItem>
           </ContextMenuContent>
         </ContextMenuRoot>
@@ -671,7 +671,7 @@ function ConnectionItem({
               onSelect={handleStartPersistent}
               data-testid="context-connection-start-persistent"
             >
-              <Play size={14} /> Start Session
+              <Play size={14} /> Start session
             </MenuItem>
           )}
           {persistentCapable && isPersistentRunning && (
@@ -680,14 +680,14 @@ function ConnectionItem({
                 onSelect={handleAttachPersistent}
                 data-testid="context-connection-attach-persistent"
               >
-                <Link size={14} /> Attach New Tab
+                <Link size={14} /> Attach new tab
               </MenuItem>
               <MenuItem
                 danger
                 onSelect={handleStopPersistent}
                 data-testid="context-connection-stop-persistent"
               >
-                <Square size={14} /> Stop Session
+                <Square size={14} /> Stop session
               </MenuItem>
             </>
           )}
@@ -699,13 +699,13 @@ function ConnectionItem({
             <MenuItem onSelect={handleManagePlugin} data-testid="context-connection-manage-plugin">
               <Puzzle size={14} />{" "}
               {pluginIssue.installed
-                ? `Manage Plugin '${pluginIssue.pluginName}'`
-                : `Install Plugin '${pluginIssue.pluginId}'…`}
+                ? `Manage plugin '${pluginIssue.pluginName}'`
+                : `Install plugin '${pluginIssue.pluginId}'…`}
             </MenuItem>
           )}
           {!!readConfigString(connection.config, "host") && (
             <MenuItem onSelect={() => onPingHost(connection)} data-testid="context-connection-ping">
-              <Activity size={14} /> Ping Host
+              <Activity size={14} /> Ping host
             </MenuItem>
           )}
           <MenuItem onSelect={() => onEdit(connection.id)} data-testid="context-connection-edit">
@@ -731,13 +731,13 @@ function ConnectionItem({
                 }}
                 data-testid="context-connection-open-jump-host"
               >
-                <Server size={14} /> Open Jump Host Terminal
+                <Server size={14} /> Open jump host terminal
               </MenuItem>
               <MenuItem
                 onSelect={() => setShowConnectionPath(true)}
                 data-testid="context-connection-show-path"
               >
-                <Route size={14} /> Show Connection Path
+                <Route size={14} /> Show connection path
               </MenuItem>
               <MenuSeparator />
             </>
@@ -778,7 +778,7 @@ function ConnectionMoveItems({
     <>
       <MenuSub>
         <MenuSubTrigger data-testid="context-connection-move-folder">
-          <FolderInput size={14} /> Move to Folder
+          <FolderInput size={14} /> Move to folder
         </MenuSubTrigger>
         <MenuSubContent data-testid="context-connection-move-folder-submenu">
           <MenuItem
@@ -786,7 +786,7 @@ function ConnectionMoveItems({
             onSelect={() => moveToFolder(connection.id, null)}
             data-testid="context-connection-move-folder-root"
           >
-            <Folder size={14} /> Top Level
+            <Folder size={14} /> Top level
             {atRoot && <span className="ui-menu__hint">current</span>}
           </MenuItem>
           {folderTargets.length > 0 && <MenuSeparator />}
@@ -811,7 +811,7 @@ function ConnectionMoveItems({
         onSelect={() => moveBy(connection.id, -1)}
         data-testid="context-connection-move-up"
       >
-        <ArrowUp size={14} /> Move Up
+        <ArrowUp size={14} /> Move up
         <span className="ui-menu__hint">{moveShortcutHint("Up")}</span>
       </MenuItem>
       <MenuItem
@@ -819,7 +819,7 @@ function ConnectionMoveItems({
         onSelect={() => moveBy(connection.id, 1)}
         data-testid="context-connection-move-down"
       >
-        <ArrowDown size={14} /> Move Down
+        <ArrowDown size={14} /> Move down
         <span className="ui-menu__hint">{moveShortcutHint("Down")}</span>
       </MenuItem>
     </>
@@ -1624,7 +1624,7 @@ export function ConnectionList() {
             actions={[
               {
                 id: "new-folder",
-                label: "New Folder",
+                label: "New folder",
                 icon: <FolderPlus size={16} />,
                 onClick: () => {
                   setLocalCollapsed(false);
@@ -1635,7 +1635,7 @@ export function ConnectionList() {
               },
               {
                 id: "new-connection",
-                label: "New Connection",
+                label: "New connection",
                 icon: <Plus size={16} />,
                 onClick: handleNewConnection,
                 iconOnly: true,
@@ -1719,20 +1719,20 @@ export function ConnectionList() {
               style={outerRemoteIdx >= 0 ? { flex: outerFlexValues[outerRemoteIdx] } : undefined}
             >
               <SidebarGroupHeader
-                title="Remote Agents"
+                title="Remote agents"
                 expanded={!remoteAgentsCollapsed}
                 onToggle={toggleRemoteAgentsCollapsed}
                 headerTestId="sidebar-group-header-remote-agents"
                 toggleTestId="connection-list-remote-agents-toggle"
                 actions={
-                  <Tooltip content="New Remote Agent" side="top">
+                  <Tooltip content="New remote agent" side="top">
                     <Button
                       variant="ghost"
                       size="sm"
                       iconOnly
                       icon={<Plus size={16} />}
                       onClick={handleNewAgent}
-                      aria-label="New Remote Agent"
+                      aria-label="New remote agent"
                       data-testid="connection-list-new-agent"
                     />
                   </Tooltip>
@@ -1850,7 +1850,7 @@ export function ConnectionList() {
       />
       <ConfirmDialog
         open={insecureFtpConnection !== null}
-        title="Insecure Connection"
+        title="Insecure connection"
         message={
           <>
             <p>
@@ -1860,7 +1860,7 @@ export function ConnectionList() {
             <p>Consider using FTPS (FTP over TLS) if the server supports it.</p>
           </>
         }
-        confirmLabel="Connect Anyway"
+        confirmLabel="Connect anyway"
         cancelLabel="Cancel"
         confirmVariant="primary"
         dontAskAgain={{
@@ -2037,10 +2037,10 @@ function RootDropZone({
       </ContextMenuTrigger>
       <ContextMenuContent onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}>
         <MenuItem onSelect={onNewConnection} data-testid="context-root-new-connection">
-          <Plus size={14} /> New Connection
+          <Plus size={14} /> New connection
         </MenuItem>
         <MenuItem onSelect={newFolderMenu.request} data-testid="context-root-new-folder">
-          <FolderPlus size={14} /> New Folder
+          <FolderPlus size={14} /> New folder
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

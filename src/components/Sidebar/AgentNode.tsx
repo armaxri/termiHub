@@ -428,7 +428,7 @@ function AgentConnectionItem({
               data-testid="context-agent-def-start-persistent"
             >
               <Play size={14} />
-              Start Session
+              Start session
             </MenuItem>
             <MenuSeparator />
           </>
@@ -440,7 +440,7 @@ function AgentConnectionItem({
               data-testid="context-agent-def-attach-persistent"
             >
               <Link size={14} />
-              Attach New Tab
+              Attach new tab
             </MenuItem>
             <MenuItem
               danger
@@ -448,7 +448,7 @@ function AgentConnectionItem({
               data-testid="context-agent-def-stop-persistent"
             >
               <Square size={14} />
-              Stop Session
+              Stop session
             </MenuItem>
             <MenuSeparator />
           </>
@@ -525,7 +525,7 @@ function AgentDefMoveToFolder({
   return (
     <MenuSub>
       <MenuSubTrigger data-testid="context-agent-def-move-folder">
-        <FolderInput size={14} /> Move to Folder
+        <FolderInput size={14} /> Move to folder
       </MenuSubTrigger>
       <MenuSubContent data-testid="context-agent-def-move-folder-submenu">
         <MenuItem
@@ -533,7 +533,7 @@ function AgentDefMoveToFolder({
           onSelect={() => onMoveToFolder(definition.id, null)}
           data-testid="context-agent-def-move-folder-root"
         >
-          <Folder size={14} /> Top Level
+          <Folder size={14} /> Top level
           {atRoot && <span className="ui-menu__hint">current</span>}
         </MenuItem>
         {folderTargets.length > 0 && <MenuSeparator />}
@@ -748,7 +748,7 @@ function AgentFolderNode({
           <ContextMenuContent onCloseAutoFocus={subfolderMenu.onCloseAutoFocus}>
             <MenuItem onSelect={() => onNewConnection(folder.id)}>
               <Plus size={14} />
-              New Connection
+              New connection
             </MenuItem>
             <MenuItem
               onSelect={() => {
@@ -758,7 +758,7 @@ function AgentFolderNode({
               }}
             >
               <FolderPlus size={14} />
-              New Subfolder
+              New subfolder
             </MenuItem>
             <MenuItem onSelect={startRename} data-testid="context-agent-folder-rename">
               <Pencil size={14} />
@@ -771,7 +771,7 @@ function AgentFolderNode({
               data-testid="context-agent-folder-delete"
             >
               <Trash2 size={14} />
-              Delete Folder
+              Delete folder
             </MenuItem>
           </ContextMenuContent>
         </ContextMenuRoot>
@@ -1384,7 +1384,7 @@ export function AgentNode({
   const handleCancelConnect = useCallback(async () => {
     try {
       await cancelConnectAgent(agent.id);
-      toast.success("Connect cancelled");
+      toast.success("Connect canceled");
     } catch (err) {
       frontendLog("agent_node", `Failed to cancel agent connect: ${errorMessage(err)}`);
       toast.error(`Failed to cancel: ${errorMessage(err)}`);
@@ -1705,24 +1705,24 @@ export function AgentNode({
             </button>
             {isConnected && (
               <div className="connection-list__group-actions">
-                <Tooltip content="New Folder" side="top">
+                <Tooltip content="New folder" side="top">
                   <Button
                     variant="ghost"
                     size="sm"
                     iconOnly
                     icon={<FolderPlus size={16} />}
                     onClick={() => setCreatingFolder(true)}
-                    aria-label="New Folder"
+                    aria-label="New folder"
                   />
                 </Tooltip>
-                <Tooltip content="New Connection" side="top">
+                <Tooltip content="New connection" side="top">
                   <Button
                     variant="ghost"
                     size="sm"
                     iconOnly
                     icon={<Plus size={16} />}
                     onClick={() => handleNewConnection(null)}
-                    aria-label="New Connection"
+                    aria-label="New connection"
                   />
                 </Tooltip>
                 {/* Two distinct teardown intents (G9, #1237). Detach keeps the
@@ -1756,14 +1756,14 @@ export function AgentNode({
               // Inline Cancel so a stuck connect is abortable without opening the
               // context menu (G1, #1235).
               <div className="connection-list__group-actions">
-                <Tooltip content="Cancel Connect" side="top">
+                <Tooltip content="Cancel connect" side="top">
                   <Button
                     variant="ghost"
                     size="sm"
                     iconOnly
                     icon={<XCircle size={16} />}
                     onClick={() => void handleCancelConnect()}
-                    aria-label="Cancel Connect"
+                    aria-label="Cancel connect"
                     data-testid={`agent-cancel-connect-${agent.id}`}
                   />
                 </Tooltip>
@@ -1802,7 +1802,7 @@ export function AgentNode({
               data-testid="context-agent-cancel-connect"
             >
               <XCircle size={14} />
-              Cancel Connect
+              Cancel connect
             </MenuItem>
           ) : !isConnected && !isReconnecting ? (
             <>
@@ -1812,7 +1812,7 @@ export function AgentNode({
               </MenuItem>
               <MenuItem onSelect={() => setSetupDialogOpen(true)} data-testid="context-agent-setup">
                 <Upload size={14} />
-                Setup Agent…
+                Set up agent…
               </MenuItem>
             </>
           ) : (
@@ -1827,14 +1827,14 @@ export function AgentNode({
               </MenuItem>
               <MenuItem onSelect={handleRefresh} data-testid="context-agent-refresh">
                 <RefreshCw size={14} />
-                Refresh Sessions
+                Refresh sessions
               </MenuItem>
               <MenuItem
                 onSelect={() => setRunningSessionsOpen(true)}
                 data-testid="context-agent-running-sessions"
               >
                 <Terminal size={14} />
-                Running Sessions…
+                Running sessions…
               </MenuItem>
               {isConnected && canUpdateAgent && (
                 <MenuItem
@@ -1842,13 +1842,13 @@ export function AgentNode({
                   data-testid="context-agent-update"
                 >
                   <ArrowUpCircle size={14} />
-                  Update Agent…
+                  Update agent…
                 </MenuItem>
               )}
               <MenuSeparator />
               <MenuItem onSelect={handleNewShellSession} data-testid="context-agent-new-shell">
                 <Terminal size={14} />
-                New Shell Session
+                New shell session
               </MenuItem>
               <AgentNewSerialSessionItem
                 agentId={agent.id}
@@ -1862,7 +1862,7 @@ export function AgentNode({
                 data-testid="context-agent-new-connection"
               >
                 <Plus size={14} />
-                New Connection
+                New connection
               </MenuItem>
               <MenuItem
                 onSelect={() => {
@@ -1873,7 +1873,7 @@ export function AgentNode({
                 data-testid="context-agent-new-folder"
               >
                 <FolderPlus size={14} />
-                New Folder
+                New folder
               </MenuItem>
             </>
           )}
@@ -1886,7 +1886,7 @@ export function AgentNode({
                 data-testid="context-agent-move-up"
               >
                 <ArrowUp size={14} />
-                Move Up
+                Move up
                 <span className="ui-menu__hint">{moveShortcutHint("Up")}</span>
               </MenuItem>
               <MenuItem
@@ -1895,7 +1895,7 @@ export function AgentNode({
                 data-testid="context-agent-move-down"
               >
                 <ArrowDown size={14} />
-                Move Down
+                Move down
                 <span className="ui-menu__hint">{moveShortcutHint("Down")}</span>
               </MenuItem>
             </>
@@ -2007,7 +2007,7 @@ export function AgentNode({
                 <>
                   <div className="agent-node__section-label" style={{ paddingLeft: 24 }}>
                     <Zap size={12} />
-                    Active Sessions
+                    Active sessions
                   </div>
                   {agentSessions.map((session) => {
                     const rowIndex = getNodeIndex(session.sessionId);
@@ -2036,7 +2036,7 @@ export function AgentNode({
               {agentSessions.length > 0 &&
                 (agentDefinitions.length > 0 || agentFolders.length > 0) && (
                   <div className="agent-node__section-label" style={{ paddingLeft: 24 }}>
-                    Saved Connections
+                    Saved connections
                   </div>
                 )}
 

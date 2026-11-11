@@ -189,9 +189,10 @@ export function UnlockDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Unlock Credential Store"
+      title="Unlock credential store"
       footer={
         <div className="unlock-dialog__footer" data-testid="unlock-dialog-footer">
+          {/* eslint-disable-next-line copy/copy-style -- Cancel is first; the fallback replaces it */}
           <div className="unlock-dialog__actions">
             {connectFallback && onConnectWithoutSaved ? (
               <Button

@@ -63,7 +63,7 @@ export function OwnerDialog({ entry, onApply, onClose }: OwnerDialogProps) {
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="Change Owner"
+      title="Change owner"
       description={entry ? `Change owner of ${entry.name}` : undefined}
       data-testid="owner-dialog"
       footer={

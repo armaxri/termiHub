@@ -201,7 +201,7 @@ export function TerminalContextMenu({
             onSelect={() => copySelectionToClipboard(tabId)}
             data-testid="terminal-context-copy-selection"
           >
-            <Copy size={14} /> Copy Selection
+            <Copy size={14} /> Copy selection
           </MenuItem>
         )}
         <MenuItem onSelect={() => pasteToTerminal(tabId)} data-testid="terminal-context-paste">
@@ -211,7 +211,7 @@ export function TerminalContextMenu({
           onSelect={() => copyTerminalToClipboard(tabId)}
           data-testid="terminal-context-copy-all"
         >
-          <ClipboardCopy size={14} /> Copy All
+          <ClipboardCopy size={14} /> Copy all
         </MenuItem>
         <MenuSeparator />
         <MenuItem onSelect={onRename} data-testid="tab-context-rename">
@@ -219,21 +219,21 @@ export function TerminalContextMenu({
         </MenuItem>
         <MenuSeparator />
         <MenuItem onSelect={() => saveTerminalToFile(tabId)}>
-          <FileDown size={14} /> Save to File
+          <FileDown size={14} /> Save to file
         </MenuItem>
         <MenuItem onSelect={() => clearTerminal(tabId)}>
-          <Eraser size={14} /> Clear Terminal
+          <Eraser size={14} /> Clear terminal
         </MenuItem>
         <MenuSeparator />
         <MenuCheckboxItem checked={horizontalScrolling} onSelect={onToggleHorizontalScrolling}>
           <MenuItemIndicator>
             <Check size={14} />
           </MenuItemIndicator>
-          <ArrowRightLeft size={14} /> Horizontal Scrolling
+          <ArrowRightLeft size={14} /> Horizontal scrolling
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onSelect={onSetColor}>
-          <Palette size={14} /> Set Color…
+          <Palette size={14} /> Set color…
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

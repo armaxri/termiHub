@@ -45,7 +45,15 @@ export function ConnectionErrorDialog({
       }
       footer={
         <>
-          {showSetupAgent && (
+          <Button
+            variant="secondary"
+            onClick={() => onOpenChange(false)}
+            data-testid="connection-error-close"
+          >
+            Close
+          </Button>
+          {/* At most one primary action: the two categories never coincide. */}
+          {showSetupAgent ? (
             <Button
               variant="primary"
               onClick={() => {
@@ -54,10 +62,9 @@ export function ConnectionErrorDialog({
               }}
               data-testid="connection-error-setup-agent"
             >
-              Setup Agent
+              Set up agent
             </Button>
-          )}
-          {showForceReconnect && (
+          ) : showForceReconnect ? (
             <Button
               variant="primary"
               onClick={() => {
@@ -66,16 +73,9 @@ export function ConnectionErrorDialog({
               }}
               data-testid="connection-error-force-reconnect"
             >
-              Force Reconnect
+              Force reconnect
             </Button>
-          )}
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            data-testid="connection-error-close"
-          >
-            Close
-          </Button>
+          ) : null}
         </>
       }
     >

@@ -238,7 +238,7 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
     setClipboard("a.txt", "/src", "copy");
     await clickPaste();
     expect(q("file-move-conflict-dialog")).toBeTruthy();
-    expect(q("file-move-conflict-dialog").textContent).toContain("Paste and Replace?");
+    expect(q("file-move-conflict-dialog").textContent).toContain("Paste and replace?");
     expect(q("file-move-conflict-dialog").textContent).toContain('"a.txt" already exists');
     expect(calls("local_copy_start")).toEqual([]);
     await act(async () => {

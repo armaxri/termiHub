@@ -179,7 +179,7 @@ describe("CommandPalette", () => {
       ],
     });
     typeInto("run workflow: deploy");
-    expect(activeLabel()).toBe("Run Workflow: Deploy");
+    expect(activeLabel()).toBe("Run workflow: Deploy");
     keydown("Enter");
     expect(runWorkflow).toHaveBeenCalledWith("wf-1");
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
@@ -193,7 +193,7 @@ describe("CommandPalette", () => {
       workspaces: [{ id: "ws-1", name: "Dev Layout", connectionCount: 2 }],
     });
     typeInto("launch workspace: dev");
-    expect(activeLabel()).toBe("Launch Workspace: Dev Layout");
+    expect(activeLabel()).toBe("Launch workspace: Dev Layout");
     keydown("Enter");
     expect(launchWorkspace).toHaveBeenCalledWith("ws-1");
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
@@ -278,7 +278,7 @@ describe("CommandPalette", () => {
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
   });
 
-  describe("Run Workflow on Broadcast Group (#3430)", () => {
+  describe("Run workflow on broadcast group (#3430)", () => {
     let harness: ReturnType<typeof installBroadcastHarness> | null = null;
 
     function wf(id: string, name: string): Workflow {
@@ -340,14 +340,14 @@ describe("CommandPalette", () => {
       const item = broadcastItem();
       expect(item).not.toBeNull();
       expect(item?.getAttribute("aria-disabled")).toBeNull();
-      expect(item?.textContent).toContain("Run Workflow on Broadcast Group");
+      expect(item?.textContent).toContain("Run workflow on broadcast group");
       expect(item?.textContent).toContain("2 terminals");
     });
 
     it("is disabled and inert when the group has no connected terminals", async () => {
       const runWorkflow = await setup({ active: true, connected: [] });
       typeInto("run workflow on broadcast group");
-      expect(activeLabel()).toContain("Run Workflow on Broadcast Group");
+      expect(activeLabel()).toContain("Run workflow on broadcast group");
       expect(broadcastItem()?.getAttribute("aria-disabled")).toBe("true");
       keydown("Enter");
       // Still on the root list, palette open, nothing run.

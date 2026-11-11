@@ -192,7 +192,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
   return (
     <form className="network-panel" data-testid="ping-sweep-panel">
       <div className="network-panel__header">
-        <span className="network-panel__title">Ping Sweep</span>
+        <span className="network-panel__title">Ping sweep</span>
         <div className="network-panel__actions">
           {status === "running" ? (
             <Button
@@ -227,7 +227,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
       <div className="network-panel__form">
         <Field
           className="network-panel__field"
-          label="Subnet / Range"
+          label="Subnet or range"
           htmlFor="ping-sweep-host"
           error={hostError ?? undefined}
         >

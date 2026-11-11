@@ -64,7 +64,7 @@ export function TransferQueue() {
       frontendLog("transfer_queue", `cancelAll: ${failed}/${pending.length} cancels failed`);
       toast.error(`Failed to cancel ${failed} transfer${failed === 1 ? "" : "s"}`);
     } else {
-      toast.success(`Cancelling ${pending.length} transfer${pending.length === 1 ? "" : "s"}`);
+      toast.success(`Canceling ${pending.length} transfer${pending.length === 1 ? "" : "s"}`);
     }
   };
 
@@ -128,7 +128,7 @@ export function TransferQueue() {
           data-testid="transfer-clear-completed"
           onClick={() => clearCompleted()}
         >
-          Clear Completed
+          Clear completed
         </Button>
         <Button
           variant="secondary"
@@ -137,7 +137,7 @@ export function TransferQueue() {
           data-testid="transfer-cancel-all"
           onClick={handleCancelAll}
         >
-          Cancel All
+          Cancel all
         </Button>
       </div>
     </div>

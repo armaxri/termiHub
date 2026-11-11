@@ -1488,7 +1488,7 @@ export function FileEditor({
 
       editor.addAction({
         id: "termihub-save",
-        label: "Save File",
+        label: "Save file",
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
         run: () => {
           saveRef.current();
@@ -1736,11 +1736,11 @@ export function FileEditor({
                 ? "This file is read-only — use “Save a copy…” or Download"
                 : listingReadonly
                   ? "This file is read-only on the server — saving is disabled"
-                  : `${isUnsavedScratch ? "Save As…" : "Save"} (${modKeyAccelerator("S")})`
+                  : `${isUnsavedScratch ? "Save as…" : "Save"} (${modKeyAccelerator("S")})`
             }
             data-testid="file-editor-save"
           >
-            {isUnsavedScratch ? "Save As…" : "Save"}
+            {isUnsavedScratch ? "Save as…" : "Save"}
           </Button>
         )}
       </div>

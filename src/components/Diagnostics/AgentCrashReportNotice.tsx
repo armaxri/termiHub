@@ -112,7 +112,7 @@ export function AgentCrashReportNotice() {
               onClick={() => dismiss(notice)}
               data-testid={`agent-crash-notice-dismiss-${notice.agentId}`}
             >
-              Dismiss
+              Close
             </Button>
             <Button
               variant="secondary"
@@ -120,7 +120,7 @@ export function AgentCrashReportNotice() {
               onClick={() => handleExport(notice)}
               data-testid={`agent-crash-notice-export-${notice.agentId}`}
             >
-              Export Diagnostics…
+              Export diagnostics…
             </Button>
             <Button
               variant="primary"
@@ -128,7 +128,7 @@ export function AgentCrashReportNotice() {
               onClick={() => handleView(notice)}
               data-testid={`agent-crash-notice-view-${notice.agentId}`}
             >
-              View Report
+              View report
             </Button>
           </div>
         </div>

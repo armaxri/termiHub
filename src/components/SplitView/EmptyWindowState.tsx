@@ -90,7 +90,7 @@ export function EmptyWindowState() {
               onClick={handleNewTerminal}
               data-testid="empty-window-new-terminal"
             >
-              New Terminal
+              New terminal
             </Button>
             <Button
               variant="secondary"
@@ -99,7 +99,7 @@ export function EmptyWindowState() {
               onClick={handleOpenConnection}
               data-testid="empty-window-open-connection"
             >
-              Open Connection…
+              Open connection…
             </Button>
           </>
         }

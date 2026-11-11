@@ -1,5 +1,5 @@
 /**
- * Tests for the "HTTP Monitors" section of the Open Connections panel (#1147,
+ * Tests for the "HTTP monitors" section of the Open connections panel (#1147,
  * GAP 9): running HTTP monitors were absent from the panel, contradicting its
  * "every live subsystem" mandate. The section is driven by the store's live
  * `httpMonitors` array (the single source of truth kept in sync by the Network
@@ -80,7 +80,7 @@ function monitorState(id: string, url: string, ok: boolean): HttpMonitorState {
 
 function monitorSection(): HTMLElement | null {
   const title = Array.from(document.querySelectorAll(".oc-section__title")).find(
-    (t) => t.textContent === "HTTP Monitors"
+    (t) => t.textContent === "HTTP monitors"
   );
   return (title?.closest("div")?.parentElement as HTMLElement) ?? null;
 }
@@ -89,7 +89,7 @@ function monitorRows(): Element[] {
   return Array.from(monitorSection()?.querySelectorAll(".oc-row") ?? []);
 }
 
-describe("OpenConnectionsModal — HTTP Monitors section", () => {
+describe("OpenConnectionsModal — HTTP monitors section", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -191,7 +191,7 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
     expect(networkHttpMonitorStopAll).toHaveBeenCalledTimes(1);
   });
 
-  it("renders no HTTP Monitors section when there are no monitors", async () => {
+  it("renders no HTTP monitors section when there are no monitors", async () => {
     await renderModal();
     expect(monitorSection()).toBeNull();
   });

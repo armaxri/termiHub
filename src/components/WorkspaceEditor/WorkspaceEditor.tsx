@@ -352,7 +352,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     <div className="workspace-editor" data-testid="workspace-editor">
       <div className="workspace-editor__header">
         <h2 className="workspace-editor__title">
-          {meta.workspaceId ? "Edit Workspace" : "New Workspace"}
+          {meta.workspaceId ? "Edit workspace" : "New workspace"}
         </h2>
       </div>
 
@@ -524,7 +524,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                   data-testid="workspace-group-add"
                 >
                   <Plus size={12} />
-                  Add Group
+                  Add group
                 </button>
               </Tooltip>
             </div>
@@ -539,11 +539,11 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
       </div>
 
       <div className="workspace-editor__actions">
-        <Button variant="primary" onClick={handleSave} data-testid="workspace-save-btn">
-          Save
-        </Button>
         <Button variant="secondary" onClick={handleCancel} data-testid="workspace-cancel-btn">
           Cancel
+        </Button>
+        <Button variant="primary" onClick={handleSave} data-testid="workspace-save-btn">
+          Save
         </Button>
       </div>
       {unsavedDialog}

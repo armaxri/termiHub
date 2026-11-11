@@ -166,7 +166,7 @@ export function EmbeddedServerSidebar() {
         actions={[
           {
             id: "new",
-            label: "New Service",
+            label: "New service",
             icon: <Plus size={14} />,
             onClick: handleNew,
             primary: true,
@@ -178,7 +178,7 @@ export function EmbeddedServerSidebar() {
       {servers.length === 0 ? (
         <EmptyState
           title="No services configured."
-          description={<>Click &quot;+ New Service&quot; to add one.</>}
+          description={<>Click &quot;+ New service&quot; to add one.</>}
           data-testid="server-empty-message"
         />
       ) : (

@@ -87,7 +87,7 @@ export function ExportDialog() {
     <Modal
       open={open}
       onOpenChange={setOpen}
-      title={<span data-testid="export-dialog-title">Export Connections</span>}
+      title={<span data-testid="export-dialog-title">Export connections</span>}
       footer={
         <>
           <Button variant="secondary" onClick={() => setOpen(false)} disabled={exporting}>

@@ -163,7 +163,7 @@ export function ImportDialog() {
   if (success) {
     footer = (
       <Button variant="primary" onClick={handleClose}>
-        Done
+        Close
       </Button>
     );
   } else if (preview) {
@@ -180,7 +180,7 @@ export function ImportDialog() {
               disabled={importing}
               data-testid="import-without-credentials"
             >
-              Skip Credentials
+              Skip credentials
             </Button>
             <Button
               variant="primary"
@@ -188,7 +188,7 @@ export function ImportDialog() {
               disabled={importing || !password}
               data-testid="import-with-credentials"
             >
-              Import with Credentials
+              Import with credentials
             </Button>
           </>
         ) : (
@@ -209,7 +209,7 @@ export function ImportDialog() {
     <Modal
       open={open}
       onOpenChange={(v) => !v && handleClose()}
-      title="Import Connections"
+      title="Import connections"
       footer={footer}
     >
       {error && !success && <p className="import-dialog__error">{error}</p>}

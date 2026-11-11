@@ -718,7 +718,7 @@ describe("SplitView in-panel terminal dialogs (#5171)", () => {
 
   it("set colour round-trips for the right-clicked tab", async () => {
     await openTerminalMenu("t3");
-    act(() => menuItem(/Set Color/).click());
+    act(() => menuItem(/Set color/).click());
     await settle();
     await clickItem("color-picker-clear");
     expect(ops.setTabColor).toHaveBeenCalledWith("t3", null);
@@ -728,7 +728,7 @@ describe("SplitView in-panel terminal dialogs (#5171)", () => {
   it("toggles horizontal scrolling for the right-clicked tab", async () => {
     await openTerminalMenu("t3");
     const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(
-      (m) => /Horizontal Scrolling/.test(m.textContent ?? "")
+      (m) => /Horizontal scrolling/.test(m.textContent ?? "")
     );
     expect(item).toBeDefined();
     act(() => item!.click());

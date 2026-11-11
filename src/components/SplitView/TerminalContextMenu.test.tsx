@@ -1,6 +1,6 @@
 /**
- * The terminal's right-click surface (#4915): the context menu (Copy Selection /
- * Paste / Copy All …) by default, Quick Copy/Paste only when opted in. Shared by
+ * The terminal's right-click surface (#4915): the context menu (Copy selection /
+ * Paste / Copy all …) by default, Quick Copy/Paste only when opted in. Shared by
  * the in-panel terminal and the zoom overlay, which previously had no terminal
  * menu at all — only the title's tab menu offered a copy.
  */
@@ -100,14 +100,14 @@ describe("TerminalContextMenu", () => {
     expect(registry.pasteToTerminal).not.toHaveBeenCalled();
   });
 
-  it("names the items as documented and offers Copy Selection only with a selection", () => {
+  it("names the items as documented and offers Copy selection only with a selection", () => {
     registry.getTerminalSelection.mockReturnValue("picked");
     act(() => root.render(<Harness />));
     rightClick(q("term")!);
 
-    expect(q("terminal-context-copy-selection")!.textContent).toContain("Copy Selection");
+    expect(q("terminal-context-copy-selection")!.textContent).toContain("Copy selection");
     expect(q("terminal-context-paste")!.textContent).toContain("Paste");
-    expect(q("terminal-context-copy-all")!.textContent).toContain("Copy All");
+    expect(q("terminal-context-copy-all")!.textContent).toContain("Copy all");
   });
 
   it("runs Quick Copy/Paste only when the setting opts in", () => {

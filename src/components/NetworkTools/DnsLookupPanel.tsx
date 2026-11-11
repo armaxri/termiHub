@@ -152,7 +152,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   return (
     <form className="network-panel" data-testid="dns-lookup-panel">
       <div className="network-panel__header">
-        <span className="network-panel__title">DNS Lookup</span>
+        <span className="network-panel__title">DNS lookup</span>
         <div className="network-panel__actions">
           <Button
             variant="secondary"
@@ -172,7 +172,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
               onClick={handleCancel}
               data-testid="dns-cancel"
             >
-              Cancel
+              Stop
             </Button>
           )}
           <Button

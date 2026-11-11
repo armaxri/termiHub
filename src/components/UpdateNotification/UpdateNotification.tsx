@@ -137,7 +137,7 @@ export function UpdateNotification() {
             onClick={() => setShowNotes((v) => !v)}
             data-testid="update-notification-whats-new"
           >
-            {showNotes ? "Hide" : "What's New"}
+            {showNotes ? "Hide" : "What's new"}
           </Button>
         )}
         <Button
@@ -146,7 +146,7 @@ export function UpdateNotification() {
           onClick={handleOpenDownloads}
           data-testid="update-notification-open-downloads"
         >
-          {isDevelop ? "Open Download Page" : "Open Downloads Page"}
+          {isDevelop ? "Open download page" : "Open downloads page"}
         </Button>
         {!isSecurity && (
           <Button
@@ -155,7 +155,7 @@ export function UpdateNotification() {
             onClick={handleSkip}
             data-testid="update-notification-skip"
           >
-            {isDevelop ? "Skip This Build" : "Skip This Version"}
+            {isDevelop ? "Skip this build" : "Skip this version"}
           </Button>
         )}
       </div>

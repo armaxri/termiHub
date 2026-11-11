@@ -217,19 +217,19 @@ export function FileMenuItems({
             onSelect={() => onShareVia(entry.path, "http")}
             data-testid={`${testIdPrefix}-share-http`}
           >
-            <Globe size={14} /> Share via HTTP Server
+            <Globe size={14} /> Share via HTTP server
           </MenuItem>
           <MenuItem
             onSelect={() => onShareVia(entry.path, "ftp")}
             data-testid={`${testIdPrefix}-share-ftp`}
           >
-            <Globe size={14} /> Share via FTP Server
+            <Globe size={14} /> Share via FTP server
           </MenuItem>
           <MenuItem
             onSelect={() => onShareVia(entry.path, "tftp")}
             data-testid={`${testIdPrefix}-share-tftp`}
           >
-            <Globe size={14} /> Share via TFTP Server
+            <Globe size={14} /> Share via TFTP server
           </MenuItem>
           <MenuSeparator />
         </>
@@ -247,7 +247,7 @@ export function FileMenuItems({
               onSelect={() => onContextAction(entry, "openFolderVscode")}
               data-testid={`${testIdPrefix}-open-folder-vscode`}
             >
-              <CodeXml size={14} /> Open Folder in VS Code
+              <CodeXml size={14} /> Open folder in VS Code
             </MenuItem>
           )}
           <MenuSeparator />
@@ -306,13 +306,13 @@ export function FileMenuItems({
         onSelect={() => onContextAction(entry, "copyName")}
         data-testid={`${testIdPrefix}-copy-name`}
       >
-        <Copy size={14} /> Copy Name
+        <Copy size={14} /> Copy name
       </MenuItem>
       <MenuItem
         onSelect={() => onContextAction(entry, "copyPath")}
         data-testid={`${testIdPrefix}-copy-path`}
       >
-        <Copy size={14} /> Copy Path
+        <Copy size={14} /> Copy path
       </MenuItem>
       <MenuSeparator />
       <MenuItem
@@ -326,7 +326,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "permissions")}
           data-testid={`${testIdPrefix}-permissions`}
         >
-          <KeyRound size={14} /> Change Permissions
+          <KeyRound size={14} /> Change permissions
         </MenuItem>
       )}
       {canChangeOwner && (
@@ -334,7 +334,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "owner")}
           data-testid={`${testIdPrefix}-owner`}
         >
-          <UserCog size={14} /> Change Owner
+          <UserCog size={14} /> Change owner
         </MenuItem>
       )}
       {canCreateSymlink && (
@@ -342,7 +342,7 @@ export function FileMenuItems({
           onSelect={() => onContextAction(entry, "symlink")}
           data-testid={`${testIdPrefix}-symlink`}
         >
-          <Link2 size={14} /> Create Symlink…
+          <Link2 size={14} /> Create symlink…
         </MenuItem>
       )}
       <MenuItem
@@ -1066,7 +1066,7 @@ interface FileBrowserErrorActionsProps {
 /**
  * Recovery controls shown on a failed directory listing (SM-008): a **Retry**
  * that re-invokes the listing (driving the Button's async pending state) and a
- * **Dismiss** that clears the error so the placeholder/banner is no longer a
+ * **Close** that clears the error so the placeholder/banner is no longer a
  * dead-end. Composed from the shared `Button` primitive.
  */
 function FileBrowserErrorActions({
@@ -1092,7 +1092,7 @@ function FileBrowserErrorActions({
         onClick={onDismiss}
         data-testid={`${testIdPrefix}-dismiss`}
       >
-        Dismiss
+        Close
       </Button>
     </div>
   );
@@ -1849,7 +1849,7 @@ export function FileBrowser() {
                 }}
                 data-testid="file-browser-placeholder-new-terminal"
               >
-                New Terminal
+                New terminal
               </Button>
             ) : undefined
           }
@@ -1924,7 +1924,7 @@ export function FileBrowser() {
         <div className="file-browser__toolbar">
           <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
           <div className="file-browser__actions">
-            <Tooltip content="Go Up" side="top">
+            <Tooltip content="Go up" side="top">
               <Button
                 variant="ghost"
                 size="sm"
@@ -1935,7 +1935,7 @@ export function FileBrowser() {
                 data-testid="file-browser-up"
               />
             </Tooltip>
-            <Tooltip content="Go to Terminal CWD" side="top">
+            <Tooltip content="Go to terminal CWD" side="top">
               <Button
                 variant="ghost"
                 size="sm"
@@ -1983,7 +1983,7 @@ export function FileBrowser() {
                 {isLoading && reducedMotion ? "Refreshing…" : undefined}
               </Button>
             </Tooltip>
-            <Tooltip content="Open Dual-Pane Transfer View" side="top">
+            <Tooltip content="Open dual-pane transfer view" side="top">
               <Button
                 variant="ghost"
                 size="sm"
@@ -2020,7 +2020,7 @@ export function FileBrowser() {
               </Tooltip>
             )}
             {mode === "local" && vscodeAvailable && (
-              <Tooltip content="Open Folder in VS Code" side="top">
+              <Tooltip content="Open folder in VS Code" side="top">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2032,7 +2032,7 @@ export function FileBrowser() {
               </Tooltip>
             )}
             {mode === "session" && (
-              <Tooltip content="Upload File" side="top">
+              <Tooltip content="Upload file" side="top">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2063,7 +2063,7 @@ export function FileBrowser() {
                 data-testid="file-browser-paste"
               />
             </Tooltip>
-            <Tooltip content="New File" side="top">
+            <Tooltip content="New file" side="top">
               <Button
                 variant="ghost"
                 size="sm"
@@ -2073,7 +2073,7 @@ export function FileBrowser() {
                 data-testid="file-browser-new-file"
               />
             </Tooltip>
-            <Tooltip content="New Folder" side="top">
+            <Tooltip content="New folder" side="top">
               <Button
                 variant="ghost"
                 size="sm"
@@ -2293,10 +2293,10 @@ export function FileBrowser() {
             </MenuItem>
             <MenuSeparator />
             <MenuItem onSelect={() => setNewFileName("")} data-testid="context-bg-new-file">
-              <FilePlus size={14} /> New File
+              <FilePlus size={14} /> New file
             </MenuItem>
             <MenuItem onSelect={() => setNewDirName("")} data-testid="context-bg-new-folder">
-              <FolderPlus size={14} /> New Folder
+              <FolderPlus size={14} /> New folder
             </MenuItem>
           </ContextMenuContent>
         </ContextMenuRoot>

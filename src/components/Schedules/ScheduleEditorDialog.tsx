@@ -160,7 +160,7 @@ export function ScheduleEditorDialog({
       open={open}
       onOpenChange={onOpenChange}
       dirty={isDirty}
-      title={schedule ? "Edit Schedule" : "New Schedule"}
+      title={schedule ? "Edit schedule" : "New schedule"}
       description={
         experimental || workflowActionLocked
           ? "Run a workflow or macro on saved connections at set times, while termiHub is running"

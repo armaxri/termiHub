@@ -1,5 +1,5 @@
 /**
- * ConnectionPicker (WorkspaceEditor): the "Add Connection" overlay that offers an
+ * ConnectionPicker (WorkspaceEditor): the "Add connection" overlay that offers an
  * inline Local Shell, saved connections (grouped by folder), and per-agent
  * connection definitions. These tests pin the rendered groupings, search filtering,
  * the empty state, the offline/empty-agent branches, and that each choice fires
@@ -172,7 +172,7 @@ describe("ConnectionPicker", () => {
     mockRemoteAgents = [agent("a1", "edge-agent", "connected")];
     mockAgentDefinitions = { a1: [def("d1", "web-ssh", "ssh")] };
     const h = render();
-    expect(dialog().textContent).toContain("Remote Agents");
+    expect(dialog().textContent).toContain("Remote agents");
     const defBtn = query("connection-picker-agent-def-d1");
     expect(defBtn?.textContent).toContain("web-ssh");
     act(() => defBtn!.click());
@@ -204,13 +204,13 @@ describe("ConnectionPicker", () => {
   });
 
   describe("dialog semantics (A11Y2-005 / UISF2-001)", () => {
-    it("opens as a modal dialog labelled by its 'Add Connection' title", () => {
+    it("opens as a modal dialog labelled by its 'Add connection' title", () => {
       render();
       const el = dialog();
       expect(el.getAttribute("role")).toBe("dialog");
       const labelId = el.getAttribute("aria-labelledby");
       expect(labelId).toBeTruthy();
-      expect(document.getElementById(labelId!)?.textContent).toBe("Add Connection");
+      expect(document.getElementById(labelId!)?.textContent).toBe("Add connection");
       // Rendered into a portal, not inline in the editor that opened it.
       expect(container.contains(el)).toBe(false);
     });

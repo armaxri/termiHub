@@ -33,8 +33,8 @@ const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   clipboard: "Clipboard",
   terminal: "Terminal",
   navigation: "Navigation / Split",
-  "tab-groups": "Tab Groups",
-  "remote-desktop": "Remote Desktop",
+  "tab-groups": "Tab groups",
+  "remote-desktop": "Remote desktop",
 };
 
 const CATEGORY_ORDER: ShortcutCategory[] = [
@@ -95,7 +95,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Keyboard Shortcuts"
+      title="Keyboard shortcuts"
       size="lg"
       data-testid="shortcuts-overlay"
       footer={

@@ -107,7 +107,7 @@ export function FileBookmarksMenu({
                   onSelect={() => void handleRemoveCurrent()}
                   data-testid="file-bookmarks-remove-current"
                 >
-                  <BookmarkMinus size={14} /> Remove Bookmark for This Folder
+                  <BookmarkMinus size={14} /> Remove bookmark for this folder
                 </MenuItem>
               ) : (
                 <MenuItem
@@ -115,7 +115,7 @@ export function FileBookmarksMenu({
                   onSelect={() => void handleAdd()}
                   data-testid="file-bookmarks-add"
                 >
-                  <BookmarkPlus size={14} /> Bookmark This Folder
+                  <BookmarkPlus size={14} /> Bookmark this folder
                 </MenuItem>
               )}
               <MenuSeparator />
@@ -149,7 +149,7 @@ export function FileBookmarksMenu({
                 onSelect={() => setManageOpen(true)}
                 data-testid="file-bookmarks-manage"
               >
-                <ListChecks size={14} /> Manage Bookmarks…
+                <ListChecks size={14} /> Manage bookmarks…
               </MenuItem>
             </>
           )}

@@ -53,13 +53,13 @@ const REQUIRED_ITEMS: ActivityBarItemDef[] = [
 ];
 
 const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
-  { view: "files", icon: FolderOpen, label: "File Browser" },
-  { view: "recent-sessions", icon: History, label: "Recent Sessions" },
+  { view: "files", icon: FolderOpen, label: "File browser" },
+  { view: "recent-sessions", icon: History, label: "Recent sessions" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
   { view: "macros", icon: Clapperboard, label: "Macros" },
-  { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels", experimental: true },
+  { view: "tunnels", icon: ArrowLeftRight, label: "SSH tunnels", experimental: true },
   { view: "services", icon: Server, label: "Services", experimental: true },
-  { view: "network-tools", icon: Stethoscope, label: "Network Tools", experimental: true },
+  { view: "network-tools", icon: Stethoscope, label: "Network tools", experimental: true },
   { view: "workflows", icon: Workflow, label: "Workflows", experimental: true },
   { view: "plugins", icon: Puzzle, label: "Plugins" },
 ];
@@ -120,10 +120,10 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
             ))}
           </div>
           <div className="activity-bar__bottom">
-            <Tooltip content="Log Viewer" side={horizontal ? "bottom" : "right"}>
+            <Tooltip content="Log viewer" side={horizontal ? "bottom" : "right"}>
               <button
                 className="activity-bar__item"
-                aria-label="Log Viewer"
+                aria-label="Log viewer"
                 data-testid="activity-bar-logs"
                 onClick={openLogViewerTab}
               >
@@ -161,21 +161,21 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   shortcut={getActionAccelerator("show-shortcuts")}
                 >
                   <Keyboard size={14} />
-                  Keyboard Shortcuts
+                  Keyboard shortcuts
                 </MenuItem>
                 <MenuItem
                   onSelect={() => setLayoutDialogOpen(true)}
                   data-testid="settings-menu-customize-layout"
                 >
                   <LayoutDashboard size={14} />
-                  Customize Layout…
+                  Customize layout…
                 </MenuItem>
                 <MenuItem
                   onSelect={() => setConnectionsModalOpen(true)}
                   data-testid="settings-menu-open-connections"
                 >
                   <Activity size={14} />
-                  Open Connections
+                  Open connections
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem
@@ -190,7 +190,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   data-testid="settings-menu-export-diagnostics"
                 >
                   <FileArchive size={14} />
-                  Export Diagnostics…
+                  Export diagnostics…
                 </MenuItem>
                 <MenuItem
                   onSelect={() => openOverlayView("about")}
@@ -205,7 +205,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
         </nav>
       </ContextMenuTrigger>
       <ContextMenuContent data-testid="activity-bar-context-menu">
-        <MenuLabel>Activity Bar</MenuLabel>
+        <MenuLabel>Activity bar</MenuLabel>
         <MenuSeparator />
         {REQUIRED_ITEMS.map((item) => (
           <MenuItem

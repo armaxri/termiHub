@@ -221,7 +221,7 @@ export function WorkspaceSidebar() {
         actions={[
           {
             id: "new",
-            label: "New Workspace",
+            label: "New workspace",
             icon: <Plus size={14} />,
             onClick: handleNew,
             primary: true,
@@ -229,8 +229,8 @@ export function WorkspaceSidebar() {
           },
           {
             id: "save-current",
-            label: "Save Current Layout",
-            shortLabel: "Save Current",
+            label: "Save current layout",
+            shortLabel: "Save current",
             icon: <Save size={14} />,
             onClick: () => setShowSaveDialog(true),
             testId: "workspace-save-current-btn",
@@ -238,8 +238,8 @@ export function WorkspaceSidebar() {
           ...exportImportActions({
             onExport: handleExport,
             onImport: handleImport,
-            exportLabel: "Export Workspaces",
-            importLabel: "Import Workspaces",
+            exportLabel: "Export workspaces",
+            importLabel: "Import workspaces",
             exportTestId: "workspace-export-btn",
             importTestId: "workspace-import-btn",
           }),
@@ -248,7 +248,7 @@ export function WorkspaceSidebar() {
       {workspaces.length === 0 ? (
         <EmptyState
           title="No workspaces configured."
-          description={<>Click &quot;+ New Workspace&quot; to create one.</>}
+          description={<>Click &quot;+ New workspace&quot; to create one.</>}
           data-testid="workspace-empty-message"
         />
       ) : (

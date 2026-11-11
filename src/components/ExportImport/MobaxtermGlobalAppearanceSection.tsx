@@ -9,7 +9,7 @@ import {
 import { dedupeThemeName } from "@/themes/customThemes";
 
 interface MobaxtermGlobalAppearanceSectionProps {
-  /** MobaXterm's parsed global colours, font and cursor. */
+  /** MobaXterm's parsed global colors, font and cursor. */
   global: MobaxtermGlobalAppearance;
   /** termiHub's current settings, for the theme name and the before values. */
   settings: AppSettings;
@@ -49,7 +49,7 @@ export function MobaxtermGlobalAppearanceSection({
               data-testid="mobaxterm-import-theme-optin"
             />
             <span className="bulk-ssh-import__selectall-label">
-              Create the theme “{themeName}” from MobaXterm’s colours and use it
+              Create the theme “{themeName}” from MobaXterm’s colors and use it
             </span>
           </label>
           <div

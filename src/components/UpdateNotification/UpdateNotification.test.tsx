@@ -2,7 +2,7 @@
  * Tests for UpdateNotification after the Button-primitive migration.
  *
  * Covers that the migrated actions still run (open downloads, skip, toggle
- * notes) and that "Open Downloads Page" is no longer silent on failure: an
+ * notes) and that "Open downloads page" is no longer silent on failure: an
  * openUrl rejection now surfaces a toast.error via the async Button lifecycle
  * (per the reactive design rule), instead of only logging.
  */
@@ -162,7 +162,7 @@ describe("UpdateNotification (Button migration)", () => {
     expect(skip).toHaveBeenCalled();
   });
 
-  it("toggles the release notes panel via the What's New button", async () => {
+  it("toggles the release notes panel via the What's new button", async () => {
     await render();
     expect(byTestId("update-notification-notes")).toBeNull();
 
@@ -204,12 +204,12 @@ describe("UpdateNotification (develop build, #5023)", () => {
     expect(byTestId("update-notification-whats-new")).toBeNull();
   });
 
-  it("labels the button 'Open Download Page' and opens the pre-release page", async () => {
+  it("labels the button 'Open download page' and opens the pre-release page", async () => {
     const dismiss = vi.fn();
     useAppStore.setState({ dismissUpdateNotification: dismiss });
     await render();
     const btn = byTestId("update-notification-open-downloads")!;
-    expect(btn.textContent).toBe("Open Download Page");
+    expect(btn.textContent).toBe("Open download page");
 
     await act(async () => {
       btn.click();
@@ -220,9 +220,9 @@ describe("UpdateNotification (develop build, #5023)", () => {
     expect(dismiss).toHaveBeenCalled();
   });
 
-  it("offers 'Skip This Build' instead of 'Skip This Version'", async () => {
+  it("offers 'Skip this build' instead of 'Skip this version'", async () => {
     await render();
-    expect(byTestId("update-notification-skip")!.textContent).toBe("Skip This Build");
+    expect(byTestId("update-notification-skip")!.textContent).toBe("Skip this build");
   });
 
   it("stays hidden when the develop build is already current", async () => {

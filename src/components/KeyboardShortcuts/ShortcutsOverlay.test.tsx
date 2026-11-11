@@ -52,14 +52,14 @@ describe("ShortcutsOverlay", () => {
     // The shell comes from the Modal primitive (.ui-modal), not a bespoke overlay.
     const modal = document.querySelector('.ui-modal[data-testid="shortcuts-overlay"]');
     expect(modal).not.toBeNull();
-    expect(modal?.querySelector(".ui-modal__title")?.textContent).toBe("Keyboard Shortcuts");
+    expect(modal?.querySelector(".ui-modal__title")?.textContent).toBe("Keyboard shortcuts");
   });
 
   it("shows the title", () => {
     act(() => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
     });
-    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("Keyboard Shortcuts");
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("Keyboard shortcuts");
   });
 
   it("renders the search input", () => {
@@ -250,7 +250,7 @@ describe("ShortcutsOverlay", () => {
   });
 
   describe("remote-desktop release chord (#4524)", () => {
-    // The Remote Desktop group is listed only while VNC/RDP are ungated (#5365).
+    // The Remote desktop group is listed only while VNC/RDP are ungated (#5365).
     beforeEach(() => seedSettings({ experimentalFeaturesEnabled: true }));
     afterEach(() => clearOverrides());
 
@@ -258,11 +258,11 @@ describe("ShortcutsOverlay", () => {
       return document.querySelector(`[data-testid="shortcut-row-${RELEASE_CHORD_ACTION}"]`);
     }
 
-    it("lists the release chord under Remote Desktop with its default", () => {
+    it("lists the release chord under Remote desktop with its default", () => {
       act(() => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
-      expect(document.body.textContent).toContain("Remote Desktop");
+      expect(document.body.textContent).toContain("Remote desktop");
       const r = row();
       expect(r?.textContent).toContain("Release Remote Desktop Keyboard");
       expect(r?.textContent).toContain("Focused remote desktop");
@@ -293,24 +293,24 @@ describe("ShortcutsOverlay", () => {
       );
     }
 
-    it("hides the Remote Desktop group while experimental features are off", () => {
+    it("hides the Remote desktop group while experimental features are off", () => {
       seedSettings({ experimentalFeaturesEnabled: false });
       act(() => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
       expect(releaseRow()).toBeNull();
-      expect(groupTitles()).not.toContain("Remote Desktop");
+      expect(groupTitles()).not.toContain("Remote desktop");
       // Other groups are unaffected.
       expect(document.querySelector('[data-testid="shortcut-row-toggle-sidebar"]')).not.toBeNull();
     });
 
-    it("lists the Remote Desktop group while experimental features are on", () => {
+    it("lists the Remote desktop group while experimental features are on", () => {
       seedSettings({ experimentalFeaturesEnabled: true });
       act(() => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
       expect(releaseRow()).not.toBeNull();
-      expect(groupTitles()).toContain("Remote Desktop");
+      expect(groupTitles()).toContain("Remote desktop");
     });
 
     it("keeps a hidden override and shows it once the gate turns on", () => {

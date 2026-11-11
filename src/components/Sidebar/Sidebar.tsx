@@ -13,14 +13,14 @@ import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
-  files: "File Browser",
-  tunnels: "SSH Tunnels",
+  files: "File browser",
+  tunnels: "SSH tunnels",
   services: "Services",
   workspaces: "Workspaces",
   macros: "Macros",
   workflows: "Workflows",
-  "network-tools": "Network Tools",
-  "recent-sessions": "Recent Sessions",
+  "network-tools": "Network tools",
+  "recent-sessions": "Recent sessions",
   plugins: "Plugins",
 };
 

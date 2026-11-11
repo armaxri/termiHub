@@ -124,13 +124,13 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
       "Open monitor https://run.example.com/health",
       "Pause monitor",
       "Stop monitor",
-      "Remove monitor",
+      "Delete monitor",
     ]);
     expect(actionLabels("halt")).toEqual([
       "Open monitor https://halt.example.com/health",
       "Resume monitor",
       "Stop monitor",
-      "Remove monitor",
+      "Delete monitor",
     ]);
   });
 
@@ -154,7 +154,7 @@ describe("NetworkToolsSidebar — monitor rows on SidebarListItem (#5193)", () =
     expect(networkHttpMonitorPause).toHaveBeenCalledWith("run");
     await act(async () => {
       q<HTMLButtonElement>(
-        '[data-testid="monitor-row-run"] [aria-label="Remove monitor"]'
+        '[data-testid="monitor-row-run"] [aria-label="Delete monitor"]'
       )!.click();
     });
     expect(networkHttpMonitorRemove).toHaveBeenCalledWith("run");

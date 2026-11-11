@@ -1,10 +1,10 @@
 /**
- * Keyboard / context-menu alternatives to dragging in the Remote Agents tree
+ * Keyboard / context-menu alternatives to dragging in the Remote agents tree
  * (#4641, WCAG 2.1.1 / 2.5.7), following the Connections tree pattern (#4528).
  *
  * - An agent header reorders with Ctrl/Cmd+Shift+ArrowUp/Down and offers Move
  *   Up / Move Down in its context menu.
- * - An agent's saved connection offers Move to Folder (the agent's folders plus
+ * - An agent's saved connection offers Move to folder (the agent's folders plus
  *   its top level), calling the store actions the drag path uses.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
@@ -257,12 +257,12 @@ describe("AgentNode — move without dragging (#4641)", () => {
     });
   });
 
-  describe("Move to Folder for agent connections", () => {
+  describe("Move to folder for agent connections", () => {
     it("lists the agent's top level and every folder by its path", async () => {
       await render();
       await openMoveToFolder("r1");
       expect(menuItem("context-agent-def-move-folder-submenu")).not.toBeNull();
-      expect(menuItem("context-agent-def-move-folder-root")?.textContent).toContain("Top Level");
+      expect(menuItem("context-agent-def-move-folder-root")?.textContent).toContain("Top level");
       expect(menuItem("context-agent-def-move-folder-prod")?.textContent).toContain("Prod");
       expect(menuItem("context-agent-def-move-folder-web")?.textContent).toContain("Prod / Web");
     });
@@ -295,14 +295,14 @@ describe("AgentNode — move without dragging (#4641)", () => {
       expect(isDisabled("context-agent-def-move-folder-root")).toBe(false);
     });
 
-    it("offers only Top Level when the agent has no folders", async () => {
+    it("offers only Top level when the agent has no folders", async () => {
       await render({ definitions: [def("a"), def("b")], folders: [] });
       await openMoveToFolder("a");
       expect(menuItem("context-agent-def-move-folder-root")).not.toBeNull();
       expect(
         document.querySelectorAll('[data-testid^="context-agent-def-move-folder-"]').length
       ).toBe(
-        2 // the submenu container + Top Level
+        2 // the submenu container + Top level
       );
     });
 

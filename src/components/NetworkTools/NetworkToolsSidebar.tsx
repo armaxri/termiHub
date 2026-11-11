@@ -242,12 +242,12 @@ function MonitorRow({
               />
             </Tooltip>
           )}
-          <Tooltip content="Remove monitor" side="top">
+          <Tooltip content="Delete monitor" side="top">
             <Button
               variant="ghost"
               size="sm"
               iconOnly
-              aria-label="Remove monitor"
+              aria-label="Delete monitor"
               icon={<Trash2 size={12} />}
               onClick={act(onRemove)}
             />
@@ -394,11 +394,11 @@ export function NetworkToolsSidebar() {
     <div className="network-sidebar" data-testid="network-tools-sidebar">
       {/* Quick Actions */}
       <div className="network-sidebar__section">
-        <div className="network-sidebar__section-title">Quick Actions</div>
-        <QuickAction label="Ping Host…" tool="ping" />
-        <QuickAction label="Ping Sweep…" tool="ping-sweep" />
-        <QuickAction label="Scan Ports…" tool="port-scanner" />
-        <QuickAction label="DNS Lookup…" tool="dns-lookup" />
+        <div className="network-sidebar__section-title">Quick actions</div>
+        <QuickAction label="Ping host…" tool="ping" />
+        <QuickAction label="Ping sweep…" tool="ping-sweep" />
+        <QuickAction label="Scan ports…" tool="port-scanner" />
+        <QuickAction label="DNS lookup…" tool="dns-lookup" />
         <QuickAction label="Wake-on-LAN…" tool="wol" />
       </div>
 
@@ -439,14 +439,14 @@ export function NetworkToolsSidebar() {
           onClick={() => openNetworkDiagnosticTab("http-monitor")}
           data-testid="network-new-monitor"
         >
-          New Monitor
+          New monitor
         </Button>
       </div>
 
       {/* Local Utilities */}
       <div className="network-sidebar__section">
         <div className="network-sidebar__section-title">Local</div>
-        <QuickAction label="View Open Ports" tool="open-ports" />
+        <QuickAction label="View open ports" tool="open-ports" />
         <QuickAction label="Traceroute…" tool="traceroute" />
       </div>
     </div>

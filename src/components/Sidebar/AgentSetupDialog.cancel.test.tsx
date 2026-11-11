@@ -1,7 +1,7 @@
 /**
  * Cancel an in-progress agent setup (#3686, MT-AGENT-29).
  *
- * While a setup runs, the dialog shows the live step with a "Cancel Setup"
+ * While a setup runs, the dialog shows the live step with a "Cancel setup"
  * button. Clicking it fires the backend cancellation token (which aborts the
  * background upload and rolls back the partial upload), confirms with a toast and
  * closes the dialog. The rollback on the host itself is covered by the bridge
@@ -114,7 +114,7 @@ function byTestId(id: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${id}"]`);
 }
 
-/** Render, let detection settle, click Start Setup and enter the running phase. */
+/** Render, let detection settle, click Start setup and enter the running phase. */
 async function startSetup(): Promise<void> {
   await act(async () => {
     root.render(<AgentSetupDialog open={true} onOpenChange={onOpenChange} agent={makeAgent()} />);
@@ -147,7 +147,7 @@ describe("AgentSetupDialog — cancel an in-progress setup (MT-AGENT-29)", () =>
     container.remove();
   });
 
-  it("shows the live setup step with a Cancel Setup button", async () => {
+  it("shows the live setup step with a Cancel setup button", async () => {
     await startSetup();
 
     expect(setupRemoteAgent).toHaveBeenCalledTimes(1);
@@ -156,8 +156,8 @@ describe("AgentSetupDialog — cancel an in-progress setup (MT-AGENT-29)", () =>
     expect(progress!.textContent).toContain("Uploading agent binary...");
     const cancel = byTestId("agent-setup-cancel-running");
     expect(cancel).not.toBeNull();
-    expect(cancel!.textContent).toContain("Cancel Setup");
-    // The idle footer (Start Setup) is replaced while running.
+    expect(cancel!.textContent).toContain("Cancel setup");
+    // The idle footer (Start setup) is replaced while running.
     expect(byTestId("agent-setup-submit")).toBeNull();
   });
 
@@ -172,7 +172,7 @@ describe("AgentSetupDialog — cancel an in-progress setup (MT-AGENT-29)", () =>
     expect(cancelAgentSetup).toHaveBeenCalledTimes(1);
     expect(cancelAgentSetup).toHaveBeenCalledWith("agent-1");
     // The confirmation resolves the deploy's loading toast in place.
-    expect(toastMock.success).toHaveBeenCalledWith("Cancelling agent deploy to Test Host…", {
+    expect(toastMock.success).toHaveBeenCalledWith("Canceling agent deploy to Test Host…", {
       id: "toast-1",
     });
     // The progress subscription is dropped and the dialog closes.

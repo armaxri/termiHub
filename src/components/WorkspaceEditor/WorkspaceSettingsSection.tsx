@@ -19,7 +19,9 @@ const INHERIT = "__inherit__";
 const BUILTIN_THEMES: SelectOption[] = [
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
+  // eslint-disable-next-line copy/copy-style -- "Solarized Dark" is the theme's name
   { value: "solarized-dark", label: "Solarized Dark" },
+  // eslint-disable-next-line copy/copy-style -- "Solarized Light" is the theme's name
   { value: "solarized-light", label: "Solarized Light" },
   { value: "system", label: "System" },
 ];

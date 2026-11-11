@@ -53,7 +53,7 @@ export function AgentNewSerialSessionItem({
   return (
     <MenuItem onSelect={() => onSelectPort(port)} data-testid="context-agent-new-serial">
       <Cable size={14} />
-      New Serial Session
+      New serial session
       <span className="ui-menu__hint">{port}</span>
     </MenuItem>
   );

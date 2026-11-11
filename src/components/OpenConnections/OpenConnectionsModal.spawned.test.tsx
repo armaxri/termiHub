@@ -1,12 +1,12 @@
 /**
- * Tests for the "Spawned Containers" section of the Open Connections panel
+ * Tests for the "Spawned containers" section of the Open connections panel
  * (#1446, #1466): spawned containers (opened from a CLI/context-menu spawn, no
  * saved connection id) are tracked separately from configured Docker
- * connections and are not double-listed under "Local Sessions".
+ * connections and are not double-listed under "Local sessions".
  *
  * Grouping is driven by the authoritative backend marker
  * (`LocalSessionInfo.spawned`, #1466) so a spawned container stays under
- * "Spawned Containers" — and killable — even after its owning tab is closed
+ * "Spawned containers" — and killable — even after its owning tab is closed
  * (the orphan case the panel exists to surface). The frontend tab flag still
  * feeds the tab badge and is honoured as a fallback.
  */
@@ -88,14 +88,14 @@ function sectionTitleFor(text: string): string | undefined {
   // Walk up from the matching row to its section wrapper and read the header.
   const row = rowsMatching(text)[0];
   const section = row?.closest("[data-testid='open-connections-spawned-section']");
-  if (section) return "Spawned Containers";
+  if (section) return "Spawned containers";
   return row
     ?.closest("div")
     ?.parentElement?.querySelector(".oc-section__title")
     ?.textContent?.trim();
 }
 
-describe("OpenConnectionsModal — Spawned Containers section", () => {
+describe("OpenConnectionsModal — Spawned containers section", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -141,14 +141,14 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
       (t) => t.textContent
     );
-    expect(titles).toContain("Spawned Containers");
+    expect(titles).toContain("Spawned containers");
     expect(rowsMatching("Container: alpine:3").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("does not double-list the spawned session under Local Sessions", async () => {
+  it("does not double-list the spawned session under Local sessions", async () => {
     await renderWithSpawnedTab();
     // Exactly one row mentions the spawned container — it lives in its own
-    // section, not also under Local Sessions.
+    // section, not also under Local sessions.
     expect(rowsMatching("Container: alpine:3")).toHaveLength(1);
     // The plain local session is still listed.
     expect(rowsMatching("My Shell")).toHaveLength(1);
@@ -174,24 +174,24 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
       (t) => t.textContent
     );
-    expect(titles).toContain("Spawned Containers");
-    expect(sectionTitleFor("Container: alpine:3")).toBe("Spawned Containers");
-    // Still exactly one row and not under Local Sessions.
+    expect(titles).toContain("Spawned containers");
+    expect(sectionTitleFor("Container: alpine:3")).toBe("Spawned containers");
+    // Still exactly one row and not under Local sessions.
     expect(rowsMatching("Container: alpine:3")).toHaveLength(1);
   });
 
-  it("keeps an orphaned spawned session (tab closed) under Spawned Containers and killable", async () => {
+  it("keeps an orphaned spawned session (tab closed) under Spawned containers and killable", async () => {
     // The spawned container's tab was closed, so the backend session leaked
-    // (orphan). It must still surface under Spawned Containers — never fall back
-    // into Local Sessions — and stay killable (#1466).
+    // (orphan). It must still surface under Spawned containers — never fall back
+    // into Local sessions — and stay killable (#1466).
     listLocalSessions.mockResolvedValue([SPAWNED_SESSION]);
     await renderModal(); // no tabs at all
 
-    expect(sectionTitleFor("Container: alpine:3")).toBe("Spawned Containers");
+    expect(sectionTitleFor("Container: alpine:3")).toBe("Spawned containers");
 
     const localTitles = Array.from(document.querySelectorAll(".oc-section__title"))
       .map((t) => t.textContent)
-      .filter((t) => t === "Local Sessions");
+      .filter((t) => t === "Local sessions");
     expect(localTitles).toHaveLength(0);
 
     const row = rowsMatching("Container: alpine:3")[0];

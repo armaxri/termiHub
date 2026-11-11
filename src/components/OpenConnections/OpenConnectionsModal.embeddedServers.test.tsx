@@ -1,5 +1,5 @@
 /**
- * Tests for the "Embedded Servers" section of the Open Connections panel
+ * Tests for the "Embedded servers" section of the Open connections panel
  * (SM-017): running embedded HTTP/FTP/TFTP servers were absent from the panel,
  * contradicting its "every live subsystem" mandate — a user could not see or
  * stop a running embedded server from the one place meant to show everything.
@@ -76,7 +76,7 @@ function serverState(id: string, status: ServerStatus): ServerState {
 
 function serverSection(): HTMLElement | null {
   const title = Array.from(document.querySelectorAll(".oc-section__title")).find(
-    (t) => t.textContent === "Embedded Servers"
+    (t) => t.textContent === "Embedded servers"
   );
   return (title?.closest("div")?.parentElement as HTMLElement) ?? null;
 }
@@ -85,7 +85,7 @@ function serverRows(): Element[] {
   return Array.from(serverSection()?.querySelectorAll(".oc-row") ?? []);
 }
 
-describe("OpenConnectionsModal — Embedded Servers section", () => {
+describe("OpenConnectionsModal — Embedded servers section", () => {
   let container: HTMLDivElement;
   let root: Root;
   const stopEmbeddedServer = vi.fn((_id: string) => Promise.resolve());
@@ -180,7 +180,7 @@ describe("OpenConnectionsModal — Embedded Servers section", () => {
     expect(stopEmbeddedServer).toHaveBeenCalledWith("s2");
   });
 
-  it("renders no Embedded Servers section when no server is running", async () => {
+  it("renders no Embedded servers section when no server is running", async () => {
     useAppStore.setState({
       embeddedServers: [config("s1", "Docs HTTP", "http")],
       embeddedServerStates: { s1: serverState("s1", "stopped") },

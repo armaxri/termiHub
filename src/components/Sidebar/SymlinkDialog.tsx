@@ -49,7 +49,7 @@ export function SymlinkDialog({ entry, onApply, onClose }: SymlinkDialogProps) {
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="Create Symlink"
+      title="Create symlink"
       description={entry ? `Create a symbolic link pointing at ${entry.name}` : undefined}
       data-testid="symlink-dialog"
       footer={

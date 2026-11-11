@@ -134,7 +134,7 @@ describe("PluginDetailPanel (#1997)", () => {
       "Enabled"
     );
     const text = container.textContent ?? "";
-    expect(text).toContain("Terminal Backend");
+    expect(text).toContain("Terminal backend");
     expect(text).toContain("k8s-exec");
     expect(text).toContain("Terminal");
     expect(text).toContain("create and manage terminal sessions");
@@ -286,7 +286,7 @@ describe("PluginDetailPanel (#1997)", () => {
       "Old Plugin"
     );
     // #4578: no Retry (enable can only fail again), no Enable/Disable, no empty
-    // Extension Points block, and the meta line omits the absent author.
+    // Extension points block, and the meta line omits the absent author.
     expect(container.querySelector('[data-testid="plugin-action-retry"]')).toBeNull();
     expect(container.querySelector('[data-testid="plugin-action-enable"]')).toBeNull();
     expect(container.querySelector('[data-testid="plugin-action-disable"]')).toBeNull();
@@ -418,7 +418,7 @@ describe("PluginDetailPanel (#1997)", () => {
       });
       render();
       expect(q("plugin-detail-platforms")).toBeNull();
-      expect(container.textContent).not.toContain("Supported Platforms");
+      expect(container.textContent).not.toContain("Supported platforms");
     });
   });
 });

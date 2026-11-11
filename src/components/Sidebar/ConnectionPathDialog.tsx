@@ -156,7 +156,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
       data-testid="connection-path-dialog"
       title={
         <span className="connection-path-dialog__title-row">
-          <Route size={16} /> Connection Path
+          <Route size={16} /> Connection path
         </span>
       }
       footer={

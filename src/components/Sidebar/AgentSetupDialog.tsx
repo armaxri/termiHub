@@ -322,7 +322,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const handleCancelRunning = useCallback(async () => {
     try {
       await cancelAgentSetup(agent.id);
-      toast.success(`Cancelling agent deploy to ${agent.name}…`, {
+      toast.success(`Canceling agent deploy to ${agent.name}…`, {
         id: progressToastIdRef.current ?? undefined,
       });
     } catch (err) {
@@ -360,16 +360,16 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     <Modal
       open={isOpen}
       onOpenChange={onOpenChange}
-      title={`Setup Agent: ${agent.name}`}
+      title={`Set up agent: ${agent.name}`}
       footer={
         phase.kind === "running" ? (
           <Button
             variant="danger"
             onClick={handleCancelRunning}
-            pendingLabel="Cancelling…"
+            pendingLabel="Canceling…"
             data-testid="agent-setup-cancel-running"
           >
-            Cancel Setup
+            Cancel setup
           </Button>
         ) : (
           <>
@@ -386,7 +386,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
               disabled={isSubmitDisabled}
               data-testid="agent-setup-submit"
             >
-              {loading ? "Setting up…" : "Start Setup"}
+              {loading ? "Setting up…" : "Start setup"}
             </Button>
           </>
         )
@@ -430,7 +430,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
           <>
             <div className="agent-setup-dialog__field">
               <label className="agent-setup-dialog__label" htmlFor="arch-select">
-                Target Architecture
+                Target architecture
               </label>
               <Select
                 id="arch-select"
@@ -454,7 +454,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
             <div className="agent-setup-dialog__field">
               <span className="agent-setup-dialog__label" id="agent-setup-binary-source-label">
-                Binary Source
+                Binary source
               </span>
               <RadioGroup
                 className="agent-setup-dialog__source-selector"
@@ -538,7 +538,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
             <div className="agent-setup-dialog__field">
               <label className="agent-setup-dialog__label" htmlFor="agent-setup-remote-path">
-                Remote Install Path
+                Remote install path
               </label>
               <Input
                 id="agent-setup-remote-path"

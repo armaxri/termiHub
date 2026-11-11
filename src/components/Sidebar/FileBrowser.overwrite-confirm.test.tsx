@@ -1,7 +1,7 @@
 /**
  * Rename, New File and OS drop never replace an existing entry without asking
- * (#5157): each goes through the same exists-check and "{Verb} and Replace?"
- * dialog as move/paste, and an upload also offers Keep Both / Skip. Driven
+ * (#5157): each goes through the same exists-check and "{Verb} and replace?"
+ * dialog as move/paste, and an upload also offers Keep both / Skip. Driven
  * through the real FileBrowser on the local pane with the Tauri IPC mocked.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -168,13 +168,13 @@ describe("FileBrowser — confirm before replacing an existing entry (#5157)", (
       });
     });
 
-    it("asks 'Rename and Replace?' for an existing name and replaces on confirm", async () => {
+    it("asks 'Rename and replace?' for an existing name and replaces on confirm", async () => {
       await renderLocal();
       await renameReportTo("notes.txt");
       expect(callsTo("local_rename")).toHaveLength(0);
-      expect(dialog().textContent).toContain("Rename and Replace?");
+      expect(dialog().textContent).toContain("Rename and replace?");
       expect(dialog().textContent).toContain('"notes.txt" already exists in /home');
-      // Rename offers no Keep Both.
+      // Rename offers no Keep both.
       expect(byTestId("file-move-conflict-alternate")).toBeNull();
       await click(byTestId("file-move-conflict-confirm"));
       expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
@@ -205,11 +205,11 @@ describe("FileBrowser — confirm before replacing an existing entry (#5157)", (
       });
     });
 
-    it("asks 'Create and Replace?' for an existing name and replaces on confirm", async () => {
+    it("asks 'Create and replace?' for an existing name and replaces on confirm", async () => {
       await renderLocal();
       await createFile("notes.txt");
       expect(callsTo("local_write_file")).toHaveLength(0);
-      expect(dialog().textContent).toContain("Create and Replace?");
+      expect(dialog().textContent).toContain("Create and replace?");
       await click(byTestId("file-move-conflict-confirm"));
       expect(mockedInvoke).toHaveBeenCalledWith("local_write_file", {
         path: "/home/notes.txt",
@@ -237,13 +237,13 @@ describe("FileBrowser — confirm before replacing an existing entry (#5157)", (
       );
     });
 
-    it("offers Replace / Keep Both / Skip for an existing name", async () => {
+    it("offers Replace / Keep both / Skip for an existing name", async () => {
       await renderLocal();
       await osDrop(["/tmp/notes.txt"]);
       expect(callsTo("local_copy_start")).toHaveLength(0);
-      expect(dialog().textContent).toContain("Upload and Replace?");
+      expect(dialog().textContent).toContain("Upload and replace?");
       expect(byTestId("file-move-conflict-cancel").textContent).toBe("Skip");
-      expect(byTestId("file-move-conflict-alternate").textContent).toBe("Keep Both");
+      expect(byTestId("file-move-conflict-alternate").textContent).toBe("Keep both");
     });
 
     it("Replace copies over the existing name", async () => {
@@ -256,7 +256,7 @@ describe("FileBrowser — confirm before replacing an existing entry (#5157)", (
       );
     });
 
-    it("Keep Both copies under a free name", async () => {
+    it("Keep both copies under a free name", async () => {
       await renderLocal();
       await osDrop(["/tmp/notes.txt"]);
       await click(byTestId("file-move-conflict-alternate"));

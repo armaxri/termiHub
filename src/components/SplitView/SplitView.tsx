@@ -463,19 +463,19 @@ export function SplitView() {
                     onSelect={() => saveTerminalToFile(zoomedTabId)}
                     data-testid="zoom-context-save"
                   >
-                    <FileDown size={14} /> Save to File
+                    <FileDown size={14} /> Save to file
                   </MenuItem>
                   <MenuItem
                     onSelect={() => copyTerminalToClipboard(zoomedTabId)}
                     data-testid="zoom-context-copy"
                   >
-                    <ClipboardCopy size={14} /> Copy All
+                    <ClipboardCopy size={14} /> Copy all
                   </MenuItem>
                   <MenuItem
                     onSelect={() => clearTerminal(zoomedTabId)}
                     data-testid="zoom-context-clear"
                   >
-                    <Eraser size={14} /> Clear Terminal
+                    <Eraser size={14} /> Clear terminal
                   </MenuItem>
                   <MenuSeparator />
                   <MenuCheckboxItem
@@ -491,7 +491,7 @@ export function SplitView() {
                     <MenuItemIndicator>
                       <Check size={14} />
                     </MenuItemIndicator>
-                    <ArrowRightLeft size={14} /> Horizontal Scrolling
+                    <ArrowRightLeft size={14} /> Horizontal scrolling
                   </MenuCheckboxItem>
                   <MenuSeparator />
                 </>
@@ -500,7 +500,7 @@ export function SplitView() {
                 onSelect={() => setZoomColorPickerOpen(true)}
                 data-testid="zoom-context-set-color"
               >
-                <Palette size={14} /> Set Color…
+                <Palette size={14} /> Set color…
               </MenuItem>
             </>
           }

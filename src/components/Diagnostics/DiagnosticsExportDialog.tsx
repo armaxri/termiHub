@@ -155,7 +155,7 @@ export function DiagnosticsExportDialog() {
       open={open}
       onOpenChange={setOpen}
       size="lg"
-      title="Export Diagnostics"
+      title="Export diagnostics"
       description="Choose where to save a redacted diagnostics bundle"
       data-testid="diagnostics-export-dialog"
       footer={
