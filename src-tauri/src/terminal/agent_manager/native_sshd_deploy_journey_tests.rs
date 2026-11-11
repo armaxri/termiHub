@@ -144,7 +144,9 @@ fn resolve_journey(
         None
     } else {
         Some(need(HOME_ENV).map_err(|e| {
-            format!("{e} (bring the fixture up with --scratch-home, so nothing lands in the real home)")
+            format!(
+                "{e} (bring the fixture up with --scratch-home, so nothing lands in the real home)"
+            )
         })?)
     };
     let mut bins = Vec::new();
@@ -308,8 +310,11 @@ fn prepare_host(journey: &Journey, session: &SshSession) -> Host {
     } else {
         let remote_path = journey.posix_install_path();
         let backup = format!("{remote_path}{POSIX_BACKUP_SUFFIX}");
-        run_remote_command(session, &format!("rm -f '{remote_path}' '{backup}'; echo RESET"))
-            .unwrap_or_else(|e| panic!("resetting the install path failed: {e}"));
+        run_remote_command(
+            session,
+            &format!("rm -f '{remote_path}' '{backup}'; echo RESET"),
+        )
+        .unwrap_or_else(|e| panic!("resetting the install path failed: {e}"));
         Host {
             remote_os,
             backup_verify: format!("{backup} --version 2>/dev/null"),
@@ -352,7 +357,10 @@ fn assert_probe_reports(
         Some(env!("CARGO_PKG_VERSION")),
         "the probe reports another version: {probe:?}"
     );
-    assert!(probe.compatible, "the probe reports it incompatible: {probe:?}");
+    assert!(
+        probe.compatible,
+        "the probe reports it incompatible: {probe:?}"
+    );
     assert_eq!(probe.remote_os, remote_os, "probe: {probe:?}");
     // The probe keeps only the version token, the same for both builds; the
     // full line tells them apart.
@@ -373,7 +381,7 @@ async fn start_counter_session(
     request_id: &mut u64,
     windows_host: bool,
 ) -> String {
-    let sid = if windows_host {
+    if windows_host {
         let sid = create_powershell_session(channel, request_id, "journey-5208").await;
         write_input(
             channel,
@@ -418,8 +426,7 @@ async fn start_counter_session(
         )
         .await;
         sid
-    };
-    sid
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -458,7 +465,10 @@ async fn deploy_probe_update_and_reattach_journey() {
     })
     .await;
     let windows_host = is_windows_os(&host.remote_os);
-    eprintln!("journey: build A {version_a:?} installed at {agent_path} on {}", host.remote_os);
+    eprintln!(
+        "journey: build A {version_a:?} installed at {agent_path} on {}",
+        host.remote_os
+    );
 
     // ── 3. A persistent session on build A, then a desktop disconnect.
     let config = journey.agent_config(&agent_path);
@@ -475,8 +485,11 @@ async fn deploy_probe_update_and_reattach_journey() {
     // ── 4. Update to build B under the running session daemon.
     let j = journey.clone();
     let want_b = version_b.clone();
-    let (remote_os, remote_path, backup_verify) =
-        (host.remote_os.clone(), host.remote_path.clone(), host.backup_verify.clone());
+    let (remote_os, remote_path, backup_verify) = (
+        host.remote_os.clone(),
+        host.remote_path.clone(),
+        host.backup_verify.clone(),
+    );
     let first_path = agent_path.clone();
     with_session(&journey, move |session| {
         let installed = install(session, &remote_os, &remote_path, &bytes_b);
@@ -502,9 +515,10 @@ async fn deploy_probe_update_and_reattach_journey() {
     )
     .await
     .expect("connection.list after the update failed");
-    let survived = list["sessions"]
-        .as_array()
-        .is_some_and(|s| s.iter().any(|s| s["session_id"].as_str() == Some(sid.as_str())));
+    let survived = list["sessions"].as_array().is_some_and(|s| {
+        s.iter()
+            .any(|s| s["session_id"].as_str() == Some(sid.as_str()))
+    });
     assert!(
         survived,
         "session {sid} did not survive the update — list: {list}"
@@ -594,7 +608,10 @@ mod gate_tests {
         let mut env = full_env();
         env.remove(HOME_ENV);
         let err = resolve(&env, false).unwrap_err();
-        assert!(err.contains(HOME_ENV) && err.contains("--scratch-home"), "{err}");
+        assert!(
+            err.contains(HOME_ENV) && err.contains("--scratch-home"),
+            "{err}"
+        );
         // A Windows fixture logs in as its own test user: no scratch home.
         assert_eq!(resolve(&env, true).expect("resolves").home, None);
     }
@@ -625,7 +642,10 @@ mod gate_tests {
             false,
         )
         .unwrap_err();
-        assert!(err.contains(UPDATE_BIN_ENV) && err.contains("not a file"), "{err}");
+        assert!(
+            err.contains(UPDATE_BIN_ENV) && err.contains("not a file"),
+            "{err}"
+        );
     }
 
     #[test]
