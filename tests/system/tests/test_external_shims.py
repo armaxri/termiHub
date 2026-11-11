@@ -18,9 +18,16 @@ import pytest
 
 from termihub_harness.external_shims import (
     FAKE_CODE_VERSION,
+    ExplorerTitle,
     HandoffShims,
     Invocation,
+    explorer_folder_titles,
+    long_path,
+    new_titles_naming,
+    parse_shell_windows,
+    path_from_location_url,
     same_path,
+    title_names_folder,
     write_launcher,
 )
 
@@ -118,3 +125,72 @@ def test_invocation_target_and_probe():
     assert Invocation("code", ("--wait", "/x"), "/").target == "/x"
     assert Invocation("code", (), "/").target is None
     assert Invocation("code", ("--version",), "/").is_probe
+
+
+# -- Explorer probe helpers (#5290) --------------------------------------------
+
+
+def test_location_url_maps_to_a_windows_path():
+    assert path_from_location_url("file:///C:/Users/a%20b/thub_x") == r"C:\Users\a b\thub_x"
+    assert path_from_location_url("file://server/share/dir") == r"\\server\share\dir"
+    assert path_from_location_url("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}") is None
+    assert path_from_location_url("") is None
+
+
+def test_shell_windows_lines_yield_paths_and_url_paths():
+    lines = [
+        "C:\\Users\\runneradmin\tfile:///C:/Users/runneradmin\trunneradmin",
+        "::{F874310E-B6B7-47DC-BC84-B9E6B38F5903}\t\tHome",
+        "\tfile:///C:/Users/runneradmin/AppData/Local/Temp/thub_x\tthub_x",
+    ]
+    assert parse_shell_windows(lines) == [
+        r"C:\Users\runneradmin",
+        "::{F874310E-B6B7-47DC-BC84-B9E6B38F5903}",
+        r"C:\Users\runneradmin\AppData\Local\Temp\thub_x",
+    ]
+
+
+@pytest.mark.parametrize(
+    "title, expected",
+    [
+        ("thub_handoff_ab12", True),
+        ("thub_handoff_ab12 - File Explorer", True),
+        ("THUB_HANDOFF_AB12 - File Explorer", True),
+        (r"C:\Users\runneradmin\AppData\Local\Temp\thub_handoff_ab12", True),
+        (r"C:\Users\runneradmin\AppData\Local\Temp\thub_handoff_ab12 - File Explorer", True),
+        ("runneradmin", False),
+        ("runneradmin - File Explorer", False),
+        ("Temp - File Explorer", False),
+        ("thub_handoff_ab123", False),
+        ("", False),
+    ],
+)
+def test_title_names_folder_matches_how_explorer_titles_windows(title, expected):
+    folder = r"C:\Users\runneradmin\AppData\Local\Temp\thub_handoff_ab12"
+    assert title_names_folder(title, folder) is expected
+
+
+def test_only_new_windows_and_tabs_count():
+    folder = r"C:\Users\runneradmin\AppData\Local\Temp\thub_x\handoff-subfolder"
+    stale_tab = ExplorerTitle(11, 10, "tab", "handoff-subfolder - File Explorer")
+    home = ExplorerTitle(10, 10, "frame", "runneradmin - File Explorer")
+    before = [home, stale_tab]
+    new_tab = ExplorerTitle(12, 10, "tab", "handoff-subfolder - File Explorer")
+    assert new_titles_naming(before, before, folder) == []
+    assert new_titles_naming(before, [*before, new_tab], folder) == [new_tab]
+    parent = ExplorerTitle(13, 10, "tab", "thub_x - File Explorer")
+    assert new_titles_naming(before, [*before, parent], folder) == []
+
+
+def test_long_path_and_title_probe_are_inert_off_windows():
+    assert long_path(r"C:\Users\RUNNER~1\x", platform="linux") == r"C:\Users\RUNNER~1\x"
+    assert long_path("", platform="win32") == ""
+    assert explorer_folder_titles(platform="darwin") == []
+
+
+def test_long_path_keeps_an_existing_folder(tmp_path):
+    """On Windows ``GetLongPathNameW`` expands it; elsewhere it is unchanged."""
+    target = tmp_path / "a long folder name"
+    target.mkdir()
+    assert same_path(long_path(str(target)), str(target))
+    assert long_path(str(target)).endswith("a long folder name")

@@ -212,16 +212,82 @@ def write_launcher(
     return path
 
 
+def long_path(path: str, platform: str = sys.platform) -> str:
+    """``path`` with Windows 8.3 short components expanded (``RUNNER~1`` → ``runneradmin``).
+
+    Uses ``GetLongPathNameW`` on Windows, so it needs the path to exist; any
+    failure (or another platform) returns ``path`` unchanged.
+    """
+    if platform != "win32" or not path:
+        return path
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        size = kernel32.GetLongPathNameW(path, None, 0)
+        if size <= 0:
+            return path
+        buffer = ctypes.create_unicode_buffer(size)
+        if kernel32.GetLongPathNameW(path, buffer, size) <= 0:
+            return path
+        return buffer.value
+    except (AttributeError, OSError):
+        return path
+
+
 def same_path(a: str, b: str) -> bool:
     """Whether two local paths name the same file or folder.
 
     Compares by identity where both exist (macOS ``/var`` vs ``/private/var``,
-    Windows 8.3 short names), and by normalised spelling otherwise.
+    Windows 8.3 short names), and by normalised long spelling otherwise.
     """
     try:
         return os.path.samefile(a, b)
     except OSError:
+        a, b = long_path(a), long_path(b)
         return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def path_from_location_url(url: str) -> Optional[str]:
+    """The local path a ``file:`` URL names (Explorer's ``LocationURL``), else ``None``.
+
+    ``file:///C:/Users/a%20b`` → ``C:\\Users\\a b``; ``file://server/share`` →
+    ``\\\\server\\share``. Virtual locations (``::{CLSID}``) have no file URL.
+    """
+    from urllib.parse import unquote
+
+    if not url.lower().startswith("file:"):
+        return None
+    rest = url[len("file:") :]
+    if rest.startswith("///"):
+        local = unquote(rest[3:])
+    elif rest.startswith("//"):
+        local = "//" + unquote(rest[2:])
+    else:
+        return None
+    return local.replace("/", "\\") if local else None
+
+
+def title_names_folder(title: str, folder: str) -> bool:
+    """Whether an Explorer window or tab ``title`` names ``folder``.
+
+    Explorer titles a folder by its display name: ``thub_x`` on Windows 10,
+    ``thub_x - File Explorer`` on Windows 11 / Server 2025, or the full path when
+    "Display the full path in the title bar" is on. 8.3 short spellings of
+    ``folder`` are expanded first, because Explorer always shows long names.
+    """
+    title = title.strip()
+    if not title:
+        return False
+    full = long_path(str(folder)).rstrip("\\/")
+    name = os.path.basename(full.replace("\\", "/"))
+    if not name:
+        return False
+    lowered, lname = title.lower(), name.lower()
+    if lowered == lname or lowered.startswith(lname + " - "):
+        return True
+    head = title.split(" - ")[0]
+    return os.path.normcase(os.path.normpath(head)) == os.path.normcase(os.path.normpath(full))
 
 
 # -- OS file-manager queries ---------------------------------------------------
@@ -230,15 +296,33 @@ def same_path(a: str, b: str) -> bool:
 # shim above records it. Windows (``ShellExecuteW``) and macOS (``/usr/bin/open``)
 # use no ``PATH`` lookup, so there the harness asks the file manager which
 # folders it shows instead.
+#
+# Windows has two views of that, and the grade reads both (#5290):
+#
+# * The ``Shell.Application`` COM object's ``Windows()`` list, which names each
+#   window's folder by path. On the Windows 11 / Server 2025 tabbed Explorer a
+#   folder opened as a *tab* of an existing window is not reliably listed.
+# * The Explorer windows themselves: every tab is a ``ShellTabWindowClass``
+#   child of a ``CabinetWClass`` frame, titled with the folder's display name
+#   (and the frame takes the active tab's title). :func:`explorer_folder_titles`
+#   reads those with ``EnumWindows``, limited to ``explorer.exe`` processes.
+#
+# Snapshotting both before the click is what showed #5290 was an app bug: with no
+# Explorer window before the click, the app's hand-off produced one new window on
+# ``C:\Users\runneradmin`` (the home folder), never the folder it was asked for.
 
 #: Opt-in for a local macOS run to query Finder over Apple Events. It triggers
 #: the Automation permission prompt for the terminal app, so it is off unless
 #: asked for; hosted macOS runners refuse it anyway (error -1743).
 FINDER_QUERY_OPT_IN_ENV = "TERMIHUB_ALLOW_FINDER_QUERY"
 
+# One line per Explorer window: folder path, LocationURL, LocationName.
 _SHELL_WINDOWS_PS = (
-    "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object "
-    "{ try { $_.Document.Folder.Self.Path } catch {} }"
+    "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object { "
+    "$p = ''; try { $p = $_.Document.Folder.Self.Path } catch {}; "
+    "$u = ''; try { $u = $_.LocationURL } catch {}; "
+    "$n = ''; try { $n = $_.LocationName } catch {}; "
+    '"$p`t$u`t$n" }'
 )
 _SHELL_WINDOWS_CLOSE_PS = (
     "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object "
@@ -257,6 +341,11 @@ end tell
 return out
 """
 
+#: Explorer's top-level folder window and its per-tab child window classes.
+_EXPLORER_FRAME_CLASS = "CabinetWClass"
+_EXPLORER_TAB_CLASS = "ShellTabWindowClass"
+_WM_CLOSE = 0x0010
+
 
 def _query_lines(argv: list[str], env: Optional[dict[str, str]] = None) -> Optional[list[str]]:
     try:
@@ -270,16 +359,36 @@ def _query_lines(argv: list[str], env: Optional[dict[str, str]] = None) -> Optio
     return [line.strip() for line in done.stdout.splitlines() if line.strip()]
 
 
+def parse_shell_windows(lines: Sequence[str]) -> list[str]:
+    """Folder paths from :data:`_SHELL_WINDOWS_PS` output, in order, de-duplicated.
+
+    Each line is ``path<TAB>LocationURL<TAB>LocationName``; both the path and the
+    path a ``file:`` URL names count (a window can report one but not the other).
+    """
+    folders: list[str] = []
+    for line in lines:
+        fields = line.split("\t")
+        candidates = [fields[0]]
+        if len(fields) > 1:
+            candidates.append(path_from_location_url(fields[1].strip()) or "")
+        for candidate in candidates:
+            candidate = candidate.strip()
+            if candidate and candidate not in folders:
+                folders.append(candidate)
+    return folders
+
+
 def file_manager_folders(platform: str = sys.platform) -> Optional[list[str]]:
     """Folders the OS file manager currently shows, or ``None`` if it cannot say.
 
     Windows asks Explorer through the ``Shell.Application`` COM object (no
-    permission needed). macOS asks Finder only with
-    :data:`FINDER_QUERY_OPT_IN_ENV` set. Linux returns ``None``: use the
-    ``xdg-open`` shim there.
+    permission needed); see :func:`explorer_folder_titles` for the tabs that
+    list can miss. macOS asks Finder only with :data:`FINDER_QUERY_OPT_IN_ENV`
+    set. Linux returns ``None``: use the ``xdg-open`` shim there.
     """
     if platform == "win32":
-        return _query_lines(["powershell", "-NoProfile", "-Command", _SHELL_WINDOWS_PS])
+        lines = _query_lines(["powershell", "-NoProfile", "-Command", _SHELL_WINDOWS_PS])
+        return None if lines is None else parse_shell_windows(lines)
     if platform == "darwin" and os.environ.get(FINDER_QUERY_OPT_IN_ENV, "").lower() in (
         "1",
         "true",
@@ -289,13 +398,122 @@ def file_manager_folders(platform: str = sys.platform) -> Optional[list[str]]:
     return None
 
 
-def close_file_manager_folder(folder: str, platform: str = sys.platform) -> None:
+@dataclass(frozen=True)
+class ExplorerTitle:
+    """One Explorer folder window (``frame``) or tab (``tab``) and its title."""
+
+    hwnd: int
+    frame: int
+    kind: str
+    title: str
+
+
+def explorer_folder_titles(platform: str = sys.platform) -> list[ExplorerTitle]:
+    """Titles of every ``explorer.exe`` folder window and tab (Windows; ``[]`` elsewhere).
+
+    A tab's ``hwnd`` is its own ``ShellTabWindowClass`` child, so a tab that
+    opens in an existing window still shows up as a new entry.
+    """
+    if platform != "win32":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        import psutil
+    except ImportError:
+        return []
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)  # type: ignore[attr-defined]
+
+    def text_of(hwnd: int) -> str:
+        buffer = ctypes.create_unicode_buffer(1024)
+        user32.GetWindowTextW(hwnd, buffer, 1024)
+        return buffer.value
+
+    def class_of(hwnd: int) -> str:
+        buffer = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buffer, 256)
+        return buffer.value
+
+    explorer_pids: dict[int, bool] = {}
+
+    def is_explorer(hwnd: int) -> bool:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value not in explorer_pids:
+            try:
+                name = psutil.Process(pid.value).name().lower()
+            except (psutil.Error, OSError):
+                name = ""
+            explorer_pids[pid.value] = name == "explorer.exe"
+        return explorer_pids[pid.value]
+
+    found: list[ExplorerTitle] = []
+
+    def visit_frame(hwnd: int, _lparam: int) -> bool:
+        if class_of(hwnd) != _EXPLORER_FRAME_CLASS or not is_explorer(hwnd):
+            return True
+        frame = int(hwnd)
+        found.append(ExplorerTitle(frame, frame, "frame", text_of(hwnd)))
+
+        def visit_child(child: int, _lp: int) -> bool:
+            if class_of(child) == _EXPLORER_TAB_CLASS:
+                found.append(ExplorerTitle(int(child), frame, "tab", text_of(child)))
+            return True
+
+        user32.EnumChildWindows(hwnd, enum_proc(visit_child), 0)
+        return True
+
+    try:
+        user32.EnumWindows(enum_proc(visit_frame), 0)
+    except OSError:
+        return found
+    return found
+
+
+def new_titles_naming(
+    before: Sequence[ExplorerTitle], after: Sequence[ExplorerTitle], folder: str
+) -> list[ExplorerTitle]:
+    """Explorer windows/tabs in ``after`` (not already in ``before``) titled ``folder``.
+
+    Only *new* entries count, so a tab left open by an earlier attempt can never
+    stand in for the folder this click was meant to open.
+    """
+    seen = {(t.hwnd, t.title) for t in before}
+    return [
+        t for t in after if (t.hwnd, t.title) not in seen and title_names_folder(t.title, folder)
+    ]
+
+
+def close_file_manager_folder(
+    folder: str,
+    platform: str = sys.platform,
+    *,
+    opened: Sequence[ExplorerTitle] = (),
+    before: Sequence[ExplorerTitle] = (),
+) -> None:
     """Close the Explorer windows showing ``folder`` (Windows; no-op elsewhere).
 
     Best effort: the test opened them, so it tidies them up; a failure here
-    never fails the test.
+    never fails the test. A whole frame from ``opened`` is closed only when it
+    did not exist ``before`` the click, so a window the test did not open (a
+    developer's own Explorer window) is never closed.
     """
     if platform != "win32":
         return
-    env = {**os.environ, "TERMIHUB_CLOSE_FOLDER": os.path.realpath(folder)}
+    env = {**os.environ, "TERMIHUB_CLOSE_FOLDER": long_path(os.path.realpath(folder))}
     _query_lines(["powershell", "-NoProfile", "-Command", _SHELL_WINDOWS_CLOSE_PS], env=env)
+    old_frames = {t.frame for t in before}
+    frames = {t.frame for t in opened if t.frame not in old_frames}
+    if not frames:
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
+        for frame in frames:
+            user32.PostMessageW(frame, _WM_CLOSE, 0, 0)
+    except (AttributeError, OSError):
+        pass
