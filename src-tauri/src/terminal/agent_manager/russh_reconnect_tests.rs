@@ -397,11 +397,12 @@ fn is_sshd_family(comm: &str) -> bool {
     comm == "sshd" || comm.starts_with("sshd-")
 }
 
-/// Whether `pid` is a session leader (its session id equals its pid) — the
-/// property `setsid` establishes and the one that distinguishes the detached
-/// session **daemon** from the `--stdio` agent that spawned it (the agent
-/// shares the daemon's binary but is not a session leader). Mirrors the
-/// `getsid` check in `agent::daemon::spawn`'s own detachment test.
+/// Whether `pid` is a session leader (its session id equals its pid), the
+/// property `setsid` establishes for the detached session **daemon**. It does
+/// not tell the daemon from the `--stdio` agent that spawned it: sshd runs that
+/// agent as a session leader too, so [`is_stdio_worker`] separates them
+/// (#5339). Mirrors the `getsid` check in `agent::daemon::spawn`'s own
+/// detachment test.
 fn is_session_leader(pid: u32) -> bool {
     // Safety: `getsid` merely reads the session id of an existing pid.
     let sid = unsafe { libc::getsid(pid as libc::pid_t) };
@@ -411,14 +412,17 @@ fn is_session_leader(pid: u32) -> bool {
 /// The setsid'd session-daemon PIDs the agent spawned under our sshd `root`,
 /// identified while they are still live descendants (before a sever reparents
 /// them to init). A session daemon is the descendant that is its own session
-/// leader (`setsid`) AND whose command is the agent binary — the `--stdio`
-/// agent shares the binary but is not a session leader, and sshd-family
-/// processes never match the agent comm. Scoped strictly to our own sshd
+/// leader (`setsid`) AND whose command is the agent binary, other than the
+/// `--stdio` agent: it shares the binary and, as sshd runs it in a session of
+/// its own, is a session leader too (#5339). sshd-family processes never match
+/// the agent comm. Scoped strictly to our own sshd
 /// subtree and identity-matched, never a global name pattern (#2580).
 fn session_daemon_pids(root: u32, agent_comm: &str) -> Vec<u32> {
     descendant_pids(root)
         .into_iter()
-        .filter(|&pid| is_session_leader(pid) && comm_of(pid) == agent_comm)
+        .filter(|&pid| {
+            is_session_leader(pid) && comm_of(pid) == agent_comm && !is_stdio_worker(pid)
+        })
         .collect()
 }
 
