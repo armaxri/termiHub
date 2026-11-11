@@ -25,7 +25,10 @@ The allowlist is a directory of **fragments**, one small JSON object per file
 (#5033). A fragment is an entry (``reason`` regex, optional ``nodeid`` regex,
 ``lanes``, ``why``), a budget (``why`` plus ``max_skips``: ``{lane: count}``),
 or both. A lane's budget is the **sum** of every fragment's ``max_skips`` for
-it; a lane no fragment budgets allows no counted skip. A PR that adds skips
+it; a lane no fragment budgets allows no counted skip. A fragment that has both
+an entry and a budget also **caps** its entry: more counted skips matching it
+on a lane than its ``max_skips`` fails that lane (#5176), so a suite that newly
+skips for an already-allowed reason is caught. A PR that adds skips
 therefore adds its own fragment (``<issue>-<slug>.json``) and never edits a
 shared number: two such PRs cannot conflict, and git cannot silently collapse
 two identical "+1" edits into one (a single shared ``max_skips`` file did both,
@@ -119,6 +122,9 @@ class Allowlist:
     entries: tuple[AllowEntry, ...]
     #: Per lane, the fragments that budget it and how many skips each adds.
     budgets: Mapping[str, tuple[tuple[str, int], ...]] = field(default_factory=dict)
+    #: Per lane, the fragments with both an entry and a budget: their entry may
+    #: match at most that many of the lane's counted skips (#5176).
+    caps: Mapping[str, tuple[tuple[str, AllowEntry, int], ...]] = field(default_factory=dict)
 
     def for_lane(self, lane: str) -> list[AllowEntry]:
         return [entry for entry in self.entries if entry.applies_to(lane)]
@@ -210,14 +216,19 @@ def parse_fragments(fragments: Mapping[str, Any]) -> Allowlist:
     """
     entries: list[AllowEntry] = []
     budgets: dict[str, list[tuple[str, int]]] = {}
+    caps: dict[str, list[tuple[str, AllowEntry, int]]] = {}
     for name in sorted(fragments):
         entry, budget = _parse_fragment(name, fragments[name])
         if entry is not None:
             entries.append(entry)
         for lane, count in budget.items():
             budgets.setdefault(lane, []).append((name, count))
+            if entry is not None:
+                caps.setdefault(lane, []).append((name, entry, count))
     return Allowlist(
-        entries=tuple(entries), budgets={lane: tuple(v) for lane, v in budgets.items()}
+        entries=tuple(entries),
+        budgets={lane: tuple(v) for lane, v in budgets.items()},
+        caps={lane: tuple(v) for lane, v in caps.items()},
     )
 
 
@@ -294,6 +305,15 @@ def evaluate(
             f"(sum of max_skips in {ALLOWLIST_DIR.name}/ — {sources}; "
             f"{exempt} guided-manual skip(s) not counted)"
         )
+    # A fragment that budgets its own reason caps it: one more suite skipping
+    # for that reason fails the lane even while the lane total has headroom.
+    for name, entry, cap in allowlist.caps.get(lane, ()):
+        matched = sum(1 for skip in counted if entry.matches(skip))
+        if matched > cap:
+            problems.append(
+                f"{matched} skips match {name}, more than its max_skips of {cap} "
+                f"for lane '{lane}'"
+            )
     return Verdict(
         lane=lane, collected=collected, skips=list(skips), unexpected=unexpected, problems=problems
     )
