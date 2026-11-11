@@ -251,3 +251,33 @@ async fn copying_a_folder_into_itself_is_refused() {
         "a refused folder copy must create nothing, got {nested:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn symlink_in_a_writable_folder_points_at_its_target() {
+    require_docker!(port_ssh_keys());
+    let browser = browser();
+    let dir = scratch_dir(&browser, "symlink-ok").await;
+    let target = format!("{dir}/target.txt");
+    browser
+        .write_file(&target, b"target")
+        .await
+        .expect("write the link target");
+    let link = format!("{dir}/link");
+
+    let result = browser.create_symlink(&target, &link).await;
+    let listing = browser.list_dir(&dir).await;
+    remove_tree(&browser, &dir).await;
+
+    result.expect("a symlink in a writable folder succeeds");
+    let listing = listing.expect("list the scratch folder");
+    let made = listing
+        .iter()
+        .find(|e| e.name == "link")
+        .unwrap_or_else(|| panic!("the link must be created at its own path: {listing:?}"));
+    assert!(made.is_symlink, "the new entry must be a symlink: {made:?}");
+    assert_eq!(
+        made.symlink_target.as_deref(),
+        Some(target.as_str()),
+        "the link must point at the target"
+    );
+}
