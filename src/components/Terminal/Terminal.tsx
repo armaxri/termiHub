@@ -95,6 +95,8 @@ import {
   resolveEstablishmentPlan,
   resolveBackendRedriveOutcome,
   classifyExitReason,
+  agentSpawnRetryDelayMs,
+  MAX_AGENT_SPAWN_ATTEMPTS,
 } from "./terminalConnectionPlan";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -108,14 +110,6 @@ export const DEFAULT_LINE_HEIGHT = 1.0;
 const DEFAULT_SCROLLBACK = 10000;
 const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
-
-/**
- * Maximum number of consecutive failed session-spawn attempts for an
- * agent-mediated tab before giving up and surfacing a disconnect error. This
- * bounds the auto-retry loop so a session that can never be created (e.g. the
- * remote command is gone) does not retry forever.
- */
-const MAX_AGENT_SPAWN_ATTEMPTS = 5;
 
 // Fallback window for the workspace-launch initial command (FEC-003). The
 // command is normally sent the moment the first output chunk arrives for the
@@ -849,28 +843,26 @@ export function Terminal({
 
                 // action.kind === "retryAfterDelay": the agent is up but the
                 // session creation failed transiently; advance the attempt
-                // counter and auto-retry after the backoff.
+                // counter and auto-retry after the shared policy's backoff
+                // (#5397) — the same budget and windows as every reconnect loop.
                 attempt = action.attempt;
 
-                // Show a brief "Connection failed" state so the user can see
-                // each attempt's outcome, then auto-retry.  Clear the retry
-                // counter first so the failure state is not hidden by the
-                // "Connecting… (attempt N)" overlay (which has higher priority).
-                useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+                // Keep this attempt's failure as the overlay's "why" line, then
+                // show "Attempt n of N · next try in Ns" for the backoff window.
+                // setTerminalAutoRetrying also clears the connect deadline.
                 setClassifiedSpawnError(tabId, err);
+                const delayMs = agentSpawnRetryDelayMs(attempt);
+                useAppStore
+                  .getState()
+                  .setTerminalAutoRetrying(tabId, attempt, Date.now() + delayMs);
 
-                // 3 s visible failure display. Cancels promptly off the signal's
-                // `abort` event (tab close / user retry) — no 100 ms polling (#4381).
-                await abortableDelay(3000, signal);
+                // Cancels promptly off the signal's `abort` event (tab close /
+                // user retry) — no polling (#4381).
+                await abortableDelay(delayMs, signal);
                 if (isCanceled()) return;
 
-                // Transition to "Connecting… (attempt N)" for the retry countdown.
-                // setTerminalAutoRetrying also clears terminalConnecting.
+                // The window is over: the attempt now runs ("Attempt n of N").
                 useAppStore.getState().setTerminalAutoRetrying(tabId, attempt);
-
-                // 2.5 s abortable delay before the next createTerminal attempt.
-                await abortableDelay(2500, signal);
-                if (isCanceled()) return;
               } else {
                 // Direct connection (SSH, Telnet, serial, local) — show error.
                 // An attempt the user aborted (or the client deadline ended)

@@ -32,6 +32,8 @@ import { t } from "@/i18n/catalog";
 import { formatElapsed } from "@/utils/formatters";
 import { CredentialReentry } from "./CredentialReentry";
 import { markTerminalRefocusPending } from "./terminalRefocus";
+import { MAX_AGENT_SPAWN_ATTEMPTS } from "./terminalConnectionPlan";
+import { reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -176,6 +178,7 @@ export function TerminalConnectionOverlay({
   // (#2205).
   const isConnecting = useProjectedSessionLifecycle(tabId).connecting;
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
+  const autoRetryNextAt = useAppStore((s) => s.terminalAutoRetryNextAt[tabId]);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
   const isReattaching = useAppStore((s) => s.terminalReattaching[tabId] ?? false);
   const error = useAppStore((s) => s.terminalSpawnErrors[tabId] ?? "");
@@ -354,16 +357,28 @@ export function TerminalConnectionOverlay({
   }
 
   if (autoRetryCount > 0) {
+    // The agent first-connect retry follows the shared reconnect policy (#5397):
+    // "Attempt n of N · next try in Ns" while a backoff window is open, then
+    // "Attempt n of N · Ns elapsed" while the attempt runs. The overlay
+    // re-renders every second while retrying (`useElapsed`), so the countdown
+    // stays live; only the attempt label is announced, never the ticks.
+    const nextInMs = autoRetryNextAt !== undefined ? autoRetryNextAt - Date.now() : 0;
+    const attemptLabel = reconnectAttemptLabel(autoRetryCount, MAX_AGENT_SPAWN_ATTEMPTS);
+    // The store keeps the spawn error as display text already.
+    const lastAttemptError = error;
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
         <ConnectProgress
           {...common}
           phase="retrying"
-          attempt={{ current: autoRetryCount + 1 }}
-          announcement={busyAnnouncement(
-            `Reconnecting to ${common.target}`,
-            `Attempt ${autoRetryCount + 1}`
-          )}
+          attempt={{
+            current: autoRetryCount,
+            max: MAX_AGENT_SPAWN_ATTEMPTS,
+            ...(nextInMs > 0 ? { nextInSeconds: Math.ceil(nextInMs / 1000) } : {}),
+          }}
+          // Why the previous attempt failed, so the wait is never unexplained.
+          status={lastAttemptError ? `Last attempt: ${lastAttemptError}` : undefined}
+          announcement={busyAnnouncement(`Reconnecting to ${common.target}`, attemptLabel)}
           deadlineAt={undefined}
           timeTestId="terminal-connection-elapsed"
           actions={

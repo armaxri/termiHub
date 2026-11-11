@@ -1,10 +1,17 @@
 import { describe, it, expect } from "vitest";
+import {
+  nextReconnectDelay,
+  RECONNECT_GIVE_UP_WINDOW_MS,
+  RECONNECT_POLICY,
+} from "@/utils/reconnectBackoff";
 import type { BackendAgentReconnectOutcome, ProjectedSessionStatus } from "@/store/sessionBridge";
 import {
   resolveEstablishmentPlan,
   resolveAgentSpawnAction,
   resolveBackendRedriveOutcome,
   classifyExitReason,
+  agentSpawnRetryDelayMs,
+  MAX_AGENT_SPAWN_ATTEMPTS,
   type EstablishmentPlan,
   type EstablishmentPlanInput,
   type AgentSpawnAction,
@@ -225,7 +232,48 @@ describe("resolveEstablishmentPlan", () => {
   });
 });
 
-const MAX_AGENT_SPAWN_ATTEMPTS = 5;
+describe("agent first-connect retry policy (#5397)", () => {
+  it("has the shared reconnect policy's budget", () => {
+    expect(MAX_AGENT_SPAWN_ATTEMPTS).toBe(RECONNECT_POLICY.maxAttempts);
+    expect(MAX_AGENT_SPAWN_ATTEMPTS).toBe(10);
+  });
+
+  it("waits the shared policy's nominal windows without jitter", () => {
+    const windows = Array.from({ length: MAX_AGENT_SPAWN_ATTEMPTS }, (_, i) =>
+      agentSpawnRetryDelayMs(i + 1, () => 0)
+    );
+    expect(windows).toEqual([
+      1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000,
+    ]);
+    expect(windows.reduce((a, b) => a + b, 0)).toBe(RECONNECT_GIVE_UP_WINDOW_MS);
+  });
+
+  it("matches the shared engine's window for every attempt and draw", () => {
+    for (let attempt = 1; attempt <= MAX_AGENT_SPAWN_ATTEMPTS; attempt++) {
+      for (const draw of [0, 0.25, 0.5, 0.999]) {
+        expect(agentSpawnRetryDelayMs(attempt, () => draw)).toBe(
+          nextReconnectDelay(attempt, RECONNECT_POLICY, () => draw)
+        );
+      }
+    }
+  });
+
+  it("retries exactly the shared budget, then gives up", () => {
+    const actions: AgentSpawnAction[] = [];
+    let attempt = 0;
+    for (;;) {
+      const action = resolveAgentSpawnAction(baseSpawnInput({ attempt }));
+      actions.push(action);
+      if (action.kind !== "retryAfterDelay") break;
+      attempt = action.attempt;
+    }
+    const retries = actions.filter((a) => a.kind === "retryAfterDelay");
+    expect(retries.map((a) => (a.kind === "retryAfterDelay" ? a.attempt : 0))).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    ]);
+    expect(actions[actions.length - 1]).toEqual({ kind: "giveUp" });
+  });
+});
 
 /** Base snapshot: agent up, first attempt — the plain retry case. */
 function baseSpawnInput(overrides: Partial<AgentSpawnActionInput> = {}): AgentSpawnActionInput {

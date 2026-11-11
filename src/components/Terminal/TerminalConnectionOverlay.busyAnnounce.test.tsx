@@ -89,7 +89,8 @@ const VARIANTS: Variant[] = [
     life: connected(),
     store: { terminalAutoRetryCount: { [TAB_ID]: 2 } },
     heading: "Reconnecting to build-host",
-    announcement: "Reconnecting to build-host. Attempt 3",
+    // Retry 2 of the shared reconnect policy's budget (#5397).
+    announcement: "Reconnecting to build-host. Attempt 2 of 10",
   },
   {
     name: "waiting for agent",
