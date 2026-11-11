@@ -2432,10 +2432,12 @@ mod tests {
         store.remember("broker", "sha256:AA");
         let (sink, pending) =
             run_cert_pump_with_pending(store.clone(), "broker", "sha256:AA", Some("rdsh2")).await;
-        let prompts = sink.cert_prompts.lock().unwrap();
-        assert_eq!(prompts.len(), 1, "the broker's trust does not carry over");
-        assert_eq!(prompts[0].host, "rdsh2");
-        assert!(!prompts[0].changed, "a first contact with the target");
+        {
+            let prompts = sink.cert_prompts.lock().unwrap();
+            assert_eq!(prompts.len(), 1, "the broker's trust does not carry over");
+            assert_eq!(prompts[0].host, "rdsh2");
+            assert!(!prompts[0].changed, "a first contact with the target");
+        }
         assert_eq!(
             pending.lock().await.as_ref().map(|p| p.host.clone()),
             Some("rdsh2".to_string())
