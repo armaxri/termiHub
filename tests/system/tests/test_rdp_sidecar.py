@@ -51,6 +51,7 @@ from termihub_harness import (
     RdpTestServer,
     RemoteDesktopUi,
     SettingsUi,
+    SidebarUi,
     SystemTest,
     TabsUi,
     find_rdp_helper,
@@ -80,7 +81,7 @@ def _unused_local_port() -> int:
 
 
 class _ProbeSuite(
-    RemoteDesktopUi, PasswordPromptUi, SettingsUi, TabsUi, ConnectionsUi, SystemTest
+    RemoteDesktopUi, PasswordPromptUi, SettingsUi, SidebarUi, TabsUi, ConnectionsUi, SystemTest
 ):
     """Shared flow: Test an unsaved RDP form against the scripted server."""
 
