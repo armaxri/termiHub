@@ -512,11 +512,13 @@ function ConnectionItem({
 
   return (
     <>
-      <ConfirmStopSessionDialog
-        name={confirmingStop ? connection.name : null}
-        onConfirm={confirmStopPersistent}
-        onCancel={() => setConfirmingStop(false)}
-      />
+      {confirmingStop && (
+        <ConfirmStopSessionDialog
+          name={connection.name}
+          onConfirm={confirmStopPersistent}
+          onCancel={() => setConfirmingStop(false)}
+        />
+      )}
       {showConnectionPath && (
         <ConnectionPathDialog
           open={showConnectionPath}
