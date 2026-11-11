@@ -169,15 +169,42 @@ describe("captureNeighborFocus", () => {
 });
 
 describe("rescueFocusAfterRemoval", () => {
-  it("focuses the target once focus has fallen to <body>", () => {
+  /** Drop focus to <body>, as removing the focused element or a dialog does. */
+  function strand() {
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+  }
+
+  it("focuses the next row once the deleted row is gone", () => {
     vi.useFakeTimers();
     const { rows } = makeTree(2);
     rows[0].focus();
-    const target = captureNeighborFocus(rows[0]);
-    rescueFocusAfterRemoval(target);
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
     rows[0].remove();
     vi.advanceTimersByTime(100);
     expect(document.activeElement).toBe(rows[1]);
+  });
+
+  it("ends once focus has landed, so a later stranding is left alone", () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(3);
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
+    rows[0].remove();
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(rows[1]);
+    // An undo restoring the row, or any later re-render, must not be chased.
+    rows[1].remove();
+    strand();
+    vi.advanceTimersByTime(3000);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("puts focus back on the row while it is still rendered", () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(2);
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(rows[0]);
   });
 
   it("never pulls focus back from an element that claimed it", () => {
@@ -193,13 +220,120 @@ describe("rescueFocusAfterRemoval", () => {
     expect(document.activeElement).toBe(other);
   });
 
+  it("ends when focus moves elsewhere, even if focus is stranded later", () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(2);
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
+    other.focus();
+    strand();
+    rows[0].remove();
+    vi.advanceTimersByTime(3000);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a failed delete (row still there once settled) does not move focus later", async () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(3);
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    other.focus();
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]), { settled: Promise.resolve() });
+    await vi.advanceTimersByTimeAsync(500);
+    // The row is removed long after the delete failed (an unrelated refresh).
+    rows[0].remove();
+    strand();
+    vi.advanceTimersByTime(3000);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a delete that settles before the DOM catches up still moves focus", async () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(2);
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]), { settled: Promise.resolve() });
+    await vi.advanceTimersByTimeAsync(30);
+    rows[0].remove();
+    vi.advanceTimersByTime(50);
+    expect(document.activeElement).toBe(rows[1]);
+  });
+
+  it("cancel() — an undo — stops it before the row goes", () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(2);
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    other.focus();
+    const rescue = rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
+    rescue.cancel();
+    rows[0].remove();
+    strand();
+    vi.advanceTimersByTime(3000);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("clicking an Undo button ends it", () => {
+    vi.useFakeTimers();
+    const { rows } = makeTree(3);
+    const undo = document.createElement("button");
+    document.body.appendChild(undo);
+    rows[0].focus();
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
+    undo.focus();
+    rows[0].remove();
+    strand();
+    vi.advanceTimersByTime(3000);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("does not outlive its tree", () => {
+    vi.useFakeTimers();
+    const { tree, rows } = makeTree(2);
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    other.focus();
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]));
+    tree.remove();
+    // A new tree with matching rows appears; the old rescue must not touch it.
+    const next = makeTree(2);
+    strand();
+    vi.advanceTimersByTime(3000);
+    expect(document.activeElement).toBe(document.body);
+    expect(next.rows.some((r) => r === document.activeElement)).toBe(false);
+  });
+
+  it("is replaced by a newer rescue", () => {
+    vi.useFakeTimers();
+    const a = makeTree(2);
+    const b = makeTree(2);
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    other.focus();
+    rescueFocusAfterRemoval(captureNeighborFocus(a.rows[0]));
+    rescueFocusAfterRemoval(captureNeighborFocus(b.rows[0]));
+    a.rows[0].remove();
+    b.rows[0].remove();
+    strand();
+    vi.advanceTimersByTime(100);
+    expect(document.activeElement).toBe(b.rows[1]);
+  });
+
+  it("does nothing for a row outside any tree", () => {
+    vi.useFakeTimers();
+    const row = document.createElement("button");
+    document.body.appendChild(row);
+    rescueFocusAfterRemoval(captureNeighborFocus(row));
+    vi.advanceTimersByTime(100);
+    expect(document.activeElement).toBe(document.body);
+  });
+
   it("gives up after its window", () => {
     vi.useFakeTimers();
     const { rows } = makeTree(2);
     const other = document.createElement("input");
     document.body.appendChild(other);
     other.focus();
-    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]), 500);
+    rescueFocusAfterRemoval(captureNeighborFocus(rows[0]), { windowMs: 500 });
     vi.advanceTimersByTime(600);
     other.blur();
     rows[0].remove();
