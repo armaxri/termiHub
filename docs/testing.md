@@ -914,6 +914,44 @@ issue that tracks the error:
 error key and the test id. Delete the file in the PR that fixes the issue. The
 machinery tests are in `tests/system/tests/test_js_errors.py`.
 
+### Hermetic app profile and egress probe
+
+The app under test must not reach the internet (#5388). Three layers keep it
+off:
+
+1. **Profile.** Before every launch, `AppInstance` seeds the app's
+   `settings.json` with `updates.autoCheck=false` and
+   `pluginUpdateCheckEnabled=false` (`termihub_harness/profile_defaults.py`).
+   Only missing keys are added, so a test that seeds its own value keeps it.
+   `AppInstance(hermetic=False)` opts out. The backend honours
+   `autoCheck=false` for the startup check, too.
+2. **Loopback feeds.** A test that grades the update or plugin-index client
+   sets `TERMIHUB_TEST_HTTP_BASE=http://127.0.0.1:<port>` through
+   `extra_app_env`. The app then fetches `https://<host>/<path>` from
+   `<base>/<host>/<path>`, for example
+   `<base>/api.github.com/repos/armaxri/termiHub/releases/latest`. Only
+   loopback bases are accepted. The seam exists only in test-bridge builds, and
+   `scripts/internal/assert-no-test-bridge.sh` fails a release binary that
+   carries the variable's name. `tests/test_update_check_hermetic.py` is the
+   worked example.
+3. **Egress probe.** From a test's setup to the end of its call phase,
+   conftest samples the app PID's connected sockets with `psutil` every 0.2 s
+   (`termihub_harness/egress.py`). Destinations that were already connected
+   when the test started do not count. Fixture networks never count either:
+   loopback, RFC 1918, ULA, link-local and CGNAT. Every other destination is
+   matched against `tests/system/egress-allowlist.d/`. Sampling is best
+   effort, so a connection that opens and closes between two samples is
+   missed.
+
+`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
+(the default), `fail` and `off`. The report goes to the terminal summary, the
+GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
+entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
+a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
+`issue` and a `reason`. The machinery tests are in
+`tests/system/tests/test_egress.py` and `test_profile_defaults.py`.
+
 ### Docker Hub resilience in CI (#4614)
 
 The container-fixture jobs pull their base images (`ubuntu`, `debian`,

@@ -8,6 +8,7 @@ import pytest
 
 from termihub_harness import (
     app_leaks,
+    egress,
     hang_guard,
     js_errors,
     skip_guard,
@@ -147,6 +148,10 @@ def pytest_configure(config):
         config._termihub_js_gate = js_errors.Gate.from_env()
     except (js_errors.GateConfigError, ValueError) as exc:
         raise pytest.UsageError(f"JS error gate (#5364): {exc}") from exc
+    try:
+        config._termihub_egress_gate = egress.Gate.from_env()
+    except (egress.GateConfigError, ValueError) as exc:
+        raise pytest.UsageError(f"Egress probe (#5388): {exc}") from exc
 
 
 def pytest_collection_modifyitems(config, items):
@@ -281,6 +286,7 @@ def _guarded_phase(phase, item):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_setup(item):
     item.config._termihub_js_gate.start(item)  # JS error gate cursor (#5364)
+    item.config._termihub_egress_gate.start(item)  # egress sampler (#5388)
     yield from _guarded_phase("setup", item)
 
 
@@ -291,6 +297,7 @@ def pytest_runtest_call(item):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
+    item.config._termihub_egress_gate.abandon(item)  # setup failed: no call phase
     yield from _guarded_phase("teardown", item)
     # After every fixture this test ended has stopped its app: an app of this
     # session still running untracked would sit (pinned on top) over every
@@ -321,6 +328,42 @@ def _report_leaks(terminalreporter):
 _JS_ERRORS_KEY = "termihub_js_errors"
 
 
+def _write_step_summary(title, lines):
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    try:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(f"## {title}\n\n```\n")
+            fh.write("\n".join(lines[:200]) + "\n```\n\n")
+    except OSError:
+        pass
+
+
+# ── Egress probe (#5388) ─────────────────────────────────────────────────────
+# The app under test must not reach the internet. Each test's new non-fixture
+# destinations (psutil, app PID) are matched against egress-allowlist.d/;
+# TERMIHUB_EGRESS_GATE=fail fails the test on a new one, annotate (default)
+# only reports. See egress.py.
+_EGRESS_KEY = "termihub_egress"
+
+
+def _report_egress(terminalreporter, config):
+    gate = config._termihub_egress_gate
+    lines = egress.format_summary(gate.records, gate.mode)
+    if not lines:
+        return
+    path = egress.write_report(
+        egress.report_path(ARTIFACT_ROOT, skip_guard.lane_from_env()), gate.records, gate.mode
+    )
+    terminalreporter.section("termihub egress from the app under test (#5388)")
+    for line in lines:
+        terminalreporter.write_line(line)
+    if path is not None:
+        terminalreporter.write_line(f"details: {path}")
+    _write_step_summary("Egress from the app under test", lines)
+
+
 def _report_js_errors(terminalreporter, config):
     gate = config._termihub_js_gate
     lines = js_errors.format_summary(gate.records, gate.mode)
@@ -334,14 +377,7 @@ def _report_js_errors(terminalreporter, config):
         terminalreporter.write_line(line)
     if path is not None:
         terminalreporter.write_line(f"details: {path}")
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        try:
-            with open(summary, "a", encoding="utf-8") as fh:
-                fh.write("## JS errors in the app under test\n\n```\n")
-                fh.write("\n".join(lines[:200]) + "\n```\n\n")
-        except OSError:
-            pass
+    _write_step_summary("JS errors in the app under test", lines)
 
 
 # ── Skip report + skip guard (#4315) ─────────────────────────────────────────
@@ -450,6 +486,7 @@ def pytest_testnodedown(node, error):
     output = getattr(node, "workeroutput", {})
     samples = output.get(_TIMING_KEY)
     _SESSION_CONFIG["config"]._termihub_js_gate.records.extend(output.get(_JS_ERRORS_KEY) or [])
+    _SESSION_CONFIG["config"]._termihub_egress_gate.records.extend(output.get(_EGRESS_KEY) or [])
     if samples:
         timing.merge(samples)
     _LEAKS.extend(output.get(_LEAKS_KEY) or [])
@@ -468,6 +505,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     _report_skips(terminalreporter, config)
     _report_leaks(terminalreporter)
     _report_js_errors(terminalreporter, config)
+    _report_egress(terminalreporter, config)
     if not timing.enabled():
         return
     lines = timing.format_lines(timing.summarize(timing.os_name()))
@@ -489,6 +527,7 @@ def pytest_sessionfinish(session, exitstatus):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()
         config.workeroutput[_LEAKS_KEY] = list(_LEAKS)
         config.workeroutput[_JS_ERRORS_KEY] = config._termihub_js_gate.records
+        config.workeroutput[_EGRESS_KEY] = config._termihub_egress_gate.records
     collector = getattr(config, "_manual_session", None)
     if collector is None or not collector.records:
         return
@@ -947,6 +986,7 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when == "call":
         item.config._termihub_js_gate.finish(item, report)  # may fail it (#5364)
+        item.config._termihub_egress_gate.finish(item, report)  # may fail it (#5388)
     if not report.failed:
         return
     instance = getattr(item, "instance", None)
