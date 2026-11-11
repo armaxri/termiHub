@@ -10,6 +10,7 @@ from termihub_harness import (
     app_leaks,
     hang_guard,
     js_errors,
+    native_ssh,
     skip_guard,
     timing,
     tool_preflight,
@@ -28,6 +29,7 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    NATIVE_SSH_TARGET,
     RDP_HELPER_ENV,
     RDP_HOST,
     RDP_NLA_PORT,
@@ -174,6 +176,7 @@ def pytest_collection_modifyitems(config, items):
         )
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
+    native_ssh.apply_markers(items, NATIVE_SSH_TARGET)
 
 
 # ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
@@ -583,7 +586,10 @@ def _ensure_ssh_services(services_and_ports):
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def ssh_fixtures():
-    """Password- and key-auth SSH containers (ports 2201 / 2203)."""
+    """Password- and key-auth SSH containers (ports 2201 / 2203), or the
+    native sshd on the macOS/Windows lanes (#5176, ``native_ssh``)."""
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     return _ensure_ssh_services(
         [(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
     )
@@ -598,6 +604,8 @@ def ssh_password_fixtures():
     with a key should ask for this instead, so they neither wait for that image
     to build nor skip when only *it* fails to.
     """
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     return _ensure_ssh_services([(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT)])
 
 
@@ -631,6 +639,8 @@ def ssh_bastion_fixtures():
     probed on the bastion's port alone; a connect through the bastion proves the
     target is up (MT-SSH-44, #3688).
     """
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     fixture = ComposeFixture()
     try:
         fixture.ensure(
