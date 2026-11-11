@@ -6,9 +6,10 @@
 //! executor (`core::files::transfer::remote_copy`), which
 //! creates (truncates) the destination before it reads the source. When both
 //! are the same file, the source is emptied while it is read. A byte-based
-//! folder paste (FTP, older agents) creates the destination folder and then
-//! lists the source, so a destination inside the source is copied into
-//! itself again and again.
+//! folder paste (FTP, agents) lists the source and then creates the
+//! destination folder, so a destination inside the source is a snapshot of
+//! the source copied into itself, and a cut of that shape deletes the source
+//! together with its new copy.
 //!
 //! The frontend's path check is textual, so it misses a symlink alias, a
 //! `..` and a respelled path. This module resolves both paths **on the
@@ -16,54 +17,51 @@
 //!
 //! - SFTP: the server's `realpath`.
 //! - Docker: `readlink -f` / `pwd -P` inside the container.
-//! - Every other backend (FTP, agent-hosted sessions): a lexical
-//!   normalisation of `.`, `..` and repeated slashes. These backends have no
-//!   way to resolve a symlink.
+//! - A backend with a [`PathCanonicalizer`] (#5333): the local filesystem's
+//!   `canonicalize`, FTP's `CWD` + `PWD`, and an agent-hosted session's
+//!   `connection.files.realpath`, which resolves on the agent host.
+//! - Every other backend, and a canonicalizer that cannot resolve a path (an
+//!   agent from before `connection.files.realpath`, an FTP server without
+//!   `PWD`): a lexical normalisation of `.`, `..` and repeated slashes.
 //!
 //! A destination that does not exist yet resolves through its parent folder.
-//! A path the backend cannot resolve is not a refusal: the paste then fails
-//! with its own, more specific error.
+//! A path SFTP or Docker cannot resolve is not a refusal: the paste then
+//! fails with its own, more specific error. For a canonicalizer, the lexical
+//! check stays the floor: when either path does not resolve, both compare
+//! lexically, exactly as before #5333.
 //!
-//! The wording matches the same-backend copy guards of #5320 and #5325. Once
-//! `core::files::copy_guard` (#5325) lands, [`copy_conflict`] and
-//! [`copy_refused`] can fold into it.
+//! The wording is [`copy_guard`](crate::files::copy_guard)'s, shared with the
+//! same-backend copy guards of #5320 and #5325.
 
 use std::future::Future;
+use std::path::Path;
+#[cfg(feature = "local-transfer")]
+use std::sync::Arc;
 
 use crate::errors::FileError;
 use crate::files::FileBrowser;
+
+#[cfg(feature = "local-transfer")]
+use crate::files::transfer::ranged::RangedTransferTarget;
 
 #[cfg(feature = "docker")]
 use crate::backends::docker::DockerTransferTarget;
 #[cfg(feature = "ssh")]
 use crate::backends::ssh::SftpFileBrowser;
 
-/// Why a copy onto itself is refused.
-pub const SAME_FILE: &str = "source and destination are the same file";
+pub use crate::files::copy_guard::{copy_conflict, copy_refused, INSIDE_SOURCE, SAME_FILE};
 
-/// Why a copy of a folder into its own subtree is refused.
-pub const INSIDE_SOURCE: &str = "the destination is inside the source folder";
-
-/// Why copying `src` to `dest` must be refused, if it must. Both paths must
-/// already be resolved. The answer is [`SAME_FILE`] for the same entry, or
-/// [`INSIDE_SOURCE`] for a folder copied into itself.
-pub fn copy_conflict(src: &str, dest: &str, src_is_dir: bool) -> Option<&'static str> {
-    let src = src.trim_end_matches('/');
-    let dest = dest.trim_end_matches('/');
-    if src == dest {
-        return Some(SAME_FILE);
-    }
-    // The root folder trims to "", so every absolute path lies inside it.
-    if src_is_dir && dest.starts_with(&format!("{src}/")) {
-        return Some(INSIDE_SOURCE);
-    }
-    None
-}
-
-/// The error of a refused copy, worded like the SFTP and local guards:
-/// `copy <src> to <dest> refused: <reason>`.
-pub fn copy_refused(src: &str, dest: &str, reason: &str) -> FileError {
-    FileError::OperationFailed(format!("copy {src} to {dest} refused: {reason}"))
+/// A backend that resolves a path to its real spelling (#5333): symlinks
+/// followed, `.` and `..` applied, as the backend's host sees them.
+///
+/// A path whose final name does not exist yet (a copy destination) resolves
+/// through its parent folder, with the name appended. A backend that cannot
+/// resolve answers [`FileError::NotSupported`]; a path that does not resolve
+/// answers its own error. Either way the paste guard then compares lexically.
+#[async_trait::async_trait]
+pub trait PathCanonicalizer: Send + Sync {
+    /// The real spelling of `path` on this backend.
+    async fn realpath(&self, path: &str) -> Result<String, FileError>;
 }
 
 /// Resolve `.`, `..` and repeated or trailing slashes of a POSIX path
@@ -152,6 +150,71 @@ where
     }
 }
 
+/// Refuse a copy of `src` to `dest` when the two conflict ([`copy_conflict`])
+/// as `realpath` resolves them, before anything is written (#5333).
+///
+/// The lexical check is the floor: when `realpath` cannot resolve either
+/// path (an older agent, a server without the primitive, a transient
+/// failure), both compare by [`normalize_lexically`] instead. A backend that
+/// resolves can only see more than the lexical check, never less.
+pub async fn check_real_or_lexical<F, Fut>(
+    src: &str,
+    dest: &str,
+    src_is_dir: bool,
+    realpath: F,
+) -> Result<(), FileError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<String, FileError>>,
+{
+    let resolved = match realpath(src.to_string()).await {
+        Ok(real_src) => match realpath(dest.to_string()).await {
+            Ok(real_dest) => Some((real_src, real_dest)),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    let (src_resolved, dest_resolved) =
+        resolved.unwrap_or_else(|| (normalize_lexically(src), normalize_lexically(dest)));
+    match copy_conflict(&src_resolved, &dest_resolved, src_is_dir) {
+        Some(reason) => Err(copy_refused(src, dest, reason)),
+        None => Ok(()),
+    }
+}
+
+/// The real spelling of the local `path` (#5333): `~` expanded, symlinks,
+/// `.` and `..` resolved, a missing final name through its parent folder.
+///
+/// On Windows the separators come back as `/`, so a folder's subtree compares
+/// the same way as on every other backend ([`copy_conflict`]).
+pub async fn local_realpath(path: &str) -> Result<String, FileError> {
+    let expanded = crate::config::expand_tilde_only(path);
+    let resolved = resolve_through_parent(&expanded, |p| async move {
+        tokio::task::spawn_blocking(move || std::fs::canonicalize(Path::new(&p)).ok())
+            .await
+            .ok()
+            .flatten()
+            .map(|real| portable_spelling(&real.to_string_lossy()))
+    })
+    .await;
+    resolved.ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")))
+}
+
+/// A canonical local path with `/` separators. On Windows the verbatim
+/// `\\?\` prefix `canonicalize` adds is dropped too.
+#[cfg(windows)]
+fn portable_spelling(path: &str) -> String {
+    path.strip_prefix(r"\\?\")
+        .unwrap_or(path)
+        .replace('\\', "/")
+}
+
+/// A canonical local path, unchanged: it already uses `/`.
+#[cfg(not(windows))]
+fn portable_spelling(path: &str) -> String {
+    path.to_string()
+}
+
 /// How a session's backend resolves a path to its real spelling. Owned, so a
 /// caller can let go of the session before the (remote) lookups run.
 #[derive(Clone)]
@@ -162,6 +225,11 @@ pub enum PathResolver {
     /// `readlink -f` / `pwd -P` inside the container.
     #[cfg(feature = "docker")]
     Docker(DockerTransferTarget),
+    /// A ranged (agent-hosted) end: its
+    /// [`realpath`](RangedTransferTarget::realpath), with the lexical check as
+    /// the floor ([`check_real_or_lexical`], #5333).
+    #[cfg(feature = "local-transfer")]
+    Ranged(Arc<dyn RangedTransferTarget>),
     /// No backend lookup: `.`, `..` and slashes only ([`normalize_lexically`]).
     Lexical,
 }
@@ -173,14 +241,18 @@ impl std::fmt::Debug for PathResolver {
             PathResolver::Sftp(_) => "Sftp",
             #[cfg(feature = "docker")]
             PathResolver::Docker(_) => "Docker",
+            #[cfg(feature = "local-transfer")]
+            PathResolver::Ranged(_) => "Ranged",
             PathResolver::Lexical => "Lexical",
         })
     }
 }
 
 impl PathResolver {
-    /// The resolver of the backend behind `browser`: SFTP and Docker resolve
-    /// on the backend, every other backend lexically.
+    /// The owned resolver of the backend behind `browser`: SFTP and Docker
+    /// resolve on the backend, every other backend lexically. A borrowed
+    /// [`PathCanonicalizer`] is not captured here: [`ensure_paste_allowed`]
+    /// and [`real_path`] use it.
     pub fn of_browser(browser: &dyn FileBrowser) -> Self {
         #[cfg(feature = "ssh")]
         if let Some(sftp) = browser
@@ -198,7 +270,9 @@ impl PathResolver {
     }
 
     /// The real spelling of `path` on this backend (a missing final name
-    /// resolves through its parent), or `None` when it cannot be resolved.
+    /// resolves through its parent), or `None` when it cannot be resolved. A
+    /// ranged end that cannot resolve, and the lexical resolver, answer the
+    /// lexical spelling.
     pub async fn resolve(&self, path: &str) -> Option<String> {
         match self {
             #[cfg(feature = "ssh")]
@@ -208,18 +282,33 @@ impl PathResolver {
             }
             #[cfg(feature = "docker")]
             PathResolver::Docker(target) => target.resolve_path(path).await,
+            #[cfg(feature = "local-transfer")]
+            PathResolver::Ranged(target) => Some(
+                target
+                    .realpath(path)
+                    .await
+                    .unwrap_or_else(|_| normalize_lexically(path)),
+            ),
             PathResolver::Lexical => Some(normalize_lexically(path)),
         }
     }
 
     /// Refuse a copy of `src` onto itself, or of the folder `src` into its
-    /// own subtree, on this backend. See [`check_resolved`].
+    /// own subtree, on this backend. See [`check_resolved`] and, for a ranged
+    /// end, [`check_real_or_lexical`].
     pub async fn ensure_copy_allowed(
         &self,
         src: &str,
         dest: &str,
         src_is_dir: bool,
     ) -> Result<(), FileError> {
+        #[cfg(feature = "local-transfer")]
+        if let PathResolver::Ranged(target) = self {
+            return check_real_or_lexical(src, dest, src_is_dir, |p| async move {
+                target.realpath(&p).await
+            })
+            .await;
+        }
         check_resolved(
             src,
             dest,
@@ -227,6 +316,50 @@ impl PathResolver {
             |p| async move { self.resolve(&p).await },
         )
         .await
+    }
+}
+
+/// Refuse a same-session paste of `src` onto itself, or of the folder `src`
+/// into its own subtree, with both paths resolved on `browser`'s backend.
+///
+/// SFTP and Docker resolve through [`PathResolver::of_browser`]. A browser
+/// with a [`PathCanonicalizer`] resolves through it, with the lexical check as
+/// the floor ([`check_real_or_lexical`], #5333). Every other browser compares
+/// lexically.
+pub async fn ensure_paste_allowed(
+    browser: &dyn FileBrowser,
+    src: &str,
+    dest: &str,
+    src_is_dir: bool,
+) -> Result<(), FileError> {
+    let resolver = PathResolver::of_browser(browser);
+    if let (PathResolver::Lexical, Some(canon)) = (&resolver, browser.path_canonicalizer()) {
+        return check_real_or_lexical(src, dest, src_is_dir, |p| async move {
+            canon.realpath(&p).await
+        })
+        .await;
+    }
+    resolver.ensure_copy_allowed(src, dest, src_is_dir).await
+}
+
+/// The real spelling of `path` on `browser`'s backend, a missing final name
+/// resolved through its parent folder (#5333). What an agent answers
+/// `connection.files.realpath` with.
+///
+/// [`FileError::NotSupported`] when the backend has no way to resolve a path
+/// (WSL, for example), so the caller falls back to its lexical check;
+/// [`FileError::NotFound`] when neither the path nor its parent resolves.
+pub async fn real_path(browser: &dyn FileBrowser, path: &str) -> Result<String, FileError> {
+    let resolver = PathResolver::of_browser(browser);
+    if !matches!(resolver, PathResolver::Lexical) {
+        return resolver
+            .resolve(path)
+            .await
+            .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")));
+    }
+    match browser.path_canonicalizer() {
+        Some(canon) => canon.realpath(path).await,
+        None => Err(FileError::NotSupported),
     }
 }
 

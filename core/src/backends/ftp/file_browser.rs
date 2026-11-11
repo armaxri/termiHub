@@ -32,6 +32,7 @@ use tokio::sync::Mutex;
 
 use crate::config::{FtpConfig, FtpTransferType};
 use crate::errors::FileError;
+use crate::files::paste_guard::{resolve_through_parent, PathCanonicalizer};
 use crate::files::utils::{expand_home_relative, is_home_relative};
 use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
@@ -228,6 +229,29 @@ impl FtpFileBrowser {
             })
             .await?;
         Ok(expand_home_relative(path, &home))
+    }
+
+    /// The server's real spelling of the folder `dir` (#5333): `CWD` into it,
+    /// read `PWD`, then `CWD` back to where the connection was. Every other
+    /// operation relies on the working directory staying the login one
+    /// ([`resolve_home`](Self::resolve_home)), so when the way back fails the
+    /// connection is dropped, and the next operation reconnects there.
+    ///
+    /// Fails when `dir` is not a folder the server enters (a file, a missing
+    /// path) or the server lacks `CWD` / `PWD`.
+    async fn resolve_dir(&self, dir: &str) -> Result<String, FileError> {
+        self.with_reconnect("CWD", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            let original = stream.pwd().await?;
+            stream.cwd(dir).await?;
+            let resolved = stream.pwd().await;
+            if stream.cwd(&original).await.is_err() {
+                *guard = None;
+            }
+            resolved
+        })
+        .await
     }
 
     /// Lock the shared stream, returning a retryable "not connected" error when
@@ -427,6 +451,29 @@ impl FileBrowser for FtpFileBrowser {
     fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         self.ranged_possible()
             .then_some(self as &dyn RangedFileAccess)
+    }
+
+    /// `CWD` + `PWD` (#5333), so a same-session paste through a symlinked
+    /// folder is refused.
+    fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        Some(self)
+    }
+}
+
+/// The server's real spelling of a path (#5333): a folder through `CWD` +
+/// `PWD`, anything else (a file, a missing destination) through its parent
+/// folder. FTP has no way to resolve a file's own symlink, so a symlink to a
+/// file resolves to the link's path in its real folder.
+#[async_trait::async_trait]
+impl PathCanonicalizer for FtpFileBrowser {
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        let path = self.resolve_home(path).await?;
+        resolve_through_parent(
+            &path,
+            |dir| async move { self.resolve_dir(&dir).await.ok() },
+        )
+        .await
+        .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")))
     }
 }
 
