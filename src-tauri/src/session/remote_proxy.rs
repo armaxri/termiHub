@@ -4524,6 +4524,9 @@ mod tests {
     /// Pastes between two sessions that reach one filesystem (#5355).
     mod cross_session_tests;
 
+    /// Pastes between two sessions that only may share a filesystem (#5430).
+    mod hinted_session_tests;
+
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.
     #[test]
