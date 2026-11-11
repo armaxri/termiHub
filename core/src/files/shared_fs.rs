@@ -18,6 +18,7 @@
 //! legitimate copy between two hosts.
 
 use crate::config::SshConfig;
+use crate::files::FileEntry;
 
 /// The filesystem a session's file browser reaches. Equal ids mean the two
 /// sessions see the same files under the same paths.
@@ -116,6 +117,126 @@ impl SshServerId {
 /// A host name as compared: trimmed, ASCII case folded.
 pub fn host_key(host: &str) -> String {
     host.trim().to_ascii_lowercase()
+}
+
+/// A weaker sign that two ends **may** reach one filesystem (#5430): the
+/// same SSH server whatever the login, a loopback server under another of
+/// its names, two agent-hosted SSH sessions opened from one saved
+/// definition. Unlike a [`FilesystemId`], equal hints are not enough to
+/// refuse a paste: the source must also show the same entry on both ends
+/// ([`same_entry`]). A login can be jailed (`ChrootDirectory`), a name can
+/// point elsewhere, a definition can be edited between two connects.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FilesystemHint {
+    /// An SSH server reached on `port` over `route`, any login.
+    Ssh {
+        /// The host name, with the loopback names folded into one.
+        host: String,
+        /// The SSH port.
+        port: u16,
+        /// The jump hosts and proxy, as in [`SshServerId`].
+        route: Vec<String>,
+    },
+    /// What `backend` hints at, as the agent `agent_id` reaches it.
+    Agent {
+        /// The agent the sessions run on.
+        agent_id: String,
+        /// The hosted session's hint.
+        backend: Box<FilesystemHint>,
+    },
+    /// An agent-hosted SSH session opened from the saved definition
+    /// `definition_id` on the agent `agent_id`.
+    AgentDefinition {
+        /// The agent the sessions run on.
+        agent_id: String,
+        /// The agent-side saved connection definition.
+        definition_id: String,
+    },
+}
+
+impl FilesystemHint {
+    /// The SSH server of `config` whatever the login, or `None` when it
+    /// names no host.
+    pub fn ssh(config: &SshConfig) -> Option<Self> {
+        if config.host.trim().is_empty() {
+            return None;
+        }
+        let mut route: Vec<String> = config
+            .proxy_jump
+            .iter()
+            .map(|hop| format!("{}@{}:{}", hop.username, hint_host(&hop.host), hop.port))
+            .collect();
+        if let Some(proxy) = &config.proxy {
+            route.push(format!(
+                "{:?}://{}:{}",
+                proxy.proxy_type,
+                hint_host(&proxy.host),
+                proxy.port
+            ));
+        }
+        Some(Self::Ssh {
+            host: hint_host(&config.host),
+            port: config.port,
+            route,
+        })
+    }
+}
+
+/// A host name as a [`FilesystemHint`] compares it: [`host_key`], without
+/// a trailing root dot, and every loopback spelling as `localhost`.
+fn hint_host(host: &str) -> String {
+    let key = host_key(host);
+    let key = key.strip_suffix('.').unwrap_or(&key).to_string();
+    let bare = key.trim_start_matches('[').trim_end_matches(']');
+    let loopback = matches!(bare, "localhost" | "::1" | "0:0:0:0:0:0:0:1")
+        || bare
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if loopback {
+        "localhost".to_string()
+    } else {
+        key
+    }
+}
+
+/// How surely two ends of a cross-session paste reach one filesystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sharing {
+    /// Equal [`FilesystemId`]s: the same path is the same entry.
+    Surely,
+    /// Equal [`FilesystemHint`]s only: refuse only when the source shows
+    /// the same entry on both ends ([`same_entry`]).
+    Possibly,
+    /// Different or unknown: never refused.
+    No,
+}
+
+/// How surely two ends with these identities and hints share a filesystem.
+pub fn sharing(
+    (id_a, id_b): (Option<&FilesystemId>, Option<&FilesystemId>),
+    (hint_a, hint_b): (Option<&FilesystemHint>, Option<&FilesystemHint>),
+) -> Sharing {
+    if same_filesystem(id_a, id_b) {
+        Sharing::Surely
+    } else if matches!((hint_a, hint_b), (Some(a), Some(b)) if a == b) {
+        Sharing::Possibly
+    } else {
+        Sharing::No
+    }
+}
+
+/// Whether two `stat`s of one path, taken through two ends, show the same
+/// entry (#5430): the same kind, modification time and permissions, and
+/// for a file the same size. A backend that reports no modification time
+/// or no permissions never matches, so an end that cannot show an entry
+/// is never taken for the other's.
+pub fn same_entry(a: &FileEntry, b: &FileEntry) -> bool {
+    a.is_directory == b.is_directory
+        && !a.modified.is_empty()
+        && a.modified == b.modified
+        && a.permissions.is_some()
+        && a.permissions == b.permissions
+        && (a.is_directory || a.size == b.size)
 }
 
 #[cfg(test)]

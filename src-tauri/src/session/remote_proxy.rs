@@ -50,7 +50,7 @@ use tracing::{debug, warn};
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::paste_guard::PathCanonicalizer;
-use termihub_core::files::shared_fs::FilesystemId;
+use termihub_core::files::shared_fs::{FilesystemHint, FilesystemId};
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 use termihub_core::monitoring::{
     agent_recovery_budget, CollectLoopState, KillSignal, MonitorStatus, MonitorStatusReason,
@@ -729,6 +729,12 @@ impl RemoteProxy {
                         file_ranges,
                         definition_id: definition_id.clone(),
                         filesystem: hosted_filesystem(&self.agent_id, &session_type, &config),
+                        filesystem_hint: hosted_filesystem_hint(
+                            &self.agent_id,
+                            &session_type,
+                            &config,
+                            definition_id.as_deref(),
+                        ),
                         attribute_ops: hosted_attribute_ops(
                             &session_type,
                             agent_outdated,
@@ -827,6 +833,10 @@ pub struct RemoteFileBrowserProxy {
     /// (#5355; [`hosted_filesystem`]): what lets a paste between two
     /// sessions on one agent host run the same-file guard.
     filesystem: Option<FilesystemId>,
+    /// A weaker sign of what the hosted session browses (#5430;
+    /// [`hosted_filesystem_hint`]), confirmed by the entry itself before a
+    /// cross-session paste is refused.
+    filesystem_hint: Option<FilesystemHint>,
     /// Which of chmod / chown / symlink the hosted backend performs (#4353),
     /// resolved from the hosted session type and the agent's reported host
     /// support (#4601) by [`hosted_attribute_ops`].
@@ -853,6 +863,40 @@ pub(crate) fn hosted_filesystem(
         _ => return None,
     };
     Some(FilesystemId::Agent {
+        agent_id: agent_id.to_string(),
+        backend: Box::new(backend),
+    })
+}
+
+/// A weaker sign of what an agent-hosted session browses (#5430): an SSH
+/// session's server under any login (its inline config), or, opened from a
+/// saved definition without an inline host, that definition on this agent.
+/// Two sessions with equal hints are refused a paste only when the source
+/// shows the same entry through both. Every other session type has none:
+/// two Docker sessions of one definition can be two containers.
+pub(crate) fn hosted_filesystem_hint(
+    agent_id: &str,
+    session_type: &str,
+    config: &Value,
+    definition_id: Option<&str>,
+) -> Option<FilesystemHint> {
+    if session_type != "ssh" {
+        return None;
+    }
+    let inline = serde_json::from_value::<termihub_core::config::SshConfig>(config.clone())
+        .ok()
+        .and_then(|ssh| FilesystemHint::ssh(&ssh));
+    let backend = match (inline, definition_id) {
+        (Some(server), _) => server,
+        (None, Some(definition_id)) if !definition_id.is_empty() => {
+            return Some(FilesystemHint::AgentDefinition {
+                agent_id: agent_id.to_string(),
+                definition_id: definition_id.to_string(),
+            })
+        }
+        _ => return None,
+    };
+    Some(FilesystemHint::Agent {
         agent_id: agent_id.to_string(),
         backend: Box::new(backend),
     })
@@ -1199,6 +1243,11 @@ impl FileBrowser for RemoteFileBrowserProxy {
     /// The agent host, or the server an SSH session reaches (#5355).
     fn filesystem_id(&self) -> Option<FilesystemId> {
         self.filesystem.clone()
+    }
+
+    /// The server under any login, or the saved definition (#5430).
+    fn filesystem_hint(&self) -> Option<FilesystemHint> {
+        self.filesystem_hint.clone()
     }
 }
 

@@ -667,6 +667,12 @@ impl FileBrowser for SftpFileBrowser {
         crate::files::shared_fs::FilesystemId::ssh(&self.config)
     }
 
+    /// The server whatever the login, loopback names folded (#5430): another
+    /// login, or `localhost` vs `127.0.0.1`, may see the same files.
+    fn filesystem_hint(&self) -> Option<crate::files::shared_fs::FilesystemHint> {
+        crate::files::shared_fs::FilesystemHint::ssh(&self.config)
+    }
+
     /// SFTP `setstat` / `symlink` back chmod, chown and symlink creation.
     fn attribute_ops(&self) -> crate::files::FileAttributeOps {
         crate::files::FileAttributeOps::ALL

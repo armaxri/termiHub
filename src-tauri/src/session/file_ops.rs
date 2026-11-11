@@ -29,6 +29,7 @@ use tokio::sync::Mutex;
 
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
 use termihub_core::files::paste_guard;
+use termihub_core::files::shared_fs::Sharing;
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 
 use crate::files::sftp::{
@@ -316,16 +317,22 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let src_handle = self.resolve(src_session).await?;
         let dest_handle = self.resolve(dest_session).await?;
-        let src_browser = src_handle.browser()?;
-        let guard = paste_guard::CrossSessionGuard::of(src_browser, dest_handle.browser()?);
-        if !guard.shares_filesystem() {
+        let guard =
+            paste_guard::CrossSessionGuard::of(src_handle.browser()?, dest_handle.browser()?);
+        if guard.sharing() == Sharing::No {
             return Ok(());
         }
-        let Ok(entry) = src_browser.stat(src).await else {
+        let Some(entry) = stat_on(&src_handle, src.to_string()).await else {
             return Ok(());
         };
         guard
-            .ensure_allowed(src, dest, entry.is_directory)
+            .ensure_allowed(
+                src,
+                dest,
+                entry.is_directory,
+                |p| stat_on(&src_handle, p),
+                |p| stat_on(&dest_handle, p),
+            )
             .await
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
@@ -571,6 +578,17 @@ fn no_file_browser() -> TerminalError {
 /// that connection alive — and close's disconnect waiting — for as long as the
 /// call runs. A graphical session's side channel (#4193) is already an owned,
 /// shared browser.
+/// The entry at `path` through `handle`'s browser, or `None` when it cannot
+/// show one (#5430). The browser is borrowed only for the one call, so the
+/// future stays `Send`.
+async fn stat_on(handle: &BrowserHandle, path: String) -> Option<FileEntry> {
+    let stat = match handle.browser() {
+        Ok(browser) => browser.stat(&path),
+        Err(_) => return None,
+    };
+    stat.await.ok()
+}
+
 enum BrowserHandle {
     /// A session's I/O handle: a shared connection plus its I/O gate guard.
     Session(IoHandle),

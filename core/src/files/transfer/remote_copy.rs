@@ -35,8 +35,8 @@ use tracing::{debug, warn};
 
 use crate::errors::FileError;
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
-use crate::files::paste_guard::{check_across, PathResolver};
-use crate::files::shared_fs::{same_filesystem, FilesystemId};
+use crate::files::paste_guard::{check_across, AcrossEnd, PathResolver};
+use crate::files::shared_fs::{sharing, FilesystemHint, FilesystemId, Sharing};
 
 use super::attempt::{
     apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
@@ -149,6 +149,42 @@ impl RemoteCopyEndpoint {
             RemoteCopyEndpoint::Ranged(target) => target.filesystem_id(),
         }
     }
+    /// A weaker sign that this end may reach another's filesystem (#5430):
+    /// the SFTP browser's server under any login, a ranged end's own
+    /// [`filesystem_hint`](RangedTransferTarget::filesystem_hint). A
+    /// container has none: its id is already exact.
+    pub fn filesystem_hint(&self) -> Option<FilesystemHint> {
+        match self {
+            #[cfg(feature = "ssh")]
+            RemoteCopyEndpoint::Sftp(browser) => {
+                crate::files::FileBrowser::filesystem_hint(browser.as_ref())
+            }
+            #[cfg(feature = "docker")]
+            RemoteCopyEndpoint::Docker(_) => None,
+            #[cfg(feature = "local-transfer")]
+            RemoteCopyEndpoint::Ranged(target) => target.filesystem_hint(),
+        }
+    }
+
+    /// The entry at `path` on this end, or `None` when it cannot show one:
+    /// what confirms a pair that only may share a filesystem (#5430).
+    async fn stat(&self, path: &str) -> Option<crate::files::FileEntry> {
+        match self {
+            #[cfg(feature = "ssh")]
+            RemoteCopyEndpoint::Sftp(browser) => {
+                crate::files::FileBrowser::stat(browser.as_ref(), path)
+                    .await
+                    .ok()
+            }
+            #[cfg(feature = "docker")]
+            RemoteCopyEndpoint::Docker(_) => {
+                let _ = path;
+                None
+            }
+            #[cfg(feature = "local-transfer")]
+            RemoteCopyEndpoint::Ranged(target) => target.stat(path).await.ok(),
+        }
+    }
 }
 
 /// Refuse a copy whose source and destination are on the **same** end and
@@ -169,26 +205,34 @@ pub async fn ensure_copy_within_allowed(
         .await
 }
 
-/// Refuse a copy between two **different** sessions that reach one
-/// filesystem (#5355) when the source and destination are the same file,
-/// before anything is opened.
+/// Refuse a copy between two **different** sessions that may reach one
+/// filesystem (#5355, #5430) when the source and destination are the same
+/// file, before anything is opened.
 ///
 /// Two agent-hosted local sessions on one agent, two SSH sessions to one
-/// server as one user, two sessions on one container: the executor would
-/// truncate the source through the destination end. Each path is resolved
-/// by its own end ([`check_across`]).
-/// Ends that do not surely share a filesystem (another host, an end that
-/// cannot tell) are never refused.
+/// server, two sessions on one container: the executor would truncate the
+/// source through the destination end. Each path is resolved by its own end
+/// ([`check_across`]); a pair that only *may* share a filesystem (another
+/// login, a loopback alias) is refused only when the source shows the same
+/// entry on both ends. Ends that do not share a filesystem, or cannot tell,
+/// are never refused.
 pub async fn ensure_copy_across_allowed(
     src_end: &RemoteCopyEndpoint,
     src_path: &str,
     dst_end: &RemoteCopyEndpoint,
     dst_path: &str,
 ) -> Result<(), FileError> {
-    if !same_filesystem(
-        src_end.filesystem_id().as_ref(),
-        dst_end.filesystem_id().as_ref(),
-    ) {
+    let sharing = sharing(
+        (
+            src_end.filesystem_id().as_ref(),
+            dst_end.filesystem_id().as_ref(),
+        ),
+        (
+            src_end.filesystem_hint().as_ref(),
+            dst_end.filesystem_hint().as_ref(),
+        ),
+    );
+    if sharing == Sharing::No {
         return Ok(());
     }
     let (src_resolver, dst_resolver) = (src_end.path_resolver(), dst_end.path_resolver());
@@ -196,13 +240,20 @@ pub async fn ensure_copy_across_allowed(
         src_path,
         dst_path,
         false,
-        |p| {
-            let r = &src_resolver;
-            async move { r.resolve(&p).await }
+        sharing,
+        AcrossEnd {
+            resolve: |p: String| {
+                let r = &src_resolver;
+                async move { r.resolve(&p).await }
+            },
+            stat: |p: String| async move { src_end.stat(&p).await },
         },
-        |p| {
-            let r = &dst_resolver;
-            async move { r.resolve(&p).await }
+        AcrossEnd {
+            resolve: |p: String| {
+                let r = &dst_resolver;
+                async move { r.resolve(&p).await }
+            },
+            stat: |p: String| async move { dst_end.stat(&p).await },
         },
     )
     .await

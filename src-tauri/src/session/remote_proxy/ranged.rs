@@ -109,4 +109,9 @@ impl RangedTransferTarget for RemoteFileBrowserProxy {
     fn filesystem_id(&self) -> Option<termihub_core::files::shared_fs::FilesystemId> {
         FileBrowser::filesystem_id(self)
     }
+
+    /// The same hint the session's file browser reports (#5430).
+    fn filesystem_hint(&self) -> Option<termihub_core::files::shared_fs::FilesystemHint> {
+        FileBrowser::filesystem_hint(self)
+    }
 }
