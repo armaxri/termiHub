@@ -377,6 +377,20 @@ violation). The seed covers the shared `ui/` primitives plus key dialogs
 must be fixed, never suppressed**: if one is too large to fix in scope, leave that component
 out of the net and file a `Ready2Implement` follow-up rather than shipping a red suite.
 
+### Lazy-import guard (#5370)
+
+A test that ends while a `React.lazy` import is still loading corrupts the
+coverage report of the lazily imported module. V8 reports the half-loaded module
+with `startOffset` 0, and when `@vitest/coverage-v8` reads that entry last, every
+range in the file shifts by the module-wrapper length (#5358).
+
+`src/test/lazyImportGuard.ts` (installed from the setup file, which wraps
+`React.lazy` through `vi.mock("react")`) prevents this. After each test and each
+test file, it waits for any lazy import still in flight and then **fails** the
+test, naming the module. To fix a flagged test, stub the lazy surface with
+`vi.mock` when the test does not need it, or await what the lazy component
+renders when it does.
+
 ### Console output guard and `act()` (#3356)
 
 Component tests drive React directly (`createRoot` + `act` from `"react"`).
