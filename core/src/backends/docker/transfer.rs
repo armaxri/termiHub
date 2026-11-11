@@ -68,7 +68,18 @@ const SIZE_SCRIPT: &str = r#"exec wc -c < "$1""#;
 /// A folder resolves with `pwd -P`, an existing entry with `readlink -f`, and
 /// a missing one (a copy destination) through its parent folder. Exits
 /// non-zero when the path cannot be resolved.
-pub(crate) const RESOLVE_PATH_SCRIPT: &str = "exit 1"; // stub
+pub(crate) const RESOLVE_PATH_SCRIPT: &str = r#"p=$1
+while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
+if [ -d "$p" ]; then cd -P -- "$p" 2>/dev/null && pwd -P; exit; fi
+if [ -L "$p" ] || [ -e "$p" ]; then
+  r=$(readlink -f -- "$p" 2>/dev/null) && [ -n "$r" ] && { printf '%s\n' "$r"; exit 0; }
+fi
+case $p in */*) d=${p%/*}; b=${p##*/};; *) d=.; b=$p;; esac
+[ -n "$d" ] || d=/
+case $b in ''|.|..) exit 1;; esac
+d=$(cd -P -- "$d" 2>/dev/null && pwd -P) || exit 1
+[ "$d" = / ] && d=
+printf '%s/%s\n' "$d" "$b""#;
 
 /// The path [`RESOLVE_PATH_SCRIPT`] printed, or `None` when it printed none.
 /// Pure.

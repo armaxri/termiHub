@@ -48,8 +48,16 @@ pub const INSIDE_SOURCE: &str = "the destination is inside the source folder";
 /// already be resolved. The answer is [`SAME_FILE`] for the same entry, or
 /// [`INSIDE_SOURCE`] for a folder copied into itself.
 pub fn copy_conflict(src: &str, dest: &str, src_is_dir: bool) -> Option<&'static str> {
-    let _ = (src, dest, src_is_dir);
-    None // stub: implemented in the fix commit
+    let src = src.trim_end_matches('/');
+    let dest = dest.trim_end_matches('/');
+    if src == dest {
+        return Some(SAME_FILE);
+    }
+    // The root folder trims to "", so every absolute path lies inside it.
+    if src_is_dir && dest.starts_with(&format!("{src}/")) {
+        return Some(INSIDE_SOURCE);
+    }
+    None
 }
 
 /// The error of a refused copy, worded like the SFTP and local guards:
@@ -63,7 +71,27 @@ pub fn copy_refused(src: &str, dest: &str, reason: &str) -> FileError {
 /// at the root). A relative path stays relative and keeps a leading `..`
 /// that cannot be resolved.
 pub fn normalize_lexically(path: &str) -> String {
-    path.to_string() // stub
+    let absolute = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => match parts.last() {
+                Some(&last) if last != ".." => {
+                    parts.pop();
+                }
+                _ if absolute => {}
+                _ => parts.push(".."),
+            },
+            other => parts.push(other),
+        }
+    }
+    let joined = parts.join("/");
+    match (absolute, joined.is_empty()) {
+        (true, _) => format!("/{joined}"),
+        (false, true) => ".".to_string(),
+        (false, false) => joined,
+    }
 }
 
 /// Split a path into its parent folder and final name.

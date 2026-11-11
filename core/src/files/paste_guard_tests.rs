@@ -65,7 +65,12 @@ fn fake_realpath(path: &str) -> Option<String> {
 }
 
 async fn check(src: &str, dest: &str, src_is_dir: bool) -> Result<(), FileError> {
-    check_resolved(src, dest, src_is_dir, |p| async move { fake_realpath(&p) }).await
+    // Resolved the way the SFTP resolver does: through the parent when the
+    // path is missing.
+    check_resolved(src, dest, src_is_dir, |p| async move {
+        resolve_through_parent(&p, |q| async move { fake_realpath(&q) }).await
+    })
+    .await
 }
 
 #[tokio::test]
