@@ -678,6 +678,14 @@ mod tests {
             browser.copy("/a", "/b").await,
             Err(FileError::NotSupported)
         ));
+        // So a copy onto itself or into itself can never write anything
+        // (#5325): it is refused before any connection is made.
+        for (src, dest) in [("/d/f", "/d/f"), ("/d/f", "/d/./f"), ("/d", "/d/copy")] {
+            assert!(
+                matches!(browser.copy(src, dest).await, Err(FileError::NotSupported)),
+                "{src} -> {dest}"
+            );
+        }
     }
 
     #[test]

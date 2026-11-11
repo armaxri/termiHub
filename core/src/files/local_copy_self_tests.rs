@@ -82,11 +82,21 @@ async fn a_file_copied_onto_itself_is_refused_and_keeps_its_bytes() {
             .await
             .expect_err(s(&dest));
         assert_refused(&err, SAME);
-        assert_eq!(std::fs::read(&file).unwrap(), PRECIOUS, "{}", dest.display());
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            PRECIOUS,
+            "{}",
+            dest.display()
+        );
 
         let err = copy_sync(s(&file), s(&dest), false).expect_err(s(&dest));
         assert!(err.to_string().ends_with(SAME), "{err}");
-        assert_eq!(std::fs::read(&file).unwrap(), PRECIOUS, "{}", dest.display());
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            PRECIOUS,
+            "{}",
+            dest.display()
+        );
     }
     assert_eq!(snapshot(dir.path()), before);
 }
@@ -101,13 +111,22 @@ async fn a_file_copied_onto_a_symlink_or_hard_link_to_itself_is_refused() {
     std::fs::hard_link(&file, &hard).unwrap();
     let before = snapshot(dir.path());
 
-    for (src, dest) in [(&file, &link), (&link, &file), (&file, &hard), (&hard, &file)] {
+    for (src, dest) in [
+        (&file, &link),
+        (&link, &file),
+        (&file, &hard),
+        (&hard, &file),
+    ] {
         let err = LocalFileBrowser::new()
             .copy(s(src), s(dest))
             .await
             .expect_err(s(dest));
         assert_refused(&err, SAME);
-        assert!(copy_sync(s(src), s(dest), false).is_err(), "{}", dest.display());
+        assert!(
+            copy_sync(s(src), s(dest), false).is_err(),
+            "{}",
+            dest.display()
+        );
         assert_eq!(std::fs::read(&file).unwrap(), PRECIOUS);
     }
     assert!(std::fs::symlink_metadata(&link)

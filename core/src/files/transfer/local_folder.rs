@@ -30,10 +30,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::local::{run_local_transfer, should_queue_local_copy};
-use crate::files::copy_guard::resolve_maybe_missing;
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferStateTag;
 use super::ProgressSink;
+use crate::files::copy_guard::resolve_maybe_missing;
 
 /// Most entries (files, folders, symlinks, skipped items) one folder copy may
 /// hold. Planning keeps one small record per entry, so this bounds its memory.
