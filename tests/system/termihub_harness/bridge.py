@@ -645,7 +645,8 @@ class Driver:
                        "containerBackground",              # computed colour
                        "themeBackground",                  # xterm theme bg
                        "horizontalScroll", "viewportClientBottom",
-                       "hscrollBarHeight"},
+                       "hscrollBarHeight",                 # laid-out bar
+                       "hscrollReserve"},                  # its strip (#5280)
              "decorations": [{"classes", "background",  # OSC 133 bars,
                               "top", "left", "width", "height"}, ...],  # flash
              "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px

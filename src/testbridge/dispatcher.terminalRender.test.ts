@@ -63,6 +63,7 @@ const MEASUREMENT: TerminalMeasurement = {
     horizontalScroll: false,
     viewportClientBottom: 420,
     hscrollBarHeight: 0,
+    hscrollReserve: 0,
   },
   screenRect: { left: 260, top: 80, width: 624, height: 408 },
   visibleRect: { left: 252, top: 80, width: 650, height: 420 },
@@ -289,6 +290,16 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
       .querySelector(".terminal-scroll-viewport")!
       .classList.add("terminal-horizontal-scroll");
     expect(measureTerminal(handles).paint.horizontalScroll).toBe(true);
+  });
+
+  it("reports the horizontal-scroll bottom reserve only in that mode (#5280)", () => {
+    const xtermEl = handles.element.querySelector<HTMLElement>(".xterm")!;
+    xtermEl.style.paddingBottom = "17px";
+    expect(measureTerminal(handles).paint.hscrollReserve).toBe(0);
+    handles.element
+      .querySelector(".terminal-scroll-viewport")!
+      .classList.add("terminal-horizontal-scroll");
+    expect(measureTerminal(handles).paint.hscrollReserve).toBe(17);
   });
 
   it("reads the painted ancestor's background when the element itself is transparent", () => {
