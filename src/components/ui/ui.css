@@ -116,22 +116,46 @@
   background: var(--bg-hover);
 }
 
-/*
- * Unavailable look. `[aria-disabled="true"]` (#5286) is the keyboard-reachable
- * twin of `[disabled]`: an invalid editor's Save stays focusable and, when
- * activated, focuses the first invalid field (#2467, #5285) — so it shares the
- * dimmed look and `not-allowed` cursor, keeps its `:focus-visible` ring, and
- * gets no hover highlight (the variant `:hover` rules exclude it). Unlike
- * `[disabled]` it must keep pointer events, or the click that explains why the
- * save did not happen would never reach the handler.
- */
-.ui-btn[disabled],
-.ui-btn[aria-disabled="true"] {
+.ui-btn[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.ui-btn[disabled] {
   pointer-events: none;
+}
+
+/*
+ * Unavailable look for `[aria-disabled="true"]` (#5286), the keyboard-reachable
+ * twin of `[disabled]`. An invalid editor's Save stays focusable, and activating
+ * it focuses the first invalid field (#2467, #5285).
+ *
+ * - It must keep pointer events, or that click never reaches the handler.
+ * - It must not use element `opacity`: that would also fade the
+ *   `:focus-visible` ring (`--shadow-focus` on this element) below the
+ *   WCAG 2.4.11 / 1.4.11 3:1 bar. Each variant's background, border and text
+ *   are mixed 50% toward transparent instead, the same visual result as
+ *   `opacity: 0.5`, with the ring at full strength.
+ * - No hover highlight: the variant `:hover` rules exclude it.
+ * - `:not([disabled])`: a natively disabled (e.g. pending) button keeps the
+ *   `[disabled]` look above instead of being dimmed twice.
+ */
+.ui-btn[aria-disabled="true"]:not([disabled]) {
+  cursor: not-allowed;
+}
+.ui-btn--primary[aria-disabled="true"]:not([disabled]) {
+  background: color-mix(in srgb, var(--accent-color) 50%, transparent);
+  color: color-mix(in srgb, var(--text-on-accent) 50%, transparent);
+}
+.ui-btn--secondary[aria-disabled="true"]:not([disabled]) {
+  background: color-mix(in srgb, var(--bg-tertiary) 50%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 50%, transparent);
+  border-color: color-mix(in srgb, var(--border-primary) 50%, transparent);
+}
+.ui-btn--ghost[aria-disabled="true"]:not([disabled]) {
+  color: color-mix(in srgb, var(--text-secondary) 50%, transparent);
+}
+.ui-btn--danger[aria-disabled="true"]:not([disabled]) {
+  background: color-mix(in srgb, var(--bg-tertiary) 50%, transparent);
+  color: color-mix(in srgb, var(--color-error) 50%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 50%, transparent);
 }
 
 /* Async lifecycle: idle → pending (disabled + spinner) → success (brief). */
