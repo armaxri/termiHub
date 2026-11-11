@@ -47,6 +47,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
 use termihub_core::errors::FileError;
+use termihub_core::files::paste_guard::{real_path, PathCanonicalizer};
 use termihub_core::files::{
     FileBrowser, FileEntry, RangedFileAccess, MAX_RANGE_BYTES, MAX_REMOTE_READ_BYTES,
 };
@@ -163,6 +164,12 @@ pub enum FileOp {
         offset: u64,
         size: u64,
     },
+    /// Resolve `path` to its real spelling on the session backend (#5333).
+    /// Sent only to a daemon that advertised
+    /// [`CAP_FILE_REALPATH`](super::protocol::CAP_FILE_REALPATH).
+    Realpath {
+        path: String,
+    },
 }
 
 impl FileOp {
@@ -212,6 +219,10 @@ pub enum FileOutcome {
     /// A read finished; its `size` bytes were sent before this reply.
     Read {
         size: u64,
+    },
+    /// A path's real spelling (#5333).
+    Resolved {
+        path: String,
     },
     /// A write / delete / rename / mkdir / chmod / chown / symlink / copy
     /// finished.
@@ -455,6 +466,9 @@ pub async fn serve(
                 Err(_) => (timed_out(), None),
             }
         }
+        FileOp::Realpath { path } => run!(real_path(browser, &path), |path| {
+            FileOutcome::Resolved { path }
+        }),
         FileOp::WriteRange { path, offset, .. } => match browser.ranged() {
             Some(ranged) => run!(ranged.write_range(&path, offset, &data), done),
             None => (failed(FileError::NotSupported), None),
@@ -609,6 +623,8 @@ pub struct FileChannel {
     /// Whether the connected daemon also serves ranged reads and writes
     /// (#3587).
     ranges: AtomicBool,
+    /// Whether the connected daemon also resolves real paths (#5333).
+    realpath: AtomicBool,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, Pending>>,
 }
@@ -641,6 +657,16 @@ impl FileChannel {
     /// Record the connected daemon's advertised ranged-access support.
     pub fn set_ranges_supported(&self, supported: bool) {
         self.ranges.store(supported, Ordering::SeqCst);
+    }
+
+    /// Whether the connected daemon resolves real paths (#5333).
+    pub fn realpath_supported(&self) -> bool {
+        self.realpath.load(Ordering::SeqCst)
+    }
+
+    /// Record the connected daemon's advertised real-path support.
+    pub fn set_realpath_supported(&self, supported: bool) {
+        self.realpath.store(supported, Ordering::SeqCst);
     }
 
     /// Reserve a request id and the receiver its reply is delivered to.
@@ -912,6 +938,27 @@ impl FileBrowser for DaemonFileBrowser {
         self.channel
             .ranges_supported()
             .then_some(self as &dyn RangedFileAccess)
+    }
+
+    /// The session backend's real paths (#5333), from a daemon that
+    /// advertised them. An older daemon would drop the request, so the paste
+    /// guard compares lexically there instead.
+    fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        self.channel
+            .realpath_supported()
+            .then_some(self as &dyn PathCanonicalizer)
+    }
+}
+
+/// A path's real spelling, resolved by the session daemon's backend (#5333).
+#[async_trait::async_trait]
+impl PathCanonicalizer for DaemonFileBrowser {
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        match self.call(FileOp::Realpath { path: path.into() }, &[]).await {
+            Ok((FileOutcome::Resolved { path }, _)) => Ok(path),
+            Ok((other, _)) => Err(unexpected(other)),
+            Err(message) => Err(FileError::OperationFailed(message)),
+        }
     }
 }
 

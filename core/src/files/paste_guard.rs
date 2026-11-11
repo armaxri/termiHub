@@ -326,20 +326,26 @@ impl PathResolver {
 /// with a [`PathCanonicalizer`] resolves through it, with the lexical check as
 /// the floor ([`check_real_or_lexical`], #5333). Every other browser compares
 /// lexically.
-pub async fn ensure_paste_allowed(
-    browser: &dyn FileBrowser,
-    src: &str,
-    dest: &str,
+///
+/// The returned future borrows only the canonicalizer, never `browser`
+/// itself, so it is `Send` even for a browser that is not `Sync`.
+pub fn ensure_paste_allowed<'a>(
+    browser: &'a dyn FileBrowser,
+    src: &'a str,
+    dest: &'a str,
     src_is_dir: bool,
-) -> Result<(), FileError> {
+) -> impl Future<Output = Result<(), FileError>> + Send + 'a {
     let resolver = PathResolver::of_browser(browser);
-    if let (PathResolver::Lexical, Some(canon)) = (&resolver, browser.path_canonicalizer()) {
-        return check_real_or_lexical(src, dest, src_is_dir, |p| async move {
-            canon.realpath(&p).await
-        })
-        .await;
+    let canon = browser.path_canonicalizer();
+    async move {
+        if let (PathResolver::Lexical, Some(canon)) = (&resolver, canon) {
+            return check_real_or_lexical(src, dest, src_is_dir, |p| async move {
+                canon.realpath(&p).await
+            })
+            .await;
+        }
+        resolver.ensure_copy_allowed(src, dest, src_is_dir).await
     }
-    resolver.ensure_copy_allowed(src, dest, src_is_dir).await
 }
 
 /// The real spelling of `path` on `browser`'s backend, a missing final name
@@ -349,17 +355,25 @@ pub async fn ensure_paste_allowed(
 /// [`FileError::NotSupported`] when the backend has no way to resolve a path
 /// (WSL, for example), so the caller falls back to its lexical check;
 /// [`FileError::NotFound`] when neither the path nor its parent resolves.
-pub async fn real_path(browser: &dyn FileBrowser, path: &str) -> Result<String, FileError> {
+///
+/// Like [`ensure_paste_allowed`], the future does not borrow `browser`.
+pub fn real_path<'a>(
+    browser: &'a dyn FileBrowser,
+    path: &'a str,
+) -> impl Future<Output = Result<String, FileError>> + Send + 'a {
     let resolver = PathResolver::of_browser(browser);
-    if !matches!(resolver, PathResolver::Lexical) {
-        return resolver
-            .resolve(path)
-            .await
-            .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")));
-    }
-    match browser.path_canonicalizer() {
-        Some(canon) => canon.realpath(path).await,
-        None => Err(FileError::NotSupported),
+    let canon = browser.path_canonicalizer();
+    async move {
+        if !matches!(resolver, PathResolver::Lexical) {
+            return resolver
+                .resolve(path)
+                .await
+                .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")));
+        }
+        match canon {
+            Some(canon) => canon.realpath(path).await,
+            None => Err(FileError::NotSupported),
+        }
     }
 }
 
