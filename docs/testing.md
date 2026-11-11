@@ -1812,13 +1812,14 @@ component starts gating once its baseline is recorded.
   because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux` and, in
   the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
   the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
-  Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
-  tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
-  heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
+  Linux number never sees. Both jobs run `./scripts/coverage.sh --split`: the workspace Rust
+  tests in the per-PR legs' partition (`scripts/internal/ci-rust-tests.sh` bulk, heavy and
+  serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
   live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
-  with the nextest `ci` profile (#5349), so a hung test fails by name within its per-test
-  timeout and the `#[serial(key)]` test groups hold there too. The heartbeat names the failing job, so a
-  Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
+  with the nextest `ci` profile (#5349, on Linux since #5428), so a hung test fails by name
+  within its per-test timeout and the `#[serial(key)]` test groups hold there too. The
+  heartbeat names the failing job, so a Windows-only drop reads
+  `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
   The release check grades the machine it runs on. A platform with no baseline fails with
   the command that records one.
 - **What `plugin-runner` counts:** its own unit tests (including the session server's
