@@ -92,6 +92,11 @@ pub(crate) struct BridgeClient {
     /// Descriptors received on the channel (Unix handle passing).
     #[cfg(unix)]
     fds: Option<FdQueue>,
+    /// Closers of the sockets the host duplicated into this runner, by
+    /// connection, until released (Windows). A `StreamClosed` for one ends
+    /// it: the host's own shutdown cannot end a read pending here (#5360).
+    #[cfg(windows)]
+    passed: Mutex<HashMap<u64, termihub_plugin_runner::ipc::handle::SocketCloser>>,
 }
 
 impl BridgeClient {
@@ -104,6 +109,8 @@ impl BridgeClient {
             closed: AtomicBool::new(false),
             #[cfg(unix)]
             fds,
+            #[cfg(windows)]
+            passed: Mutex::new(HashMap::new()),
         })
     }
 
@@ -205,8 +212,9 @@ impl BridgeClient {
                 // SAFETY: the host duplicated this handle into this process
                 // for this very reply; a value that is not a socket handle is
                 // refused untouched (and the slot released).
-                let socket = unsafe { adopt(handle) }.ok()?;
-                Some(ConnHandle::Passed(SocketStream::new(socket), guard))
+                let socket = SocketStream::new(unsafe { adopt(handle) }.ok()?).ok()?;
+                self.lock_passed().insert(conn_id, socket.closer());
+                Some(ConnHandle::Passed(socket, guard))
             }
             // A transport this platform cannot receive: the host never sends
             // it here; refuse it and release the slot.
@@ -224,10 +232,15 @@ impl BridgeClient {
         }
     }
 
-    /// Reader thread: a proxied socket reached end of stream.
+    /// Reader thread: a proxied socket reached end of stream, or (Windows)
+    /// the host ended a connection it duplicated into this runner.
     pub(crate) fn on_stream_closed(&self, conn: ConnRef) {
-        if let Some(conn) = self.proxy(conn.conn_id) {
-            conn.close_read();
+        if let Some(proxy) = self.proxy(conn.conn_id) {
+            proxy.close_read();
+        }
+        #[cfg(windows)]
+        if let Some(closer) = self.lock_passed().get(&conn.conn_id) {
+            closer.close();
         }
     }
 
@@ -246,6 +259,11 @@ impl BridgeClient {
         for conn in proxies {
             conn.shut();
         }
+        // The host is gone: nothing will shut a passed socket down any more.
+        #[cfg(windows)]
+        for closer in self.lock_passed().drain().map(|(_, c)| c) {
+            closer.close();
+        }
     }
 
     fn proxy(&self, conn_id: u64) -> Option<Arc<ProxyConn>> {
@@ -258,6 +276,14 @@ impl BridgeClient {
 
     fn lock_proxies(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Arc<ProxyConn>>> {
         self.proxies.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[cfg(windows)]
+    fn lock_passed(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<u64, termihub_plugin_runner::ipc::handle::SocketCloser>>
+    {
+        self.passed.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -273,6 +299,8 @@ impl Drop for ReleaseGuard {
             if let Some(conn) = client.lock_proxies().remove(&self.conn_id) {
                 conn.shut();
             }
+            #[cfg(windows)]
+            client.lock_passed().remove(&self.conn_id);
             let _ = client.channel.send(&Message::BridgeRelease(ConnRef {
                 conn_id: self.conn_id,
             }));
