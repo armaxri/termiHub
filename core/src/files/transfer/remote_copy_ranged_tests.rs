@@ -4,6 +4,7 @@
 //! agent-hosted session, paired with the SFTP/Docker mock endpoints of the
 //! parent module or with a second ranged end (agent→agent).
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use super::*;
@@ -27,6 +28,10 @@ struct MemRanged {
     refuse_probe: Option<String>,
     /// Called with the destination size after each write lands.
     on_write: Mutex<Option<WriteHook>>,
+    /// Symlinked folders (`link -> real`) the end resolves through
+    /// `realpath` (#5333); `None` is an agent without
+    /// `connection.files.realpath`.
+    links: Option<HashMap<String, String>>,
 }
 
 impl MemRanged {
@@ -167,6 +172,17 @@ impl RangedTransferTarget for MemRanged {
     async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         self.files.lock().expect("files").remove(path);
         Ok(())
+    }
+
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        let links = self.links.as_ref().ok_or(FileError::NotSupported)?;
+        let mut real = crate::files::paste_guard::normalize_lexically(path);
+        for (link, target) in links {
+            if real == *link || real.starts_with(&format!("{link}/")) {
+                real = format!("{target}{}", &real[link.len()..]);
+            }
+        }
+        Ok(real)
     }
 }
 
@@ -541,4 +557,54 @@ async fn a_copy_onto_itself_on_one_end_is_refused_and_keeps_the_bytes() {
     ensure_copy_within_allowed(&end, "/d/f", "/d/g")
         .await
         .expect("a different file copies");
+}
+
+/// An end that resolves on its host (#5333): a copy onto the source through
+/// a symlinked folder is refused before the destination is opened, and the
+/// bytes stay intact.
+#[tokio::test]
+async fn a_copy_onto_itself_through_a_symlink_alias_is_refused() {
+    let target = Arc::new(MemRanged {
+        links: Some(HashMap::from([("/alias".to_string(), "/d".to_string())])),
+        ..MemRanged::default()
+    });
+    target.put("/d/f", content(3 * SLICE as usize, 7), 1);
+    let end = RemoteCopyEndpoint::Ranged(target.clone());
+    for dest in ["/alias/f", "/alias/./f", "/x/../alias/f"] {
+        let err = ensure_copy_within_allowed(&end, "/d/f", dest)
+            .await
+            .expect_err(&format!("{dest} is the source"));
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Operation failed: copy /d/f to {dest} refused: \
+                 source and destination are the same file"
+            )
+        );
+    }
+    let err = ensure_copy_within_allowed(&end, "/alias/f", "/d/f")
+        .await
+        .expect_err("the source spelled through the alias");
+    assert!(err.to_string().contains("same file"), "{err}");
+    assert_eq!(target.get("/d/f"), Some(content(3 * SLICE as usize, 7)));
+    assert!(target.writes().is_empty(), "nothing may be written");
+    ensure_copy_within_allowed(&end, "/d/f", "/alias/g")
+        .await
+        .expect("a different file copies");
+}
+
+/// An end without `realpath` (an older agent) keeps the lexical check of
+/// #5330 exactly: a respelled path is refused, an alias it cannot see is not.
+#[tokio::test]
+async fn an_end_without_realpath_keeps_the_lexical_check() {
+    let target = MemRanged::new();
+    target.put("/d/f", content(16, 3), 1);
+    let end = RemoteCopyEndpoint::Ranged(target.clone());
+    assert_eq!(format!("{:?}", end.path_resolver()), "Ranged");
+    ensure_copy_within_allowed(&end, "/d/f", "/d/x/../f")
+        .await
+        .expect_err("lexically the source");
+    ensure_copy_within_allowed(&end, "/d/f", "/alias/f")
+        .await
+        .expect("an alias is invisible without realpath, as before");
 }
