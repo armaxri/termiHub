@@ -555,6 +555,27 @@ fn shell_escape(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A same-backend copy is refused as `NotSupported` without reaching the
+    /// daemon, so a copy onto itself or into itself cannot write anything
+    /// (#5325). The client points at a closed port: any request would fail
+    /// with a connection error instead.
+    #[tokio::test]
+    async fn copy_onto_or_into_itself_is_not_supported_and_never_runs() {
+        let client = bollard::Docker::connect_with_http(
+            "http://127.0.0.1:1",
+            1,
+            bollard::API_DEFAULT_VERSION,
+        )
+        .expect("client");
+        let browser = DockerFileBrowser::new(client, "c".to_string());
+        for (src, dest) in [("/d/f", "/d/f"), ("/d/f", "/d/./f"), ("/d", "/d/copy")] {
+            assert!(
+                matches!(browser.copy(src, dest).await, Err(FileError::NotSupported)),
+                "{src} -> {dest}"
+            );
+        }
+    }
+
     // --- parse_find_output tests ---
 
     #[test]
