@@ -630,6 +630,41 @@ mod tests {
         }
     }
 
+    /// A missing runner is refused before any sandbox setup (#5345): no
+    /// AppContainer profile is created or granted for a runner that cannot
+    /// start. Parallel test processes loading one plugin id with a missing
+    /// runner otherwise raced on that OS-wide profile.
+    #[test]
+    fn a_missing_runner_is_unavailable_before_any_sandbox_setup() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let install = tmp.path().join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        let policy = SandboxPolicy {
+            install_dir: install.to_str().unwrap().to_owned(),
+            ..SandboxPolicy::default()
+        };
+        let id = format!("core-spawn-missing-{}", std::process::id());
+        let missing = tmp.path().join("no-such-runner");
+        let sandbox = RunnerSandbox {
+            plugin_id: &id,
+            policy: &policy,
+        };
+        let result = spawn_runner(&missing, &ResourceLimits::default(), Some(sandbox));
+        #[cfg(windows)]
+        {
+            let created = termihub_plugin_runner::appcontainer::profile_exists(&id).unwrap();
+            if created {
+                let _ = termihub_plugin_runner::appcontainer::delete_profile_revoking(&id, &[]);
+            }
+            assert!(!created, "no AppContainer profile for a missing runner");
+        }
+        match result {
+            Err(HostError::RunnerUnavailable { path, .. }) => assert_eq!(path, missing),
+            Err(other) => panic!("expected RunnerUnavailable, got {other:?}"),
+            Ok(_) => panic!("spawning a missing runner succeeded"),
+        }
+    }
+
     /// A stand-in runner that exits 0 once started with any arguments. Linux
     /// execs the pinned descriptor, which needs a real ELF (a `#!` script's
     /// interpreter cannot reopen the close-on-exec `/proc/self/fd/<n>`); macOS
