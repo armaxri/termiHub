@@ -10,6 +10,7 @@ import {
   classify,
   allAreas,
   testMatrix,
+  LINUX_TEST_SHARDS,
   formatOutputs,
   findCommentOnlyRust,
   isNarrowableRustSource,
@@ -205,7 +206,9 @@ describe("classify", () => {
   it("runs the scripts/internal vitest suite for a PR touching only a pinned Python script", () => {
     const flags = classify(["scripts/build-testid-catalog.py"]);
     expect(flags).toMatchObject({ frontend: true, harness: true });
-    expect(testMatrix(flags, true)).toEqual(["ubuntu-latest"]);
+    // The vitest suite runs in the Frontend Tests jobs (gated on `frontend`),
+    // not in a Run Tests leg (#5465).
+    expect(testMatrix(flags, true)).toEqual([]);
   });
 
   it("runs the scripts/internal vitest suite for every file under scripts/", () => {
@@ -531,23 +534,34 @@ describe("comment-only Rust changes (#3903)", () => {
 });
 
 describe("testMatrix", () => {
-  it("is the full OS set post-merge", () => {
+  const linux = (shard) => ({
+    os: "ubuntu-latest",
+    shard,
+    shards: LINUX_TEST_SHARDS,
+    label: `ubuntu-latest, ${shard}/${LINUX_TEST_SHARDS}`,
+  });
+  const linuxShards = () => Array.from({ length: LINUX_TEST_SHARDS }, (_, i) => linux(i + 1));
+
+  it("is every Linux shard plus Windows and macOS post-merge", () => {
     expect(testMatrix(classify(["docs/a.md"]), false)).toEqual([
-      "ubuntu-latest",
-      "windows-latest",
-      "macos-latest",
+      ...linuxShards(),
+      { os: "windows-latest", shard: 1, shards: 1, label: "windows-latest" },
+      { os: "macos-latest", shard: 1, shards: 1, label: "macos-latest" },
     ]);
   });
 
-  it("runs ubuntu + windows for Rust PRs, never macOS", () => {
-    expect(testMatrix(classify(["core/src/lib.rs"]), true)).toEqual([
-      "ubuntu-latest",
-      "windows-latest",
-    ]);
+  it("runs only the Linux shards for Rust PRs, never Windows or macOS (#5465)", () => {
+    expect(testMatrix(classify(["core/src/lib.rs"]), true)).toEqual(linuxShards());
   });
 
-  it("runs only ubuntu for frontend-only PRs", () => {
-    expect(testMatrix(classify(["src/main.tsx"]), true)).toEqual(["ubuntu-latest"]);
+  it("numbers the Linux shards 1..N exactly once, so every partition runs", () => {
+    expect(LINUX_TEST_SHARDS).toBeGreaterThanOrEqual(1);
+    const shards = testMatrix(classify(["core/src/lib.rs"]), true).map((leg) => leg.shard);
+    expect(shards).toEqual(Array.from({ length: LINUX_TEST_SHARDS }, (_, i) => i + 1));
+  });
+
+  it("has no Run Tests leg for frontend-only PRs (Frontend Tests runs vitest)", () => {
+    expect(testMatrix(classify(["src/main.tsx"]), true)).toEqual([]);
   });
 
   it("is empty for docs-only PRs", () => {
@@ -562,13 +576,13 @@ describe("formatOutputs", () => {
     expect(out).toContain("rust=false\n");
     expect(out).toContain("agent=false\n");
     expect(out).toContain("workflows=false\n");
-    expect(out).toContain('test_matrix=["ubuntu-latest"]\n');
+    expect(out).toContain("test_matrix=[]\n");
   });
 
   it("reports tests=true by default and keeps the matrix", () => {
     const out = formatOutputs(classify(["core/src/lib.rs"]), true);
     expect(out).toContain("tests=true\n");
-    expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
+    expect(out).toContain(`test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`);
   });
 
   it("under [skip-tests] reports tests=false and an empty matrix, areas unchanged", () => {
@@ -738,7 +752,7 @@ describe("[skip-tests] tag (#3915)", () => {
         const headSha = git(dir, "rev-parse", "HEAD^2");
         const { out, summary } = run(dir, ["--event", "pull_request", "--head-sha", headSha]);
         expect(out).toContain("tests=true\n");
-        expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
+        expect(out).toContain(`test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`);
         expect(summary).toBe("");
       } finally {
         rmSync(dir, { recursive: true, force: true });
