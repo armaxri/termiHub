@@ -297,14 +297,14 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         const meta: NetworkDiagnosticMeta = { tool, prefillHost, connectionId };
         const dummyConfig: ConnectionConfig = { type: "local", config: {} };
         const toolLabel: Record<NetworkTool, string> = {
-          "port-scanner": "Port Scanner",
+          "port-scanner": "Port scanner",
           ping: "Ping",
-          "ping-sweep": "Ping Sweep",
-          "dns-lookup": "DNS Lookup",
-          "http-monitor": "HTTP Monitor",
+          "ping-sweep": "Ping sweep",
+          "dns-lookup": "DNS lookup",
+          "http-monitor": "HTTP monitor",
           traceroute: "Traceroute",
           wol: "Wake-on-LAN",
-          "open-ports": "Open Ports",
+          "open-ports": "Open ports",
         };
         const title = prefillHost ? `${toolLabel[tool]}: ${prefillHost}` : toolLabel[tool];
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "network-diagnostic");
@@ -348,7 +348,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         const remoteTitle = meta.remoteTabId
           ? state.tabContent[meta.remoteTabId]?.title
           : undefined;
-        const title = remoteTitle ? `Transfer: ${remoteTitle}` : "File Transfer";
+        const title = remoteTitle ? `Transfer: ${remoteTitle}` : "File transfer";
         const dummyConfig: ConnectionConfig = { type: "local", config: {} };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "transfer-view");
         newTab.transferViewMeta = meta;
@@ -512,9 +512,9 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         if (!targetPanelId) return state;
 
         // Determine tab title
-        let title = "New Connection";
+        let title = "New connection";
         if (connectionId === "new-remote-agent") {
-          title = "New Remote Agent";
+          title = "New remote agent";
         } else if (connectionId !== "new") {
           const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
           if (conn) {
@@ -570,7 +570,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         if (!targetPanelId) return state;
 
         // Determine title
-        let title = "New Agent Connection";
+        let title = "New agent connection";
         if (definitionId !== "new") {
           const defs = currentAgentsView().agentDefinitions[agentId] ?? [];
           const def = defs.find((d) => d.id === definitionId);
@@ -680,7 +680,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
-        let title = "New Tunnel";
+        let title = "New tunnel";
         if (tunnelId) {
           const tunnel = state.tunnels.find((t) => t.id === tunnelId);
           if (tunnel) {
@@ -789,7 +789,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
-        let title = "New Workspace";
+        let title = "New workspace";
         if (workspaceId) {
           const ws = state.workspaces.find((w) => w.id === workspaceId);
           if (ws) {

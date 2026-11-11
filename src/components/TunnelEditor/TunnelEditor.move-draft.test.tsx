@@ -37,7 +37,7 @@ function editorTab(tunnelId: string | null): TerminalTab {
   return {
     id: "tab-src",
     sessionId: null,
-    title: tunnelId ? "Edit: DB" : "New Tunnel",
+    title: tunnelId ? "Edit: DB" : "New tunnel",
     connectionType: "local",
     contentType: "tunnel-editor",
     config: { type: "local", config: {} },

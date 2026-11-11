@@ -445,7 +445,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("connection-editor");
-      expect(leaf.tabs[0].title).toBe("New Connection");
+      expect(leaf.tabs[0].title).toBe("New connection");
       expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("new");
       expect(leaf.tabs[0].connectionEditorMeta?.folderId).toBeNull();
     });
@@ -495,14 +495,14 @@ describe("appStore — connections, folders, and special tabs", () => {
       expect(leaf.tabs).toHaveLength(2);
     });
 
-    it("creates a 'New Remote Agent' tab for the new-remote-agent sentinel", () => {
+    it("creates a 'New remote agent' tab for the new-remote-agent sentinel", () => {
       useAppStore.getState().openConnectionEditorTab("new-remote-agent");
 
       const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("connection-editor");
-      expect(leaf.tabs[0].title).toBe("New Remote Agent");
+      expect(leaf.tabs[0].title).toBe("New remote agent");
       expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("new-remote-agent");
     });
 

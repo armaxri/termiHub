@@ -113,7 +113,7 @@ describe("appStore — Move tabs carries unsaved editors (#4412)", () => {
       await useAppStore.getState().prepareWindowClose(OTHERS);
 
       expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toEqual([
-        { tabId, title: "New Connection", movable: false },
+        { tabId, title: "New connection", movable: false },
       ]);
     });
   });
@@ -547,7 +547,7 @@ describe("appStore — Move tabs carries the transfer view (#4751)", () => {
       localPath: "/home/me",
       remotePath: "/srv/app",
     });
-    expect(view.title).toBe("File Transfer");
+    expect(view.title).toBe("File transfer");
   });
 
   it("flags only a transfer view whose terminal stays behind as unpaired", async () => {
@@ -555,7 +555,7 @@ describe("appStore — Move tabs carries the transfer view (#4751)", () => {
       contentType: "transfer-view",
       transferViewMeta: { remoteTabId: "t-gone" },
     });
-    const free = staticTab("tv3", "File Transfer", {
+    const free = staticTab("tv3", "File transfer", {
       contentType: "transfer-view",
       transferViewMeta: { remoteTabId: null },
     });

@@ -288,14 +288,14 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     it("Discard on a blocked editor closes that tab and unblocks Move", async () => {
       const tabId = useAppStore
         .getState()
-        .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
+        .addTab("New connection", "local", undefined, { contentType: "connection-editor" });
       useAppStore.getState().setEditorDirty(tabId, true);
       render();
       act(() =>
         useAppStore
           .getState()
           .setPendingWindowClose(
-            request({ dirtyEditors: [{ tabId, title: "New Connection", movable: false }] })
+            request({ dirtyEditors: [{ tabId, title: "New connection", movable: false }] })
           )
       );
 
@@ -311,14 +311,14 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     it("Save or discard opens the editor's own prompt and keeps the window", async () => {
       const tabId = useAppStore
         .getState()
-        .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
+        .addTab("New connection", "local", undefined, { contentType: "connection-editor" });
       useAppStore.getState().setEditorDirty(tabId, true);
       render();
       act(() =>
         useAppStore
           .getState()
           .setPendingWindowClose(
-            request({ dirtyEditors: [{ tabId, title: "New Connection", movable: false }] })
+            request({ dirtyEditors: [{ tabId, title: "New connection", movable: false }] })
           )
       );
 
@@ -478,9 +478,9 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
           request({
             sessions: [],
             dirtyEditors: [
-              { tabId: "c1", title: "New Connection", movable: true },
-              { tabId: "t1", title: "New Tunnel", movable: true },
-              { tabId: "w1", title: "New Workspace", movable: true },
+              { tabId: "c1", title: "New connection", movable: true },
+              { tabId: "t1", title: "New tunnel", movable: true },
+              { tabId: "w1", title: "New workspace", movable: true },
             ],
           })
         )
@@ -513,7 +513,7 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
               },
               {
                 tabId: "c2",
-                title: "New Connection",
+                title: "New connection",
                 movable: true,
                 clearedSecrets: ["Password", "SSH tunnel password", "Jump host password"],
               },
@@ -526,7 +526,7 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       expect(rows).toEqual([
         '"Edit: prod-db" moves without the Password typed into it, since typed secrets are ' +
           "never copied to another window. Type it again there.",
-        '"New Connection" moves without the Password, SSH tunnel password and Jump host ' +
+        '"New connection" moves without the Password, SSH tunnel password and Jump host ' +
           "password typed into it, since typed secrets are never copied to another window. " +
           "Type them again there.",
       ]);
