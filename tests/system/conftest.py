@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from termihub_harness import app_leaks, hang_guard, skip_guard, timing
+from termihub_harness import app_leaks, hang_guard, skip_guard, timing, tool_preflight
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     record_failed_attempt,
@@ -165,6 +165,60 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason=reason))
 
 
+# ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
+# One missing runner tool (openbox, xdotool, socat, docker, …) used to error in
+# every test that needed it, each retried by the rerun policy. After collection
+# the tools the *selected* tests declare are checked once; on a lane a missing
+# one stops the session with one message (exit tool_preflight.EXIT_CODE). xdist
+# workers cannot ``pytest.exit`` (the controller crashes), so a worker empties
+# its collection and hands the message to the controller, which exits.
+# See termihub_harness/tool_preflight.py.
+_PREFLIGHT_KEY = "termihub_tool_preflight"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_finish(session):
+    config = session.config
+    if config.option.collectonly or not session.items:
+        return
+    outcome = tool_preflight.check_session(session.items, markexpr=config.option.markexpr or "")
+    if outcome is None:
+        return
+    report = {
+        "lines": outcome.summary_lines(),
+        "stop": outcome.stops_session,
+        "quiet": not outcome.needed,
+    }
+    config._termihub_preflight = report
+    if not outcome.stops_session:
+        if hasattr(config, "workeroutput"):
+            config.workeroutput[_PREFLIGHT_KEY] = report
+        return
+    if hasattr(config, "workeroutput"):
+        config.workeroutput[_PREFLIGHT_KEY] = report
+        session.items[:] = []
+        return
+    pytest.exit(outcome.message, returncode=tool_preflight.EXIT_CODE)
+
+
+def _preflight_from_worker(config, node):
+    report = getattr(node, "workeroutput", {}).get(_PREFLIGHT_KEY)
+    if report is None or getattr(config, "_termihub_preflight", None) is not None:
+        return
+    config._termihub_preflight = report
+    if report["stop"]:
+        pytest.exit("\n".join(report["lines"]), returncode=tool_preflight.EXIT_CODE)
+
+
+def _report_preflight(terminalreporter, config):
+    report = getattr(config, "_termihub_preflight", None)
+    if report is None or report["stop"] or report["quiet"]:
+        return  # a stop already printed its message as the exit reason
+    terminalreporter.section("termihub tool preflight (#5340)")
+    for line in report["lines"]:
+        terminalreporter.write_line(line)
+
+
 # ── Hang guard (#4017) ───────────────────────────────────────────────────────
 # A blocking call with no timeout froze the macOS lane on 2026-10-06 until the
 # job ceiling cancelled it. On xdist workers each test phase now runs under a
@@ -305,6 +359,8 @@ def _enforce_skip_guard(session):
     lane = skip_guard.lane_from_env()
     if lane is None or hasattr(config, "workerinput"):
         return
+    if (getattr(config, "_termihub_preflight", None) or {}).get("stop"):
+        return  # the preflight already failed the lane, before any test ran
     recorder = _skip_recorder(config)
     verdict = skip_guard.evaluate(
         lane,
@@ -353,6 +409,7 @@ def pytest_testnodedown(node, error):
     if samples:
         timing.merge(samples)
     _LEAKS.extend(output.get(_LEAKS_KEY) or [])
+    _preflight_from_worker(_SESSION_CONFIG["config"], node)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
@@ -363,6 +420,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """
     if hasattr(config, "workerinput"):
         return
+    _report_preflight(terminalreporter, config)
     _report_skips(terminalreporter, config)
     _report_leaks(terminalreporter)
     if not timing.enabled():
