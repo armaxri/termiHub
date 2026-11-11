@@ -2,7 +2,7 @@ import { useCallback, useRef, type RefObject } from "react";
 import { LeafPanel } from "@/types/terminal";
 import { getPanelActiveSessionId } from "@/utils/panelTree";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
-import { sendInput } from "@/services/api";
+import { sendInputDetached } from "@/services/detachedSessionInput";
 import { quotePath } from "@/utils/quotePath";
 
 interface PaneFileDrop {
@@ -26,7 +26,7 @@ export function usePaneFileDrop(panel: LeafPanel): PaneFileDrop {
     async (paths: string[]) => {
       if (!panelSessionId || paths.length === 0) return;
       const text = paths.map(quotePath).join(" ");
-      await sendInput(panelSessionId, text);
+      await sendInputDetached(panelSessionId, text, "dropped file paths");
     },
     [panelSessionId]
   );

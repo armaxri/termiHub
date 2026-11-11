@@ -103,6 +103,7 @@ use notifications::{
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
 mod agent_stderr;
 mod alive;
+mod backoff_clock;
 mod capabilities;
 pub(crate) mod files_only;
 mod io_lanes;
@@ -3713,6 +3714,10 @@ mod tests;
 mod connect_off_lock_tests;
 #[cfg(test)]
 mod fake_agent_sshd;
+// Virtual backoff clock for the reconnect backoff/park tests (#5339); unix-only
+// like the tests that use it.
+#[cfg(all(test, unix))]
+mod virtual_backoff_clock;
 // Output flow control + lossless output delivery for agent sessions (#4416).
 #[cfg(test)]
 mod output_flow_tests;
@@ -3723,6 +3728,10 @@ mod capability_refresh_tests;
 // like the transport sever it drives.
 #[cfg(all(test, unix))]
 mod reconnect_give_up_tests;
+// The reconnect backoff, park and give-up timing in virtual time (#5339);
+// unix-only, as a refused loopback connect is slow on Windows.
+#[cfg(all(test, unix))]
+mod reconnect_virtual_time_tests;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //

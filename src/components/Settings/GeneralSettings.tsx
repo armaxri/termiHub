@@ -6,6 +6,7 @@ import { getShellLabel } from "@/utils/shellLabels";
 import { useAppStore } from "@/store/appStore";
 import { isWindows, getPlatform } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
+import { EXPERIMENTAL_SETTING_LABEL } from "@/utils/experimentalSetting";
 import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { ClipboardCopy } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -217,7 +218,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
         {show("experimentalFeaturesEnabled") && (
           <SettingsField
-            label="Allow Experimental Features"
+            label={EXPERIMENTAL_SETTING_LABEL}
             hint="Enables hidden features under active development. Experimental features may change, break, or be removed at any time without notice."
             hintVariant="warning"
           >

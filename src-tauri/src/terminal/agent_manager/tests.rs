@@ -1736,6 +1736,8 @@ fn a_new_manager_reconnects_with_the_production_tuning() {
         ReconnectTuning {
             handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
             policy: super::AGENT_RECONNECT_POLICY,
+            // #5339: production backoff waits on the real tokio timer.
+            clock: &super::backoff_clock::TOKIO_BACKOFF_CLOCK,
         }
     );
     let app = tauri::test::mock_app();

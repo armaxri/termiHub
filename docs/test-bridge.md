@@ -240,6 +240,7 @@ unmount.
 | `readTerminalCells`        | Read xterm's buffer cells: characters and column width         |
 | `readTerminalOutput`       | Read the raw stream a terminal was handed (flash grades)       |
 | `readFrontendLog`          | Read the Log Viewer history, optionally filtered by message    |
+| `getJsErrors`              | Read the page's JS errors (rejections, errors, console.error)  |
 | `compose`                  | Test-only: replay an IME composition on a control (see below)  |
 | `loseTerminalWebglContext` | Test-only: force a WebGL context loss (see below)              |
 | `readTerminalWebglFrame`   | Read back the pixels the WebGL renderer drew (see below)       |
@@ -460,6 +461,37 @@ optionally only the entries whose message contains `contains`. Frontend DEBUG
 entries never reach the app's stdout log, so this is how a test asserts the
 terminal renderer transitions and the absence of `webgl context lost`. Python:
 `driver.read_frontend_log(contains=None)`.
+
+### JavaScript errors (`getJsErrors`)
+
+`{ action: "getJsErrors", since? }` returns the JavaScript errors the page
+produced since the bridge chunk loaded (#5364): every `unhandledrejection`,
+uncaught `error` and `console.error` call, each with a timestamp and the first
+few stack frames:
+
+```jsonc
+{
+  "pageId": "m3k9x1-4fz0a2c1", // changes when the page reloads
+  "cursor": 3, // pass as `since` next time to read only newer records
+  "dropped": 0, // records evicted from the bounded buffer (500 kept)
+  "errors": [
+    {
+      "seq": 2,
+      "timestampMs": 1762860000000,
+      "kind": "unhandledrejection", // or "error" / "console.error"
+      "message": "Canceled",
+      "stack": "…", // only when the value carried one
+    },
+  ],
+}
+```
+
+The buffer lives in `src/testbridge/jsErrors.ts`, so like the rest of the bridge
+it is only in a `VITE_TEST_BRIDGE=1` bundle and installs only in test mode.
+Errors thrown before the chunk loaded reach only `app.log`. The system-test
+harness diffs it per test and gates on new errors (see
+[testing.md → JS error gate](testing.md#js-error-gate)). Python:
+`driver.get_js_errors(since=None)`.
 
 ### Glyph cells and IME composition (`readTerminalCells`, `compose`)
 

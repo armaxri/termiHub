@@ -739,6 +739,23 @@ class Driver:
         """
         return self._call({"action": "readFrontendLog", "contains": contains})
 
+    def get_js_errors(
+        self, since: Optional[int] = None, *, timeout: Optional[float] = None
+    ) -> dict[str, Any]:
+        """Read the page's JavaScript errors from cursor ``since`` on (#5364).
+
+        The bridge records every ``unhandledrejection``, uncaught ``error`` and
+        ``console.error`` since its chunk loaded. Returns::
+
+            {"pageId": str,     # changes when the page reloads (seq restarts at 0)
+             "cursor": int,     # pass as ``since`` to read only newer records
+             "dropped": int,    # records evicted from the bounded buffer
+             "errors": [{"seq", "timestampMs", "kind", "message", "stack"?}]}
+
+        Read-only. :mod:`termihub_harness.js_errors` diffs it per test.
+        """
+        return self._call({"action": "getJsErrors", "since": since}, timeout=timeout)
+
     def lose_terminal_webgl_context(self, tab_id: Optional[str] = None) -> bool:
         """Force a real WebGL context loss on a terminal's renderer (#2988).
 

@@ -1,4 +1,6 @@
 use super::live_channel_support::{channel_rpc, read_counter_until, wait_for_output};
+use super::reconnect_virtual_time_tests::{virtual_tuning, PRODUCTION_SCHEDULE_SECS};
+use super::virtual_backoff_clock::VirtualBackoffClock;
 use super::*;
 use base64::engine::general_purpose::STANDARD as B64;
 use std::path::{Path, PathBuf};
@@ -395,11 +397,12 @@ fn is_sshd_family(comm: &str) -> bool {
     comm == "sshd" || comm.starts_with("sshd-")
 }
 
-/// Whether `pid` is a session leader (its session id equals its pid) — the
-/// property `setsid` establishes and the one that distinguishes the detached
-/// session **daemon** from the `--stdio` agent that spawned it (the agent
-/// shares the daemon's binary but is not a session leader). Mirrors the
-/// `getsid` check in `agent::daemon::spawn`'s own detachment test.
+/// Whether `pid` is a session leader (its session id equals its pid), the
+/// property `setsid` establishes for the detached session **daemon**. It does
+/// not tell the daemon from the `--stdio` agent that spawned it: sshd runs that
+/// agent as a session leader too, so [`is_stdio_worker`] separates them
+/// (#5339). Mirrors the `getsid` check in `agent::daemon::spawn`'s own
+/// detachment test.
 fn is_session_leader(pid: u32) -> bool {
     // Safety: `getsid` merely reads the session id of an existing pid.
     let sid = unsafe { libc::getsid(pid as libc::pid_t) };
@@ -409,14 +412,17 @@ fn is_session_leader(pid: u32) -> bool {
 /// The setsid'd session-daemon PIDs the agent spawned under our sshd `root`,
 /// identified while they are still live descendants (before a sever reparents
 /// them to init). A session daemon is the descendant that is its own session
-/// leader (`setsid`) AND whose command is the agent binary — the `--stdio`
-/// agent shares the binary but is not a session leader, and sshd-family
-/// processes never match the agent comm. Scoped strictly to our own sshd
+/// leader (`setsid`) AND whose command is the agent binary, other than the
+/// `--stdio` agent: it shares the binary and, as sshd runs it in a session of
+/// its own, is a session leader too (#5339). sshd-family processes never match
+/// the agent comm. Scoped strictly to our own sshd
 /// subtree and identity-matched, never a global name pattern (#2580).
 fn session_daemon_pids(root: u32, agent_comm: &str) -> Vec<u32> {
     descendant_pids(root)
         .into_iter()
-        .filter(|&pid| is_session_leader(pid) && comm_of(pid) == agent_comm)
+        .filter(|&pid| {
+            is_session_leader(pid) && comm_of(pid) == agent_comm && !is_stdio_worker(pid)
+        })
         .collect()
 }
 
@@ -507,13 +513,29 @@ fn is_zombie(pid: u32) -> bool {
 }
 
 /// The `termihub-agent --stdio` workers under our sshd `root`: agent-binary
-/// descendants that are NOT session leaders (the setsid'd session and registry
-/// daemons are), and have not yet exited.
+/// descendants launched with `--stdio` that have not yet exited.
+///
+/// Matched on the command line, not on session leadership: sshd runs the exec'd
+/// command in a session of its own, so the `--stdio` worker is a session leader
+/// just like the setsid'd session and registry daemons (#5339).
 fn agent_worker_pids(root: u32, agent_comm: &str) -> Vec<u32> {
     descendant_pids(root)
         .into_iter()
-        .filter(|&pid| !is_session_leader(pid) && comm_of(pid) == agent_comm && !is_zombie(pid))
+        .filter(|&pid| comm_of(pid) == agent_comm && !is_zombie(pid) && is_stdio_worker(pid))
         .collect()
+}
+
+/// Whether `pid`'s command line launches the agent's `--stdio` mode.
+fn is_stdio_worker(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-o", "args=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .any(|arg| arg == "--stdio")
+        })
+        .unwrap_or(false)
 }
 
 /// Poll `pending` until it reports no processes or `grace` runs out. Returns
@@ -786,6 +808,11 @@ impl LocalAgentSshd {
         let registry_endpoint = dir.join("registry.sock");
         let xdg = dir.join("xdg");
         std::fs::create_dir_all(&xdg)?;
+        // A scratch HOME (and HISTFILE inside it) for every agent and shell this
+        // sshd launches, so the test's shells never read the developer's dotfiles
+        // or append the counter loops to their real shell history (#5339).
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home)?;
 
         let config = dir.join("sshd_config");
         // Loopback-only key auth, no PAM/strict-modes so it runs unprivileged
@@ -801,6 +828,7 @@ impl LocalAgentSshd {
         // `warn_if_no_parent_watchdog`.
         // `LLVM_PROFILE_FILE` sends an instrumented agent's coverage profile
         // (and its daemons') to the llvm-cov target instead of `$HOME` (#3831).
+        // `HOME`/`HISTFILE` point at the scratch home above (#5339).
         let cwd = std::env::current_dir()?;
         let profile_file = agent_profile_file(
             std::env::var_os(LLVM_PROFILE_FILE_ENV).as_deref(),
@@ -823,11 +851,13 @@ impl LocalAgentSshd {
                 "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={} \
                  TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15 \
                  TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120 \
-                 TERMIHUB_TEST_PARENT_PID={} {}",
+                 TERMIHUB_TEST_PARENT_PID={} {} {} {}",
                 registry_endpoint.display(),
                 xdg.display(),
                 std::process::id(),
                 sshd_setenv_token(LLVM_PROFILE_FILE_ENV, &profile_file.to_string_lossy()),
+                sshd_setenv_token("HOME", &home.to_string_lossy()),
+                sshd_setenv_token("HISTFILE", &home.join(".history").to_string_lossy()),
             ),
             String::new(),
         ]
@@ -1078,6 +1108,31 @@ impl LocalAgentSshd {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// The `--stdio` agent workers currently serving connections to this sshd
+    /// (empty if the master is gone). Snapshot them before a transport drop to
+    /// wait for that drop to reach the peer ([`Self::wait_for_workers_gone`]).
+    fn stdio_workers(&self) -> Vec<u32> {
+        self.master_pid()
+            .map(|root| agent_worker_pids(root, &self.agent_comm))
+            .unwrap_or_default()
+    }
+
+    /// Wait (bounded by [`AGENT_EXIT_GRACE`]) until every worker in `workers`
+    /// has exited: the transport drop reached the peer and nobody is attached
+    /// any more. Exact PIDs, identity re-checked, so a recycled PID never
+    /// counts. Returns whether they all exited in time.
+    fn wait_for_workers_gone(&self, workers: &[u32]) -> bool {
+        wait_until_gone(AGENT_EXIT_GRACE, || {
+            workers
+                .iter()
+                .copied()
+                .filter(|&pid| {
+                    !is_zombie(pid) && comm_of(pid) == self.agent_comm && is_stdio_worker(pid)
+                })
+                .collect()
+        })
     }
 
     /// The live PID of our sshd `-D` master, if running.
@@ -1436,6 +1491,11 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
     // ── Real transport drop, SPARING the daemon: the established russh channel
     // must go down (genuine transport loss), but the daemon keeps the counter
     // running with nobody attached.
+    let workers = sshd.stdio_workers();
+    assert!(
+        !workers.is_empty(),
+        "no --stdio agent worker found before the drop"
+    );
     sshd.stop_sparing_daemon();
     let channel_closed = {
         let close_deadline = Instant::now() + Duration::from_secs(10);
@@ -1464,8 +1524,13 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
     drop(channel);
     drop(session);
 
-    // Disconnected gap: no agent attached, but the daemon's counter keeps ticking.
-    std::thread::sleep(Duration::from_millis(1500));
+    // Disconnected gap: wait until the drop reached the peer (the `--stdio`
+    // agent that served it exited), so nobody is attached while the daemon's
+    // counter keeps ticking. An observable condition, not a fixed sleep (#5339).
+    assert!(
+        sshd.wait_for_workers_gone(&workers),
+        "the --stdio agent outlived the transport drop — the outage never reached the peer"
+    );
 
     // ── Restore + reconnect: the fresh `--stdio` agent's startup recovery
     // re-adopts the surviving daemon session.
@@ -1663,9 +1728,19 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
     // in-process sever below reparents it beyond `stop()`'s subtree reach, so
     // teardown must reap it by exact PID (#2580).
     sshd.record_session_daemons();
+    let workers = sshd.stdio_workers();
+    assert!(
+        !workers.is_empty(),
+        "no --stdio agent worker found before the sever"
+    );
     test_sever_desktop_transport(channel, Some(session));
-    // The daemon keeps ticking with nobody attached.
-    std::thread::sleep(Duration::from_millis(1500));
+    // The daemon keeps ticking with nobody attached: wait until the sever
+    // reached the peer (its `--stdio` agent exited) instead of a fixed sleep
+    // (#5339).
+    assert!(
+        sshd.wait_for_workers_gone(&workers),
+        "the --stdio agent outlived the in-process sever — the outage never reached the peer"
+    );
     assert!(
         is_listening(sshd.port),
         "the in-process sever must not touch the sshd — it is still listening"
@@ -1769,10 +1844,12 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
 ///
 /// After severing in-process and taking the sshd fully down, `reconnect_agent`
 /// must **park** — keep retrying with backoff — never reporting a spurious
-/// success against the dead endpoint (bounded so the test cannot hang). A
-/// user-cancel (`alive = false`) is the DISTINCT settle: the next attempt
-/// returns promptly with the stop signal, not an `Ok`. Together these pin the
-/// two terminal outcomes the reconnect grade must tell apart.
+/// success against the dead endpoint. The park is graded in virtual time
+/// (#5339): every attempt must start exactly when its production backoff
+/// window ends. A user-cancel (`alive = false`) is the DISTINCT settle: a
+/// parked loop, and the next attempt, return promptly with the stop signal,
+/// not an `Ok`. Together these pin the two terminal outcomes the reconnect
+/// grade must tell apart.
 ///
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1814,29 +1891,52 @@ async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
     );
 
     // Permanent loss → PARK: reconnect keeps retrying, never settling early.
-    // Bounded by a timeout so a regression to a false Ok/early-Err trips here.
-    // (The `Ok` transport holds a russh handle that is not `Debug`, so match
-    // rather than assert-format.)
-    match tokio::time::timeout(
-        Duration::from_secs(6),
-        reconnect_agent(
-            &config,
-            &settings,
-            &mut request_id,
-            &alive,
-            &ReconnectTuning::PRODUCTION,
-        ),
-    )
-    .await
-    {
-        Err(_elapsed) => {} // still retrying when the window elapsed → parked
-        Ok(Ok(_)) => {
-            panic!("reconnect to a permanently-dead endpoint falsely reported success")
-        }
-        Ok(Err(e)) => {
-            panic!("reconnect settled early on a permanent loss instead of parking: {e}")
-        }
+    // Graded in virtual time (#5339): the loop runs the production schedule
+    // (jitter off) on a virtual backoff clock, so each of the first
+    // `PARKED_ROUNDS` attempts must start at exactly the end of its backoff
+    // window and fail against the dead endpoint without the loop settling.
+    // A user stop mid-park then settles it at once with the stop signal.
+    const PARKED_ROUNDS: usize = 9;
+    let clock = VirtualBackoffClock::leaked();
+    let parked_alive = AgentAlive::new();
+    let parked = {
+        let (config, settings, alive) = (config.clone(), settings.clone(), parked_alive.clone());
+        let tuning = virtual_tuning(clock);
+        tokio::spawn(async move {
+            let mut request_id = 0u64;
+            // The `Ok` transport holds a russh handle that is not `Debug`.
+            reconnect_agent(&config, &settings, &mut request_id, &alive, &tuning)
+                .await
+                .map(|_| ())
+        })
+    };
+    let mut at = Duration::ZERO;
+    for (i, secs) in PRODUCTION_SCHEDULE_SECS[..PARKED_ROUNDS].iter().enumerate() {
+        let delay = Duration::from_secs(*secs);
+        tokio::task::block_in_place(|| {
+            clock.step_round(i + 1, at, delay, || !parked.is_finished())
+        });
+        at += delay;
     }
+    // Every attempt so far failed: the loop is parked in the next window.
+    tokio::task::block_in_place(|| clock.nth_request(PARKED_ROUNDS + 1));
+    assert!(
+        !parked.is_finished(),
+        "reconnect to a permanently-dead endpoint settled instead of parking"
+    );
+    parked_alive.stop();
+    match tokio::time::timeout(Duration::from_secs(15), parked)
+        .await
+        .expect("a user stop must settle a parked reconnect at once")
+        .expect("join the parked reconnect")
+    {
+        Err(e) => assert!(
+            e.contains("stopped by user"),
+            "a user stop mid-park must settle with the stop signal, got: {e}"
+        ),
+        Ok(()) => panic!("reconnect to a permanently-dead endpoint falsely reported success"),
+    }
+    assert_eq!(clock.now(), at, "the stop must not wait out the window");
 
     // User-cancel is the DISTINCT settle: with alive=false the next attempt
     // returns promptly with the stop signal — never a spurious Ok.
@@ -2412,7 +2512,9 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
 /// a user-cancel, which tears the agent down and settles the region Disconnected.
 ///
 /// This pins the two terminal outcomes the reconnect grade must tell apart, on the
-/// shipped command → task path rather than `reconnect_agent` in isolation.
+/// shipped command → task path rather than `reconnect_agent` in isolation. The
+/// park is graded in virtual time (#5339): the manager's I/O task backs off on a
+/// virtual clock, stepped through the production schedule.
 ///
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
 ///
@@ -2444,7 +2546,12 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
     handle.manage(agents_store.clone());
     let agent_states = AgentStateLog::attach(&handle, &agent_id);
 
-    let manager = Arc::new(AgentConnectionManager::new(handle.clone()));
+    // The I/O task's reconnect backoff runs on a virtual clock, so the park
+    // below is graded in virtual time (#5339).
+    let clock = VirtualBackoffClock::leaked();
+    let mut manager = AgentConnectionManager::new(handle.clone());
+    manager.set_reconnect_tuning_for_test(virtual_tuning(clock));
+    let manager = Arc::new(manager);
     let config = sshd.agent_config();
     let settings = AgentSettings::default();
 
@@ -2479,19 +2586,33 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
 
             // PARK: the task folds Reconnecting and keeps retrying the dead
             // endpoint. Wait for that fold on the ordered transition log, then
-            // hold for a window spanning several backoff attempts: the region
-            // must never leave Reconnecting (no Disconnected, no Connected) and
-            // the agent must stay alive (parked in its reconnect loop).
+            // step the virtual backoff clock through every production window
+            // but the last (#5339): each attempt must start exactly when its
+            // window ends, and through all of them the region must never leave
+            // Reconnecting (no Disconnected, no Connected) and the agent must
+            // stay alive (parked in its reconnect loop).
+            const PARKED_ROUNDS: usize = 9;
             let reached_reconnecting = agent_states
                 .wait_until(Instant::now() + Duration::from_secs(10), |s| {
                     s.iter().any(|st| st == "reconnecting")
                 });
-            std::thread::sleep(Duration::from_secs(5));
-            let parked_states = agent_states.states();
-            let left_reconnecting = parked_states
-                .iter()
-                .skip_while(|st| *st != "reconnecting")
-                .any(|st| st != "reconnecting");
+            let left_reconnecting = |states: &[String]| {
+                states
+                    .iter()
+                    .skip_while(|st| *st != "reconnecting")
+                    .any(|st| st != "reconnecting")
+            };
+            let mut at = Duration::ZERO;
+            for (i, secs) in PRODUCTION_SCHEDULE_SECS[..PARKED_ROUNDS].iter().enumerate() {
+                let delay = Duration::from_secs(*secs);
+                clock.step_round(i + 1, at, delay, || {
+                    !left_reconnecting(&agent_states.states()) && manager.is_connected(&agent_id)
+                });
+                at += delay;
+            }
+            // The last attempt failed too: parked in the final window.
+            clock.nth_request(PARKED_ROUNDS + 1);
+            let left_reconnecting = left_reconnecting(&agent_states.states());
             let still_alive_parked = manager.is_connected(&agent_id);
 
             // User-cancel is the DISTINCT settle: it tears the agent down and folds
@@ -2867,7 +2988,10 @@ fn sshd_session_env_carries_the_absolute_profile_path() {
         ])
         .arg(&harness.client_key)
         .arg(format!("{}@127.0.0.1", harness.username))
-        .arg(format!("printenv {LLVM_PROFILE_FILE_ENV}"))
+        // One name per `printenv`: the BSD one takes a single name.
+        .arg(format!(
+            "printenv {LLVM_PROFILE_FILE_ENV} && printenv HOME && printenv HISTFILE"
+        ))
         .stdin(Stdio::null())
         .output()
     {
@@ -2886,8 +3010,23 @@ fn sshd_session_env_carries_the_absolute_profile_path() {
         "ssh printenv failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let forwarded = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut lines = stdout.lines().map(str::trim);
+    let forwarded = lines.next().unwrap_or_default().to_string();
     // Exact match: sshd must not expand or strip `%p`-style patterns (#3831).
     assert_eq!(Path::new(&forwarded), harness.profile_file.as_path());
     assert!(Path::new(&forwarded).is_absolute(), "{forwarded}");
+    // #5339: the session's HOME and HISTFILE are the harness's scratch home,
+    // never the developer's real one.
+    let home = harness.dir.join("home");
+    assert_eq!(
+        lines.next().map(Path::new),
+        Some(home.as_path()),
+        "{stdout}"
+    );
+    assert_eq!(
+        lines.next().map(Path::new),
+        Some(home.join(".history").as_path()),
+        "{stdout}"
+    );
 }

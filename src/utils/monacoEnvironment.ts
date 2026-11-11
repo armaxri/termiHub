@@ -25,6 +25,10 @@ import CssWorker from "monaco-editor/language/css/css.worker?worker";
 import HtmlWorker from "monaco-editor/language/html/html.worker?worker";
 import JsonWorker from "monaco-editor/language/json/json.worker?worker";
 import TsWorker from "monaco-editor/language/typescript/ts.worker?worker";
+// Patch Monaco's WebKit clipboard pre-arm before its services exist (#5383).
+// Every monaco-editor importer imports this module first, so this is the one
+// place that is guaranteed to run early enough.
+import "./monacoClipboard";
 
 type WorkerConstructor = new (options?: { name?: string }) => Worker;
 

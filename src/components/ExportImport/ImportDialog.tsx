@@ -256,7 +256,7 @@ export function ImportDialog() {
           )}
         </>
       ) : (
-        !error && <p className="import-dialog__description">Loading preview...</p>
+        !error && <p className="import-dialog__description">Loading preview…</p>
       )}
     </Modal>
   );

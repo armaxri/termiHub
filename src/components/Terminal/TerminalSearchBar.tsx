@@ -106,7 +106,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         size="sm"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Find..."
+        placeholder="Find…"
         spellCheck={false}
       />
       <span className="terminal-search-bar__count" aria-live="polite" role="status">

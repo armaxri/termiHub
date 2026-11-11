@@ -1,7 +1,7 @@
 import { Network, Plus } from "lucide-react";
 import { Button, EmptyState } from "@/components/ui";
-import { useAppStore } from "@/store/appStore";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { ExperimentalSettingLink } from "@/components/Settings/ExperimentalSettingLink";
 
 /**
  * Props for {@link ConnectionsEmptyState}.
@@ -22,7 +22,6 @@ export interface ConnectionsEmptyStateProps {
  */
 export function ConnectionsEmptyState({ onNewConnection }: ConnectionsEmptyStateProps) {
   const experimental = useExperimentalFeatures();
-  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   const description = experimental ? (
     "Create your first connection to get started."
@@ -31,14 +30,10 @@ export function ConnectionsEmptyState({ onNewConnection }: ConnectionsEmptyState
       Create your first connection to get started.
       <br />
       More features — SSH Tunnels, Services, Network Tools and Workflows — live behind{" "}
-      <button
-        type="button"
+      <ExperimentalSettingLink
         className="connections-empty__link"
-        onClick={() => openSettingsTab({ category: "general" })}
         data-testid="connections-empty-experimental-link"
-      >
-        Settings ▸ General ▸ Experimental Features
-      </button>
+      />
       .
     </>
   );

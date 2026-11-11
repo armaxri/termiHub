@@ -184,38 +184,45 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Run the performance gate (release)
+        # The test writes $TERMIHUB_REPORT_DIR/plugin-sandbox-perf.json: one row
+        # per budget with its verdict (#5352). TERMIHUB_PERF_REPORT names the
+        # same file for a tree from before the report dir (a "both" dispatch
+        # grading main), whose flat report renders as reported-only rows.
         env:
-          TERMIHUB_PERF_REPORT: ${{ runner.temp }}/plugin-sandbox-perf.json
-        run: >-
-          cargo test -p termihub-core --features plugin --release
-          --test plugin_runner_perf -- --ignored --nocapture
+          TERMIHUB_REPORT_DIR: ${{ runner.temp }}/termihub-reports
+          TERMIHUB_PERF_REPORT: ${{ runner.temp }}/termihub-reports/plugin-sandbox-perf.json
+        shell: bash
+        run: |
+          mkdir -p "$TERMIHUB_REPORT_DIR"
+          cargo test -p termihub-core --features plugin --release \
+            --test plugin_runner_perf -- --ignored --nocapture
 
       - name: Summarise the measurements
+        # always(): a breached budget fails the step above, and its numbers
+        # are exactly what the summary must still show.
         if: always()
         shell: bash
         env:
-          REPORT: ${{ runner.temp }}/plugin-sandbox-perf.json
           LEG: ${{ matrix.os }} · ${{ matrix.branch }}
+          REPORT: ${{ runner.temp }}/termihub-reports/plugin-sandbox-perf.json
         run: |
-          {
-            echo "### Plugin sandbox perf ($LEG)"
-            echo
-            if [ -f "$REPORT" ]; then
-              echo '```json'
-              cat "$REPORT"
-              echo
-              echo '```'
-            else
-              echo "No report written (the test failed before measuring)."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          renderer=scripts/internal/render-report-summary.mjs
+          if [ ! -f "$renderer" ]; then
+            # A graded tree from before the renderer (#5352): show the raw JSON.
+            { echo "### Plugin sandbox perf ($LEG)"; echo '```json'
+              cat "$REPORT" 2>/dev/null || echo "no report written"; echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node "$renderer" --commit "$(git rev-parse HEAD)" --label "$LEG" \
+            --out "$GITHUB_STEP_SUMMARY" "$REPORT"
 
       - name: Upload the measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: plugin-sandbox-perf-${{ matrix.os }}-${{ matrix.branch }}
-          path: ${{ runner.temp }}/plugin-sandbox-perf.json
+          path: ${{ runner.temp }}/termihub-reports/plugin-sandbox-perf.json
           if-no-files-found: ignore
 
   plugin-tls-handshake:

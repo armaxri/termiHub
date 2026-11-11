@@ -4,7 +4,8 @@
 //!
 //! `audit_injected_setup_side_effects` (ignored; run with `--ignored
 //! --nocapture`) prints the table for the injected setup next to a plain
-//! shell, which is the evidence for #5009's audit. The other tests assert
+//! shell, which is the evidence for #5009's audit; with `TERMIHUB_REPORT_DIR`
+//! set it also writes them as `shell-side-effects.json` (#5352). The other tests assert
 //! that a session with the injection off leaves the shell exactly as a plain
 //! shell, while the file browser still follows its directory.
 
@@ -158,6 +159,7 @@ pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> Shel
 #[serial(local_pty)]
 #[ignore = "audit: prints the side-effect table; run with --ignored --nocapture"]
 async fn audit_injected_setup_side_effects() {
+    let mut rows = Vec::new();
     for shell in ["bash", "zsh"] {
         if !installed(shell) {
             continue;
@@ -166,7 +168,91 @@ async fn audit_injected_setup_side_effects() {
         let injected = measure(shell, Some(true)).await;
         eprintln!("AUDIT {shell} plain    = {plain:?}");
         eprintln!("AUDIT {shell} injected = {injected:?}");
+        rows.extend(audit_rows(shell, &plain, &injected));
     }
+    write_audit_report(&rows);
+}
+
+/// Whether a prompt hook value carries termiHub's setup.
+fn prompt_touched(value: &str) -> usize {
+    usize::from(value.contains("termihub") || value.contains("133;"))
+}
+
+/// The audit's report rows for one shell (#5352): each count with the injected
+/// setup, next to the same count for a plain shell. Reported, not asserted —
+/// the injected setup is opt-in and #5009 documents what it leaves behind.
+fn audit_rows(shell: &str, plain: &ShellState, injected: &ShellState) -> Vec<serde_json::Value> {
+    let counts = |s: &ShellState| {
+        [
+            (
+                "history entries mentioning termihub (in session)",
+                s.history_in_session,
+            ),
+            ("history file lines mentioning termihub", s.history_file),
+            ("shell functions mentioning termihub", s.functions),
+            ("termiHub shell variables", s.variables),
+            ("PROMPT_COMMAND changed", prompt_touched(&s.prompt_command)),
+            ("PS1 changed", prompt_touched(&s.ps1)),
+            ("PS0 changed", prompt_touched(&s.ps0)),
+            ("precmd_functions changed", prompt_touched(&s.precmd)),
+        ]
+    };
+    counts(injected)
+        .into_iter()
+        .zip(counts(plain))
+        .map(|((metric, value), (_, baseline))| {
+            serde_json::json!({
+                "metric": format!("{shell} · {metric}"),
+                "value": value,
+                "baseline": baseline,
+                "baseline_label": "plain shell",
+                "verdict": "info",
+            })
+        })
+        .collect()
+}
+
+/// Write `shell-side-effects.json` into `$TERMIHUB_REPORT_DIR` when it is set
+/// (the nightly lane renders it with `scripts/internal/render-report-summary.mjs`
+/// and uploads it); otherwise write nothing.
+fn write_audit_report(rows: &[serde_json::Value]) {
+    let Some(dir) = std::env::var_os("TERMIHUB_REPORT_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).expect("create TERMIHUB_REPORT_DIR");
+    let report = serde_json::json!({
+        "schema": 1,
+        "report": "shell-side-effects",
+        "title": "Injected shell setup side effects",
+        "rows": rows,
+    });
+    let text = serde_json::to_string_pretty(&report).expect("serialise the audit report");
+    std::fs::write(dir.join("shell-side-effects.json"), text).expect("write the audit report");
+}
+
+#[test]
+fn audit_rows_pair_each_injected_count_with_the_plain_shell() {
+    let plain = ShellState::default();
+    let injected = ShellState {
+        history_file: 2,
+        prompt_command: "__termihub_precmd".into(),
+        ..ShellState::default()
+    };
+    let rows = audit_rows("bash", &plain, &injected);
+    assert_eq!(rows.len(), 8);
+    assert_eq!(
+        rows[1],
+        serde_json::json!({
+            "metric": "bash · history file lines mentioning termihub",
+            "value": 2,
+            "baseline": 0,
+            "baseline_label": "plain shell",
+            "verdict": "info",
+        })
+    );
+    assert_eq!(rows[4]["value"], 1, "PROMPT_COMMAND carries the hook");
+    assert_eq!(rows[5]["value"], 0, "PS1 untouched");
 }
 
 /// #5009 (c): a session with default settings leaves the user's shell as a

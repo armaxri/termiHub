@@ -22,6 +22,7 @@ use termihub_core::reconnect_backoff::{
 };
 
 use super::alive::AgentAlive;
+use super::backoff_clock::{BackoffClock, TOKIO_BACKOFF_CLOCK};
 use super::capabilities::capabilities_from_initialize;
 use super::{
     build_initialize_params, parse_initialize_result, read_handshake_line, serialize_request,
@@ -46,20 +47,46 @@ pub(crate) const AGENT_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKin
 /// Production always runs [`ReconnectTuning::PRODUCTION`]; a test swaps in a
 /// short handshake bound and a fast, few-attempt policy so the whole loop —
 /// every attempt through to give-up — finishes in a test's budget.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// The backoff waits run on `clock`: the tokio timer in production, a virtual
+/// clock in the tests that grade the backoff and park timing (#5339).
+#[derive(Clone, Copy)]
 pub(super) struct ReconnectTuning {
     /// Bound on each attempt's post-auth handshake ([`reconnect_handshake`]).
     pub(super) handshake_timeout: std::time::Duration,
     /// Backoff delay, attempt budget and jitter of the loop.
     pub(super) policy: BackoffConfig,
+    /// The clock the backoff waits on.
+    pub(super) clock: &'static dyn BackoffClock,
 }
 
 impl ReconnectTuning {
-    /// [`AGENT_HANDSHAKE_TIMEOUT`] on [`AGENT_RECONNECT_POLICY`].
+    /// [`AGENT_HANDSHAKE_TIMEOUT`] on [`AGENT_RECONNECT_POLICY`], waiting on
+    /// [`TOKIO_BACKOFF_CLOCK`].
     pub(super) const PRODUCTION: Self = Self {
         handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
         policy: AGENT_RECONNECT_POLICY,
+        clock: &TOKIO_BACKOFF_CLOCK,
     };
+}
+
+impl PartialEq for ReconnectTuning {
+    /// Equal knobs on the same clock instance.
+    fn eq(&self, other: &Self) -> bool {
+        self.handshake_timeout == other.handshake_timeout
+            && self.policy == other.policy
+            && std::ptr::addr_eq(self.clock, other.clock)
+    }
+}
+
+impl std::fmt::Debug for ReconnectTuning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReconnectTuning")
+            .field("handshake_timeout", &self.handshake_timeout)
+            .field("policy", &self.policy)
+            .field("clock", &(self.clock as *const dyn BackoffClock))
+            .finish()
+    }
 }
 
 /// Attempt to reconnect to an agent with exponential backoff.
@@ -115,7 +142,7 @@ pub(super) async fn reconnect_agent(
 
         // Wait out the backoff, waking the instant a Disconnect / shutdown
         // stops the connection (#4366).
-        if !alive.sleep(backoff).await {
+        if !alive.sleep(tuning.clock, backoff).await {
             return Err("Reconnect stopped by user".to_string());
         }
 

@@ -110,6 +110,17 @@ function q(testid: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testid}"]`);
 }
 
+/** Click an element rendered anywhere in the document (dialogs are portalled). */
+function clickInDocument(testid: string) {
+  act(() => {
+    document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)!.click();
+  });
+}
+
+function dialogText(): string {
+  return document.querySelector('[data-testid="confirm-stop-session-dialog"]')?.textContent ?? "";
+}
+
 function entry(state: PersistentSessionEntry["state"]): PersistentSessionEntry {
   return { connectionId: "ssh-1", sessionId: "sess-1", state, attachedTabIds: [] };
 }
@@ -174,10 +185,27 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     });
     expect(attachPersistentSession).toHaveBeenCalledWith("ssh-1");
 
+    // Stop asks first: the session runs in the background (#5375).
     act(() => {
       q("persistent-stop-ssh-1")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    expect(stopPersistentSession).not.toHaveBeenCalled();
+    expect(dialogText()).toContain('Stop "My SSH"? It is running in the background and will end.');
+    clickInDocument("confirm-stop-session-confirm");
     expect(stopPersistentSession).toHaveBeenCalledWith("ssh-1");
+  });
+
+  it("cancelling the Stop confirmation leaves the session running (#5375)", async () => {
+    const stopPersistentSession = vi.fn(() => Promise.resolve());
+    await render({ "ssh-1": entry("running") }, { stopPersistentSession });
+
+    act(() => {
+      q("persistent-stop-ssh-1")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    clickInDocument("confirm-stop-session-cancel");
+
+    expect(stopPersistentSession).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="confirm-stop-session-dialog"]')).toBeNull();
   });
 
   it("hides inline lifecycle buttons while transitioning and still shows no marker", async () => {

@@ -133,6 +133,13 @@ async fn fetch_github_json<T: serde::de::DeserializeOwned>(
     url: &str,
     running_version: &str,
 ) -> anyhow::Result<T> {
+    // Test-bridge builds may rebase the URL onto the harness's loopback
+    // fixture server (#5388); release builds always fetch `url` as given.
+    #[cfg(feature = "test-bridge")]
+    let rebased = crate::utils::test_bridge::rebase_url(url);
+    #[cfg(feature = "test-bridge")]
+    let url = rebased.as_deref().unwrap_or(url);
+
     let client = reqwest::Client::builder()
         .user_agent(format!("termiHub/{running_version}"))
         .build()
@@ -262,6 +269,12 @@ fn should_check(last_check_time: &Option<String>, force: bool) -> bool {
     elapsed >= MIN_CHECK_INTERVAL_SECS
 }
 
+/// Whether a check may run: a forced ("Check Now") check always may, an
+/// automatic one only while `updates.autoCheck` is on.
+fn automatic_check_allowed(auto_check: bool, force: bool) -> bool {
+    force || auto_check
+}
+
 /// Check for a termiHub update.
 ///
 /// * `force` — skip the 1-hour rate limit (used by the "Check Now" button).
@@ -296,6 +309,13 @@ pub async fn check_for_updates(
 
     let settings = manager.get_settings();
     let update_settings = settings.updates.clone();
+
+    // The frontend schedules its startup check before settings load, so the
+    // backend is what honours "check automatically: off" (#5388).
+    if !automatic_check_allowed(update_settings.auto_check, force) {
+        debug!("Update check skipped — automatic checks are turned off");
+        return Ok(UpdateInfo::unavailable(running_version, channel));
+    }
 
     // Rate-limit automatic checks.
     if !should_check(&update_settings.last_check_time, force) {
@@ -411,6 +431,17 @@ mod tests {
     }
 
     // ── should_check ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn automatic_check_honours_auto_check_off() {
+        assert!(automatic_check_allowed(true, false));
+        assert!(!automatic_check_allowed(false, false));
+        assert!(
+            automatic_check_allowed(false, true),
+            "Check Now ignores the setting"
+        );
+        assert!(automatic_check_allowed(true, true));
+    }
 
     #[test]
     fn should_check_with_no_previous_check() {

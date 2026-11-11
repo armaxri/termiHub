@@ -24,6 +24,17 @@ vi.mock("@/services/api", async (importOriginal) => ({
   listSessionOwners: vi.fn(() => Promise.resolve({})),
 }));
 
+// Stub the editor surface. The test checks the tab the store opens, not Monaco.
+// With the real module, SplitView's `lazy(() => import("@/components/FileEditor"))`
+// starts when the editor tab renders and can still be loading when this file
+// ends. V8 then reports a FileEditor.tsx script that vitest never recorded as
+// executed, so it has no wrapper offset (startOffset 0). If that entry is the
+// last one merged, the whole FileEditor.tsx coverage map shifts by the wrapper
+// length: on ubuntu CI its branches read 64 % instead of 79 % (#5358).
+vi.mock("@/components/FileEditor", () => ({
+  FileEditor: () => <div data-testid="file-editor-stub" />,
+}));
+
 const SAVED_PATH = "/tmp/termihub-test/terminal-output.txt";
 
 function allTabs() {

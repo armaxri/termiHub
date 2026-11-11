@@ -22,6 +22,7 @@ const saveTunnel = vi.fn((_config: TunnelConfig) => Promise.resolve());
 const deleteTunnel = vi.fn((_id: string, _opts?: { undoable?: boolean }) => Promise.resolve());
 const updateSettings = vi.fn((_s: unknown) => Promise.resolve());
 const openTunnelEditorTab = vi.fn();
+const openSettingsTab = vi.fn();
 
 vi.mock("@/store/appStore", () => {
   const state: Record<string, unknown> = {};
@@ -62,6 +63,7 @@ function seed(tunnels: TunnelConfig[], tunnelStates: Record<string, TunnelState>
     deleteTunnel,
     updateSettings,
     openTunnelEditorTab,
+    openSettingsTab,
   });
 }
 
@@ -244,5 +246,44 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
     expect(deleteTunnel).not.toHaveBeenCalled();
     await click(byTestId("confirm-delete-confirm"));
     expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
+  });
+
+  describe("hint copy follows the experimental gate (#5363)", () => {
+    function emitExperimental(enabled: boolean) {
+      act(() =>
+        __emitSettingsViewForTest(
+          {
+            version: "1",
+            externalConnectionFiles: [],
+            powerMonitoringEnabled: true,
+            fileBrowserEnabled: true,
+            experimentalFeaturesEnabled: enabled,
+          },
+          3
+        )
+      );
+    }
+
+    it("with experimental features off, does not name the hidden sidebar as visible and links to the toggle", async () => {
+      emitExperimental(false);
+      seed([]);
+      await render("conn-1");
+      const hint = byTestId("connection-port-forwarding-hint")!;
+      expect(hint.textContent).not.toContain("listed in the SSH Tunnels sidebar");
+      expect(hint.textContent).toContain(
+        "turn on Settings ▸ General ▸ Allow Experimental Features"
+      );
+      await click(byTestId("connection-port-forwarding-experimental-link"));
+      expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
+    });
+
+    it("with experimental features on, names the SSH Tunnels sidebar and shows no toggle link", async () => {
+      emitExperimental(true);
+      seed([]);
+      await render("conn-1");
+      const hint = byTestId("connection-port-forwarding-hint")!;
+      expect(hint.textContent).toContain("same tunnels listed in the SSH Tunnels sidebar");
+      expect(byTestId("connection-port-forwarding-experimental-link")).toBeNull();
+    });
   });
 });

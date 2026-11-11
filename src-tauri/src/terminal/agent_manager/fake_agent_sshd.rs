@@ -114,7 +114,14 @@ impl FakeAgentSshd {
     /// Start the server on an ephemeral loopback port. Must be called inside a
     /// Tokio runtime, which then drives it.
     pub(super) async fn serve(behavior: InitBehavior) -> Self {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        Self::serve_on(0, behavior).await
+    }
+
+    /// Start the server on loopback `port` (`0`: an ephemeral one), e.g. to
+    /// bring an endpoint back on the port a reconnect loop keeps dialing
+    /// (#5339).
+    pub(super) async fn serve_on(port: u16, behavior: InitBehavior) -> Self {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
             .await
             .expect("bind the fake agent SSH server");
         let port = listener.local_addr().expect("fake agent address").port();
