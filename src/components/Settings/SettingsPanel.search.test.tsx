@@ -1,4 +1,4 @@
-import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -74,6 +74,8 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
 
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "get_app_info") return Promise.resolve({ version: "0.0.0", gitHash: "abc" });
+      // The Security trust lists (#5365 tests open that category).
+      if (cmd === "rdp_trust_list" || cmd === "ssh_trust_list") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
   });
@@ -125,5 +127,40 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     await render();
     search("zzz-no-such-setting");
     expect(container.querySelector(".settings-panel__no-results")).not.toBeNull();
+  });
+
+  describe("RDP certificates follow the experimental gate (#5365)", () => {
+    const rdpSection = () => container.querySelector("[data-testid='settings-rdp-trust']");
+    const sshSection = () => container.querySelector("[data-testid='settings-ssh-trust']");
+
+    function openSecurity() {
+      act(() => navItem("security")?.click());
+    }
+
+    it("hides the section and its search entry while experimental features are off", async () => {
+      seedSettings({ experimentalFeaturesEnabled: false });
+      await render();
+      openSecurity();
+      expect(rdpSection()).toBeNull();
+      expect(sshSection()).not.toBeNull();
+
+      search("rdp");
+      expect(rdpSection()).toBeNull();
+      expect(container.querySelector(".settings-panel__no-results")).not.toBeNull();
+
+      search("certificate");
+      expect(rdpSection()).toBeNull();
+    });
+
+    it("shows the section and finds it by search while experimental features are on", async () => {
+      seedSettings({ experimentalFeaturesEnabled: true });
+      await render();
+      openSecurity();
+      expect(rdpSection()).not.toBeNull();
+
+      search("remote desktop");
+      expect(rdpSection()).not.toBeNull();
+      expect(navItem("security")?.className).not.toContain("settings-nav__item--dimmed");
+    });
   });
 });

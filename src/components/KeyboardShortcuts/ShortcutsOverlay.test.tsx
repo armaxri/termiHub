@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { useAppStore } from "@/store/appStore";
 import { RELEASE_CHORD_ACTION, clearOverrides, setOverride } from "@/services/keybindings";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -12,6 +13,8 @@ vi.mock("@/themes", () => ({
 
 let container: HTMLDivElement;
 let root: Root;
+
+setupSettingsRegion();
 
 describe("ShortcutsOverlay", () => {
   beforeEach(() => {
@@ -234,6 +237,7 @@ describe("ShortcutsOverlay", () => {
     });
 
     it("lists the remote-desktop release chord (#4524)", () => {
+      seedSettings({ experimentalFeaturesEnabled: true });
       act(() => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
@@ -246,6 +250,8 @@ describe("ShortcutsOverlay", () => {
   });
 
   describe("remote-desktop release chord (#4524)", () => {
+    // The Remote Desktop group is listed only while VNC/RDP are ungated (#5365).
+    beforeEach(() => seedSettings({ experimentalFeaturesEnabled: true }));
     afterEach(() => clearOverrides());
 
     function row(): HTMLElement | null {
@@ -270,6 +276,55 @@ describe("ShortcutsOverlay", () => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
       const keys = Array.from(row()?.querySelectorAll("kbd") ?? []).map((k) => k.textContent);
+      expect(keys).toEqual(["Ctrl+Alt"]);
+    });
+  });
+
+  describe("experimental gate (#5365)", () => {
+    afterEach(() => clearOverrides());
+
+    function releaseRow(): HTMLElement | null {
+      return document.querySelector(`[data-testid="shortcut-row-${RELEASE_CHORD_ACTION}"]`);
+    }
+
+    function groupTitles(): string[] {
+      return Array.from(document.querySelectorAll(".shortcuts-overlay__group-label"), (el) =>
+        (el.textContent ?? "").trim()
+      );
+    }
+
+    it("hides the Remote Desktop group while experimental features are off", () => {
+      seedSettings({ experimentalFeaturesEnabled: false });
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(releaseRow()).toBeNull();
+      expect(groupTitles()).not.toContain("Remote Desktop");
+      // Other groups are unaffected.
+      expect(document.querySelector('[data-testid="shortcut-row-toggle-sidebar"]')).not.toBeNull();
+    });
+
+    it("lists the Remote Desktop group while experimental features are on", () => {
+      seedSettings({ experimentalFeaturesEnabled: true });
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(releaseRow()).not.toBeNull();
+      expect(groupTitles()).toContain("Remote Desktop");
+    });
+
+    it("keeps a hidden override and shows it once the gate turns on", () => {
+      setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
+      seedSettings({ experimentalFeaturesEnabled: false });
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(releaseRow()).toBeNull();
+
+      act(() => seedSettings({ experimentalFeaturesEnabled: true }));
+      const keys = Array.from(releaseRow()?.querySelectorAll("kbd") ?? []).map(
+        (k) => k.textContent
+      );
       expect(keys).toEqual(["Ctrl+Alt"]);
     });
   });
