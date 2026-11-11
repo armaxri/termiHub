@@ -244,6 +244,14 @@ struct Inner {
     /// meaningful while the tab is `Failed`; every other route into `Failed`, a
     /// fresh `connect` and `remove` clear it.
     agent_gave_up: HashSet<String>,
+    /// Tabs whose `Reconnecting` loop runs **on the agent** (#5396): an
+    /// agent-hosted serial session reopening its port in place. The region
+    /// mirrors the agent's steps, and the backend timer must not arm a redrive
+    /// for them. See [`agent_reconnect`].
+    agent_reconnecting: HashSet<String>,
+    /// The last `connection.reconnect` sequence number applied per tab (#5396),
+    /// so a late or replayed step never undoes a newer one.
+    agent_reconnect_seq: HashMap<String, u64>,
 }
 
 /// A serialized description of the region entries touched since the previous
@@ -303,6 +311,8 @@ impl SessionLifecycleStore {
                 rand: Box::new(system_jitter),
                 dirty: HashSet::new(),
                 agent_gave_up: HashSet::new(),
+                agent_reconnecting: HashSet::new(),
+                agent_reconnect_seq: HashMap::new(),
             }),
         }
     }
@@ -323,6 +333,7 @@ impl SessionLifecycleStore {
         inner.dirty.insert(session_id.to_string());
         // A fresh connect (the user's Reconnect) leaves an agent give-up (#4713).
         inner.agent_gave_up.remove(session_id);
+        agent_reconnect::forget(&mut inner, session_id);
         inner
             .sessions
             .insert(session_id.to_string(), SessionLifecycle::connecting());
@@ -340,6 +351,7 @@ impl SessionLifecycleStore {
             return;
         }
         inner.dirty.insert(session_id.to_string());
+        inner.agent_reconnecting.remove(session_id);
         let current = reconnect_of(&inner, session_id);
         // Only the engine's Connecting sub-phase accepts Success; from a plain
         // initial connect the loop is Idle and the reducer is a no-op.
@@ -542,6 +554,8 @@ impl SessionLifecycleStore {
             return;
         }
         inner.dirty.insert(session_id.to_string());
+        // The desktop's own loop takes over; it is not the agent's (#5396).
+        inner.agent_reconnecting.remove(session_id);
         let current = reconnect_of(&inner, session_id);
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Drop);
         // No-op for an unknown/removed session (SM-006): a reconnect loop only arms
@@ -610,6 +624,8 @@ impl SessionLifecycleStore {
             return;
         }
         inner.dirty.insert(session_id.to_string());
+        // The transport break supersedes a mirrored agent-side loop (#5396).
+        inner.agent_reconnecting.remove(session_id);
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -682,6 +698,7 @@ impl SessionLifecycleStore {
     pub fn cancel_reconnect(&self, session_id: &str) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
+        inner.agent_reconnecting.remove(session_id);
         let current = reconnect_of(&inner, session_id);
         let _ = inner.reconnect_event(current, ReconnectEvent::Cancel);
         if let Some(entry) = inner.sessions.get_mut(session_id) {
@@ -729,6 +746,14 @@ impl SessionLifecycleStore {
     pub fn set_backend_session_id(&self, session_id: &str, backend_session_id: Option<String>) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
+        let changed = inner
+            .sessions
+            .get(session_id)
+            .is_some_and(|e| e.backend_session_id != backend_session_id);
+        if changed {
+            // Another backend session numbers its reconnect steps afresh (#5396).
+            inner.agent_reconnect_seq.remove(session_id);
+        }
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.backend_session_id = backend_session_id;
         }
@@ -772,17 +797,22 @@ impl SessionLifecycleStore {
     pub fn set_exit(&self, session_id: &str, exit: Option<TerminalExit>) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
+        // #5396: the session an agent's reopen gave up on ends with a clean exit
+        // right after; the give-up stays the tab's ending, as for #4713.
+        let gave_up = agent_gave_up(&inner, session_id);
         let entry = inner
             .sessions
             .entry(session_id.to_string())
             .or_insert_with(SessionLifecycle::connecting);
-        if matches!(
-            exit,
-            Some(TerminalExit {
-                reason: TerminalExitReason::Clean,
-                ..
-            })
-        ) {
+        if !gave_up
+            && matches!(
+                exit,
+                Some(TerminalExit {
+                    reason: TerminalExitReason::Clean,
+                    ..
+                })
+            )
+        {
             // A clean process exit is a graceful, expected end — fold the terminal
             // status explicitly (#2637). See the byte-identical note above.
             entry.status = SessionStatus::Disconnected;
@@ -932,6 +962,7 @@ impl SessionLifecycleStore {
         inner.dirty.insert(session_id.to_string());
         inner.sessions.remove(session_id);
         inner.agent_gave_up.remove(session_id);
+        agent_reconnect::forget(&mut inner, session_id);
     }
 
     /// Drain the dirty-key set, serializing each touched session's current value
@@ -1060,6 +1091,7 @@ fn agent_gave_up(inner: &Inner, session_id: &str) -> bool {
 /// [`SessionLifecycleStore::disconnect`]).
 fn apply_disconnect(inner: &mut Inner, session_id: &str) {
     inner.dirty.insert(session_id.to_string());
+    inner.agent_reconnecting.remove(session_id);
     // No-op for an unknown/removed session (SM-006): a user disconnect only
     // fires for a live tab that already folded `connect`, so a late/duplicate
     // `disconnect` for a removed tab must not resurrect a phantom entry.
@@ -1092,6 +1124,7 @@ fn apply_connect_failed(inner: &mut Inner, session_id: &str, error: Option<Strin
         return;
     }
     inner.dirty.insert(session_id.to_string());
+    inner.agent_reconnecting.remove(session_id);
     // A plain connect failure is not an agent give-up (#4713); the agent
     // give-up fold re-marks the tab after this.
     inner.agent_gave_up.remove(session_id);
@@ -1118,6 +1151,7 @@ fn apply_session_lost(inner: &mut Inner, session_id: &str, error: Option<String>
         return;
     }
     inner.dirty.insert(session_id.to_string());
+    inner.agent_reconnecting.remove(session_id);
     // No-op for an unknown/removed session (SM-006): a late fold arriving after
     // the user closed the tab must not resurrect a phantom entry. The status
     // guard lives in `session_lost_if_reconnecting` (agent recovery) and in the
@@ -1150,6 +1184,8 @@ fn reconnect_of(inner: &Inner, session_id: &str) -> ReconnectState {
         .map(|s| s.reconnect)
         .unwrap_or(INITIAL_RECONNECT_STATE)
 }
+
+mod agent_reconnect;
 
 #[cfg(test)]
 #[path = "store_tests.rs"]

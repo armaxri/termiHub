@@ -481,6 +481,22 @@ pub fn fold_agent_session_reclaimed<R: tauri::Runtime>(app_handle: &AppHandle<R>
     sync_timer_generic(app_handle, tab_id);
 }
 
+/// Fold one step of a hosted session's **agent-side** reconnect loop (#5396) at
+/// the backend source: an agent-hosted serial session reopening its port in
+/// place. See [`SessionLifecycleStore::agent_session_reconnect`]. The timer
+/// reconcile after it never arms a redrive for an agent-driven loop.
+pub fn fold_agent_session_reconnect<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+    seq: u64,
+    status: &termihub_core::protocol::methods::SessionReconnectStatus,
+) {
+    fold_session_transition(app_handle, |store| {
+        store.agent_session_reconnect(tab_id, seq, status);
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
 /// Register the `session.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`SessionLifecycleStore`] lazily (so it
@@ -594,9 +610,15 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
     registry.route("session.cancelReconnect", move |intent, projector| {
         let store = store_of(&handle)?;
         let id = required_str(intent, "sessionId")?;
+        // A loop running on the agent (#5396) stops only when its session
+        // closes: read the session before the cancel drops its id.
+        let agent_session = store.agent_reconnect_session(&id);
         store.cancel_reconnect(&id);
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
+        if let Some(backend_session_id) = agent_session {
+            close_agent_reconnecting_session(&handle, backend_session_id);
+        }
         // The user stopped the loop: scrub the retained request (#2454 Model A
         // mitigation) — the session is no longer active or reconnecting.
         clear_retained_request(&handle, &id);
@@ -642,6 +664,25 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         // mitigation).
         clear_retained_request(&handle, &id);
         Ok(produced)
+    });
+}
+
+/// Close the agent session of a tab whose agent-side reconnect the user stopped
+/// (#5396), so the agent stops reopening its port. Off-path when the session
+/// manager is not managed.
+pub(crate) fn close_agent_reconnecting_session<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    backend_session_id: String,
+) {
+    let Some(manager) = app_handle.try_state::<SessionManager>() else {
+        return;
+    };
+    let manager = (*manager).clone();
+    // Not app-owned (#3105): a one-shot close for a single user Stop.
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = manager.close_session(&backend_session_id).await {
+            tracing::warn!("closing a stopped agent reconnect failed: {e}");
+        }
     });
 }
 

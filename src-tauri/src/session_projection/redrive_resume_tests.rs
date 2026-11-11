@@ -96,6 +96,8 @@ struct FakeAgent {
     /// When set, a plain `attach_session` is refused because another desktop
     /// holds the session (SM-003, #3404) — until a `reclaim_session`.
     held_by_peer: AtomicBool,
+    /// The remote session ids `close_session` was asked to close (#5396).
+    closed: Mutex<Vec<String>>,
 }
 impl FakeAgent {
     fn new() -> Self {
@@ -109,6 +111,7 @@ impl FakeAgent {
             session_recoverable: AtomicBool::new(true),
             senders: Mutex::new(Vec::new()),
             held_by_peer: AtomicBool::new(false),
+            closed: Mutex::new(Vec::new()),
         }
     }
 }
@@ -193,8 +196,12 @@ impl AgentRpcClient for FakeAgent {
     fn close_session(
         &self,
         _agent_id: &str,
-        _remote_session_id: &str,
+        remote_session_id: &str,
     ) -> Result<(), TerminalError> {
+        self.closed
+            .lock()
+            .unwrap()
+            .push(remote_session_id.to_string());
         Ok(())
     }
     fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
@@ -1841,3 +1848,7 @@ mod agent_recovery_status;
 /// #4459: a user agent Disconnect/Shutdown ends the hosted tabs at the backend.
 #[path = "agent_user_end_tests.rs"]
 mod agent_user_end;
+
+/// #5396: an agent-hosted serial tab mirrors its agent's in-place reopen.
+#[path = "agent_serial_reconnect_tests.rs"]
+mod agent_serial_reconnect;

@@ -195,9 +195,15 @@ impl ReconnectTimerDriver {
     /// phase: arm a one-shot for a `Waiting` phase's `delay_ms`, else cancel any
     /// pending timer. Idempotent and cheap, so the routes call it after every
     /// `session.*` transition regardless of kind.
+    ///
+    /// A `Waiting` phase mirrored from an **agent-side** loop (#5396) arms
+    /// nothing: the agent times and runs those attempts itself.
     pub fn sync(self: &Arc<Self>, session_id: &str) {
         match self.store.reconnect_state(session_id) {
-            Some(state) if state.phase == ReconnectPhase::Waiting => {
+            Some(state)
+                if state.phase == ReconnectPhase::Waiting
+                    && !self.store.agent_owns_reconnect(session_id) =>
+            {
                 let delay = state.delay_ms.max(0) as u64;
                 let this = Arc::clone(self);
                 let id = session_id.to_string();
