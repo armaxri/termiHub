@@ -14,8 +14,10 @@
 //!    disk in plaintext.
 //! 2. **Next start, before any store loads** ([`promote`] / [`discard`]): a
 //!    successful swap moves the sealed import out of the pending directory to
-//!    [`DEFERRED_IMPORT_FILE`]; a failed swap deletes it, so the credentials
-//!    stay exactly as before the restore.
+//!    [`DEFERRED_IMPORT_FILE`] and records its key id in
+//!    [`DEFERRED_KEY_ID_FILE`], so the key can be deleted even if the sealed
+//!    file is later found damaged; a failed swap deletes it, so the
+//!    credentials stay exactly as before the restore.
 //! 3. **Once the credential store is available** ([`apply_deferred_import`]):
 //!    the import is unsealed and written as one batch, then the sealed file and
 //!    its key are deleted.
@@ -278,6 +280,23 @@ pub(super) fn discard(config_dir: &Path, pending: &Path) {
     info!("Discarded the deferred credential import of the failed backup restore");
 }
 
+/// The seal-key id recorded for the deferred import in `config_dir` at
+/// promotion, if any.
+fn recorded_key_id(config_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(config_dir.join(DEFERRED_KEY_ID_FILE)).ok()?;
+    let id = text.trim();
+    valid_key_id(id).then(|| id.to_string())
+}
+
+/// Remove the recorded seal-key id of the deferred import, if any.
+fn remove_recorded_key_id(config_dir: &Path) {
+    match std::fs::remove_file(config_dir.join(DEFERRED_KEY_ID_FILE)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!("Could not remove the recorded backup-restore seal-key id: {e}"),
+    }
+}
+
 fn warning(message: &str, details: String) -> RecoveryWarning {
     RecoveryWarning {
         file_name: "backup restore".to_string(),
@@ -294,16 +313,33 @@ pub(super) fn promote(config_dir: &Path, pending: &Path) -> Option<RecoveryWarni
     if !sealed.is_file() {
         return None;
     }
+    // Read the key id while the file is known intact (it was committed
+    // atomically), so a later damaged copy can still have its key deleted.
+    let key_id = read_key_id(&sealed);
     let target = config_dir.join(DEFERRED_IMPORT_FILE);
     if target.exists() {
         // An older import that could never be applied is superseded.
         warn!("Replacing an older deferred credential import that was never applied");
-        if let Ok(id) = read_key_id(&target) {
-            queue_key_cleanup_logged(Some(config_dir), &id);
+        let older = [read_key_id(&target).ok(), recorded_key_id(config_dir)];
+        for id in older.iter().flatten() {
+            queue_key_cleanup_logged(Some(config_dir), id);
         }
     }
+    // The recorded id always describes the file at `target`: drop the old one
+    // before the new file takes its place.
+    remove_recorded_key_id(config_dir);
     match std::fs::rename(&sealed, &target) {
-        Ok(()) => None,
+        Ok(()) => {
+            match key_id {
+                Ok(id) => {
+                    if let Err(e) = write_atomic(&config_dir.join(DEFERRED_KEY_ID_FILE), &id) {
+                        warn!("Could not record the deferred credential import's key id: {e:#}");
+                    }
+                }
+                Err(e) => warn!("Could not read the key id of the deferred credential import: {e}"),
+            }
+            None
+        }
         Err(e) => {
             error!("Could not keep the deferred credential import: {e}");
             discard(config_dir, pending);
@@ -338,6 +374,10 @@ pub fn apply_deferred_import(
     } else {
         None
     };
+    if !path.exists() {
+        // Applied or dropped (its key is queued): the recorded id is spent.
+        remove_recorded_key_id(config_dir);
+    }
     run_key_cleanup(config_dir, store);
     warning
 }
@@ -372,6 +412,11 @@ fn apply_sealed(
         }
         Err(ApplyError::Lost(reason)) => {
             error!("Dropping the credential import of the restored backup: {reason}");
+            // The file may be too damaged to name its key (#5213): queue the
+            // id recorded at promotion before the file goes.
+            if let Some(id) = recorded_key_id(config_dir) {
+                queue_key_cleanup_logged(Some(config_dir), &id);
+            }
             if let Err(e) = std::fs::remove_file(path) {
                 warn!("Could not remove the sealed credential import: {e}");
             }
@@ -391,9 +436,11 @@ fn unseal_and_write(
     path: &Path,
     store: &dyn CredentialStore,
 ) -> Result<usize, ApplyError> {
-    let text = std::fs::read_to_string(path)
+    // Read bytes, not a string: content that is not UTF-8 is malformed (lost),
+    // not a read failure to retry forever (#5213).
+    let bytes = std::fs::read(path)
         .map_err(|e| ApplyError::Retry(format!("the sealed import could not be read: {e}")))?;
-    let sealed: SealedImport = serde_json::from_str(&text)
+    let sealed: SealedImport = serde_json::from_slice(&bytes)
         .map_err(|e| ApplyError::Lost(format!("the sealed import is malformed: {e}")))?;
     if sealed.format != SEALED_FORMAT || !valid_key_id(&sealed.key_id) {
         return Err(ApplyError::Lost(
