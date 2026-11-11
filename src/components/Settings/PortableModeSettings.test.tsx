@@ -440,6 +440,25 @@ describe("PortableModeSettings", () => {
       expect(result.textContent).toBe("Copied 2 file(s) from /portable/data");
     });
 
+    it.each(["export-config-btn", "import-config-btn"])(
+      "a failed listing of the picked directory renders a failure result (%s)",
+      async (button) => {
+        const m = await setup();
+        m.open.mockResolvedValueOnce("/unreadable");
+        m.listConfigFiles.mockRejectedValueOnce({ code: "io", message: "permission denied" });
+        await renderPanel();
+
+        await clickTestId(button);
+
+        expect(q('[data-testid="migration-dialog"]')).toBeNull();
+        const result = q('[data-testid="migration-result"]')!;
+        expect(result.classList.contains("portable-mode__result--error")).toBe(true);
+        expect(result.textContent).toBe("permission denied");
+        expect(m.exportConfigToPortable).not.toHaveBeenCalled();
+        expect(m.importConfigFromPortable).not.toHaveBeenCalled();
+      }
+    );
+
     it("starting a new migration clears the previous result", async () => {
       const m = await setup();
       m.open.mockResolvedValueOnce("/portable/data").mockResolvedValueOnce("/portable/data");

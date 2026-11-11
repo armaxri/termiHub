@@ -140,7 +140,14 @@ export function PortableModeSettings() {
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
     const destDir = typeof dir === "string" ? dir : dir[0];
-    const files = await listConfigFiles(destDir);
+    let files: ConfigFileStatus[];
+    try {
+      files = await listConfigFiles(destDir);
+    } catch (err) {
+      // Without this a failed listing is an unhandled rejection: the click silently does nothing.
+      setMigrationResult({ success: false, message: errorMessage(err) });
+      return;
+    }
     setMigrationTarget(destDir);
     setMigrationTargetFiles(files);
     setExportDialog(true);
@@ -151,7 +158,13 @@ export function PortableModeSettings() {
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
     const srcDir = typeof dir === "string" ? dir : dir[0];
-    const files = await listConfigFiles(srcDir);
+    let files: ConfigFileStatus[];
+    try {
+      files = await listConfigFiles(srcDir);
+    } catch (err) {
+      setMigrationResult({ success: false, message: errorMessage(err) });
+      return;
+    }
     setMigrationTarget(srcDir);
     setMigrationTargetFiles(files);
     setImportDialog(true);
