@@ -5,6 +5,7 @@ import {
   SETTINGS_REGISTRY,
   CATEGORIES,
 } from "./settingsRegistry";
+import { EXPERIMENTAL_SETTING_LABEL, EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 
 describe("settingsRegistry", () => {
   describe("filterSettings", () => {
@@ -135,6 +136,23 @@ describe("settingsRegistry", () => {
         "showCrashReportNotice",
         "experimentalFeaturesEnabled",
       ]);
+    });
+  });
+
+  describe("the experimental-features setting has one name (#5363)", () => {
+    it("is labelled with the shared name every pointer to it uses", () => {
+      const entry = SETTINGS_REGISTRY.find((s) => s.id === "experimentalFeaturesEnabled");
+      expect(entry?.label).toBe(EXPERIMENTAL_SETTING_LABEL);
+      expect(EXPERIMENTAL_SETTING_LABEL).toBe("Allow Experimental Features");
+      expect(EXPERIMENTAL_SETTING_PATH).toBe("Settings ▸ General ▸ Allow Experimental Features");
+    });
+
+    it("is found by searching for the name pointers use", () => {
+      expect(
+        filterSettings("allow experimental features").some(
+          (s) => s.id === "experimentalFeaturesEnabled"
+        )
+      ).toBe(true);
     });
   });
 

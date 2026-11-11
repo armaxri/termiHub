@@ -120,6 +120,7 @@ async fn give_up_and_settle(agent: &'static str, tab: &'static str, resilient: b
     manager.set_reconnect_tuning_for_test(ReconnectTuning {
         handshake_timeout: Duration::from_millis(200),
         policy: FAST_POLICY,
+        ..ReconnectTuning::PRODUCTION
     });
     let manager = Arc::new(manager);
     handle.manage(SessionManager::new(

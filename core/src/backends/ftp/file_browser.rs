@@ -32,6 +32,7 @@ use tokio::sync::Mutex;
 
 use crate::config::{FtpConfig, FtpTransferType};
 use crate::errors::FileError;
+use crate::files::paste_guard::{resolve_through_parent, PathCanonicalizer};
 use crate::files::utils::{expand_home_relative, is_home_relative};
 use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
@@ -228,6 +229,29 @@ impl FtpFileBrowser {
             })
             .await?;
         Ok(expand_home_relative(path, &home))
+    }
+
+    /// The server's real spelling of the folder `dir` (#5333): `CWD` into it,
+    /// read `PWD`, then `CWD` back to where the connection was. Every other
+    /// operation relies on the working directory staying the login one
+    /// ([`resolve_home`](Self::resolve_home)), so when the way back fails the
+    /// connection is dropped, and the next operation reconnects there.
+    ///
+    /// Fails when `dir` is not a folder the server enters (a file, a missing
+    /// path) or the server lacks `CWD` / `PWD`.
+    async fn resolve_dir(&self, dir: &str) -> Result<String, FileError> {
+        self.with_reconnect("CWD", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            let original = stream.pwd().await?;
+            stream.cwd(dir).await?;
+            let resolved = stream.pwd().await;
+            if stream.cwd(&original).await.is_err() {
+                *guard = None;
+            }
+            resolved
+        })
+        .await
     }
 
     /// Lock the shared stream, returning a retryable "not connected" error when
@@ -427,6 +451,29 @@ impl FileBrowser for FtpFileBrowser {
     fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         self.ranged_possible()
             .then_some(self as &dyn RangedFileAccess)
+    }
+
+    /// `CWD` + `PWD` (#5333), so a same-session paste through a symlinked
+    /// folder is refused.
+    fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        Some(self)
+    }
+}
+
+/// The server's real spelling of a path (#5333): a folder through `CWD` +
+/// `PWD`, anything else (a file, a missing destination) through its parent
+/// folder. FTP has no way to resolve a file's own symlink, so a symlink to a
+/// file resolves to the link's path in its real folder.
+#[async_trait::async_trait]
+impl PathCanonicalizer for FtpFileBrowser {
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        let path = self.resolve_home(path).await?;
+        resolve_through_parent(
+            &path,
+            |dir| async move { self.resolve_dir(&dir).await.ok() },
+        )
+        .await
+        .ok_or_else(|| FileError::NotFound(format!("cannot resolve {path}")))
     }
 }
 
@@ -950,5 +997,105 @@ mod tests {
         assert!(browser.ranged().is_none());
         let binary = FtpFileBrowser::new(FtpConfig::default());
         assert!(binary.ranged().is_some());
+    }
+
+    // ── Real paths through CWD + PWD (#5333) ───────────────────────────────
+
+    /// `/srv/data` with a file, reachable through the symlinked `/srv/link`.
+    async fn linked_tree(options: MockFtpOptions) -> (MockFtpServer, FtpFileBrowser) {
+        let (server, browser) = mock(options).await;
+        server.put("/srv/data/f", b"payload", "20240101000000");
+        server.put_dir("/srv", "/srv");
+        server.put_dir("/srv/data", "/srv/data");
+        server.put_dir("/srv/data/sub", "/srv/data/sub");
+        server.put_dir("/srv/link", "/srv/data");
+        server.put_dir("/srv/link/sub", "/srv/data/sub");
+        (server, browser)
+    }
+
+    #[tokio::test]
+    async fn realpath_resolves_a_symlinked_folder_through_cwd_and_pwd() {
+        let (server, browser) = linked_tree(MockFtpOptions::default()).await;
+        let real = |p: &'static str| PathCanonicalizer::realpath(&browser, p);
+        assert_eq!(real("/srv/link").await.unwrap(), "/srv/data");
+        assert_eq!(real("/srv/link/sub").await.unwrap(), "/srv/data/sub");
+        // A file and a missing destination resolve through their folder.
+        assert_eq!(real("/srv/link/f").await.unwrap(), "/srv/data/f");
+        assert_eq!(real("/srv/link/new").await.unwrap(), "/srv/data/new");
+        assert!(matches!(real("/nope/x").await, Err(FileError::NotFound(_))));
+        // The working directory is back at the login one: `~` still lists it.
+        server.put(&format!("{MOCK_HOME}/home.txt"), b"h", "20240101000000");
+        let entries = browser.list_dir("~").await.expect("list ~");
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(server.connections(), 1, "no reconnect was needed");
+    }
+
+    #[tokio::test]
+    async fn a_paste_through_a_symlinked_folder_is_refused() {
+        use crate::files::paste_guard::ensure_paste_allowed;
+        let (server, browser) = linked_tree(MockFtpOptions::default()).await;
+        let err = ensure_paste_allowed(&browser, "/srv/data", "/srv/link/sub/copy", true)
+            .await
+            .expect_err("inside the source");
+        assert_eq!(
+            err.to_string(),
+            "Operation failed: copy /srv/data to /srv/link/sub/copy refused: \
+             the destination is inside the source folder"
+        );
+        let err = ensure_paste_allowed(&browser, "/srv/data/f", "/srv/link/f", false)
+            .await
+            .expect_err("the same file");
+        assert!(err.to_string().ends_with("the same file"), "{err}");
+        ensure_paste_allowed(&browser, "/srv/data", "/srv/copy", true)
+            .await
+            .expect("a sibling copies");
+        assert_eq!(server.get("/srv/data/f"), Some(b"payload".to_vec()));
+        assert!(server.transfers().is_empty(), "nothing was written");
+    }
+
+    /// A server without `CWD` resolves nothing: the guard is the lexical one.
+    #[tokio::test]
+    async fn without_cwd_the_guard_falls_back_to_the_lexical_check() {
+        use crate::files::paste_guard::ensure_paste_allowed;
+        let (_server, browser) = linked_tree(MockFtpOptions {
+            cwd: false,
+            ..MockFtpOptions::default()
+        })
+        .await;
+        assert!(PathCanonicalizer::realpath(&browser, "/srv/link")
+            .await
+            .is_err());
+        ensure_paste_allowed(&browser, "/srv/data", "/srv/link/sub/copy", true)
+            .await
+            .expect("an alias is invisible without CWD, as before");
+        ensure_paste_allowed(&browser, "/srv/data", "/srv/x/../data/copy", true)
+            .await
+            .expect_err("a respelled path is still refused");
+    }
+
+    /// When the way back to the login directory fails, the connection is
+    /// dropped, so the next operation starts afresh at the login directory.
+    #[tokio::test]
+    async fn a_failed_return_drops_the_connection() {
+        let (server, browser) = linked_tree(MockFtpOptions {
+            refuse_return: true,
+            ..MockFtpOptions::default()
+        })
+        .await;
+        assert_eq!(
+            PathCanonicalizer::realpath(&browser, "/srv/link")
+                .await
+                .unwrap(),
+            "/srv/data"
+        );
+        assert!(browser.client.lock().await.is_none(), "dropped");
+        server.put(&format!("{MOCK_HOME}/home.txt"), b"h", "20240101000000");
+        let entries = browser.list_dir("~").await.expect("list ~");
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(
+            server.connections(),
+            2,
+            "reconnected at the login directory"
+        );
     }
 }

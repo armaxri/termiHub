@@ -49,6 +49,7 @@ use tracing::{debug, warn};
 
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
+use termihub_core::files::paste_guard::PathCanonicalizer;
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 use termihub_core::monitoring::{
     agent_recovery_budget, CollectLoopState, KillSignal, MonitorStatus, MonitorStatusReason,
@@ -902,8 +903,8 @@ impl RemoteFileBrowserProxy {
 mod files_params {
     use termihub_core::protocol::methods::{
         FilesCopyParams, FilesCreateSymlinkParams, FilesDeleteParams, FilesListParams,
-        FilesMkdirParams, FilesReadParams, FilesRenameParams, FilesSetOwnerParams,
-        FilesSetPermissionsParams, FilesStatParams, FilesWriteParams,
+        FilesMkdirParams, FilesReadParams, FilesRealpathParams, FilesRenameParams,
+        FilesSetOwnerParams, FilesSetPermissionsParams, FilesStatParams, FilesWriteParams,
     };
 
     pub(super) fn list(connection_id: &str, path: &str) -> FilesListParams {
@@ -1011,6 +1012,13 @@ mod files_params {
             connection_id: Some(connection_id.to_string()),
             src: src.to_string(),
             dest: dest.to_string(),
+        }
+    }
+
+    pub(super) fn realpath(connection_id: &str, path: &str) -> FilesRealpathParams {
+        FilesRealpathParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
         }
     }
 }
@@ -1148,6 +1156,32 @@ impl FileBrowser for RemoteFileBrowserProxy {
     fn ranged(&self) -> Option<&dyn termihub_core::files::RangedFileAccess> {
         self.file_ranges
             .then_some(self as &dyn termihub_core::files::RangedFileAccess)
+    }
+
+    /// The agent resolves real paths (`connection.files.realpath`, #5333), so
+    /// a same-session paste through a symlink alias is refused. An agent
+    /// too old to browse the session is not asked at all.
+    fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        (!self.agent_outdated).then_some(self as &dyn PathCanonicalizer)
+    }
+}
+
+/// A path's real spelling, resolved on the agent host or inside the
+/// agent-hosted session (protocol 0.36.0, #5333). An older agent answers
+/// "method not found", which the paste guard treats like any unresolved
+/// path: it falls back to its lexical check.
+#[async_trait::async_trait]
+impl PathCanonicalizer for RemoteFileBrowserProxy {
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        let result = self
+            .rpc(
+                termihub_core::protocol::methods::CONNECTION_FILES_REALPATH,
+                files_params::realpath(&self.remote_session_id, path),
+            )
+            .await?;
+        serde_json::from_value::<termihub_core::protocol::methods::FilesRealpathResult>(result)
+            .map(|r| r.path)
+            .map_err(|e| FileError::OperationFailed(e.to_string()))
     }
 }
 
@@ -3496,6 +3530,17 @@ mod tests {
                 json!({ "connection_id": CONN, "src": "/a", "dest": "/b" }),
             );
         }
+
+        /// `connection.files.realpath` (#5333): snake_case like its siblings,
+        /// and what the agent parses.
+        #[test]
+        fn realpath_params_match_hand_built_json() {
+            let v = serde_json::to_value(files_params::realpath(CONN, "/a/link")).unwrap();
+            assert_eq!(v, json!({ "connection_id": CONN, "path": "/a/link" }));
+            let parsed: termihub_core::protocol::methods::FilesRealpathParams =
+                serde_json::from_value(v).unwrap();
+            assert_eq!(parsed.path, "/a/link");
+        }
     }
 
     // ── Agent-mediated monitor status derivation (SM-012) ──────────────
@@ -4387,6 +4432,9 @@ mod tests {
 
     /// Relaunching agent-hosted queued transfers after a restart (#4114).
     mod relaunch_tests;
+
+    /// Same-session pastes resolved on the agent host (#5333).
+    mod realpath_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

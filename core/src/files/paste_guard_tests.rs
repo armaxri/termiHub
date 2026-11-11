@@ -153,3 +153,185 @@ async fn the_lexical_resolver_catches_a_respelled_path() {
         .await
         .expect("different files");
 }
+
+// ── #5333: a backend canonicalizer, the lexical check as the floor ──
+
+/// `fake_realpath` as a canonicalizer would answer it: through the parent
+/// for a missing final name, an error when nothing resolves.
+async fn fake_canon(path: String) -> Result<String, FileError> {
+    resolve_through_parent(&path, |p| async move { fake_realpath(&p) })
+        .await
+        .ok_or_else(|| FileError::NotFound(path.clone()))
+}
+
+/// A backend that cannot resolve anything: an agent from before
+/// `connection.files.realpath`.
+async fn no_canon(_path: String) -> Result<String, FileError> {
+    Err(FileError::NotSupported)
+}
+
+#[tokio::test]
+async fn a_canonicalizer_sees_through_a_symlink_alias() {
+    let err = check_real_or_lexical("/data/dir/f", "/data/alias-f", false, fake_canon)
+        .await
+        .expect_err("the alias is the source");
+    assert_eq!(
+        err.to_string(),
+        "Operation failed: copy /data/dir/f to /data/alias-f refused: \
+         source and destination are the same file"
+    );
+    let err = check_real_or_lexical("/data/dir", "/link/copy", true, fake_canon)
+        .await
+        .expect_err("the alias is inside the source");
+    assert!(err.to_string().ends_with(INSIDE_SOURCE), "{err}");
+    check_real_or_lexical("/data/dir/f", "/data/g", false, fake_canon)
+        .await
+        .expect("a different file copies");
+}
+
+/// Without a working canonicalizer the guard is exactly the lexical one of
+/// #5330: a respelled path is refused, an alias it cannot see is not.
+#[tokio::test]
+async fn an_unresolvable_path_falls_back_to_the_lexical_check() {
+    for (src, dest, is_dir) in [("/a/f", "/a/b/../f", false), ("/a/d", "/a//d/./x", true)] {
+        let lexical = PathResolver::Lexical
+            .ensure_copy_allowed(src, dest, is_dir)
+            .await
+            .expect_err("lexically the same");
+        let fallback = check_real_or_lexical(src, dest, is_dir, no_canon)
+            .await
+            .expect_err("the fallback is the lexical check");
+        assert_eq!(fallback.to_string(), lexical.to_string());
+    }
+    check_real_or_lexical("/data/dir/f", "/data/alias-f", false, no_canon)
+        .await
+        .expect("an alias is invisible without a resolver, as before");
+    // Only one side resolves: both compare lexically, so a respelled path
+    // is still refused.
+    check_real_or_lexical("/data/dir/f", "/nope/../data/dir/f", false, fake_canon)
+        .await
+        .expect_err("the lexical floor holds when one side does not resolve");
+}
+
+#[cfg(unix)]
+mod local {
+    use super::*;
+    use crate::files::LocalFileBrowser;
+
+    fn tree() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path())
+            .expect("canonical tempdir")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::create_dir_all(format!("{root}/data/sub")).expect("mkdir");
+        std::fs::write(format!("{root}/data/f"), b"payload").expect("write");
+        std::os::unix::fs::symlink(format!("{root}/data"), format!("{root}/link"))
+            .expect("dir link");
+        std::os::unix::fs::symlink(format!("{root}/data/f"), format!("{root}/alias-f"))
+            .expect("file link");
+        (dir, root)
+    }
+
+    #[tokio::test]
+    async fn local_realpath_follows_links_and_a_missing_final_name() {
+        let (_dir, root) = tree();
+        let real = |p: &str| {
+            let path = format!("{root}/{p}");
+            async move { local_realpath(&path).await }
+        };
+        assert_eq!(real("link/f").await.unwrap(), format!("{root}/data/f"));
+        assert_eq!(real("alias-f").await.unwrap(), format!("{root}/data/f"));
+        assert_eq!(real("link/new").await.unwrap(), format!("{root}/data/new"));
+        assert_eq!(
+            real("link/sub/../f").await.unwrap(),
+            format!("{root}/data/f")
+        );
+        assert!(matches!(real("nope/x").await, Err(FileError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn a_local_paste_through_an_alias_is_refused() {
+        let (_dir, root) = tree();
+        let browser = LocalFileBrowser::new();
+        let src = format!("{root}/data/f");
+        let alias = format!("{root}/alias-f");
+        let err = ensure_paste_allowed(&browser, &src, &alias, false)
+            .await
+            .expect_err("the alias is the source");
+        assert_eq!(
+            err.to_string(),
+            format!("Operation failed: copy {src} to {alias} refused: {SAME_FILE}")
+        );
+        let folder = format!("{root}/data");
+        let into = format!("{root}/link/sub/copy");
+        let err = ensure_paste_allowed(&browser, &folder, &into, true)
+            .await
+            .expect_err("inside the source");
+        assert!(err.to_string().ends_with(INSIDE_SOURCE), "{err}");
+        ensure_paste_allowed(&browser, &folder, &format!("{root}/data2"), true)
+            .await
+            .expect("a sibling copies");
+        assert_eq!(std::fs::read(&src).unwrap(), b"payload");
+        assert_eq!(
+            real_path(&browser, &alias).await.unwrap(),
+            src,
+            "what an agent answers connection.files.realpath with"
+        );
+    }
+}
+
+/// A browser without a resolver of its own answers `NotSupported`, so the
+/// agent tells the desktop to fall back to its lexical check.
+#[tokio::test]
+async fn real_path_of_a_browser_without_a_resolver_is_not_supported() {
+    struct Plain;
+    #[async_trait::async_trait]
+    impl FileBrowser for Plain {
+        async fn list_dir(&self, _: &str) -> Result<Vec<crate::files::FileEntry>, FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn read_file(&self, _: &str) -> Result<Vec<u8>, FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn write_file(&self, _: &str, _: &[u8]) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn delete(&self, _: &str) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn rename(&self, _: &str, _: &str) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn stat(&self, _: &str) -> Result<crate::files::FileEntry, FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn mkdir(&self, _: &str) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn set_permissions(&self, _: &str, _: u32) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn set_owner(
+            &self,
+            _: &str,
+            _: Option<u32>,
+            _: Option<u32>,
+        ) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn create_symlink(&self, _: &str, _: &str) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+        async fn copy(&self, _: &str, _: &str) -> Result<(), FileError> {
+            Err(FileError::NotSupported)
+        }
+    }
+    assert!(matches!(
+        real_path(&Plain, "/a").await,
+        Err(FileError::NotSupported)
+    ));
+    ensure_paste_allowed(&Plain, "/a/f", "/a/./f", false)
+        .await
+        .expect_err("the lexical check still applies");
+}

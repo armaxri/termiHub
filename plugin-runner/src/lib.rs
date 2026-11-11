@@ -43,6 +43,8 @@ pub mod appcontainer;
 pub mod ipc;
 pub mod loader;
 #[cfg(windows)]
+mod named_mutex;
+#[cfg(windows)]
 pub mod process;
 pub mod sandbox;
 #[cfg(windows)]

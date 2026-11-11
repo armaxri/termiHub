@@ -10,6 +10,7 @@
 //! `fileRanges`; see [`FileBrowser::ranged`].
 
 use termihub_core::errors::FileError;
+use termihub_core::files::paste_guard::PathCanonicalizer;
 use termihub_core::files::transfer::ranged::RangedTransferTarget;
 use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
 use termihub_core::protocol::methods::{
@@ -93,5 +94,12 @@ impl RangedTransferTarget for RemoteFileBrowserProxy {
 
     async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         FileBrowser::delete(self, path).await
+    }
+
+    /// `connection.files.realpath` (#5333): the same-session copy guard sees
+    /// through a symlink alias, so the ranged writer never opens its own
+    /// source. An older agent's "method not found" leaves the lexical check.
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        PathCanonicalizer::realpath(self, path).await
     }
 }

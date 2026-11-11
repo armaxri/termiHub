@@ -11,6 +11,10 @@ import {
   fetchHarnessCoverage,
   harnessArtifactName,
   readMeasuredSha,
+  latestRun,
+  laneStatus,
+  commitsBehind,
+  WORKFLOW,
   ARTIFACT,
   LCOV_NAME,
   HARNESS_LCOV,
@@ -279,5 +283,78 @@ describe("readMeasuredSha", () => {
     writeFileSync(meta, "{");
     expect(readMeasuredSha(meta)).toBeNull();
     expect(readMeasuredSha(path.join(dir, "missing.json"))).toBeNull();
+  });
+});
+
+describe("overlay status (#5346)", () => {
+  it("latestRun picks the newest run of any outcome", () => {
+    const runs = [
+      run(1, { html_url: "u1" }),
+      run(3, { conclusion: "cancelled", html_url: "u3" }),
+      run(2, { html_url: "u2" }),
+    ];
+    expect(latestRun(runs)).toEqual({ id: 3, url: "u3", conclusion: "cancelled" });
+    expect(latestRun([])).toBeNull();
+  });
+
+  it("records the latest run and the last note when nothing is usable", () => {
+    const listRuns = "gh api -X GET repos/o/r/actions/workflows/integration-fixtures.yml/runs";
+    const exec = fakeExec([
+      [listRuns, JSON.stringify({ workflow_runs: [run(1, { conclusion: "cancelled" })] })],
+    ]);
+    const info = {};
+    expect(
+      fetchIntegrationCoverage(
+        { repo: "o/r", branch: "develop", outDir: "x" },
+        exec,
+        () => {},
+        info
+      )
+    ).toBeNull();
+    expect(info.latestRun).toEqual({ id: 1, url: null, conclusion: "cancelled" });
+    expect(info.note).toMatch(/no integration-fixtures.yml nightly run/);
+    const entry = laneStatus(
+      { lane: "integration fixtures", workflow: WORKFLOW, repo: "o/r", root: "/w" },
+      null,
+      info
+    );
+    expect(entry.present).toBe(false);
+    expect(entry.note).toBe(info.note);
+    expect(entry.workflowUrl).toBe(
+      "https://github.com/o/r/actions/workflows/integration-fixtures.yml"
+    );
+  });
+
+  it("counts the overlay's stale files from the lcov and the stale list", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "status-"));
+    const lcov = path.join(dir, LCOV_NAME);
+    const staleList = path.join(dir, "stale-files.txt");
+    writeFileSync(lcov, "SF:/w/core/a.rs\nend_of_record\nSF:/w/core/b.rs\nend_of_record\n");
+    writeFileSync(staleList, "core/a.rs\nREADME.md\nsrc/x.ts\n");
+    const r = run(7, { run_started_at: "2026-11-01T03:00:00Z", html_url: "u7" });
+    const entry = laneStatus(
+      { lane: "integration fixtures", workflow: WORKFLOW, repo: "o/r", root: "/w" },
+      { lcov, staleList, run: r, sha: r.head_sha },
+      {}
+    );
+    expect(entry).toMatchObject({
+      present: true,
+      sha: r.head_sha,
+      measuredAt: "2026-11-01T03:00:00Z",
+      run: { id: 7, url: "u7", event: "schedule" },
+      changedFiles: 3,
+      overlayFiles: 2,
+      staleOverlayFiles: 1,
+    });
+  });
+
+  it("commitsBehind reads the compare API's ahead_by, null on failure", () => {
+    const sha = "a".repeat(40);
+    const calls = [];
+    const exec = fakeExec([["gh api repos/o/r/compare/", "218\n"]], calls);
+    expect(commitsBehind("o/r", sha, "h".repeat(40), exec)).toBe(218);
+    expect(calls[0]).toContain(`compare/${sha}...${"h".repeat(40)} --jq .ahead_by`);
+    expect(commitsBehind("o/r", sha, "h", fakeExec([["gh", new Error("404")]]))).toBeNull();
+    expect(commitsBehind("o/r", sha, null, exec)).toBeNull();
   });
 });

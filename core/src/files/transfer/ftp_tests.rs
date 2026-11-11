@@ -343,6 +343,7 @@ async fn download_relaunch_restarts_when_rest_is_rejected() {
             feat: false,
             rest: false,
             mdtm: false,
+            ..MockFtpOptions::default()
         },
         &data,
         MTIME,

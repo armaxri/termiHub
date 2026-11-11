@@ -47,7 +47,8 @@
 //!   --test plugin_runner_perf -- --ignored --nocapture
 //! ```
 //!
-//! Set `TERMIHUB_PERF_REPORT=<file>` to also write the numbers as JSON.
+//! Set `TERMIHUB_REPORT_DIR=<dir>` to also write the numbers as JSON
+//! (`<dir>/plugin-sandbox-perf.json`: one row per budget with its verdict, #5352).
 #![cfg(feature = "plugin")]
 
 use std::ffi::c_void;
@@ -409,53 +410,118 @@ async fn out_of_process_echo_stays_within_the_budget() {
          spread {spread:.2}x | starved {starved}"
     );
 
+    // Each budget's verdict, computed once for the report rows and the
+    // breach list below.
+    let latency_ok = added_p99 <= BUDGET_ADDED_P99;
+    let throughput_ok = sandboxed.mb_per_s >= BUDGET_MB_PER_S;
+    let cold_ok = cold_p95 <= BUDGET_COLD_START_P95;
+    let rss_ok = idle_rss.is_some_and(|kib| kib <= BUDGET_IDLE_RSS_KIB);
+    let starved_ok = starved == 0;
+    let fairness_ok = spread <= BUDGET_FAIRNESS;
+    let release = !cfg!(debug_assertions);
+    let verdict = |ok: bool| {
+        if !release {
+            "info"
+        } else if ok {
+            "pass"
+        } else {
+            "fail"
+        }
+    };
+    let cold_p95_ms = cold_p95.as_secs_f64() * 1000.0;
     write_report(&serde_json::json!({
+        "schema": 1,
+        "report": "plugin-sandbox-perf",
+        "title": "Plugin sandbox perf gate",
+        "release": release,
+        "rows": [
+            {
+                "metric": "keystroke-to-echo p99 added",
+                "value": added_p99.as_micros() as u64, "unit": "µs",
+                "op": "<=", "budget": BUDGET_ADDED_P99.as_micros() as u64,
+                "verdict": verdict(latency_ok),
+            },
+            {
+                "metric": "output throughput, one session",
+                "value": sandboxed.mb_per_s.round(), "unit": "MB/s",
+                "op": ">=", "budget": BUDGET_MB_PER_S,
+                "verdict": verdict(throughput_ok),
+            },
+            {
+                "metric": "throughput vs in-process (reported only)",
+                "value": (ratio * 100.0).round(), "unit": "%",
+                "verdict": "info",
+            },
+            {
+                "metric": "helper cold start p95",
+                "value": (cold_p95_ms * 10.0).round() / 10.0, "unit": "ms",
+                "op": "<=", "budget": BUDGET_COLD_START_P95.as_millis() as u64,
+                "verdict": verdict(cold_ok),
+            },
+            {
+                "metric": "idle helper memory",
+                "value": idle_rss, "unit": "KiB",
+                "op": "<=", "budget": BUDGET_IDLE_RSS_KIB,
+                "verdict": verdict(rss_ok),
+            },
+            {
+                "metric": format!("starved sessions of {FAIR_SESSIONS}"),
+                "value": starved,
+                "op": "<=", "budget": 0,
+                "verdict": verdict(starved_ok),
+            },
+            {
+                "metric": format!("fairness spread, {FAIR_SESSIONS} sessions ({cores} cores)"),
+                "value": (spread * 100.0).round() / 100.0, "unit": "x",
+                "op": "<=", "budget": BUDGET_FAIRNESS,
+                "verdict": verdict(starved_ok && fairness_ok),
+            },
+        ],
         "latency_p99_added_us": added_p99.as_micros() as u64,
         "latency_p99_runner_us": sandboxed.p99.as_micros() as u64,
         "throughput_mb_per_s": sandboxed.mb_per_s.round(),
         "throughput_ratio_pct": (ratio * 100.0).round(),
-        "cold_start_p95_ms": cold_p95.as_secs_f64() * 1000.0,
+        "cold_start_p95_ms": cold_p95_ms,
         "idle_rss_kib": idle_rss,
         "fair_sessions": FAIR_SESSIONS,
         "fair_spread": spread,
         "cores": cores,
         "fair_starved": starved,
-        "release": !cfg!(debug_assertions),
     }));
 
-    if cfg!(debug_assertions) {
+    if !release {
         println!("(debug build: numbers are indicative only; budgets not asserted)");
         return;
     }
     let mut breaches = Vec::new();
-    if added_p99 > BUDGET_ADDED_P99 {
+    if !latency_ok {
         breaches.push(format!(
             "p99 latency added {added_p99:?} > {BUDGET_ADDED_P99:?}"
         ));
     }
-    if sandboxed.mb_per_s < BUDGET_MB_PER_S {
+    if !throughput_ok {
         breaches.push(format!(
             "throughput {:.0} MB/s < {BUDGET_MB_PER_S} MB/s",
             sandboxed.mb_per_s
         ));
     }
-    if cold_p95 > BUDGET_COLD_START_P95 {
+    if !cold_ok {
         breaches.push(format!(
             "cold start p95 {cold_p95:?} > {BUDGET_COLD_START_P95:?}"
         ));
     }
     match idle_rss {
-        Some(kib) if kib > BUDGET_IDLE_RSS_KIB => {
+        Some(kib) if !rss_ok => {
             breaches.push(format!("idle RSS {kib} KiB > {BUDGET_IDLE_RSS_KIB} KiB"));
         }
         Some(_) => {}
         None => breaches.push("idle RSS could not be measured".to_owned()),
     }
-    if starved > 0 {
+    if !starved_ok {
         breaches.push(format!(
             "{starved} of {FAIR_SESSIONS} sessions starved (> {STARVATION_TIMEOUT:?})"
         ));
-    } else if spread > BUDGET_FAIRNESS {
+    } else if !fairness_ok {
         breaches.push(format!("fairness spread {spread:.2}x > {BUDGET_FAIRNESS}x"));
     }
     assert!(
@@ -465,11 +531,21 @@ async fn out_of_process_echo_stays_within_the_budget() {
     );
 }
 
-/// Write the numbers to `$TERMIHUB_PERF_REPORT` when set (the nightly lane
-/// uploads it and shows it in the job summary).
+/// Write the report as `plugin-sandbox-perf.json` into `$TERMIHUB_REPORT_DIR`
+/// when set (#5352: the nightly lane renders its `rows` into the job summary
+/// with `scripts/internal/render-report-summary.mjs` and uploads the file).
+/// `$TERMIHUB_PERF_REPORT=<file>` still names an exact file. Neither set: no
+/// file.
 fn write_report(report: &serde_json::Value) {
-    if let Some(path) = std::env::var_os("TERMIHUB_PERF_REPORT") {
+    let path = std::env::var_os("TERMIHUB_REPORT_DIR")
+        .map(|dir| {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).expect("create TERMIHUB_REPORT_DIR");
+            dir.join("plugin-sandbox-perf.json")
+        })
+        .or_else(|| std::env::var_os("TERMIHUB_PERF_REPORT").map(Into::into));
+    if let Some(path) = path {
         let text = serde_json::to_string_pretty(report).expect("serialise the report");
-        std::fs::write(&path, text).expect("write TERMIHUB_PERF_REPORT");
+        std::fs::write(&path, text).expect("write the perf report");
     }
 }

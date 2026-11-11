@@ -1,3 +1,5 @@
+import { EXPERIMENTAL_SETTING_LABEL } from "@/utils/experimentalSetting";
+
 export type SettingsCategory =
   | "general"
   | "appearance"
@@ -712,7 +714,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "experimentalFeaturesEnabled",
-    label: "Allow Experimental Features",
+    label: EXPERIMENTAL_SETTING_LABEL,
     description:
       "Show experimental features that are not guaranteed to be released or long-term supported",
     category: "general",

@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Sequence
 
 import psutil
 import pytest
@@ -48,8 +49,11 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.external_shims import (
+    ExplorerTitle,
     close_file_manager_folder,
+    explorer_folder_titles,
     file_manager_folders,
+    new_titles_naming,
     same_path,
 )
 
@@ -108,13 +112,35 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _browse_workspace(self) -> None:
-        """A local terminal ``cd``'d into the workspace, with Files showing it."""
-        self.open_cwd_following_terminal()
+        """A local terminal ``cd``'d into the workspace, with Files showing it.
+
+        The workspace is class-scoped, so the browser may still show it from an
+        earlier test's tab when this one's new terminal becomes active. Seeing the
+        workspace name is therefore not enough: on Windows the new PowerShell has
+        not reported its ``cd`` yet, the browser briefly falls back to the home
+        folder, and a click in that window acts on home (#5290: the app was asked
+        to open ``C:/Users/runneradmin``). So wait for *this* tab's reported cwd,
+        then for the browser to settle (no listing in flight) on the workspace.
+        """
+        tab_id = self.open_cwd_following_terminal()
         self.switch_to_connections_sidebar()
         # Forward slashes: valid in PowerShell, Git Bash and POSIX shells (#2683).
         self.run_command(f'cd "{str(self.workspace).replace(chr(92), "/")}"')
         self.switch_to_files_sidebar()
-        self.wait_for_path_contains(self.workspace.name)
+        name = self.workspace.name
+        if tab_id is not None:
+            self.wait(
+                lambda: name in str((self.driver.get_state("tabCwds") or {}).get(tab_id, "")),
+                what=f"the new terminal to report its cd into {name}",
+            )
+        deadline = time.monotonic() + 30
+        shown = ""
+        while time.monotonic() < deadline:
+            shown = self.wait_file_browser_settled()
+            if name in shown:
+                return
+            time.sleep(0.5)
+        raise AssertionError(f"the file browser settled on {shown!r}, not the workspace {name}")
 
     def _vscode_detected(self) -> None:
         self.wait(
@@ -133,8 +159,28 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
                 continue
         return "\n".join(parts)
 
-    def _assert_file_manager_opened(self, folder: Path, *, after: int) -> None:
-        """The OS file manager was asked to show ``folder`` (per-platform proof)."""
+    def _file_manager_log_lines(self) -> list[str]:
+        """The app's file-manager log lines: what it was asked to open, and any failure."""
+        return [
+            line.strip()[-300:]
+            for line in self._app_log_text().splitlines()
+            if "opening in the file manager" in line
+            or "could not open the folder" in line
+            or "could not start Explorer" in line
+            or _HANDOFF_FAILED.search(line)
+        ]
+
+    def _assert_file_manager_opened(
+        self, folder: Path, *, after: int, before: Sequence[ExplorerTitle] = ()
+    ) -> None:
+        """The OS file manager was asked to show ``folder`` (per-platform proof).
+
+        Windows counts either proof (#5290): Explorer's COM window list names the
+        folder by path, or a *new* Explorer window or tab (not in ``before``,
+        taken just ahead of the click) is titled with the folder's name. The tabbed
+        Explorer on Windows 11 / Server 2025 can open the folder as a tab that the
+        COM list does not report.
+        """
         if sys.platform.startswith("linux"):
             inv = self.shims.wait_for_handoff(
                 "xdg-open", lambda i: i.target is not None, after=after
@@ -143,20 +189,30 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
                 f"xdg-open was handed {list(inv.argv)}, expected only the folder {folder}"
             )
             return
+        titled: list[ExplorerTitle] = []
         try:
             folders = None
+            titles: list[ExplorerTitle] = []
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
                 folders = file_manager_folders()
-                if folders is None or any(same_path(f, str(folder)) for f in folders):
+                titles = explorer_folder_titles()
+                titled = new_titles_naming(before, titles, str(folder))
+                if folders is None or titled:
+                    break
+                if any(same_path(f, str(folder)) for f in folders):
                     break
                 time.sleep(0.5)
             if folders is not None:
-                assert any(same_path(f, str(folder)) for f in folders), (
-                    f"the file manager does not show {folder}; it shows {folders}"
+                assert titled or any(same_path(f, str(folder)) for f in folders), (
+                    f"the file manager does not show {folder}; its windows list {folders}, "
+                    f"its window/tab titles are {[(t.kind, t.title) for t in titles]} "
+                    f"(before the click: {[(t.kind, t.title) for t in before]}); "
+                    f"the file browser shows {self.file_browser_path()!r}; "
+                    f"the app logged {self._file_manager_log_lines()}"
                 )
         finally:
-            close_file_manager_folder(str(folder))
+            close_file_manager_folder(str(folder), opened=titled, before=before)
         assert not _HANDOFF_FAILED.search(self._app_log_text()), (
             "the app logged a failed file-manager hand-off"
         )
@@ -201,6 +257,9 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
         self.clear_entry_filter()
 
     # ── MT-FB-21 / MT-FB-32 ──────────────────────────────────────────────────
+    # No reruns (#5290): the first click on a cold Explorer is exactly the case that
+    # used to open the home folder; a retry against a warm Explorer would hide it.
+    @pytest.mark.flaky(reruns=0)
     def test_open_in_file_manager_opens_folders_never_an_app(self):
         """MT-FB-21, MT-FB-32: "Open in File Manager" shows folders, never runs an app.
 
@@ -209,13 +268,17 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
         """
         self._browse_workspace()
         opened = len(self.shims.handoffs("xdg-open"))
+        before = explorer_folder_titles()
         self.driver.click(self.OPEN_IN_EXPLORER)
-        self._assert_file_manager_opened(self.workspace, after=opened)
+        self._assert_file_manager_opened(self.workspace, after=opened, before=before)
 
         opened = len(self.shims.handoffs("xdg-open"))
         self.open_file_menu(_SUBFOLDER)
+        before = explorer_folder_titles()
         self.driver.click(_ROW_FILE_MANAGER)
-        self._assert_file_manager_opened(self.workspace / _SUBFOLDER, after=opened)
+        self._assert_file_manager_opened(
+            self.workspace / _SUBFOLDER, after=opened, before=before
+        )
         self.clear_entry_filter()
 
         if sys.platform == "darwin":

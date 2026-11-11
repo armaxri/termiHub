@@ -157,7 +157,11 @@ pub fn local_open_folder<R: tauri::Runtime>(
     use crate::files::open_folder::{resolve_folder_target, FolderTarget};
     use tauri_plugin_opener::OpenerExt;
 
-    let opened = match resolve_folder_target(&path)? {
+    let target = resolve_folder_target(&path)?;
+    // Which folder the file manager was asked for: the evidence a "wrong folder
+    // opened" report needs (#5290). Paths only, no file contents.
+    tracing::info!(requested = %path, ?target, "opening in the file manager");
+    let opened = match target {
         FolderTarget::Open(dir) => app.opener().open_path(dir.to_string_lossy(), None::<&str>),
         FolderTarget::Reveal(entry) => app.opener().reveal_item_in_dir(entry),
     };

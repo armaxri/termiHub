@@ -111,8 +111,9 @@ impl RemoteCopyEndpoint {
 
 impl RemoteCopyEndpoint {
     /// How this end resolves a path to its real spelling (#5330): the SFTP
-    /// server's `realpath`, the container's `readlink -f`, or a lexical
-    /// normalisation for a ranged (agent-hosted) end.
+    /// server's `realpath`, the container's `readlink -f`, or a ranged
+    /// (agent-hosted) end's own `RangedTransferTarget::realpath`
+    /// with the lexical check as the floor (#5333).
     pub fn path_resolver(&self) -> PathResolver {
         match self {
             #[cfg(feature = "ssh")]
@@ -122,7 +123,7 @@ impl RemoteCopyEndpoint {
             #[cfg(feature = "docker")]
             RemoteCopyEndpoint::Docker(target) => PathResolver::Docker(target.clone()),
             #[cfg(feature = "local-transfer")]
-            RemoteCopyEndpoint::Ranged(_) => PathResolver::Lexical,
+            RemoteCopyEndpoint::Ranged(target) => PathResolver::Ranged(target.clone()),
         }
     }
 }

@@ -725,3 +725,58 @@ mod executor {
         target.browser().delete(&remote).await.expect("cleanup");
     }
 }
+
+// ── FTP-09: real paths through CWD + PWD (#5333) ──────────────────────────────
+//
+// A same-session paste guard resolves both paths on the server: a folder
+// through `CWD` + `PWD`, a file or a missing destination through its folder.
+// The symlinked `/links/docs-link` resolves to `/pub/docs`, so a paste of
+// `/pub/docs` into the link's subtree is refused, and the working directory is
+// back at the login one afterwards.
+
+#[tokio::test]
+async fn ftp_09_realpath_resolves_a_symlinked_folder() {
+    use termihub_core::files::paste_guard::{ensure_paste_allowed, real_path};
+
+    require_docker!(port_ftp());
+
+    let mut ftp = connect(ftpuser_settings()).await;
+    let browser = ftp.file_browser().expect("FTP exposes a file browser");
+
+    assert_eq!(
+        real_path(browser, "/links/docs-link").await.unwrap(),
+        "/pub/docs"
+    );
+    assert_eq!(
+        real_path(browser, "/links/docs-link/new-copy")
+            .await
+            .unwrap(),
+        "/pub/docs/new-copy",
+        "a missing final name resolves through its folder"
+    );
+    assert_eq!(
+        real_path(browser, "/pub/docs/../readme.txt").await.unwrap(),
+        "/pub/readme.txt"
+    );
+
+    let err = ensure_paste_allowed(browser, "/pub/docs", "/links/docs-link/copy", true)
+        .await
+        .expect_err("the alias's subtree is inside the source");
+    assert!(
+        err.to_string()
+            .ends_with("the destination is inside the source folder"),
+        "{err}"
+    );
+    ensure_paste_allowed(browser, "/pub/docs", "/uploads/docs-copy", true)
+        .await
+        .expect("a different folder copies");
+
+    // Every later operation still starts at the login directory.
+    let home = list_by_name(browser, "~").await;
+    assert!(
+        home.contains_key("pub"),
+        "home still lists the root: {home:?}"
+    );
+
+    ftp.disconnect().await.expect("disconnect should succeed");
+}
