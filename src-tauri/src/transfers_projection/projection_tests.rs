@@ -19,10 +19,9 @@ use tauri::Manager;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
-    Projector, SnapshotFrame,
+    apply_ops, compute_ops, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
 };
-use crate::test_support::RecordingSink;
+use crate::test_support::{ClientCache, RecordingSink};
 use crate::transfers_projection::projection::{
     fold_transfer_progress, publish_transfers, seed_target_is_live, TRANSFERS_REGION,
 };
@@ -155,27 +154,6 @@ fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> 
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-    }
 }
 
 fn intent(kind: &str, payload: Value) -> Intent {

@@ -18,7 +18,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use super::*;
-use crate::projection::{apply_ops, DiffFrame, Dispatcher, IntentStatus, SnapshotFrame};
+use crate::projection::{Dispatcher, IntentStatus};
+pub(super) use crate::test_support::ClientCache;
 use crate::test_support::RecordingSink;
 use crate::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, TunnelConfig, TunnelState, TunnelStats, TunnelStatus,
@@ -155,27 +156,6 @@ impl FakeTunnels {
                 s.status = status.clone();
             }
         }
-    }
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-pub(super) struct ClientCache {
-    pub(super) version: u64,
-    pub(super) view: Value,
-}
-
-impl ClientCache {
-    pub(super) fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    pub(super) fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
     }
 }
 
