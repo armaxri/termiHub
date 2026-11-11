@@ -35,14 +35,14 @@ const MS: Duration = Duration::from_millis(1);
 
 /// The production agent reconnect policy with its jitter switched off, so the
 /// schedule is exact.
-const UNJITTERED_PRODUCTION_POLICY: BackoffConfig = BackoffConfig {
+pub(super) const UNJITTERED_PRODUCTION_POLICY: BackoffConfig = BackoffConfig {
     jitter_ratio: 0.0,
     ..AGENT_RECONNECT_POLICY
 };
 
 /// The backoff delays [`UNJITTERED_PRODUCTION_POLICY`] waits before each of its
 /// ten attempts: 1 s doubling to the 30 s ceiling.
-const PRODUCTION_SCHEDULE_SECS: [u64; 10] = [1, 2, 4, 8, 16, 30, 30, 30, 30, 30];
+pub(super) const PRODUCTION_SCHEDULE_SECS: [u64; 10] = [1, 2, 4, 8, 16, 30, 30, 30, 30, 30];
 
 /// The give-up error after the production budget.
 const GIVE_UP_ERROR: &str = "Failed to reconnect after 10 attempts";
@@ -62,7 +62,7 @@ fn trust_all_host_keys() {
 }
 
 /// The production tuning, unjittered, waiting on `clock`.
-fn virtual_tuning(clock: &'static VirtualBackoffClock) -> ReconnectTuning {
+pub(super) fn virtual_tuning(clock: &'static VirtualBackoffClock) -> ReconnectTuning {
     ReconnectTuning {
         policy: UNJITTERED_PRODUCTION_POLICY,
         clock,
@@ -110,46 +110,22 @@ fn spawn_reconnect(
     })
 }
 
-/// Wait (real time, bounded) until the loop has asked for its `n`th backoff
-/// wait; returns that request.
-async fn nth_wait(clock: &'static VirtualBackoffClock, n: usize) -> SleepRequest {
-    let requests = tokio::task::spawn_blocking(move || clock.wait_for_requests(n, STEP))
-        .await
-        .expect("join the wait watcher");
-    let requests = requests.unwrap_or_else(|| {
-        panic!(
-            "the reconnect loop never asked for backoff wait #{n}; requests: {:?}",
-            clock.requests()
-        )
-    });
-    requests[n - 1]
-}
-
-/// Grade one backoff round: the loop is parked in wait `n` (1-based), which
-/// started at `at` and lasts `delay`. Step to 1 ms before its deadline and
-/// check the loop is still parked, without having started the attempt; then
-/// step the last millisecond, which releases the attempt.
-async fn step_round(
+/// Grade one backoff round on the virtual clock (see
+/// [`VirtualBackoffClock::step_round`]): parked means the loop task is still
+/// running.
+fn step_round(
     clock: &'static VirtualBackoffClock,
     task: &JoinHandle<Result<(), String>>,
     n: usize,
     at: Duration,
     delay: Duration,
 ) {
-    assert_eq!(
-        nth_wait(clock, n).await,
-        SleepRequest { at, delay },
-        "backoff wait #{n} must start at {at:?} and last {delay:?}"
-    );
-    clock.advance(delay - MS);
-    assert_eq!(clock.pending(), 1, "wait #{n} resolved before its deadline");
-    assert_eq!(
-        clock.requests().len(),
-        n,
-        "attempt #{n} started before its backoff ran out"
-    );
-    assert!(!task.is_finished(), "the loop settled while parked in wait #{n}");
-    clock.advance(MS);
+    tokio::task::block_in_place(|| clock.step_round(n, at, delay, || !task.is_finished()));
+}
+
+/// The loop's `n`th backoff request (see [`VirtualBackoffClock::nth_request`]).
+fn nth_wait(clock: &'static VirtualBackoffClock, n: usize) -> SleepRequest {
+    tokio::task::block_in_place(|| clock.nth_request(n))
 }
 
 /// Await the loop's outcome (bounded in real time).
@@ -186,7 +162,7 @@ async fn a_dead_endpoint_parks_on_the_production_schedule_then_gives_up_on_time(
     let mut at = Duration::ZERO;
     for (i, secs) in PRODUCTION_SCHEDULE_SECS.into_iter().enumerate() {
         let delay = Duration::from_secs(secs);
-        step_round(clock, &task, i + 1, at, delay).await;
+        step_round(clock, &task, i + 1, at, delay);
         at += delay;
     }
 
@@ -212,12 +188,12 @@ async fn a_user_stop_mid_park_settles_at_once_without_another_attempt() {
     let mut at = Duration::ZERO;
     for (i, secs) in PRODUCTION_SCHEDULE_SECS[..3].iter().enumerate() {
         let delay = Duration::from_secs(*secs);
-        step_round(clock, &task, i + 1, at, delay).await;
+        step_round(clock, &task, i + 1, at, delay);
         at += delay;
     }
     // Parked in the 4th window (8 s from 7 s); stop it halfway through.
     assert_eq!(
-        nth_wait(clock, 4).await,
+        nth_wait(clock, 4),
         SleepRequest {
             at,
             delay: Duration::from_secs(8)
@@ -242,12 +218,12 @@ async fn a_returning_endpoint_reconnects_at_the_next_backoff_instant() {
     let task = spawn_reconnect(config.clone(), AgentAlive::new(), virtual_tuning(clock));
 
     // Attempts 1 (at 1 s) and 2 (at 3 s) hit the dead endpoint.
-    step_round(clock, &task, 1, Duration::ZERO, Duration::from_secs(1)).await;
-    step_round(clock, &task, 2, Duration::from_secs(1), Duration::from_secs(2)).await;
+    step_round(clock, &task, 1, Duration::ZERO, Duration::from_secs(1));
+    step_round(clock, &task, 2, Duration::from_secs(1), Duration::from_secs(2));
 
     // Parked in the 3rd window (4 s from 3 s): the endpoint comes back.
     assert_eq!(
-        nth_wait(clock, 3).await,
+        nth_wait(clock, 3),
         SleepRequest {
             at: Duration::from_secs(3),
             delay: Duration::from_secs(4)

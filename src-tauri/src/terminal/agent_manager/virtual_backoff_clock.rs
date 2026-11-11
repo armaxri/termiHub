@@ -22,6 +22,13 @@ use tokio::sync::oneshot;
 
 use super::backoff_clock::{BackoffClock, BackoffSleep};
 
+/// Real-time bound on waiting for the loop's next backoff request: covers one
+/// connect attempt on a loaded runner. Only keeps a regression from hanging.
+pub(super) const REQUEST_WITHIN: Duration = Duration::from_secs(15);
+
+/// The step [`VirtualBackoffClock::step_round`] stops short of a deadline by.
+const ONE_MS: Duration = Duration::from_millis(1);
+
 /// One backoff wait the loop asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SleepRequest {
@@ -99,6 +106,50 @@ impl VirtualBackoffClock {
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
+    }
+
+    /// Block (real time, bounded by [`REQUEST_WITHIN`]) until the loop has
+    /// asked for its `n`th backoff wait (1-based) and return that request.
+    /// Panics if it never does.
+    pub(super) fn nth_request(&self, n: usize) -> SleepRequest {
+        match self.wait_for_requests(n, REQUEST_WITHIN) {
+            Some(requests) => requests[n - 1],
+            None => panic!(
+                "the reconnect loop never asked for backoff wait #{n}; requests: {:?}",
+                self.requests()
+            ),
+        }
+    }
+
+    /// Grade one backoff round. The loop must be parked in wait `n` (1-based),
+    /// started at virtual `at` and lasting `delay`. Steps to 1 ms before the
+    /// deadline and checks that the wait is still pending, that attempt `n`
+    /// has not started (no later wait was requested) and that `still_parked`
+    /// holds. Then steps the last millisecond, which releases attempt `n`.
+    ///
+    /// Blocks the calling thread: call it from a blocking thread (or inside
+    /// `block_in_place`), never on a runtime worker the loop needs.
+    pub(super) fn step_round(
+        &self,
+        n: usize,
+        at: Duration,
+        delay: Duration,
+        still_parked: impl FnOnce() -> bool,
+    ) {
+        assert_eq!(
+            self.nth_request(n),
+            SleepRequest { at, delay },
+            "backoff wait #{n} must start at {at:?} and last {delay:?}"
+        );
+        self.advance(delay - ONE_MS);
+        assert_eq!(self.pending(), 1, "wait #{n} resolved before its deadline");
+        assert_eq!(
+            self.requests().len(),
+            n,
+            "attempt #{n} started before its backoff ran out"
+        );
+        assert!(still_parked(), "the loop left its park during wait #{n}");
+        self.advance(ONE_MS);
     }
 
     /// Move virtual time forward by `by`, resolving every wait now due.
