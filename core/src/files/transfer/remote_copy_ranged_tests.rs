@@ -34,6 +34,8 @@ struct MemRanged {
     links: Option<HashMap<String, String>>,
     /// The filesystem this end reports (#5355); `None` cannot tell.
     fs_id: Option<crate::files::shared_fs::FilesystemId>,
+    /// The weaker hint this end reports (#5430).
+    fs_hint: Option<crate::files::shared_fs::FilesystemHint>,
 }
 
 impl MemRanged {
@@ -167,6 +169,7 @@ impl RangedTransferTarget for MemRanged {
             path: path.into(),
             size: file.data.len() as u64,
             modified: format!("mtime-{}", file.mtime),
+            permissions: Some("rw-r--r--".into()),
             ..FileEntry::default()
         })
     }
@@ -189,6 +192,10 @@ impl RangedTransferTarget for MemRanged {
 
     fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
         self.fs_id.clone()
+    }
+
+    fn filesystem_hint(&self) -> Option<crate::files::shared_fs::FilesystemHint> {
+        self.fs_hint.clone()
     }
 }
 

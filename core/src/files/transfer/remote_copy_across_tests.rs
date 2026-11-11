@@ -86,3 +86,64 @@ async fn an_end_without_an_identity_is_never_refused() {
         .await
         .expect("one end cannot tell");
 }
+
+/// Two agent-hosted SSH sessions opened from one saved definition (#5430):
+/// a hint, no exact id.
+fn server_hint() -> Option<crate::files::shared_fs::FilesystemHint> {
+    Some(crate::files::shared_fs::FilesystemHint::AgentDefinition {
+        agent_id: "agent-1".into(),
+        definition_id: "build".into(),
+    })
+}
+
+/// An end with only a hint, resolving `/alias` to `/d`, holding `/d/f`
+/// written at `mtime`.
+fn hinted_end(mtime: u64) -> Arc<MemRanged> {
+    let target = Arc::new(MemRanged {
+        links: Some(HashMap::from([("/alias".to_string(), "/d".to_string())])),
+        fs_hint: server_hint(),
+        ..MemRanged::default()
+    });
+    target.put("/d/f", content(16, 9), mtime);
+    target
+}
+
+/// Equal hints over one shared store: the source shows the same entry
+/// through both ends, so a copy onto it is refused and keeps its bytes.
+#[tokio::test]
+async fn a_hinted_pair_showing_the_same_entry_is_refused() {
+    let shared = hinted_end(1);
+    let (a, b) = (ranged(&shared), ranged(&shared));
+    for dest in ["/d/f", "/alias/f"] {
+        let err = ensure_copy_across_allowed(&a, "/d/f", &b, dest)
+            .await
+            .expect_err(&format!("{dest} is the source"));
+        assert!(err.to_string().ends_with("same file"), "{err}");
+    }
+    assert_eq!(shared.get("/d/f"), Some(content(16, 9)));
+    assert!(shared.writes().is_empty(), "nothing may be written");
+    ensure_copy_across_allowed(&a, "/d/f", &b, "/d/g")
+        .await
+        .expect("another file copies");
+}
+
+/// Equal hints over two stores (a jailed login, a name for another
+/// machine): the same path shows another entry, so the copy goes ahead.
+#[tokio::test]
+async fn a_hinted_pair_showing_another_entry_copies() {
+    let (one, two) = (hinted_end(1), hinted_end(2));
+    ensure_copy_across_allowed(&ranged(&one), "/d/f", &ranged(&two), "/d/f")
+        .await
+        .expect("another entry");
+    ensure_copy_across_allowed(&ranged(&one), "/d/f", &ranged(&two), "/alias/f")
+        .await
+        .expect("another entry");
+    // Nothing there at all: never refused either.
+    let empty = Arc::new(MemRanged {
+        fs_hint: server_hint(),
+        ..MemRanged::default()
+    });
+    ensure_copy_across_allowed(&ranged(&one), "/d/f", &ranged(&empty), "/d/f")
+        .await
+        .expect("nothing to compare");
+}

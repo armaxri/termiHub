@@ -304,4 +304,97 @@ mod tests {
         assert_ne!(a, FilesystemId::agent_host("agent-2"));
         assert_ne!(a, FilesystemId::Local);
     }
+
+    fn entry(dir: bool, size: u64, modified: &str, perms: Option<&str>) -> FileEntry {
+        FileEntry {
+            is_directory: dir,
+            size,
+            modified: modified.to_string(),
+            permissions: perms.map(str::to_string),
+            ..FileEntry::default()
+        }
+    }
+
+    #[test]
+    fn a_hint_ignores_the_login_but_not_the_server() {
+        let a = FilesystemHint::ssh(&ssh("build.example", 22, "alice"));
+        assert_eq!(a, FilesystemHint::ssh(&ssh("build.example", 22, "bob")));
+        assert_ne!(a, FilesystemHint::ssh(&ssh("build.example", 2222, "alice")));
+        assert_ne!(a, FilesystemHint::ssh(&ssh("other.example", 22, "alice")));
+        assert_eq!(FilesystemHint::ssh(&ssh(" ", 22, "alice")), None);
+    }
+
+    #[test]
+    fn a_hint_folds_loopback_names_and_the_root_dot() {
+        let local = FilesystemHint::ssh(&ssh("localhost", 22, "ci"));
+        for alias in [
+            "127.0.0.1",
+            "127.0.1.1",
+            "::1",
+            "[::1]",
+            "LOCALHOST.",
+            "localhost.",
+        ] {
+            assert_eq!(local, FilesystemHint::ssh(&ssh(alias, 22, "ci")), "{alias}");
+        }
+        assert_eq!(
+            FilesystemHint::ssh(&ssh("build.example.", 22, "ci")),
+            FilesystemHint::ssh(&ssh("build.example", 22, "ci"))
+        );
+        assert_ne!(local, FilesystemHint::ssh(&ssh("10.0.0.1", 22, "ci")));
+        // The exact id keeps every spelling apart.
+        assert_ne!(
+            FilesystemId::ssh(&ssh("localhost", 22, "ci")),
+            FilesystemId::ssh(&ssh("127.0.0.1", 22, "ci"))
+        );
+    }
+
+    #[test]
+    fn sharing_is_sure_only_for_equal_ids() {
+        let id = FilesystemId::agent_host("a");
+        let hint = FilesystemHint::ssh(&ssh("h", 22, "u"));
+        assert_eq!(
+            sharing((Some(&id), Some(&id)), (None, None)),
+            Sharing::Surely
+        );
+        assert_eq!(
+            sharing((Some(&id), None), (hint.as_ref(), hint.as_ref())),
+            Sharing::Possibly
+        );
+        assert_eq!(sharing((None, None), (hint.as_ref(), None)), Sharing::No);
+        assert_eq!(sharing((None, None), (None, None)), Sharing::No);
+    }
+
+    #[test]
+    fn the_same_entry_needs_a_time_permissions_and_size() {
+        let file = entry(false, 3, "2026-11-11T12:00:00Z", Some("rw-r--r--"));
+        assert!(same_entry(&file, &file.clone()));
+        assert!(!same_entry(
+            &file,
+            &entry(false, 4, "2026-11-11T12:00:00Z", Some("rw-r--r--"))
+        ));
+        assert!(!same_entry(
+            &file,
+            &entry(false, 3, "2026-11-11T12:00:01Z", Some("rw-r--r--"))
+        ));
+        assert!(!same_entry(
+            &file,
+            &entry(false, 3, "2026-11-11T12:00:00Z", Some("rw-------"))
+        ));
+        assert!(!same_entry(
+            &file,
+            &entry(true, 3, "2026-11-11T12:00:00Z", Some("rw-r--r--"))
+        ));
+        // An end that cannot show a time or permissions never matches.
+        let blind = entry(false, 3, "", None);
+        assert!(!same_entry(&blind, &blind.clone()));
+        let no_perms = entry(false, 3, "2026-11-11T12:00:00Z", None);
+        assert!(!same_entry(&no_perms, &no_perms.clone()));
+        // A folder's size is not compared.
+        let dir = entry(true, 64, "2026-11-11T12:00:00Z", Some("rwxr-xr-x"));
+        assert!(same_entry(
+            &dir,
+            &entry(true, 96, "2026-11-11T12:00:00Z", Some("rwxr-xr-x"))
+        ));
+    }
 }

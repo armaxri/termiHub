@@ -68,8 +68,14 @@ fn entry(path: &str) -> Option<Option<&'static str>> {
     TREE.iter().find(|(p, _)| *p == path).map(|(_, c)| *c)
 }
 
+/// The fixed modification time of every entry (2025-11-11T12:00:00Z), so a
+/// client can compare one entry seen through two sessions (#5430).
+pub const MTIME: u32 = 1_762_862_400;
+
 fn attrs(contents: Option<&str>) -> FileAttributes {
     let mut attrs = FileAttributes::default();
+    attrs.mtime = Some(MTIME);
+    attrs.atime = Some(MTIME);
     match contents {
         Some(text) => {
             attrs.permissions = Some(0o100_644);
