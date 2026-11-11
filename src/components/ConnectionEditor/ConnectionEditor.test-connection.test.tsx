@@ -231,4 +231,43 @@ describe("ConnectionEditor — Test Connection (UX-007)", () => {
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(toastError.mock.calls[0][0]).toBe("Connection failed");
   });
+  /** The Test button's `data-test-outcome` (#5175), the system harness's hook. */
+  function outcome(): string | null {
+    return container
+      .querySelector('[data-testid="connection-editor-test"]')!
+      .getAttribute("data-test-outcome");
+  }
+
+  it("marks the Test button with the outcome of the last test (#5175)", async () => {
+    let result: Promise<unknown> = Promise.resolve(undefined);
+    mockedInvoke.mockImplementation((cmd) =>
+      cmd === "test_connection" ? result : Promise.resolve(undefined)
+    );
+
+    renderNew();
+    await flush();
+    typeName("My Local Shell");
+    await flush();
+    expect(outcome()).toBeNull();
+
+    clickTest();
+    await flush();
+    expect(outcome()).toBe("success");
+
+    // A new test clears the previous outcome while it runs.
+    let reject: (reason: unknown) => void = () => {};
+    result = new Promise((_, r) => {
+      reject = r;
+    });
+    clickTest();
+    await flush();
+    expect(outcome()).toBeNull();
+
+    await act(async () => {
+      reject({ code: "unreachable", message: "no route to host" });
+      await result.catch(() => undefined);
+    });
+    await flush();
+    expect(outcome()).toBe("failed");
+  });
 });
