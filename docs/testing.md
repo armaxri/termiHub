@@ -1711,8 +1711,9 @@ component starts gating once its baseline is recorded.
   instrumented runner binary. The runner that `core/tests/plugin_runner_*` spawn is built
   into a private target dir and started with a scrubbed environment inside the OS sandbox,
   so its process writes no profile and does not count.
-- **Not gated:** the nightly integration overlay (its availability and staleness vary run to
-  run) and function/branch percentages (reported only).
+- **Not gated by the ratchet:** the nightly integration overlays and function/branch
+  percentages (reported only). The overlays' freshness has its own gate, see
+  [Overlay freshness](#overlay-freshness-gate).
 - **Raising the baseline (one command):** when coverage improves — the ratchet prints
   `ok (raise baseline)` / "lock it in" — run
 
@@ -1777,6 +1778,20 @@ flowchart LR
   Every file that changed between that commit and the one being reported
   (`git diff --name-only`) keeps its unit-only coverage, because its line numbers
   may have moved. The gap report shows how many were skipped.
+- <a id="overlay-freshness-gate"></a>**Overlay freshness gate (#5346):** the
+  `Integration overlay freshness` step (`scripts/internal/overlay-freshness.mjs`)
+  runs after the ratchet. It adds a table to the job summary with each overlay's
+  (fixtures and harness) source sha, age in days, commits behind HEAD, changed
+  files and stale overlay files (count and share). On `develop` the step fails
+  when an overlay is missing or older than **3 days**: its nightly lane went
+  dark. The error names the lane and links its latest run. More than **10 %**
+  of an overlay's files stale is only a warning (an annotation and a
+  highlighted row), never a failure: develop takes hundreds of commits a day,
+  so even a day-old overlay can cross it, and a gate that is red most nights
+  gets ignored. The ratchet's verdict does not change, and the lane heartbeat
+  reports this failure as "integration overlay dark", not "lane broken". On
+  other branches everything only warns. To grade a branch against develop's overlays, run
+  `gh workflow run coverage.yml --ref <branch> -f overlay-branch=develop`.
 - **Reading it:** the Coverage run's job summary shows the unified number
   (unit + integration) and a table of the files with lines covered **only** by
   the integration lane. The `coverage-unified` artifact holds `merged.lcov`
@@ -1789,8 +1804,8 @@ flowchart LR
   against running fixtures, then
   `cargo llvm-cov report -p termihub-core --lcov --output-path int.lcov`.
 - The Python bridge harness lane is measured too, see
-  [Harness coverage](#harness-coverage-nightly-bridge-harness-lane). The whole
-  report stays advisory; it gates nothing.
+  [Harness coverage](#harness-coverage-nightly-bridge-harness-lane). The merged
+  numbers stay advisory. Only the overlays' freshness is gated.
 
 ### Harness coverage (nightly bridge harness lane)
 
@@ -1798,8 +1813,10 @@ The Python bridge harness (`system-integration.yml`) drives the real app, so it
 reaches frontend components and desktop-backend (`src-tauri`) paths that no unit
 test does. Its Linux leg measures both and feeds the same unified report
 ([#3657](https://github.com/armaxri/termiHub/issues/3657)). Advisory, like the
-fixtures overlay: it never gates anything, and every coverage step is
-`continue-on-error`, so only a failing test can red the lane.
+fixtures overlay: its numbers gate nothing, and every coverage step is
+`continue-on-error`, so only a failing test can red the lane. A dark (missing or
+over 3 days old) harness overlay reds the Coverage run's
+[overlay freshness gate](#overlay-freshness-gate) instead.
 
 ```mermaid
 flowchart LR
