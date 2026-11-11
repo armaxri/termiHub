@@ -11,13 +11,21 @@
 //! bash 5.1. For those shells the setup waits for that mark
 //! ([`ReadySignal::PasteMark`]); older ones keep the canonical-mode cue.
 //!
+//! The same signal times a connection's initial command when no setup is
+//! typed ([`ProbeGate`], #5455).
+//!
+//! Shells without the signal keep the canonical-mode cue for both, as before:
+//! bash < 5.1 (macOS's `/bin/bash` 3.2), fish, and anything else.
+//!
 //! A shell whose bracketed paste was turned off by its user
 //! (`unset zle_bracketed_paste`, `set enable-bracketed-paste off`) never
-//! sends the mark, and the setup is then never typed: no integration is
-//! better than input typed into a question.
+//! sends the mark: the setup is then never typed and the initial command
+//! never sent. No integration is better than input typed into a question.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use crate::connection::PromptProbe;
 
 use crate::session::shell::shell_kind;
 
@@ -45,6 +53,8 @@ pub(crate) struct PasteGate {
     input_seen: bool,
     /// Since that input, the line editor accepted a line.
     accepted_since_input: bool,
+    /// Bracketed paste is on: a line editor reads a command line.
+    paste_on: bool,
     ready: bool,
 }
 
@@ -57,11 +67,13 @@ impl PasteGate {
         while i + PASTE_ON.len() <= joined.len() {
             let window = &joined[i..i + PASTE_ON.len()];
             if window == PASTE_ON {
+                self.paste_on = true;
                 if !self.input_seen || self.accepted_since_input {
                     self.ready = true;
                 }
                 i += PASTE_ON.len();
             } else if window == PASTE_OFF {
+                self.paste_on = false;
                 self.ready = false;
                 if self.input_seen {
                     self.accepted_since_input = true;
@@ -85,9 +97,62 @@ impl PasteGate {
         self.ready = false;
     }
 
+    /// Note input the user typed, `raw_reader` telling whether something
+    /// read the terminal in non-canonical mode at that moment. One key while
+    /// a non-line-editor reads raw answers a one-key question (`read -q`,
+    /// `read -n 1`) and is consumed at once, so the next prompt is fresh.
+    /// Anything else may sit in the next line and counts as
+    /// [`note_input`](Self::note_input).
+    pub(crate) fn note_keys(&mut self, data: &[u8], raw_reader: bool) {
+        if data.len() == 1 && raw_reader && !self.paste_on {
+            return;
+        }
+        self.note_input();
+    }
+
     /// Whether the line editor reads a fresh command line.
     pub(crate) fn ready(&self) -> bool {
         self.ready
+    }
+}
+
+/// The local shell's prompt probe for the initial command when no setup is
+/// typed (#5455): the line editor reads ([`PromptProbe`] from the PTY) and
+/// has announced a fresh command line ([`PasteGate`]). The probe never
+/// reports a startup question, so the wait for it has no cap.
+#[derive(Clone)]
+pub(crate) struct ProbeGate {
+    gate: Arc<Mutex<PasteGate>>,
+    reading: PromptProbe,
+}
+
+impl ProbeGate {
+    pub(crate) fn new(reading: PromptProbe) -> Self {
+        Self {
+            gate: Arc::default(),
+            reading,
+        }
+    }
+
+    /// Note a chunk of shell output.
+    pub(crate) fn feed(&self, data: &[u8]) {
+        if let Ok(mut gate) = self.gate.lock() {
+            gate.feed(data);
+        }
+    }
+
+    /// Note input the user typed (see [`PasteGate::note_keys`]).
+    pub(crate) fn note_keys(&self, data: &[u8]) {
+        let raw_reader = (self.reading)();
+        if let Ok(mut gate) = self.gate.lock() {
+            gate.note_keys(data, raw_reader);
+        }
+    }
+
+    /// The probe: the line editor reads a fresh command line.
+    pub(crate) fn probe(&self) -> PromptProbe {
+        let this = self.clone();
+        Arc::new(move || (this.reading)() && this.gate.lock().is_ok_and(|g| g.ready()))
     }
 }
 
@@ -220,6 +285,50 @@ mod tests {
         assert!(!g.ready(), "their input may sit in this line");
         g.feed(b"ls\x1b[?2004l\r\nfile\r\nprompt> \x1b[?2004h");
         assert!(g.ready());
+    }
+
+    #[test]
+    fn one_key_answering_a_raw_question_keeps_the_next_prompt_fresh() {
+        let mut g = PasteGate::default();
+        g.feed(b"Continue? [y/n] ");
+        g.note_keys(b"y", true);
+        g.feed(b"\r\nprompt> \x1b[?2004h");
+        assert!(g.ready());
+    }
+
+    #[test]
+    fn other_input_before_the_prompt_waits_for_an_accepted_line() {
+        // Typed while the shell still starts (canonical mode): typeahead.
+        let mut g = PasteGate::default();
+        g.note_keys(b"y", false);
+        g.feed(b"prompt> \x1b[?2004h");
+        assert!(!g.ready());
+        // More than one key, even to a raw reader.
+        let mut g = PasteGate::default();
+        g.note_keys(b"yes", true);
+        g.feed(b"prompt> \x1b[?2004h");
+        assert!(!g.ready());
+        // One key at the line editor's own prompt.
+        let mut g = PasteGate::default();
+        g.feed(b"prompt> \x1b[?2004h");
+        g.note_keys(b"l", true);
+        assert!(!g.ready());
+    }
+
+    #[test]
+    fn the_probe_needs_both_the_line_editor_and_the_mark() {
+        let reading = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let r = reading.clone();
+        let gate = ProbeGate::new(Arc::new(move || {
+            r.load(std::sync::atomic::Ordering::SeqCst)
+        }));
+        let probe = gate.probe();
+        reading.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(!probe(), "a raw reader without the mark is a question");
+        gate.feed(b"prompt> \x1b[?2004h");
+        assert!(probe());
+        reading.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(!probe());
     }
 
     #[test]

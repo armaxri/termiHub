@@ -28,7 +28,7 @@ use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 use super::cwd_follow_thread::CwdFollowThread;
 pub use super::local_shell_env::set_shell_env_override;
-use super::local_shell_ready::{ready_signal, ReadySignal};
+use super::local_shell_ready::{ready_signal, ProbeGate, ReadySignal};
 use super::local_shell_setup::TypedSetup;
 
 use crate::output::early::EarlyOutput;
@@ -335,6 +335,9 @@ struct ConnectedState {
     setup: Option<Arc<TypedSetup>>,
     /// The line-editor probe offered for the initial command (#5029).
     prompt_probe: Option<PromptProbe>,
+    /// Behind `prompt_probe` for a shell that announces its line editor
+    /// (#5455): sees the output and the user's keys.
+    prompt_gate: Option<ProbeGate>,
     /// Re-sends a resize a running command got to bash at its next prompt
     /// (#5096); only for bash without the shell hook.
     resize_catch_up: Option<Box<dyn Fn() + Send + Sync>>,
@@ -656,6 +659,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
+        let has_initial_command = initial_command.is_some();
         // Off unless asked for: the directory is followed without it (#5009).
         let shell_integration = settings
             .get("shellIntegration")
@@ -710,14 +714,24 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(spawned.writer));
         // The shell-integration line typed into bash / zsh, hidden where the
         // line editor is observable (#5009).
+        let observable = spawned.line_editor_reading.is_some();
+        // Only where the line editor is observable can its mark be awaited,
+        // and only the setup or an initial command needs it.
+        let signal = if observable && (osc7_for_stdin.is_some() || has_initial_command) {
+            ready_signal(&final_cmd.program)
+        } else {
+            ReadySignal::Canonical
+        };
+        let line_editor: Option<PromptProbe> = spawned.line_editor_reading.map(PromptProbe::from);
+        // The initial command's probe without the setup (#5029): for a shell
+        // that announces its line editor it also needs that mark (#5455).
+        let prompt_gate = line_editor
+            .clone()
+            .filter(|_| {
+                osc7_for_stdin.is_none() && has_initial_command && signal == ReadySignal::PasteMark
+            })
+            .map(ProbeGate::new);
         let setup = osc7_for_stdin.map(|line| {
-            let observable = spawned.line_editor_reading.is_some();
-            // Only where the line editor is observable can its mark be awaited.
-            let signal = if observable {
-                ready_signal(&final_cmd.program)
-            } else {
-                ReadySignal::Canonical
-            };
             let setup = TypedSetup::new(
                 line,
                 observable,
@@ -743,6 +757,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
         let reader_setup = setup.clone();
+        let reader_gate = prompt_gate.clone();
         let reader_cwd = cwd_follow.clone();
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
@@ -753,6 +768,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = buf[..n].to_vec();
+                        if let Some(gate) = &reader_gate {
+                            gate.feed(&data);
+                        }
                         // Clone the sender out of the guard and DROP the lock
                         // BEFORE the blocking send. `blocking_send` parks this
                         // thread under backpressure (full channel), so holding
@@ -829,7 +847,6 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // editor is observable it waits for the prompt so its echo can be
         // hidden (#5009); elsewhere it is typed now, as before. Failures are
         // non-fatal — the shell works without CWD tracking.
-        let line_editor: Option<PromptProbe> = spawned.line_editor_reading.map(PromptProbe::from);
         if let Some(setup) = &setup {
             match &line_editor {
                 _ if bootstrapped => setup.clone().type_unless_bootstrapped(alive.clone()),
@@ -840,10 +857,14 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             }
         }
         // Without the typed setup, the line editor taking over the PTY is
-        // also the initial command's cue (#5029). With it, the prompt mark
-        // the setup brings is, so the command never lands between the two.
-        let prompt_probe =
-            line_editor.filter(|_| setup.is_none() && has_line_editor(&effective_shell));
+        // also the initial command's cue (#5029), with its bracketed-paste
+        // mark where the shell announces one (#5455). With the setup, the
+        // prompt mark the setup brings is, so the command never lands between
+        // the two.
+        let prompt_probe = match &prompt_gate {
+            Some(gate) => Some(gate.probe()),
+            None => line_editor.filter(|_| setup.is_none() && has_line_editor(&effective_shell)),
+        };
 
         // bash 3.2 re-reads the size after a command only with `checkwinsize`,
         // which the hook turns on (#5035). Without the hook, termiHub re-sends
@@ -862,6 +883,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             disconnected: false,
             setup,
             prompt_probe,
+            prompt_gate,
         });
 
         Ok(())
@@ -945,6 +967,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         if let Some(setup) = &state.setup {
             setup.before_input();
         }
+        if let Some(gate) = &state.prompt_gate {
+            gate.note_keys(data);
+        }
         let mut writer = state.writer.lock().map_err(|e| {
             SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
         })?;
@@ -996,6 +1021,12 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 
     fn prompt_probe(&self) -> Option<PromptProbe> {
         self.state.as_ref()?.prompt_probe.clone()
+    }
+
+    fn prompt_probe_uncapped(&self) -> bool {
+        self.state
+            .as_ref()
+            .is_some_and(|state| state.prompt_gate.is_some())
     }
 }
 
