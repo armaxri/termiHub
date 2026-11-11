@@ -10,7 +10,8 @@
  * - WebView2 (Chromium 121+) ignores every `::-webkit-scrollbar` rule on an
  *   element whose `scrollbar-width` or `scrollbar-color` is not `auto`, and the
  *   global `* { scrollbar-width: thin }` rule sets both. The bar is Chromium's
- *   own thin bar.
+ *   own thin bar (11 px in Chromium 156 with classic scrollbars, where the
+ *   `::-webkit-scrollbar` pin alone gives 10 px).
  * - WKWebView (macOS) with the standard properties (WebKit 18.2+) does the
  *   same: the CI runner measured a 13 px classic bar, not the 10 px the pin
  *   asked for. With overlay scrollbars ("Show scroll bars: automatically" and no
