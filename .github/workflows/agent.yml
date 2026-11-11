@@ -328,6 +328,15 @@ jobs:
           ./scripts/internal/fetch-conpty.sh --arch x64 --dest "$dest"
           echo "TERMIHUB_TEST_CONPTY_DIR=$(cygpath -w "$dest")" >>"$GITHUB_ENV"
 
+      # cargo-nextest runs the Rust tests with a per-test timeout (#5345). The
+      # action checks the release archive's SHA-256 against its manifest;
+      # `fallback: none` forbids an unverified cargo-binstall/cargo install.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
+
       # Same bulk + capped-heavy split as code-quality.yml's test leg (CI-013,
       # #3350), so the PTY / remote-forward suites don't contend with the rest.
       # The live-agent-TCP tests are skipped here (CI_RUST_TESTS_SPLIT_SERIAL):

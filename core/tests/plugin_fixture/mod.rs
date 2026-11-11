@@ -8,8 +8,9 @@
 //!
 //! * within one test binary the build runs at most once per variant (a
 //!   [`OnceLock`] per variant), and
-//! * across test binaries a second `cargo build` of an unchanged variant is a
-//!   no-op, and cargo's build-directory lock serialises concurrent builds.
+//! * across test processes the build runs under a file lock, and at most once
+//!   per nextest run (`shared_build`, #5345): a concurrent no-op build re-links
+//!   the artifact and could make it vanish under another process's copy.
 //!
 //! Variants get separate target directories because they all produce the same
 //! output file name; sharing one directory would let one variant's build
@@ -25,6 +26,13 @@
     dead_code,
     reason = "shared test-support module: each test binary uses a different subset"
 )]
+
+#[allow(
+    clippy::duplicate_mod,
+    reason = "plugin_fixture and plugin_runner_support both load it; a binary may use either"
+)]
+#[path = "../shared_build/mod.rs"]
+mod shared_build;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -121,19 +129,21 @@ fn shared_artifact(variant: Variant) -> &'static Path {
     ];
     BUILT[variant.index()].get_or_init(|| {
         let target_dir = shared_target_dir(variant);
-        let status = Command::new(env!("CARGO"))
-            .arg("build")
-            .arg("--manifest-path")
-            .arg(fixture_manifest())
-            .arg("--target-dir")
-            .arg(&target_dir)
-            .args(variant.cargo_feature_args())
-            .status()
-            .expect("failed to spawn cargo to build the fixture plugin");
-        assert!(
-            status.success(),
-            "building the fixture plugin failed (variant {variant:?})"
-        );
+        shared_build::build_once(&target_dir, || {
+            let status = Command::new(env!("CARGO"))
+                .arg("build")
+                .arg("--manifest-path")
+                .arg(fixture_manifest())
+                .arg("--target-dir")
+                .arg(&target_dir)
+                .args(variant.cargo_feature_args())
+                .status()
+                .expect("failed to spawn cargo to build the fixture plugin");
+            assert!(
+                status.success(),
+                "building the fixture plugin failed (variant {variant:?})"
+            );
+        });
         target_dir.join("debug").join(artifact_name())
     })
 }

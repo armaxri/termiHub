@@ -1,0 +1,109 @@
+# cargo-nextest configuration (#5345).
+#
+# CI runs the workspace's non-doc tests through `cargo nextest run --profile ci`
+# (scripts/internal/ci-rust-tests.sh). Nextest gives every test a per-test
+# timeout, so a hung test fails within minutes and is named in the log, instead
+# of eating the job's `timeout-minutes` and showing up as "cancelled".
+# Doc-tests are not run by nextest; the script's bulk phase keeps a
+# `cargo test --doc` step for them.
+#
+# The version CI installs is pinned in .github/cargo-tools.json.
+
+# ── Test groups: cross-process stand-ins for `#[serial(key)]` ────────────────
+#
+# Nextest runs each test in its own process and runs test binaries in parallel,
+# so serial_test's in-process `#[serial(key)]` lock no longer serializes
+# anything: two tests with the same key would run at once. Each key in the
+# workspace has a group of the SAME name here with `max-threads = 1`, assigned
+# by the overrides in `[profile.default]` below (every profile inherits them).
+# `ci-rust-tests.sh list` fails when a `#[serial(key)]` has no group here.
+# A group's filter may select more tests than carry the key (a whole module or
+# binary); that only serializes a few extra tests, it never under-serializes.
+[test-groups]
+# Real shells behind a PTY (core/src/backends/local_shell*.rs).
+local_pty = { max-threads = 1 }
+# Docker fault-injection: monitoring_fault.rs + network_resilience.rs.
+network_fault = { max-threads = 1 }
+# Docker FTP container: ftp_transfer_faults.rs.
+ftp_server = { max-threads = 1 }
+# Docker sftp-stress container: sftp_stress.rs.
+sftp_stress = { max-threads = 1 }
+# Docker SSH bastion: ssh_advanced.rs + ssh_agent_forward.rs.
+ssh_bastion = { max-threads = 1 }
+# Docker sudo fixture's one root-owned file: files::sftp + log_secrecy.
+elevated_save = { max-threads = 1 }
+# Windows only, not a `#[serial]` key: the real-runner plugin tests create,
+# reuse and delete one AppContainer profile per plugin id (the same ids across
+# binaries). The runner's PROFILE_LOCK is per process, so in parallel processes
+# CreateAppContainerProfile failed (0x8000ffff) and a runner spawned while
+# another test deleted its profile failed with "file not found" (#5345).
+# `cargo test` never overlapped two binaries, so this restores that.
+appcontainer = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(termihub-core) & kind(lib) & test(/^backends::local_shell::/)'
+test-group = 'local_pty'
+
+[[profile.default.overrides]]
+filter = 'binary_id(termihub-core::monitoring_fault) | binary_id(termihub-core::network_resilience)'
+test-group = 'network_fault'
+
+[[profile.default.overrides]]
+filter = 'binary_id(termihub-core::ftp_transfer_faults)'
+test-group = 'ftp_server'
+
+[[profile.default.overrides]]
+filter = 'binary_id(termihub-core::sftp_stress)'
+test-group = 'sftp_stress'
+
+[[profile.default.overrides]]
+filter = 'binary_id(termihub-core::ssh_advanced) | binary_id(termihub-core::ssh_agent_forward)'
+test-group = 'ssh_bastion'
+
+[[profile.default.overrides]]
+filter = 'package(termihub) & kind(lib) & (test(/^files::sftp::tests::/) | test(/^session::manager::tests::log_secrecy::sudo_password_/))'
+test-group = 'elevated_save'
+
+[[profile.default.overrides]]
+platform = 'cfg(windows)'
+filter = 'binary_id(/^termihub-core::plugin_/) | binary_id(termihub-plugin-runner::runner_process) | (package(termihub-plugin-runner) & kind(lib) & test(/^appcontainer::/))'
+test-group = 'appcontainer'
+
+# ── CI profile ───────────────────────────────────────────────────────────────
+[profile.ci]
+# Run every test even after a failure, so one red test does not hide others.
+fail-fast = false
+# No retries: a flake must stay visible (quarantine it, see docs/testing.md).
+retries = 0
+# A test is reported SLOW after 60s and killed (failing, with its name) after
+# 3 periods. Measured locally on macOS, the slowest workspace test takes well
+# under 60s; 180s leaves headroom for a loaded 4-core runner while still
+# failing a hang ~25 minutes before the job's own timeout.
+slow-timeout = { period = "60s", terminate-after = 3 }
+# Print the failing tests' output again at the end of the run, next to the
+# summary, so the log's tail names what broke.
+failure-output = "immediate-final"
+status-level = "slow"
+final-status-level = "slow"
+
+[profile.ci.junit]
+# Written to target/nextest/ci/junit.xml; the script keeps one copy per phase.
+path = "junit.xml"
+
+# Tests whose OWN deadline is longer than 180s get a longer kill, so their own
+# assertion (with its diagnostic message) fires first and nextest's timeout
+# only catches a genuine hang.
+#
+# The self-update pipeline test waits up to 240s (UPDATE_PIPELINE_TIMEOUT in
+# agent/tests/self_update_integration.rs).
+[[profile.ci.overrides]]
+filter = 'binary_id(termihub-agent::self_update_integration)'
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# Windows PowerShell / Git Bash cold starts on a fresh runner stall for minutes
+# (#2498); the shell tests allow up to 300s for the first prompt
+# (TERMIHUB_TEST_SHELL_STARTUP_TIMEOUT_SECS).
+[[profile.ci.overrides]]
+platform = 'cfg(windows)'
+filter = '(package(termihub-core) & kind(lib) & test(/^backends::local_shell::/)) | binary_id(termihub-agent::local_agent_integration)'
+slow-timeout = { period = "60s", terminate-after = 6 }
