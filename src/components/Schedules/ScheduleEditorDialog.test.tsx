@@ -267,6 +267,10 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       expect(workflow.textContent).toContain("Health check");
       expect(workflow.hasAttribute("disabled")).toBe(true);
       expect(query("schedule-editor-dialog")!.textContent).toContain("Workflows are experimental");
+      // Names the toggle exactly as its Settings label reads (#5363).
+      expect(query("schedule-editor-dialog")!.textContent).toContain(
+        "Turn on Settings ▸ General ▸ Allow Experimental Features to change this action."
+      );
 
       setInput("schedule-editor-name", "Backups v2");
       await act(async () => query("schedule-editor-save")!.click());
