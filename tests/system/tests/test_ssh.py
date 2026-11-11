@@ -30,7 +30,7 @@ from termihub_harness import (
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
     SSH_X11_PORT,
-    SshServerControl,
+    ssh_server_control,
     SystemTest,
     TabsUi,
     TerminalUi,
@@ -269,6 +269,7 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-06: a mid-session server-side disconnect surfaces the disconnect UX.
 
@@ -293,7 +294,9 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         Returns the tab id once the client has marked the session exited and the
         disconnect overlay is up.
         """
-        control = SshServerControl()
+        # The container exec, or on the macOS native sshd (#5421) a key-auth ssh
+        # exec as the fixture user that kills its per-connection sshd process.
+        control = ssh_server_control()
         if not control.available:
             pytest.skip("no container runtime to drop the SSH session server-side")
 

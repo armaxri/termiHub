@@ -1243,24 +1243,37 @@ with the same user and keys. `jump-stop` / `jump-start` drop and restore only
 that bastion. The jump-host reconnect suite counts gateway sessions as the
 bastion master's per-connection children.
 
+**Server-side checks (#5421).** Suites that inspect or control the server
+call `ssh_server_control()` instead of building `SshServerControl` directly. On
+the native target it returns `NativeSshServerControl`, which runs each step as
+a key-auth `ssh` exec as the fixture user with the fixture's client key
+(`TERMIHUB_NATIVE_SSHD_KEY`). It reads, writes and removes files in that user's
+home with POSIX tools (`wc -c`, `ls -di`, `shasum`, not GNU `stat`), and
+`home()` gives that home in place of `/home/testuser`. To drop a session, it
+finds the user's terminal connections locally with `ps` as children of the
+fixture's master sshd and `SIGKILL`s their user-owned processes. Killing only
+the user-owned process drops the connection (checked on the unprivileged
+fixture), so the root-owned handler of a `--password-login` fixture is left
+alone. Off the native target it returns the Docker `SshServerControl` as before.
+
 Which suites run where:
 
-| Suite(s)                                                                                                                                                                                                                             | macOS | Windows                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------- |
-| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py`                              | yes   | yes                                                                                                  |
-| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output, monitoring), SSH connect flash, SFTP VS Code handoff, jump host | yes   | no: they type POSIX shell commands, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                    | macOS | Windows                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py`                                                                                                                                                                                                                     | yes   | yes                                                                                                                                       |
+| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output, monitoring), SSH connect flash, SFTP VS Code handoff, jump host, `test_ssh.py` (server disconnect), `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py`, `test_ssh_sftp_cwd.py` | yes   | no: they type POSIX shell commands or check the server with POSIX tools, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
 
 **What stays on the Linux lane in `tests/system/`.** These suites still skip on
 macOS and Windows. Each skip reason has a capped fragment in
 `tests/system/skip-allowlist.d/` (`5176-*.json`), so one more suite skipping for
 that reason fails the lane:
 
-| Suite(s)                                                                                                                              | Why                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                     | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
-| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites     | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
-| `test_ssh.py` (server disconnect), `test_transfer_*`, `test_file_browser_drag_sftp_live.py`, `test_session_sftp_no_orphan_on_quit.py` | control or inspect the server through the container (`SshServerControl`, `/proc`), or use GNU `stat`                                                                 |
-| `test_remote_agent*.py`, `test_agent_*_live.py`, `test_file_browser_remote_to_local.py`                                               | deploy a Linux agent baked into the `remote-agent` containers                                                                                                        |
+| Suite(s)                                                                                                                          | Why                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                 | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
+| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
+| `test_session_sftp_no_orphan_on_quit.py`                                                                                          | inspects the server's SFTP connections through the container (`/proc`)                                                                                               |
+| `test_remote_agent*.py`, `test_agent_*_live.py`, `test_file_browser_remote_to_local.py`                                           | deploy a Linux agent baked into the `remote-agent` containers                                                                                                        |
 
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 
