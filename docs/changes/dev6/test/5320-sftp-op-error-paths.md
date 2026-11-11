@@ -10,3 +10,5 @@
 - A refused chmod, chown or symlink on an SSH host now says "Permission denied"
   and names the file, and a missing file says "File not found", instead of a
   generic "Operation failed" (#5320).
+- File operations on an SSH connection that fail now report an "SFTP error"
+  instead of a misleading "Remote agent error: Operation failed" (#5320).

@@ -25,6 +25,36 @@ pub(crate) fn sftp_op_error(err: termihub_core::errors::FileError) -> TerminalEr
     }
 }
 
+/// Whether a session's file browser is an SSH session's SFTP browser, whose
+/// errors [`map_file_error`] maps through [`sftp_op_error`] (#5320).
+///
+/// Taken before the operation is awaited: `dyn FileBrowser` is not `Sync`, so
+/// the browser reference cannot be held by the error-mapping closure.
+pub(crate) fn is_sftp_browser(browser: &dyn termihub_core::files::FileBrowser) -> bool {
+    browser
+        .as_any()
+        .is_some_and(|any| any.is::<termihub_core::backends::ssh::SftpFileBrowser>())
+}
+
+/// Map a session file-browser operation's [`FileError`](termihub_core::errors::FileError)
+/// to a [`TerminalError`] by the browser behind it (#5320).
+///
+/// An SSH session's SFTP browser (`is_sftp`, from [`is_sftp_browser`]) goes
+/// through [`sftp_op_error`], so a refused chmod reads
+/// `SFTP error: Permission denied: …`. Every other backend (local, Docker, FTP,
+/// an agent-hosted session) keeps the remote-error mapping it has always had,
+/// whose envelope code the frontend and any agent marker rely on.
+pub(crate) fn map_file_error(
+    is_sftp: bool,
+    err: termihub_core::errors::FileError,
+) -> TerminalError {
+    if is_sftp {
+        sftp_op_error(err)
+    } else {
+        TerminalError::RemoteError(err.to_string())
+    }
+}
+
 /// Pure unit tests of the desktop SFTP error mapping (#5320): every core
 /// [`FileError`](termihub_core::errors::FileError) variant must reach the user
 /// as a specific, readable `SFTP error: …` message, and a session's SFTP
@@ -110,14 +140,17 @@ mod error_mapping_tests {
     fn map_file_error_maps_an_sftp_browser_like_sftp_op_error() {
         let browser = SftpFileBrowser::new(SshConfig::default());
         for (err, expected) in every_variant() {
-            assert_eq!(map_file_error(&browser, err).to_string(), expected);
+            assert_eq!(
+                map_file_error(is_sftp_browser(&browser), err).to_string(),
+                expected
+            );
         }
     }
 
     #[test]
     fn map_file_error_keeps_other_backends_on_the_remote_error_path() {
         let browser = LocalFileBrowser::new();
-        let mapped = map_file_error(&browser, FileError::NotFound("/x".into()));
+        let mapped = map_file_error(is_sftp_browser(&browser), FileError::NotFound("/x".into()));
         assert!(
             matches!(mapped, TerminalError::RemoteError(_)),
             "{mapped:?}"
