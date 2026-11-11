@@ -8,14 +8,9 @@ use termihub_core::errors::SessionError;
 use termihub_core::files::FileBrowser;
 use termihub_core::monitoring::MonitoringProvider;
 
-use termihub_core::monitoring::MonitoringSender;
-
-use crate::connection::config::AgentSettings;
-use crate::terminal::agent_manager::{
-    AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
-    AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
-};
-use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
+use crate::terminal::agent_manager::AgentRpcClient;
+use crate::test_support::agent_rpc::Step;
+use crate::test_support::FakeAgent;
 
 /// The `data` field of a serialized [`TerminalOutputEvent`] must be a base64
 /// string that decodes byte-for-byte back to the original bytes — the exact
@@ -425,7 +420,10 @@ async fn write_and_resize_on_mock_session() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn send_input_normalizes_to_session_line_ending() {
     let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "sess-1",
@@ -453,7 +451,10 @@ async fn send_input_normalizes_to_session_line_ending() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn send_input_raw_does_not_normalize() {
     let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "sess-1",
@@ -477,7 +478,10 @@ async fn send_input_raw_does_not_normalize() {
 /// re-parentable with scrollback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn replay_scrollback_returns_captured_history_without_touching_session() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session("sess-move", Box::new(MockConnection::default()))
         .await;
@@ -509,7 +513,10 @@ async fn replay_scrollback_returns_captured_history_without_touching_session() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn initial_command_honors_session_line_ending() {
     let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "sess-1",
@@ -551,7 +558,10 @@ async fn remove_session() {
 /// interpolation or a missing span.
 #[tokio::test]
 async fn close_session_log_carries_session_id_field_and_span() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session("sess-obs-004", Box::new(MockConnection::default()))
         .await;
@@ -1065,134 +1075,12 @@ impl ConnectionType for DisconnectSpy {
     }
 }
 
-// ── NullAgent ────────────────────────────────────────────────────
-
-/// A no-op `AgentRpcClient` for tests that construct a full `SessionManager`.
-struct NullAgent;
-
-impl AgentRpcClient for NullAgent {
-    fn connect_agent(
-        &self,
-        _: &str,
-        _: &RemoteAgentConfig,
-        _: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
-    }
-    fn cancel_connect(&self, _: &str) -> bool {
-        false
-    }
-    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn is_connected(&self, _: &str) -> bool {
-        false
-    }
-    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
-        None
-    }
-    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
-    }
-    fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
-        unimplemented!()
-    }
-    fn create_session(
-        &self,
-        _: &str,
-        _: &str,
-        _: Value,
-        _: Option<&str>,
-        _: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        unimplemented!()
-    }
-    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn save_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn create_folder(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_session_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: OutputSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_monitoring_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-}
-
 // ── get_remote_session_buffer tests ──────────────────────────────
 
 #[tokio::test]
 async fn get_remote_session_buffer_returns_error_for_nonexistent_session() {
     let registry = ConnectionTypeRegistry::new();
-    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+    let manager = SessionManager::new(registry, Arc::new(FakeAgent::offline()));
     let result = manager.get_remote_session_buffer("no-such-session").await;
     assert!(result.is_err());
     assert!(matches!(
@@ -1204,7 +1092,7 @@ async fn get_remote_session_buffer_returns_error_for_nonexistent_session() {
 #[tokio::test]
 async fn get_remote_session_buffer_returns_remote_error_for_local_session() {
     let registry = ConnectionTypeRegistry::new();
-    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+    let manager = SessionManager::new(registry, Arc::new(FakeAgent::offline()));
     manager
         .insert_test_session("local-sess", Box::new(MockConnection::default()))
         .await;
@@ -1224,7 +1112,7 @@ async fn get_remote_session_buffer_returns_remote_error_for_local_session() {
 #[tokio::test]
 async fn close_session_calls_disconnect_on_connection() {
     let registry = ConnectionTypeRegistry::new();
-    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+    let manager = SessionManager::new(registry, Arc::new(FakeAgent::offline()));
 
     let disconnected = Arc::new(AtomicBool::new(false));
     let spy = DisconnectSpy::new(disconnected.clone());
@@ -1275,7 +1163,7 @@ fn make_test_manager() -> SessionManager {
         "mock",
         Box::new(|| Box::new(MockConnection::default())),
     );
-    let agent_manager = Arc::new(NullAgent);
+    let agent_manager = Arc::new(FakeAgent::offline());
     SessionManager::new(registry, agent_manager)
 }
 
@@ -1385,263 +1273,65 @@ async fn create_connection_retains_request_for_resilient_direct_session() {
     );
 }
 
-/// A mock `AgentRpcClient` that satisfies the `create_connection` agent
-/// handshake (create → register output → attach → capability query) and
-/// **records** every `clear_retained_agent_config` call, so the #2473
+/// An agent that satisfies the `create_connection` agent handshake (create →
+/// register output → attach → capability query) and **records** every
+/// `retain_agent_config` / `clear_retained_agent_config` call, so the #2473
 /// retention + refcount-scrub tests can drive a real agent session through the
-/// manager without a live SSH transport.
-struct RetainAgent {
-    cleared: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    /// Every `retain_agent_config` call (#3661).
-    retained: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    /// Registered output senders, held so a session's output channel stays open
-    /// (dropping the sender would EOF the reader and look like a genuine drop,
-    /// removing the tab binding before a deliberate close can observe it).
-    outputs: std::sync::Mutex<Vec<OutputSender>>,
-    /// The `correlation_id` every `connection.create` carried (#3085).
-    correlation_ids: std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>,
-    /// When set, `connection.create` fails with a `SESSION_CREATION_FAILED`
-    /// error carrying this optional `data` — built through the real agent
-    /// error mapping, as the io task would (#3089).
-    create_error_data: Option<Option<Value>>,
-}
-
-type Recorded = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
-
-impl RetainAgent {
-    fn new() -> (Self, Recorded) {
-        let (agent, _retained, cleared) = Self::recording();
-        (agent, cleared)
+/// manager without a live SSH transport. Registered output senders are held,
+/// so a session's output channel stays open (dropping the sender would EOF the
+/// reader and look like a genuine drop).
+fn retain_agent() -> FakeAgent {
+    FakeAgent {
+        disconnected: true,
+        ..FakeAgent::default()
     }
-
-    /// Like [`Self::new`], also returning the recorded retains: `(agent,
-    /// retained, cleared)`.
-    fn recording() -> (Self, Recorded, Recorded) {
-        let cleared = Recorded::default();
-        let retained = Recorded::default();
-        (
-            Self {
-                cleared: cleared.clone(),
-                retained: retained.clone(),
-                outputs: std::sync::Mutex::new(Vec::new()),
-                correlation_ids: Default::default(),
-                create_error_data: None,
-            },
-            retained,
-            cleared,
-        )
-    }
-}
-
-fn recorded(list: &Recorded) -> Vec<String> {
-    list.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-}
-
-impl AgentRpcClient for RetainAgent {
-    fn connect_agent(
-        &self,
-        _: &str,
-        _: &RemoteAgentConfig,
-        _: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
-    }
-    fn cancel_connect(&self, _: &str) -> bool {
-        false
-    }
-    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn is_connected(&self, _: &str) -> bool {
-        true
-    }
-    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
-        None
-    }
-    fn retain_agent_config(&self, agent_id: &str) -> bool {
-        self.retained
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(agent_id.to_string());
-        true
-    }
-    fn clear_retained_agent_config(&self, agent_id: &str) {
-        self.cleared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(agent_id.to_string());
-    }
-    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
-    }
-    fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
-        // The handshake queries `connection.types`; an empty list is fine (no
-        // file-browser / monitoring proxies wired for the test session).
-        Ok(serde_json::json!({ "types": [] }))
-    }
-    fn create_session(
-        &self,
-        _: &str,
-        session_type: &str,
-        _: Value,
-        title: Option<&str>,
-        definition_id: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        Ok(AgentSessionInfo {
-            session_id: uuid::Uuid::new_v4().to_string(),
-            title: title.unwrap_or("mock").to_string(),
-            session_type: session_type.to_string(),
-            status: "running".to_string(),
-            attached: true,
-            definition_id: definition_id.map(str::to_string),
-        })
-    }
-    fn create_session_owned(
-        &self,
-        agent_id: &str,
-        session_type: &str,
-        config: Value,
-        title: Option<&str>,
-        definition_id: Option<&str>,
-        _owner: Option<&str>,
-        correlation_id: Option<&str>,
-        _unattended: bool,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        self.correlation_ids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(correlation_id.map(str::to_string));
-        if let Some(data) = &self.create_error_data {
-            return Err(
-                crate::terminal::agent_manager::AgentRpcFailure::from_error_response(
-                    Some(termihub_core::protocol::errors::SESSION_CREATION_FAILED),
-                    "Authentication failed".into(),
-                    data.as_ref(),
-                )
-                .into_terminal_error(),
-            );
-        }
-        self.create_session(agent_id, session_type, config, title, definition_id)
-    }
-    fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        Ok(Vec::new())
-    }
-    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn save_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn create_folder(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_session_output(
-        &self,
-        _: &str,
-        _: &str,
-        tx: OutputSender,
-    ) -> Result<(), TerminalError> {
-        self.outputs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(tx);
-        Ok(())
-    }
-    fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn register_monitoring_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-}
-
-/// Build a manager whose agent client is a [`RetainAgent`], returning the
-/// recorded-clears handle alongside it.
-fn make_test_manager_with_retain_agent() -> (
-    SessionManager,
-    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-) {
-    let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
-    registry.register(
-        "mock",
-        "Mock",
-        "mock",
-        Box::new(|| Box::new(MockConnection::default())),
-    );
-    let (agent, cleared) = RetainAgent::new();
-    (SessionManager::new(registry, Arc::new(agent)), cleared)
-}
-
-/// Build a manager whose agent client is a recording [`RetainAgent`], returning
-/// `(manager, retained, cleared)` (#3661).
-fn make_test_manager_recording_agent_config() -> (SessionManager, Recorded, Recorded) {
-    let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
-    registry.register(
-        "mock",
-        "Mock",
-        "mock",
-        Box::new(|| Box::new(MockConnection::default())),
-    );
-    let (agent, retained, cleared) = RetainAgent::recording();
-    (
-        SessionManager::new(registry, Arc::new(agent)),
-        retained,
-        cleared,
+    .always("disconnect_agent", Step::Ok)
+    .always("retain_agent_config", Step::Ok)
+    // The handshake queries `connection.types`; an empty list is fine (no
+    // file-browser / monitoring proxies wired for the test session).
+    .always(
+        "send_request",
+        Step::Reply(serde_json::json!({ "types": [] })),
     )
+    .always("create_session", Step::NewSession)
+    .always("create_session_owned", Step::NewSession)
+    .always("attach_session", Step::Ok)
+    .always("close_session", Step::Ok)
+    .always("list_sessions", Step::Reply(serde_json::json!([])))
+    .always("register_session_output", Step::Ok)
+    .always("unregister_session_output", Step::Ok)
+}
+
+/// The agent ids of every `retain_agent_config` call, in order (#3661).
+fn retained_configs(agent: &FakeAgent) -> Vec<String> {
+    agent
+        .calls_to("retain_agent_config")
+        .into_iter()
+        .map(|args| args[0].clone())
+        .collect()
+}
+
+/// The agent ids of every `clear_retained_agent_config` call, in order.
+fn cleared_configs(agent: &FakeAgent) -> Vec<String> {
+    agent
+        .calls_to("clear_retained_agent_config")
+        .into_iter()
+        .map(|args| args[0].clone())
+        .collect()
+}
+
+/// Build a manager whose agent client is a [`retain_agent`], returning the
+/// agent alongside it so a test can read its recorded retains and clears.
+fn make_test_manager_with_retain_agent() -> (SessionManager, Arc<FakeAgent>) {
+    let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+    registry.register(
+        "mock",
+        "Mock",
+        "mock",
+        Box::new(|| Box::new(MockConnection::default())),
+    );
+    let agent = Arc::new(retain_agent());
+    (SessionManager::new(registry, agent.clone()), agent)
 }
 
 async fn open_agent_tab(manager: &SessionManager, connect_id: &str, resilient: bool) -> String {
@@ -1670,15 +1360,18 @@ async fn agent_connect_sends_the_desktop_session_id_as_correlation_id() {
         "mock",
         Box::new(|| Box::new(MockConnection::default())),
     );
-    let (agent, _retained, _cleared) = RetainAgent::recording();
-    let correlation_ids = agent.correlation_ids.clone();
-    let manager = SessionManager::new(registry, Arc::new(agent));
+    let agent = Arc::new(retain_agent());
+    let manager = SessionManager::new(registry, agent.clone());
 
     let session_id = open_agent_tab(&manager, "tab-c:0", false).await;
 
     assert_eq!(
-        *correlation_ids.lock().unwrap(),
-        vec![Some(session_id)],
+        agent
+            .calls_to("create_session_owned")
+            .into_iter()
+            .map(|args| args[3].clone())
+            .collect::<Vec<_>>(),
+        vec![session_id],
         "connection.create must carry the desktop session id"
     );
 }
@@ -1687,16 +1380,16 @@ async fn agent_connect_sends_the_desktop_session_id_as_correlation_id() {
 async fn resilient_agent_tab_connect_retains_the_agent_config() {
     // #3661: a resilient agent tab opts its agent's transport config into the
     // reap-surviving reattach store, so `reconnect_retained_agent` can find it.
-    let (manager, retained, _cleared) = make_test_manager_recording_agent_config();
+    let (manager, agent) = make_test_manager_with_retain_agent();
     open_agent_tab(&manager, "tab-r:0", true).await;
-    assert_eq!(recorded(&retained), vec!["agent-1".to_string()]);
+    assert_eq!(retained_configs(&agent), vec!["agent-1".to_string()]);
 }
 
 #[tokio::test]
 async fn non_resilient_agent_tab_or_direct_tab_never_retains_an_agent_config() {
     // The gate: a non-resilient tab never reconnects, so it must not extend the
     // agent secret's lifetime past a reap; a direct tab has no agent at all.
-    let (manager, retained, _cleared) = make_test_manager_recording_agent_config();
+    let (manager, agent) = make_test_manager_with_retain_agent();
     open_agent_tab(&manager, "tab-n:0", false).await;
     manager
         .create_connection(
@@ -1710,7 +1403,7 @@ async fn non_resilient_agent_tab_or_direct_tab_never_retains_an_agent_config() {
         )
         .await
         .expect("direct session should open");
-    assert!(recorded(&retained).is_empty());
+    assert!(retained_configs(&agent).is_empty());
 }
 
 #[tokio::test]
@@ -1718,19 +1411,19 @@ async fn closing_the_last_resilient_agent_tab_scrubs_the_agent_config() {
     // #3661: tab close was a per-tab-only clear, so closing the last resilient
     // tab on an agent left its retained password alive until disconnect/prune.
     // It now refcount-scrubs like the lifecycle routes.
-    let (manager, _retained, cleared) = make_test_manager_recording_agent_config();
+    let (manager, agent) = make_test_manager_with_retain_agent();
     let first = open_agent_tab(&manager, "tab-1:0", true).await;
     let second = open_agent_tab(&manager, "tab-2:0", true).await;
 
     manager.close_session(&first).await.expect("close first");
     assert!(
-        recorded(&cleared).is_empty(),
+        cleared_configs(&agent).is_empty(),
         "a sibling resilient tab still holds agent-1's config"
     );
 
     manager.close_session(&second).await.expect("close second");
     assert_eq!(
-        recorded(&cleared),
+        cleared_configs(&agent),
         vec!["agent-1".to_string()],
         "closing the last resilient tab on agent-1 scrubs its config once"
     );
@@ -1739,7 +1432,7 @@ async fn closing_the_last_resilient_agent_tab_scrubs_the_agent_config() {
 #[tokio::test]
 async fn releasing_the_last_evicted_agent_tab_scrubs_the_agent_config() {
     // Releasing an evicted (single-attach) session view is a tab-gone point too.
-    let (manager, _retained, cleared) = make_test_manager_recording_agent_config();
+    let (manager, agent) = make_test_manager_with_retain_agent();
     let sid = open_agent_tab(&manager, "tab-e:0", true).await;
 
     manager
@@ -1747,7 +1440,7 @@ async fn releasing_the_last_evicted_agent_tab_scrubs_the_agent_config() {
         .await
         .expect("release evicted session");
     assert!(!manager.has_retained_request("tab-e"));
-    assert_eq!(recorded(&cleared), vec!["agent-1".to_string()]);
+    assert_eq!(cleared_configs(&agent), vec!["agent-1".to_string()]);
 }
 
 #[tokio::test]
@@ -1757,7 +1450,7 @@ async fn create_connection_retains_request_for_resilient_agent_session() {
     // way a resilient direct session does (#2454). Before this, retention was
     // guarded to `agent_id.is_none()`, so agent tabs never entered the backend
     // redrive.
-    let (manager, _cleared) = make_test_manager_with_retain_agent();
+    let (manager, _agent) = make_test_manager_with_retain_agent();
     manager
         .create_connection(
             "mock",
@@ -1788,7 +1481,7 @@ async fn create_connection_records_agent_session_id_on_the_retained_request() {
     // connect), so the redrive can re-attach to *that same* live session on
     // reconnect instead of minting a new one. A resilient DIRECT tab has no
     // agent session, so it retains `None`.
-    let (manager, _cleared) = make_test_manager_with_retain_agent();
+    let (manager, _agent) = make_test_manager_with_retain_agent();
 
     manager
         .create_connection(
@@ -1837,7 +1530,7 @@ async fn clear_retained_request_scrubs_agent_config_only_for_the_last_tab() {
     // so the per-agent transport config (#2472) must survive until the LAST tab
     // on that agent releases its retained request. Clearing one of two sibling
     // tabs must NOT scrub the config; clearing the last one must.
-    let (manager, cleared) = make_test_manager_with_retain_agent();
+    let (manager, agent) = make_test_manager_with_retain_agent();
     for tab in ["tab-x:0", "tab-y:0"] {
         manager
             .create_connection(
@@ -1856,20 +1549,15 @@ async fn clear_retained_request_scrubs_agent_config_only_for_the_last_tab() {
     // First sibling clears: a tab on agent-1 still holds it → no scrub.
     manager.clear_retained_request_with_agent_scrub("tab-x");
     assert!(
-        cleared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty(),
+        cleared_configs(&agent).is_empty(),
         "a sibling tab still holds agent-1, so its transport config must not be scrubbed"
     );
 
     // Last sibling clears: nothing left on agent-1 → scrub exactly once.
     manager.clear_retained_request_with_agent_scrub("tab-y");
     assert_eq!(
-        &*cleared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-        &["agent-1".to_string()],
+        cleared_configs(&agent),
+        vec!["agent-1".to_string()],
         "the last tab on agent-1 releasing it scrubs the per-agent transport config once"
     );
 }
@@ -1879,7 +1567,7 @@ async fn clear_retained_request_with_agent_scrub_is_a_noop_for_direct_tabs() {
     // A direct (non-agent) tab has no per-agent config, so the refcounted scrub
     // must behave exactly like the plain per-tab clear and never touch the
     // agent config store.
-    let (manager, cleared) = make_test_manager_with_retain_agent();
+    let (manager, agent) = make_test_manager_with_retain_agent();
     manager
         .create_connection(
             "mock",
@@ -1897,10 +1585,7 @@ async fn clear_retained_request_with_agent_scrub_is_a_noop_for_direct_tabs() {
     manager.clear_retained_request_with_agent_scrub("tab-d");
     assert!(!manager.has_retained_request("tab-d"));
     assert!(
-        cleared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty(),
+        cleared_configs(&agent).is_empty(),
         "a direct tab has no agent config to scrub"
     );
 }
@@ -2230,7 +1915,10 @@ fn auth_failing_manager() -> Arc<SessionManager> {
         "mock",
         Box::new(|| Box::new(AuthFailConnect)),
     );
-    Arc::new(SessionManager::new(registry, Arc::new(NullAgent)))
+    Arc::new(SessionManager::new(
+        registry,
+        Arc::new(FakeAgent::offline()),
+    ))
 }
 
 fn failing_manager() -> Arc<SessionManager> {
@@ -2241,7 +1929,10 @@ fn failing_manager() -> Arc<SessionManager> {
         "mock",
         Box::new(|| Box::new(ImmediateFailConnect)),
     );
-    Arc::new(SessionManager::new(registry, Arc::new(NullAgent)))
+    Arc::new(SessionManager::new(
+        registry,
+        Arc::new(FakeAgent::offline()),
+    ))
 }
 
 /// A genuine (non-cancelled) **initial** **direct** connect failure folds
@@ -2345,7 +2036,10 @@ async fn create_connection_does_not_fold_connect_failed_on_cancellation() {
         "mock",
         Box::new(|| Box::new(BlockingConnect)),
     );
-    let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+    let manager = Arc::new(SessionManager::new(
+        registry,
+        Arc::new(FakeAgent::offline()),
+    ));
     let emitter = MockEventEmitter::new();
 
     let spawned = manager.clone();
@@ -2467,7 +2161,10 @@ async fn cancel_connecting_aborts_in_flight_local_connect() {
         "mock",
         Box::new(|| Box::new(BlockingConnect)),
     );
-    let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+    let manager = Arc::new(SessionManager::new(
+        registry,
+        Arc::new(FakeAgent::offline()),
+    ));
 
     let spawned = manager.clone();
     let join = tokio::spawn(async move {
@@ -2839,186 +2536,38 @@ fn persistent_session_state_event_serialises_snake_case() {
     );
 }
 
-// ── SpyAgent for attach_persistent_tab regression tests ──────────
+// ── Spy agents for attach_persistent_tab regression tests ────────
 
-type AttachLog = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
-
-/// An `AgentRpcClient` implementation that records `attach_session` calls
-/// and succeeds silently on `register_session_output`.
-struct SpyAgent {
-    attach_calls: AttachLog,
-    /// When set, a plain `attach_session` is refused as held by another desktop
-    /// (SM-003, #3404) until a `reclaim_session` takes the session over.
-    held_by_peer: Arc<AtomicBool>,
-    reclaim_calls: AttachLog,
-    /// Output senders registered for re-attached sessions, so a test can stream
-    /// output as the agent would after a Reclaim.
-    outputs: Arc<std::sync::Mutex<Vec<OutputSender>>>,
+/// An agent that is not connected but whose session plumbing succeeds:
+/// attach, close and the session output routes answer `Ok` (each call is
+/// recorded); everything else panics.
+fn spy_agent() -> FakeAgent {
+    FakeAgent::offline()
+        .always("attach_session", Step::Ok)
+        .always("close_session", Step::Ok)
+        .always("register_session_output", Step::Ok)
+        .always("unregister_session_output", Step::Ok)
 }
 
-impl SpyAgent {
-    fn new() -> (Self, AttachLog) {
-        let calls: AttachLog = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        (
-            Self {
-                attach_calls: calls.clone(),
-                held_by_peer: Arc::new(AtomicBool::new(false)),
-                reclaim_calls: Arc::new(std::sync::Mutex::new(Vec::new())),
-                outputs: Arc::new(std::sync::Mutex::new(Vec::new())),
-            },
-            calls,
-        )
-    }
-
-    /// A spy whose sessions are held by another desktop: plain attaches are
-    /// refused with the typed [`TerminalError::SessionHeldByPeer`].
-    fn held() -> Self {
-        let (spy, _) = Self::new();
-        spy.held_by_peer.store(true, Ordering::SeqCst);
-        spy
-    }
+/// A spy whose sessions are held by another desktop: plain attaches are
+/// refused with the typed [`TerminalError::SessionHeldByPeer`] until a
+/// `reclaim_session` takes the session over.
+fn held_spy_agent() -> Arc<FakeAgent> {
+    let spy = spy_agent();
+    spy.held_by_peer.store(true, Ordering::SeqCst);
+    Arc::new(spy)
 }
 
-impl AgentRpcClient for SpyAgent {
-    fn connect_agent(
-        &self,
-        _: &str,
-        _: &RemoteAgentConfig,
-        _: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
-    }
-    fn cancel_connect(&self, _: &str) -> bool {
-        false
-    }
-    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn is_connected(&self, _: &str) -> bool {
-        false
-    }
-    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
-        None
-    }
-    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
-    }
-    fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
-        unimplemented!()
-    }
-    fn create_session(
-        &self,
-        _: &str,
-        _: &str,
-        _: Value,
-        _: Option<&str>,
-        _: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn attach_session(&self, agent_id: &str, remote_sid: &str) -> Result<(), TerminalError> {
-        self.attach_calls
-            .lock()
-            .unwrap()
-            .push((agent_id.to_string(), remote_sid.to_string()));
-        if self.held_by_peer.load(Ordering::SeqCst) {
-            return Err(TerminalError::SessionHeldByPeer(
-                "Session is held by another desktop".to_string(),
-            ));
-        }
-        Ok(())
-    }
-    fn reclaim_session(&self, agent_id: &str, remote_sid: &str) -> Result<(), TerminalError> {
-        self.reclaim_calls
-            .lock()
-            .unwrap()
-            .push((agent_id.to_string(), remote_sid.to_string()));
-        self.held_by_peer.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-    fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        unimplemented!()
-    }
-    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn save_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn create_folder(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_session_output(
-        &self,
-        _: &str,
-        _: &str,
-        tx: OutputSender,
-    ) -> Result<(), TerminalError> {
-        self.outputs.lock().unwrap().push(tx);
-        Ok(())
-    }
-    fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn register_monitoring_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
+/// A spy whose plain attach fails with a generic error.
+fn failing_attach_agent() -> FakeAgent {
+    spy_agent().always("attach_session", Step::fail("Agent connection lost"))
 }
 
 /// Regression: `attach_persistent_tab` must NOT call `attach_session` for
 /// local (non-agent) sessions where there is no agent_id or remote_session_id.
 #[tokio::test]
 async fn attach_persistent_tab_skips_daemon_reattach_for_local_session() {
-    // NullAgent.attach_session panics (unimplemented!), so if it were called
+    // An offline FakeAgent panics on an unscripted attach_session, so if it were called
     // by the local-session path this test would fail.
     let manager = make_test_manager();
     let emitter = MockPersistentEmitter::new();
@@ -3041,7 +2590,7 @@ async fn attach_persistent_tab_skips_daemon_reattach_for_local_session() {
         .unwrap();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    // No assertion needed: if NullAgent.attach_session were called it would panic.
+    // No assertion needed: if attach_session were called the agent would panic.
 }
 
 /// Regression: after an agent SSH disconnect, `emit_and_cleanup` removes the
@@ -3051,7 +2600,7 @@ async fn attach_persistent_tab_skips_daemon_reattach_for_local_session() {
 /// prop keeps working without any frontend state update.
 #[tokio::test]
 async fn attach_persistent_tab_reconnects_after_agent_disconnect() {
-    let (spy, attach_calls) = SpyAgent::new();
+    let spy = Arc::new(spy_agent());
 
     let mut registry = ConnectionTypeRegistry::new();
     registry.register(
@@ -3060,7 +2609,7 @@ async fn attach_persistent_tab_reconnects_after_agent_disconnect() {
         "mock",
         Box::new(|| Box::new(MockConnection::default())),
     );
-    let manager = SessionManager::new(registry, Arc::new(spy));
+    let manager = SessionManager::new(registry, spy.clone());
     let emitter = MockPersistentEmitter::new();
 
     let session_id = manager
@@ -3124,14 +2673,14 @@ async fn attach_persistent_tab_reconnects_after_agent_disconnect() {
     );
 
     // attach_session must have been called (by reconnect_existing) to get the buffer replay.
-    let calls = attach_calls.lock().unwrap();
+    let calls = spy.calls_to("attach_session");
     assert_eq!(
         calls.len(),
         1,
         "attach_session must be called once for reconnect"
     );
-    assert_eq!(calls[0].0, "agent-1");
-    assert_eq!(calls[0].1, "remote-1");
+    assert_eq!(calls[0][0], "agent-1");
+    assert_eq!(calls[0][1], "remote-1");
 }
 
 // ── Held by another desktop (SM-003, #3404) ─────────────────────────
@@ -3157,10 +2706,8 @@ async fn wait_for_emitted(emitter: &MockEventEmitter, session_id: &str, needle: 
 /// the session over (a takeover attach) and output flows to the tab.
 #[tokio::test]
 async fn reattach_agent_session_held_by_peer_registers_entry_and_reclaims() {
-    let spy = SpyAgent::held();
-    let reclaim_calls = spy.reclaim_calls.clone();
-    let outputs = spy.outputs.clone();
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(spy));
+    let spy = held_spy_agent();
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), spy.clone());
     let emitter = MockEventEmitter::new();
 
     let reattach = manager
@@ -3183,7 +2730,7 @@ async fn reattach_agent_session_held_by_peer_registers_entry_and_reclaims() {
         Some(("agent-1".to_string(), "remote-1".to_string()))
     );
     assert!(
-        reclaim_calls.lock().unwrap().is_empty(),
+        spy.calls_to("reclaim_session").is_empty(),
         "never reclaims implicitly"
     );
 
@@ -3192,12 +2739,13 @@ async fn reattach_agent_session_held_by_peer_registers_entry_and_reclaims() {
         .await
         .expect("reclaim from the held state succeeds");
     assert_eq!(
-        reclaim_calls.lock().unwrap().as_slice(),
-        &[("agent-1".to_string(), "remote-1".to_string())]
+        spy.calls_to("reclaim_session"),
+        vec![vec!["agent-1".to_string(), "remote-1".to_string()]]
     );
 
     // Output the agent streams after the takeover reaches the tab's session.
-    let tx = outputs
+    let tx = spy
+        .session_outputs
         .lock()
         .unwrap()
         .last()
@@ -3210,22 +2758,25 @@ async fn reattach_agent_session_held_by_peer_registers_entry_and_reclaims() {
 /// An unheld implicit re-attach is unchanged: attached, not held.
 #[tokio::test]
 async fn reattach_agent_session_unheld_is_attached() {
-    let (spy, attach_calls) = SpyAgent::new();
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(spy));
+    let spy = Arc::new(spy_agent());
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), spy.clone());
 
     let reattach = manager
         .reattach_agent_session("tab-1", "agent-1", "remote-1", MockEventEmitter::new())
         .await
         .unwrap();
     assert!(!reattach.held_by_peer);
-    assert_eq!(attach_calls.lock().unwrap().len(), 1);
+    assert_eq!(spy.calls_to("attach_session").len(), 1);
 }
 
 /// A generic (non-held) re-attach failure still surfaces as an error and
 /// registers nothing.
 #[tokio::test]
 async fn reattach_agent_session_generic_failure_is_an_error() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(FailingAttachAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(failing_attach_agent()),
+    );
     let result = manager
         .reattach_agent_session("tab-1", "agent-1", "remote-1", MockEventEmitter::new())
         .await;
@@ -3239,9 +2790,8 @@ async fn reattach_agent_session_generic_failure_is_an_error() {
 /// instead of failing the attach.
 #[tokio::test]
 async fn attach_persistent_tab_held_by_peer_keeps_entry_for_reclaim() {
-    let spy = SpyAgent::held();
-    let reclaim_calls = spy.reclaim_calls.clone();
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(spy));
+    let spy = held_spy_agent();
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), spy.clone());
     let emitter = MockPersistentEmitter::new();
 
     manager.persistent_sessions.lock().await.insert(
@@ -3268,129 +2818,7 @@ async fn attach_persistent_tab_held_by_peer_keeps_entry_for_reclaim() {
         .reclaim_session("tab-held")
         .await
         .expect("reclaim resolves through the tab binding");
-    assert_eq!(reclaim_calls.lock().unwrap().len(), 1);
-}
-
-/// An `AgentRpcClient` whose plain attach fails with a generic error.
-struct FailingAttachAgent;
-
-impl AgentRpcClient for FailingAttachAgent {
-    fn connect_agent(
-        &self,
-        _: &str,
-        _: &RemoteAgentConfig,
-        _: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
-    }
-    fn cancel_connect(&self, _: &str) -> bool {
-        false
-    }
-    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn is_connected(&self, _: &str) -> bool {
-        false
-    }
-    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
-        None
-    }
-    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
-    }
-    fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
-        unimplemented!()
-    }
-    fn create_session(
-        &self,
-        _: &str,
-        _: &str,
-        _: Value,
-        _: Option<&str>,
-        _: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::RemoteError(
-            "Agent connection lost".to_string(),
-        ))
-    }
-    fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        unimplemented!()
-    }
-    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn save_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn create_folder(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_session_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: OutputSender,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn register_monitoring_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
+    assert_eq!(spy.calls_to("reclaim_session").len(), 1);
 }
 
 // ── FileOps facade tests (#2076) ──────────────────────────────────
@@ -3555,7 +2983,10 @@ impl ConnectionType for FileConnection {
 #[tokio::test]
 async fn file_ops_delegate_to_session_file_browser() {
     let listed = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "fs-1",
@@ -3584,7 +3015,10 @@ async fn file_ops_delegate_to_session_file_browser() {
 #[tokio::test]
 async fn transfer_source_guard_refuses_a_folder_in_either_direction() {
     use crate::files::transfer::TransferDirection;
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "fs-guard",
@@ -3647,7 +3081,10 @@ async fn transfer_source_guard_refuses_a_folder_in_either_direction() {
 /// the facade extraction.
 #[tokio::test]
 async fn file_ops_error_when_connection_has_no_file_browser() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session("no-fs", Box::new(MockConnection::default()))
         .await;
@@ -3662,7 +3099,10 @@ async fn file_ops_error_when_connection_has_no_file_browser() {
 /// An unknown session yields `SessionNotFound`, unchanged by the facade.
 #[tokio::test]
 async fn file_ops_error_when_session_unknown() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     let err = manager.read_file("ghost", "/").await.unwrap_err();
     assert!(matches!(err, TerminalError::SessionNotFound(_)));
 }
@@ -3674,7 +3114,10 @@ async fn file_ops_error_when_session_unknown() {
 /// `RemoteError` rather than misbehaving.
 #[tokio::test]
 async fn session_sftp_ops_error_when_browser_not_sftp_backed() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "fs-nonsftp",
@@ -3719,7 +3162,10 @@ async fn session_sftp_ops_error_when_browser_not_sftp_backed() {
 /// of chmod / chown / symlink, and an unknown session is `SessionNotFound`.
 #[tokio::test]
 async fn session_file_capabilities_reports_the_browser_attribute_ops() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "fs-plain",
@@ -3744,7 +3190,10 @@ async fn session_file_capabilities_reports_the_browser_attribute_ops() {
 /// session, exactly like the rest of the file-ops facade (#2312).
 #[tokio::test]
 async fn session_sftp_ops_error_when_session_unknown() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     assert!(matches!(
         manager.session_realpath("ghost", ".").await,
         Err(TerminalError::SessionNotFound(_))
@@ -3877,7 +3326,10 @@ impl ConnectionType for MonitoringConnection {
 #[tokio::test]
 async fn monitoring_controls_delegate_to_session_provider() {
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "mon-1",
@@ -3923,7 +3375,10 @@ async fn monitoring_controls_delegate_to_session_provider() {
 /// before the facade extraction, for both provider-required controls.
 #[tokio::test]
 async fn monitoring_controls_error_when_connection_has_no_capability() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session("no-mon", Box::new(MockConnection::default()))
         .await;
@@ -3946,7 +3401,10 @@ async fn monitoring_controls_error_when_connection_has_no_capability() {
 /// session, unchanged by the facade.
 #[tokio::test]
 async fn monitoring_controls_error_when_session_unknown() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     assert!(matches!(
         manager
             .set_session_monitoring_paused("ghost", true)
@@ -3967,7 +3425,10 @@ async fn monitoring_controls_error_when_session_unknown() {
 /// already gone and returns `Ok(())` rather than erroring.
 #[tokio::test]
 async fn stop_and_cancel_monitoring_are_noops_for_unknown_session() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager.stop_session_monitoring("ghost").await.unwrap();
     manager.cancel_session_monitoring("ghost").await.unwrap();
 }
@@ -4074,7 +3535,10 @@ async fn monitoring_provider_call_does_not_hold_sessions_lock() {
         release: release.clone(),
     });
 
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session(
             "mon-block",
@@ -4191,7 +3655,7 @@ async fn test_connection_succeeds_tears_down_and_leaves_no_session() {
         "mock",
         Box::new(move || Box::new(DisconnectSpy::new(flag.clone()))),
     );
-    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+    let manager = SessionManager::new(registry, Arc::new(FakeAgent::offline()));
 
     let result = manager
         .test_connection(
@@ -4232,7 +3696,7 @@ async fn test_connection_classifies_auth_failure() {
         "mock",
         Box::new(|| Box::new(AuthFailConnect)),
     );
-    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+    let manager = SessionManager::new(registry, Arc::new(FakeAgent::offline()));
 
     let result = manager
         .test_connection(
@@ -4270,7 +3734,7 @@ async fn test_connection_classifies_unreachable_host() {
         "mock",
         Box::new(|| Box::new(UnreachableConnect)),
     );
-    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+    let manager = SessionManager::new(registry, Arc::new(FakeAgent::offline()));
 
     let result = manager
         .test_connection("unreachable", serde_json::json!({}), None, None, None, None)
@@ -4303,7 +3767,10 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
         "mock",
         Box::new(|| Box::new(BlockingConnect)),
     );
-    let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+    let manager = Arc::new(SessionManager::new(
+        registry,
+        Arc::new(FakeAgent::offline()),
+    ));
 
     let spawned = manager.clone();
     let join = tokio::spawn(async move {
@@ -4493,7 +3960,10 @@ mod ki_prompt_owner {
                 })
             }),
         );
-        let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+        let manager = Arc::new(SessionManager::new(
+            registry,
+            Arc::new(FakeAgent::offline()),
+        ));
 
         let connect = |connect_id: &'static str| {
             let manager = manager.clone();
@@ -4879,8 +4349,17 @@ fn auth_rejecting_agent_manager(data: Option<Value>) -> SessionManager {
         "mock",
         Box::new(|| Box::new(MockConnection::default())),
     );
-    let (mut agent, _retained, _cleared) = RetainAgent::recording();
-    agent.create_error_data = Some(data);
+    let agent = retain_agent().always(
+        "create_session_owned",
+        Step::error(move || {
+            crate::terminal::agent_manager::AgentRpcFailure::from_error_response(
+                Some(termihub_core::protocol::errors::SESSION_CREATION_FAILED),
+                "Authentication failed".into(),
+                data.as_ref(),
+            )
+            .into_terminal_error()
+        }),
+    );
     SessionManager::new(registry, Arc::new(agent))
 }
 
@@ -5058,7 +4537,7 @@ impl ConnectionType for StalledDisconnect {
 async fn close_session_does_not_hold_the_session_map_during_a_stalled_disconnect() {
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
-        Arc::new(NullAgent),
+        Arc::new(FakeAgent::offline()),
     ));
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
@@ -5107,7 +4586,7 @@ fn probe_manager(outcome: crate::session::graphical_probe::tests::Outcome) -> Se
         "mock",
         Box::new(move || Box::new(ProbeFake::new(outcome.clone()))),
     );
-    SessionManager::new(registry, Arc::new(NullAgent))
+    SessionManager::new(registry, Arc::new(FakeAgent::offline()))
 }
 
 /// RDP Test connection against a peer that never finishes the negotiation

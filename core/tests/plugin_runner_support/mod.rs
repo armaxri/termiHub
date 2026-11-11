@@ -14,6 +14,13 @@
     reason = "shared test-support module: each test binary uses a different subset"
 )]
 
+#[allow(
+    clippy::duplicate_mod,
+    reason = "plugin_fixture and plugin_runner_support both load it; a binary may use either"
+)]
+#[path = "../shared_build/mod.rs"]
+mod shared_build;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -43,14 +50,16 @@ fn profile_args() -> (&'static [&'static str], &'static str) {
 fn build_package(package: &str) -> PathBuf {
     let (args, profile) = profile_args();
     let target_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{package}-{profile}"));
-    let status = Command::new(env!("CARGO"))
-        .current_dir(workspace_root())
-        .args(["build", "-p", package, "--target-dir"])
-        .arg(&target_dir)
-        .args(args)
-        .status()
-        .expect("spawn cargo");
-    assert!(status.success(), "building {package} failed");
+    shared_build::build_once(&target_dir, || {
+        let status = Command::new(env!("CARGO"))
+            .current_dir(workspace_root())
+            .args(["build", "-p", package, "--target-dir"])
+            .arg(&target_dir)
+            .args(args)
+            .status()
+            .expect("spawn cargo");
+        assert!(status.success(), "building {package} failed");
+    });
     target_dir.join(profile)
 }
 

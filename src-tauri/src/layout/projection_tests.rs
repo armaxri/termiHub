@@ -12,16 +12,16 @@
 //! not touch another client's region), rejection paths advance nothing, and a
 //! dead subscriber is reaped.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
 use super::*;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
+    SnapshotFrame,
 };
+use crate::test_support::RecordingSink;
 use termihub_core::layout::panel_tree::{
     Direction, DropEdge, LeafPanel, PanelNode, Position, SplitContainer, Tab,
 };
@@ -275,44 +275,6 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
     registry
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/tunnel test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
 struct ClientCache {
     version: u64,
@@ -353,8 +315,8 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot_full("A"));
 
-    let snap_a = projector.subscribe(&region, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(&region, "sub-b", "A", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(&region, "sub-a", "A", Arc::new(RecordingSink::new()));
+    let snap_b = projector.subscribe(&region, "sub-b", "A", Arc::new(RecordingSink::new()));
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -376,8 +338,8 @@ fn split_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub-a", "A", sink_a.clone());
     projector.subscribe(&region, "sub-b", "A", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -473,7 +435,7 @@ fn move_and_close_intents_advance_the_region_monotonically() {
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -516,7 +478,7 @@ fn replace_seeds_a_tree_then_a_structural_intent_round_trips() {
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -580,7 +542,7 @@ fn the_step2b_intents_round_trip_and_converge_on_authority() {
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -644,7 +606,7 @@ fn a_bad_reorder_index_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     // b holds a single tab → index 5 is out of range.
@@ -671,8 +633,8 @@ fn intents_are_client_scoped_across_regions() {
     projector.register_region(&layout_region("B"), store.snapshot_full("B"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     projector.subscribe(&layout_region("A"), "sa", "A", sink_a.clone());
     projector.subscribe(&layout_region("B"), "sb", "B", sink_b.clone());
 
@@ -696,7 +658,7 @@ fn a_rejected_intent_advances_nothing() {
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     // Unknown tab → rejected, no diff, no version bump.
@@ -719,11 +681,11 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "live", "A", live.clone());
     projector.subscribe(&region, "dead", "A", dead.clone());
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
 
     dispatcher.dispatch(intent(
         "layout.split",
@@ -739,12 +701,12 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
 
 /// Wire a projector + dispatcher over `store` for client `A`, returning the
 /// dispatcher, the region id, a subscribed sink, and the seeded client cache.
-fn harness_for(store: Arc<LayoutStore>) -> (Dispatcher, String, Arc<VecSink>, ClientCache) {
+fn harness_for(store: Arc<LayoutStore>) -> (Dispatcher, String, Arc<RecordingSink>, ClientCache) {
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let cache = ClientCache::from_snapshot(&snap);
     (dispatcher, region, sink, cache)
@@ -816,7 +778,7 @@ fn rename_group_route_moves_the_full_view_and_updates_authority() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -904,7 +866,7 @@ fn close_group_route_rejects_the_last_group() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     let group_id = store.snapshot_full("A")["activeGroupId"]
@@ -962,7 +924,7 @@ fn set_active_tab_route_rejects_an_unknown_tab() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent(
