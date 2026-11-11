@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from termihub_harness import app_leaks, hang_guard, skip_guard, timing
+from termihub_harness import app_leaks, hang_guard, skip_guard, timing, tool_preflight
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     record_failed_attempt,
@@ -165,6 +165,60 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason=reason))
 
 
+# ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
+# One missing runner tool (openbox, xdotool, socat, docker, …) used to error in
+# every test that needed it, each retried by the rerun policy. After collection
+# the tools the *selected* tests declare are checked once; on a lane a missing
+# one stops the session with one message (exit tool_preflight.EXIT_CODE). xdist
+# workers cannot ``pytest.exit`` (the controller crashes), so a worker empties
+# its collection and hands the message to the controller, which exits.
+# See termihub_harness/tool_preflight.py.
+_PREFLIGHT_KEY = "termihub_tool_preflight"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_finish(session):
+    config = session.config
+    if config.option.collectonly or not session.items:
+        return
+    outcome = tool_preflight.check_session(session.items, markexpr=config.option.markexpr or "")
+    if outcome is None:
+        return
+    report = {
+        "lines": outcome.summary_lines(),
+        "stop": outcome.stops_session,
+        "quiet": not outcome.needed,
+    }
+    config._termihub_preflight = report
+    if not outcome.stops_session:
+        if hasattr(config, "workeroutput"):
+            config.workeroutput[_PREFLIGHT_KEY] = report
+        return
+    if hasattr(config, "workeroutput"):
+        config.workeroutput[_PREFLIGHT_KEY] = report
+        session.items[:] = []
+        return
+    pytest.exit(outcome.message, returncode=tool_preflight.EXIT_CODE)
+
+
+def _preflight_from_worker(config, node):
+    report = getattr(node, "workeroutput", {}).get(_PREFLIGHT_KEY)
+    if report is None or getattr(config, "_termihub_preflight", None) is not None:
+        return
+    config._termihub_preflight = report
+    if report["stop"]:
+        pytest.exit("\n".join(report["lines"]), returncode=tool_preflight.EXIT_CODE)
+
+
+def _report_preflight(terminalreporter, config):
+    report = getattr(config, "_termihub_preflight", None)
+    if report is None or report["stop"] or report["quiet"]:
+        return  # a stop already printed its message as the exit reason
+    terminalreporter.section("termihub tool preflight (#5340)")
+    for line in report["lines"]:
+        terminalreporter.write_line(line)
+
+
 # ── Hang guard (#4017) ───────────────────────────────────────────────────────
 # A blocking call with no timeout froze the macOS lane on 2026-10-06 until the
 # job ceiling cancelled it. On xdist workers each test phase now runs under a
@@ -305,6 +359,8 @@ def _enforce_skip_guard(session):
     lane = skip_guard.lane_from_env()
     if lane is None or hasattr(config, "workerinput"):
         return
+    if (getattr(config, "_termihub_preflight", None) or {}).get("stop"):
+        return  # the preflight already failed the lane, before any test ran
     recorder = _skip_recorder(config)
     verdict = skip_guard.evaluate(
         lane,
@@ -353,6 +409,7 @@ def pytest_testnodedown(node, error):
     if samples:
         timing.merge(samples)
     _LEAKS.extend(output.get(_LEAKS_KEY) or [])
+    _preflight_from_worker(_SESSION_CONFIG["config"], node)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
@@ -363,6 +420,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """
     if hasattr(config, "workerinput"):
         return
+    _report_preflight(terminalreporter, config)
     _report_skips(terminalreporter, config)
     _report_leaks(terminalreporter)
     if not timing.enabled():
@@ -477,6 +535,7 @@ def _ensure_ssh_services(services_and_ports):
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_fixtures():
     """Password- and key-auth SSH containers (ports 2201 / 2203)."""
     return _ensure_ssh_services(
@@ -485,6 +544,7 @@ def ssh_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_password_fixtures():
     """Password-auth SSH container only (port 2201).
 
@@ -496,6 +556,7 @@ def ssh_password_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_x11_fixtures():
     """X11-forwarding SSH container (port 2208).
 
@@ -509,12 +570,14 @@ def ssh_x11_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_banner_fixtures():
     """Pre-auth-banner / MOTD SSH container (port 2206)."""
     return _ensure_ssh_services([(SSH_BANNER_SERVICE, SSH_BANNER_PORT)])
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_bastion_fixtures():
     """Jump-host bastion (port 2204) plus its internal target (no host port).
 
@@ -535,12 +598,14 @@ def ssh_bastion_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_tunnel_fixtures():
     """Tunnel-target SSH container with internal HTTP (port 2207)."""
     return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_mfa_fixtures():
     """Two-factor SSH container (port 2216) plus the key-auth ``ssh-keys`` (2203).
 
@@ -555,6 +620,7 @@ def ssh_mfa_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def ssh_permission_fixtures():
     """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
     password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
@@ -569,6 +635,7 @@ def ssh_permission_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def telnet_fixtures():
     """Telnet container (in.telnetd via xinetd, published on port 2301)."""
     return _ensure_services(
@@ -595,12 +662,14 @@ def _ensure_vnc_service(service, port):
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def vnc_fixtures():
     """Classic-VncAuth VNC server (x11vnc + Xvfb, profile ``vnc``, port 2501)."""
     return _ensure_vnc_service(VNC_SERVICE, VNC_PORT)
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def vnc_jpeg_fixtures():
     """Tight-JPEG VNC server (TigerVNC Xvnc, profile ``vnc``, port 2504, #4821).
 
@@ -611,6 +680,7 @@ def vnc_jpeg_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def vnc_vencrypt_fixtures():
     """VeNCrypt X509 VNC server (TigerVNC Xvnc, profile ``vnc``, port 2502).
 
@@ -621,6 +691,7 @@ def vnc_vencrypt_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def rdp_fixtures():
     """xrdp (TLS, port 2601) + FreeRDP shadow (NLA, port 2602), profile ``rdp``.
 
@@ -666,6 +737,7 @@ def rdp_fixtures():
 
 
 @pytest.fixture
+@tool_preflight.fixture_needs("socat")
 def serial_echo_pair():
     """A host ``socat`` PTY pair with an echo loop on one end (#3682).
 
@@ -687,6 +759,7 @@ def serial_echo_pair():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def traceroute_fixtures():
     """Two routers + a target (compose profile ``traceroute``, #4964).
 
@@ -703,6 +776,7 @@ def traceroute_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def remote_agent_fixtures():
     """Deployed-agent SSH container (compose profile ``agent``, port 2211).
 
@@ -726,6 +800,7 @@ def remote_agent_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def remote_agent_pending_fixtures():
     """Armed deployed-agent container (compose profile ``agent``, port 2214).
 
@@ -751,6 +826,7 @@ def remote_agent_pending_fixtures():
 
 
 @pytest.fixture
+@tool_preflight.fixture_needs("docker")
 def remote_agent_update_swap_fixtures():
     """Armed agent container that can REALLY apply its staged update (port 2218).
 
@@ -782,6 +858,7 @@ def remote_agent_update_swap_fixtures():
 
 
 @pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
 def remote_agent_kbdint_fixtures():
     """Deployed-agent container behind a keyboard-interactive-only sshd (port 2217).
 

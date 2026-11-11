@@ -155,6 +155,7 @@ class TestThemeGrades(
         assert is_light(parse_color(paint["containerBackground"])), paint
 
     # ── MT-UI-05 ─────────────────────────────────────────────────────────────
+    @pytest.mark.requires_tools("xsettingsd", platforms=("linux",))
     def test_os_theme_toggle_switches_app_live(self):
         """MT-UI-05: with the System theme, an OS appearance flip re-themes live."""
         try:

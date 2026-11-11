@@ -1619,11 +1619,13 @@ pub(crate) fn finalize<R: tauri::Runtime>(
         // instead of polling on past shutdown.
         let tasks = app.state::<app_tasks::AppTasks>();
         let cancel = tasks.cancellation_token();
+        // Capture the baseline now, not inside the task (#5353): the task
+        // may first run only after another instance has already written the
+        // file, and a baseline read then would swallow that change.
+        let mut last_mtime: Option<std::time::SystemTime> = std::fs::metadata(&connections_file)
+            .ok()
+            .and_then(|m| m.modified().ok());
         tasks.spawn(async move {
-            use std::time::SystemTime;
-            let mut last_mtime: Option<SystemTime> = std::fs::metadata(&connections_file)
-                .ok()
-                .and_then(|m| m.modified().ok());
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
