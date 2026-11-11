@@ -24,6 +24,7 @@ import { RemoteDesktopDropOverlay } from "./RemoteDesktopDropOverlay";
 import { RemoteDesktopFiles } from "./RemoteDesktopFiles";
 import { dropSubject, unavailableCopy } from "./fileTransfer";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
+import { useRemoteDesktopFailureActions } from "./useRemoteDesktopFailureActions";
 import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
 import { monitorLabel, viewportsFor } from "./monitorLayout";
@@ -121,6 +122,11 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const [viewportIndex, setViewportIndex] = useState<number | null>(null);
 
   const session = useRemoteDesktopSession(tabId);
+  const failureActions = useRemoteDesktopFailureActions(
+    tabId,
+    session.errorKind,
+    session.reconnect
+  );
   // A fixed-resolution session (PROD-026) only toggles Fit ↔ 1:1: it scales
   // locally and never asks the remote to resize.
   const scaleCycle = scaleModesFor(session.fixedResolution);
@@ -437,6 +443,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onCancel={session.cancelReconnect}
           onCancelConnect={session.cancelConnect}
           onReconnect={session.reconnect}
+          errorKind={session.errorKind}
+          aborted={session.aborted}
+          {...failureActions}
           isActive={isVisible}
         />
       )}

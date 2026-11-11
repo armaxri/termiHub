@@ -64,6 +64,8 @@ function fakeSession(files: RemoteClipboardFile[], bound: number): RemoteDesktop
     state: "active",
     reconnectAttempt: 0,
     message: null,
+    errorKind: "other",
+    aborted: false,
     remoteClipboard: null,
     certPrompt: null,
     respondCert: vi.fn(),

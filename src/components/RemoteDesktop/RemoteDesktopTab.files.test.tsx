@@ -80,6 +80,8 @@ function fakeSession(state: GraphicalSessionState, viewOnly = false): RemoteDesk
     state,
     reconnectAttempt: 0,
     message: null,
+    errorKind: "other",
+    aborted: false,
     remoteClipboard: null,
     certPrompt: null,
     respondCert: vi.fn(),

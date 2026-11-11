@@ -2,7 +2,7 @@
  * Screen-reader announcement and focus handling of the remote-desktop resting
  * (non-busy) overlay states (#4514, follow-up to #4331): failures are announced
  * assertively, intentional closes politely, each exactly once with the backend
- * message; Reconnect takes focus only in the active tab; and axe passes.
+ * message; the primary action takes focus only in the active tab; and axe passes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -36,6 +36,7 @@ function render(state: GraphicalSessionState, message: string | null, isActive =
         onCancel={vi.fn()}
         onCancelConnect={vi.fn()}
         onReconnect={vi.fn()}
+        onCloseTab={vi.fn()}
         isActive={isActive}
       />
     );
@@ -50,13 +51,13 @@ function liveRegion(): HTMLElement {
   return regions[0];
 }
 
-function reconnectButton(): HTMLElement | null {
-  return container.querySelector('[data-testid="remote-desktop-reconnect"]');
+function retryButton(): HTMLElement | null {
+  return container.querySelector('[data-testid="remote-desktop-retry"]');
 }
 
 describe("RemoteDesktopOverlay resting-state announcement (#4514)", () => {
   it.each([
-    ["connectFailed", "Could not connect. Connection refused"],
+    ["connectFailed", "Connection failed. rd-host: Connection refused"],
     ["disconnected", "Connection lost. Connection refused"],
   ] as const)("announces %s assertively with its message", (state, spoken) => {
     render(state, "Connection refused");
@@ -65,19 +66,17 @@ describe("RemoteDesktopOverlay resting-state announcement (#4514)", () => {
     expect(region.textContent).toBe(spoken);
   });
 
-  it("announces an auth failure assertively with the credentials hint", () => {
+  it("announces an auth failure assertively with the backend message (#5377)", () => {
     render("authFailed", "Invalid password");
     const region = liveRegion();
     expect(region.getAttribute("role")).toBe("alert");
-    expect(region.textContent).toBe(
-      "Authentication failed. Invalid password Check the credentials and try again."
-    );
+    expect(region.textContent).toBe("Connection failed. rd-host: Invalid password");
     const body = container.querySelector(".ui-content-overlay") as HTMLElement;
     const description = (body.getAttribute("aria-describedby") ?? "")
       .split(" ")
       .map((id) => document.getElementById(id)?.textContent ?? "")
       .join(" ");
-    expect(description).toBe("Invalid password Check the credentials and try again.");
+    expect(description).toContain("Invalid password");
   });
 
   it.each([
@@ -92,14 +91,14 @@ describe("RemoteDesktopOverlay resting-state announcement (#4514)", () => {
     expect(body.getAttribute("aria-describedby")).toBeNull();
   });
 
-  it("focuses Reconnect in the active tab only", () => {
+  it("focuses Retry in the active tab only", () => {
     render("connectFailed", "Connection refused");
-    expect(document.activeElement).toBe(reconnectButton());
+    expect(document.activeElement).toBe(retryButton());
     act(() => root.unmount());
     root = createRoot(container);
     (document.activeElement as HTMLElement | null)?.blur();
     render("connectFailed", "Connection refused", false);
-    expect(reconnectButton()).not.toBeNull();
+    expect(retryButton()).not.toBeNull();
     expect(document.activeElement).toBe(document.body);
   });
 
