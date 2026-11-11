@@ -1455,12 +1455,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // (#4510). Only the user's explicit verdict in the dialog answers it; the
   // backend treats closing it, a cancel, or its timeout as a reject.
   const [testCertPrompt, setTestCertPrompt] = useState<RemoteDesktopCertPromptPayload | null>(null);
+  // How the last finished test ended, exposed on the Test button as
+  // `data-test-outcome` (#5175): the toasts carry no stable hook, so this is
+  // what the system harness reads. Cleared while a new test runs.
+  const [testOutcome, setTestOutcome] = useState<"success" | "failed" | "canceled" | null>(null);
 
   const handleTest = useCallback(async () => {
     if (!canSave) {
       focusFirstInvalidField();
       return;
     }
+    setTestOutcome(null);
     // Build the connect config from the live form WITHOUT persisting it — the
     // same routing Save & Connect uses (agent-definition → remote-session; a
     // direct connection → its type + config), minus any save.
@@ -1544,10 +1549,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     });
     try {
       await testTerminal(config, connectId, { reviewCert: unlistenCertPrompt !== null });
+      setTestOutcome("success");
       toast.success("Connection successful", {
         description: `Reached ${name.trim() || "the target"} — nothing was saved.`,
       });
     } catch (err) {
+      setTestOutcome(testCanceledRef.current ? "canceled" : "failed");
       if (testCanceledRef.current) {
         toast.info("Connection test canceled.");
       } else if (isSecondFactorFailure(err)) {
@@ -2120,6 +2127,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 aria-disabled={!canSave}
                 data-invalid={!canSave || undefined}
                 pendingLabel="Testing…"
+                data-test-outcome={testOutcome ?? undefined}
                 data-testid="connection-editor-test"
               >
                 Test
