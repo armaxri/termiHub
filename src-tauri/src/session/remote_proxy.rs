@@ -1635,7 +1635,12 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         }
 
         // Send subscribe request to agent at the currently-configured cadence
-        // (#1233); the frontend may later change it via `set_interval`.
+        // (#1233); the frontend may later change it via `set_interval`. The
+        // gate supersedes any stop still owed for this agent host and keeps a
+        // late retry of it from racing this subscribe (#5301).
+        let _gate =
+            super::agent_monitor_stops::begin_subscribe(&self.agent_id, &self.monitoring_host)
+                .await;
         self.rpc(
             termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
             MonitoringSubscribeParams {
@@ -1682,19 +1687,32 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             // Never subscribed (#3871): nothing to stop.
             return Ok(());
         }
-        // Unregister monitoring channel before telling the agent to stop.
+        // Unregister monitoring channel before telling the agent to stop. This
+        // closes the status-derivation driver's feed, so the desktop half of
+        // the monitor is gone whatever the agent answers.
         let _ = self
             .agent_manager
             .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
 
-        self.rpc(
-            termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
-            MonitoringUnsubscribeParams {
-                host: self.monitoring_host.clone(),
-            },
-        )
-        .await?;
-        Ok(())
+        let result = self
+            .rpc(
+                termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
+                MonitoringUnsubscribeParams {
+                    host: self.monitoring_host.clone(),
+                },
+            )
+            .await;
+        if result.is_err() {
+            // The agent did not confirm the stop, so its collect loop may still
+            // run — a TCP-listen agent keeps it across a client disconnect.
+            // Keep retrying in the background until it does (#5301).
+            super::agent_monitor_stops::defer_stop(
+                &self.agent_id,
+                &self.monitoring_host,
+                self.agent_manager.clone(),
+            );
+        }
+        result.map(|_| ())
     }
 
     async fn set_interval(&self, interval: std::time::Duration) {

@@ -303,6 +303,16 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
     }
 
     /// Stop session-based monitoring: abort the push task and unsubscribe.
+    ///
+    /// The teardown always completes, whatever fails (#5301): the push task is
+    /// aborted first and unconditionally, and the provider is always
+    /// unsubscribed — which tears down its local collect loop, or, for an
+    /// agent-mediated monitor, its output route and status driver. Only the
+    /// agent's own collect loop depends on the agent answering; when it does
+    /// not, the proxy keeps retrying the stop in the background (see
+    /// [`agent_monitor_stops`](super::agent_monitor_stops)). The unsubscribe
+    /// error is still returned, so the caller can report it — but nothing is
+    /// left running untracked once the monitor leaves the region.
     pub(super) async fn stop_session_monitoring(
         &self,
         session_id: &str,
@@ -313,22 +323,25 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
 
         // An agent-hosted monitor (#2593) is driven by a standalone override
         // proxy, not the session's connection — unsubscribe and drop it here.
-        if let Some(proxy) = self.monitoring_overrides.lock().await.remove(session_id) {
-            if let Err(e) = proxy.unsubscribe().await {
-                warn!(session_id, error = %e, "Agent monitor unsubscribe error");
-            }
+        let override_proxy = self.monitoring_overrides.lock().await.remove(session_id);
+        let provider = match override_proxy {
+            Some(proxy) => Some(proxy),
+            // Fetch the provider handle, then unsubscribe with the `sessions`
+            // lock released — an agent-hosted monitor's unsubscribe is a
+            // network RPC (CONC-007). A missing session / provider is already
+            // gone.
+            None => self.optional_session_provider(session_id).await,
+        };
+        let Some(provider) = provider else {
             return Ok(());
-        }
-
-        // Fetch the provider handle, then unsubscribe with the `sessions` lock
-        // released — an agent-hosted monitor's unsubscribe is a network RPC
-        // (CONC-007). Best-effort: a missing session / provider is already gone.
-        if let Some(provider) = self.optional_session_provider(session_id).await {
-            if let Err(e) = provider.unsubscribe().await {
-                warn!(session_id, error = %e, "Session monitoring unsubscribe error");
-            }
-        }
-        Ok(())
+        };
+        provider.unsubscribe().await.map_err(|e| {
+            warn!(session_id, error = %e, "Session monitoring unsubscribe error");
+            TerminalError::RemoteError(format!(
+                "monitoring stopped here, but the remote side did not confirm the stop \
+                 ({e}); retrying it in the background"
+            ))
+        })
     }
 
     /// Pause or resume a session's monitoring loop (#1233).
