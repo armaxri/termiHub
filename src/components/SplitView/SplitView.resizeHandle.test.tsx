@@ -23,6 +23,14 @@ vi.mock("@/services/api", async (importOriginal) => ({
   listSessionOwners: vi.fn(() => Promise.resolve({})),
 }));
 
+// Stub the lazily loaded Settings surface: this test checks the split handle, not
+// the panel. The real `lazy(() => import(...))` can still be loading when the file
+// ends, and V8 then reports a SettingsPanel.tsx script vitest never recorded as
+// executed. Merged last, that entry shifts SettingsPanel's coverage map (#5358).
+vi.mock("@/components/Settings/SettingsPanel", () => ({
+  SettingsPanel: () => <div data-testid="settings-panel-stub" />,
+}));
+
 /** A leaf holding one Settings tab — an all-empty layout renders the empty-window
  * state instead of the split, and Settings needs no session. */
 function leaf(id: string): LeafPanel {

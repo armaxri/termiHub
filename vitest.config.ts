@@ -86,9 +86,11 @@ export default defineConfig({
       //   directory row — these directories are flat — and agree with the CI lcov.)
       //   src/components/Sidebar/** 86.93 / 79.98 / 86.43 / 88.27 (2026-11-11, #5348;
       //     floored ~3 points below)
-      //   src/components/FileEditor/** 80.27 / 65.20 / 80.64 / 83.82 (2026-11-11, #5348;
-      //     the lower of macOS and ubuntu CI per metric. FileEditor.tsx branches differ by
-      //     platform: 78.7 % on macOS, 64.0 % on ubuntu; floored ~3 points below)
+      //   src/components/FileEditor/** 80.27 / 78.33 / 80.64 / 85.22 (2026-11-11, #5358;
+      //     same on macOS and Linux; floored ~3 points below). #5348 measured 65.20 %
+      //     branches on ubuntu: a test left SplitView's lazy FileEditor import in flight,
+      //     and the unrecorded script shifted the merged coverage map. Fixed by stubbing
+      //     the lazy surface in that test.
       //   src/components/WorkflowSidebar/** 81.71 / 71.74 / 81.20 / 83.41 (2026-11-11,
       //     #5348; floored ~3 points below)
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
@@ -143,9 +145,9 @@ export default defineConfig({
         },
         "src/components/FileEditor/**": {
           statements: 77,
-          branches: 62,
+          branches: 75,
           functions: 77.5,
-          lines: 80.5,
+          lines: 82,
         },
         "src/components/WorkflowSidebar/**": {
           statements: 78.5,
