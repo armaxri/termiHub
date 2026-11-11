@@ -294,6 +294,11 @@ windows-sys = { version = "0.59", features = [
     # The TLS root snapshot of a sandboxed plugin (#4811): the host reads the
     # system `ROOT` / `AuthRoot` / `Disallowed` certificate stores.
     "Win32_Security_Cryptography",
+    # The USB identity of a COM port for serial auto-reconnect (#5394): find the
+    # port's devnode (SetupAPI + its `PortName` registry value) and walk the
+    # device tree (CfgMgr) up to the USB device.
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_System_Registry",
 ] }
 # Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
 # Git Bash is discoverable regardless of install location — see

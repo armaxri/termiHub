@@ -24,8 +24,10 @@
 //! it) the loop reopens the configured name once it exists again, and nothing
 //! else. It never opens a port the user did not configure.
 //!
-//! The identity is read from sysfs on Linux. macOS and Windows report none yet,
-//! so they rely on the configured name alone.
+//! The identity is read from sysfs on Linux, from the IOKit registry on macOS
+//! (the USB ancestor of the port's `IOSerialBSDClient`) and from the device
+//! tree on Windows (the USB ancestor of the COM port's device node, #5394).
+//! Other platforms report none and rely on the configured name alone.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +50,20 @@ impl SerialDeviceIdentity {
         self.serial_number
             .as_deref()
             .is_some_and(|s| !s.trim().is_empty())
+    }
+
+    /// Build an identity from numeric USB ids, in the canonical form the
+    /// resolver compares: ids as four lowercase hex digits, an empty serial
+    /// number as none. The serial number is case-sensitive and kept as reported.
+    pub fn from_usb_ids(vendor_id: u16, product_id: u16, serial_number: Option<&str>) -> Self {
+        Self {
+            vendor_id: format!("{vendor_id:04x}"),
+            product_id: format!("{product_id:04x}"),
+            serial_number: serial_number
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        }
     }
 
     /// A short human-readable form, e.g. `USB 0403:6001 (serial A10K3Z)`.
@@ -164,7 +180,7 @@ pub fn resolve_reconnect_port(
 }
 
 /// The production [`SerialPortProbe`]: the real port list, and the USB identity
-/// from sysfs on Linux (none elsewhere yet).
+/// from sysfs on Linux, IOKit on macOS and the device tree on Windows.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemSerialPortProbe;
 
@@ -198,11 +214,70 @@ fn platform_usb_identity(port: &str) -> Option<SerialDeviceIdentity> {
     usb_identity_from_sysfs(std::path::Path::new("/sys/class/tty"), tty)
 }
 
-/// No USB identity is read on this platform yet; the loop matches the port
-/// name only.
-#[cfg(not(target_os = "linux"))]
+/// The USB identity of `port` (`/dev/cu.*` or `/dev/tty.*`) from the IOKit
+/// registry.
+#[cfg(target_os = "macos")]
+fn platform_usb_identity(port: &str) -> Option<SerialDeviceIdentity> {
+    macos_usb::usb_identity(port)
+}
+
+/// The USB identity of `port` (a COM name) from the Windows device tree.
+#[cfg(windows)]
+fn platform_usb_identity(port: &str) -> Option<SerialDeviceIdentity> {
+    windows_usb::usb_identity(port)
+}
+
+/// No USB identity is read on this platform; the loop matches the port name
+/// only.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn platform_usb_identity(_port: &str) -> Option<SerialDeviceIdentity> {
     None
+}
+
+#[cfg(target_os = "macos")]
+#[path = "serial_usb_identity_macos.rs"]
+mod macos_usb;
+
+#[cfg(windows)]
+#[path = "serial_usb_identity_windows.rs"]
+mod windows_usb;
+
+/// Parse the USB identity out of a Windows device instance id such as
+/// `USB\VID_0403&PID_6001\A10K3Z`.
+///
+/// Returns `None` for an id that is not a whole USB device: another bus
+/// (`FTDIBUS\…`, `ACPI\…`), a hub, or one interface of a composite device
+/// (`…&MI_00\…`, whose parent is the device). The last segment is the USB
+/// serial number unless Windows generated it because the device reports none;
+/// a generated instance id contains `&` and yields no serial number.
+#[cfg(any(windows, test))]
+pub(crate) fn usb_identity_from_windows_device_id(id: &str) -> Option<SerialDeviceIdentity> {
+    let mut parts = id.split('\\');
+    let (bus, hardware, instance) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() || !bus.eq_ignore_ascii_case("USB") {
+        return None;
+    }
+    let mut vendor_id = None;
+    let mut product_id = None;
+    for field in hardware.split('&') {
+        let (key, value) = field.split_once('_')?;
+        let parsed = (value.len() == 4)
+            .then(|| u16::from_str_radix(value, 16).ok())
+            .flatten();
+        match key.to_ascii_uppercase().as_str() {
+            "VID" => vendor_id = Some(parsed?),
+            "PID" => product_id = Some(parsed?),
+            // An interface of a composite device, or a revision / other field
+            // this parser does not know: not a whole device.
+            _ => return None,
+        }
+    }
+    let serial = (!instance.contains('&')).then_some(instance);
+    Some(SerialDeviceIdentity::from_usb_ids(
+        vendor_id?,
+        product_id?,
+        serial,
+    ))
 }
 
 /// Read the USB identity of tty `tty` from a sysfs `class/tty` directory: walk
