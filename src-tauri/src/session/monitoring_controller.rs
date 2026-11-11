@@ -665,3 +665,7 @@ mod tests {
 #[cfg(test)]
 #[path = "monitoring_controller_close_tests.rs"]
 mod close_tests;
+
+#[cfg(test)]
+#[path = "monitoring_controller_open_tests.rs"]
+mod open_tests;
