@@ -29,6 +29,9 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    RdpTestServer,
+    RdpTestServerUnavailable,
+    find_rdp_test_server,
     RDP_HELPER_ENV,
     RDP_HOST,
     RDP_NLA_PORT,
@@ -775,6 +778,32 @@ def vnc_vencrypt_fixtures():
     return _ensure_vnc_service(VNC_VENCRYPT_SERVICE, VNC_VENCRYPT_PORT)
 
 
+def _rdp_build_missing(what: str) -> None:
+    """Skip (or, on the Linux nightly, fail) for an RDP build product that is missing."""
+    message = (
+        f"RDP sidecar not built: {what}; run scripts/internal/build-system-test-app.sh "
+        f"(or ./scripts/build-rdp-sidecar.sh) or set {RDP_HELPER_ENV}"
+    )
+    # The Linux nightly builds the sidecar (build-system-test-app.sh), so a
+    # missing one there is a build gap, not an environment gap (#4315).
+    # Keyed on the lane's TERMIHUB_REQUIRE_FIXTURES opt-in rather than on
+    # CI alone: the scheduled nightly runs main's copy of the workflow,
+    # which lags develop's, and must not red before its copy installs
+    # libasound2-dev. The macOS and Windows lanes allowlist no "RDP sidecar
+    # not built" skip, so the skip guard fails them instead (#5175).
+    if sys.platform.startswith("linux") and skip_guard.require_fixtures():
+        pytest.fail(f"{message} ({skip_guard.REQUIRE_FIXTURES_ENV}=1, #4315)")
+    pytest.skip(message)
+
+
+def _use_rdp_helper() -> None:
+    """Point every app the harness launches from now on at the built sidecar."""
+    helper = find_rdp_helper()
+    if helper is None:
+        _rdp_build_missing("no termihub-rdp-helper")
+    os.environ[RDP_HELPER_ENV] = str(helper)
+
+
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def rdp_fixtures():
@@ -788,22 +817,7 @@ def rdp_fixtures():
     lane does, via ``scripts/internal/build-system-test-app.sh``). Readiness is
     an answered X.224 Connection Request on each port, not a bare TCP connect.
     """
-    helper = find_rdp_helper()
-    if helper is None:
-        message = (
-            "RDP sidecar not built: run ./scripts/build-rdp-sidecar.sh "
-            f"or set {RDP_HELPER_ENV}"
-        )
-        # The Linux nightly builds the sidecar (build-system-test-app.sh), so a
-        # missing one there is a build gap, not an environment gap (#4315).
-        # Keyed on the lane's TERMIHUB_REQUIRE_FIXTURES opt-in rather than on
-        # CI alone: the scheduled nightly runs main's copy of the workflow,
-        # which lags develop's, and must not red before its copy installs
-        # libasound2-dev.
-        if sys.platform.startswith("linux") and skip_guard.require_fixtures():
-            pytest.fail(f"{message} ({skip_guard.REQUIRE_FIXTURES_ENV}=1, #4315)")
-        pytest.skip(message)
-    os.environ[RDP_HELPER_ENV] = str(helper)
+    _use_rdp_helper()
     fixture = ComposeFixture()
     try:
         # build=True: the session's input probe lives in the image (startwm.sh),
@@ -819,6 +833,30 @@ def rdp_fixtures():
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"RDP container fixture unavailable: {exc}")
     return fixture
+
+
+@pytest.fixture(scope="session")
+def rdp_test_server():
+    """The scripted RDP server (``rdp_test_server`` example, #5175), on every OS.
+
+    No container: the sidecar's own scripted server (TLS-only, a throwaway
+    self-signed certificate, an activated session held until the client hangs
+    up) on a loopback port, so the RDP sidecar is graded on macOS and Windows
+    too. Points the app at the built sidecar like :func:`rdp_fixtures`, and
+    skips (fails on the Linux nightly) when either was not built. A built
+    server that does not come up fails.
+    """
+    _use_rdp_helper()
+    binary = find_rdp_test_server()
+    if binary is None:
+        _rdp_build_missing("no rdp_test_server example")
+    server = RdpTestServer.for_binary(binary)
+    try:
+        server.start()
+    except RdpTestServerUnavailable as exc:
+        pytest.fail(f"the RDP test server did not start: {exc}")
+    yield server
+    server.stop()
 
 
 @pytest.fixture
