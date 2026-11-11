@@ -245,4 +245,20 @@ describe("KeyboardSettings — experimental gate (#5365)", () => {
     expect(releaseButton()?.textContent).toBe("Ctrl+Alt");
     expect(releaseOverride()).toBe("Ctrl+Alt");
   });
+
+  it.each([false, true])(
+    "exports the cheat sheet with the current gate (experimental: %s, #5403)",
+    async (experimental) => {
+      const { exportCheatSheet } = await import("@/utils/cheatSheetPdf");
+      vi.mocked(exportCheatSheet).mockClear();
+      seedSettings({ keybindingOverrides: undefined, experimentalFeaturesEnabled: experimental });
+      await renderComponent();
+      act(() => {
+        container
+          .querySelector<HTMLElement>('[data-testid="keyboard-settings-export-pdf"]')
+          ?.click();
+      });
+      expect(exportCheatSheet).toHaveBeenCalledWith("current", { experimental });
+    }
+  );
 });

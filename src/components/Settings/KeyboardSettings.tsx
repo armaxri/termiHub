@@ -375,7 +375,9 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           variant="secondary"
           size="sm"
           icon={<Download size={14} />}
-          onClick={() => void exportCheatSheet(cheatSheetAllPlatforms ? "all" : "current")}
+          onClick={() =>
+            void exportCheatSheet(cheatSheetAllPlatforms ? "all" : "current", { experimental })
+          }
           data-testid="keyboard-settings-export-pdf"
           title="Save a one-page HTML cheat sheet of all shortcuts"
         >
