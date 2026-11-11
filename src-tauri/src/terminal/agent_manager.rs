@@ -3714,8 +3714,9 @@ mod tests;
 mod connect_off_lock_tests;
 #[cfg(test)]
 mod fake_agent_sshd;
-// Virtual backoff clock for the reconnect backoff/park tests (#5339).
-#[cfg(test)]
+// Virtual backoff clock for the reconnect backoff/park tests (#5339); unix-only
+// like the tests that use it.
+#[cfg(all(test, unix))]
 mod virtual_backoff_clock;
 // Output flow control + lossless output delivery for agent sessions (#4416).
 #[cfg(test)]
