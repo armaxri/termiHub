@@ -84,7 +84,11 @@ from termihub_harness import (
     unique_name,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # LocalAgentSshd off Windows; Windows uses the provisioned native fixture (#5340).
+    pytest.mark.requires_tools("sshd"),
+]
 
 # The ``LocalAgentSshd`` fixture only guards that an ``sshd`` *binary* is present
 # (it is on the GitHub-hosted runners) — not that a full app→agent connect +
