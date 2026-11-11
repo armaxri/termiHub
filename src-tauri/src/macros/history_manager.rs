@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::history::{MacroRun, MacroRunHistoryStore};
 use super::history_storage::MacroRunHistoryStorage;
@@ -35,7 +35,7 @@ pub struct MacroRunHistoryManager {
 
 impl MacroRunHistoryManager {
     /// Initialize from disk, with recovery on corruption.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage = MacroRunHistoryStorage::new(app_handle)
             .context("Failed to initialize macro run-history storage")?;
         let result = storage

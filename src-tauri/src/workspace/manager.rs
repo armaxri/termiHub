@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::config::{
     follow_connection_id_changes_in_groups, WorkspaceDefinition, WorkspaceExportData,
@@ -53,7 +53,7 @@ impl WorkspaceManager {
     }
 
     /// Initialize from disk, with recovery on corruption.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage =
             WorkspaceStorage::new(app_handle).context("Failed to initialize workspace storage")?;
         let result = storage
