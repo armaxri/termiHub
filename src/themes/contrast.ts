@@ -14,9 +14,10 @@ export const TEXT_ON_ACCENT_LIGHT = "#ffffff";
 /**
  * Minimum contrast white must keep against the accent before the derived
  * foreground flips to dark. 3:1 is the WCAG 2.2 AA minimum for large text and
- * UI components; it keeps the established white-on-blue look of every
- * built-in theme (whose accents sit between 3:1 and 4.5:1 against white) while
- * catching genuinely light accents such as yellows and pastels.
+ * UI components; it keeps white on the mid-tone accents custom and plugin
+ * themes commonly pick (#4356) while catching genuinely light accents such as
+ * yellows and pastels. The built-in themes go further: their accents are
+ * tuned so white text reaches 4.5:1 (#5164, graded in `contrast.test.ts`).
  */
 const WHITE_ON_ACCENT_MIN_CONTRAST = 3;
 

@@ -480,7 +480,7 @@ export function Tab({
         <ContextMenuTrigger asChild>{tabElement}</ContextMenuTrigger>
         <ContextMenuContent>
           <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
-            <Palette size={14} /> Set Color...
+            <Palette size={14} /> Set Color…
           </MenuItem>
           <MenuSeparator />
           {moveItems}
@@ -574,7 +574,7 @@ export function Tab({
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
-          <Palette size={14} /> Set Color...
+          <Palette size={14} /> Set Color…
         </MenuItem>
         {focusOwningWindowItem}
         <MenuSeparator />

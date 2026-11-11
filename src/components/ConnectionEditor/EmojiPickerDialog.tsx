@@ -78,7 +78,7 @@ export function EmojiPickerDialog({ open, onOpenChange, onEmojiSelect }: EmojiPi
         <div className="emoji-picker__header">
           <EmojiPicker.Search
             className="ui-input emoji-picker__search"
-            placeholder="Search emoji..."
+            placeholder="Search emoji…"
             aria-label="Search emoji"
             autoFocus
             data-testid="emoji-picker-search"

@@ -2,7 +2,12 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { RotateCcw, Download, Upload, FileDown, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
+import {
+  KeyCombo,
+  KeyBinding,
+  KeybindingOverrideEntry,
+  ShortcutCategory,
+} from "@/types/keybindings";
 import {
   getDefaultBindings,
   getEffectiveCombo,
@@ -26,7 +31,18 @@ import {
 } from "./modifierOnlyRecorder";
 import { serializeKeybindings, parseKeybindingEnvelope } from "@/services/keybindingIo";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
-import { Button, Checkbox, Field, Toggle, Tooltip, SearchInput, toast } from "@/components/ui";
+import {
+  Button,
+  Checkbox,
+  ConfirmDialog,
+  Field,
+  Toggle,
+  Tooltip,
+  SearchInput,
+  toast,
+} from "@/components/ui";
+import { showUndoToast } from "@/utils/undoableDelete";
+import { customBindingCount, restoreKeybindings } from "./restoreKeybindings";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import "./KeyboardSettings.css";
@@ -113,10 +129,43 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     forceRender((n) => n + 1);
   }, [settings, updateSettings]);
 
+  // A reset or import replaces every custom binding, so it asks first when there
+  // are any to lose, and offers a 10 s Undo afterwards (#5375).
+  const [pendingReplace, setPendingReplace] = useState<PendingReplace | null>(null);
+
+  /** Replace all overrides with `entries`, then offer an Undo that restores them. */
+  const replaceOverrides = useCallback(
+    (entries: KeybindingOverrideEntry[], message: string) => {
+      const snapshot = getOverrides();
+      if (entries.length === 0) clearOverrides();
+      else setOverrides(entries);
+      persistOverrides();
+      showUndoToast(message, {
+        testId: "keybinding-undo-toast",
+        onUndo: () => {
+          restoreKeybindings(snapshot);
+          forceRender((n) => n + 1);
+          toast.success("Keyboard shortcuts restored");
+        },
+      });
+    },
+    [persistOverrides]
+  );
+
+  /** Run `replace` at once when nothing custom would be lost, else confirm first. */
+  const confirmReplace = useCallback((replace: PendingReplace) => {
+    if (getOverrides().length === 0) replace.apply();
+    else setPendingReplace(replace);
+  }, []);
+
   const handleResetAll = useCallback(() => {
-    clearOverrides();
-    persistOverrides();
-  }, [persistOverrides]);
+    confirmReplace({
+      title: "Reset to safer defaults?",
+      summary: `${customBindingCount(getOverrides().length)} will be replaced with the built-in defaults.`,
+      confirmLabel: "Reset",
+      apply: () => replaceOverrides([], "Keyboard shortcuts reset to safer defaults"),
+    });
+  }, [confirmReplace, replaceOverrides]);
 
   // JSON export/import of the current keybinding overrides (PROD-055), reusing the
   // shared flat-sidebar file dialog flow. A cancelled dialog is a silent no-op.
@@ -136,13 +185,15 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const handleImportJson = useCallback(() => {
     void importKeybindingsFromFile(async (json) => {
       const entries = parseKeybindingEnvelope(json);
-      setOverrides(entries);
-      persistOverrides();
-      toast.success(
-        `Imported ${entries.length} keyboard shortcut${entries.length === 1 ? "" : "s"}`
-      );
+      const imported = `${entries.length} keyboard shortcut${entries.length === 1 ? "" : "s"}`;
+      confirmReplace({
+        title: "Import shortcuts?",
+        summary: `${customBindingCount(getOverrides().length)} will be replaced with the ${imported} from this file.`,
+        confirmLabel: "Import",
+        apply: () => replaceOverrides(entries, `Imported ${imported}`),
+      });
     });
-  }, [importKeybindingsFromFile, persistOverrides]);
+  }, [importKeybindingsFromFile, confirmReplace, replaceOverrides]);
 
   const passthroughEnabled = settings.terminalKeyPassthrough !== false;
   const handleTogglePassthrough = useCallback(() => {
@@ -261,7 +312,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
       <div className="keyboard-settings__search">
         <SearchInput
-          placeholder="Search shortcuts..."
+          placeholder="Search shortcuts…"
           value={query}
           onValueChange={setQuery}
           clearLabel="Clear shortcut search"
@@ -410,8 +461,33 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           Import Shortcuts
         </Button>
       </div>
+      <ConfirmDialog
+        open={pendingReplace !== null}
+        title={pendingReplace?.title ?? ""}
+        variant="danger"
+        message={pendingReplace?.summary ?? ""}
+        confirmLabel={pendingReplace?.confirmLabel ?? "Confirm"}
+        confirmVariant="danger"
+        testIdBase="confirm-keybinding-replace"
+        data-testid="confirm-keybinding-replace-dialog"
+        onConfirm={() => {
+          const replace = pendingReplace;
+          setPendingReplace(null);
+          replace?.apply();
+        }}
+        onCancel={() => setPendingReplace(null)}
+      />
     </div>
   );
+}
+
+/** A reset or import of all keybindings awaiting confirmation (#5375). */
+interface PendingReplace {
+  title: string;
+  /** What changes, e.g. "3 custom bindings will be replaced with …". */
+  summary: string;
+  confirmLabel: string;
+  apply: () => void;
 }
 
 interface KeybindingRowProps {
@@ -670,9 +746,9 @@ function recordingLabel(modifierOnly: boolean, preview: string): string {
   if (modifierOnly) {
     return preview
       ? `${preview} … (release to set)`
-      : "Hold 2+ modifier keys, then release... (Esc cancels)";
+      : "Hold 2+ modifier keys, then release… (Esc cancels)";
   }
   return preview
     ? `${preview} … (press another key to chord)`
-    : "Press a key combination... (Esc cancels, Backspace clears)";
+    : "Press a key combination… (Esc cancels, Backspace clears)";
 }

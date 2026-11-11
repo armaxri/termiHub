@@ -44,7 +44,7 @@ describe("SettingsSearch", () => {
   it("renders the current query as the input value with a placeholder", () => {
     render("theme");
     expect(input().value).toBe("theme");
-    expect(input().placeholder).toBe("Search settings...");
+    expect(input().placeholder).toBe("Search settings…");
   });
 
   it("emits typed text through onQueryChange", () => {
