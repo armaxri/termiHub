@@ -858,6 +858,12 @@ a budget, or both:
 - Guided-manual tests gated off by conftest (`@pytest.mark.manual` plus a
   "guided-manual test" reason) need their entry but do not count against the
   budget (#4921).
+- A fragment with both an entry and a `max_skips` also **caps** its entry: more
+  counted skips matching it on a lane than its `max_skips` fails that lane, even
+  when the lane total has headroom (#5176). The macOS/Windows container-fixture
+  reasons (`5176-*.json`) are capped this way, so a suite that newly skips for
+  "no Linux containers" is caught. To admit one more such skip on purpose,
+  raise that fragment's cap in the same PR and say why.
 
 To admit a new skip, **add a new file** named `<issue>-<slug>.json`. If the
 reason is new, the fragment carries the entry and its `max_skips`. If the skip
@@ -1145,6 +1151,63 @@ sshd** moved to the native fixture. These stay on the Linux Docker lane:
 The portable parts of those (key auth for every key type, exec/stdin, SFTP
 round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
 all three OSes.
+
+### System-test SSH suites on the native sshd (#5176)
+
+The app-driven SSH/SFTP suites in `tests/system/` run on macOS and Windows
+too, against the same fixture. The macOS/Windows integration lane in
+[`system-integration.yml`](../.github/workflows/system-integration.yml) brings it
+up with `--password-login` (and `--jump-host` on macOS) and sets
+`TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
+[`termihub_harness/native_ssh.py`](../tests/system/termihub_harness/native_ssh.py)
+takes over:
+
+- `SSH_PASSWORD_PORT`, `SSH_KEYS_PORT`, `SSH_USERNAME` and `SSH_PASSWORD` point
+  at the native sshd and its dedicated user. The repo's fixture keys are in its
+  `authorized_keys`. The jump-host bastion is the fixture's second sshd, and the
+  target is the first one.
+- `ssh_fixtures`, `ssh_password_fixtures` and `ssh_bastion_fixtures` return the
+  native target instead of starting containers.
+- Only suites marked `@pytest.mark.native_sshd` (optionally
+  `platforms=("darwin",)`) run. Every other test that asks for one of those
+  fixtures is skipped with `SSH suite not ported to the native sshd fixture
+(#5176)`, which has its own skip budget.
+- `test_ssh_tunnels.py` uses the native fixture on Windows as well (it already
+  did on macOS).
+
+**Password login.** An unprivileged sshd cannot check a password. On macOS,
+`--password-login` therefore creates a dedicated local user `termihubssh` with a
+random password and runs sshd as root with PAM (passwordless `sudo`, which the
+hosted runner has). That user's home is a fresh, throwaway home, and `down`
+deletes the user again. The flag refuses to run off CI unless
+`TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1` is set, so a developer machine never
+gets the account by accident. On Windows the fixture's own test user gets
+password auth. The password is exported as `TERMIHUB_NATIVE_SSHD_PASSWORD` and
+masked in the job log.
+
+**Jump host (macOS).** `--jump-host` starts a second sshd on the next free port
+with the same user and keys. `jump-stop` / `jump-start` drop and restore only
+that bastion. The jump-host reconnect suite counts gateway sessions as the
+bastion master's per-connection children.
+
+Which suites run where:
+
+| Suite(s)                                                                                                                                                                                                                             | macOS | Windows                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------- |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py`                              | yes   | yes                                                                                                  |
+| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output, monitoring), SSH connect flash, SFTP VS Code handoff, jump host | yes   | no: they type POSIX shell commands, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+
+**What stays on the Linux lane in `tests/system/`.** These suites still skip on
+macOS and Windows. Each skip reason has a capped fragment in
+`tests/system/skip-allowlist.d/` (`5176-*.json`), so one more suite skipping for
+that reason fails the lane:
+
+| Suite(s)                                                                                                                              | Why                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                     | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
+| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites     | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
+| `test_ssh.py` (server disconnect), `test_transfer_*`, `test_file_browser_drag_sftp_live.py`, `test_session_sftp_no_orphan_on_quit.py` | control or inspect the server through the container (`SshServerControl`, `/proc`), or use GNU `stat`                                                                 |
+| `test_remote_agent*.py`, `test_agent_*_live.py`, `test_file_browser_remote_to_local.py`                                               | deploy a Linux agent baked into the `remote-agent` containers                                                                                                        |
 
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 
