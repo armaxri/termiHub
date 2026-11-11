@@ -125,6 +125,9 @@ class RemoteDesktopUi(HarnessMixin):
     OVERLAY_RECONNECTING = "remote-desktop-overlay-reconnecting"
     OVERLAY_ERROR = "remote-desktop-overlay-error"
     RECONNECT = "remote-desktop-reconnect"
+    # A failed / aborted connect rests on the terminal's failure screen (#5377).
+    RETRY = "remote-desktop-retry"
+    CLOSE_TAB = "remote-desktop-close-tab"
     CERT_PROMPT = "remote-desktop-cert-prompt"
     CERT_ACCEPT_ONCE = "cert-accept-once"
     CERT_REJECT = "cert-reject"

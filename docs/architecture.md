@@ -856,11 +856,12 @@ sequenceDiagram
 ### Auto-Reconnect Setting (PARITY-008)
 
 Every connection type that supports automatically recovering a dropped connection
-exposes it under **one** settings key, `autoReconnect` (label "Auto-Reconnect"), which
-defaults to **on**: an absent key means "on", only an explicit `false` opts out. Today
-that is SSH (backend-driven backoff redrive into the same tab) and the graphical
-backends (VNC/RDP). The key, default and legacy handling live in
-`core/src/connection/auto_reconnect.rs` (mirrored for the frontend in
+exposes it under **one** settings key, `autoReconnect` (label "Auto-Reconnect"). An
+absent key means the **per-type default** (`auto_reconnect_default_for`, #5390): on for
+SSH, serial and the graphical backends (VNC/RDP), off for telnet. An explicit value always
+wins. SSH, serial and telnet terminal tabs use the backend-driven backoff redrive into the
+same tab; the graphical backends run their own loop. The key, defaults and legacy handling
+live in `core/src/connection/auto_reconnect.rs` (mirrored for the frontend in
 `src/utils/autoReconnect.ts`).
 
 SSH previously used `resilientReconnect` (default off). The legacy key is migrated and
@@ -970,8 +971,28 @@ disconnect (a restarting server sends one) and any VNC close stay ordinary drops
 no protocol-level "session ended" signal. A user's Stop moves the machine to `Closed`,
 which is sticky, so no later backend or reconnect event can reopen the tab.
 
-**Telnet and serial** have no automatic reconnect: they do not expose Auto-Reconnect,
-and a dropped tab shows the manual reconnect prompt.
+**Serial and telnet** (#5390) reconnect through the same backend redrive as direct SSH:
+the frontend marks the tab resilient when its Auto-Reconnect is on (serial by default,
+telnet opt-in), the backend retains the request and re-creates the session on each timer
+attempt. Living in the backend redrive, this survived the client reconnect engine's
+removal (#2205). Before each **serial** attempt the redrive asks
+`core::session::serial_reconnect::resolve_reconnect_port` whether the configured device
+is back: it matches the configured port name and, where the platform reports one (Linux
+sysfs), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
+an unidentifiable device or a different device on the name is a failed attempt with a
+reason, so the shared policy backs off and gives up; nothing is opened. A device with a
+serial number is followed to a new name only when exactly one port carries its identity.
+
+```mermaid
+flowchart TD
+    D[serial port drops] --> W[Waiting: countdown strip]
+    W -->|timer| R{resolve_reconnect_port}
+    R -->|configured device back| O[reopen with saved line settings] --> C[Connected]
+    R -->|absent / unverified / different device| F[failed attempt]
+    F -->|attempts left| W
+    F -->|limit reached| G[Reconnect failed]
+    W -->|Cancel| X[Disconnected]
+```
 
 **Agent tabs: no compounding.** An agent-hosted tab has two loops that could look
 nested. A transient break of the agent's SSH transport is owned by the agent's
@@ -1245,12 +1266,12 @@ never build scripts or proc macros; the agent's `cargo test` builds stay dynamic
 About 28 GitHub Actions workflows live in `.github/workflows/`. They form three lanes; the
 authoritative, per-job description is [Contributing → CI lanes](contributing.md#ci-lanes-what-a-green-pr-proves-and-what-it-does-not).
 
-| Lane                    | Trigger                                                                 | Main workflows                                                                                                                                                        |
-| ----------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-PR (lean)**       | PR to `develop` or `main`                                               | `code-quality.yml`, `build.yml`, `agent.yml`, `security-audit.yml`, plugin and vendored-fork checks — jobs gated on the changed areas                                 |
-| **Post-merge (full)**   | Push to `develop` or `main`                                             | `code-quality.yml`, `agent.yml`, `dev-build.yml` and the other push-triggered checks run the full matrix; `coverage.yml` runs on `main`                               |
-| **Nightly / scheduled** | Schedule (crons in `scripts/internal/scheduled-lanes.mjs`) and dispatch | `scheduled-dispatch.yml` fans out `system-integration.yml`, `integration-fixtures.yml`, `windows-ssh-host.yml`, `wsl-live.yml`, `plugin-sandbox-nightly.yml` and more |
-| **Release**             | Tag `v*.*.*` (`release.yml`) and manual RC dispatch                     | `release.yml`, `release-candidate.yml` and the per-platform `release-*-smoke.yml` workflows                                                                           |
+| Lane                    | Trigger                                                                 | Main workflows                                                                                                                                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Per-PR (lean)**       | PR to `develop` or `main`                                               | `code-quality.yml` and `build.yml` (plus the small path-filtered `security-audit.yml`, plugin and vendored-fork checks) — jobs gated on the changed areas (#5461)                                                                                      |
+| **Post-merge (full)**   | Push to `develop` or `main`                                             | `code-quality.yml`, `agent.yml`, `dev-build.yml` and the other push-triggered checks run the full matrix; path-filtered `develop` pushes also run `integration-fixtures.yml`, `wsl-live.yml` and `windows-ssh-host.yml`; `coverage.yml` runs on `main` |
+| **Nightly / scheduled** | Schedule (crons in `scripts/internal/scheduled-lanes.mjs`) and dispatch | `scheduled-dispatch.yml` fans out `system-integration.yml`, `integration-fixtures.yml`, `windows-ssh-host.yml`, `wsl-live.yml`, `plugin-sandbox-nightly.yml` and more                                                                                  |
+| **Release**             | Tag `v*.*.*` (`release.yml`) and manual RC dispatch                     | `release.yml`, `release-candidate.yml` and the per-platform `release-*-smoke.yml` workflows                                                                                                                                                            |
 
 See [Releasing](contributing.md#release-process) for the full release process.
 

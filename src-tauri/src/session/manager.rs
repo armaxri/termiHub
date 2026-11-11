@@ -1377,6 +1377,14 @@ impl SessionManager {
                         // the session id (#4301).
                         saved_connection_id: None,
                         resilient: true,
+                        // The device a direct serial tab opened (#5390), so its
+                        // reconnect never opens another adapter on the same name.
+                        serial_identity: super::serial_reconnect::opened_serial_identity(
+                            type_id,
+                            agent_id,
+                            &settings,
+                            &termihub_core::session::serial_reconnect::SystemSerialPortProbe,
+                        ),
                     },
                 );
                 // A resilient AGENT tab also opts its agent's SSH transport

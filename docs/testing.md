@@ -1074,8 +1074,8 @@ restarted and the file is byte-exact. Without `docker exec` access those tests
 print `SKIPPED:` (or fail under `TERMIHUB_REQUIRE_DOCKER=1`).
 
 The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
-lane (nightly, on `tests/docker`/`core/tests`/backend and core session-plumbing
-changes, and via the release candidate run on every release commit — see
+lane (nightly, post-merge on `develop` pushes touching `tests/docker`/`core/tests`/backend
+and core session-plumbing paths — never on a PR since #5461 — and via the release candidate run on every release commit — see
 [Release integration gate](contributing.md#release-integration-gate)) brings the
 fixtures up and runs these suites with `TERMIHUB_REQUIRE_DOCKER=1` (#2970), so a
 missing fixture reds the lane. It brings up every profile a gated test needs
@@ -1137,7 +1137,7 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
   runs [`scripts/internal/run-native-sshd-suites.sh`](../scripts/internal/run-native-sshd-suites.sh)
   (fixture up with `--scratch-home` → suite → sshd log on failure → teardown) on `ubuntu-latest`,
   `macos-latest` and `windows-latest`. It also runs on manual dispatch and in the
-  release gate, but not on the path-filtered PR runs. Its ubuntu leg then grades
+  release gate, but not on the path-filtered `develop` push runs. Its ubuntu leg then grades
   the hidden fish setup on a real **fish 3.x** login shell too:
   [`run-native-sshd-fish3-suite.sh`](../scripts/internal/run-native-sshd-fish3-suite.sh)
   installs Debian bookworm's fish 3.6 (checksum-pinned), makes it the fixture
@@ -1301,8 +1301,8 @@ serial)` job. Only the exactly-once replay count stays unix-only, because
 ConPTY repaints its screen.
 
 The [`windows-ssh-host.yml`](../.github/workflows/windows-ssh-host.yml) lane
-runs the recipe once per shell: nightly, on manual dispatch, and on PRs that
-touch the deploy/connect paths. Like the other nightly lanes, its schedule only starts
+runs the recipe once per shell: nightly, on manual dispatch, and post-merge on
+`develop` pushes that touch the deploy/connect paths (never on a PR, #5461). Like the other nightly lanes, its schedule only starts
 once the workflow is on `main`. Off Windows, or without
 `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL`, the tests print `SKIPPED:` and pass.
 
@@ -1341,8 +1341,8 @@ tests/docker/polkit/run.sh --clean  # also removes the image and volumes (CI)
 
 It runs in the `polkit-dbus` job of the
 [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) lane
-(nightly, and on PRs touching `tests/docker/**`, the polkit module or the policy
-file) — not in the per-PR lane, since it needs a system bus. The real desktop
+(nightly, and post-merge on `develop` pushes touching `tests/docker/**`, the polkit
+module or the policy file) — not in the per-PR lane, since it needs a system bus. The real desktop
 agents' dialogs (GNOME Shell, KDE) remain a manual check — MT-CRED-14 on the
 [release-gating checklist](#release-gating-manual-checklist).
 
@@ -1677,9 +1677,9 @@ Debian 12 on `windows-latest` with
 `scripts/internal/fetch-wsl-distro.sh` (resumable, retried, SHA-256 pinned,
 cached) and tries the install twice. If the runner cannot provide WSL, the run
 shows a `WSL environment failure` annotation instead of a test failure (#5317).
-The lane runs the tests under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
-PRs that touch the WSL backend, the shell-integration commands or the local
-transfer executor. It is not part of the per-PR lane: installing WSL plus a
+The lane runs the tests under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and
+post-merge on `develop` pushes that touch the WSL backend, the shell-integration commands or
+the local transfer executor. It never runs on a PR (#5461): installing WSL plus a
 Windows build of the core crate costs several minutes.
 
 Its second job, `wsl-spawn-grades` (#4962), drives the desktop app through the
@@ -3207,7 +3207,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Sudo-elevated remote save over SFTP (#1328)** — Automated. src-tauri/src/files/sftp.rs::elevated_save_success_rewrites_root_file_over_real_ssh (ssh-sudo Docker fixture; owner/mode preserved, no /tmp/termihub-\* leftover); src-tauri/src/files/sftp.rs::elevated_save_wrong_password_leaves_file_untouched (IncorrectPassword, file unchanged, temp cleaned); src-tauri/src/session/manager/tests/log_secrecy.rs::sudo_password_of_an_elevated_save_stays_out_of_the_app_log (wrong + right sudo password never reach the trace file sink); src-tauri/src/session/manager/tests/log_secrecy.rs::sudo_password_stays_out_of_the_app_log_against_an_in_process_server (the same per PR against an in-process SSH/SFTP/sudo server; sudo got both passwords on stdin only); …
 - **Application log file (#1570)** — Automated + Tracked. src-tauri/src/utils/file_log.rs tests: writes_land_in_the_live_file, reopening_appends_rather_than_truncating, rotates_once_the_size_cap_is_exceeded, generations_shift_and_the_oldest_is_dropped, total_disk_usage_stays_bounded_under_sustained_writes, log_dir_matches_platform_convention, the_default_file_directive_clamps_russh, raising_file_detail_does_not_unclamp_russh, file_filter_keeps_info_and_drops_debug; .github/workflows/release-macos-smoke.yml + release-windows-smoke.yml (installed build writes termihub.log at the platform path and logs startup IPC); src-tauri/src/session/manager/tests/log_secrecy.rs (SSH password login, terminal echo and credential-store unlock never reach the file sink at trace, #4011); scripts/internal/release-smoke-app-lifecycle.sh / .ps1 in release-linux-smoke.yml (AppImage + .deb), release-macos-smoke.yml and release-windows-smoke.yml (banner with version + pid, no ANSI, 'termiHub exited cleanly' after a real close, none after kill -9, append across relaunch; on macOS the close clicks the app's Quit menu item through System Events, which the hosted image pre-grants to osascript, with a direct Quit AppleEvent as the fallback, #4076. That menu Quit is proven on the hosted macOS image every night: system-integration.yml's macOS leg runs the script with --quit-probe against the debug bundle (launch, Quit menu item by pid, clean-exit line); self-tested on a stub app, including both macOS Quit paths via a fake osascript, by check-script-headless.sh. Not yet run against a real release build: that needs the next Release or a maintainer dispatch of the smoke workflows)
 - **Local crash reports and Export Diagnostics (#3571, OBS-010)** — Automated. core/src/diagnostics/crash_report_tests.rs, core/src/diagnostics/redact_tests.rs; src-tauri/src/utils/diagnostics_bundle_tests.rs::plan_lists_readme_system_info_logs_and_crash_reports_only, plan_never_includes_session_transcripts, written_bundle_matches_the_plan_and_is_redacted; tests/system/tests/test_crash_report_notice.py (seeded report → notice → View Report, no second notice after a restart, Don't show again survives a restart); …; tests/system/tests/test_native_dialogs.py::test_export_diagnostics_writes_the_previewed_redacted_zip (integration lane, Save dialog stubbed, #4122: contents checked against the preview and for redaction)
-- **Release crash reports name termiHub functions (#4316, OBS2-001)** — Automated. scripts/internal/check-release-crash-symbols.sh builds tests/release-crash-probe with the real `[profile.release]`, forces a panic through `CrashDetails::capture` + `write_report`, and fails unless the report's backtrace has a resolved `termihub_core::` frame (agent.yml job "Release crash-report symbols", every PR touching the root Cargo.toml, core or the probe; fails with `strip = true`). core/src/diagnostics/crash_report_tests.rs::capture_reads_payload_location_and_backtrace_inside_a_hook, a_report_without_a_commit_says_unknown. Windows reports carry addresses only; they are symbolized with the shipped .pdb (#4504).
+- **Release crash reports name termiHub functions (#4316, OBS2-001)** — Automated. scripts/internal/check-release-crash-symbols.sh builds tests/release-crash-probe with the real `[profile.release]`, forces a panic through `CrashDetails::capture` + `write_report`, and fails unless the report's backtrace has a resolved `termihub_core::` frame (agent.yml job "Release crash-report symbols", every develop/main push touching the root Cargo.toml, core or the probe; fails with `strip = true`). core/src/diagnostics/crash_report_tests.rs::capture_reads_payload_location_and_backtrace_inside_a_hook, a_report_without_a_commit_says_unknown. Windows reports carry addresses only; they are symbolized with the shipped .pdb (#4504).
 - **Split debug symbols and offline crash symbolization (#4504)** — Automated. scripts/internal/check-release-crash-symbols.sh (same agent.yml job) rebuilds the probe the way release.yml does, runs the stripped binary away from its symbols, matches the report's `image:` build id and resolves the capture frame to crash_report.rs with addr2line/atos; on Windows (agent.yml job "Release crash-report symbols (Windows)", #4794) it runs the probe with its .pdb moved away, matches the `image:` PDB GUID/age and resolves the capture frame's RVA with llvm-symbolizer against the staged .pdb; core/src/diagnostics/module_image_tests.rs (Mach-O/ELF/PE header parsing, live image base and build id), crash_report_tests.rs::a_report_records_the_module_image_for_offline_symbolization; scripts/internal/debug-symbols.test.mjs (build-id extraction, stage/check); release.yml verifies every symbol file against the shipped binaries in build-app and check-release-assets (proved by a `release.yml` dry run), workflow-token-hygiene.test.mjs pins the publish path.
 - **Agent crashed since last connect notice (#3593, OBS-010)** — Automated. src-tauri/src/utils/agent_crash_notice_tests.rs, src-tauri/src/utils/agent_crash_reports_tests.rs; agent/src/handler/dispatch/tests/crash_reports_tests.rs; tests/system/tests/test_agent_crash_notice_live.py (deployed-agent container: baseline on first connect, a later crash announced on reconnect and viewed redacted, opt-out skips the check); …
 - **Connected agents' log files in Export Diagnostics (#4519)** — Automated. core/src/diagnostics/remote_log_tests.rs (family listing, caps, name validation, symlinks, redaction, tail cut on a line boundary); agent/src/handler/dispatch/tests/agent_logs_tests.rs (init gate, listing, redacted and capped reads, refused names); src-tauri/src/utils/agent_logs_tests.rs (unsupported agents, untrusted names, per-file and total caps, re-redaction in the written bundle); src/components/Diagnostics/DiagnosticsExportDialog.test.tsx 'remote agent log files (#4519)'.
