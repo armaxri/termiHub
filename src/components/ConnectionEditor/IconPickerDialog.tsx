@@ -70,7 +70,7 @@ export function IconPickerDialog({
       <SearchInput
         value={query}
         onValueChange={setQuery}
-        placeholder="Search icons..."
+        placeholder="Search icons…"
         clearLabel="Clear icon search"
         autoFocus
         data-testid="icon-picker-search"

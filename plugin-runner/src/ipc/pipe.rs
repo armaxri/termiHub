@@ -46,7 +46,9 @@ use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_WAIT,
 };
-use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
+};
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 use super::transport::ChannelStream;
@@ -333,7 +335,7 @@ thread_local! {
     static IO_EVENT: Option<OwnedHandle> = new_event().ok();
 }
 
-fn new_event() -> io::Result<OwnedHandle> {
+pub(crate) fn new_event() -> io::Result<OwnedHandle> {
     // SAFETY: an unnamed, manual-reset, initially non-signalled event.
     owned(unsafe { CreateEventW(std::ptr::null(), TRUE, FALSE, std::ptr::null()) })
 }
@@ -346,6 +348,22 @@ fn new_event() -> io::Result<OwnedHandle> {
 pub(crate) fn overlapped(
     handle: HANDLE,
     timeout: Option<Duration>,
+    start: impl FnOnce(*mut OVERLAPPED) -> BOOL,
+) -> io::Result<u32> {
+    overlapped_until(handle, timeout, None, start)
+}
+
+/// [`overlapped`], also ended by `abort`: an event that, once signalled,
+/// cancels the operation (`CancelIoEx`) and fails it with
+/// `ERROR_OPERATION_ABORTED` (unless it completed meanwhile).
+///
+/// The abort is the runner's own: no other process can cancel an operation
+/// this one issued, and a peer's `shutdown` does not complete a receive that
+/// is already pending on a socket (#5360).
+pub(crate) fn overlapped_until(
+    handle: HANDLE,
+    timeout: Option<Duration>,
+    abort: Option<HANDLE>,
     start: impl FnOnce(*mut OVERLAPPED) -> BOOL,
 ) -> io::Result<u32> {
     // The thread's cached event, or (while thread-locals are torn down) a
@@ -367,28 +385,36 @@ pub(crate) fn overlapped(
         if error != ERROR_IO_PENDING {
             return Err(os_error(error));
         }
-        if let Some(timeout) = timeout {
-            // SAFETY: `event` is a valid event handle for this whole call.
-            let waited = unsafe { WaitForSingleObject(event, wait_millis(timeout)) };
-            if waited != WAIT_OBJECT_0 {
-                // The deadline passed (or the wait failed): cancel, then wait
-                // for the cancellation — `ov` must outlive the operation.
-                // SAFETY: cancels only this operation, identified by `ov`.
-                unsafe { CancelIoEx(handle, &ov) };
-                return match finish(handle, &ov) {
-                    // It completed before the cancellation landed.
-                    Ok(done) => Ok(done),
-                    Err(e)
-                        if waited == WAIT_TIMEOUT && is_os_error(&e, ERROR_OPERATION_ABORTED) =>
-                    {
-                        Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "plugin runner pipe operation timed out",
-                        ))
-                    }
-                    Err(e) => Err(e),
-                };
+        let millis = timeout.map_or(INFINITE, wait_millis);
+        let waited = match abort {
+            // SAFETY: both are valid event handles for this whole call; the
+            // completion event comes first, so it wins when both are set.
+            Some(abort) => unsafe {
+                WaitForMultipleObjects(2, [event, abort].as_ptr(), FALSE, millis)
+            },
+            None if timeout.is_some() => {
+                // SAFETY: `event` is a valid event handle for this whole call.
+                unsafe { WaitForSingleObject(event, millis) }
             }
+            None => WAIT_OBJECT_0,
+        };
+        if waited != WAIT_OBJECT_0 {
+            // The deadline passed, the abort fired (or the wait failed):
+            // cancel, then wait for the cancellation — `ov` must outlive the
+            // operation.
+            // SAFETY: cancels only this operation, identified by `ov`.
+            unsafe { CancelIoEx(handle, &ov) };
+            return match finish(handle, &ov) {
+                // It completed before the cancellation landed.
+                Ok(done) => Ok(done),
+                Err(e) if waited == WAIT_TIMEOUT && is_os_error(&e, ERROR_OPERATION_ABORTED) => {
+                    Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "plugin runner pipe operation timed out",
+                    ))
+                }
+                Err(e) => Err(e),
+            };
         }
     }
     finish(handle, &ov)

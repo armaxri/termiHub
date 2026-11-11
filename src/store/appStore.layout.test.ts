@@ -303,7 +303,7 @@ describe("appStore — setTabSessionId", () => {
     // Regression: remote-session tabs are added with sessionId=null because the
     // terminal session is created asynchronously. setTabSessionId must update
     // the tab in the store so that the file browser's reactive effect can
-    // observe the change and transition out of "Waiting for session...".
+    // observe the change and transition out of "Waiting for session…".
     const store = useAppStore.getState();
     store.addTab("My Session", "remote-session", {
       type: "remote-session",

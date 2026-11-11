@@ -108,7 +108,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
     >
       <div className="shortcuts-overlay__search">
         <SearchInput
-          placeholder="Search shortcuts..."
+          placeholder="Search shortcuts…"
           value={query}
           onValueChange={setQuery}
           data-testid="shortcuts-overlay-search"

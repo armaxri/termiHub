@@ -500,7 +500,7 @@ export function SplitView() {
                 onSelect={() => setZoomColorPickerOpen(true)}
                 data-testid="zoom-context-set-color"
               >
-                <Palette size={14} /> Set Color...
+                <Palette size={14} /> Set Color…
               </MenuItem>
             </>
           }

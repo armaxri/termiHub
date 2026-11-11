@@ -64,8 +64,13 @@ export const darkTheme: ThemeDefinition = {
     borderSecondary: "#1a1e2a",
 
     // Accent / focus
-    accentColor: "#3d7de8",
-    accentHover: "#5a94f0",
+    // #5164: darkened (same hue) so white text on buttons reaches WCAG AA:
+    // #3d7de8 measured 3.96:1 and the hover #5a94f0 3.03:1. Now 4.51:1 and
+    // 5.41:1; hover darkens rather than lightens so it can stay distinct and
+    // above AA. focusBorder / activityBarIndicator keep the brighter blue
+    // (non-text indicators on dark surfaces). Locked by contrast.test.ts.
+    accentColor: "#2d72e6",
+    accentHover: "#1463df",
     focusBorder: "#3d7de8",
     textOnAccent: "#ffffff",
 

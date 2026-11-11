@@ -233,7 +233,7 @@ export function TerminalContextMenu({
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onSelect={onSetColor}>
-          <Palette size={14} /> Set Color...
+          <Palette size={14} /> Set Color…
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

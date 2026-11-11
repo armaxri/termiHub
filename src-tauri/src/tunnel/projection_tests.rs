@@ -13,16 +13,13 @@
 //!   the real [`TunnelManager`]/`AppHandle` wiring is thin and integration-
 //!   verified via a local `./scripts/dev.sh` run.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
 use super::*;
-use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, IntentStatus, ProjectionError, ProjectionFrame,
-    ProjectionSink, SnapshotFrame,
-};
+use crate::projection::{apply_ops, DiffFrame, Dispatcher, IntentStatus, SnapshotFrame};
+use crate::test_support::RecordingSink;
 use crate::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, TunnelConfig, TunnelState, TunnelStats, TunnelStatus,
     TunnelType,
@@ -161,44 +158,6 @@ impl FakeTunnels {
     }
 }
 
-/// An in-memory sink that records delivered frames and can be killed to simulate
-/// a dead subscriber (mirrors the Phase-1 substrate test double).
-pub(super) struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    pub(super) fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    pub(super) fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
 pub(super) struct ClientCache {
     pub(super) version: u64,
@@ -287,8 +246,8 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(TUNNELS_REGION, fake.view());
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap_a = projector.subscribe(TUNNELS_REGION, "sub-a", "A", sink_a);
     let snap_b = projector.subscribe(TUNNELS_REGION, "sub-b", "B", sink_b);
 
@@ -307,8 +266,8 @@ fn start_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(TUNNELS_REGION, fake.view());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(fake.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(TUNNELS_REGION, "sub-a", "A", sink_a.clone());
     projector.subscribe(TUNNELS_REGION, "sub-b", "B", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -343,7 +302,7 @@ fn create_and_remove_intents_advance_the_config_list() {
     projector.register_region(TUNNELS_REGION, fake.view());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(fake.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(TUNNELS_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
     assert_eq!(cache.view["tunnels"], json!([]));
@@ -374,11 +333,11 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
     projector.register_region(TUNNELS_REGION, fake.view());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(fake.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(TUNNELS_REGION, "live", "A", live.clone());
     projector.subscribe(TUNNELS_REGION, "dead", "B", dead.clone());
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
 
     dispatcher.dispatch(intent("tunnel.start", json!({ "id": "t1" })));
     assert_eq!(projector.subscriber_count(TUNNELS_REGION), 1, "dead reaped");

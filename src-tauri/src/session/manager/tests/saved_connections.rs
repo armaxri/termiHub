@@ -4,7 +4,10 @@
 use super::*;
 
 fn manager() -> SessionManager {
-    SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent))
+    SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    )
 }
 
 async fn open(manager: &SessionManager, session_id: &str) {
