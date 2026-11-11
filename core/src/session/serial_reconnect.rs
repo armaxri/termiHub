@@ -185,18 +185,24 @@ impl SerialPortProbe for SystemSerialPortProbe {
     }
 
     fn identity(&self, port: &str) -> Option<SerialDeviceIdentity> {
-        #[cfg(target_os = "linux")]
-        {
-            let real = std::fs::canonicalize(port).ok()?;
-            let tty = real.file_name()?.to_str()?;
-            usb_identity_from_sysfs(std::path::Path::new("/sys/class/tty"), tty)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = port;
-            None
-        }
+        platform_usb_identity(port)
     }
+}
+
+/// The USB identity of `port` from sysfs: resolve `/dev/serial/by-id/…` links
+/// to the tty, then read its USB ancestor.
+#[cfg(target_os = "linux")]
+fn platform_usb_identity(port: &str) -> Option<SerialDeviceIdentity> {
+    let real = std::fs::canonicalize(port).ok()?;
+    let tty = real.file_name()?.to_str()?;
+    usb_identity_from_sysfs(std::path::Path::new("/sys/class/tty"), tty)
+}
+
+/// No USB identity is read on this platform yet; the loop matches the port
+/// name only.
+#[cfg(not(target_os = "linux"))]
+fn platform_usb_identity(_port: &str) -> Option<SerialDeviceIdentity> {
+    None
 }
 
 /// Read the USB identity of tty `tty` from a sysfs `class/tty` directory: walk
