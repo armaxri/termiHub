@@ -20,7 +20,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::tool_history::{NetworkHistoryTool, NetworkToolHistoryStore, NetworkToolRun};
 use super::tool_history_storage::NetworkToolHistoryStorage;
@@ -53,7 +53,7 @@ pub struct NetworkToolHistoryManager {
 impl NetworkToolHistoryManager {
     /// Initialize from disk, with recovery on corruption. Expired runs are
     /// dropped in memory; the file catches up on the next write.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage = NetworkToolHistoryStorage::new(app_handle)
             .context("Failed to initialize network tool history storage")?;
         let mut result = storage

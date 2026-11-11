@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::config::{compute_dedup_key, SessionHistoryEntry, SessionHistoryStore};
 use super::storage::SessionHistoryStorage;
@@ -19,7 +19,7 @@ pub struct SessionHistoryManager {
 
 impl SessionHistoryManager {
     /// Initialize from disk, with recovery on corruption.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage = SessionHistoryStorage::new(app_handle)
             .context("Failed to initialize session-history storage")?;
         let result = storage

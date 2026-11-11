@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use termihub_core::service::drain_broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -148,17 +148,17 @@ pub struct NetworkManager {
     config_dir: PathBuf,
     app_handle: Arc<Mutex<Option<AppHandle>>>,
     /// The app-wide owned-task registry (ARCH-007, #3105), captured in
-    /// [`init`](Self::init). Every desktop-hosted HTTP-monitor poll loop is
+    /// [`load_persisted`](Self::load_persisted). Every desktop-hosted HTTP-monitor poll loop is
     /// scoped to it (its stop token is a child of the app token and its thread
     /// is tracked), so app teardown cancels and awaits the loops even if a
     /// monitor escaped [`stop_all_http_monitors`](Self::stop_all_http_monitors).
-    /// `None` until `init` (and in unit tests), where loops stay standalone.
+    /// `None` until `load_persisted` (and in unit tests), where loops stay standalone.
     tasks: Option<AppTasks>,
 }
 
 impl NetworkManager {
-    /// Create a new manager. Call [`NetworkManager::init`] after the Tauri
-    /// app is set up to provide the config directory.
+    /// Create a new manager. Call [`NetworkManager::load_persisted`] after
+    /// the Tauri app is set up to provide the config directory.
     pub fn new() -> Self {
         Self {
             active_tasks: Mutex::new(HashMap::new()),
@@ -263,19 +263,31 @@ impl NetworkManager {
             .and_then(|app| crate::agent_service::agent_rpc_client(&app))
     }
 
-    /// Initialise the manager with the app config directory and app handle.
-    /// Loads persisted WoL devices and HTTP monitor configs from disk, returning
-    /// any recovery warnings (a newer-version file left untouched, a corrupt
-    /// file backed up and salvaged) for the startup notice (#3946).
-    pub fn init(&mut self, config_dir: PathBuf, app_handle: AppHandle) -> Vec<RecoveryWarning> {
+    /// Hand the manager the app handle it emits events and reaches managed
+    /// state through. Called at boot before
+    /// [`load_persisted`](Self::load_persisted).
+    pub fn attach_app_handle(&self, app_handle: AppHandle) {
+        if let Ok(mut handle) = self.app_handle.lock() {
+            *handle = Some(app_handle);
+        }
+    }
+
+    /// Initialise the manager with the app config directory: adopt the app
+    /// task registry (when there is one), then load the persisted WoL devices
+    /// and HTTP monitor configs from disk, returning any recovery warnings (a
+    /// newer-version file left untouched, a corrupt file backed up and
+    /// salvaged) for the startup notice (#3946). Takes no `AppHandle`, so the
+    /// boot phase runs on a mock app (#5313).
+    pub(crate) fn load_persisted(
+        &mut self,
+        config_dir: PathBuf,
+        tasks: Option<AppTasks>,
+    ) -> Vec<RecoveryWarning> {
         let mut warnings = Vec::new();
         self.config_dir = config_dir.clone();
         // Before any monitor is loaded, so every poll loop is app-owned.
-        if let Some(tasks) = app_handle.try_state::<AppTasks>() {
-            self.adopt_app_tasks(tasks.inner().clone());
-        }
-        if let Ok(mut handle) = self.app_handle.lock() {
-            *handle = Some(app_handle);
+        if let Some(tasks) = tasks {
+            self.adopt_app_tasks(tasks);
         }
         match wol_storage::load_wol_devices_with_recovery(&config_dir) {
             Ok(result) => {
@@ -471,7 +483,7 @@ impl NetworkManager {
 
     /// Spawn the poll loop for a config and track its service, **without**
     /// touching disk. Used by [`start_http_monitor`](Self::start_http_monitor)
-    /// (after persisting) and on resume. On launch, [`init`](Self::init) instead
+    /// (after persisting) and on resume. On launch, [`load_persisted`](Self::load_persisted) instead
     /// loads persisted monitors *stopped* via
     /// [`load_http_monitor_stopped`](Self::load_http_monitor_stopped) (PERF-008).
     ///
@@ -1557,7 +1569,7 @@ mod tests {
         let id = cfg.id.clone();
         mgr.persist_monitor_config(cfg).expect("persist config");
 
-        // Mirror what `init` does at launch: load each persisted config stopped.
+        // Mirror what `load_persisted` does at launch: load each persisted config stopped.
         for config in mgr.load_persisted_monitor_configs() {
             mgr.load_http_monitor_stopped(config);
         }

@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::history::{WorkflowRun, WorkflowRunHistoryStore};
 use super::history_storage::WorkflowRunHistoryStorage;
@@ -23,7 +23,7 @@ pub struct WorkflowRunHistoryManager {
 
 impl WorkflowRunHistoryManager {
     /// Initialize from disk, with recovery on corruption.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage = WorkflowRunHistoryStorage::new(app_handle)
             .context("Failed to initialize workflow run-history storage")?;
         let result = storage
