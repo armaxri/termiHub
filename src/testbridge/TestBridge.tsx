@@ -20,6 +20,7 @@ import {
   readTerminalWebglFrame,
 } from "./terminalRender";
 import { readTerminalCells } from "./terminalCells";
+import { ensureJsErrorCapture } from "./jsErrors";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 import { bridgeRunnerUrl } from "./wsProtocol";
@@ -68,6 +69,12 @@ let latestDispatch: BridgeDispatch | undefined;
 // Tap every terminal's raw output stream from the moment this chunk loads
 // (#4931), so the flash grades see the bytes painted before the first prompt.
 if (isTestBridgeEnabled()) setTerminalRegisterObserver(tapTerminalOutput);
+
+// Record the page's JS errors (unhandled rejections, uncaught errors,
+// console.error) from the moment this chunk loads (#5364), so the harness can
+// gate a test on the errors it caused. Test-bridge builds only: this module is
+// never in a production bundle.
+if (isTestBridgeEnabled()) ensureJsErrorCapture();
 
 /**
  * The projection recorder is page-scoped like the runner socket, not per-mount:
@@ -147,6 +154,8 @@ export function TestBridge() {
           target,
           message,
         })),
+      // The page's JS error buffer, read with a since-cursor (#5364).
+      readJsErrors: (since) => ensureJsErrorCapture().read(since),
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       // Augment the raw store state with the composed layout (#2562): the layout
       // is no longer stored as `rootPanel` / `tabGroups` / `activePanelId` /

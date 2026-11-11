@@ -9,6 +9,7 @@ import type {
   DragModifiers,
   DragObservations,
   FrontendLogRecord,
+  JsErrorsResult,
   OsInputProbeResult,
   TerminalCellRow,
   TerminalInspection,
@@ -112,6 +113,11 @@ export interface BridgeDeps {
    * Optional — absent, `readFrontendLog` fails with a clear error.
    */
   readFrontendLog?: () => FrontendLogRecord[];
+  /**
+   * The page's JavaScript error buffer from `since` on (#5364). Optional —
+   * absent, `getJsErrors` fails with a clear error.
+   */
+  readJsErrors?: (since?: number) => JsErrorsResult;
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -1257,6 +1263,16 @@ export async function dispatchCommand(
         "readFrontendLog",
         needle ? entries.filter((entry) => entry.message.includes(needle)) : entries
       );
+    }
+
+    case "getJsErrors": {
+      if (!deps.readJsErrors) return fail("getJsErrors", "the JS error buffer is not available");
+      // `== null` also accepts the explicit JSON `null` a Python client sends.
+      const since = command.since == null ? undefined : command.since;
+      if (since !== undefined && (!Number.isInteger(since) || since < 0)) {
+        return fail("getJsErrors", `since must be a non-negative integer, got ${String(since)}`);
+      }
+      return ok("getJsErrors", deps.readJsErrors(since));
     }
 
     case "getState": {
