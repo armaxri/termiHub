@@ -17,6 +17,18 @@ export const SAVE_PASSWORD_KEY = "savePassword";
 export const CREDENTIAL_STORAGE_OFF_TEXT =
   "Credential storage is off — enable it under Settings ▸ Security to save this.";
 
+/**
+ * Help paragraph for the editor's save toggle before any storage choice exists
+ * (#5187): turning it on asks where to keep passwords.
+ */
+export const CREDENTIAL_STORAGE_CHOOSE_TEXT =
+  "Turning this on asks once where termiHub should keep passwords — the OS keychain " +
+  "is recommended. You can change it later under Settings ▸ Security.";
+
+/** Under a live save box before any storage choice exists (#5187). */
+export const CREDENTIAL_STORAGE_CHOOSE_HINT =
+  "Tick to choose where termiHub keeps passwords. Saved once the connection succeeds.";
+
 /** Label of the action that leads a user in None mode to the storage setting. */
 export const ENABLE_CREDENTIAL_STORAGE_LABEL = "Enable credential storage…";
 
@@ -33,9 +45,14 @@ const MODE_PARAGRAPH: Record<CredentialStorageMode, string> = {
 
 /**
  * The paragraph describing where saved credentials go for `mode`, or `null`
- * while the mode is still unknown (store status not loaded yet).
+ * while the mode is still unknown (store status not loaded yet). Before any
+ * storage choice exists (`needsChoice`, #5187) it says the first save asks.
  */
-export function credentialStorageParagraph(mode: CredentialStorageMode | undefined): string | null {
+export function credentialStorageParagraph(
+  mode: CredentialStorageMode | undefined,
+  needsChoice = false
+): string | null {
+  if (needsChoice) return CREDENTIAL_STORAGE_CHOOSE_TEXT;
   return mode ? MODE_PARAGRAPH[mode] : null;
 }
 
@@ -47,10 +64,11 @@ export function credentialStorageParagraph(mode: CredentialStorageMode | undefin
  */
 export function modeAwareSaveHelpText(
   helpText: string | null | undefined,
-  mode: CredentialStorageMode | undefined
+  mode: CredentialStorageMode | undefined,
+  needsChoice = false
 ): string | undefined {
   const base = helpText ?? undefined;
-  const paragraph = credentialStorageParagraph(mode);
+  const paragraph = credentialStorageParagraph(mode, needsChoice);
   if (!paragraph) return base;
   if (!base) return paragraph;
   return mode === "none" ? `${paragraph}\n\n${base}` : `${base}\n\n${paragraph}`;
@@ -59,10 +77,11 @@ export function modeAwareSaveHelpText(
 /** Apply {@link modeAwareSaveHelpText} to a `savePassword` field; other fields pass through. */
 export function withModeAwareSaveHelp(
   field: SettingsField,
-  mode: CredentialStorageMode | undefined
+  mode: CredentialStorageMode | undefined,
+  needsChoice = false
 ): SettingsField {
   if (field.key !== SAVE_PASSWORD_KEY) return field;
-  const helpText = modeAwareSaveHelpText(field.helpText, mode);
+  const helpText = modeAwareSaveHelpText(field.helpText, mode, needsChoice);
   return helpText === (field.helpText ?? undefined) ? field : { ...field, helpText };
 }
 

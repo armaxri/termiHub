@@ -11,4 +11,11 @@ mode: "master_password" | "os_keychain" | "none",
 /**
  * Current status: `"unlocked"`, `"locked"`, or `"unavailable"`.
  */
-status: "unlocked" | "locked" | "unavailable", };
+status: "unlocked" | "locked" | "unavailable", 
+/**
+ * Whether the user has made a credential-storage choice (#5187). `false`
+ * only while the mode is still the untouched `none` default: the first
+ * attempt to save a secret then shows the one-time storage chooser. Any
+ * active store counts as chosen, so existing users are never asked.
+ */
+storageChosen?: boolean, };

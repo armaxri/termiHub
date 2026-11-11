@@ -88,6 +88,7 @@ import {
   filterRuntimeOptions,
   filterCredentialFields,
 } from "@/utils/schemaDefaults";
+import { credentialStorageNeedsChoice } from "@/utils/credentialStorageChoice";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
@@ -262,6 +263,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const updateAgentDef = useAppStore((s) => s.updateAgentDef);
   const settings = useProjectedSettings();
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
+  // No storage choice yet (#5187): turning "Save credentials" on asks first.
+  const credentialStorageChoose = credentialStorageNeedsChoice(credentialStoreStatus);
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const renameTab = useAppStore((s) => s.renameTab);
   const retargetConnectionEditorFolder = useAppStore((s) => s.retargetConnectionEditorFolder);
@@ -1677,7 +1680,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (selectedType === "docker" && !runtimesLoading) {
       schema = filterRuntimeOptions(schema, dockerAvailable, podmanAvailable);
     }
-    return filterCredentialFields(schema, credentialStoreStatus?.mode);
+    return filterCredentialFields(schema, credentialStoreStatus?.mode, credentialStorageChoose);
   }, [
     isAgentTransportMode,
     currentTypeInfo?.schema,
@@ -1686,6 +1689,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     dockerAvailable,
     podmanAvailable,
     credentialStoreStatus?.mode,
+    credentialStorageChoose,
   ]);
 
   // Guided Git-for-Windows setup for the local-shell picker (#1692), mirroring
@@ -1892,7 +1896,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               : undefined
           }
           credentialSavedHint={credentialSavedHint}
-          credentialStorageOff={credentialStoreStatus?.mode === "none"}
+          credentialStorageOff={credentialStoreStatus?.mode === "none" && !credentialStorageChoose}
+          credentialStorageChoose={credentialStorageChoose}
           storedFieldSecrets={storedSecrets.fields}
           availablePorts={
             isAgentDefinitionMode

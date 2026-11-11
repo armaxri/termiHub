@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  credentialStorageNeedsChoice,
+  ensureCredentialStorageForSave,
+} from "@/utils/credentialStorageChoice";
 import { Button, Checkbox, Field, Input, Modal, NumberInput, Select, toast } from "@/components/ui";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { IconPickerDialog } from "@/components/ConnectionEditor/IconPickerDialog";
@@ -75,6 +79,8 @@ export function SaveAsConnectionDialog({
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
   const credentialStoreActive =
     credentialStoreStatus != null && credentialStoreStatus.mode !== "none";
+  // No storage choice yet (#5187): ticking the box asks where to store first.
+  const needsStorageChoice = credentialStorageNeedsChoice(credentialStoreStatus);
 
   const [name, setName] = useState("");
   const [folderId, setFolderId] = useState(NO_FOLDER);
@@ -144,7 +150,7 @@ export function SaveAsConnectionDialog({
     // Persist the entered secret before writing the connection so a store
     // failure aborts the save rather than orphaning a connection whose
     // password never made it to the credential store.
-    if (savePassword && password.trim() !== "") {
+    if (savePassword && credentialStoreActive && password.trim() !== "") {
       const credentialType = authMethod === "key" ? "key_passphrase" : "password";
       try {
         await storeCredential(connection.id, credentialType, password);
@@ -266,9 +272,17 @@ export function SaveAsConnectionDialog({
       <div className="recent-sessions__save-password">
         <label className="recent-sessions__save-password-toggle">
           <Checkbox
-            checked={savePassword}
-            onCheckedChange={setSavePassword}
-            disabled={!credentialStoreActive}
+            checked={savePassword && credentialStoreActive}
+            onCheckedChange={(checked) => {
+              if (credentialStoreActive) {
+                setSavePassword(checked);
+              } else if (checked && needsStorageChoice) {
+                void ensureCredentialStorageForSave().then((active) => {
+                  if (active) setSavePassword(true);
+                });
+              }
+            }}
+            disabled={!credentialStoreActive && !needsStorageChoice}
             data-testid="save-as-connection-save-password"
           />
           <span>Save password to credential store</span>
@@ -285,7 +299,7 @@ export function SaveAsConnectionDialog({
             />
           </Field>
         )}
-        {!credentialStoreActive && (
+        {!credentialStoreActive && !needsStorageChoice && (
           <span className="recent-sessions__save-password-hint">
             Set up a credential store in Settings to save passwords.
           </span>

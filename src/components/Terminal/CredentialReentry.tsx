@@ -9,6 +9,11 @@ import {
   reconnectWithReenteredCredentials,
   type CredentialReentryTarget,
 } from "@/utils/credentialReentry";
+import {
+  credentialStoreActive,
+  credentialStorageNeedsChoice,
+  ensureCredentialStorageForSave,
+} from "@/utils/credentialStorageChoice";
 import "./CredentialReentry.css";
 
 interface CredentialReentryProps {
@@ -21,6 +26,11 @@ interface CredentialReentryFormProps {
   target: CredentialReentryTarget;
   /** Whether a credential store is configured, so a "Save" box makes sense. */
   storeActive: boolean;
+  /**
+   * No storage choice exists yet (#5187): the "Save" box shows unticked and
+   * ticking it opens the one-time storage chooser first.
+   */
+  needsStorageChoice: boolean;
   onCancel: () => void;
 }
 
@@ -33,11 +43,12 @@ function CredentialReentryForm({
   tabId,
   target,
   storeActive,
+  needsStorageChoice,
   onCancel,
 }: CredentialReentryFormProps) {
   const [secret, setSecret] = useState("");
   const [keyPath, setKeyPath] = useState(target.keyPath);
-  const canSave = storeActive && target.credentialId !== null;
+  const canSave = (storeActive || needsStorageChoice) && target.credentialId !== null;
   const [save, setSave] = useState(target.saveDefault);
   const baseId = useId();
   const isKey = target.authMethod === "key";
@@ -48,10 +59,27 @@ function CredentialReentryForm({
     const saved = await reconnectWithReenteredCredentials(tabId, target, {
       secret,
       keyPath: isKey ? keyPath : undefined,
-      save: canSave && save,
+      // Only ever into a store the user chose (#5187).
+      save: storeActive && canSave && save,
     });
     if (!saved) toast.error(t("credentialReentry.saveFailed"));
-  }, [tabId, target, secret, isKey, keyPath, canSave, save]);
+  }, [tabId, target, secret, isKey, keyPath, storeActive, canSave, save]);
+
+  const handleSaveChange = useCallback(
+    (checked: boolean) => {
+      if (storeActive) {
+        setSave(checked);
+        return;
+      }
+      // No store chosen yet: ask where first, and tick only once one is set up.
+      if (checked) {
+        void ensureCredentialStorageForSave().then((active) => {
+          if (active) setSave(true);
+        });
+      }
+    },
+    [storeActive]
+  );
 
   const secretLabel = isKey
     ? t("credentialReentry.passphrase.label")
@@ -110,8 +138,8 @@ function CredentialReentryForm({
       {canSave && (
         <label className="credential-reentry__save">
           <Checkbox
-            checked={save}
-            onCheckedChange={setSave}
+            checked={storeActive && save}
+            onCheckedChange={handleSaveChange}
             aria-label={saveLabel}
             data-testid="terminal-credential-reentry-save"
           />
@@ -152,7 +180,7 @@ function CredentialReentryForm({
 export function CredentialReentry({ tabId }: CredentialReentryProps) {
   const config = useAppStore((s) => s.tabContent[tabId]?.config);
   const connectionId = useAppStore((s) => s.tabContent[tabId]?.connectionId);
-  const storeMode = useAppStore((s) => s.credentialStoreStatus?.mode);
+  const storeStatus = useAppStore((s) => s.credentialStoreStatus);
   const [open, setOpen] = useState(false);
   const target = useMemo(
     () => credentialReentryTarget(config, connectionId),
@@ -176,7 +204,8 @@ export function CredentialReentry({ tabId }: CredentialReentryProps) {
     <CredentialReentryForm
       tabId={tabId}
       target={target}
-      storeActive={storeMode !== undefined && storeMode !== "none"}
+      storeActive={credentialStoreActive(storeStatus)}
+      needsStorageChoice={credentialStorageNeedsChoice(storeStatus)}
       onCancel={() => setOpen(false)}
     />
   );

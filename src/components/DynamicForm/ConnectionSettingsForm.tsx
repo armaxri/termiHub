@@ -41,6 +41,12 @@ interface ConnectionSettingsFormProps {
    */
   credentialStorageOff?: boolean;
   /**
+   * When true, no credential-storage choice exists yet (#5187): turning the
+   * `savePassword` toggle on first opens the one-time storage chooser, and the
+   * toggle only turns on once a store is set up.
+   */
+  credentialStorageChoose?: boolean;
+  /**
    * The schema secrets other than `password` stored for the saved connection,
    * by settings key, with the user's pending clears (#4431). An empty password
    * field among them shows a "saved" placeholder and a Clear control.
@@ -113,6 +119,7 @@ export function ConnectionSettingsForm({
   onChange,
   credentialSavedHint,
   credentialStorageOff,
+  credentialStorageChoose,
   storedFieldSecrets,
   availablePorts,
   serialPortAgentId,
@@ -389,6 +396,9 @@ export function ConnectionSettingsForm({
                           }
                           credentialStorageOff={
                             credentialStorageOff && field.key === SAVE_PASSWORD_KEY
+                          }
+                          credentialStorageChoose={
+                            credentialStorageChoose && field.key === SAVE_PASSWORD_KEY
                           }
                           storedSecret={
                             field.fieldType.type === "password" && field.key !== PASSWORD_KEY

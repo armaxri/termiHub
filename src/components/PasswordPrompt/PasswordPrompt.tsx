@@ -5,7 +5,14 @@ import { Modal, Button, Checkbox } from "@/components/ui";
 import "./PasswordPrompt.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
-import { CREDENTIAL_STORAGE_OFF_TEXT } from "@/utils/credentialStorageCopy";
+import {
+  CREDENTIAL_STORAGE_CHOOSE_HINT,
+  CREDENTIAL_STORAGE_OFF_TEXT,
+} from "@/utils/credentialStorageCopy";
+import {
+  credentialStorageNeedsChoice,
+  ensureCredentialStorageForSave,
+} from "@/utils/credentialStorageChoice";
 
 /**
  * Global dialog that prompts the user for an SSH password at connect time.
@@ -16,10 +23,12 @@ import { CREDENTIAL_STORAGE_OFF_TEXT } from "@/utils/credentialStorageCopy";
  * persists the secret (Test Connection, #3316) opts out via
  * `requestPassword(..., { allowSave: false })`, which hides the checkbox.
  *
- * With credential storage off (None mode, #5186) the row still shows, disabled,
- * with an "Enable credential storage…" action: it closes the prompt (the
- * connect is cancelled) and opens the storage setting, so saving stays
- * discoverable.
+ * Before any storage choice exists (#5187) the box is live but unticked:
+ * ticking it opens the one-time storage chooser, and once a store is set up
+ * the box turns on. With credential storage off by choice (#5186), the row
+ * still shows, disabled, with an "Enable credential storage…" action: it
+ * closes the prompt (the connect is cancelled) and opens the storage setting,
+ * so saving stays discoverable.
  *
  * Saving happens only after the connect succeeds (#5156): a ticked box asks the
  * caller to persist the secret once the session is established, so a typo is
@@ -50,9 +59,12 @@ export function PasswordPrompt() {
 
   const storeActive = credentialStoreStatus != null && credentialStoreStatus.mode !== "none";
   const showSave = storeActive && allowSave;
-  // Storage off (#5186): show the save row disabled with a way to enable
-  // storage, so the user can discover that saving exists.
-  const showStorageOff = credentialStoreStatus?.mode === "none" && allowSave;
+  // No storage choice yet (#5187): the save box is live, and ticking it asks
+  // where to keep passwords first.
+  const showChoose = credentialStorageNeedsChoice(credentialStoreStatus) && allowSave;
+  // Storage off by choice (#5186): show the save row disabled with a way to
+  // enable storage, so the user can discover that saving exists.
+  const showStorageOff = credentialStoreStatus?.mode === "none" && allowSave && !showChoose;
 
   // A key passphrase unlocks a private key file — it is not the remote account
   // password, so label the prompt accordingly (UX-010).
@@ -167,6 +179,31 @@ export function PasswordPrompt() {
             />
             <span>{saveLabel}</span>
           </label>
+        )}
+        {showChoose && (
+          <>
+            <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
+              <Checkbox
+                checked={false}
+                onCheckedChange={(checked) => {
+                  // Nothing is saved here: the chooser sets a store up, and the
+                  // box turns on (default for an active store) once it has one.
+                  if (checked) void ensureCredentialStorageForSave();
+                }}
+                aria-label={saveLabel}
+                aria-describedby={saveHintId}
+                data-testid="password-prompt-save-checkbox"
+              />
+              <span>{saveLabel}</span>
+            </label>
+            <p
+              id={saveHintId}
+              className="password-prompt__save-hint"
+              data-testid="password-prompt-save-choose-hint"
+            >
+              {CREDENTIAL_STORAGE_CHOOSE_HINT}
+            </p>
+          </>
         )}
         {showStorageOff && (
           <>
