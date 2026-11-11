@@ -73,9 +73,11 @@ fn entry(path: &str) -> Option<Option<&'static str>> {
 pub const MTIME: u32 = 1_762_862_400;
 
 fn attrs(contents: Option<&str>) -> FileAttributes {
-    let mut attrs = FileAttributes::default();
-    attrs.mtime = Some(MTIME);
-    attrs.atime = Some(MTIME);
+    let mut attrs = FileAttributes {
+        mtime: Some(MTIME),
+        atime: Some(MTIME),
+        ..FileAttributes::default()
+    };
     match contents {
         Some(text) => {
             attrs.permissions = Some(0o100_644);
