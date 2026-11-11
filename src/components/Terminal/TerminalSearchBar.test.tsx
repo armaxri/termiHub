@@ -81,7 +81,7 @@ describe("TerminalSearchBar (Button migration)", () => {
     // Migrated from a raw <input> to ui/Input: carries the primitive class and
     // preserves the placeholder + testable behavior.
     expect(field.className).toContain("ui-input");
-    expect(field.getAttribute("placeholder")).toBe("Find...");
+    expect(field.getAttribute("placeholder")).toBe("Find…");
   });
 
   it("reflects toggle state through the Button variant and aria-pressed", async () => {

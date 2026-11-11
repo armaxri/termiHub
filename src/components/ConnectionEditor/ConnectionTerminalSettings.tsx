@@ -227,8 +227,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
 export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerminalSettingsProps) {
   const globalSettings = useProjectedSettings();
 
-  const globalFontFamily =
-    globalSettings.fontFamily || "MesloLGS Nerd Font Mono, Cascadia Code, ...";
+  const globalFontFamily = globalSettings.fontFamily || "MesloLGS Nerd Font Mono, Cascadia Code, …";
   const globalFontSize = globalSettings.fontSize ?? 14;
   const globalScrollback = globalSettings.scrollbackBuffer ?? 10000;
   const globalCursorStyle = globalSettings.cursorStyle ?? "block";

@@ -343,7 +343,7 @@ export function EmbeddedServerItem({
         )}
         <MenuSeparator />
         <MenuItem onSelect={() => onEdit(config.id)} data-testid={`ctx-edit-${config.id}`}>
-          <Pencil size={14} /> Edit...
+          <Pencil size={14} /> Edit…
         </MenuItem>
         <MenuItem
           onSelect={() => onDuplicate(config.id)}

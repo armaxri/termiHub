@@ -247,7 +247,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         <SearchInput
           className="log-viewer__search"
           size="sm"
-          placeholder="Search logs..."
+          placeholder="Search logs…"
           aria-label="Search logs"
           value={search}
           onValueChange={setSearch}
