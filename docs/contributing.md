@@ -187,6 +187,11 @@ CI runner queueing is the project's throughput bottleneck, so CI is split into a
 **lean per-PR lane** and a **full post-merge lane** (#3325). The maintainer
 accepted (2026-09-25) that some findings — e.g. a new package-audit advisory, or
 a macOS-only break — surface on `develop` after merge instead of on the PR.
+Since 2026-11-11 (#5461) a PR gates on **Build + Code Quality** only (plus the
+small path-filtered checks in the table below): the path-filtered heavy lanes —
+**Agent**, **Integration (Docker fixtures)**, **WSL Live (Windows)** and
+**Windows SSH Host** — run post-merge on `develop`, and `develop` may turn red
+and be fixed forward.
 
 **Per-PR lane.** A `Detect Changed Areas` job classifies the PR's changed files
 ([`scripts/internal/ci-changes.mjs`](../scripts/internal/ci-changes.mjs)) and
@@ -210,14 +215,12 @@ each job runs only if the PR can affect it:
 | System-Test Harness / Test-ID Drift Guard                 | `tests/system/` or files it reads (drift guard: also frontend)         |
 | Security Audit                                            | a dependency manifest/lockfile changed                                 |
 | Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed              |
-| Agent — Linux musl cross-builds                           | anything the agent builds from changed (`agent` area, not comments)    |
 | Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)               |
-| Integration (Docker fixtures)                             | a backend/fixture path changed (not comment-only Rust)                 |
 | Lint Commit Messages                                      | always                                                                 |
 
-The test and build rows (Run Tests, Agent Live Tests, Build, the agent
-cross-builds, Plugin Packaging, Integration, System-Test Harness) also skip when
-the PR head commit carries `[skip-tests]`; see below.
+The test and build rows (Run Tests, Agent Live Tests, Build, Plugin Packaging,
+System-Test Harness) also skip when the PR head commit carries `[skip-tests]`;
+see below.
 
 A skipped check reports as **skipped**, which is a pass. The classifier is
 **fail-open**: an unrecognised path, any `.github/` change, or a failure of the
@@ -227,8 +230,7 @@ commit-lint; a docs-only PR runs commit-lint plus the Markdown checks.
 **Comment-only Rust changes (#3903).** A workspace `.rs` file whose changed lines
 (added and removed) are **all** whole-line `//`, `///` or `//!` comments counts
 as a docs change, not a Rust change: the PR runs `cargo fmt --check` and Rustdoc
-(`-D warnings`) and skips Clippy, the Rust tests, the agent cross-builds, Plugin
-Packaging and the Docker fixtures. Code with a trailing comment, a `//` line
+(`-D warnings`) and skips Clippy, the Rust tests and Plugin Packaging. Code with a trailing comment, a `//` line
 inside a string or block comment, a doctest line (inside a doc code fence), a
 file that uses ts-rs (its docs flow into `src/types/generated`), and an added,
 deleted or renamed file all keep the full Rust lane. Clippy's doc lints on a
@@ -237,8 +239,7 @@ comment-only change surface post-merge.
 **The `[skip-tests]` commit tag (#3915).** If the **head commit** of a PR (the
 newest commit on the PR branch) has `[skip-tests]` anywhere in its message, that
 PR run skips the test and build lanes: Run Tests (all OS), Agent Live Tests
-(Windows), the agent musl cross-builds, Build on ubuntu, core/tests against live
-fixtures, the polkit verifier, the System-Test Harness (machinery) and Plugin
+(Windows), Build on ubuntu, the System-Test Harness (machinery) and Plugin
 Package + load. Detect Changed Areas, Lint Commit Messages, Rust and Frontend
 Code Quality (fmt, clippy, eslint, tsc, prettier), Rustdoc, actionlint, the shell
 and Markdown lints, the Test-ID Drift Guard and the PR Gate still run. The skipped
@@ -273,12 +274,19 @@ coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Li
 and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
 `cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
 dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
-(`cargo doc -D warnings`, #3812) for PRs that do not touch Rust; the macOS leg of plugin package-then-load (PLG-011).
+(`cargo doc -D warnings`, #3812) for PRs that do not touch Rust; the macOS leg of plugin package-then-load (PLG-011);
+the agent Linux musl cross-builds and crash-symbol probes (Agent); the Docker
+fixture suites (Integration); the live WSL suite (WSL Live) and the Windows SSH
+host deploy/connect suite (Windows SSH Host) — #5461. To try one of those four on
+a PR branch before merging, dispatch it by hand
+(`gh workflow run <file> --ref <branch>`).
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
 Audit (also daily), Bundle Size, Rustdoc, the full Agent matrix
-and Dev Build. **Coverage** (the blocking unit-coverage ratchet) runs nightly on
+and Dev Build. A push to `develop` also runs Integration (Docker fixtures), WSL
+Live (Windows) and Windows SSH Host when it touches their path filters (the lists
+that were their PR filters before #5461). **Coverage** (the blocking unit-coverage ratchet) runs nightly on
 `develop` (dispatched, see
 [Scheduled lanes](#scheduled-lanes-stay-dark-until-they-reach-main)), on every
 push to `main` and on demand — not per merge (#4119; see
@@ -291,7 +299,7 @@ the last green run on `develop` — read the commit range, not just the head PR.
 regression (or a new advisory) and needs a follow-up fix, since the PR that
 caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged, and a release additionally requires them green on the exact
-release commit (see [Release integration gate](#release-integration-gate)). The nightly **WSL Live (Windows)** lane ([`wsl-live.yml`](../.github/workflows/wsl-live.yml), #4008) runs the live WSL tests against a real distribution; PRs touching the WSL code paths run it too. The nightly **Plugin Sandbox Hardening** lane ([`plugin-sandbox-nightly.yml`](../.github/workflows/plugin-sandbox-nightly.yml), #4190) fuzzes the plugin IPC protocol and runs the plugin sandbox performance gate (see [Testing](testing.md#plugin-sandbox-hardening-nightly)). The weekly **Vendored Forks** upstream-drift job keeps one
+release commit (see [Release integration gate](#release-integration-gate)). The nightly **WSL Live (Windows)** lane ([`wsl-live.yml`](../.github/workflows/wsl-live.yml), #4008) runs the live WSL tests against a real distribution; pushes to `develop` touching the WSL code paths run it too (post-merge, #5461). The nightly **Plugin Sandbox Hardening** lane ([`plugin-sandbox-nightly.yml`](../.github/workflows/plugin-sandbox-nightly.yml), #4190) fuzzes the plugin IPC protocol and runs the plugin sandbox performance gate (see [Testing](testing.md#plugin-sandbox-hardening-nightly)). The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
 **Concurrency rule (#3588, #4119).** Every workflow sets a per-ref `concurrency`
@@ -301,7 +309,7 @@ is for:
 - **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging
   and Vendored Forks — use the group `<name>-${{ github.event_name }}-${{ github.ref }}`
   with `cancel-in-progress` true only for a `pull_request` or a `push` to
-  `develop`. A superseded PR run, or the run of an older `develop` commit, is
+  `develop` (Agent has no `pull_request` trigger since #5461). A superseded PR run, or the run of an older `develop` commit, is
   cancelled, so a merge burst fully tests only its newest commit (which contains
   every earlier merge) instead of running each superseded commit to completion.
   Pushes to `main`, tag/release pushes, schedules and `workflow_dispatch` are
@@ -315,6 +323,9 @@ is for:
 - **Advisory, heavy or publish-only workflows** — Dev Build,
   Build (PR-only), and the scheduled/manual lanes — keep
   `cancel-in-progress: true`. Only the newest commit's result matters for them.
+  The post-merge live lanes (Integration, WSL Live, Windows SSH Host) put the
+  event name in their group too, so a `develop` push cancels only an older push
+  run, never the nightly dispatch on `develop`.
 
 A new workflow that gates correctness post-merge must use the correctness-gate
 form above (never cancel on `main`, tags, schedules or dispatch).
@@ -1806,9 +1817,9 @@ unit numbers, so when that run is missing the summary says so and prints the
 `gh workflow run coverage.yml` command. It never blocks the release. See
 [Release coverage summary](testing.md#release-coverage-summary-advisory).
 
-**Integration-fixtures PR path filter.** Beyond `tests/docker/**`, `core/tests/**`,
-`core/src/backends/**` and the RDP/polkit sources, the fixture lane also runs on PRs that
-touch the core plumbing its suites drive directly — `core/src/connection/**`,
+**Integration-fixtures push path filter.** The fixture lane never runs on a PR (#5461). Beyond
+`tests/docker/**`, `core/tests/**`, `core/src/backends/**` and the RDP/polkit sources, it also
+runs on pushes to `develop` that touch the core plumbing its suites drive directly — `core/src/connection/**`,
 `core/src/session/**`, `core/src/files/**`, `core/src/tunnel/**`, `core/src/reconnect_backoff*`
 and `core/Cargo.toml`. It is deliberately **not** widened to `agent/**` or `src-tauri/**`
 (the lane tests `termihub-core` only, so those changes would gain no coverage there) or to
