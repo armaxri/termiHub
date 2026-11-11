@@ -1,0 +1,5 @@
+{
+  "nodeid": "test_plugin_discovery_https\\.py",
+  "issue": 4961,
+  "reason": "MT-APP-03 grades Browse Plugins and Install from URL against the real GitHub plugin index and a pinned package; it is the one suite that needs the internet"
+}
