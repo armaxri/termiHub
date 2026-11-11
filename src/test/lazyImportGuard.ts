@@ -27,7 +27,7 @@
  * element the lazy component renders) when the test does.
  */
 import { afterAll, afterEach } from "vitest";
-import type { ComponentType, LazyExoticComponent } from "react";
+import type { lazy } from "react";
 
 /** Upper bound on waiting for a stray import to settle before failing the test. */
 export const LAZY_IMPORT_SETTLE_TIMEOUT_MS = 10_000;
@@ -75,14 +75,8 @@ export function pendingLazyImports(): string[] {
  * Returns a `React.lazy` replacement that tracks every factory call. React calls
  * the factory once, on the first render of the lazy component.
  */
-export function createTrackedLazy(
-  realLazy: <T extends ComponentType<never>>(
-    factory: () => Promise<{ default: T }>
-  ) => LazyExoticComponent<T>
-) {
-  return function trackedLazy<T extends ComponentType<never>>(
-    factory: () => Promise<{ default: T }>
-  ): LazyExoticComponent<T> {
+export function createTrackedLazy(realLazy: typeof lazy): typeof lazy {
+  return (factory) => {
     const label = describeLazyFactory(factory);
     return realLazy(() => trackLazyImport(label, factory()));
   };
