@@ -6,14 +6,18 @@ macOS and Windows the RDP sidecar never met a server. ``rdp-sidecar``'s
 redirection tests (#5271) on a loopback port: X.224 selecting TLS, a TLS
 handshake with a throwaway self-signed certificate, the MCS connect sequence and
 licensing, and then — under ``--act activate`` — an activated session it holds
-until the client hangs up. It needs no container, so it runs on every runner.
+until the client hangs up, its whole desktop painted one solid colour and
+repainted every few seconds (#5426). It needs no container, so it runs on every
+runner.
 ``scripts/internal/build-system-test-app.sh`` builds it next to the sidecar.
 
 :class:`RdpTestServer` owns one such process. The server reports on stdout
-(see the example's docs): ``listening <port>``, ``dial #<n>`` per accepted
-connection and ``client-info #<n> <username>`` once a connection's Client Info
-PDU arrived — which the sidecar only sends after the certificate trust gate
-passed. The process exits when its stdin closes, so it cannot outlive the run.
+(see the example's docs): ``desktop <w>x<h> <rrggbb>`` (what an activated
+session paints), ``listening <port>``, ``dial #<n>`` per accepted connection,
+``client-info #<n> <username>`` once a connection's Client Info PDU arrived —
+which the sidecar only sends after the certificate trust gate passed — and
+``input #<n> <event>`` per key or button event a session received
+(``key 0x1e down``, ``button left up 512,384``). The process exits when its stdin closes, so it cannot outlive the run.
 
 The line parsing and process lifecycle are unit-tested in the normal lane
 (``tests/test_rdp_test_server.py``) against a stand-in script.
@@ -47,9 +51,9 @@ class RdpTestServerUnavailable(RuntimeError):
 class ServerEvent:
     """One parsed stdout line of the server."""
 
-    kind: str  # "listening" | "dial" | "client-info"
-    number: int  # the port for "listening", else the connection number
-    username: Optional[str] = None
+    kind: str  # "desktop" | "listening" | "dial" | "client-info" | "input"
+    number: int  # the port for "listening", 0 for "desktop", else the connection
+    text: Optional[str] = None  # the username / input event / "<w>x<h> <rrggbb>"
 
 
 def parse_line(line: str) -> Optional[ServerEvent]:
@@ -60,11 +64,27 @@ def parse_line(line: str) -> Optional[ServerEvent]:
             return ServerEvent("listening", int(parts[1]))
         if parts[0] == "dial" and len(parts) == 2 and parts[1].startswith("#"):
             return ServerEvent("dial", int(parts[1][1:]))
-        if parts[0] == "client-info" and len(parts) == 3 and parts[1].startswith("#"):
-            return ServerEvent("client-info", int(parts[1][1:]), parts[2])
+        if parts[0] in ("client-info", "input") and len(parts) == 3 and parts[1].startswith("#"):
+            return ServerEvent(parts[0], int(parts[1][1:]), parts[2])
+        if parts[0] == "desktop" and len(parts) == 3:
+            text = f"{parts[1]} {parts[2]}"
+            return ServerEvent("desktop", 0, text) if parse_desktop(text) else None
     except ValueError:
         return None
     return None
+
+
+def parse_desktop(text: str) -> Optional[tuple[tuple[int, int], tuple[int, int, int]]]:
+    """``"1024x768 00a050"`` -> ``((1024, 768), (0, 160, 80))``; ``None`` if malformed."""
+    try:
+        size, color = text.split(" ")
+        width, height = (int(v) for v in size.split("x"))
+        if len(color) != 6:
+            return None
+        rgb = (int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16))
+    except ValueError:
+        return None
+    return (width, height), rgb
 
 
 def find_rdp_test_server(repo_root: Path = REPO_ROOT) -> Optional[Path]:
@@ -161,7 +181,21 @@ class RdpTestServer:
     def client_infos(self) -> list[str]:
         """The username of every Client Info PDU the server received so far."""
         with self._lock:
-            return [e.username or "" for e in self._events if e.kind == "client-info"]
+            return [e.text or "" for e in self._events if e.kind == "client-info"]
+
+    def inputs(self) -> list[str]:
+        """Every key / button event the server's sessions received so far."""
+        with self._lock:
+            return [e.text or "" for e in self._events if e.kind == "input"]
+
+    def desktop(self) -> tuple[tuple[int, int], tuple[int, int, int]]:
+        """The size and RGB colour an activated session paints."""
+        with self._lock:
+            desktops = [e.text for e in self._events if e.kind == "desktop"]
+        parsed = parse_desktop(desktops[0] or "") if desktops else None
+        if parsed is None:
+            raise RdpTestServerUnavailable("the server reported no desktop")
+        return parsed
 
     def stop(self, *, timeout: float = 10.0) -> None:
         """Close the server's stdin (it exits on EOF); kill it if it lingers."""

@@ -37,6 +37,12 @@ from termihub_harness.rdp_test_server import (
         ("listening abc", None),
         ("dial 3", None),
         ("dial #x", None),
+        ("input #2 key 0x1e down", ServerEvent("input", 2, "key 0x1e down")),
+        ("input #2 button left up 512,384", ServerEvent("input", 2, "button left up 512,384")),
+        ("desktop 1024x768 00a050", ServerEvent("desktop", 0, "1024x768 00a050")),
+        ("desktop 1024x768 green", None),
+        ("desktop 1024 00a050", None),
+        ("input key", None),
         ("rdp_test_server: cannot listen", None),
         ("", None),
     ],
@@ -69,10 +75,13 @@ def test_for_binary_builds_the_command_and_rejects_unknown_acts(tmp_path: Path):
 _STAND_IN = textwrap.dedent(
     """
     import sys
+    print("desktop 1024x768 00a050", flush=True)
     print("listening 4242", flush=True)
     print("dial #1", flush=True)
     print("dial #2", flush=True)
     print("client-info #2 alice", flush=True)
+    print("input #2 key 0x1e down", flush=True)
+    print("input #2 button left down 512,384", flush=True)
     sys.stdin.read()
     print("bye", flush=True)
     """
@@ -92,13 +101,23 @@ def test_lifecycle_reports_port_dials_and_client_infos():
         server.port  # not started yet
     with server:
         assert server.port == 4242
-        _wait(lambda: server.client_infos() == ["alice"])
+        _wait(lambda: len(server.inputs()) == 2)
+        assert server.client_infos() == ["alice"]
         assert server.dials() == 2
+        assert server.inputs() == ["key 0x1e down", "button left down 512,384"]
+        assert server.desktop() == ((1024, 768), (0, 160, 80))
         process = server._process
     # Leaving the block closed stdin: the stand-in ran to its end and exited.
     assert process is not None and process.returncode == 0
     assert server.output()[-1] == "bye"
     server.stop()  # idempotent
+
+
+def test_desktop_fails_when_none_was_reported():
+    script = "import sys; print('listening 1', flush=True); sys.stdin.read()"
+    with RdpTestServer([sys.executable, "-c", script]) as server:
+        with pytest.raises(RdpTestServerUnavailable, match="no desktop"):
+            server.desktop()
 
 
 def test_start_fails_when_the_server_never_reports_a_port():
