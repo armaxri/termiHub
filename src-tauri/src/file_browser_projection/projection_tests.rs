@@ -1,6 +1,6 @@
 //! Projection-contract tests for the client-scoped `file-browser@<clientId>`
 //! region (#2228), reusing the substrate harness (#2164): an in-memory
-//! [`VecSink`] and a client cache that applies diffs. The routes here drive a
+//! [`RecordingSink`] and a client cache that applies diffs. The routes here drive a
 //! real [`FileBrowserStore`] directly through the **production** parse helpers
 //! ([`super`]), the exact parse → mutate → publish path
 //! `register_file_browser_intents` runs (that thin wiring only differs in
@@ -13,8 +13,7 @@
 //! intent coalesces to nothing, a dead subscriber is reaped, and the client cache
 //! converges on the store's authority across a full browsing session.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -24,9 +23,10 @@ use super::{
 use crate::file_browser_projection::projection::{file_browser_region, publish_file_browser};
 use crate::file_browser_projection::store::FileBrowserStore;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
+    SnapshotFrame,
 };
+use crate::test_support::RecordingSink;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -104,44 +104,6 @@ fn entry_json(name: &str, is_directory: bool) -> Value {
     })
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/broadcast/layout test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
 struct ClientCache {
     version: u64,
@@ -181,8 +143,8 @@ fn subscribe_returns_the_idle_baseline_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot("A"));
 
-    let snap_a = projector.subscribe(&region, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(&region, "sub-b", "A", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(&region, "sub-a", "A", Arc::new(RecordingSink::new()));
+    let snap_b = projector.subscribe(&region, "sub-b", "A", Arc::new(RecordingSink::new()));
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -200,8 +162,8 @@ fn a_load_succeeded_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub-a", "A", sink_a.clone());
     projector.subscribe(&region, "sub-b", "A", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -240,7 +202,7 @@ fn a_clear_error_intent_dismisses_the_error_and_keeps_the_listing() {
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -285,7 +247,7 @@ fn a_full_browsing_session_advances_monotonically_and_converges() {
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -338,7 +300,7 @@ fn a_replace_seed_produces_one_diff_that_converges_on_the_whole_view() {
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -398,8 +360,8 @@ fn browser_state_is_isolated_to_its_client_region() {
     projector.register_region(&region_b, store.snapshot("B"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     projector.subscribe(&region_a, "sa", "A", sink_a.clone());
     projector.subscribe(&region_b, "sb", "B", sink_b.clone());
 
@@ -421,7 +383,7 @@ fn an_intent_with_an_invalid_pane_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     // "none" is not a valid concrete pane target for loadStarted.
@@ -443,7 +405,7 @@ fn a_missing_entries_listing_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent(
@@ -466,7 +428,7 @@ fn a_no_op_set_mode_advances_nothing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
 
     // The baseline mode is already "none"; setting it to "none" is a no-op.
@@ -488,7 +450,7 @@ fn a_set_clipboard_then_clear_round_trips_through_the_region() {
     let projector = Arc::new(Projector::new());
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -523,13 +485,13 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     projector.register_region(&region, store.snapshot("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(&region, "live", "A", live.clone());
     projector.subscribe(&region, "dead", "A", dead.clone());
     assert_eq!(projector.subscriber_count(&region), 2);
 
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
     dispatcher.dispatch(intent(
         "fileBrowser.setMode",
         "A",
