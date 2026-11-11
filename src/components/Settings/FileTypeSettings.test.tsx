@@ -38,6 +38,22 @@ function click(testId: string) {
   });
 }
 
+function setInput(testId: string, value: string) {
+  const input = query(testId) as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function keyDown(testId: string, init: KeyboardEventInit) {
+  const input = query(testId) as HTMLInputElement;
+  act(() => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  });
+}
+
 setupSettingsRegion();
 
 describe("FileTypeSettings", () => {
@@ -246,5 +262,144 @@ describe("FileTypeSettings", () => {
     // The inner content is conditionally rendered based on show()
     expect(query("file-type-pattern-input")).toBeNull();
     expect(query("file-type-add-btn")).toBeNull();
+  });
+
+  describe("adding a mapping (#5304)", () => {
+    it("rejects an empty language on Enter with its message and persists nothing", async () => {
+      const updateSpy = vi.fn(useAppStore.getState().updateSettings);
+      useAppStore.setState({ updateSettings: updateSpy });
+      await render();
+
+      setInput("file-type-pattern-input", "Jenkinsfile");
+      setInput("file-type-language-input", "   ");
+      keyDown("file-type-pattern-input", { key: "Enter" });
+
+      expect(query("file-type-add-error")?.textContent).toBe("Language ID is required.");
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect((query("file-type-add-btn") as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("rejects an empty pattern on Enter with its message", async () => {
+      const updateSpy = vi.fn(useAppStore.getState().updateSettings);
+      useAppStore.setState({ updateSettings: updateSpy });
+      await render();
+
+      setInput("file-type-language-input", "groovy");
+      keyDown("file-type-language-input", { key: "Enter" });
+
+      expect(query("file-type-add-error")?.textContent).toBe("Pattern is required.");
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects a pattern with invalid characters with its message", async () => {
+      const updateSpy = vi.fn(useAppStore.getState().updateSettings);
+      useAppStore.setState({ updateSettings: updateSpy });
+      await render();
+
+      setInput("file-type-pattern-input", "foo bar/*");
+      setInput("file-type-language-input", "groovy");
+      click("file-type-add-btn");
+
+      expect(query("file-type-add-error")?.textContent).toBe(
+        "Pattern may only contain letters, digits, dots, dashes, underscores, and +."
+      );
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it("clears the validation error as soon as the user edits an input", async () => {
+      await render();
+      setInput("file-type-pattern-input", "bad pattern");
+      setInput("file-type-language-input", "groovy");
+      click("file-type-add-btn");
+      expect(query("file-type-add-error")).not.toBeNull();
+
+      setInput("file-type-pattern-input", "Jenkinsfile");
+      expect(query("file-type-add-error")).toBeNull();
+    });
+
+    it("a valid add calls updateSettings, persists the mapping and resets the form", async () => {
+      seedSettings({ fileLanguageMappings: { ".conf": "nginx" } });
+      const realUpdate = useAppStore.getState().updateSettings;
+      const updateSpy = vi.fn(realUpdate);
+      useAppStore.setState({ updateSettings: updateSpy });
+      await render();
+
+      setInput("file-type-pattern-input", "  Jenkinsfile ");
+      setInput("file-type-language-input", " groovy ");
+      click("file-type-add-btn");
+      await act(async () => {});
+      await render();
+
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy.mock.calls[0][0].fileLanguageMappings).toEqual({
+        ".conf": "nginx",
+        Jenkinsfile: "groovy",
+      });
+      expect(currentSettingsView().fileLanguageMappings).toEqual({
+        ".conf": "nginx",
+        Jenkinsfile: "groovy",
+      });
+      expect(query("file-type-remove-Jenkinsfile")).not.toBeNull();
+      expect((query("file-type-pattern-input") as HTMLInputElement).value).toBe("");
+      expect((query("file-type-language-input") as HTMLInputElement).value).toBe("");
+      expect(query("file-type-add-error")).toBeNull();
+    });
+
+    it("Enter on the language input submits a valid mapping", async () => {
+      await render();
+      setInput("file-type-pattern-input", ".tf");
+      setInput("file-type-language-input", "hcl");
+      keyDown("file-type-language-input", { key: "Enter" });
+      await act(async () => {});
+      await render();
+
+      expect(currentSettingsView().fileLanguageMappings).toEqual({ ".tf": "hcl" });
+    });
+
+    it("re-adding an existing pattern replaces its language instead of duplicating the row", async () => {
+      seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
+      await render();
+
+      setInput("file-type-pattern-input", "Jenkinsfile");
+      setInput("file-type-language-input", "shell");
+      click("file-type-add-btn");
+      await act(async () => {});
+      await render();
+
+      expect(currentSettingsView().fileLanguageMappings).toEqual({ Jenkinsfile: "shell" });
+      expect(
+        container.querySelectorAll('[data-testid="file-type-remove-Jenkinsfile"]')
+      ).toHaveLength(1);
+    });
+
+    it.each([
+      ["isComposing", { key: "Enter", isComposing: true }],
+      ["keyCode 229", { key: "Enter", keyCode: 229 }],
+    ])("ignores Enter during IME composition (%s) on both inputs", async (_label, init) => {
+      const updateSpy = vi.fn(useAppStore.getState().updateSettings);
+      useAppStore.setState({ updateSettings: updateSpy });
+      await render();
+
+      setInput("file-type-pattern-input", "Jenkinsfile");
+      setInput("file-type-language-input", "groovy");
+      keyDown("file-type-pattern-input", init);
+      keyDown("file-type-language-input", init);
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      // The form keeps the half-typed values; nothing was submitted or cleared.
+      expect((query("file-type-pattern-input") as HTMLInputElement).value).toBe("Jenkinsfile");
+      expect((query("file-type-language-input") as HTMLInputElement).value).toBe("groovy");
+      expect(query("file-type-add-error")).toBeNull();
+    });
+
+    it("ignores non-Enter keys", async () => {
+      const updateSpy = vi.fn(useAppStore.getState().updateSettings);
+      useAppStore.setState({ updateSettings: updateSpy });
+      await render();
+      setInput("file-type-pattern-input", "Jenkinsfile");
+      setInput("file-type-language-input", "groovy");
+      keyDown("file-type-language-input", { key: "a" });
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
   });
 });
