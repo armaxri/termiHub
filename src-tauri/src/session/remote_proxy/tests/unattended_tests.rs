@@ -9,9 +9,11 @@
 use super::*;
 use termihub_core::backends::ssh::unattended::run_unattended;
 
-fn mock_agent(unattended_connect: Option<bool>) -> Arc<MockAgentRpcClient> {
-    let mut mock = MockAgentRpcClient::new();
-    mock.unattended_connect = unattended_connect;
+fn mock_agent(unattended_connect: Option<bool>) -> Arc<FakeAgent> {
+    let mut mock = proxy_agent(serde_json::Value::Null);
+    if let Some(flag) = unattended_connect {
+        mock.capabilities_mut().unattended_connect = flag;
+    }
     Arc::new(mock)
 }
 
@@ -26,7 +28,7 @@ async fn unattended_connect_on_a_new_agent_sends_the_flag() {
     run_unattended(proxy.connect(ssh_settings()))
         .await
         .expect("a 0.23.0+ agent connects unattended");
-    assert_eq!(*mock.created_unattended.lock().unwrap(), vec![true]);
+    assert_eq!(created_unattended(&mock), vec![true]);
 }
 
 #[tokio::test]
@@ -40,7 +42,7 @@ async fn unattended_connect_on_an_old_agent_is_refused_as_agent_outdated() {
     assert!(text.contains("[thub-code:agent_outdated]"), "{text}");
     assert!(text.contains(AGENT_TOO_OLD_FOR_UNATTENDED), "{text}");
     assert!(
-        mock.created_sessions.lock().unwrap().is_empty(),
+        created_sessions(&mock).is_empty(),
         "nothing was created on the agent"
     );
 }
@@ -57,7 +59,7 @@ async fn unattended_connect_on_a_disconnected_agent_is_refused() {
     let text = err.to_string();
     assert!(text.contains("not connected"), "{text}");
     assert!(!text.contains("agent_outdated"), "{text}");
-    assert!(mock.created_sessions.lock().unwrap().is_empty());
+    assert!(created_sessions(&mock).is_empty());
 }
 
 #[tokio::test]
@@ -69,6 +71,6 @@ async fn attended_connect_never_sends_the_flag() {
             .connect(ssh_settings())
             .await
             .expect("attended connect");
-        assert_eq!(*mock.created_unattended.lock().unwrap(), vec![false]);
+        assert_eq!(created_unattended(&mock), vec![false]);
     }
 }

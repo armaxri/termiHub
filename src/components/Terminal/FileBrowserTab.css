@@ -14,19 +14,8 @@
 }
 
 /* The phase body (icon/heading/hint/actions) is the shared ContentOverlay
-   primitive (UISF2-006); only the icon tone and error text live here. */
+   primitive (UISF2-006); only the placeholder icon tone lives here. */
 .file-browser-tab__icon {
   color: var(--text-secondary);
   opacity: 0.85;
-}
-
-.file-browser-tab__icon--error {
-  color: var(--color-error);
-}
-
-.file-browser-tab__error {
-  color: var(--color-error);
-  max-width: 480px;
-  margin: 0;
-  word-break: break-word;
 }

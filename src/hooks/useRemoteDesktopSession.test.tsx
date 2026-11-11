@@ -295,6 +295,8 @@ describe("useRemoteDesktopSession", () => {
       act(() => h.get().cancelConnect());
       expect(mockedCancelConnect).toHaveBeenCalledWith(connectIdOfCall());
       expect(h.get().state).toBe("closed");
+      // Marked as the user's abort, so the overlay says "Connection aborted" (#5377).
+      expect(h.get().aborted).toBe(true);
       expect(h.get().message).toBeNull();
 
       // The aborted connect rejects; the user's cancel is not a failure.
@@ -332,6 +334,7 @@ describe("useRemoteDesktopSession", () => {
 
       expect(mockedConnect).toHaveBeenCalledTimes(2);
       expect(h.get().state).toBe("active");
+      expect(h.get().aborted).toBe(false);
       expect(h.get().sessionId).toBe("rd-1");
     });
 
@@ -377,7 +380,29 @@ describe("useRemoteDesktopSession", () => {
     await flush();
 
     expect(h.get().state).toBe("authFailed");
+    expect(h.get().errorKind).toBe("auth");
     expect(h.get().message).toBe("Authentication failed");
+  });
+
+  it("types a rejected connect from its backend error code (#5377)", async () => {
+    mockedConnect.mockRejectedValueOnce({ code: "refused", message: "os error 61" });
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    expect(h.get().state).toBe("connectFailed");
+    expect(h.get().errorKind).toBe("refused");
+    expect(h.get().aborted).toBe(false);
+  });
+
+  it("types an authFailed state event as an auth failure (#5377)", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({ state: "authFailed", reconnect_attempt: 0, message: "NLA rejected" });
+    expect(h.get().errorKind).toBe("auth");
+    dispatchState({ state: "connectFailed", reconnect_attempt: 0, message: "gone" });
+    expect(h.get().errorKind).toBe("other");
   });
 
   it("reports connectFailed for a non-auth first-connect error", async () => {
@@ -657,6 +682,7 @@ describe("useRemoteDesktopSession", () => {
 
     expect(mockedDisconnect).toHaveBeenCalledWith("rd-1");
     expect(h.get().state).toBe("closed");
+    expect(h.get().aborted).toBe(true);
     expect(h.get().reconnectAttempt).toBe(0);
     // Cancel never dials again on its own.
     expect(mockedConnect).toHaveBeenCalledTimes(1);

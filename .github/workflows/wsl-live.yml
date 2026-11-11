@@ -19,8 +19,10 @@ name: WSL Live (Windows)
 # virtualization it needs. Debian is the smallest mainstream distro, keeping the
 # cache footprint low; nothing under test is distro-specific.
 #
-# Not on every PR (installing WSL plus a Windows build of the core crate costs
-# several minutes): nightly + manual + PRs that touch the WSL code paths.
+# Never on a PR (#5461, maintainer decision 2026-11-11: a PR gates on Build +
+# Code Quality only; installing WSL plus a Windows build of the core crate costs
+# several minutes): nightly + manual + post-merge pushes to develop that touch
+# the WSL code paths. A develop failure is fixed forward.
 # `TERMIHUB_REQUIRE_WSL=1` turns a missing distro from a skip into a failure, so
 # a broken setup reds this lane instead of skipping to a false green.
 #
@@ -44,7 +46,9 @@ on:
     # scripts/internal/scheduled-lanes.mjs.
     - cron: "41 3 * * 3"
   workflow_dispatch:
-  pull_request:
+  # Post-merge (#5461; a pull_request trigger with the same paths before).
+  push:
+    branches: [develop]
     # Every source the live suite exercises (#4618); kept in sync by the drift
     # test in scripts/internal/ci-changes.test.mjs ("live lane path filters").
     paths:
@@ -76,8 +80,11 @@ on:
       - "scripts/internal/fetch-wsl-distro.sh"
       - ".github/workflows/wsl-live.yml"
 
+# Cancel superseded runs (#4119): a newer push to develop cancels the in-flight
+# push run for the older commit. The event name is part of the group, so a push
+# can never cancel the nightly dispatch (scheduled-dispatch.yml) on develop.
 concurrency:
-  group: wsl-live-${{ github.ref }}
+  group: wsl-live-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010): checkout + build + test only.

@@ -7,10 +7,11 @@ name: Integration (Docker fixtures)
 # "unhealthy" container) can rot unnoticed (#858). This lane brings the fixtures
 # up and runs that suite against them, so a broken fixture fails CI.
 #
-# Not on every PR (it builds container images and runs network tests, so it is
-# slower and Docker-bound): nightly + manual + a path-filtered PR subset instead.
-# Trigger by hand from the Actions tab ("Run workflow") when touching tests/docker
-# or core/tests. A release is never cut on the path-filtered PR subset: the
+# Never on a PR (#5461, maintainer decision 2026-11-11: a PR gates on Build +
+# Code Quality only). It runs nightly, by hand, and post-merge on a path-filtered
+# push to develop; a develop failure is fixed forward. Trigger it by hand from
+# the Actions tab ("Run workflow") on a PR branch when touching tests/docker or
+# core/tests. A release is never cut on the path-filtered push subset: the
 # Release workflow requires release-candidate.yml, which calls this lane with no
 # path filter on the exact release commit (#3652).
 
@@ -38,13 +39,15 @@ on:
         description: Run the suite under cargo-llvm-cov and upload integration-coverage
         type: boolean
         default: false
-  # Also run when the fixtures, the integration tests, or the backend *source*
-  # they exercise change — so a PR that edits the SSH/SFTP/telnet/serial/Docker
-  # backends gets integration feedback without waiting for the nightly run. The
-  # `require_docker!`-gated tests in core/tests self-skip on the per-PR gate
-  # (which runs with no containers up), so a backend change would otherwise reach
-  # `develop` with its integration path completely unexercised (#2050).
-  pull_request:
+  # Also run post-merge when the fixtures, the integration tests, or the backend
+  # *source* they exercise change — so a merge that edits the SSH/SFTP/telnet/
+  # serial/Docker backends gets integration feedback without waiting for the
+  # nightly run. The `require_docker!`-gated tests in core/tests self-skip in
+  # Code Quality (which runs with no containers up), so a backend change would
+  # otherwise sit on `develop` with its integration path unexercised (#2050).
+  # Before #5461 this was a pull_request trigger with the same paths.
+  push:
+    branches: [develop]
     paths:
       - "tests/docker/**"
       - "core/tests/**"
@@ -98,11 +101,12 @@ on:
       - "scripts/internal/registry-mirror.sh"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
-# lands on the same ref. `github.workflow` is the CALLER's name when this lane is
-# called by release-candidate.yml, so a candidate run and a nightly/PR run on the
-# same ref never cancel each other.
+# lands on the same ref (#4119). `github.workflow` is the CALLER's name when this
+# lane is called by release-candidate.yml, so a candidate run and a nightly/push
+# run on the same ref never cancel each other; the event name keeps a develop
+# push from cancelling the nightly dispatch (scheduled-dispatch.yml).
 concurrency:
-  group: integration-fixtures-${{ github.workflow }}-${{ github.ref }}
+  group: integration-fixtures-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010). The job checks out, brings up Docker fixtures,
@@ -129,7 +133,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # The PR merge commit plus its parents, so HEAD^1 (the base tip) exists.
+          # HEAD plus its parent, so the classifier can diff HEAD^1..HEAD.
           fetch-depth: 2
           persist-credentials: false
 
@@ -141,10 +145,11 @@ jobs:
     name: core/tests against live fixtures
     runs-on: ubuntu-latest
     needs: changes
-    # Skipped on a PR whose matching changes are comment-only Rust (#3903): the
-    # path filter's other inputs map to rust (core/, polkit), sidecar
-    # (rdp-sidecar/) or scripts (tests/docker/). Also skipped when the PR head
-    # commit carries [skip-tests] (#3915).
+    # Gated on the classifier (#3903): the path filter's inputs map to rust
+    # (core/, polkit), sidecar (rdp-sidecar/) or scripts (tests/docker/). Every
+    # trigger of this lane is a non-PR event since #5461, which reports every
+    # area on, so this skips only if a PR trigger returns (comment-only Rust
+    # #3903, [skip-tests] #3915).
     if: >-
       ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
       (needs.changes.outputs.rust != 'false' ||
@@ -158,7 +163,7 @@ jobs:
       # Integration coverage (TOOL-005, #3656): manually dispatched runs
       # (including the nightly develop dispatch) measure the suite with cargo-llvm-cov and upload the lcov, which the
       # Coverage workflow (coverage.yml) merges into the unified report.
-      # PR-triggered runs stay a plain `cargo test`, so PR runtime is unchanged.
+      # Path-filtered develop push runs stay a plain `cargo test`.
       # The develop nightly is dispatched by scheduled-dispatch.yml (#4277).
       #
       # A CALLED run instruments only when its caller asks via the
@@ -227,9 +232,9 @@ jobs:
           workspaces: |
             . -> target
             rdp-sidecar -> target
-          # Reader/writer split (#3328): this lane also runs on PRs (path filter);
-          # those restore the develop/main cache but never save, so PR caches
-          # don't evict the shared ones. Nightly/dispatch runs on main write it.
+          # Reader/writer split (#3328): only develop/main runs (push, nightly,
+          # dispatch) save; a run dispatched on any other branch restores the
+          # shared cache but never writes, so it cannot evict the shared ones.
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Make apt retry downloads
@@ -567,12 +572,12 @@ jobs:
     # service + local test user on Windows. TERMIHUB_NATIVE_SSHD=1 (exported by
     # the fixture) turns a missing fixture into a hard failure, never a skip.
     #
-    # Nightly / manual / release gate only -- not on the path-filtered PRs: it
-    # costs a macOS and a Windows runner. Dispatch this workflow on a branch to
-    # try it. The whole recipe (fixture up -> suite -> sshd log on failure ->
+    # Nightly / manual / release gate only -- not on the path-filtered develop
+    # pushes (a pull_request trigger before #5461): it costs a macOS and a
+    # Windows runner. Dispatch this workflow on a branch to try it. The whole recipe (fixture up -> suite -> sshd log on failure ->
     # teardown) is scripts/internal/run-native-sshd-suites.sh in the checked-out
     # tree, so the graded tree's recipe runs whatever copy of this file fired.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     name: SSH/SFTP journeys against native sshd (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # 75, not 45: the agent deploy journey (#5208) builds the desktop lib tests.
@@ -736,10 +741,11 @@ jobs:
     name: polkit D-Bus verifier (Linux)
     runs-on: ubuntu-latest
     needs: changes
-    # Skipped on a PR whose matching changes are comment-only Rust (#3903): the
-    # path filter's other inputs map to rust (core/, polkit), sidecar
-    # (rdp-sidecar/) or scripts (tests/docker/). Also skipped when the PR head
-    # commit carries [skip-tests] (#3915).
+    # Gated on the classifier (#3903): the path filter's inputs map to rust
+    # (core/, polkit), sidecar (rdp-sidecar/) or scripts (tests/docker/). Every
+    # trigger of this lane is a non-PR event since #5461, which reports every
+    # area on, so this skips only if a PR trigger returns (comment-only Rust
+    # #3903, [skip-tests] #3915).
     if: >-
       ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
       (needs.changes.outputs.rust != 'false' ||
