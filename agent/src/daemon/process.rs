@@ -66,9 +66,16 @@ pub(crate) fn positive_secs(raw: Option<&str>) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
+/// Read one variable from the real process environment; the production
+/// `lookup` for the env-parsing helpers below. A missing or non-UTF-8 value
+/// reads as `None`, exactly as `std::env::var(..).ok()` does.
+fn env_lookup(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
 /// The configured [`DETACHED_TIMEOUT_ENV`] bound, or `None` (unbounded).
 fn detached_timeout_from_env() -> Option<Duration> {
-    positive_secs(std::env::var(DETACHED_TIMEOUT_ENV).ok().as_deref())
+    positive_secs(env_lookup(DETACHED_TIMEOUT_ENV).as_deref())
 }
 
 /// Env var carrying the desktop's `correlation_id` for this session (#3782).
@@ -87,7 +94,13 @@ pub const CORRELATION_ID_ENV: &str = "TERMIHUB_CORRELATION_ID";
 /// forge a log line, an escape sequence, an oversized value) is dropped rather
 /// than logged.
 fn correlation_id_from_env() -> Option<String> {
-    let id = std::env::var(CORRELATION_ID_ENV).ok()?;
+    correlation_id_from(env_lookup)
+}
+
+/// [`correlation_id_from_env`] over an injected environment `lookup`, so tests
+/// need not mutate the process-wide environment.
+fn correlation_id_from(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let id = lookup(CORRELATION_ID_ENV)?;
     if termihub_core::protocol::methods::is_valid_correlation_id(&id) {
         Some(id)
     } else {
@@ -141,14 +154,23 @@ impl DaemonConfig {
     ///   pipe name on windows; default: auto-generated)
     /// - `TERMIHUB_BUFFER_SIZE` — ring buffer size in bytes (default: 1 MiB)
     fn from_env(session_id: &str, settings: serde_json::Value) -> anyhow::Result<Self> {
-        let endpoint = std::env::var("TERMIHUB_SOCKET_PATH")
-            .unwrap_or_else(|_| transport::session_endpoint(session_id));
+        Self::from_lookup(session_id, settings, env_lookup)
+    }
 
-        let type_id = std::env::var("TERMIHUB_TYPE_ID")
-            .map_err(|_| anyhow::anyhow!("TERMIHUB_TYPE_ID env var is required"))?;
+    /// [`Self::from_env`] over an injected environment `lookup`, so tests can
+    /// supply the variables without mutating the process-wide environment.
+    fn from_lookup(
+        session_id: &str,
+        settings: serde_json::Value,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
+        let endpoint = lookup("TERMIHUB_SOCKET_PATH")
+            .unwrap_or_else(|| transport::session_endpoint(session_id));
 
-        let buffer_size = std::env::var("TERMIHUB_BUFFER_SIZE")
-            .ok()
+        let type_id = lookup("TERMIHUB_TYPE_ID")
+            .ok_or_else(|| anyhow::anyhow!("TERMIHUB_TYPE_ID env var is required"))?;
+
+        let buffer_size = lookup("TERMIHUB_BUFFER_SIZE")
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_BUFFER_SIZE);
 
@@ -1389,10 +1411,18 @@ async fn send_exited_async(agent_writer: &mut Option<WorkerSink>, code: i32) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
-    /// Env var tests mutate the process environment and must run serially.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// A map-backed environment `lookup` for the env-parsing helpers, so the
+    /// tests never mutate the process-wide environment (#5282).
+    fn fake_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |key| map.get(key).cloned()
+    }
 
     // ── output credit (#4439) ─────────────────────────────────────────
 
@@ -1516,28 +1546,23 @@ pub(crate) mod tests {
 
     #[test]
     fn daemon_config_requires_type_id() {
-        let _guard = ENV_LOCK.lock().unwrap();
-
-        std::env::remove_var("TERMIHUB_TYPE_ID");
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
-
-        let result = DaemonConfig::from_env("test-123", serde_json::json!({}));
+        let result = DaemonConfig::from_lookup("test-123", serde_json::json!({}), fake_env(&[]));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("TERMIHUB_TYPE_ID"));
     }
 
     #[test]
     fn daemon_config_from_env() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let env = fake_env(&[
+            ("TERMIHUB_TYPE_ID", "ssh"),
+            ("TERMIHUB_SOCKET_PATH", "/tmp/test-daemon.sock"),
+            ("TERMIHUB_BUFFER_SIZE", "2097152"),
+        ]);
 
-        std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::set_var("TERMIHUB_SOCKET_PATH", "/tmp/test-daemon.sock");
-        std::env::set_var("TERMIHUB_BUFFER_SIZE", "2097152");
-
-        let config = DaemonConfig::from_env(
+        let config = DaemonConfig::from_lookup(
             "test-456",
             serde_json::json!({"host":"192.168.1.1","port":22}),
+            env,
         )
         .unwrap();
         assert_eq!(config.session_id, "test-456");
@@ -1546,22 +1571,12 @@ pub(crate) mod tests {
         assert_eq!(config.settings["port"], 22);
         assert_eq!(config.endpoint, "/tmp/test-daemon.sock");
         assert_eq!(config.buffer_size, 2097152);
-
-        // Clean up
-        std::env::remove_var("TERMIHUB_TYPE_ID");
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
     }
 
     #[test]
     fn daemon_config_defaults() {
-        let _guard = ENV_LOCK.lock().unwrap();
-
-        std::env::set_var("TERMIHUB_TYPE_ID", "local");
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
-
-        let config = DaemonConfig::from_env("test-789", serde_json::json!({})).unwrap();
+        let env = fake_env(&[("TERMIHUB_TYPE_ID", "local")]);
+        let config = DaemonConfig::from_lookup("test-789", serde_json::json!({}), env).unwrap();
         assert_eq!(config.type_id, "local");
         assert_eq!(config.settings, serde_json::json!({}));
         assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
@@ -1572,9 +1587,6 @@ pub(crate) mod tests {
             "got {}",
             config.endpoint
         );
-
-        // Clean up
-        std::env::remove_var("TERMIHUB_TYPE_ID");
     }
 
     // ── SSH agent forwarding through the remote-agent backend (#1719) ─────
@@ -1602,11 +1614,7 @@ pub(crate) mod tests {
     /// reused core SSH backend requests forwarding on the agent's SSH leg.
     #[test]
     fn daemon_ssh_settings_carry_forward_agent() {
-        let _guard = ENV_LOCK.lock().unwrap();
-
-        std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+        let env = fake_env(&[("TERMIHUB_TYPE_ID", "ssh")]);
 
         let settings = serde_json::json!({
             "host": "target.example",
@@ -1614,7 +1622,7 @@ pub(crate) mod tests {
             "authMethod": "agent",
             "forwardAgent": true,
         });
-        let config = DaemonConfig::from_env("fwd-agent-1", settings).unwrap();
+        let config = DaemonConfig::from_lookup("fwd-agent-1", settings, env).unwrap();
         // The flag reaches the daemon verbatim …
         assert_eq!(config.settings["forwardAgent"], serde_json::json!(true));
         // … and the daemon feeds exactly these settings to the core SSH backend,
@@ -1624,8 +1632,6 @@ pub(crate) mod tests {
             ssh.forward_agent,
             "forwardAgent must reach the core SSH backend through the agent"
         );
-
-        std::env::remove_var("TERMIHUB_TYPE_ID");
     }
 
     /// With `forwardAgent` absent (every pre-#1699 saved connection), the
@@ -1633,21 +1639,15 @@ pub(crate) mod tests {
     /// connections behave exactly as before.
     #[test]
     fn daemon_ssh_settings_default_forward_agent_off() {
-        let _guard = ENV_LOCK.lock().unwrap();
-
-        std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+        let env = fake_env(&[("TERMIHUB_TYPE_ID", "ssh")]);
 
         let settings = serde_json::json!({"host":"target.example","username":"me"});
-        let config = DaemonConfig::from_env("fwd-agent-2", settings).unwrap();
+        let config = DaemonConfig::from_lookup("fwd-agent-2", settings, env).unwrap();
         let ssh = termihub_core::backends::ssh::parse_ssh_settings(&config.settings);
         assert!(
             !ssh.forward_agent,
             "an absent forwardAgent must leave the agent's SSH leg unforwarded"
         );
-
-        std::env::remove_var("TERMIHUB_TYPE_ID");
     }
 
     // ── Generation-counter regression tests ──────────────────────────────
@@ -2247,32 +2247,26 @@ pub(crate) mod tests {
 
     #[test]
     fn correlation_id_from_env_reads_a_valid_id() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var(CORRELATION_ID_ENV, "desk-sid-1");
-        let id = correlation_id_from_env();
-        std::env::remove_var(CORRELATION_ID_ENV);
+        let id = correlation_id_from(fake_env(&[(CORRELATION_ID_ENV, "desk-sid-1")]));
         assert_eq!(id.as_deref(), Some("desk-sid-1"));
     }
 
     #[test]
     fn correlation_id_from_env_is_none_when_unset() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var(CORRELATION_ID_ENV);
-        assert_eq!(correlation_id_from_env(), None);
+        assert_eq!(correlation_id_from(fake_env(&[])), None);
     }
 
     #[test]
     fn correlation_id_from_env_drops_a_malformed_id() {
         // The env var is untrusted input: an id that could forge a log line
         // (newline, escape sequence) or is oversized must be dropped.
-        let _guard = ENV_LOCK.lock().unwrap();
         for bad in ["evil\nforged line", "\u{1b}[31m", "has space", ""] {
-            std::env::set_var(CORRELATION_ID_ENV, bad);
-            assert_eq!(correlation_id_from_env(), None, "{bad:?} must be dropped");
+            let id = correlation_id_from(fake_env(&[(CORRELATION_ID_ENV, bad)]));
+            assert_eq!(id, None, "{bad:?} must be dropped");
         }
-        std::env::set_var(CORRELATION_ID_ENV, "a".repeat(10_000));
-        assert_eq!(correlation_id_from_env(), None, "oversized id dropped");
-        std::env::remove_var(CORRELATION_ID_ENV);
+        let oversized = "a".repeat(10_000);
+        let id = correlation_id_from(fake_env(&[(CORRELATION_ID_ENV, &oversized)]));
+        assert_eq!(id, None, "oversized id dropped");
     }
 
     #[tokio::test]
@@ -2297,13 +2291,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_malformed_launch_correlation_id_never_reaches_the_log() {
-        let id = {
-            let _guard = ENV_LOCK.lock().unwrap();
-            std::env::set_var(CORRELATION_ID_ENV, "evil\nforged line");
-            let id = correlation_id_from_env();
-            std::env::remove_var(CORRELATION_ID_ENV);
-            id
-        };
+        let id = correlation_id_from(fake_env(&[(CORRELATION_ID_ENV, "evil\nforged line")]));
         let logs = logged_session(id).await;
         assert!(logs.contains("Session daemon starting"), "{logs:?}");
         assert!(!logs.contains("correlation_id"), "{logs:?}");
