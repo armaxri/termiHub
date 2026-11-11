@@ -518,6 +518,14 @@ pub struct AppSettings {
     #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(as = "Option<CredentialStorageMode>", optional))]
     pub credential_storage_mode: Option<CredentialStorageMode>,
+    /// Whether the user has made a credential-storage choice (#5187): set by
+    /// the first-use storage chooser (including "Don't save") and by every
+    /// store switch. Absent on installs that never chose; a persisted
+    /// `credential_storage_mode` also counts as chosen. Owned by the backend:
+    /// a frontend whole-document save never changes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub credential_storage_chosen: Option<bool>,
     /// Auto-lock timeout in minutes for master password mode. None = never.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -726,6 +734,16 @@ impl AppSettings {
         }
         changed
     }
+
+    /// Carry the backend-owned credential-storage keys over from `current`
+    /// (#5187). The storage mode and the storage choice change only through
+    /// the credential commands (store switch, first-use chooser); a frontend
+    /// whole-document save holding an older copy of the document must not
+    /// revert them.
+    pub fn keep_credential_storage_keys(&mut self, current: &AppSettings) {
+        self.credential_storage_mode = current.credential_storage_mode;
+        self.credential_storage_chosen = current.credential_storage_chosen;
+    }
 }
 
 impl Default for AppSettings {
@@ -767,6 +785,7 @@ impl Default for AppSettings {
             network_tool_history_enabled: true,
             layout: None,
             credential_storage_mode: None,
+            credential_storage_chosen: None,
             credential_auto_lock_minutes: None,
             right_click_behavior: None,
             default_line_ending: None,
@@ -1508,7 +1527,41 @@ mod tests {
         let settings = AppSettings::default();
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("credentialStorageMode"));
+        assert!(!json.contains("credentialStorageChosen"));
         assert!(!json.contains("credentialAutoLockMinutes"));
+    }
+
+    #[test]
+    fn keep_credential_storage_keys_ignores_a_stale_frontend_copy() {
+        let current = AppSettings {
+            credential_storage_mode: SettingsUnion::parse("os_keychain"),
+            credential_storage_chosen: Some(true),
+            ..Default::default()
+        };
+        let mut incoming = AppSettings {
+            credential_auto_lock_minutes: Some(5),
+            ..Default::default()
+        };
+        incoming.keep_credential_storage_keys(&current);
+        assert_eq!(
+            incoming.credential_storage_mode.map(SettingsUnion::as_str),
+            Some("os_keychain")
+        );
+        assert_eq!(incoming.credential_storage_chosen, Some(true));
+        // Frontend-owned credential settings still come from the save.
+        assert_eq!(incoming.credential_auto_lock_minutes, Some(5));
+    }
+
+    #[test]
+    fn credential_storage_chosen_round_trips() {
+        let settings = AppSettings {
+            credential_storage_chosen: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains(r#""credentialStorageChosen":true"#));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.credential_storage_chosen, Some(true));
     }
 
     #[test]

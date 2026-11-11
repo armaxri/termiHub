@@ -510,6 +510,13 @@ pub(crate) fn init_credentials_and_connections_with<R: tauri::Runtime>(
     app.manage(Arc::new(named_credentials));
 
     let credential_manager = CredentialManager::new(storage_mode.clone(), config_dir.clone());
+    // First-use storage chooser (#5187): an install that ever chose — or that
+    // already keeps credentials in a store — is never asked.
+    credential_manager.set_storage_choice_recorded(credential::types::storage_choice_made(
+        settings.credential_storage_chosen == Some(true),
+        settings.credential_storage_mode.is_some(),
+        &storage_mode,
+    ));
     recovery_warnings.extend(apply_deferred_credential_import(
         &config_dir,
         &storage_mode,

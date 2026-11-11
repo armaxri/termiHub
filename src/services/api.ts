@@ -2920,6 +2920,16 @@ export async function changeMasterPassword(
   await invoke("change_master_password", { currentPassword, newPassword });
 }
 
+/**
+ * Record the first-use storage chooser's "Don't save" (#5187): the user made a
+ * choice and keeps credential storage off, so the chooser is not shown again.
+ * Choosing a store goes through {@link switchCredentialStore} instead, which
+ * records the choice itself. Resolves with the refreshed store status.
+ */
+export async function markCredentialStorageChosen(): Promise<CredentialStoreStatusInfo> {
+  return await invoke<CredentialStoreStatusInfo>("mark_credential_storage_chosen");
+}
+
 /** Switch the credential storage backend. Optionally migrates existing credentials. */
 export async function switchCredentialStore(
   newMode: string,

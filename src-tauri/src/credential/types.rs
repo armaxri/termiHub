@@ -151,6 +151,23 @@ pub struct CredentialStoreStatusInfo {
     /// Current status: `"unlocked"`, `"locked"`, or `"unavailable"`.
     #[cfg_attr(test, ts(type = "\"unlocked\" | \"locked\" | \"unavailable\""))]
     pub status: String,
+    /// Whether the user has made a credential-storage choice (#5187). `false`
+    /// only while the mode is still the untouched `none` default: the first
+    /// attempt to save a secret then shows the one-time storage chooser. Any
+    /// active store counts as chosen, so existing users are never asked.
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub storage_chosen: bool,
+}
+
+/// Whether a credential-storage choice has been made (#5187).
+///
+/// True when the user confirmed a choice (`chosen_flag`, persisted as the
+/// `credentialStorageChosen` setting), when a storage mode was ever persisted
+/// (`mode_persisted` — set by every store switch, including an explicit switch
+/// to `none`), or when a store other than `none` is active (an install that
+/// already keeps credentials somewhere is never asked again).
+pub fn storage_choice_made(chosen_flag: bool, mode_persisted: bool, mode: &StorageMode) -> bool {
+    chosen_flag || mode_persisted || *mode != StorageMode::None
 }
 
 /// Convert a [`CredentialStoreStatus`] to its string representation.
@@ -165,15 +182,44 @@ pub fn status_to_string(status: &CredentialStoreStatus) -> &'static str {
 /// Build a [`CredentialStoreStatusInfo`] from a credential manager.
 pub fn build_status_info(manager: &super::CredentialManager) -> CredentialStoreStatusInfo {
     use super::CredentialStore;
+    let mode = manager.get_mode();
     CredentialStoreStatusInfo {
-        mode: manager.get_mode().to_settings_str().to_string(),
+        mode: mode.to_settings_str().to_string(),
         status: status_to_string(&manager.status()).to_string(),
+        storage_chosen: storage_choice_made(manager.storage_choice_recorded(), false, &mode),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_choice_is_not_made_on_a_fresh_install() {
+        assert!(!storage_choice_made(false, false, &StorageMode::None));
+    }
+
+    #[test]
+    fn storage_choice_counts_the_flag_a_persisted_mode_and_an_active_store() {
+        assert!(storage_choice_made(true, false, &StorageMode::None));
+        assert!(storage_choice_made(false, true, &StorageMode::None));
+        // Existing users that already keep credentials somewhere are never asked.
+        assert!(storage_choice_made(false, false, &StorageMode::OsKeychain));
+        assert!(storage_choice_made(false, false, &StorageMode::MasterPassword));
+    }
+
+    #[test]
+    fn status_info_reports_the_storage_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = super::super::CredentialManager::new(StorageMode::None, dir.path().into());
+        assert!(!build_status_info(&manager).storage_chosen);
+        manager.set_storage_choice_recorded(true);
+        let info = build_status_info(&manager);
+        assert!(info.storage_chosen);
+        assert_eq!(info.mode, "none");
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["storageChosen"], true);
+    }
 
     #[test]
     fn credential_type_display_password() {

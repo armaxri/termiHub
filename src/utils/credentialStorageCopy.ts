@@ -65,3 +65,45 @@ export function withModeAwareSaveHelp(
   const helpText = modeAwareSaveHelpText(field.helpText, mode);
   return helpText === (field.helpText ?? undefined) ? field : { ...field, helpText };
 }
+
+/** One option of the first-use credential-storage chooser (#5187). */
+export interface CredentialStorageChoiceCopy {
+  mode: CredentialStorageMode;
+  label: string;
+  badge?: string;
+  description: string;
+}
+
+/** Title of the first-use credential-storage chooser (#5187). */
+export const CREDENTIAL_STORAGE_CHOOSER_TITLE = "Where should termiHub keep passwords?";
+
+/** Where the choice can be changed later — the same setting the chooser writes. */
+export const CREDENTIAL_STORAGE_CHANGE_LATER_TEXT =
+  "You can change this any time under Settings ▸ Security ▸ Credential Storage.";
+
+/**
+ * The chooser's options, OS Keychain first (pre-selected). Labels match the
+ * Settings ▸ Security options, so the user finds the same choice there.
+ */
+export const CREDENTIAL_STORAGE_CHOICES: CredentialStorageChoiceCopy[] = [
+  {
+    mode: "os_keychain",
+    label: "OS Keychain",
+    badge: "Recommended",
+    description:
+      "Managed by your operating system and unlocked with your login. " +
+      "Nothing extra to remember.",
+  },
+  {
+    mode: "master_password",
+    label: "Master Password",
+    description:
+      "An encrypted termiHub vault, locked with a master password you set. " +
+      "Portable — you can export it to another machine.",
+  },
+  {
+    mode: "none",
+    label: "Don't save passwords",
+    description: "You'll be asked for passwords each time you connect.",
+  },
+];

@@ -518,8 +518,12 @@ pub async fn switch_credential_store(
         migrate_credentials,
         |mode| {
             // Persist the new mode to settings so it survives app restarts.
+            // A switch is a storage choice (#5187): the first-use chooser
+            // never asks again.
             let mut settings = connection_manager.get_settings();
             settings.credential_storage_mode = CredentialStorageMode::parse(mode.to_settings_str());
+            settings.credential_storage_chosen = Some(true);
+            manager.set_storage_choice_recorded(true);
             if let Err(e) = connection_manager.save_settings(settings) {
                 warn!(
                     "Failed to persist credential storage mode to settings: {}",
@@ -538,9 +542,35 @@ pub async fn switch_credential_store(
     ) {
         sync_embedded_server_secrets(&app_handle);
         sync_connection_credential_scopes(&app_handle);
+        // Reflect the persisted mode + choice into the settings region, so a
+        // later whole-document settings save starts from the fresh values.
+        crate::settings_projection::projection::fold_settings_from_manager(&app_handle);
     }
     emit_status_changed(&app_handle, &manager);
     result
+}
+
+/// Record that the user made a credential-storage choice without switching
+/// stores (#5187) — the first-use chooser's "Don't save", which keeps the
+/// `none` mode. The chooser is not shown again; the mode stays changeable
+/// under Settings ▸ Security. Choosing a store goes through
+/// [`switch_credential_store`], which records the choice itself.
+#[tauri::command]
+pub fn mark_credential_storage_chosen(
+    app_handle: AppHandle,
+    manager: State<'_, Arc<CredentialManager>>,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<CredentialStoreStatusInfo, String> {
+    info!("Recording the credential storage choice");
+    let mut settings = connection_manager.get_settings();
+    settings.credential_storage_chosen = Some(true);
+    connection_manager
+        .save_settings(settings)
+        .map_err(|e| format!("Failed to save the credential storage choice: {e}"))?;
+    manager.set_storage_choice_recorded(true);
+    crate::settings_projection::projection::fold_settings_from_manager(&app_handle);
+    emit_status_changed(&app_handle, &manager);
+    Ok(build_status_info(&manager))
 }
 
 /// Remove the collected credentials from the previous store after a switch to

@@ -13,6 +13,7 @@ import {
 } from "@/components/Diagnostics";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
+import { CredentialStorageChooser } from "@/components/CredentialStorage";
 import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt";
 import { SshKeyboardInteractivePrompt } from "@/components/SshKeyboardInteractivePrompt/SshKeyboardInteractivePrompt";
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
@@ -381,6 +382,7 @@ function App() {
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />
+          <CredentialStorageChooser />
           <SshHostKeyPrompt />
           <SshKeyboardInteractivePrompt />
           <LocalProcessAuthDialog />

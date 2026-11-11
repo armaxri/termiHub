@@ -1,12 +1,19 @@
 import { useAppStore } from "@/store/appStore";
+import { credentialStorageNeedsChoice } from "@/utils/credentialStorageChoice";
 
 /**
  * Take the user to where credential storage is turned on (#5186).
  *
- * Today that is Settings ▸ Security. This is the single seam the first-use
- * storage chooser (#5187) replaces: every "Enable credential storage…" action
- * routes through here, so swapping the target is a one-line change.
+ * Every "Enable credential storage…" action routes through here. Before any
+ * storage choice exists this opens the first-use storage chooser (#5187);
+ * once a choice was made (e.g. "Don't save passwords") it opens Settings ▸
+ * Security, where the choice can be changed.
  */
 export function openCredentialStorageSetup(): void {
-  useAppStore.getState().openSettingsTab({ category: "security" });
+  const state = useAppStore.getState();
+  if (credentialStorageNeedsChoice(state.credentialStoreStatus)) {
+    void state.requestStorageChoice();
+    return;
+  }
+  state.openSettingsTab({ category: "security" });
 }

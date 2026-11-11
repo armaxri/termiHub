@@ -191,7 +191,11 @@ impl LegacySecret {
 /// Settings keys that describe **this machine's** credential store. They are
 /// never taken from a backup: restoring another machine's storage mode would
 /// point the app at a credential store that does not exist here.
-pub const LOCAL_SETTINGS_KEYS: &[&str] = &["credentialStorageMode", "credentialAutoLockMinutes"];
+pub const LOCAL_SETTINGS_KEYS: &[&str] = &[
+    "credentialStorageMode",
+    "credentialStorageChosen",
+    "credentialAutoLockMinutes",
+];
 
 fn to_doc<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).unwrap_or_default()
