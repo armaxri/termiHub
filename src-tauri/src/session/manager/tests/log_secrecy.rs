@@ -21,7 +21,7 @@
 //! test also asserts a known line DID reach the file, so an empty log can never
 //! pass for a clean one.
 
-use super::{MockEventEmitter, NullAgent};
+use super::{FakeAgent, MockEventEmitter};
 
 /// In-process SSH + SFTP + scripted-`sudo` server, so the sudo-password check
 /// runs on every PR (#4007).
@@ -142,7 +142,7 @@ async fn ssh_password_login() {
     .await
     .expect("start the in-process SSH server");
 
-    let manager = SessionManager::new(build_desktop_registry(), Arc::new(NullAgent));
+    let manager = SessionManager::new(build_desktop_registry(), Arc::new(FakeAgent::offline()));
     let emitter = MockEventEmitter::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
@@ -300,7 +300,7 @@ fn sudo_password_of_an_elevated_save_stays_out_of_the_app_log() {
 async fn elevated_save_wrong_then_right(port: u16) {
     use termihub_core::backends::ssh::sftp_ops::ElevatedWriteResult;
 
-    let manager = SessionManager::new(build_desktop_registry(), Arc::new(NullAgent));
+    let manager = SessionManager::new(build_desktop_registry(), Arc::new(FakeAgent::offline()));
     let emitter = MockEventEmitter::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
@@ -398,7 +398,7 @@ async fn in_process_elevated_save_wrong_then_right() {
     use termihub_core::backends::ssh::sftp_ops::ElevatedWriteResult;
 
     let server = sudo_sftp_server::serve(&[(IN_PROCESS_TARGET, "original\n")]).await;
-    let manager = SessionManager::new(build_desktop_registry(), Arc::new(NullAgent));
+    let manager = SessionManager::new(build_desktop_registry(), Arc::new(FakeAgent::offline()));
     let settings = serde_json::json!({
         "host": "127.0.0.1",
         "port": server.addr.port(),
