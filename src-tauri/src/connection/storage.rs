@@ -2,12 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::config::{ConnectionStore, ConnectionTreeNode, FlatConnectionStore, SavedRemoteAgent};
 use super::recovery::{RecoveryResult, RecoveryWarning};
 use super::tree::flatten_tree;
-use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::config_paths::resolve_app_config_dir;
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{
     guard_not_newer, load_versioned, read_unknown_fields, recover_corrupt_store,
@@ -25,8 +25,8 @@ impl ConnectionStorage {
     /// Create a new storage instance, resolving the config directory.
     ///
     /// If `TERMIHUB_CONFIG_DIR` is set, it overrides the default Tauri config directory.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let config_dir = resolve_config_dir(Some(app_handle))?;
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
+        let config_dir = resolve_app_config_dir(app_handle)?;
 
         tracing::info!("Using config directory: {}", config_dir.display());
 

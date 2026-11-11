@@ -199,7 +199,10 @@ pub struct ConnectionManager {
 impl ConnectionManager {
     /// Create a new connection manager, loading existing data from disk.
     /// Uses recovery loading to handle corrupt files gracefully.
-    pub fn new(app_handle: &AppHandle, credential_store: Arc<dyn CredentialStore>) -> Result<Self> {
+    pub fn new<R: tauri::Runtime>(
+        app_handle: &AppHandle<R>,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Result<Self> {
         let storage = ConnectionStorage::new(app_handle)?;
         let conn_result = storage.load_with_recovery()?;
         let flat = conn_result.data;
