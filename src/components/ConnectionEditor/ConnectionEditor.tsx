@@ -17,7 +17,6 @@ import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { currentConnectionsView } from "@/store/connectionsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
   ConnectionConfig,
@@ -44,6 +43,7 @@ import {
   isSecondFactorFailure,
 } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
+import { persistSecretOnceConnected } from "@/utils/persistSecretOnceConnected";
 import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import {
@@ -195,6 +195,15 @@ const DEFAULT_STORAGE_FILE = "__default__";
  * (#3557): the connection's own password and its "save" toggle.
  */
 const SHARED_CREDENTIAL_HIDDEN_FIELDS = ["password", "savePassword"] as const;
+
+/**
+ * What {@link ConnectionEditor}'s save step returns: the saved entry and the id
+ * the backend stored it under (`null` when the persist failed).
+ */
+interface SavedEntry {
+  entry: SavedConnection | RemoteAgentDefinition;
+  persistedId: Promise<string | null>;
+}
 
 interface ConnectionEditorProps {
   tabId: string;
@@ -1046,10 +1055,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     updateAgentDef,
   ]);
 
-  /** Save the connection (or agent transport) and return the saved entry. */
-  const saveConnection = useCallback(async (): Promise<
-    SavedConnection | RemoteAgentDefinition | null
-  > => {
+  /**
+   * Save the connection (or agent transport) and return the saved entry, with
+   * the id the backend stores it under (`persistedId`, #5257): it is
+   * recomputed from folder + name, so a new connection's optimistic `conn-<ulid>`
+   * id and a renamed connection's old id are not it. Resolves `null` when the
+   * persist failed (the store already toasted it).
+   */
+  const saveConnection = useCallback(async (): Promise<SavedEntry | null> => {
     if (!name.trim()) return null;
     if (nameError) return null;
     if (jumpHostValidation.errors.length > 0) return null;
@@ -1064,7 +1077,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           agentSettings,
         };
         updateRemoteAgent(updated);
-        return updated;
+        return { entry: updated, persistedId: Promise.resolve(updated.id) };
       } else {
         const newAgent: RemoteAgentDefinition = {
           id: newId("agent"),
@@ -1075,7 +1088,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           connectionState: "disconnected",
         };
         addRemoteAgent(newAgent);
-        return newAgent;
+        return { entry: newAgent, persistedId: Promise.resolve(newAgent.id) };
       }
     }
 
@@ -1125,11 +1138,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // connection lands in the target exactly once, with the edit (#3590).
       const originalSource = existingConnection.sourceFile ?? null;
       if (originalSource !== sourceFile) {
-        return await saveConnectionToFile(saved, originalSource);
+        const moved = await saveConnectionToFile(saved, originalSource);
+        return moved ? { entry: moved, persistedId: Promise.resolve(moved.id) } : null;
       }
 
-      updateConnection(saved);
-      return saved;
+      return { entry: saved, persistedId: updateConnection(saved) };
     } else {
       const saved: SavedConnection = {
         id: newId("conn"),
@@ -1142,8 +1155,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         iconEmoji,
         sourceFile,
       };
-      addConnection(saved);
-      return saved;
+      return { entry: saved, persistedId: addConnection(saved) };
     }
   }, [
     currentTypeInfo?.schema,
@@ -1308,6 +1320,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             ...connSettings,
             persistent,
             title: name.trim(),
+            // Link the session to the saved definition, as the sidebar's
+            // connect does, so reattach finds it (#5257). A new definition's
+            // id is not known here yet.
+            ...(existingAgentDef ? { definitionId: existingAgentDef.id } : {}),
           },
         },
         { terminalOptions }
@@ -1316,8 +1332,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
 
-    const saved = await saveConnection();
-    if (!saved || "connectionState" in saved) return;
+    const result = await saveConnection();
+    if (!result || "connectionState" in result.entry) return;
+    const saved = result.entry;
+    // Bind the tab to the saved connection the way a sidebar connect does
+    // (#5257, #5258): schedules find their targets and a transfer's resume
+    // finds its connection by this id. It is the *persisted* id, so wait for the
+    // save to land; a failed save connects without one, like an unsaved tab.
+    const connectionId = (await result.persistedId) ?? undefined;
 
     let config: ConnectionConfig = saved.config;
     const savedSourceFile = "sourceFile" in saved ? (saved.sourceFile ?? null) : null;
@@ -1327,7 +1349,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     const fieldSecrets = await resolveFieldSecrets({
       schema: currentTypeInfo?.schema,
       settings: connSettings,
-      connectionId: saved.id,
+      connectionId: connectionId ?? saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
       // The connection's name titles each prompt (#4475).
@@ -1347,7 +1369,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         ? AGENT_SCHEMA
         : withoutFieldSecretFields(currentTypeInfo?.schema),
       settings: fieldSecrets.settings,
-      connectionId: saved.id,
+      connectionId: connectionId ?? saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
       label: saved.name,
@@ -1359,29 +1381,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       toast.info("Connect canceled — your changes were saved.");
       throw new PromptCanceledError();
     }
+    // A secret typed into the connect prompt with its Save box checked (#874,
+    // #879) is written only once the tab's session is established (#5156), so
+    // a typo is never saved. It is stored under the persisted id, in the file
+    // the connection lives in (#3591); a failed save stores nothing.
+    let typedSecret: (() => Promise<void>) | null = null;
     if (secret.status === "resolved") {
-      // Persist a freshly-entered secret when the prompt's Save box is checked
-      // (#874, #879). Store under the connection's persisted id — a new
-      // connection's optimistic conn-<ts> id has been reconciled by now (#863),
-      // and the editor enforces unique names per folder, so name + folderId
-      // identifies the stored entry.
-      if (secret.source === "prompt" && secret.shouldSave) {
-        // The file matters too: a same-named connection in another file has
-        // its own secret (#3591).
-        const storeConn = currentConnectionsView().connections.find(
-          (c) =>
-            c.name === saved.name &&
-            (c.folderId ?? null) === (saved.folderId ?? null) &&
-            (c.sourceFile ?? null) === savedSourceFile
-        );
-        await storeCredential(
-          storeConn?.id ?? saved.id,
-          secret.credentialType,
-          secret.secret,
-          savedSourceFile
-        ).catch((err) =>
-          frontendLog("connection_editor", `Failed to store credential: ${errorMessage(err)}`)
-        );
+      if (secret.source === "prompt" && secret.shouldSave && connectionId) {
+        const { credentialType, secret: value } = secret;
+        typedSecret = () => storeCredential(connectionId, credentialType, value, savedSourceFile);
       }
       config = {
         ...config,
@@ -1391,13 +1399,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
     // Open the same tab the sidebar would: a graphical type (VNC/RDP) gets its
     // canvas, a terminal-less type (FTP) its browser — not a terminal (#4017).
-    addTab(saved.name, saved.config.type, config, {
+    const tabId = addTab(saved.name, saved.config.type, config, {
+      connectionId,
       terminalOptions: saved.terminalOptions,
       contentType: connectionTabContentType(
         useAppStore.getState().connectionTypes,
         saved.config.type
       ),
     });
+    if (typedSecret) {
+      void persistSecretOnceConnected(tabId, typedSecret).then((outcome) => {
+        if (outcome === "failed") {
+          frontendLog("connection_editor", `Failed to store the typed credential for ${tabId}`);
+        } else if (outcome === "discarded") {
+          frontendLog("connection_editor", `Connect of ${tabId} did not succeed: not saved`);
+        }
+      });
+    }
     closeThisTab();
   }, [
     isAgentDefinitionMode,

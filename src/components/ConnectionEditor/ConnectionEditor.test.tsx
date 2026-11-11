@@ -11,6 +11,14 @@ import { currentConnectionsView } from "@/store/connectionsBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
+import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
+import {
+  authFailed,
+  connected,
+  connecting,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider, toast } from "@/components/ui";
 
@@ -275,6 +283,19 @@ const SSH_CONN_KEY: SavedConnection = {
 };
 
 describe("ConnectionEditor — Save & Connect credential handling", () => {
+  const sessions = installSessionLifecycleHarness();
+
+  /** Report the tab Save & Connect opened as connected (#5156). */
+  async function connectOpenedTab(): Promise<void> {
+    const tab = getAllTabsAcrossGroupTrees().find((t) => t.contentType === "terminal");
+    expect(tab).toBeDefined();
+    sessions.transport.setSession(tab!.id, connected());
+    await flushSessionRegion();
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
   async function renderFor(connId: string) {
     await act(async () => {
       root.render(
@@ -600,6 +621,11 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       save: true,
     });
 
+    // Typed into the prompt: saved only once the connect succeeds (#5156).
+    const callsOf = () => mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    expect(callsOf()).toHaveLength(0);
+    await connectOpenedTab();
+
     const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
     expect(storeCalls).toHaveLength(1);
     expect(storeCalls[0][1]).toMatchObject({
@@ -607,6 +633,27 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       credentialType: "password",
       value: "typed-secret",
     });
+  });
+
+  it("does not store a typed password the server rejects (#5156)", async () => {
+    await saveConnectThenAnswerPrompt({
+      connId: SSH_CONN_PASSWORD.id,
+      persistedId: "ssh-pw-conn",
+      secret: "typo-secret",
+      save: true,
+    });
+
+    const tab = getAllTabsAcrossGroupTrees().find((t) => t.contentType === "terminal");
+    expect(tab).toBeDefined();
+    sessions.transport.setSession(tab!.id, connecting());
+    await flushSessionRegion();
+    sessions.transport.setSession(tab!.id, authFailed());
+    await flushSessionRegion();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential")).toHaveLength(0);
   });
 
   it("does not store the password when the prompt's Save box is unchecked (#874)", async () => {
@@ -628,6 +675,11 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       secret: "typed-passphrase",
       save: true,
     });
+
+    // Typed into the prompt: saved only once the connect succeeds (#5156).
+    const callsOf = () => mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    expect(callsOf()).toHaveLength(0);
+    await connectOpenedTab();
 
     const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
     expect(storeCalls).toHaveLength(1);
