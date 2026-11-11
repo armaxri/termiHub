@@ -92,7 +92,7 @@ gh attestation verify termiHub-0.1.0-macos-arm64.dmg --repo armaxri/termiHub
 Each release also ships CycloneDX software bills of materials (`termiHub-<version>-sbom-*.cdx.json`
 for the desktop app, the agent, the RDP sidecar and the frontend) listing every bundled dependency.
 The third-party license notices for everything termiHub ships are bundled with the app (**About →
-Third-Party Licenses**) and attached to each release as `termiHub-<version>-THIRD_PARTY_NOTICES.txt`.
+Third-party licenses**) and attached to each release as `termiHub-<version>-THIRD_PARTY_NOTICES.txt`.
 See [Verifying release artifacts](docs/contributing.md#verifying-release-artifacts) for details.
 
 ### Known limitations (beta)
@@ -102,7 +102,7 @@ See [Verifying release artifacts](docs/contributing.md#verifying-release-artifac
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
 
-> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases (develop-branch dev builds instead query the rolling `dev-develop-latest` pre-release on the same API, to tell you when a newer develop build exists). That is the only network call termiHub makes on its own (Settings → Plugins → **Browse Plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**; if you turn on Settings → Plugins → **Check for Plugin Updates Automatically**, which is off by default, termiHub also checks, once a day, the update URL of each installed plugin that publishes one and the plugin index) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export Diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
+> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases (develop-branch dev builds instead query the rolling `dev-develop-latest` pre-release on the same API, to tell you when a newer develop build exists). That is the only network call termiHub makes on its own (Settings → Plugins → **Browse plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**; if you turn on Settings → Plugins → **Check for plugin updates automatically**, which is off by default, termiHub also checks, once a day, the update URL of each installed plugin that publishes one and the plugin index) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
 
 Prefer to build it yourself? See [Development](#development) below.
 
@@ -128,19 +128,19 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Connection management** — Organize connections in folder hierarchies with import/export from external files
 - **Find in terminal** — Search the terminal output (`Cmd+F` on macOS, `Ctrl+Shift+F` on Windows/Linux)
 - **Shell integration and prompt navigation** — The per-connection **Shell Integration** toggle (local shell, WSL and SSH; on by default) lets the file browser follow the shell's current directory and marks each prompt and command (OSC 7 / OSC 133). With the marks, jump between prompts, select or copy the last command's output from the command palette, and see a green or red exit-status mark next to each finished command — see [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md#prompt-navigation-and-command-output-osc-133)
-- **Open Connections panel** — One place to inspect and close everything termiHub has open: local sessions, agent connections and their sessions, SSH tunnels, SFTP sessions, monitoring, embedded servers and X servers (gear menu → **Open Connections**)
+- **Open connections panel** — One place to inspect and close everything termiHub has open: local sessions, agent connections and their sessions, SSH tunnels, SFTP sessions, monitoring, embedded servers and X servers (gear menu → **Open connections**)
 
 ### SSH Features
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
-- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The separate **SSH Tunnels** sidebar view is **experimental** — hidden until you enable **Settings → General → Allow Experimental Features**
+- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The separate **SSH tunnels** sidebar view is **experimental** — hidden until you enable **Settings → General → Allow Experimental Features**
 - **Jump hosts** — Connect through one or more bastion hosts (`ProxyJump`-style chains)
 - **X11 forwarding** — Forward remote GUI applications to your local X server
 - **System monitoring** — Real-time CPU, memory, swap, disk, and network throughput stats for remote hosts
 
 ### Power Tools
 
-- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse Plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** with an Ed25519 signature / trust model. Native plugins are off by default; each one runs out of process in an OS sandbox (`termihub-plugin-runner`) — see the plugin trust warning under [Security](#security)
+- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** with an Ed25519 signature / trust model. Native plugins are off by default; each one runs out of process in an OS sandbox (`termihub-plugin-runner`) — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN. **Experimental** — the Network Tools view is hidden until you enable **Settings → General → Allow Experimental Features**
 - **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. **Experimental** — the Services view that manages them is hidden until you enable **Settings → General → Allow Experimental Features**
 - **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`); replay into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
@@ -165,11 +165,11 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **Credential storage** — Optional credential encryption via platform keychain (OS keychain), master password, or prompt-only mode
 - **Auto-lock** — Configurable timeout for credential store locking
-- **Backup & restore** — Back up all app data (connections, settings, themes, keyboard shortcuts, workspaces, macros, workflows, schedules, tunnels, embedded servers, network tools, trusted SSH host keys and RDP certificates, installed plugins, and optionally the encrypted credential vault) to one passphrase-protected file and restore it — per part, merged or replaced (Settings → Backup & Restore)
+- **Backup & restore** — Back up all app data (connections, settings, themes, keyboard shortcuts, workspaces, macros, workflows, schedules, tunnels, embedded servers, network tools, trusted SSH host keys and RDP certificates, installed plugins, and optionally the encrypted credential vault) to one passphrase-protected file and restore it — per part, merged or replaced (Settings → Backup & restore)
 - **Credential vault backup** — Export saved credentials to a passphrase-protected, encrypted file (Settings → Security → Export vault…; in OS Keychain mode each export is confirmed with Touch ID / Windows Hello) and import it on another machine or after a reinstall (Import vault…)
 - **Unlock with Touch ID / Windows Hello** — Optionally unlock the master-password credential store with biometrics; the master password keeps working and is required to turn it on
 
-> ⚠️ **Plugin trust warning.** termiHub can load **native plugins** (cdylib backends). They are **off by default** (Settings → Plugins → **Enable Native Plugins**), and each one loads only after you trust that exact build and the access it asks for. A native plugin never runs inside termiHub: it runs in its own `termihub-plugin-runner` process, confined by an OS sandbox (landlock, seccomp and namespaces on Linux; Seatbelt on macOS; a Less-Privileged AppContainer in a job object on Windows). In that sandbox it can read and write only its own data folder, cannot open sockets, start programs or reach devices, and gets network and file access only through termiHub's permission-checked bridge. If full isolation is unavailable (mostly an older Linux kernel without landlock), the plugin loads only after you accept reduced isolation for that build; there is no setting to turn the sandbox off. Plugins also carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`). The sandbox raises the cost of an attack but does not protect against kernel or operating-system vulnerabilities, or against a plugin misleading you inside its own terminal (for example, asking for a password). **Only install plugins from publishers you trust.** Details: [SECURITY.md](SECURITY.md#native-plugin-sandbox) and [The plugin sandbox](docs/plugin-authoring.md#the-plugin-sandbox).
+> ⚠️ **Plugin trust warning.** termiHub can load **native plugins** (cdylib backends). They are **off by default** (Settings → Plugins → **Enable native plugins**), and each one loads only after you trust that exact build and the access it asks for. A native plugin never runs inside termiHub: it runs in its own `termihub-plugin-runner` process, confined by an OS sandbox (landlock, seccomp and namespaces on Linux; Seatbelt on macOS; a Less-Privileged AppContainer in a job object on Windows). In that sandbox it can read and write only its own data folder, cannot open sockets, start programs or reach devices, and gets network and file access only through termiHub's permission-checked bridge. If full isolation is unavailable (mostly an older Linux kernel without landlock), the plugin loads only after you accept reduced isolation for that build; there is no setting to turn the sandbox off. Plugins also carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`). The sandbox raises the cost of an attack but does not protect against kernel or operating-system vulnerabilities, or against a plugin misleading you inside its own terminal (for example, asking for a password). **Only install plugins from publishers you trust.** Details: [SECURITY.md](SECURITY.md#native-plugin-sandbox) and [The plugin sandbox](docs/plugin-authoring.md#the-plugin-sandbox).
 
 ### Workflow Automation (experimental)
 
@@ -235,15 +235,15 @@ termiHub uses a VS Code-inspired three-column layout:
 
 **Folders** — Create folders via the toolbar icon. Drag and drop connections between folders. Deleting a folder moves children to the parent.
 
-**Import & Export** — Imports are one-time steps, so they all live on **Settings → Import & Migration**: import hosts from your `~/.ssh/config`, onboard hosts from a CSV / host inventory, import or export connections as a JSON file, and migrate from **MobaXterm** (described in [Importing from MobaXterm](#importing-from-mobaxterm) below). The **Import connections…** icon in the Connections header opens that page. To move all app data to a new machine, use **Settings → Backup & Restore**. In the connection editor, **Fill from ~/.ssh/config…** fills in the SSH connection you are editing from one host of your OpenSSH config.
+**Import & Export** — Imports are one-time steps, so they all live on **Settings → Import & migration**: import hosts from your `~/.ssh/config`, onboard hosts from a CSV / host inventory, import or export connections as a JSON file, and migrate from **MobaXterm** (described in [Importing from MobaXterm](#importing-from-mobaxterm) below). The **Import connections…** icon in the Connections header opens that page. To move all app data to a new machine, use **Settings → Backup & restore**. In the connection editor, **Fill from ~/.ssh/config…** fills in the SSH connection you are editing from one host of your OpenSSH config.
 
-**External Connection Files** — Load shared connection configs from external JSON files (e.g., from a git repo). Add them in Settings > External Connection Files. External connections appear read-only with a git-folder icon.
+**External connection files** — Load shared connection configs from external JSON files (e.g., from a git repo). Add them in Settings > External connection files. External connections appear read-only with a git-folder icon.
 
 **Environment Variable Placeholders** — Use `${VAR}` syntax in any connection field to substitute environment variables at connect time (e.g., `${HOME}/.ssh/id_rsa`). Unknown variables expand to an empty string. A leading `~` is also expanded to the user's home directory.
 
 #### Importing from MobaXterm
 
-The import lives under **Settings → Import & Migration**. It always shows a preview first and creates nothing until you click **Import**.
+The import lives under **Settings → Import & migration**. It always shows a preview first and creates nothing until you click **Import**.
 
 - **Finding the file** — The settings page tells you whether it found your MobaXterm configuration (on Windows: `%APPDATA%\MobaXterm\MobaXterm.ini` for the installed edition, or a `MobaXterm` folder in your Documents). **Import from MobaXterm…** opens a preview of it right away. On any OS — and for the portable edition, whose `MobaXterm.ini` sits next to its `.exe` — click **Choose file…** and pick a `MobaXterm.ini` or an exported `.mxtsessions` file (MobaXterm: right-click **User sessions** → **Export all sessions to file**). Files in UTF-8 or MobaXterm's Windows-1252 encoding are both read.
 - **Sessions** — SSH (host, port, user, private key), Telnet, Serial, RDP, VNC, FTP, SFTP (imported as SSH), local shell and WSL sessions are importable; anything else (Browser, Mosh, XDMCP, Rsh, File, S3) is listed as **Not imported** with the reason. MobaXterm's folder tree is recreated under the target folder you pick, existing folders with the same name are reused, and names that already exist get a "(2)" suffix. Path placeholders in key paths (`_ProfileDir_`, `_MyDocuments_`, `_CurrentDrive_`, …) are resolved for this computer.
@@ -355,7 +355,7 @@ The terminal renders images that programs send inline, using
 - **SIXEL** (DCS sixel) — e.g. `img2sixel`, `chafa -f sixel`, `lsix`, matplotlib's sixel backend
 - **iTerm2 inline image protocol** (`OSC 1337 ; File=…`) — e.g. `imgcat`
 
-Toggle it under **Settings > Terminal > Inline Images** (on by default; applies live). Because
+Toggle it under **Settings > Terminal > Inline images** (on by default; applies live). Because
 the shell (or a remote host) controls what is sent, each terminal enforces memory caps:
 
 | Limit                        | Value                  |
@@ -429,7 +429,7 @@ The most-used default shortcuts:
 | … outside a terminal           | `F1`                          | `F1`                                |
 | Save file (in editor)          | `Cmd+S`                       | `Ctrl+S`                            |
 
-Windows/Linux defaults use `Ctrl+Shift` or `Alt+Shift` so that common shell keys such as `Ctrl+W` and `Ctrl+B` still reach the terminal. Bare function keys such as `F1` and `F6` go to the program running in a focused terminal (htop, mc, nano, …); their `Ctrl` / `Cmd` variants work there too. Every shortcut can be rebound under **Settings → Keyboard → Keyboard Shortcuts**. See [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md) for the reasoning and the prompt-navigation and focus keys.
+Windows/Linux defaults use `Ctrl+Shift` or `Alt+Shift` so that common shell keys such as `Ctrl+W` and `Ctrl+B` still reach the terminal. Bare function keys such as `F1` and `F6` go to the program running in a focused terminal (htop, mc, nano, …); their `Ctrl` / `Cmd` variants work there too. Every shortcut can be rebound under **Settings → Keyboard → Keyboard shortcuts**. See [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md) for the reasoning and the prompt-navigation and focus keys.
 
 ### Settings
 
@@ -459,11 +459,11 @@ When something misbehaves, termiHub keeps two kinds of logs to help you diagnose
 
 ### Reporting a problem: Export Diagnostics
 
-To attach logs to a bug report, use the gear menu at the bottom of the Activity Bar → **Export Diagnostics…**. It shows exactly which files it will include, then saves a zip wherever you choose: the recent application log files, local crash reports, and your app version, build and platform. Every file in it is **redacted** first: passwords, tokens, keys, host names, IP addresses, usernames and home directory paths are masked. Session transcripts, terminal content, connection settings and the credential store are never included. Nothing is uploaded; you decide whether to share the file.
+To attach logs to a bug report, use the gear menu at the bottom of the Activity Bar → **Export diagnostics…**. It shows exactly which files it will include, then saves a zip wherever you choose: the recent application log files, local crash reports, and your app version, build and platform. Every file in it is **redacted** first: passwords, tokens, keys, host names, IP addresses, usernames and home directory paths are masked. Session transcripts, terminal content, connection settings and the credential store are never included. Nothing is uploaded; you decide whether to share the file.
 
 ### The in-app Log Viewer
 
-Click the **Log Viewer** icon (the scroll icon at the bottom of the Activity Bar) to open a live log tab. From there you can:
+Click the **Log viewer** icon (the scroll icon at the bottom of the Activity Bar) to open a live log tab. From there you can:
 
 - **Filter** by level (Error / Warning / Info / Debug) and **search** the messages.
 - **Copy** a single entry or all visible entries to the clipboard.
@@ -473,7 +473,7 @@ The Log Viewer shows the most recent entries of the current session only; it is 
 
 ### The persistent log file
 
-termiHub also writes a durable, size-capped log file that survives restarts and crashes. **Export Diagnostics** includes a redacted copy of it. The raw file itself is **not redacted**: it can contain host names, usernames and file paths, so review it before sharing it and prefer the diagnostics bundle for bug reports. It lives in your platform's conventional location:
+termiHub also writes a durable, size-capped log file that survives restarts and crashes. **Export diagnostics** includes a redacted copy of it. The raw file itself is **not redacted**: it can contain host names, usernames and file paths, so review it before sharing it and prefer the diagnostics bundle for bug reports. It lives in your platform's conventional location:
 
 | Platform | Log file                                            |
 | -------- | --------------------------------------------------- |
@@ -491,7 +491,7 @@ The remote agent keeps its own logs on the host it runs on, in the `logs/` folde
 
 By default the file records **Info** level and above — enough to be readable without drowning in per-keystroke noise. When you are chasing a bug, raise the detail:
 
-- **In the app:** open **Settings → General → Diagnostics → Log File Verbosity** and choose a level (Off, Error, Warning, Info, Debug, Trace). The change applies immediately and is remembered across restarts. Debug is usually the right level for a bug report; set it back to Info when you are done.
+- **In the app:** open **Settings → General → Diagnostics → Log file verbosity** and choose a level (Off, Error, Warning, Info, Debug, Trace). The change applies immediately and is remembered across restarts. Debug is usually the right level for a bug report; set it back to Info when you are done.
 - **With an environment variable:** set `TERMIHUB_FILE_LOG` before launching to override the level at startup — e.g. `TERMIHUB_FILE_LOG=debug`. This wins over the in-app setting for that run. A support case that truly needs SSH internals can pass an explicit directive such as `TERMIHUB_FILE_LOG="debug,russh=debug"`; otherwise low-level SSH packet logging is kept out of the file even at Debug/Trace.
 
 ---

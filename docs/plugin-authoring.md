@@ -464,7 +464,7 @@ runtime exactly as the app does.
 > main WebView with full IPC/command access and no per-plugin permission
 > enforcement — the manifest `permissions` are not applied to them (tracked in
 > #2001). Their code therefore only runs when the user turns on **Settings →
-> Plugins → Frontend Plugins (Experimental)**, which is off by default. With the
+> Plugins → Frontend plugins (experimental)**, which is off by default. With the
 > gate off, `protocolParser` and `statusBarWidget` entries are installed but never
 > loaded, and turning it off tears down running frontend plugins immediately.
 > Theme-only and native-backend plugins are unaffected by this setting.
@@ -613,7 +613,7 @@ host you built yourself, use the same toolchain that built it.
 
 A plugin built for ABI **1.0** predates the record, so termiHub cannot verify
 it. It still loads and behaves exactly as before — but only after the user,
-when trusting it under **Settings → Plugins → Native Plugins**, explicitly
+when trusting it under **Settings → Plugins → Native plugins**, explicitly
 accepts the unverified toolchain (the row explains the risk). Rebuild such a
 plugin for 1.1 to drop that step. See ADR-15 in
 [architecture.md](architecture.md) for the rationale.
@@ -976,7 +976,7 @@ ships for (Windows uses `x86_64-pc-windows-msvc`, not `-gnu`):
   up front: it says the package is not available for this computer and lists the
   platforms it does support, with no install action.
 - The install dialog and the plugin detail panel list a multi-platform package's
-  **Supported Platforms** by friendly name (_macOS (Apple Silicon)_, _Windows x64_,
+  **Supported platforms** by friendly name (_macOS (Apple Silicon)_, _Windows x64_,
   _Linux ARM64_, …; any other triple is shown as-is) and mark _This computer_.
   A legacy package shows _Current platform only (legacy package)_.
 - A package **without** a `libraries` map is a legacy single-platform package:
@@ -1116,7 +1116,7 @@ is confirmed in the same prompt.
 For 0.1 there is **no plugin store** and termiHub **never installs or updates a
 plugin automatically**. Plugins are installed from a local `.termihub-plugin`
 file (**Plugins → Install from file…**), from the curated **plugin index**
-(**Settings → Plugins → Browse Plugins**, see
+(**Settings → Plugins → Browse plugins**, see
 [Getting listed in the plugin index](#getting-listed-in-the-plugin-index)), or
 from an HTTPS URL plus its SHA-256 (**Settings → Plugins → Install from URL**).
 All three end in the same install dialog. Installing a newer file over an
@@ -1207,7 +1207,7 @@ whose index entry is strictly newer **and** installable on this computer
 (compatible ABI, a package for this platform, no toolchain mismatch) shows the
 same update badge, and its detail panel says "Update available (plugin index)".
 Its **Download & install…** runs the verified index download and opens the
-normal install dialog. Opening **Settings → Plugins → Browse Plugins** and
+normal install dialog. Opening **Settings → Plugins → Browse plugins** and
 loading the index records the same offers.
 
 **Which source wins.** Each source only ever offers a strictly newer, compatible
@@ -1223,7 +1223,7 @@ update the JSON document. Keep `updateUrl` stable across versions.
 
 ### Getting listed in the plugin index
 
-termiHub's **Browse Plugins** view reads a curated JSON index. The default index
+termiHub's **Browse plugins** view reads a curated JSON index. The default index
 is [`plugins/index.json`](../plugins/index.json) in this repository, served from
 the stable `main` branch; it starts empty. To get a plugin listed, open a pull
 request against `develop` that adds one entry to `plugins`:
@@ -1304,7 +1304,7 @@ When you publish a new version, open a PR that updates `version`, `url` and
 **Update available** in Browse Plugins. The `updateUrl` update check above
 works independently of the index.
 
-Users can point **Settings → Plugins → Plugin Index URL** at another HTTPS
+Users can point **Settings → Plugins → Plugin index URL** at another HTTPS
 index in the same format (for example an internal company index). A custom
 index may be unsigned — Browse then shows an **Unsigned index** notice. termiHub
 looks for `<index URL>.sig` (`.sig` appended to the URL path): if one is

@@ -2,7 +2,7 @@
 
 This document explains the conflict-avoidance rules behind termiHub's default
 keybindings, the terminal-focus pass-through behavior, and the trade-offs
-involved. For the full list of bindings, open **Settings → Keyboard Shortcuts**
+involved. For the full list of bindings, open **Settings → Keyboard shortcuts**
 inside the app or press <kbd>Ctrl</kbd>+<kbd>F1</kbd> (Win/Linux) /
 <kbd>Cmd</kbd>+<kbd>K</kbd> <kbd>Cmd</kbd>+<kbd>S</kbd> (macOS) — or bare
 <kbd>F1</kbd> anywhere except in a focused terminal.
@@ -96,7 +96,7 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
   past the last prompt returns to the bottom.
 - Each finished command gets a thin green (exit code 0) or red (non-zero) mark
   in the left gutter next to its prompt. Turn it off with **Settings →
-  Terminal → Command Status Marks**.
+  Terminal → Command status marks**.
 - **No marks, no change:** if the shell emits no OSC 133, the palette entries are
   disabled and the prompt-jump keys are passed through to the shell exactly as
   before.
@@ -137,7 +137,7 @@ this order:
   or status bar — are skipped.
 - Focus inside a dialog stays there; the keys do nothing until the dialog
   closes.
-- All four actions can be rebound in **Settings → Keyboard Shortcuts**. A
+- All four actions can be rebound in **Settings → Keyboard shortcuts**. A
   rebound **Focus Next Region** / **Focus Previous Region** key still goes to
   the terminal program while a terminal has focus.
 
@@ -155,10 +155,10 @@ terminal.
 
 A connection moves within its own folder. To move it to another folder, open its
 context menu (right-click, <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key) and
-pick **Move to Folder**.
+pick **Move to folder**.
 
-In the Remote Agents section, an agent's context menu also offers **Move Up**
-and **Move Down**. A saved connection on an agent has **Move to Folder** in its
+In the Remote Agents section, an agent's context menu also offers **Move up**
+and **Move down**. A saved connection on an agent has **Move to folder** in its
 context menu, listing that agent's folders and its top level.
 
 ## Paste, and right-click in apps that use the mouse
@@ -193,7 +193,7 @@ To protect against that, termiHub adds a focus-aware pass-through:
 > matched against app shortcuts.
 
 This applies on every platform. It is **on by default** and can be toggled in
-**Settings → Keyboard Shortcuts → "Pass through shell keys when terminal is
+**Settings → Keyboard shortcuts → "Pass through shell keys when terminal is
 focused"**.
 
 The set of shell-reserved keys is:
@@ -247,10 +247,10 @@ To give the keyboard back to termiHub, press the **release chord** — by defaul
 still held there are released. Holding an extra modifier on top of the chord
 still releases. The chord is shown in the canvas's description, the on-focus
 hint, the remote-desktop toolbar and the shortcuts overlay (under
-**Remote Desktop**), always reflecting your current binding.
+**Remote desktop**), always reflecting your current binding.
 
 The release chord is a **modifier-only** chord and can be rebound in
-**Settings → Keyboard Shortcuts → Remote Desktop → Release Remote Desktop
+**Settings → Keyboard shortcuts → Remote desktop → Release Remote Desktop
 Keyboard**. Because it is the only keyboard way out of the canvas, termiHub
 refuses any binding that could trap you:
 
@@ -314,10 +314,10 @@ The shortcuts overlay (<kbd>Ctrl</kbd>+<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kb
 <kbd>Cmd</kbd>+<kbd>S</kbd>, or <kbd>F1</kbd> outside a terminal) is a searchable, read-only cheat sheet. It shows
 one **Shortcut** column with the bindings of the platform you are running on,
 including your own overrides. To change a binding, use its **Edit shortcuts…**
-button, which opens **Settings → Keyboard Shortcuts** — the panel with the
+button, which opens **Settings → Keyboard shortcuts** — the panel with the
 interactive editor.
 
-**Save HTML Cheat Sheet** in that panel exports a printable sheet for this
+**Save HTML cheat sheet** in that panel exports a printable sheet for this
 platform. Check **All platforms** first to list the Win / Linux and macOS
 bindings side by side, for example to share with someone on another OS.
 
@@ -349,7 +349,7 @@ Recorded chords fire through the same chord matcher the built-in defaults use.
 ## Restoring the safer defaults
 
 If a user has previously customized their bindings into a conflicting state,
-**Settings → Keyboard Shortcuts → Reset to Safer Defaults** clears every
+**Settings → Keyboard shortcuts → Reset to safer defaults** clears every
 override and re-applies the conflict-avoiding defaults.
 
 ## When to override

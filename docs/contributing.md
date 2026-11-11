@@ -1947,7 +1947,7 @@ The release workflow adds two supply-chain records to every release (CI-022,
 - **Third-party license notices.** `termiHub-X.Y.Z-THIRD_PARTY_NOTICES.txt` holds the full
   license text of every Rust crate and npm production package shipped in the desktop app,
   the agent and the RDP sidecar (the same file every installer bundles for **About →
-  Third-Party Licenses**). Regenerate it with `pnpm notices:generate`; see
+  Third-party licenses**). Regenerate it with `pnpm notices:generate`; see
   [Licensing → Generated third-party notices](licensing.md#generated-third-party-notices).
 
 To reproduce the SBOMs locally (no build needed; generated files land next to each crate):
