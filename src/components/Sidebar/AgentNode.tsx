@@ -1284,8 +1284,7 @@ export function AgentNode({
     } catch (err) {
       // The store action rejects and leaves the feedback to us (#5278). The
       // reconnect still runs: it is what the user asked for, and it reports its
-      // own outcome.
-      frontendLog("agent_node", `Failed to disconnect agent ${agent.id}: ${errorMessage(err)}`);
+      // own outcome. The store action has already logged the failure.
       toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
     }
     void handleConnect();
