@@ -623,6 +623,14 @@ before its first apt call; a stage built `FROM` an earlier stage inherits it. An
 `docker run`, or in a shell script, passes `-o Acquire::Retries=5`. `check-apt-retries.mjs` (run by
 the Workflow Lint job and `./scripts/check.sh`) fails on an apt call that is not covered.
 
+The same action also routes apt around unreachable Ubuntu mirrors (#5385). The runner image lists
+only `*.ubuntu.com` hosts in `/etc/apt/apt-mirrors.txt`, so one DNS outage for that domain fails
+every install. `mirror-fallback.sh` probes those mirrors and rewrites the list to the reachable
+ones, plus fallback mirrors outside `ubuntu.com` that also carry the `-security` pocket. apt still
+verifies the signed `InRelease` files against the Ubuntu keyring. When no mirror answers, the step
+fails with an `APT mirrors unreachable` error annotation. The Workflow Lint job proves this by
+blocking `*.ubuntu.com` in `/etc/hosts` and installing a package anyway.
+
 ### Git hooks
 
 Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`
