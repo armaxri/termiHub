@@ -450,16 +450,17 @@ EOF
   if [ -s "$JUMP_PORT_FILE" ]; then
     lines="$lines"$'\n'"TERMIHUB_NATIVE_SSHD_JUMP_PORT=$(cat "$JUMP_PORT_FILE")"
   fi
+  if [ -s "$PASSWORD_FILE" ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
+    # A throwaway test password, but keep it out of the job log anyway: masked
+    # before the export lines below print it.
+    echo "::add-mask::$(cat "$PASSWORD_FILE")" >&2
+  fi
   local line
   while IFS= read -r line; do
     printf "export %s='%s'\n" "${line%%=*}" "${line#*=}"
   done <<<"$lines"
   if [ "$GITHUB_ENV_OUT" -eq 1 ]; then
     [ -n "${GITHUB_ENV:-}" ] || die "--github-env given but GITHUB_ENV is not set"
-    if [ -s "$PASSWORD_FILE" ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
-      # A throwaway test password, but keep it out of the job log anyway.
-      echo "::add-mask::$(cat "$PASSWORD_FILE")" >&2
-    fi
     printf '%s\n' "$lines" >>"$GITHUB_ENV"
   fi
 }

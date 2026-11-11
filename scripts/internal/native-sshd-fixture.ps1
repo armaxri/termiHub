@@ -455,16 +455,17 @@ function Write-FixtureEnvironment([bool]$ToGitHubEnv) {
     if (Test-Path -LiteralPath $PasswordFile) {
         $vars['TERMIHUB_NATIVE_SSHD_PASSWORD'] = (Get-Content -LiteralPath $PasswordFile).Trim()
     }
+    if ($vars.Contains('TERMIHUB_NATIVE_SSHD_PASSWORD') -and $env:GITHUB_ACTIONS) {
+        # A throwaway test password, but keep it out of the job log anyway:
+        # masked before the export lines below print it.
+        [Console]::Error.WriteLine("::add-mask::$($vars['TERMIHUB_NATIVE_SSHD_PASSWORD'])")
+    }
     foreach ($name in $vars.Keys) {
         Write-Output "export $name='$($vars[$name])'"
     }
     if ($ToGitHubEnv) {
         if (-not $env:GITHUB_ENV) {
             throw '-GitHubEnv given but GITHUB_ENV is not set'
-        }
-        if ($vars.Contains('TERMIHUB_NATIVE_SSHD_PASSWORD') -and $env:GITHUB_ACTIONS) {
-            # A throwaway test password, but keep it out of the job log anyway.
-            [Console]::Error.WriteLine("::add-mask::$($vars['TERMIHUB_NATIVE_SSHD_PASSWORD'])")
         }
         $vars.Keys | ForEach-Object { "$_=$($vars[$_])" } |
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
