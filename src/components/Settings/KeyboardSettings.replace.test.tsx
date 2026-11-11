@@ -71,7 +71,8 @@ async function click(id: string) {
 
 /** Run the Undo action of the last success toast. */
 async function undoLastToast() {
-  const opts = toastSuccess.mock.calls.at(-1)?.[1];
+  const calls = toastSuccess.mock.calls;
+  const opts = calls[calls.length - 1]?.[1];
   expect(opts?.action?.label).toBe("Undo");
   await act(async () => {
     opts!.action!.onClick();
