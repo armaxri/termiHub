@@ -362,19 +362,65 @@ fn finalize_manages_the_accumulated_warnings_and_watches_connections() {
         vec!["tunnels.json", "macros.json"]
     );
 
-    // Another instance writing connections.json is announced. The watcher arms
-    // on its own thread, so a single early write can land before it watches (a
-    // loaded Windows runner missed it, #5345): write again until it is seen.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut next_write = Instant::now();
-    while !*changed.lock().unwrap() && Instant::now() < deadline {
-        if Instant::now() >= next_write {
-            std::fs::write(&connections_file, "{}").unwrap();
-            next_write = Instant::now() + Duration::from_millis(500);
-        }
+    // Another instance writing connections.json is announced.
+    // The file did not exist at `finalize`, so the watcher's baseline is
+    // "absent" whenever its task first runs (#5353).
+    std::fs::write(&connections_file, "{}").unwrap();
+    assert!(
+        wait_for(&changed, Duration::from_secs(10)),
+        "no connections-changed event"
+    );
+    tasks.cancellation_token().cancel();
+}
+
+/// Waits up to `limit` for `flag` to become true.
+fn wait_for(flag: &Mutex<bool>, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    while !*flag.lock().unwrap() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(*changed.lock().unwrap(), "no connections-changed event");
+    let seen = *flag.lock().unwrap();
+    seen
+}
+
+/// The watcher's baseline is the file as it was when `finalize` ran (#5353),
+/// so an unchanged file is never announced and a later write always is,
+/// regardless of when the poll task is first scheduled.
+#[test]
+fn finalize_watches_an_existing_connections_file_from_its_state_at_finalize() {
+    let tmp = tempfile::tempdir().unwrap();
+    let connections_file = tmp.path().join("connections.json");
+    std::fs::write(&connections_file, "{}").unwrap();
+    let app = app_at(tmp.path());
+    let tasks = AppTasks::new();
+    app.manage(tasks.clone());
+    let changed: Arc<Mutex<bool>> = Arc::default();
+    let seen = changed.clone();
+    app.listen_any("connections-changed", move |_| {
+        *seen.lock().unwrap() = true;
+    });
+
+    finalize(&app, Vec::new(), connections_file.clone());
+
+    // Two poll ticks pass without a change: nothing is announced.
+    assert!(
+        !wait_for(&changed, Duration::from_millis(2_500)),
+        "an unchanged connections.json was announced"
+    );
+
+    // Another instance rewrites it; set an mtime that is certainly newer so
+    // the check does not depend on the filesystem's timestamp granularity.
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&connections_file)
+        .unwrap();
+    file.set_modified(std::time::SystemTime::now() + Duration::from_secs(60))
+        .unwrap();
+    drop(file);
+    assert!(
+        wait_for(&changed, Duration::from_secs(10)),
+        "no connections-changed event"
+    );
     tasks.cancellation_token().cancel();
 }
 
