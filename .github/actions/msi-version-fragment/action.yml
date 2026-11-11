@@ -1,0 +1,51 @@
+name: 'Windows MSI version fragment'
+description: >-
+  Map a release version to the numeric Windows MSI version and write it as a
+  Tauri `--config` fragment that sets bundle.windows.wix.version (PKG2-003,
+  #4283). Tauri's WiX bundler rejects a semver prerelease such as 0.2.0-beta.1,
+  so scripts/internal/msi-version.mjs maps it (beta < rc < final, see the script
+  header and docs/contributing.md). release.yml's Windows leg and the prerelease
+  MSI dry run (release-msi-prerelease.yml, #4442) both build through this action,
+  so the dry run exercises exactly the fragment path a release uses.
+
+inputs:
+  version:
+    description: >-
+      Release version to map (X.Y.Z, X.Y.Z-beta.N or X.Y.Z-rc.N, optionally with a
+      leading v). Empty: the in-repo package.json version (release dry runs, whose
+      stand-in 0.0.0-dryrun has no MSI form).
+    required: false
+    default: ''
+  fragment:
+    description: 'Path of the generated fragment, relative to the workspace'
+    required: false
+    default: 'src-tauri/tauri.wix-version.conf.json'
+
+outputs:
+  config:
+    description: 'The tauri build arguments that merge the fragment: --config <fragment>'
+    value: ${{ steps.map.outputs.config }}
+  msi-version:
+    description: 'The mapped MSI version, e.g. 0.2.0.10001'
+    value: ${{ steps.map.outputs.msi_version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate the Windows MSI version fragment
+      id: map
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        FRAGMENT: ${{ inputs.fragment }}
+      run: |
+        set -euo pipefail
+        if [ -z "$VERSION" ]; then VERSION="$(node -p "require('./package.json').version")"; fi
+        # Not captured: on an unsupported version the script's ::error annotation
+        # must reach the log. Read the mapped version back from the fragment.
+        node scripts/internal/msi-version.mjs --config-out "$FRAGMENT" "$VERSION"
+        msi_version="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).bundle.windows.wix.version" "$FRAGMENT")"
+        echo "Release version ${VERSION} -> MSI version ${msi_version}"
+        cat "$FRAGMENT"
+        echo "config=--config $FRAGMENT" >> "$GITHUB_OUTPUT"
+        echo "msi_version=$msi_version" >> "$GITHUB_OUTPUT"

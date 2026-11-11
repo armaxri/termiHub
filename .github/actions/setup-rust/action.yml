@@ -1,0 +1,50 @@
+name: 'Setup Rust (pinned toolchain)'
+description: >-
+  Install the ONE Rust toolchain every CI job uses (CI-005, SUP-011,
+  WA-CI-016). The version is read from `.github/rust-version` — the single
+  source of truth — so build, test, lint, release and coverage jobs all compile
+  with the same rustc instead of whatever `stable` is on the day. This pins CI
+  only: there is deliberately no repo-root rust-toolchain.toml (#2549), so local
+  dev keeps its own toolchain. `scripts/internal/check-rust-version.mjs` keeps
+  this file in sync with the crates' `rust-version`. Bump procedure:
+  docs/contributing.md -> "Rust toolchain version".
+
+inputs:
+  targets:
+    description: 'Comma-separated extra target triples (forwarded to dtolnay/rust-toolchain)'
+    required: false
+    default: ''
+  components:
+    description: 'Comma-separated extra rustup components (forwarded to dtolnay/rust-toolchain)'
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'The pinned toolchain version that was installed, e.g. "1.98.0"'
+    value: ${{ steps.version.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Read pinned Rust version
+      id: version
+      shell: bash
+      run: |
+        file="$GITHUB_ACTION_PATH/../../rust-version"
+        version="$(tr -d '[:space:]' < "$file")"
+        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error file=.github/rust-version::expected an exact X.Y.Z toolchain version, got '$version'"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    # The `stable`-branch SHA of dtolnay/rust-toolchain, with `toolchain`
+    # overridden to the pinned version above (the input defaults to `stable`
+    # only when omitted).
+    - name: Install Rust ${{ steps.version.outputs.version }}
+      uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+      with:
+        toolchain: ${{ steps.version.outputs.version }}
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
