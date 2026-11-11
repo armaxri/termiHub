@@ -978,7 +978,7 @@ attempt. Living in the backend redrive, this survived the client reconnect engin
 removal (#2205). Before each **serial** attempt the redrive asks
 `core::session::serial_reconnect::resolve_reconnect_port` whether the configured device
 is back: it matches the configured port name and, where the platform reports one (Linux
-sysfs), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
+sysfs, the macOS IOKit registry, the Windows device tree, #5394), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
 an unidentifiable device or a different device on the name is a failed attempt with a
 reason, so the shared policy backs off and gives up; nothing is opened. A device with a
 serial number is followed to a new name only when exactly one port carries its identity.
