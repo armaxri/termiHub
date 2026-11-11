@@ -30,6 +30,9 @@
 #   scripts/internal/native-sshd-fixture.sh jump-start [--dir DIR]  # bastion back up
 #   scripts/internal/native-sshd-fixture.sh env   [--dir DIR] [--github-env]
 #   scripts/internal/native-sshd-fixture.sh down  [--dir DIR]   # stop + delete all state
+#   scripts/internal/native-sshd-fixture.sh variant-up  --variant NAME [--port N]
+#                                     [--setenv KEY=VALUE]... [--kbdint] [--dir DIR]
+#   scripts/internal/native-sshd-fixture.sh variant-log --variant NAME [--dir DIR]
 #
 # `up` creates the state, starts sshd, proves a real `ssh -p` login + sftp
 # subsystem works, and prints `export NAME='value'` lines (eval-able) for:
@@ -63,6 +66,18 @@
 # forwards to the first sshd. `jump-stop` / `jump-start` drop and restore only
 # the bastion, so the suite can sever every session that rides it.
 #
+# `variant-up` (#5444, macOS/Linux) starts, or restarts with a fresh config,
+# one more sshd on --port for the same login user: an agent "host" of its own.
+# Its sessions get their own HOME and XDG dirs (the variant home), a private
+# agent registry endpoint, and every --setenv pair, through sshd `SetEnv`. The
+# armed and real-swap deployed-agent suites use it to give the agents they
+# start the test-hook env without it ever reaching the plain agent suites.
+# `--kbdint` makes it keyboard-interactive only (PAM), which needs the root
+# sshd of a --password-login fixture, so it is CI-only like that flag. The
+# variant home lives in the state dir, or in the dedicated user's home for a
+# --password-login fixture. It prints the variant home as its last line.
+# `variant-log` prints that sshd's log; `down` stops every variant too.
+#
 # `--scratch-home` (macOS/Linux; ignored on Windows, whose fixture logs in as
 # its own dedicated user): sshd `SetEnv`s HOME, XDG_CONFIG/DATA/STATE/CACHE_HOME
 # and HISTFILE into a `home` dir in the state dir, plus a private agent
@@ -86,7 +101,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,85p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,99p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -113,6 +128,9 @@ AGENT_BIN=""
 SCRATCH_HOME=0
 PASSWORD_LOGIN=0
 JUMP_HOST=0
+VARIANT=""
+KBDINT=0
+SETENV=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)
@@ -141,6 +159,18 @@ while [ $# -gt 0 ]; do
       ;;
     --jump-host)
       JUMP_HOST=1
+      shift
+      ;;
+    --variant)
+      VARIANT="${2:?--variant needs a value}"
+      shift 2
+      ;;
+    --setenv)
+      SETENV+=("${2:?--setenv needs KEY=VALUE}")
+      shift 2
+      ;;
+    --kbdint)
+      KBDINT=1
       shift
       ;;
     *)
@@ -605,8 +635,147 @@ require_jump() {
     die "no jump-host bastion in $STATE_DIR (run 'up --jump-host' first)"
 }
 
+# ── Agent-host variants (#5444) ───────────────────────────────────────────────
+VARIANTS_DIR="$STATE_DIR/variants"
+
+variant_dir() {
+  case "$VARIANT" in
+    "" | *[!a-z0-9-]*) die "--variant needs a name of [a-z0-9-] (got '$VARIANT')" ;;
+  esac
+  echo "$VARIANTS_DIR/$VARIANT"
+}
+
+# The registry endpoint dir of a variant on PORT: short (a unix socket path is
+# capped at 104 bytes on macOS) and keyed by our own port.
+variant_registry_dir() { echo "/tmp/thub-nsv-$1"; }
+
+cmd_variant_up() {
+  # require_state loads the main sshd's port into PORT: keep the variant's.
+  local want_port="$PORT"
+  require_state
+  load_mode
+  local vdir home port lock i
+  vdir="$(variant_dir)"
+  if [ "$KBDINT" -eq 1 ] && [ "${#SUDO[@]}" -eq 0 ]; then
+    die "--kbdint needs a --password-login fixture (a root sshd with PAM); CI only"
+  fi
+  mkdir -p "$VARIANTS_DIR"
+  # One caller at a time: parallel test workers may bring the same variant up.
+  lock="$vdir.lock"
+  for i in $(seq 1 600); do
+    mkdir "$lock" 2>/dev/null && break
+    [ "$i" -eq 600 ] && die "timed out waiting for $lock"
+    sleep 0.1
+  done
+  # shellcheck disable=SC2064 # expand $lock now: it is fixed for this run
+  trap "rmdir '$lock' 2>/dev/null || true" EXIT
+  mkdir -p "$vdir"
+  if [ -s "$vdir/port" ]; then
+    port="$(cat "$vdir/port")"
+    [ -z "$want_port" ] || [ "$want_port" = "$port" ] ||
+      die "variant $VARIANT already runs on port $port, not $want_port"
+  else
+    port="${want_port:?variant-up of a new variant needs --port}"
+  fi
+  stop_sshd "$vdir/sshd.pid" "$vdir/sshd_config"
+  # Our own variant is down now: anything still listening is someone else.
+  if port_in_use "$port"; then
+    die "variant $VARIANT: port $port is already taken"
+  fi
+  if [ "${#SUDO[@]}" -gt 0 ]; then
+    # The dedicated user cannot enter the runner-owned state dir: its home.
+    home="/Users/$LOGIN_USER/variants/$VARIANT"
+    sudo -n mkdir -p "$home"
+    sudo -n chown "$LOGIN_USER:staff" "/Users/$LOGIN_USER/variants" "$home"
+    sudo -n chmod 700 "$home"
+    [ -e "$home/.zshrc" ] ||
+      echo "# native-sshd-fixture variant home (#5444)" | sudo -n -u "$LOGIN_USER" tee "$home/.zshrc" >/dev/null
+  else
+    home="$vdir/home"
+    mkdir -p "$home"
+    chmod 700 "$home"
+    [ -e "$home/.zshrc" ] || echo "# native-sshd-fixture variant home (#5444)" >"$home/.zshrc"
+  fi
+  local config="$vdir/sshd_config"
+  write_config "$port" "$config" "$vdir/sshd.pid"
+  if [ "$KBDINT" -eq 1 ]; then
+    # sshd takes the first value of a keyword: these go before the base config.
+    {
+      printf '%s\n' 'KbdInteractiveAuthentication yes' 'PasswordAuthentication no' \
+        'PubkeyAuthentication no' 'AuthenticationMethods keyboard-interactive' 'UsePAM yes'
+      grep -v -E '^(KbdInteractiveAuthentication|PasswordAuthentication|PubkeyAuthentication|UsePAM) ' "$config"
+    } >"$config.tmp"
+    mv "$config.tmp" "$config"
+  fi
+  # The variant's own HOME / XDG dirs and registry, then the caller's pairs (a
+  # caller's KEY replaces the default one).
+  local -a env=(
+    "HOME=$home" "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/share"
+    "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache" "HISTFILE=$home/.history"
+    "TERMIHUB_REGISTRY_ENDPOINT=$(variant_registry_dir "$port")/registry"
+    "TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15" "TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120"
+  )
+  local pair key line="SetEnv" kept
+  for pair in "${env[@]}"; do
+    key="${pair%%=*}"
+    kept=1
+    for kv in ${SETENV[@]+"${SETENV[@]}"}; do
+      [ "${kv%%=*}" = "$key" ] && kept=0
+    done
+    [ "$kept" -eq 0 ] || line="$line \"$pair\""
+  done
+  for kv in ${SETENV[@]+"${SETENV[@]}"}; do
+    case "$kv" in
+      *=*) ;;
+      *) die "--setenv needs KEY=VALUE (got '$kv')" ;;
+    esac
+    case "$kv" in
+      *\"* | *\\*) die "--setenv value may not hold quotes or backslashes: '$kv'" ;;
+    esac
+    line="$line \"$kv\""
+  done
+  echo "$line" >>"$config"
+  local sshd
+  sshd="$(find_sshd)" || die "no sshd binary found"
+  ${SUDO[@]+"${SUDO[@]}"} "$sshd" -t -f "$config" ||
+    die "variant $VARIANT: sshd rejects its config $config"
+  { start_sshd "$config" "$vdir/sshd.pid" "$vdir/sshd.log" "$port" &&
+    recorded_sshd_pid "$vdir/sshd.pid" "$config" >/dev/null; } || {
+    [ -f "$vdir/sshd.log" ] && ${SUDO[@]+"${SUDO[@]}"} sed 's/^/  | /' "$vdir/sshd.log" >&2
+    die "variant $VARIANT did not start on 127.0.0.1:$port"
+  }
+  echo "$port" >"$vdir/port"
+  echo "$home" >"$vdir/home_path"
+  log "variant $VARIANT sshd listening on 127.0.0.1:$port (home $home)"
+  echo "$home"
+}
+
+cmd_variant_log() {
+  require_state
+  load_mode
+  local vdir
+  vdir="$(variant_dir)"
+  [ -f "$vdir/sshd.log" ] || die "variant $VARIANT has no log (run variant-up first)"
+  ${SUDO[@]+"${SUDO[@]}"} cat "$vdir/sshd.log"
+}
+
+stop_variants() {
+  local vdir port
+  [ -d "$VARIANTS_DIR" ] || return 0
+  for vdir in "$VARIANTS_DIR"/*/; do
+    [ -d "$vdir" ] || continue
+    vdir="${vdir%/}"
+    stop_sshd "$vdir/sshd.pid" "$vdir/sshd_config"
+    if [ -s "$vdir/port" ]; then
+      port="$(cat "$vdir/port")"
+      ${SUDO[@]+"${SUDO[@]}"} rm -rf "$(variant_registry_dir "$port")" "$(variant_registry_dir "$port")"-*
+    fi
+  done
+}
+
 cmd_down() {
   load_mode
+  stop_variants
   stop_sshd "$JUMP_PID_FILE" "$JUMP_CONFIG"
   stop_sshd "$PID_FILE" "$CONFIG"
   delete_system_user
@@ -653,6 +822,8 @@ case "$ACTION" in
     emit_env
     ;;
   down) cmd_down ;;
+  variant-up) cmd_variant_up ;;
+  variant-log) cmd_variant_log ;;
   *)
     echo "error: unknown action: $ACTION" >&2
     usage >&2
