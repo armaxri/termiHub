@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -350,8 +350,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // built tunnel links to the same row Save creates.
   const buildConfig = (values: TunnelFormState): TunnelConfig => ({
     id: existingTunnel?.id ?? newId("tun"),
-    // Save is disabled while the name is blank (UX-022), so this fallback only
-    // ever guards the non-Save caller (chaining a hop).
+    // Save refuses to save while the name is blank (UX-022, #5284), so this
+    // fallback only ever guards the non-Save caller (chaining a hop).
     name: values.name.trim() || "Untitled Tunnel",
     sshConnectionId: values.sshConnectionId,
     tunnelType: values.tunnelType,
@@ -362,7 +362,29 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     companionOf: existingTunnel?.companionOf,
   });
 
+  const formRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Move focus to the first field that blocks Save, in visual order, so a user
+   * who activates the (aria-disabled) Save sees why it did not save. Every
+   * invalid field carries `aria-invalid` (injected by `Field` alongside the
+   * inline message), so the first one in DOM order is the first invalid field.
+   */
+  const focusFirstInvalidField = () => {
+    const target = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (target) {
+      target.scrollIntoView?.({ block: "center" });
+      target.focus();
+    }
+  };
+
   const handleSave = async (andStart: boolean) => {
+    // Save stays keyboard-reachable while invalid (aria-disabled, not
+    // disabled): activating it then points at the problem instead of saving.
+    if (!canSave) {
+      focusFirstInvalidField();
+      return;
+    }
     const config = buildConfig(getValues());
 
     try {
@@ -520,11 +542,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   const nameRef = useAutofocusSelect<HTMLInputElement>();
 
-  // Enter (from a single-line field) saves; Escape cancels.
+  // Enter (from a single-line field) saves; Escape cancels. While invalid,
+  // Enter goes through the same guard as Save and focuses the first invalid
+  // field instead of saving.
   const handleKeyDown = useEditorKeyboard({
     onSubmit: () => void handleSave(false),
     onCancel: handleCancel,
-    canSubmit: canSave,
   });
 
   return (
@@ -539,7 +562,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </span>
       </div>
 
-      <div className="tunnel-editor__form" data-testid="tunnel-editor-form">
+      <div className="tunnel-editor__form" ref={formRef} data-testid="tunnel-editor-form">
         <Controller
           name="name"
           control={control}
@@ -906,7 +929,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <Button
             variant="primary"
             onClick={() => handleSave(false)}
-            disabled={!canSave}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             data-testid="tunnel-editor-save"
           >
             Save
@@ -914,7 +938,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <Button
             variant="primary"
             onClick={() => handleSave(true)}
-            disabled={!canSave}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             data-testid="tunnel-editor-save-start"
           >
             Save &amp; Start
