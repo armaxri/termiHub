@@ -187,8 +187,12 @@ set_run() {
   shift 2
   local before=() after=()
   if [ "$runner" = "nextest" ]; then
-    if [ -n "$threads" ]; then before+=(--test-threads "$threads"); fi
-    if [ "$nocapture" = "1" ]; then before+=(--no-capture); fi
+    # --no-capture already runs one test at a time (and rejects a thread cap).
+    if [ "$nocapture" = "1" ]; then
+      before+=(--no-capture)
+    elif [ -n "$threads" ]; then
+      before+=(--test-threads "$threads")
+    fi
   else
     if [ -n "$threads" ]; then after+=(--test-threads="$threads"); fi
     if [ "$nocapture" = "1" ]; then after+=(--nocapture); fi
@@ -288,7 +292,14 @@ list_libtest() {
 # included (libtest lists them too), with nextest's own filter matching.
 list_nextest() {
   CARGO_TERM_COLOR=never LC_ALL=C cargo nextest list "${selection[@]}" "${targets[@]}" \
-    --run-ignored all --message-format oneline -- "$@" 2>/dev/null |
+    --run-ignored all --message-format oneline -- "$@" |
+    LC_ALL=C sort
+}
+
+# The ignored tests the given filters select (sorted "<binary-id> <test>").
+list_nextest_ignored() {
+  CARGO_TERM_COLOR=never LC_ALL=C cargo nextest list "${selection[@]}" "${targets[@]}" \
+    --run-ignored only --message-format oneline -- "$@" |
     LC_ALL=C sort
 }
 
@@ -394,10 +405,12 @@ case "$phase" in
     fi
     status=0
     wait "$cargo_pid" || status=$?
+    keep_junit
     stream_log
     if [ "$timed_out" = "1" ]; then
       # The last "test NAME ..." line with no result after it is the wedged one.
-      hung="$(tr -d '\r' <"$log" | grep -oE '^test [^ ]+ \.\.\.' | tail -n 1 || true)"
+      # (libtest: "test NAME ..."; nextest: "START [ ] (n/N) BINARY NAME").
+      hung="$(tr -d '\r' <"$log" | grep -oE '^test [^ ]+ \.\.\.|START .*' | tail -n 1 || true)"
       echo "serial phase: TIMED OUT after ${SERIAL_TIMEOUT_SECS}s (CI_SERIAL_TIMEOUT_SECS)." >&2
       echo "  last test started: ${hung:-<none -- still building?>}" >&2
       exit 124
@@ -410,13 +423,30 @@ case "$phase" in
         echo "serial phase: note: ${leaked} termihub-agent process(es) still running after cargo exited (leaked by a test)"
       fi
     fi
-    # Sum libtest's per-binary summaries. A guard, not a formality: a filter that
-    # silently matched nothing would otherwise "pass" with zero tests run.
-    read -r passed failed ignored < <(
-      tr -d '\r' <"$log" |
-        grep -oE 'test result: [A-Za-z]+\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored' |
-        awk '{p += $4; f += $6; i += $8} END {print p + 0, f + 0, i + 0}'
-    )
+    # Count what ran. A guard, not a formality: a filter that silently matched
+    # nothing would otherwise "pass" with zero tests run.
+    if [ "$runner" = "nextest" ]; then
+      # Nextest's one Summary line ("N tests run: P passed, F failed, ..."). It
+      # never runs an ignored test (so it never reports one), so list them: the
+      # ignored tests the serial filters select.
+      read -r passed failed < <(
+        tr -d '\r' <"$log" | grep -E '^ *Summary \[' | tail -n 1 |
+          awk '{p = 0; f = 0
+            for (i = 2; i <= NF; i++) {
+              if ($i ~ /^passed/) p = $(i - 1)
+              if ($i ~ /^failed/) f = $(i - 1)
+            }
+            print p + 0, f + 0}'
+      )
+      ignored="$(list_nextest_ignored "${SERIAL_FILTERS[@]}" | wc -l | tr -d ' ')"
+    else
+      # Sum libtest's per-binary summaries.
+      read -r passed failed ignored < <(
+        tr -d '\r' <"$log" |
+          grep -oE 'test result: [A-Za-z]+\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored' |
+          awk '{p += $4; f += $6; i += $8} END {print p + 0, f + 0, i + 0}'
+      )
+    fi
     echo "serial phase: passed=${passed} failed=${failed} ignored=${ignored} (cargo exit ${status})"
     if [ "$status" -ne 0 ]; then
       exit "$status"
