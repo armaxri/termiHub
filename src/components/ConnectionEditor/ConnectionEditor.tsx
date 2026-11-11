@@ -717,12 +717,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // collide with an agent named "Foo" — so the uniqueness check runs only against
   // peers in the entity being edited. `sourceFile`, `persistent`, `icon`,
   // `terminalOptions`, and `agentSettings` ride along unvalidated (they had no
-  // validation before; `z.custom` without a check accepts any value). The
-  // blank-name issue carries a sentinel message that is filtered out of the
-  // rendered error below, so a blank name disables Save without surfacing inline
-  // text — matching the prior behavior where an empty name showed no error
-  // message.
-  const BLANK_NAME_ISSUE = "__blank_name__";
+  // validation before; `z.custom` without a check accepts any value). A blank
+  // name is the one issue the editor reveals lazily (see `visibleNameError`):
+  // a new connection starts with an empty name, so showing it on open would
+  // flag a field the user has not had a chance to fill in yet (#5284).
+  const BLANK_NAME_ISSUE = "Name is required.";
   const topLevelSchema = useMemo(
     () =>
       z
@@ -815,10 +814,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   });
   const iconEmojiError = topLevelValidity.errors["iconEmoji"] ?? null;
 
-  // The blank-name issue disables Save (validity is false) without surfacing
-  // inline text: its sentinel message is filtered out here.
-  const rawNameError = topLevelValidity.errors["name"];
-  const nameError = rawNameError && rawNameError !== BLANK_NAME_ISSUE ? rawNameError : null;
+  // Every name issue gates Save. The blank-name one is only shown inline once
+  // the user has touched the Name field or tried to save (#5284): before that
+  // a brand-new connection's empty name is not yet a mistake. A duplicate name
+  // is shown at once, as before.
+  const nameError = topLevelValidity.errors["name"] ?? null;
+  const [nameTouched, setNameTouched] = useState(false);
+  const [saveAttempted, setSaveAttempted] = useState(false);
+  const visibleNameError =
+    nameError === BLANK_NAME_ISSUE && !nameTouched && !saveAttempted ? null : nameError;
 
   // Client-side validity of the schema-driven connection form (reported upward
   // by ConnectionSettingsForm). Gates Save/Save & Connect while a visible
@@ -941,13 +945,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
    * Save/Save & Connect is attempted while the form is invalid.
    */
   const focusFirstInvalidField = useCallback(() => {
+    setSaveAttempted(true);
     setActiveCategory("connection");
     // Defer until the Connection tab content is mounted/visible.
     requestAnimationFrame(() => {
       const root = containerRef.current;
       if (!root) return;
       let selector: string;
-      if (!name.trim() || nameError) {
+      if (nameError) {
         selector = '[data-testid="connection-editor-name-input"]';
       } else {
         const firstKey = Object.keys(schemaErrors)[0];
@@ -959,7 +964,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         target.focus();
       }
     });
-  }, [name, nameError, schemaErrors]);
+  }, [nameError, schemaErrors]);
 
   // Focus the field a failed connect's Edit connection action asked for
   // (#5183). The schema form may still be loading the saved settings, so poll
@@ -1736,7 +1741,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               variant="settings"
               label="Name"
               htmlFor={nameInputId}
-              error={nameError || undefined}
+              required
+              error={visibleNameError || undefined}
               errorTestId="connection-editor-name-error"
             >
               <Input
@@ -1744,10 +1750,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 id={nameInputId}
                 type="text"
                 value={field.value ?? ""}
-                onChange={(e) => field.onChange(e.target.value)}
-                onBlur={field.onBlur}
+                onChange={(e) => {
+                  setNameTouched(true);
+                  field.onChange(e.target.value);
+                }}
+                onBlur={() => {
+                  setNameTouched(true);
+                  field.onBlur();
+                }}
                 placeholder="Connection name"
-                error={!!nameError}
+                aria-required
+                error={!!visibleNameError}
                 data-testid="connection-editor-name-input"
               />
             </Field>

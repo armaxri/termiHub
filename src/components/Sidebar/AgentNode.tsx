@@ -1279,15 +1279,38 @@ export function AgentNode({
   const handleForceReconnect = useCallback(async () => {
     // A reconnect follows at once, so the hosted tabs wait to resume their
     // sessions instead of ending (#4309).
-    await disconnectRemoteAgent(agent.id, { endHostedSessions: false });
+    try {
+      await disconnectRemoteAgent(agent.id, { endHostedSessions: false });
+    } catch (err) {
+      // The store action rejects and leaves the feedback to us (#5278). The
+      // reconnect still runs: it is what the user asked for, and it reports its
+      // own outcome. The store action has already logged the failure.
+      toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
+    }
     void handleConnect();
   }, [agent.id, disconnectRemoteAgent, handleConnect]);
 
   // Disconnect (detach) — drop the transport but leave persistent daemon-backed
   // remote sessions running so they re-list on the next connect (G9, #1237).
-  const handleDisconnect = useCallback(() => {
-    disconnectRemoteAgent(agent.id);
+  // The store action rejects on failure without toasting (#5278): report it
+  // once here and re-throw, so the header Button (`errorToast={false}`) lands
+  // in its error state.
+  const handleDisconnect = useCallback(async () => {
+    try {
+      await disconnectRemoteAgent(agent.id);
+    } catch (err) {
+      // The store action has already logged the failure.
+      toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
+      throw err;
+    }
   }, [agent.id, disconnectRemoteAgent]);
+
+  // The context menu has no error state, so the re-throw (already toasted) ends here.
+  const handleDisconnectFromMenu = useCallback(() => {
+    handleDisconnect().catch((err: unknown) => {
+      frontendLog("agent_node", `Disconnect from the menu failed: ${errorMessage(err)}`);
+    });
+  }, [handleDisconnect]);
 
   // Shutdown (stop remote) — stop the remote sessions and disconnect, reporting
   // how many sessions the agent detached/killed as a success toast (G9, #1237).
@@ -1693,6 +1716,7 @@ export function AgentNode({
                     size="sm"
                     icon={<Unplug size={14} />}
                     onClick={handleDisconnect}
+                    errorToast={false}
                     aria-label="Disconnect (detach)"
                     data-testid={`agent-disconnect-${agent.id}`}
                   />
@@ -1774,7 +1798,7 @@ export function AgentNode({
             </>
           ) : (
             <>
-              <MenuItem onSelect={handleDisconnect} data-testid="context-agent-disconnect">
+              <MenuItem onSelect={handleDisconnectFromMenu} data-testid="context-agent-disconnect">
                 <Unplug size={14} />
                 Disconnect (detach)
               </MenuItem>

@@ -174,6 +174,29 @@ describe("AgentNode — disconnect (detach) vs shutdown (stop remote) (#1237, G9
     expect(shutdownAgentMock).not.toHaveBeenCalled();
   });
 
+  it("a failed Disconnect shows one error toast and keeps the agent connected (#5278)", async () => {
+    disconnectAgentMock.mockRejectedValueOnce(new Error("agent hung"));
+    render();
+
+    const btn = container.querySelector(
+      `[data-testid="agent-disconnect-${AGENT_ID}"]`
+    ) as HTMLButtonElement | null;
+    act(() => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    await flush();
+
+    // Driven through the real store action: exactly one toast, from the caller.
+    expect(disconnectAgentMock).toHaveBeenCalledWith(AGENT_ID);
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith("Failed to disconnect agent: agent hung");
+    expect(toastSuccess).not.toHaveBeenCalled();
+    // The agent was not disconnected, so the region must not claim it was.
+    const agent = currentAgentsView().remoteAgents.find((a) => a.id === AGENT_ID);
+    expect(agent?.connectionState).toBe("connected");
+  });
+
   it("exposes a Shutdown (stop remote) control that routes to shutdown_agent and toasts the detached count", async () => {
     render();
 

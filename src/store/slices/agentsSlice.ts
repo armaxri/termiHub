@@ -114,6 +114,12 @@ export interface AgentsSlice {
    * `{ endHostedSessions: false }` for a suspend-style disconnect that is
    * followed by a reconnect (agent update, Force reconnect), so the hosted tabs
    * keep waiting to resume their sessions.
+   *
+   * Rejects when the backend disconnect fails (#5278). The action logs the
+   * failure but does not toast: the caller owns the user feedback, so a single
+   * stop reports one error and a bulk action one summary — never a success
+   * toast after a failure, never one store toast per agent. On failure the
+   * region entry is left as is, because the agent was not disconnected.
    */
   disconnectRemoteAgent: (
     agentId: string,
@@ -476,7 +482,9 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     } catch (err) {
       if (endHostedSessions) clearAgentDisconnectIntent(agentId);
       frontendLog("app_store", `Failed to disconnect agent ${agentId}: ${errorMessage(err)}`);
-      toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
+      // The caller reports the failure (#5278): a single stop toasts it, a bulk
+      // action folds it into one summary.
+      throw err;
     }
     // Optimistically force the region entry to disconnected and clear its live
     // sessions/folders (the store's `disconnect` does exactly this, #2409).
