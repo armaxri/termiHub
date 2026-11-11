@@ -232,6 +232,12 @@ describe("AgentNode — persistent-session row actions (#5322)", () => {
     await render();
 
     await click(q(`persistent-stop-${DEF_ID}`));
+    // Stop asks first: the shell runs in the background on the agent (#5375).
+    expect(stopPersistentSession).not.toHaveBeenCalled();
+    expect(q("confirm-stop-session-dialog").textContent).toContain(
+      'Stop "Build Shell"? It is running in the background and will end.'
+    );
+    await click(q("confirm-stop-session-confirm"));
 
     expect(stopPersistentSession).toHaveBeenCalledWith(CONNECTION_ID);
     expect(useAppStore.getState().persistentSessions[CONNECTION_ID].state).toBe("stopping");
@@ -275,6 +281,19 @@ describe("AgentNode — persistent-session row actions (#5322)", () => {
     expect(attachPersistentTab).toHaveBeenCalledTimes(1);
 
     await openMenuItem("context-agent-def-stop-persistent");
+    await click(q("confirm-stop-session-confirm"));
     expect(stopPersistentSession).toHaveBeenCalledWith(CONNECTION_ID);
+  });
+
+  it("cancelling the Stop confirmation leaves the session running (#5375)", async () => {
+    seed(runningEntry());
+    await render();
+
+    await click(q(`persistent-stop-${DEF_ID}`));
+    await click(q("confirm-stop-session-cancel"));
+
+    expect(stopPersistentSession).not.toHaveBeenCalled();
+    expect(useAppStore.getState().persistentSessions[CONNECTION_ID].state).toBe("running");
+    expect(q("confirm-stop-session-dialog")).toBeNull();
   });
 });
