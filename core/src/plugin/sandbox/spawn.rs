@@ -159,6 +159,10 @@ fn spawn_checked(
             ));
         }
         Some(pinned) => pinned.load_path().map_err(|e| unavailable(e.to_string()))?,
+        // A runner that does not exist cannot start: refuse it before the
+        // Windows confinement creates and grants the plugin's AppContainer
+        // profile, OS-wide state that would outlive the failed spawn (#5345).
+        None if !runner.is_file() => return Err(unavailable("not found".to_owned())),
         None => runner.to_owned(),
     };
     let confinement = confinement(&exec_path, sandbox)?;
