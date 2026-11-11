@@ -47,12 +47,16 @@
 # `cargo test --doc` (nextest does not run them).
 #
 # CI_RUST_TESTS_COVERAGE=1 runs bulk, heavy and serial under cargo-llvm-cov
-# (`cargo llvm-cov --no-report` in place of `cargo test`), so a
-# coverage lane keeps the same partition and the same thread caps. The phases'
-# profiles accumulate; the caller cleans first (`cargo llvm-cov clean
+# (`cargo llvm-cov nextest --no-report` in place of `cargo nextest run`, #5349),
+# so a coverage lane keeps the same partition, thread caps, per-test timeouts
+# and test groups. Nextest runs each test in its own process; the processes of
+# one binary merge their profiles into a small file pool (see test_cmd). The
+# phases' profiles accumulate; the caller cleans first (`cargo llvm-cov clean
 # --workspace`) and writes the report after (scripts/coverage.sh --split, the
-# Windows coverage leg, #5160). Doc-tests are skipped there: llvm-cov measures
-# them only on nightly, and the Linux coverage run does not count them either.
+# Windows coverage leg, #5160). Without nextest a local run falls back to
+# `cargo llvm-cov --no-report` (libtest); CI requires nextest here too.
+# Doc-tests are skipped there: llvm-cov measures them only on nightly, and the
+# Linux coverage run does not count them either.
 #
 # Usage:
 #   scripts/internal/ci-rust-tests.sh <bulk|heavy|serial|list> [cargo selection args]
@@ -66,7 +70,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,64p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,68p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Contention-sensitive tests, as libtest substring filters. Add a module here
@@ -138,14 +142,24 @@ case "$phase" in
 esac
 
 # The runner each run phase uses: nextest (see the header), or libtest via
-# `cargo test` -- the instrumented coverage run (profiles accumulate across
-# phases; see the header), or a local run without nextest installed.
-if [ "$COVERAGE" = "1" ]; then
-  runner=libtest
-  test_cmd=(cargo llvm-cov --no-report)
-elif cargo nextest --version >/dev/null 2>&1; then
+# `cargo test` on a local run without nextest installed. A coverage run wraps
+# either in cargo-llvm-cov (profiles accumulate across phases; see the header).
+# `--profile` reaches nextest there: llvm-cov names the cargo profile
+# `--cargo-profile`.
+if cargo nextest --version >/dev/null 2>&1; then
   runner=nextest
-  test_cmd=(cargo nextest run --profile "$NEXTEST_PROFILE" --no-fail-fast --no-tests=warn)
+  nextest_args=(--profile "$NEXTEST_PROFILE" --no-fail-fast --no-tests=warn)
+  if [ "$COVERAGE" = "1" ]; then
+    test_cmd=(cargo llvm-cov nextest --no-report "${nextest_args[@]}")
+    # One process per test means one profile per test under llvm-cov's default
+    # `<name>-%p-%Nm` pattern: ~10k files and ~18 GB for the workspace on macOS,
+    # which filled the disk and truncated profiles. Without %p the runtime merges
+    # every process of a binary into a pool of 8 files instead (online merging,
+    # file-locked; the merged numbers match the per-process ones).
+    export LLVM_PROFILE_FILE_NAME="${LLVM_PROFILE_FILE_NAME:-termihub-%8m.profraw}"
+  else
+    test_cmd=(cargo nextest run "${nextest_args[@]}")
+  fi
 elif [ -n "${CI:-}" ]; then
   echo "ci-rust-tests.sh: cargo-nextest is required on CI (#5345); install the version" >&2
   echo "  pinned in .github/cargo-tools.json (taiki-e/install-action)" >&2
@@ -153,7 +167,11 @@ elif [ -n "${CI:-}" ]; then
 else
   echo "note: cargo-nextest not found; running under plain cargo test (no per-test timeout)"
   runner=libtest
-  test_cmd=(cargo test)
+  if [ "$COVERAGE" = "1" ]; then
+    test_cmd=(cargo llvm-cov --no-report)
+  else
+    test_cmd=(cargo test)
+  fi
 fi
 
 selection=("$@")
@@ -303,10 +321,22 @@ list_nextest() {
 }
 
 # The ignored tests the given filters select (sorted "<binary-id> <test>").
+# A coverage run lists from llvm-cov's instrumented build (its environment and
+# target dir, so cargo finds it fresh) instead of building the selection again,
+# uninstrumented, just to list it; the listing's own profiles go to a scratch
+# dir, never into the report.
 list_nextest_ignored() {
-  CARGO_TERM_COLOR=never LC_ALL=C cargo nextest list "${selection[@]}" "${targets[@]}" \
-    --run-ignored only --message-format oneline -- "$@" |
-    LC_ALL=C sort
+  (
+    local build=()
+    if [ "$COVERAGE" = "1" ]; then
+      eval "$(cargo llvm-cov show-env --sh)"
+      LLVM_PROFILE_FILE="$(mktemp -d)/list-%p-%m.profraw"
+      export LLVM_PROFILE_FILE
+      build=(--target-dir "$TARGET_DIR/llvm-cov-target")
+    fi
+    CARGO_TERM_COLOR=never LC_ALL=C cargo nextest list "${selection[@]}" "${targets[@]}" \
+      ${build[@]+"${build[@]}"} --run-ignored only --message-format oneline -- "$@"
+  ) | LC_ALL=C sort
 }
 
 # Partition with the runner the phases use, so `list` proves what CI runs.
