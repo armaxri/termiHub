@@ -3,26 +3,26 @@
  * Copy style lint (#5391): the repo's ESLint config enforces the mechanically
  * checkable parts of docs/copy-style.md, with today's violations grandfathered
  * in scripts/internal/copy-style-baseline.json. Lints snippets through the real
- * config, as if they were a production component.
+ * config, as if they were a production component. The pure helpers are
+ * covered by scripts/internal/eslint-copy-style.test.mjs.
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
-import {
-  britishSpelling,
-  formatMessage,
-  parseMessage,
-  titleCaseWords,
-} from "../../scripts/internal/eslint-copy-style.mjs";
-import { pruneBaseline, toBaseline } from "../../scripts/internal/copy-style-baseline.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PROBE_PATH = `${REPO_ROOT}src/components/CopyStyleProbe.tsx`;
 const PROBE_KEY = "src/components/CopyStyleProbe.tsx";
 
 let eslint: ESLint;
+
+/** `{ check, text }` from a copy-style message (`... (#5391, <check>): ... Text: "<json>"`). */
+function parseMessage(message: string): { check: string; text: string } | null {
+  const match = /^Copy style \(#5391, ([a-z-]+)\): .* Text: (".*")$/.exec(message);
+  return match ? { check: match[1], text: JSON.parse(match[2]) as string } : null;
+}
 
 /** `[check, text]` pairs the copy-style rule reports for the given source. */
 async function violations(source: string, linter = eslint): Promise<[string, string][]> {
@@ -49,53 +49,6 @@ function component(jsx: string[]): string {
 
 beforeAll(() => {
   eslint = new ESLint({ cwd: REPO_ROOT });
-});
-
-describe("titleCaseWords", () => {
-  it("flags capitalized words after the first word", () => {
-    expect(titleCaseWords("Save & Connect")).toEqual(["Connect"]);
-    expect(titleCaseWords("Clear History")).toEqual(["History"]);
-    expect(titleCaseWords("Read-Only Mode")).toEqual(["Only", "Mode"]);
-  });
-
-  it("allows sentence case, acronyms, mixed-case names and proper nouns", () => {
-    expect(titleCaseWords("Allow experimental features")).toEqual([]);
-    expect(titleCaseWords("Open SSH session in termiHub")).toEqual([]);
-    expect(titleCaseWords("Use PowerShell on Windows or macOS")).toEqual([]);
-    expect(titleCaseWords("Press Ctrl and Shift")).toEqual([]);
-  });
-
-  it("restarts at a new sentence and skips quoted names", () => {
-    expect(titleCaseWords("Saved. Reconnect to apply")).toEqual([]);
-    expect(titleCaseWords("Error: Something failed")).toEqual([]);
-    expect(titleCaseWords('Delete "My Server"')).toEqual([]);
-  });
-});
-
-describe("britishSpelling", () => {
-  it("finds British spellings and names the US form", () => {
-    expect(britishSpelling("Transfer cancelled")?.us).toBe("canceled / canceling");
-    expect(britishSpelling("Pick a colour")?.us).toBe("color");
-    expect(britishSpelling("Initialise the store")?.us).toBe("-ize / -ization");
-  });
-
-  it("leaves US spelling and look-alikes alone", () => {
-    expect(britishSpelling("Transfer canceled")).toBeNull();
-    expect(britishSpelling("Pick a color")).toBeNull();
-    expect(britishSpelling("Cancellation pending")).toBeNull();
-    expect(britishSpelling("Raise the window, otherwise wise")).toBeNull();
-  });
-});
-
-describe("message format", () => {
-  it("round-trips the check and text, including quotes and dashes", () => {
-    const text = 'Saved "a" — b';
-    expect(parseMessage(formatMessage("sentence-case", text))).toEqual({
-      check: "sentence-case",
-      text,
-    });
-    expect(parseMessage("some other message")).toBeNull();
-  });
 });
 
 describe("copy style lint (#5391)", () => {
@@ -213,40 +166,5 @@ describe("copy style lint (#5391)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-});
-
-describe("baseline tool", () => {
-  it("counts violations per file, check and text", () => {
-    expect(
-      toBaseline([
-        { file: "b.tsx", check: "discard", text: "Just close" },
-        { file: "a.tsx", check: "sentence-case", text: "Save Now" },
-        { file: "a.tsx", check: "sentence-case", text: "Save Now" },
-      ])
-    ).toEqual({
-      "a.tsx": { "sentence-case": { "Save Now": 2 } },
-      "b.tsx": { discard: { "Just close": 1 } },
-    });
-  });
-
-  it("prunes fixed entries and never adds new ones", () => {
-    const baseline = {
-      "a.tsx": { "sentence-case": { "Save Now": 2, "Clear History": 1 } },
-      "b.tsx": { discard: { "Just close": 1 } },
-    };
-    const current = {
-      "a.tsx": { "sentence-case": { "Save Now": 1, "New Thing": 1 } },
-      "b.tsx": { discard: { "Just close": 1 } },
-    };
-    const { pruned, stale } = pruneBaseline(baseline, current);
-    expect(pruned).toEqual({
-      "a.tsx": { "sentence-case": { "Save Now": 1 } },
-      "b.tsx": { discard: { "Just close": 1 } },
-    });
-    expect(stale).toEqual([
-      { file: "a.tsx", check: "sentence-case", text: "Save Now", count: 1 },
-      { file: "a.tsx", check: "sentence-case", text: "Clear History", count: 1 },
-    ]);
   });
 });
