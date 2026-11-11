@@ -1741,11 +1741,14 @@ flowchart LR
   runs after the ratchet. It adds a table to the job summary with each overlay's
   (fixtures and harness) source sha, age in days, commits behind HEAD, changed
   files and stale overlay files (count and share). On `develop` the step fails
-  when an overlay is missing, older than **3 days**, or has more than **10 %** of
-  its files stale. The error names the lane that went dark and links its latest
-  run. The ratchet's verdict does not change, and the lane heartbeat reports
-  this failure as "integration overlay stale", not "lane broken". On other
-  branches it only warns. To grade a branch against develop's overlays, run
+  when an overlay is missing or older than **3 days**: its nightly lane went
+  dark. The error names the lane and links its latest run. More than **10 %**
+  of an overlay's files stale is only a warning (an annotation and a
+  highlighted row), never a failure: develop takes hundreds of commits a day,
+  so even a day-old overlay can cross it, and a gate that is red most nights
+  gets ignored. The ratchet's verdict does not change, and the lane heartbeat
+  reports this failure as "integration overlay dark", not "lane broken". On
+  other branches everything only warns. To grade a branch against develop's overlays, run
   `gh workflow run coverage.yml --ref <branch> -f overlay-branch=develop`.
 - **Reading it:** the Coverage run's job summary shows the unified number
   (unit + integration) and a table of the files with lines covered **only** by
@@ -1769,8 +1772,8 @@ reaches frontend components and desktop-backend (`src-tauri`) paths that no unit
 test does. Its Linux leg measures both and feeds the same unified report
 ([#3657](https://github.com/armaxri/termiHub/issues/3657)). Advisory, like the
 fixtures overlay: its numbers gate nothing, and every coverage step is
-`continue-on-error`, so only a failing test can red the lane. A dark or stale
-harness overlay reds the Coverage run's
+`continue-on-error`, so only a failing test can red the lane. A dark (missing or
+over 3 days old) harness overlay reds the Coverage run's
 [overlay freshness gate](#overlay-freshness-gate) instead.
 
 ```mermaid
