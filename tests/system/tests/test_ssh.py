@@ -537,6 +537,7 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
         self.dismiss_menu()
         self.close_all_tabs()
 
+    @pytest.mark.requires_tools("xdotool", platforms=("linux",))
     def test_forwarded_x11_client_opens_a_window_on_the_local_display(self):
         """MT-XPLAT-03, MT-SSH-15: a remote X11 client's window appears locally.
 
@@ -552,8 +553,7 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
             pytest.skip("no local X server to forward to (DISPLAY unset, no /tmp/.X11-unix)")
         xdotool = shutil.which("xdotool")
         if xdotool is None:
-            if os.environ.get("GITHUB_ACTIONS") == "true":
-                pytest.fail("xdotool is missing on the CI runner (system-integration.yml)")
+            # On CI the session-start tool preflight already stopped the lane (#5340).
             pytest.skip("xdotool is not installed (apt install xdotool)")
 
         name = unique_name("x11-window")

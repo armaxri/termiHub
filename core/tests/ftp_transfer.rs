@@ -408,13 +408,16 @@ async fn ftp_transfer_04_upload_rest_resume() {
     assert!(transferred >= stop_after, "upload stopped mid-flight");
 
     // The server retained the partial STOR; resume from its actual size (this is
-    // what a real queue does — REST from the server-reported offset).
+    // what a real queue does — REST from the server-reported offset). A stopped
+    // upload closes its data connection and waits for the server's reply before
+    // it reports, so the server already holds every reported byte: a SIZE
+    // straight after must not race the server still receiving them.
     let remote_size = probe_remote_size(&cfg, &remote)
         .await
         .expect("SIZE of partial upload");
-    assert!(
-        remote_size > 0 && remote_size <= transferred,
-        "server retained a partial upload ({remote_size} bytes, <= reported {transferred})"
+    assert_eq!(
+        remote_size, transferred,
+        "server retained the whole partial upload ({remote_size} bytes, reported {transferred})"
     );
 
     let outcome2 = run_attempt(

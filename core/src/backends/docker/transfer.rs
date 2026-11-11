@@ -64,6 +64,30 @@ tail -c "+$2" < "$1" | head -c "$3""#;
 /// Print the file's size in bytes.
 const SIZE_SCRIPT: &str = r#"exec wc -c < "$1""#;
 
+/// Print the real spelling of `$1` (#5330): symlinks, `.` and `..` resolved.
+/// A folder resolves with `pwd -P`, an existing entry with `readlink -f`, and
+/// a missing one (a copy destination) through its parent folder. Exits
+/// non-zero when the path cannot be resolved.
+pub(crate) const RESOLVE_PATH_SCRIPT: &str = r#"p=$1
+while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
+if [ -d "$p" ]; then cd -P -- "$p" 2>/dev/null && pwd -P; exit; fi
+if [ -L "$p" ] || [ -e "$p" ]; then
+  r=$(readlink -f -- "$p" 2>/dev/null) && [ -n "$r" ] && { printf '%s\n' "$r"; exit 0; }
+fi
+case $p in */*) d=${p%/*}; b=${p##*/};; *) d=.; b=$p;; esac
+[ -n "$d" ] || d=/
+case $b in ''|.|..) exit 1;; esac
+d=$(cd -P -- "$d" 2>/dev/null && pwd -P) || exit 1
+[ "$d" = / ] && d=
+printf '%s/%s\n' "$d" "$b""#;
+
+/// The path [`RESOLVE_PATH_SCRIPT`] printed, or `None` when it printed none.
+/// Pure.
+pub(crate) fn parse_resolved_path(output: &str) -> Option<String> {
+    let path = output.strip_suffix('\n').unwrap_or(output);
+    path.starts_with('/').then(|| path.to_string())
+}
+
 /// Upper bound on the stderr kept per exec for error reporting.
 const STDERR_CAP: usize = 16 * 1024;
 
@@ -468,6 +492,17 @@ impl DockerTransferTarget {
         parse_size(&out)
     }
 
+    /// The real spelling of `path` inside the container (symlinks, `.` and
+    /// `..` resolved; a missing final name resolves through its parent), or
+    /// `None` when it cannot be resolved (#5330).
+    pub async fn resolve_path(&self, path: &str) -> Option<String> {
+        let argv = ["sh", "-c", RESOLVE_PATH_SCRIPT, "sh", path];
+        let out = exec_command(&self.client, &self.container_id, argv.to_vec())
+            .await
+            .ok()?;
+        parse_resolved_path(&out)
+    }
+
     /// Remove a container file (best-effort partial cleanup; missing is fine).
     pub async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         let argv = remove_argv(path);
@@ -818,3 +853,7 @@ mod tests {
         assert_eq!(reader.stderr.lock().expect("lock").as_slice(), b"warn");
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "transfer_resolve_tests.rs"]
+mod resolve_tests;

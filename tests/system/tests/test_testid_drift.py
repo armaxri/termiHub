@@ -129,6 +129,155 @@ def test_literal_covered_by_specific_glob_not_by_wildcard():
     assert not mod._literal_covered("something-else", literals, specific)
 
 
+# ── registry-backed templates (#5341) ────────────────────────────────────────
+
+tpl = mod.templates
+
+_REGISTRY_TS = """
+export const CATEGORIES: CategoryDefinition[] = [
+  { id: "general", label: "General" },
+  { id: "appearance", label: "Appearance" }, // trailing comment
+];
+"""
+
+_SETTINGS_CONFIG = {
+    "registry": [
+        {
+            "globs": ["settings-nav-*"],
+            "source": "registry.ts",
+            "extract": {"kind": "object-field", "const": "CATEGORIES", "field": "id"},
+        }
+    ],
+    "dynamic": {"file-row-*": "file name"},
+}
+
+
+def _classify(tmp_path, ts_text, config=_SETTINGS_CONFIG, globs=None):
+    (tmp_path / "registry.ts").write_text(ts_text, encoding="utf-8")
+    return tpl.classify(globs or ["settings-nav-*", "file-row-*"], config, tmp_path)
+
+
+def _covered(cls, testid):
+    globs = ["settings-nav-*", "file-row-*"]
+    return mod._literal_covered(testid, set(), globs, tpl.expansions(cls["members"]))
+
+
+def test_registry_member_passes(tmp_path):
+    cls = _classify(tmp_path, _REGISTRY_TS)
+    assert cls["problems"] == []
+    assert cls["members"]["settings-nav-*"] == ["appearance", "general"]
+    assert _covered(cls, "settings-nav-appearance")
+
+
+def test_registry_typo_suffix_fails(tmp_path):
+    cls = _classify(tmp_path, _REGISTRY_TS)
+    assert not _covered(cls, "settings-nav-apperance")
+
+
+def test_registry_removed_member_fails(tmp_path):
+    removed = _REGISTRY_TS.replace('  { id: "appearance", label: "Appearance" },', "")
+    cls = _classify(tmp_path, removed)
+    assert cls["members"]["settings-nav-*"] == ["general"]
+    assert not _covered(cls, "settings-nav-appearance")
+
+
+def test_dynamic_template_passes_any_suffix(tmp_path):
+    cls = _classify(tmp_path, _REGISTRY_TS)
+    assert cls["kind"]["file-row-*"] == tpl.DYNAMIC
+    assert _covered(cls, "file-row-anything-at-all")
+
+
+def test_unresolvable_registry_falls_back_and_is_reported(tmp_path):
+    # A member that is not a literal must not yield a partial (wrong) expansion.
+    cls = _classify(tmp_path, "const CATEGORIES = [{ id: SOME_CONST }];\n")
+    assert "settings-nav-*" not in cls["members"]
+    assert cls["kind"]["settings-nav-*"] == tpl.REGISTRY
+    assert any("non-literal" in p for p in cls["problems"])
+    assert _covered(cls, "settings-nav-apperance")  # plain-glob fallback
+
+
+def test_missing_registry_source_is_reported(tmp_path):
+    cls = tpl.classify(["settings-nav-*"], _SETTINGS_CONFIG, tmp_path)
+    assert any("not found" in p for p in cls["problems"])
+
+
+def test_stale_config_glob_is_reported(tmp_path):
+    cls = _classify(tmp_path, _REGISTRY_TS, globs=["settings-nav-*"])
+    assert any("'file-row-*'" in p and "stale" in p for p in cls["problems"])
+
+
+def test_star_leading_glob_is_a_caller_stem(tmp_path):
+    cls = _classify(tmp_path, _REGISTRY_TS, globs=["settings-nav-*", "file-row-*", "*-confirm"])
+    assert cls["kind"]["*-confirm"] == tpl.STEM
+
+
+def test_extractors_cover_unions_arrays_and_transforms():
+    union = 'export type Side =\n  | "local"\n  | "remote";\n'
+    assert tpl.extract_members(union, {"kind": "union", "type": "Side"}) == ["local", "remote"]
+    prop = 'export type Info = { /** doc */ level: "a" | "b", other: string, };'
+    spec = {"kind": "property-union", "type": "Info", "property": "level"}
+    assert tpl.extract_members(prop, spec) == ["a", "b"]
+    arr = 'const SIZES = [1, 2, 4] as const;\nconst COLORS = ["#ef4444", "#22c55e"];'
+    assert tpl.extract_members(arr, {"kind": "array", "const": "SIZES"}) == ["1", "2", "4"]
+    colors = tpl.extract_members(arr, {"kind": "array", "const": "COLORS"}, "strip-hash")
+    assert colors == ["22c55e", "ef4444"]
+    items = 'const A = [{ label: "File Browser" }];\nconst B = [{ label: "Macros" }];'
+    spec = {"kind": "object-field", "const": ["A", "B"], "field": "label"}
+    assert tpl.extract_members(items, spec, "kebab-lower") == ["file-browser", "macros"]
+
+
+def test_helper_call_resolves_to_concrete_id(tmp_path):
+    # The harness wraps templated ids in helpers; a literal argument at the call
+    # site must become a concrete reference so a typo there is caught.
+    body = (
+        "class SettingsUi:\n"
+        "    def open_settings_category(self, category):\n"
+        '        nav = f"settings-nav-{category}"\n'
+        "        self.driver.click(nav)\n"
+        "    def run(self):\n"
+        '        self.open_settings_category("apperance")\n'
+        '        self.open_settings_category(category="general")\n'
+    )
+    import ast
+
+    tree = ast.parse(body)
+    helpers = mod.builder_calls.merge(
+        [
+            mod.builder_calls.function_templates(
+                tree, mod._SELECTOR_METHODS_ARG0, mod._SELECTOR_METHODS_TWO
+            )
+        ]
+    )
+    found = mod.builder_calls.call_literals(tree, helpers, {})
+    assert found == {"settings-nav-apperance", "settings-nav-general"}
+
+
+def test_conflicting_helper_definitions_are_skipped():
+    a = {"open_thing": {("name", 0, 1, "a-", "")}}
+    b = {"open_thing": {("name", 0, 1, "b-", "")}}
+    assert mod.builder_calls.merge([a, b]) == {}
+
+
+def test_live_typo_in_registry_backed_id_is_drift(monkeypatch):
+    # End to end on the real src/**: a typo'd settings category is drift, a real
+    # one is not.
+    refs = {"settings-nav-apperance": {"x.py"}, "settings-nav-appearance": {"x.py"}}
+    monkeypatch.setattr(mod, "harness_references", lambda: (refs, {}))
+    result = mod.analyze()
+    assert [t for t, _ in result["literal_drift"]] == ["settings-nav-apperance"]
+    assert result["registry_misses"]["settings-nav-apperance"] == ["settings-nav-*"]
+
+
+def test_live_template_config_resolves_cleanly():
+    # Every registry entry in tests/system/testid-templates.json resolves and
+    # every listed glob is still rendered — otherwise the guard would be
+    # quietly falling back to plain globs.
+    _, globs, _ = mod.source_testids()
+    cls = mod.classify_globs(globs)
+    assert cls["problems"] == []
+    assert "appearance" in cls["members"]["settings-nav-*"]
+
+
 # ── live guard against the real trees (the actual gate) ──────────────────────
 
 
