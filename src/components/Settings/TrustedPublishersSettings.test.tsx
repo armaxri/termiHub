@@ -1,5 +1,5 @@
 /**
- * Tests for the Trusted Publishers settings group (#2036): listing bundled and
+ * Tests for the Trusted publishers settings group (#2036): listing bundled and
  * user-pinned publisher keys, and revoking a user-pinned key (bundled keys carry
  * no revoke action).
  */

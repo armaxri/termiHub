@@ -41,7 +41,7 @@ function setValue(el: HTMLInputElement, value: string) {
 
 function scrollbackInput(): HTMLInputElement {
   const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
-    (el) => el.textContent === "Scrollback Buffer"
+    (el) => el.textContent === "Scrollback buffer"
   );
   return label?.closest(".settings-form__field")?.querySelector("input") as HTMLInputElement;
 }
@@ -73,20 +73,20 @@ describe("TerminalSettings", () => {
     expect(trigger.classList.contains("ui-select__trigger")).toBe(true);
   });
 
-  it("shows Platform Default when rightClickBehavior is undefined", () => {
+  it("shows Platform default when rightClickBehavior is undefined", () => {
     renderWith(defaultSettings);
     // Radix renders the selected option's label into the trigger.
-    expect(rightClickTrigger().textContent).toContain("Platform Default");
+    expect(rightClickTrigger().textContent).toContain("Platform default");
   });
 
   it("reflects contextMenu setting value", () => {
     renderWith({ ...defaultSettings, rightClickBehavior: "contextMenu" });
-    expect(rightClickTrigger().textContent).toContain("Context Menu");
+    expect(rightClickTrigger().textContent).toContain("Context menu");
   });
 
   it("reflects quickAction setting value", () => {
     renderWith({ ...defaultSettings, rightClickBehavior: "quickAction" });
-    expect(rightClickTrigger().textContent).toContain("Quick Copy/Paste");
+    expect(rightClickTrigger().textContent).toContain("Quick copy/paste");
   });
 
   it("lists every right-click option when opened", () => {
@@ -99,9 +99,9 @@ describe("TerminalSettings", () => {
     const labels = Array.from(document.querySelectorAll('[role="option"]')).map(
       (o) => o.textContent
     );
-    expect(labels.join(" ")).toContain("Platform Default");
-    expect(labels.join(" ")).toContain("Context Menu");
-    expect(labels.join(" ")).toContain("Quick Copy/Paste");
+    expect(labels.join(" ")).toContain("Platform default");
+    expect(labels.join(" ")).toContain("Context menu");
+    expect(labels.join(" ")).toContain("Quick copy/paste");
   });
 
   it("hides right-click behavior when visibleFields excludes it", () => {
@@ -116,14 +116,14 @@ describe("TerminalSettings", () => {
     });
 
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const rightClickLabel = labels.find((el) => el.textContent === "Right-Click Behavior");
+    const rightClickLabel = labels.find((el) => el.textContent === "Right-click behavior");
     expect(rightClickLabel).toBeUndefined();
   });
 
   it("renders the scrollback buffer input", () => {
     renderWith(defaultSettings);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const label = labels.find((el) => el.textContent === "Scrollback Buffer");
+    const label = labels.find((el) => el.textContent === "Scrollback buffer");
     expect(label).toBeDefined();
 
     const field = label?.closest(".settings-form__field");
@@ -158,7 +158,7 @@ describe("TerminalSettings", () => {
     renderWith({ ...defaultSettings, scrollbackBuffer: 25000 });
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const input = field?.querySelector("input[type='number']") as HTMLInputElement;
     expect(input.value).toBe("25000");
@@ -177,7 +177,7 @@ describe("TerminalSettings", () => {
   it("renders the cursor blink control as a shared Toggle and flips onChange", () => {
     const onChange = renderWith({ ...defaultSettings, cursorBlink: true });
     const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
-      (el) => el.textContent === "Cursor Blink"
+      (el) => el.textContent === "Cursor blink"
     );
     const toggle = label?.closest(".settings-form__field")?.querySelector('[role="switch"]') as
       | HTMLElement
@@ -258,7 +258,7 @@ describe("TerminalSettings", () => {
     renderWith(defaultSettings);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const hint = field?.querySelector(".settings-form__hint");
     expect(hint?.textContent?.toLowerCase()).toContain("memory");
@@ -276,7 +276,7 @@ describe("TerminalSettings", () => {
     });
 
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const label = labels.find((el) => el.textContent === "Scrollback Buffer");
+    const label = labels.find((el) => el.textContent === "Scrollback buffer");
     expect(label).toBeUndefined();
   });
 });

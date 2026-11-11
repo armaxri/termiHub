@@ -43,7 +43,7 @@ class TestExternalFiles(ConnectionsUi, SettingsUi, SidebarUi, TabsUi, SystemTest
             lambda: self.driver.exists("settings-external-files"),
             what="the External Connection Files section",
         )
-        assert "External Connection Files" in self.driver.get_text("settings-external-files")
+        assert "External connection files" in self.driver.get_text("settings-external-files")
 
     def test_external_files_section_offers_create_and_add_actions(self):
         self.open_settings_category("external-files")
@@ -52,5 +52,5 @@ class TestExternalFiles(ConnectionsUi, SettingsUi, SidebarUi, TabsUi, SystemTest
             what="the External Connection Files section",
         )
         text = self.driver.get_text("settings-external-files")
-        assert "Create File" in text
-        assert "Add File" in text
+        assert "Create file" in text
+        assert "Add file" in text

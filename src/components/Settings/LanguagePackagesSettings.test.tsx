@@ -244,12 +244,12 @@ describe("LanguagePackagesSettings", () => {
 
   it("hides all content when installedLanguagePackages not in visibleFields", () => {
     render({ visibleFields: new Set(["someOtherField"]) });
-    expect(container.textContent).not.toContain("Language Packages");
+    expect(container.textContent).not.toContain("Language packages");
     expect(query("lang-pkg-search")).toBeNull();
   });
 
   it("shows content when installedLanguagePackages is in visibleFields", () => {
     render({ visibleFields: new Set(["installedLanguagePackages"]) });
-    expect(container.textContent).toContain("Language Packages");
+    expect(container.textContent).toContain("Language packages");
   });
 });

@@ -1,5 +1,5 @@
 /**
- * PluginCatalogSettings (PROD-048): Settings → Plugins → Browse Plugins. Pins
+ * PluginCatalogSettings (PROD-048): Settings → Plugins → Browse plugins. Pins
  * that the index is fetched only on request, entries show their compatibility
  * (ABI / platform / toolchain / native) and install state, search filters, and
  * Install / Install-from-URL download a verified package and hand it to the

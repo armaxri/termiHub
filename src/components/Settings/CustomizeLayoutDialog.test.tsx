@@ -176,9 +176,9 @@ describe("CustomizeLayoutDialog", () => {
     expect(defaultBtn?.className).not.toContain("--active");
   });
 
-  // --- Activity Bar visibility ---
+  // --- Activity bar visibility ---
 
-  it("unchecking Activity Bar visibility hides it", async () => {
+  it("unchecking Activity bar visibility hides it", async () => {
     await renderDialog();
     expect(isChecked("layout-ab-visible")).toBe(true);
 
@@ -188,7 +188,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(state.layoutConfig.activityBarPosition).toBe("hidden");
   });
 
-  it("re-checking Activity Bar visibility restores last position", async () => {
+  it("re-checking Activity bar visibility restores last position", async () => {
     // Set to right, then hide, then re-show
     useAppStore.setState({
       layoutConfig: { ...DEFAULT_LAYOUT, activityBarPosition: "right" },
@@ -207,7 +207,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(useAppStore.getState().layoutConfig.activityBarPosition).toBe("right");
   });
 
-  it("disables position radios when Activity Bar is hidden", async () => {
+  it("disables position radios when Activity bar is hidden", async () => {
     await renderDialog();
     clickTestId("layout-ab-visible");
     await renderDialog();
@@ -217,7 +217,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(isDisabled("layout-ab-top")).toBe(true);
   });
 
-  it("enables position radios when Activity Bar is visible", async () => {
+  it("enables position radios when Activity bar is visible", async () => {
     await renderDialog();
 
     expect(isDisabled("layout-ab-left")).toBe(false);
@@ -225,16 +225,16 @@ describe("CustomizeLayoutDialog", () => {
     expect(isDisabled("layout-ab-top")).toBe(false);
   });
 
-  // --- Activity Bar position ---
+  // --- Activity bar position ---
 
-  it("selects Right position for Activity Bar", async () => {
+  it("selects Right position for Activity bar", async () => {
     await renderDialog();
     clickTestId("layout-ab-right");
 
     expect(useAppStore.getState().layoutConfig.activityBarPosition).toBe("right");
   });
 
-  it("selects Top position for Activity Bar", async () => {
+  it("selects Top position for Activity bar", async () => {
     await renderDialog();
     clickTestId("layout-ab-top");
 
@@ -281,9 +281,9 @@ describe("CustomizeLayoutDialog", () => {
     expect(useAppStore.getState().layoutConfig.sidebarPosition).toBe("right");
   });
 
-  // --- Status Bar visibility ---
+  // --- Status bar visibility ---
 
-  it("unchecking Status Bar visibility hides it", async () => {
+  it("unchecking Status bar visibility hides it", async () => {
     await renderDialog();
     expect(isChecked("layout-statusbar-visible")).toBe(true);
 
@@ -292,9 +292,9 @@ describe("CustomizeLayoutDialog", () => {
     expect(useAppStore.getState().layoutConfig.statusBarVisible).toBe(false);
   });
 
-  // --- Reset to Default ---
+  // --- Reset to default ---
 
-  it("Reset to Default restores DEFAULT_LAYOUT from any config", async () => {
+  it("Reset to default restores DEFAULT_LAYOUT from any config", async () => {
     useAppStore.setState({ layoutConfig: { ...LAYOUT_PRESETS.zen } });
     await renderDialog();
 
@@ -313,7 +313,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(useAppStore.getState().layoutDialogOpen).toBe(false);
   });
 
-  // --- Layout Preview integration ---
+  // --- Layout preview integration ---
 
   it("renders LayoutPreview inside the dialog", async () => {
     await renderDialog();
@@ -325,7 +325,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(query("preview-statusbar")).not.toBeNull();
   });
 
-  it("LayoutPreview updates when Activity Bar position changes to Right", async () => {
+  it("LayoutPreview updates when Activity bar position changes to Right", async () => {
     await renderDialog();
     clickTestId("layout-ab-right");
     await renderDialog();
@@ -341,7 +341,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(abIndex).toBeGreaterThan(termIndex);
   });
 
-  it("LayoutPreview updates when Activity Bar position changes to Top", async () => {
+  it("LayoutPreview updates when Activity bar position changes to Top", async () => {
     await renderDialog();
     clickTestId("layout-ab-top");
     await renderDialog();
@@ -350,7 +350,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(query("preview-ab")).toBeNull();
   });
 
-  it("LayoutPreview hides AB when Activity Bar visibility is unchecked", async () => {
+  it("LayoutPreview hides AB when Activity bar visibility is unchecked", async () => {
     await renderDialog();
     clickTestId("layout-ab-visible");
     await renderDialog();
@@ -384,7 +384,7 @@ describe("CustomizeLayoutDialog", () => {
     expect(sbIndex).toBeGreaterThan(termIndex);
   });
 
-  it("LayoutPreview hides status bar when Status Bar visibility is unchecked", async () => {
+  it("LayoutPreview hides status bar when Status bar visibility is unchecked", async () => {
     await renderDialog();
     clickTestId("layout-statusbar-visible");
     await renderDialog();

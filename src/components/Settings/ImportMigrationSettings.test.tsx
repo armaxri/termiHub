@@ -221,7 +221,7 @@ describe("ImportMigrationSettings", () => {
     expect(useAppStore.getState().exportDialogOpen).toBe(true);
   });
 
-  it("links to Settings → Backup & Restore", async () => {
+  it("links to Settings → Backup & restore", async () => {
     mockedDiscover.mockResolvedValue([]);
     const openSettingsTab = vi.fn();
     useAppStore.setState({ openSettingsTab });

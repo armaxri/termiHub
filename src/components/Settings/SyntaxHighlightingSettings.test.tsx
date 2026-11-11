@@ -221,7 +221,7 @@ describe("SyntaxHighlightingSettings custom rules", () => {
     expect(byTestId("syntax-custom-rules-empty")).not.toBeNull();
   });
 
-  it("opens the inline editor when Add Rule is clicked", () => {
+  it("opens the inline editor when Add rule is clicked", () => {
     renderWith(defaultSettings);
     expect(byTestId("custom-rule-editor")).toBeNull();
     act(() => byTestId("syntax-custom-rule-add").click());

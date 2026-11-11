@@ -536,7 +536,7 @@ for (const win of WINDOWS) {
       const report = new SurfaceReport(page, testInfo, win.name);
       await boot(page);
       await openSettings(page, "external-files");
-      await page.getByRole("button", { name: "Create File" }).click();
+      await page.getByRole("button", { name: "Create file" }).click();
       await page.locator(".settings-panel__create-prompt").waitFor();
       await report.check("settings/external-files-create-prompt", SETTINGS_PANEL);
       await report.finish();
