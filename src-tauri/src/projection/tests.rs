@@ -12,7 +12,7 @@
 //! subscriber lifecycle, and the envelope serde shapes that mirror the
 //! TypeScript types.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -20,51 +20,9 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::*;
+use crate::test_support::RecordingSink;
 
 // ── Test doubles ────────────────────────────────────────────────────────────
-
-/// An in-memory [`ProjectionSink`] that records delivered frames and can be
-/// "killed" to simulate a closed channel / dead socket.
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn kill(&self) {
-        self.alive.store(false, Ordering::SeqCst);
-    }
-
-    /// Every diff this sink received, in delivery order.
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("test sink killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
 
 /// A simulated client-side cache: holds `{ version, view }`, applies ordered
 /// diffs, detects gaps, and re-baselines from a snapshot. Mirrors the
@@ -203,8 +161,8 @@ fn full_loop_subscribe_dispatch_fanout_and_forced_gap_resync() {
 
     // 1 · Attach two subscribers (desktop A + browser B). Both get the same
     //     baseline snapshot at version 0.
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap_a = projector.subscribe("tunnels", "sub-a", "A", sink_a.clone());
     let snap_b = projector.subscribe("tunnels", "sub-b", "B", sink_b.clone());
     assert_eq!(snap_a.version, 0);
@@ -335,7 +293,7 @@ fn each_change_advances_version_by_exactly_one() {
 fn unsubscribe_stops_delivery_and_is_idempotent() {
     let projector = Projector::new();
     projector.register_region("r", json!({ "n": 0 }));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe("r", "sub-1", "A", sink.clone());
     projector.publish("r", json!({ "n": 1 }));
     assert_eq!(sink.diffs().len(), 1);
@@ -352,9 +310,9 @@ fn unsubscribe_client_detaches_all_of_a_clients_subscriptions() {
     let projector = Projector::new();
     projector.register_region("r", json!({ "n": 0 }));
     // One client with two subscriptions (e.g. two windows), plus another client.
-    projector.subscribe("r", "sub-1", "A", Arc::new(VecSink::new()));
-    projector.subscribe("r", "sub-2", "A", Arc::new(VecSink::new()));
-    let other = Arc::new(VecSink::new());
+    projector.subscribe("r", "sub-1", "A", Arc::new(RecordingSink::new()));
+    projector.subscribe("r", "sub-2", "A", Arc::new(RecordingSink::new()));
+    let other = Arc::new(RecordingSink::new());
     projector.subscribe("r", "sub-3", "B", other.clone());
     assert_eq!(projector.subscriber_count("r"), 3);
 
@@ -370,8 +328,8 @@ fn unsubscribe_client_detaches_all_of_a_clients_subscriptions() {
 fn resubscribe_with_same_id_replaces_the_sink() {
     let projector = Projector::new();
     projector.register_region("r", json!({ "n": 0 }));
-    let first = Arc::new(VecSink::new());
-    let second = Arc::new(VecSink::new());
+    let first = Arc::new(RecordingSink::new());
+    let second = Arc::new(RecordingSink::new());
     projector.subscribe("r", "sub-1", "A", first.clone());
     projector.subscribe("r", "sub-1", "A", second.clone());
     assert_eq!(projector.subscriber_count("r"), 1);
@@ -578,7 +536,7 @@ fn slow_subscriber_on_one_region_does_not_block_other_regions() {
     });
     projector.subscribe("A", "sub-a", "A", blocker);
 
-    let sink_b = Arc::new(VecSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     projector.subscribe("B", "sub-b", "B", sink_b.clone());
 
     // Publishing to A blocks inside delivery, holding region A's lock.
@@ -619,7 +577,7 @@ fn slow_subscriber_on_one_region_does_not_block_other_regions() {
 fn concurrent_publishers_to_one_region_deliver_in_version_order() {
     let projector = Arc::new(Projector::new());
     projector.register_region("r", json!({ "n": 0 }));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe("r", "sub", "A", sink.clone());
 
     const THREADS: u64 = 8;
@@ -674,8 +632,8 @@ fn concurrent_publishers_to_one_region_deliver_in_version_order() {
 #[test]
 fn reused_subscription_id_from_another_client_does_not_evict() {
     let projector = Projector::new();
-    let a = Arc::new(VecSink::new());
-    let b = Arc::new(VecSink::new());
+    let a = Arc::new(RecordingSink::new());
+    let b = Arc::new(RecordingSink::new());
     projector.subscribe("r", "sub-1", "A", a.clone());
     // Client B presents A's subscription id: it attaches beside A, never
     // replacing A's sink.
@@ -690,8 +648,8 @@ fn reused_subscription_id_from_another_client_does_not_evict() {
 #[test]
 fn unsubscribe_owned_only_detaches_owned_subscribers() {
     let projector = Projector::new();
-    projector.subscribe("r", "sub-1", "A", Arc::new(VecSink::new()));
-    projector.subscribe("r", "sub-1", "B", Arc::new(VecSink::new()));
+    projector.subscribe("r", "sub-1", "A", Arc::new(RecordingSink::new()));
+    projector.subscribe("r", "sub-1", "B", Arc::new(RecordingSink::new()));
 
     // A caller owning only B cannot detach A's subscription.
     assert_eq!(projector.unsubscribe_owned("r", "sub-1", |c| c == "B"), 1);
@@ -705,9 +663,9 @@ fn unsubscribe_owned_only_detaches_owned_subscribers() {
 #[test]
 fn unsubscribe_clients_everywhere_detaches_across_regions() {
     let projector = Projector::new();
-    projector.subscribe("shared", "s1", "A", Arc::new(VecSink::new()));
-    projector.subscribe("layout@A", "s2", "A", Arc::new(VecSink::new()));
-    projector.subscribe("shared", "s3", "B", Arc::new(VecSink::new()));
+    projector.subscribe("shared", "s1", "A", Arc::new(RecordingSink::new()));
+    projector.subscribe("layout@A", "s2", "A", Arc::new(RecordingSink::new()));
+    projector.subscribe("shared", "s3", "B", Arc::new(RecordingSink::new()));
 
     assert_eq!(projector.unsubscribe_clients_everywhere(&[]), 0);
     assert_eq!(

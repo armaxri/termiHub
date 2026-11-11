@@ -15,9 +15,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::tests::{dynamic_tunnel, local_tunnel, state, ClientCache, VecSink};
+use super::tests::{dynamic_tunnel, local_tunnel, state, ClientCache};
 use super::*;
 use crate::projection::{compute_ops, DiffOp};
+use crate::test_support::RecordingSink;
 use crate::tunnel::config::{TunnelConfig, TunnelState, TunnelStats, TunnelStatus};
 
 fn stats(sent: u64, received: u64, active: u32, total: u64) -> TunnelStats {
@@ -52,13 +53,13 @@ fn full_view(t1: TunnelStats, t3: TunnelStats) -> Value {
 }
 
 /// A projector seeded with the zero-stats view and one subscribed sink.
-fn seeded() -> (Projector, Arc<VecSink>, ClientCache) {
+fn seeded() -> (Projector, Arc<RecordingSink>, ClientCache) {
     let projector = Projector::new();
     projector.register_region(
         TUNNELS_REGION,
         full_view(TunnelStats::default(), TunnelStats::default()),
     );
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(TUNNELS_REGION, "sub-a", "A", sink.clone());
     let cache = ClientCache::from_snapshot(&snap);
     (projector, sink, cache)
