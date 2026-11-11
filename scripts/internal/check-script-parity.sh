@@ -57,6 +57,7 @@ ALLOWLIST=(
   "scripts/internal/check-script-headless.sh" # headless-exec checker (CI-only bash gate)
   "scripts/internal/ci-rust-tests.sh"         # CI test runner (bash on every runner, CI-013)
   "scripts/internal/fetch-github-release-asset.sh" # pinned-tool downloader for bash callers (CI + the .sh setup scripts, #5105)
+  "scripts/internal/fetch-wsl-distro.sh"  # CI-only pinned WSL distro downloader (Git Bash on the wsl-live runner, #5317)
   "scripts/internal/build-system-test-app.sh" # test-app build recipe (bash on every runner; Windows via test-system-py.cmd -> Git Bash, #3664)
   "scripts/internal/build-system-test-agent.sh" # musl test agent for the Linux deployed-agent fixtures (harness/nightly, #4092)
   "scripts/internal/harness-coverage.sh"      # harness coverage env/report (nightly Linux leg, #3657)
@@ -81,6 +82,7 @@ ALLOWLIST=(
   "scripts/internal/native-sshd-fixture.sh"   # fixture up/stop/start/down (-> .ps1 on Windows)
   "scripts/internal/run-native-sshd-suites.sh" # CI suite runner (bash on every runner)
   "scripts/internal/run-native-sshd-fish3-suite.sh" # Linux CI fish 3 login-shell leg (#5115)
+  "scripts/internal/run-native-sshd-deploy-journey.sh" # agent deploy journey, bash on every runner (#5208)
   # Windows SSH-host agent lane (#3684): run by the nightly Windows leg under
   # Git Bash only (drives native-sshd-fixture.sh -> .ps1); a .cmd adds nothing.
   "scripts/internal/run-windows-ssh-host-suite.sh" # Windows CI suite runner (Git Bash)

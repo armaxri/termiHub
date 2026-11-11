@@ -758,6 +758,7 @@ impl RemoteProxy {
                         agent_manager: self.agent_manager.clone(),
                         interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
                         paused_tx: tokio::sync::watch::channel(false).0,
+                        subscribed: AtomicBool::new(false),
                         agent_outdated: !is_local && !agent_monitors_session,
                     }));
                     // A host that can be monitored can also have its processes
@@ -1300,6 +1301,11 @@ pub struct RemoteMonitoringProxy {
     /// channel so a `set_paused` on the provider steers the running driver
     /// immediately (each `subscribe` takes a fresh receiver).
     paused_tx: tokio::sync::watch::Sender<bool>,
+    /// Whether the monitor is open — set by `subscribe`, cleared by
+    /// `unsubscribe` (#5318). Read under the agent host gate by pause, resume
+    /// and interval changes, so none of them re-subscribes (resurrects) a
+    /// monitor a stop already took down, nor stops one that was never opened.
+    subscribed: AtomicBool,
     /// The agent predates agent-hosted session monitoring (#3871): `subscribe`
     /// fails with the `agent_outdated` code — the status bar says to update the
     /// agent — without a request the agent would only reject.
@@ -1326,6 +1332,7 @@ impl RemoteMonitoringProxy {
             agent_manager,
             interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
             paused_tx: tokio::sync::watch::channel(false).0,
+            subscribed: AtomicBool::new(false),
             agent_outdated: false,
         }
     }
@@ -1344,6 +1351,84 @@ impl RemoteMonitoringProxy {
             .await
             .map_err(|e| CoreError::Other(format!("spawn_blocking join: {e}")))?
             .map_err(|e| CoreError::Other(e.to_string()))
+    }
+
+    /// Send `connection.monitoring.subscribe` for this host at `interval_ms`.
+    async fn send_subscribe(&self, interval_ms: u64) -> Result<Value, CoreError> {
+        self.rpc(
+            termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
+            MonitoringSubscribeParams {
+                host: self.monitoring_host.clone(),
+                interval_ms: Some(interval_ms),
+            },
+        )
+        .await
+    }
+
+    /// Stop the agent's poller for a pause (#3001), under the host gate (#5318).
+    ///
+    /// A pause the agent does not confirm is handled like a failed stop: the
+    /// desktop stays `Paused` (the user asked for it, and the driver already
+    /// drops samples), and the unsubscribe is retried in the background until
+    /// the agent confirms it or a resume supersedes it — so the remote host is
+    /// never left sampling behind a Paused badge.
+    async fn pause_agent_poller(&self) {
+        let _gate =
+            super::agent_monitor_stops::hold_host(&self.agent_id, &self.monitoring_host).await;
+        // Not open (never subscribed, or stopped): there is no agent loop to
+        // pause. Resumed meanwhile: the resume re-subscribed it, so stopping it
+        // now would undo the user's later choice.
+        if !self.subscribed.load(Ordering::SeqCst) || !*self.paused_tx.borrow() {
+            return;
+        }
+        let result = self
+            .rpc(
+                termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
+                MonitoringUnsubscribeParams {
+                    host: self.monitoring_host.clone(),
+                },
+            )
+            .await;
+        if let Err(e) = result {
+            warn!(
+                host = %self.monitoring_host,
+                error = %e,
+                "Agent did not confirm the monitoring pause; stopping its poller in the background"
+            );
+            super::agent_monitor_stops::defer_stop(
+                &self.agent_id,
+                &self.monitoring_host,
+                self.agent_manager.clone(),
+            );
+        }
+    }
+
+    /// Restart the agent's poller for a resume (#3001), under the host gate
+    /// (#5318).
+    ///
+    /// The re-subscribe supersedes any stop still owed for the host (a pause
+    /// the agent did not confirm), so a late retry cannot stop the resumed
+    /// monitor. The poller restarts at the current cadence *before* the
+    /// desktop driver un-holds, so fresh samples are already flowing; the
+    /// agent's `subscribe` replaces any existing subscription in place.
+    async fn resume_agent_poller(&self) {
+        let _gate =
+            super::agent_monitor_stops::hold_host(&self.agent_id, &self.monitoring_host).await;
+        if self.subscribed.load(Ordering::SeqCst) {
+            super::agent_monitor_stops::supersede(&self.agent_id, &self.monitoring_host);
+            let interval_ms = self.interval_ms.load(Ordering::SeqCst);
+            if let Err(e) = self.send_subscribe(interval_ms).await {
+                // The monitor shows running again and keeps its route, so a
+                // later sample still recovers it and its close stops the
+                // agent; the status driver reports the gap meanwhile.
+                warn!(
+                    host = %self.monitoring_host,
+                    error = %e,
+                    "Failed to resume agent monitoring poller"
+                );
+            }
+        }
+        self.paused_tx.send_replace(false);
     }
 }
 
@@ -1638,17 +1723,33 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // (#1233); the frontend may later change it via `set_interval`. The
         // gate supersedes any stop still owed for this agent host and keeps a
         // late retry of it from racing this subscribe (#5301).
-        let _gate =
+        let gate =
             super::agent_monitor_stops::begin_subscribe(&self.agent_id, &self.monitoring_host)
                 .await;
-        self.rpc(
-            termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-            MonitoringSubscribeParams {
-                host: self.monitoring_host.clone(),
-                interval_ms: Some(self.interval_ms.load(Ordering::SeqCst)),
-            },
-        )
-        .await?;
+        self.subscribed.store(true, Ordering::SeqCst);
+        if let Err(e) = self
+            .send_subscribe(self.interval_ms.load(Ordering::SeqCst))
+            .await
+        {
+            // The open failed, but the agent may have acted on the request —
+            // a timed-out subscribe can still have started its collect loop.
+            // Drop the output route (nothing will consume it) and stop the
+            // agent half in the background until the agent confirms (#5305).
+            // Deferred while still holding the gate, so the stop targets this
+            // failed generation: a reopen waiting on the gate supersedes it.
+            self.subscribed.store(false, Ordering::SeqCst);
+            let _ = self
+                .agent_manager
+                .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
+            super::agent_monitor_stops::defer_stop(
+                &self.agent_id,
+                &self.monitoring_host,
+                self.agent_manager.clone(),
+            );
+            drop(gate);
+            return Err(e);
+        }
+        drop(gate);
 
         // Consumer-facing channels. The driver forwards each fresh agent sample
         // onto `stats_tx` and drives `status_tx` from a `CollectLoopState`: a
@@ -1687,6 +1788,9 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             // Never subscribed (#3871): nothing to stop.
             return Ok(());
         }
+        // Closed from here on: a pause, resume or interval change still in
+        // flight must not re-subscribe the agent behind this stop (#5318).
+        self.subscribed.store(false, Ordering::SeqCst);
         // Unregister monitoring channel before telling the agent to stop. This
         // closes the status-derivation driver's feed, so the desktop half of
         // the monitor is gone whatever the agent answers.
@@ -1694,6 +1798,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             .agent_manager
             .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
 
+        // Hold the host gate across the request and a possible deferred stop,
+        // so a reopen racing this close cannot be stopped by it (#5305).
+        let _gate =
+            super::agent_monitor_stops::hold_host(&self.agent_id, &self.monitoring_host).await;
         let result = self
             .rpc(
                 termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
@@ -1724,16 +1832,20 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         if self.agent_outdated {
             return;
         }
-        if let Err(e) = self
-            .rpc(
-                termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-                MonitoringSubscribeParams {
-                    host: self.monitoring_host.clone(),
-                    interval_ms: Some(ms),
-                },
-            )
-            .await
-        {
+        // Under the host gate, so the re-subscribe is ordered against a stop
+        // or pause of this host (#5318). A monitor that is not running on the
+        // agent — not opened yet, stopped, or paused — only records the
+        // cadence: the next subscribe or resume reads it. Re-subscribing it
+        // here would resurrect a loop the user stopped.
+        let _gate =
+            super::agent_monitor_stops::hold_host(&self.agent_id, &self.monitoring_host).await;
+        if !self.subscribed.load(Ordering::SeqCst) || *self.paused_tx.borrow() {
+            return;
+        }
+        // A running monitor re-subscribes: supersede any stop still owed for
+        // the host, so its retry cannot stop the monitor after this lands.
+        super::agent_monitor_stops::supersede(&self.agent_id, &self.monitoring_host);
+        if let Err(e) = self.send_subscribe(ms).await {
             warn!(host = %self.monitoring_host, error = %e, "Failed to update agent monitoring interval");
         }
     }
@@ -1752,51 +1864,21 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // The desktop-side steering stays too (SM-013): while paused the
         // status-derivation driver holds the badge at `Paused` and drops any
         // sample still in flight, so the UI never desyncs from the "paused"
-        // label even in the gap before the agent acts on the RPC (or if the RPC
-        // fails against an unreachable agent). `send_replace` updates the value
-        // even with no live subscriber (a later `subscribe` reads it).
+        // label even in the gap before the agent acts on the RPC. `send_replace`
+        // updates the value even with no live subscriber (a later `subscribe`
+        // reads it).
+        //
+        // Both halves run under the agent host gate, like subscribe and
+        // unsubscribe (#5318), so a pause, a resume, an interval change and a
+        // deferred stop's retry are ordered on the agent.
         if paused {
             // Steer the desktop driver first so no late sample slips through,
             // then stop the remote poller. The output channel stays registered,
             // so a later resume routes fresh samples back to the same driver.
             self.paused_tx.send_replace(true);
-            if let Err(e) = self
-                .rpc(
-                    termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
-                    MonitoringUnsubscribeParams {
-                        host: self.monitoring_host.clone(),
-                    },
-                )
-                .await
-            {
-                warn!(
-                    host = %self.monitoring_host,
-                    error = %e,
-                    "Failed to pause agent monitoring poller (desktop pause still honoured)"
-                );
-            }
+            self.pause_agent_poller().await;
         } else {
-            // Restart the remote poller at the current cadence *before* resuming
-            // the desktop driver, so fresh samples are already flowing when it
-            // un-holds. The agent's `subscribe` replaces any existing
-            // subscription, so this restarts the poller in place.
-            if let Err(e) = self
-                .rpc(
-                    termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-                    MonitoringSubscribeParams {
-                        host: self.monitoring_host.clone(),
-                        interval_ms: Some(self.interval_ms.load(Ordering::SeqCst)),
-                    },
-                )
-                .await
-            {
-                warn!(
-                    host = %self.monitoring_host,
-                    error = %e,
-                    "Failed to resume agent monitoring poller"
-                );
-            }
-            self.paused_tx.send_replace(false);
+            self.resume_agent_poller().await;
         }
         debug!(
             host = %self.monitoring_host,
@@ -2582,6 +2664,9 @@ mod tests {
     async fn pausing_agent_monitor_stops_remote_poller_and_resume_restarts_it() {
         let mock = Arc::new(MockAgentRpcClient::new());
         let proxy = RemoteMonitoringProxy::for_agent_self("agent-1".to_string(), mock.clone());
+        // Only an open monitor has an agent poller to pause (#5318).
+        let _subscription = proxy.subscribe().await.expect("subscribe");
+        mock.sent_requests.lock().unwrap().clear();
 
         // Pause: the agent's poller must be told to stop so it stops wasting
         // remote CPU/bandwidth while paused.
@@ -2596,6 +2681,7 @@ mod tests {
         }
 
         // Resume: the agent must be re-subscribed so its poller restarts.
+        mock.sent_requests.lock().unwrap().clear();
         proxy.set_paused(false).await;
         {
             let sent = mock.sent_requests.lock().unwrap();

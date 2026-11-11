@@ -2,11 +2,7 @@ import { describe, it, expect } from "vitest";
 import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
 import {
-  ANSI_COLOR_KEYS,
-  ANSI_MIN_CONTRAST,
   adjustForContrast,
-  adjustLightnessForContrast,
-  applyAnsiContrastFloor,
   contrastRatio,
   deriveTextMutedOnSelection,
   deriveTextSecondaryOnSelection,
@@ -274,21 +270,6 @@ describe("adjustForContrast (#5008)", () => {
 
 const BUILT_IN_THEMES = [darkTheme, lightTheme, solarizedDarkTheme, solarizedLightTheme];
 
-/** OKLCH hue in degrees, for asserting a nudge kept the colour's identity. */
-function oklchHue(hex: string): { hue: number; chroma: number } {
-  const n = parseInt(hex.slice(1, 7), 16);
-  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
-    const s = c / 255;
-    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  });
-  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
-  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
-  const sh = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
-  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * sh;
-  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * sh;
-  return { hue: (Math.atan2(bb, a) * 180) / Math.PI, chroma: Math.hypot(a, bb) };
-}
-
 /**
  * Inactive activity-bar icons (#5192, WCAG 1.4.11 non-text 3:1). The icons are
  * the only identification of the primary navigation controls. Dark measured
@@ -310,123 +291,99 @@ describe("inactive activity-bar icon contrast (WCAG 1.4.11, #5192)", () => {
 });
 
 /**
- * ANSI palette floor (#5191): every ANSI colour, normal and bright, reaches
- * 3:1 on its theme's terminal background. Light's white/bright-white used to
- * equal the background (1.04:1 / 1.00:1), and the Solarized brblack (dark) and
- * brwhite (light) are canonically the background tone (1.00:1).
+ * ANSI palettes stay canonical (#5309). The palette paints both foreground and
+ * background cells, so #5274's palette-level 3:1 floor also turned ANSI-black
+ * backgrounds grey (powerline/Agnoster segments, TUI panels). Text readability
+ * is instead enforced per cell at render time by xterm's `minimumContrastRatio`
+ * (see `TERMINAL_MIN_CONTRAST_RATIO`), so these tokens must ship as authored.
  */
-describe("ansi palette contrast on the terminal background (#5191)", () => {
-  for (const theme of BUILT_IN_THEMES) {
-    const bg = theme.colors.terminalBg;
-    for (const key of ANSI_COLOR_KEYS) {
-      const fg = theme.colors[key];
-      it(`${theme.id} ${key} (${fg}) reaches 3:1 on terminalBg (${bg})`, () => {
-        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(ANSI_MIN_CONTRAST);
-      });
-    }
-
-    it(`${theme.id} renders its palette unchanged (the runtime floor is a no-op)`, () => {
-      applyTheme(theme.id);
-      const xterm = getXtermTheme();
-      expect(xterm.white).toBe(theme.colors.ansiWhite);
-      expect(xterm.brightWhite).toBe(theme.colors.ansiBrightWhite);
-      expect(xterm.black).toBe(theme.colors.ansiBlack);
-      expect(xterm.brightBlack).toBe(theme.colors.ansiBrightBlack);
-      expect(applyAnsiContrastFloor(theme.colors)).toEqual(
-        Object.fromEntries(ANSI_COLOR_KEYS.map((k) => [k, theme.colors[k]]))
-      );
+describe("ansi palettes keep their canonical values (#5309)", () => {
+  // [theme, token, canonical value]: every entry #5274 had nudged.
+  const canonical: [typeof darkTheme, keyof typeof darkTheme.colors, string][] = [
+    [darkTheme, "ansiBlack", "#0f1117"],
+    [lightTheme, "ansiWhite", "#fafafa"],
+    [lightTheme, "ansiBrightGreen", "#98c379"],
+    [lightTheme, "ansiBrightYellow", "#e5c07b"],
+    [lightTheme, "ansiBrightBlue", "#61afef"],
+    [lightTheme, "ansiBrightMagenta", "#c678dd"],
+    [lightTheme, "ansiBrightCyan", "#56b6c2"],
+    [lightTheme, "ansiBrightWhite", "#ffffff"],
+    [solarizedDarkTheme, "ansiBlack", "#073642"], // base02
+    [solarizedDarkTheme, "ansiBrightBlack", "#002b36"], // base03
+    [solarizedDarkTheme, "ansiBrightGreen", "#586e75"], // base01
+    [solarizedLightTheme, "ansiGreen", "#859900"],
+    [solarizedLightTheme, "ansiYellow", "#b58900"],
+    [solarizedLightTheme, "ansiCyan", "#2aa198"],
+    [solarizedLightTheme, "ansiWhite", "#eee8d5"], // base2
+    [solarizedLightTheme, "ansiBrightBlue", "#839496"], // base0
+    [solarizedLightTheme, "ansiBrightCyan", "#93a1a1"], // base1
+    [solarizedLightTheme, "ansiBrightWhite", "#fdf6e3"], // base3
+  ];
+  for (const [theme, key, value] of canonical) {
+    it(`${theme.id} ${key} is the canonical ${value}`, () => {
+      expect(theme.colors[key]).toBe(value);
     });
   }
 
-  it("floors a plugin theme whose ansiWhite equals its terminal background", () => {
+  const XTERM_ANSI: [string, keyof typeof darkTheme.colors][] = [
+    ["black", "ansiBlack"],
+    ["red", "ansiRed"],
+    ["green", "ansiGreen"],
+    ["yellow", "ansiYellow"],
+    ["blue", "ansiBlue"],
+    ["magenta", "ansiMagenta"],
+    ["cyan", "ansiCyan"],
+    ["white", "ansiWhite"],
+    ["brightBlack", "ansiBrightBlack"],
+    ["brightRed", "ansiBrightRed"],
+    ["brightGreen", "ansiBrightGreen"],
+    ["brightYellow", "ansiBrightYellow"],
+    ["brightBlue", "ansiBrightBlue"],
+    ["brightMagenta", "ansiBrightMagenta"],
+    ["brightCyan", "ansiBrightCyan"],
+    ["brightWhite", "ansiBrightWhite"],
+  ];
+  for (const theme of BUILT_IN_THEMES) {
+    it(`${theme.id} reaches xterm with its palette unchanged`, () => {
+      applyTheme(theme.id);
+      const xterm = getXtermTheme();
+      for (const [slot, key] of XTERM_ANSI) {
+        expect(xterm[slot], `${theme.id} ${slot}`).toBe(theme.colors[key]);
+      }
+      applyTheme("dark");
+    });
+  }
+
+  it("dark: an ANSI-black background cell blends into the terminal background", () => {
+    // `ESC[40m` paints xterm's `black`; it must be the terminal surface, or every
+    // Agnoster/powerline segment and TUI panel shows a visible block (#5309).
+    applyTheme("dark");
+    const xterm = getXtermTheme();
+    expect(xterm.black).toBe(xterm.background);
+    expect(darkTheme.colors.ansiBlack).toBe(darkTheme.colors.terminalBg);
+  });
+
+  it("does not rewrite a plugin theme's palette either", () => {
+    // A plugin ansiWhite equal to its background stays as authored in the theme;
+    // the render-time contrast floor keeps white *text* readable per cell.
     const full: Record<string, string> = {};
     for (const key of COLOR_TOKEN_KEYS) full[key] = "#123456";
     const json = JSON.stringify({
       colorScheme: "light",
-      colors: { ...full, terminalBg: "#ffffff", ansiWhite: "#ffffff", ansiBrightWhite: "#fafafa" },
+      colors: { ...full, terminalBg: "#ffffff", ansiWhite: "#ffffff" },
     });
     const plugin = parsePluginTheme("acme", { id: "paper", name: "Paper", file: "p.json" }, json);
     previewTheme(plugin);
-    const xterm = getXtermTheme();
-    expect(contrastRatio(xterm.white, "#ffffff")).toBeGreaterThanOrEqual(ANSI_MIN_CONTRAST);
-    expect(contrastRatio(xterm.brightWhite, "#ffffff")).toBeGreaterThanOrEqual(ANSI_MIN_CONTRAST);
+    expect(getXtermTheme().white).toBe("#ffffff");
     applyTheme("dark");
   });
 
-  it("floors an edited custom theme too", () => {
+  it("does not rewrite an edited custom theme", () => {
     const custom = createCustomTheme("dark", "Ink");
     custom.colors.ansiBrightBlack = custom.colors.terminalBg;
     previewTheme(custom);
     const xterm = getXtermTheme();
-    expect(contrastRatio(xterm.brightBlack, xterm.background)).toBeGreaterThanOrEqual(
-      ANSI_MIN_CONTRAST
-    );
+    expect(xterm.brightBlack).toBe(xterm.background);
     applyTheme("dark");
-  });
-});
-
-describe("adjustLightnessForContrast (#5191)", () => {
-  it("returns a passing colour unchanged", () => {
-    expect(adjustLightnessForContrast("#e5e5e5", "#0f1117")).toBe("#e5e5e5");
-  });
-
-  it("leaves non-hex input alone", () => {
-    expect(adjustLightnessForContrast("red", "#ffffff")).toBe("red");
-    expect(adjustLightnessForContrast("#ffffff", "var(--x)")).toBe("#ffffff");
-  });
-
-  it("darkens on a light background and lightens on a dark one, just to the floor", () => {
-    const dark = adjustLightnessForContrast("#fafafa", "#ffffff");
-    expect(contrastRatio(dark, "#ffffff")).toBeGreaterThanOrEqual(3);
-    expect(contrastRatio(dark, "#ffffff")).toBeLessThan(3.1);
-    const light = adjustLightnessForContrast("#073642", "#002b36");
-    expect(contrastRatio(light, "#002b36")).toBeGreaterThanOrEqual(3);
-    expect(contrastRatio(light, "#002b36")).toBeLessThan(3.1);
-  });
-
-  it("produced the shipped built-in values from the original palettes", () => {
-    // [theme, token, original value, background]: the shipped value is exactly
-    // the smallest lightness nudge of the original, so the change is minimal.
-    const cases: [typeof darkTheme, keyof typeof darkTheme.colors, string, string][] = [
-      [darkTheme, "activityBarInactive", "#525d6e", darkTheme.colors.activityBarBg],
-      [darkTheme, "ansiBlack", "#0f1117", darkTheme.colors.terminalBg],
-      [lightTheme, "ansiWhite", "#fafafa", lightTheme.colors.terminalBg],
-      [lightTheme, "ansiBrightGreen", "#98c379", lightTheme.colors.terminalBg],
-      [lightTheme, "ansiBrightYellow", "#e5c07b", lightTheme.colors.terminalBg],
-      [lightTheme, "ansiBrightBlue", "#61afef", lightTheme.colors.terminalBg],
-      [lightTheme, "ansiBrightMagenta", "#c678dd", lightTheme.colors.terminalBg],
-      [lightTheme, "ansiBrightCyan", "#56b6c2", lightTheme.colors.terminalBg],
-      [lightTheme, "ansiBrightWhite", "#ffffff", lightTheme.colors.terminalBg],
-      [solarizedDarkTheme, "activityBarInactive", "#586e75", "#002b36"],
-      [solarizedDarkTheme, "ansiBlack", "#073642", "#002b36"],
-      [solarizedDarkTheme, "ansiBrightBlack", "#002b36", "#002b36"],
-      [solarizedDarkTheme, "ansiBrightGreen", "#586e75", "#002b36"],
-      [solarizedLightTheme, "activityBarInactive", "#586e75", "#073642"],
-      [solarizedLightTheme, "ansiGreen", "#859900", "#fdf6e3"],
-      [solarizedLightTheme, "ansiYellow", "#b58900", "#fdf6e3"],
-      [solarizedLightTheme, "ansiCyan", "#2aa198", "#fdf6e3"],
-      [solarizedLightTheme, "ansiWhite", "#eee8d5", "#fdf6e3"],
-      [solarizedLightTheme, "ansiBrightBlue", "#839496", "#fdf6e3"],
-      [solarizedLightTheme, "ansiBrightCyan", "#93a1a1", "#fdf6e3"],
-      [solarizedLightTheme, "ansiBrightWhite", "#fdf6e3", "#fdf6e3"],
-    ];
-    for (const [theme, key, original, bg] of cases) {
-      expect(theme.colors[key], `${theme.id} ${key}`).toBe(
-        adjustLightnessForContrast(original, bg)
-      );
-    }
-  });
-
-  it("keeps the hue of a saturated colour", () => {
-    for (const [color, bg] of [
-      ["#61afef", "#ffffff"],
-      ["#e5c07b", "#ffffff"],
-      ["#859900", "#fdf6e3"],
-      ["#586e75", "#002b36"],
-    ]) {
-      const out = adjustLightnessForContrast(color, bg);
-      expect(out).not.toBe(color);
-      expect(Math.abs(oklchHue(out).hue - oklchHue(color).hue)).toBeLessThan(3);
-    }
   });
 });

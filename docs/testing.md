@@ -957,6 +957,12 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
     `_AGENT_BIN` with `--agent-binary`). `--github-env` also writes them to
     `$GITHUB_ENV`. `down` kills only the recorded sshd (verified by its command
     line) and removes all state.
+  - `up --scratch-home` (macOS/Linux) sets `HOME`, the `XDG_*` dirs and
+    `HISTFILE` of every SSH session to a `home` dir in the state dir, plus a
+    private agent registry endpoint. It exports that dir as
+    `TERMIHUB_NATIVE_SSHD_HOME`. An agent deployed through the fixture then
+    never writes into the login user's real home. The Windows fixture ignores
+    the flag, because its login user is already a dedicated test account.
 - **Suite:** [`core/tests/ssh_native.rs`](../core/tests/ssh_native.rs) covers
   key login, the whole fixture key-type matrix, rejection of an unauthorized key
   and a wrong passphrase, exec stdout/stderr/exit status/stdin, an interactive
@@ -1010,6 +1016,42 @@ sshd** moved to the native fixture. These stay on the Linux Docker lane:
 The portable parts of those (key auth for every key type, exec/stdin, SFTP
 round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
 all three OSes.
+
+### Agent deploy, probe, update and reattach on the native sshd (#5208)
+
+[`native_sshd_deploy_journey_tests.rs`](../src-tauri/src/terminal/agent_manager/native_sshd_deploy_journey_tests.rs)
+is the live half of the in-process deploy tests (#5162). It runs on Linux,
+macOS and Windows against the native sshd fixture with two real agent builds:
+
+1. **Deploy.** `install_agent_bytes` installs build A. The result must report
+   A's exact version line.
+2. **Probe.** `probe_remote_agent` finds the agent and reports a compatible
+   version.
+3. **Session.** It connects over SSH exec `--stdio`, starts a persistent
+   session with a counter, and disconnects. The session daemon keeps running.
+4. **Update.** Build B is installed while that daemon runs. The result must
+   report B's version line and leave no backup, and the probe must see B.
+5. **Reattach.** It reconnects through B, finds the same session id,
+   re-attaches, and expects the counter past its old value and still
+   advancing.
+
+A and B are the same source built with different `TERMIHUB_BUILD_BRANCH`
+labels, so their `--version` lines differ. On Windows the test reuses the
+Windows SSH-host helpers (connect, PowerShell session).
+[`scripts/internal/run-native-sshd-deploy-journey.sh`](../scripts/internal/run-native-sshd-deploy-journey.sh)
+builds both agents, brings the fixture up with `--scratch-home`, and runs the
+test with `TERMIHUB_REQUIRE_NATIVE_SSHD_DEPLOY=1`. A missing fixture fails
+instead of skipping. The script fails when the test skipped or did not run,
+and it always tears the fixture down. The `native-sshd` job of
+`integration-fixtures.yml` runs it as its own step on all three OSes.
+Run it locally the same way:
+
+```bash
+scripts/internal/run-native-sshd-deploy-journey.sh
+```
+
+The line coverage of `agent_deploy.rs` is not measured in this lane (the job
+runs plain `cargo test`). The nightly coverage overlay reports it.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
@@ -1448,8 +1490,12 @@ cargo test -p termihub-core --no-default-features --features "wsl,local-transfer
 
 The [`wsl-live.yml`](../.github/workflows/wsl-live.yml) lane installs WSL 2 +
 Debian 12 on `windows-latest` with
-[`Vampire/setup-wsl`](https://github.com/Vampire/setup-wsl) (cached rootfs) and
-runs them under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
+[`Vampire/setup-wsl`](https://github.com/Vampire/setup-wsl), wrapped by
+`.github/actions/setup-wsl-debian`. That action downloads the Debian file with
+`scripts/internal/fetch-wsl-distro.sh` (resumable, retried, SHA-256 pinned,
+cached) and tries the install twice. If the runner cannot provide WSL, the run
+shows a `WSL environment failure` annotation instead of a test failure (#5317).
+The lane runs the tests under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
 PRs that touch the WSL backend, the shell-integration commands or the local
 transfer executor. It is not part of the per-PR lane: installing WSL plus a
 Windows build of the core crate costs several minutes.
