@@ -30,7 +30,10 @@ fn emitted(emitter: &MockEventEmitter) -> Vec<u8> {
 
 #[tokio::test]
 async fn set_output_flow_pauses_and_resumes_the_session_reader() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager
         .insert_test_session("s", Box::new(MockConnection::default()))
         .await;
@@ -83,174 +86,37 @@ async fn set_output_flow_pauses_and_resumes_the_session_reader() {
 
 #[tokio::test]
 async fn set_output_flow_on_unknown_session_is_a_no_op() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager.set_output_flow("missing", true).await;
     assert!(manager.output_flow_gate("missing").await.is_none());
 }
 
 // ── Agent-proxied sessions (#4416) ───────────────────────────────────────────
 
-type FlowCalls = Arc<std::sync::Mutex<Vec<(String, String, bool)>>>;
-
-/// An agent client whose agent does (or does not) support output flow control,
-/// recording every `set_session_output_paused` it is asked for.
-struct FlowAgent {
-    output_flow: bool,
-    calls: FlowCalls,
+/// An agent client whose agent does (or does not) support output flow control;
+/// it records every `set_session_output_paused` it is asked for.
+fn flow_agent(output_flow: bool) -> Arc<FakeAgent> {
+    Arc::new(FakeAgent {
+        output_flow,
+        ..FakeAgent::default()
+    })
 }
 
-impl FlowAgent {
-    fn new(output_flow: bool) -> (Arc<Self>, FlowCalls) {
-        let calls = FlowCalls::default();
-        (
-            Arc::new(Self {
-                output_flow,
-                calls: calls.clone(),
-            }),
-            calls,
-        )
-    }
+/// The `(agent, remote session, paused)` of every pause/resume the agent got.
+fn pause_calls(agent: &FakeAgent) -> Vec<(String, String, bool)> {
+    agent
+        .calls_to("set_session_output_paused")
+        .into_iter()
+        .map(|args| (args[0].clone(), args[1].clone(), args[2] == "true"))
+        .collect()
 }
 
-impl AgentRpcClient for FlowAgent {
-    fn connect_agent(
-        &self,
-        _: &str,
-        _: &RemoteAgentConfig,
-        _: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
-    }
-    fn cancel_connect(&self, _: &str) -> bool {
-        false
-    }
-    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn is_connected(&self, _: &str) -> bool {
-        true
-    }
-    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
-        let mut caps: AgentCapabilities = serde_json::from_value(serde_json::json!({
-            "connectionTypes": [],
-            "maxSessions": 10,
-        }))
-        .expect("minimal capabilities parse");
-        caps.output_flow = self.output_flow;
-        Some(caps)
-    }
-    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
-    }
-    fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
-        unimplemented!()
-    }
-    fn create_session(
-        &self,
-        _: &str,
-        _: &str,
-        _: Value,
-        _: Option<&str>,
-        _: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        unimplemented!()
-    }
-    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn save_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn create_folder(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_session_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: OutputSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn register_monitoring_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn set_session_output_paused(
-        &self,
-        agent_id: &str,
-        remote_session_id: &str,
-        paused: bool,
-    ) -> Result<(), TerminalError> {
-        self.calls.lock().unwrap().push((
-            agent_id.to_string(),
-            remote_session_id.to_string(),
-            paused,
-        ));
-        Ok(())
-    }
-}
-
-async fn agent_session_manager(output_flow: bool) -> (SessionManager, FlowCalls) {
-    let (agent, calls) = FlowAgent::new(output_flow);
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), agent);
+async fn agent_session_manager(output_flow: bool) -> (SessionManager, Arc<FakeAgent>) {
+    let agent = flow_agent(output_flow);
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), agent.clone());
     manager
         .insert_test_agent_session(
             "desk-1",
@@ -259,12 +125,12 @@ async fn agent_session_manager(output_flow: bool) -> (SessionManager, FlowCalls)
             Box::new(MockConnection::default()),
         )
         .await;
-    (manager, calls)
+    (manager, agent)
 }
 
 #[tokio::test]
 async fn set_output_flow_forwards_pause_and_resume_to_a_flow_capable_agent() {
-    let (manager, calls) = agent_session_manager(true).await;
+    let (manager, agent) = agent_session_manager(true).await;
     let gate = manager.output_flow_gate("desk-1").await.expect("gate");
 
     manager.set_output_flow("desk-1", true).await;
@@ -273,7 +139,7 @@ async fn set_output_flow_forwards_pause_and_resume_to_a_flow_capable_agent() {
     assert!(!gate.is_paused());
 
     assert_eq!(
-        *calls.lock().unwrap(),
+        pause_calls(&agent),
         vec![
             ("agent-a".to_string(), "remote-1".to_string(), true),
             ("agent-a".to_string(), "remote-1".to_string(), false),
@@ -284,7 +150,7 @@ async fn set_output_flow_forwards_pause_and_resume_to_a_flow_capable_agent() {
 
 #[tokio::test]
 async fn set_output_flow_leaves_an_older_agent_session_unpaused_without_error() {
-    let (manager, calls) = agent_session_manager(false).await;
+    let (manager, agent) = agent_session_manager(false).await;
     let gate = manager.output_flow_gate("desk-1").await.expect("gate");
 
     manager.set_output_flow("desk-1", true).await;
@@ -294,14 +160,14 @@ async fn set_output_flow_leaves_an_older_agent_session_unpaused_without_error() 
         "a desktop reader in front of an agent that keeps streaming must not pause"
     );
     assert!(
-        calls.lock().unwrap().is_empty(),
+        pause_calls(&agent).is_empty(),
         "an older agent must not be asked to pause"
     );
 }
 
 #[tokio::test]
 async fn output_flow_is_wired_for_direct_and_flow_capable_agent_sessions_only() {
-    let (capable, _) = FlowAgent::new(true);
+    let capable = flow_agent(true);
     let manager = SessionManager::new(ConnectionTypeRegistry::new(), capable);
     let io = SessionIo::default();
     assert!(manager.output_flow_for(None, &io).is_some(), "direct");
@@ -310,7 +176,7 @@ async fn output_flow_is_wired_for_direct_and_flow_capable_agent_sessions_only() 
         "flow-capable agent"
     );
 
-    let (older, _) = FlowAgent::new(false);
+    let older = flow_agent(false);
     let manager = SessionManager::new(ConnectionTypeRegistry::new(), older);
     assert!(
         manager.output_flow_for(Some("agent-a"), &io).is_none(),

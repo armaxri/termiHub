@@ -183,7 +183,7 @@ async fn manager_with_parked_write_in(
 ) {
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
-        Arc::new(NullAgent),
+        Arc::new(FakeAgent::offline()),
     ));
     let (other_conn, other) = stalling(None);
     manager.insert_test_session("stuck", stuck_conn).await;
@@ -311,7 +311,10 @@ async fn writes_to_one_session_keep_their_order_behind_a_stall() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn input_to_a_closed_session_reports_not_found() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     let (conn, _probe) = stalling(None);
     manager.insert_test_session("gone", conn).await;
     manager.close_session("gone").await.unwrap();
