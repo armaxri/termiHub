@@ -10,7 +10,9 @@ import {
   latestRunLink,
   parseArgs,
   MAX_OVERLAY_AGE_DAYS,
-  MAX_STALE_SHARE,
+  WARN_STALE_SHARE,
+  staleMessage,
+  verdictCell,
 } from "./overlay-freshness.mjs";
 
 const NOW = Date.parse("2026-11-09T07:30:00Z");
@@ -32,9 +34,9 @@ const lane = (over = {}) => ({
 });
 
 describe("thresholds", () => {
-  it("are the issue's limits: 3 days and 10 %", () => {
+  it("fail above 3 days old and warn above 10 % stale", () => {
     expect(MAX_OVERLAY_AGE_DAYS).toBe(3);
-    expect(MAX_STALE_SHARE).toBe(0.1);
+    expect(WARN_STALE_SHARE).toBe(0.1);
   });
 });
 
@@ -74,39 +76,47 @@ describe("lcovFiles / staleShare", () => {
 });
 
 describe("evaluateOverlay", () => {
+  const ok = { problems: [], warnings: [] };
+
   it("passes a fresh overlay", () => {
-    expect(evaluateOverlay(lane(), NOW)).toEqual([]);
+    expect(evaluateOverlay(lane(), NOW)).toEqual(ok);
   });
 
-  it("passes exactly at the limits and fails just past them", () => {
-    expect(evaluateOverlay(lane({ measuredAt: daysAgo(3) }), NOW)).toEqual([]);
-    expect(evaluateOverlay(lane({ staleOverlayFiles: 20 }), NOW)).toEqual([]);
-    expect(evaluateOverlay(lane({ measuredAt: daysAgo(3.1) }), NOW)).toEqual([
-      "it is 3.1 days old (limit 3)",
-    ]);
-    expect(evaluateOverlay(lane({ staleOverlayFiles: 21 }), NOW)).toEqual([
-      "21 of its 200 files (10.5 %) changed since (limit 10.0 %)",
-    ]);
+  it("fails just past the age limit, passes exactly at it", () => {
+    expect(evaluateOverlay(lane({ measuredAt: daysAgo(3) }), NOW)).toEqual(ok);
+    expect(evaluateOverlay(lane({ measuredAt: daysAgo(3.1) }), NOW)).toEqual({
+      problems: ["it is 3.1 days old (limit 3)"],
+      warnings: [],
+    });
   });
 
-  it("reports both problems of the 2026-11-09 overlay", () => {
-    const problems = evaluateOverlay(
+  it("only WARNS past the stale share, never fails", () => {
+    expect(evaluateOverlay(lane({ staleOverlayFiles: 20 }), NOW)).toEqual(ok);
+    expect(evaluateOverlay(lane({ staleOverlayFiles: 21 }), NOW)).toEqual({
+      problems: [],
+      warnings: ["21 of its 200 files (10.5 %) changed since (warning above 10.0 %)"],
+    });
+  });
+
+  it("fails the 2026-11-09 overlay on age and warns on its stale share", () => {
+    const res = evaluateOverlay(
       lane({ measuredAt: daysAgo(11), overlayFiles: 300, staleOverlayFiles: 153 }),
       NOW
     );
-    expect(problems).toHaveLength(2);
-    expect(problems[0]).toMatch(/11\.0 days old/);
-    expect(problems[1]).toMatch(/153 of its 300 files \(51\.0 %\)/);
+    expect(res.problems).toEqual(["it is 11.0 days old (limit 3)"]);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.warnings[0]).toMatch(/153 of its 300 files \(51\.0 %\)/);
   });
 
-  it("flags a missing overlay with the fetch note, and an unknown measurement time", () => {
-    expect(evaluateOverlay({ present: false, note: "artifact expired" }, NOW)).toEqual([
-      "no usable overlay (artifact expired)",
-    ]);
-    expect(evaluateOverlay({ present: false }, NOW)).toEqual([
+  it("fails a missing overlay with the fetch note, and an unknown measurement time", () => {
+    expect(evaluateOverlay({ present: false, note: "artifact expired" }, NOW)).toEqual({
+      problems: ["no usable overlay (artifact expired)"],
+      warnings: [],
+    });
+    expect(evaluateOverlay({ present: false }, NOW).problems).toEqual([
       "no usable overlay (nothing fetched)",
     ]);
-    expect(evaluateOverlay(lane({ measuredAt: null }), NOW)).toEqual([
+    expect(evaluateOverlay(lane({ measuredAt: null }), NOW).problems).toEqual([
       "its measurement time is unknown",
     ]);
   });
@@ -129,6 +139,13 @@ describe("evaluateStatus", () => {
   it("passes on develop when every overlay is fresh", () => {
     expect(evaluateStatus({ branch: "develop", lanes: [lane()] }, NOW).failed).toBe(false);
   });
+
+  it("does not fail on develop when an overlay is only stale (the 2026-11-11 harness)", () => {
+    const harness = lane({ lane: "bridge harness", overlayFiles: 1425, staleOverlayFiles: 173 });
+    const res = evaluateStatus({ branch: "develop", lanes: [lane(), harness] }, NOW);
+    expect(res.failed).toBe(false);
+    expect(res.lanes[1].warnings).toHaveLength(1);
+  });
 });
 
 describe("messages and summary", () => {
@@ -142,6 +159,20 @@ describe("messages and summary", () => {
     );
     expect(latestRunLink(lane({ latestRun: null }))).toBe(
       "[integration-fixtures.yml](https://github.com/o/r/actions/workflows/integration-fixtures.yml)"
+    );
+  });
+
+  it("explains a stale-only warning and highlights its row", () => {
+    expect(staleMessage(lane(), ["x"])).toBe(
+      "integration fixtures overlay (integration-fixtures.yml) is stale: x. " +
+        "Not a failure: develop churns fast; only age or a missing overlay fails."
+    );
+    expect(verdictCell([], [])).toBe("ok");
+    expect(verdictCell([], ["w"])).toBe("**warning, stale**: w");
+    expect(verdictCell(["p"], ["w"])).toBe("**dark**: p");
+    const status = { branch: "develop", lanes: [lane({ staleOverlayFiles: 30 })] };
+    expect(formatSummary(status, evaluateStatus(status, NOW), NOW)).toContain(
+      "| 30 / 200 (15.0 %) | **warning, stale**: 30 of its 200 files"
     );
   });
 
