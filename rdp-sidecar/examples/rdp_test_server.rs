@@ -12,14 +12,19 @@
 //!
 //! - `--bind` (default `127.0.0.1:0`): where to listen.
 //! - `--act` (default `activate`): what every connection gets once its Client
-//!   Info arrived. `activate` brings the session up and holds it until the
-//!   client hangs up; `hangup` drops the connection there.
+//!   Info arrived. `activate` brings the session up, paints its whole desktop
+//!   one solid colour (repainted every few seconds, #5426) and holds it until
+//!   the client hangs up; `hangup` drops the connection there.
 //!
 //! Stdout is line-based, for the harness (`termihub_harness.rdp_test_server`):
-//! first `listening <port>`, then `dial #<n>` when connection `n` is accepted
-//! and `client-info #<n> <username>` when its Client Info PDU arrived (only
-//! after the client's certificate trust gate passed). The server exits when
-//! stdin reaches end of file, so it never outlives the harness that owns it.
+//! first `desktop <width>x<height> <rrggbb>` (what an activated session paints)
+//! and `listening <port>`, then `dial #<n>` when connection `n` is accepted,
+//! `client-info #<n> <username>` when its Client Info PDU arrived (only after
+//! the client's certificate trust gate passed) and `input #<n> <event>` for
+//! each key or button event the session received, e.g. `input #2 key 0x1e
+//! down` or `input #2 button left up 512,384` (pointer moves are not
+//! reported). The server exits when stdin reaches end of file, so it never
+//! outlives the harness that owns it.
 
 // Only the activate/hang-up acts of the shared scripted servers are played
 // here; the redirection acts and the target's certificate serve the unit tests.
@@ -102,6 +107,12 @@ async fn main() {
         vec![args.act; MAX_CONNECTIONS],
         Arc::clone(&events),
     );
+    let [r, g, b] = broker::DESKTOP_COLOR;
+    say(&format!(
+        "desktop {}x{} {r:02x}{g:02x}{b:02x}",
+        broker::DESKTOP_WIDTH,
+        broker::DESKTOP_HEIGHT
+    ));
     say(&format!("listening {port}"));
 
     // Report what happened, as it happens: the dial log, then each
@@ -109,6 +120,7 @@ async fn main() {
     tokio::spawn(async move {
         let mut said_events = 0;
         let mut said_info = Vec::new();
+        let mut said_input: Vec<usize> = Vec::new();
         loop {
             let lines: Vec<String> = events.lock().unwrap()[said_events..].to_vec();
             said_events += lines.len();
@@ -119,11 +131,16 @@ async fn main() {
             for (index, conn) in server.conns().iter().enumerate() {
                 if said_info.len() <= index {
                     said_info.push(false);
+                    said_input.push(0);
                 }
                 if let (false, Some(username)) = (said_info[index], &conn.username) {
                     said_info[index] = true;
                     say(&format!("client-info #{} {username}", index + 1));
                 }
+                for event in &conn.input[said_input[index]..] {
+                    say(&format!("input #{} {event}", index + 1));
+                }
+                said_input[index] = conn.input.len();
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

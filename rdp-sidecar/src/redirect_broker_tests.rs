@@ -19,6 +19,9 @@
 #[path = "redirect_broker.rs"]
 mod broker;
 
+#[path = "scripted_desktop_tests.rs"]
+mod scripted_desktop_tests;
+
 use std::sync::Arc;
 use std::time::Duration;
 
