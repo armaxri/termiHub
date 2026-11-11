@@ -1553,3 +1553,7 @@ pub(crate) fn finalize(
         });
     }
 }
+
+#[cfg(test)]
+#[path = "phases_tests.rs"]
+mod phases_tests;
