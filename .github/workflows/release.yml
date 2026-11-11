@@ -528,6 +528,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           key: release-${{ matrix.platform }}
 
       - name: Make apt retry downloads
@@ -1298,6 +1300,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           key: release-agent-${{ matrix.target }}
 
       - name: Install cross-rs
@@ -1408,6 +1412,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           key: release-agent-${{ matrix.target }}
 
       # Split debug symbols (#4504): packed split debuginfo makes rustc run
@@ -1511,6 +1517,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           key: release-agent-${{ matrix.target }}
 
       # Link the Visual C++ runtime statically (#4175): the desktop deploys this

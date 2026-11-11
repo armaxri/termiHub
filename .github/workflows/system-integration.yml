@@ -360,6 +360,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Setup uv
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
@@ -890,6 +893,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Setup uv
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
@@ -1123,6 +1129,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Verify the Docker daemon is reachable
         # Fail loudly if Docker is unavailable rather than letting the suites

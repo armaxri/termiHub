@@ -51,3 +51,6 @@ runs:
         python-version: ${{ inputs.python-version }}
         enable-cache: ${{ inputs.enable-cache }}
         cache-dependency-glob: ${{ inputs.cache-dependency-glob }}
+        # Restore everywhere, save only on develop/main (#3328, #5328): feature
+        # branch and PR runs left their own setup-uv-* entries behind.
+        save-cache: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}

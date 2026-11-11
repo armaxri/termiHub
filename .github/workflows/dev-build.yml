@@ -130,11 +130,14 @@ jobs:
           # dev-build-only targets (linux-arm64, macos-x64) are never restored by
           # any PR, so saving them just crowds out the PR-blocking caches and
           # forces LRU eviction of the Windows PR cache. Those two post-merge
-          # builds run cold instead — non-blocking.
+          # builds run cold instead — non-blocking. The workflow only runs on
+          # develop/main pushes; the ref gate keeps check-cache-save-gates
+          # (#5328) honest should a branch trigger ever be added.
           save-if: >-
-            ${{ matrix.rust_target == 'x86_64-unknown-linux-gnu'
+            ${{ (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+              && (matrix.rust_target == 'x86_64-unknown-linux-gnu'
               || matrix.rust_target == 'aarch64-apple-darwin'
-              || matrix.rust_target == 'x86_64-pc-windows-msvc' }}
+              || matrix.rust_target == 'x86_64-pc-windows-msvc') }}
 
       - name: Make apt retry downloads
         if: startsWith(matrix.os, 'ubuntu')
