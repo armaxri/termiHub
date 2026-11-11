@@ -702,6 +702,20 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     fn attribute_ops(&self) -> super::FileAttributeOps {
         super::FileAttributeOps::all_if(cfg!(unix))
     }
+
+    /// `canonicalize` (#5333), so a same-session paste through a symlink alias
+    /// is refused.
+    fn path_canonicalizer(&self) -> Option<&dyn super::paste_guard::PathCanonicalizer> {
+        Some(self)
+    }
+}
+
+/// The local filesystem's real spelling of a path (#5333).
+#[async_trait::async_trait]
+impl super::paste_guard::PathCanonicalizer for LocalFileBrowser {
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        super::paste_guard::local_realpath(path).await
+    }
 }
 
 /// Offset-addressed access to the local filesystem (#3587): what an

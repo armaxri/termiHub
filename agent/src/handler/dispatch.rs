@@ -44,9 +44,10 @@ use crate::protocol::methods::{
     EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     EmbeddedServerClearActivityResult, FilesCopyParams, FilesCreateSymlinkParams,
     FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
-    FilesReadResult, FilesRenameParams, FilesSetOwnerParams, FilesSetPermissionsParams,
-    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
-    HealthCheckResult, HostSessionEntry, HostSessionListResult, InitializeParams, InitializeResult,
+    FilesReadResult, FilesRealpathParams, FilesRealpathResult, FilesRenameParams,
+    FilesSetOwnerParams, FilesSetPermissionsParams, FilesStatParams, FilesWriteParams,
+    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
+    HostSessionEntry, HostSessionListResult, InitializeParams, InitializeResult,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, ProcessKillParams, ProcessesListParams,
     ProcessesListResult, ServicePauseParams, ServicePauseResult, ServiceResumeParams,
     ServiceResumeResult, ServiceStartParams, ServiceStartResult, ServiceStatusParams,
@@ -77,6 +78,7 @@ use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{
     check_pin_matches_desktop, coordinate_update, CoordinationOutcome, ACK_TIMEOUT,
 };
+use termihub_core::files::paste_guard::real_path;
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{
     LocalProcessManager, MonitoringProvider, ProcessError, ProcessManager,
@@ -214,7 +216,12 @@ use termihub_core::monitoring::{
 /// Bumped to 0.35.0 for the additive `refused` / `unreachable` / `dns` values
 /// of a failed `connection.create`'s `data.connect_failure` (#5183); a desktop
 /// ignores a value it does not recognize.
-const AGENT_PROTOCOL_VERSION: &str = "0.35.0";
+/// Bumped to 0.36.0 for the additive `connection.files.realpath` method
+/// (#5333): the desktop resolves both paths of a same-session paste on the
+/// agent host, so a symlink alias cannot empty the source or delete its own
+/// copy. An older agent answers "method not found", and the desktop keeps its
+/// lexical check.
+const AGENT_PROTOCOL_VERSION: &str = "0.36.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -880,6 +887,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_files_set_owner(module)?;
     register_files_create_symlink(module)?;
     register_files_copy(module)?;
+    register_files_realpath(module)?;
     file_ranges::register(module)?;
     register_monitoring_subscribe(module)?;
     register_monitoring_unsubscribe(module)?;
@@ -2226,6 +2234,33 @@ fn register_files_copy(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             .map_err(map_file_error)?;
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
+    Ok(())
+}
+
+/// `connection.files.realpath` (#5333): the real spelling of a path on the
+/// agent host or inside the agent-hosted session, so the desktop's paste
+/// guard sees through a symlink alias. A backend that cannot resolve answers
+/// `FILE_BROWSING_NOT_SUPPORTED`, and the desktop falls back to its lexical
+/// check, as it does for an older agent's "method not found".
+fn register_files_realpath(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_FILES_REALPATH,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+            let p: FilesRealpathParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.realpath", e))?;
+
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+
+            let path = real_path(browser.as_ref(), &p.path)
+                .await
+                .map_err(map_file_error)?;
+            to_result_value(&FilesRealpathResult { path })
+        },
+    )?;
     Ok(())
 }
 
@@ -3999,10 +4034,11 @@ mod tests {
     /// definition icon colour / emoji with its `definitionIconStyle`
     /// capability (#5021), and 0.34.0 `serial.list_ports` with its
     /// `serialPortRescan` capability (#5069), and 0.35.0 the `refused` /
-    /// `unreachable` / `dns` connect-failure kinds (#5183).
+    /// `unreachable` / `dns` connect-failure kinds (#5183), and 0.36.0
+    /// `connection.files.realpath` (#5333).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.35.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.36.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

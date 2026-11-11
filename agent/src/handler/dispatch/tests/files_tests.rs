@@ -898,3 +898,102 @@ async fn a_host_copy_onto_or_into_itself_is_refused() {
     let entries: Vec<_> = std::fs::read_dir(&src).unwrap().collect();
     assert_eq!(entries.len(), 1, "nothing created beside f");
 }
+
+// ── connection.files.realpath (#5333) ─────────────────────────────
+
+/// The agent host's own files resolve on the host: a symlink alias comes
+/// back as its real path, a missing final name through its parent folder.
+#[cfg(unix)]
+#[tokio::test]
+async fn realpath_resolves_on_the_agent_host() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = std::fs::canonicalize(dir.path())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    std::fs::create_dir_all(format!("{root}/data")).unwrap();
+    std::fs::write(format!("{root}/data/f"), b"payload").unwrap();
+    std::os::unix::fs::symlink(format!("{root}/data"), format!("{root}/link")).unwrap();
+    let sessions = FilesSessionManager::new();
+    sessions.script(
+        "local-session",
+        Ok(Arc::new(LocalFileBrowser::new()) as Arc<dyn FileBrowser + Send + Sync>),
+    );
+    let handler = handler_with(sessions).await;
+
+    for (id, connection_id) in [(2, json!(null)), (3, json!("local-session"))] {
+        let r = dispatch(
+            &handler,
+            pm::CONNECTION_FILES_REALPATH,
+            json!({"connection_id": connection_id, "path": format!("{root}/link/f")}),
+            id,
+        )
+        .await;
+        assert_eq!(r["result"]["path"], format!("{root}/data/f"), "{r}");
+    }
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_REALPATH,
+        json!({"connection_id": null, "path": format!("{root}/link/new")}),
+        4,
+    )
+    .await;
+    assert_eq!(r["result"]["path"], format!("{root}/data/new"), "{r}");
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_REALPATH,
+        json!({"connection_id": null, "path": format!("{root}/nope/x")}),
+        5,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::FILE_NOT_FOUND, "{r}");
+    assert_eq!(std::fs::read(format!("{root}/data/f")).unwrap(), b"payload");
+}
+
+/// A session backend without a resolver answers `FILE_BROWSING_NOT_SUPPORTED`,
+/// which the desktop treats like an older agent: it keeps its lexical check.
+#[tokio::test]
+async fn realpath_on_a_backend_without_a_resolver_is_not_supported() {
+    let sessions = FilesSessionManager::new();
+    sessions.script("wsl-session", Ok(FakeBrowser::new("wsl")));
+    let handler = handler_with(sessions).await;
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_REALPATH,
+        json!({"connection_id": "wsl-session", "path": "/srv/x"}),
+        2,
+    )
+    .await;
+    assert_eq!(
+        r["error"]["code"],
+        errors::FILE_BROWSING_NOT_SUPPORTED,
+        "{r}"
+    );
+}
+
+/// Like every `connection.files.*` method, realpath refuses a session this
+/// client does not hold, and needs `initialize` first.
+#[tokio::test]
+async fn realpath_respects_session_ownership() {
+    let sessions = FilesSessionManager::new();
+    sessions.script("theirs", Err(SessionProcessError::HeldElsewhere));
+    let handler = handler_with(sessions).await;
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_REALPATH,
+        json!({"connection_id": "theirs", "path": "/srv/x"}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{r}");
+
+    let fresh = make_handler();
+    let r = dispatch(
+        &fresh,
+        pm::CONNECTION_FILES_REALPATH,
+        json!({"path": "/"}),
+        3,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::NOT_INITIALIZED, "{r}");
+}
