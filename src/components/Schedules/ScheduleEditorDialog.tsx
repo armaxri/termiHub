@@ -33,6 +33,7 @@ import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { t } from "@/i18n/catalog";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
+import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import "./Schedules.css";
 
 export interface ScheduleEditorDialogProps {
@@ -214,7 +215,7 @@ export function ScheduleEditorDialog({
               htmlFor="schedule-editor-action-kind"
               hint={
                 workflowActionLocked
-                  ? "Workflows are experimental. Turn on experimental features to change this action."
+                  ? `Workflows are experimental. Turn on ${EXPERIMENTAL_SETTING_PATH} to change this action.`
                   : undefined
               }
             >

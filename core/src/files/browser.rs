@@ -9,6 +9,7 @@
 use std::any::Any;
 
 use crate::errors::FileError;
+use crate::files::paste_guard::PathCanonicalizer;
 use crate::files::{FileAttributeOps, FileEntry, RangedFileAccess};
 
 /// Async file browsing capability exposed by connection types.
@@ -155,6 +156,20 @@ pub trait FileBrowser: Send {
     /// reports.
     fn attribute_ops(&self) -> FileAttributeOps {
         FileAttributeOps::NONE
+    }
+
+    /// How this backend resolves a path to its real spelling, when it can
+    /// (#5333): the local filesystem's `canonicalize`, FTP's `CWD` + `PWD`, an
+    /// agent's `connection.files.realpath`.
+    ///
+    /// The same-session paste guard
+    /// ([`paste_guard::ensure_paste_allowed`](crate::files::paste_guard::ensure_paste_allowed))
+    /// resolves both paths through it, so a symlink alias cannot slip past
+    /// the guard. The default is `None`: the guard compares lexically. SFTP
+    /// and Docker resolve through their own downcast
+    /// ([`PathResolver::of_browser`](crate::files::paste_guard::PathResolver::of_browser)).
+    fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        None
     }
 }
 

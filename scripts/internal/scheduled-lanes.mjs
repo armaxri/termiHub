@@ -143,8 +143,12 @@ export const LANES = [
     dispatch: true,
     ownSchedule: false,
     sources: [DEVELOP_DISPATCH, DEVELOP_PUSH],
-    // A red ratchet is a coverage drop, not a broken lane (#5159).
-    gateSteps: { "Coverage ratchet": "ratchet drop" },
+    // A red ratchet is a coverage drop, not a broken lane (#5159). A red
+    // overlay-freshness step means an integration nightly went dark (#5346).
+    gateSteps: {
+      "Coverage ratchet": "ratchet drop",
+      "Integration overlay freshness": "integration overlay dark",
+    },
   },
   {
     // The upstream-drift job runs only on dispatch; the path-filtered push

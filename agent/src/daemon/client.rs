@@ -239,6 +239,7 @@ impl FeatureChannels {
         self.monitoring.fail_all();
         self.files.set_supported(false);
         self.files.set_ranges_supported(false);
+        self.files.set_realpath_supported(false);
         self.files.fail_all();
         self.output_flow.store(false, Ordering::SeqCst);
         self.output_credit.store(false, Ordering::SeqCst);
@@ -255,6 +256,8 @@ impl FeatureChannels {
         self.files.set_supported(flags & CAP_FILES != 0);
         self.files
             .set_ranges_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_RANGES != 0);
+        self.files
+            .set_realpath_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_REALPATH != 0);
         self.output_flow
             .store(flags & CAP_OUTPUT_FLOW != 0, Ordering::SeqCst);
         self.output_credit

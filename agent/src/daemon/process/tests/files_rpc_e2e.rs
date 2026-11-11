@@ -20,6 +20,7 @@ use crate::daemon::transport::{self, DaemonListener};
 use crate::io::transport::NotificationSender;
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{FileError, SessionError};
+use termihub_core::files::paste_guard::{ensure_paste_allowed, real_path, PathCanonicalizer};
 use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 /// An in-memory file tree standing in for the session backend's browser (an
@@ -35,6 +36,16 @@ struct FakeFiles {
     learns_unsupported: bool,
     /// Probes that reached the backend.
     probes: AtomicUsize,
+    /// Resolves real paths on the local filesystem, like an agent-hosted
+    /// local or SSH session's backend (#5333).
+    resolves: bool,
+}
+
+#[async_trait::async_trait]
+impl PathCanonicalizer for FakeFiles {
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        termihub_core::files::paste_guard::local_realpath(path).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -166,6 +177,9 @@ impl FileBrowser for FakeFiles {
     }
     fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         self.ranges.then_some(self as &dyn RangedFileAccess)
+    }
+    fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
+        self.resolves.then_some(self as &dyn PathCanonicalizer)
     }
 }
 
@@ -604,4 +618,147 @@ async fn a_pre_ranges_daemon_offers_files_without_ranges() {
         .expect("worker attaches");
     let browser = client.file_browser().expect("files advertised");
     assert!(browser.ranged().is_none());
+}
+
+/// A symlinked folder on the session backend's host (#5333): `<root>/link`
+/// points at `<root>/data`, which holds `f`.
+#[cfg(unix)]
+fn linked_tree() -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = std::fs::canonicalize(dir.path())
+        .expect("canonical tempdir")
+        .to_string_lossy()
+        .into_owned();
+    std::fs::create_dir_all(format!("{root}/data/sub")).expect("mkdir");
+    std::fs::write(format!("{root}/data/f"), b"payload").expect("write");
+    std::os::unix::fs::symlink(format!("{root}/data"), format!("{root}/link")).expect("link");
+    (dir, root)
+}
+
+/// The worker resolves real paths through the session daemon's backend
+/// (#5333), so the same-session paste guard sees through a symlink alias on
+/// the session's host and refuses before anything is written.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_daemon_session_resolves_real_paths_through_its_backend() {
+    let (_dir, root) = linked_tree();
+    let endpoint = unique_endpoint("realpath");
+    let files = Arc::new(FakeFiles {
+        resolves: true,
+        ..FakeFiles::default()
+    });
+    let _out = spawn_daemon(&endpoint, Some(files.clone())).await;
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("file capability");
+    assert!(browser.path_canonicalizer().is_some(), "advertised");
+
+    let src = format!("{root}/data/f");
+    let alias = format!("{root}/link/f");
+    assert_eq!(real_path(browser.as_ref(), &alias).await.unwrap(), src);
+    assert_eq!(
+        real_path(browser.as_ref(), &format!("{root}/link/new"))
+            .await
+            .unwrap(),
+        format!("{root}/data/new"),
+        "a missing final name resolves through its parent"
+    );
+
+    let err = ensure_paste_allowed(browser.as_ref(), &src, &alias, false)
+        .await
+        .expect_err("the alias is the source");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Operation failed: copy {src} to {alias} refused: \
+             source and destination are the same file"
+        )
+    );
+    let folder = format!("{root}/data");
+    let into = format!("{root}/link/sub/copy");
+    let err = ensure_paste_allowed(browser.as_ref(), &folder, &into, true)
+        .await
+        .expect_err("inside the source");
+    assert!(
+        err.to_string()
+            .ends_with("the destination is inside the source folder"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(&src).unwrap(), b"payload");
+    assert!(!std::path::Path::new(&into).exists(), "nothing was created");
+    assert!(
+        files.files.lock().unwrap().is_empty(),
+        "nothing was written"
+    );
+}
+
+/// A backend without a resolver answers `NotSupported` through the daemon,
+/// so the desktop falls back to its lexical check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_daemon_backend_without_a_resolver_is_not_supported() {
+    let endpoint = unique_endpoint("realpath-none");
+    let _out = spawn_daemon(&endpoint, Some(Arc::new(FakeFiles::default()))).await;
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("file capability");
+    assert!(matches!(
+        real_path(browser.as_ref(), "/srv/x").await,
+        Err(FileError::NotSupported)
+    ));
+}
+
+/// A daemon from before #5333 (it survives agent upgrades) advertises files
+/// but not real paths: no request it would drop is sent, and the paste guard
+/// keeps its lexical check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pre_realpath_daemon_keeps_the_lexical_check() {
+    let endpoint = unique_endpoint("pre-realpath");
+    let mut listener = DaemonListener::bind(&endpoint).await.expect("bind");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let seen = requests.clone();
+    tokio::spawn(async move {
+        let (mut reader, mut writer) = listener.accept().await.expect("accept");
+        let intent = protocol::read_frame_async(&mut reader).await;
+        assert!(matches!(intent, Ok(Some(f)) if f.msg_type == MSG_ATTACH_INTENT));
+        protocol::write_frame_async(
+            &mut writer,
+            protocol::MSG_CAPABILITIES,
+            &[protocol::CAP_FILES | protocol::CAP_FILE_RANGES],
+        )
+        .await
+        .unwrap();
+        protocol::write_frame_async(&mut writer, MSG_READY, &[])
+            .await
+            .unwrap();
+        while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+            if frame.msg_type == protocol::MSG_FILE_REQUEST {
+                seen.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        listener.cleanup();
+    });
+
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("files advertised");
+    assert!(browser.path_canonicalizer().is_none());
+    let resolved = tokio::time::timeout(
+        Duration::from_secs(5),
+        real_path(browser.as_ref(), "/srv/x"),
+    )
+    .await
+    .expect("answered at once, without a request");
+    assert!(matches!(resolved, Err(FileError::NotSupported)));
+    let guard = tokio::time::timeout(
+        Duration::from_secs(5),
+        ensure_paste_allowed(browser.as_ref(), "/srv/d", "/srv/x/../d/copy", true),
+    )
+    .await
+    .expect("answered at once");
+    assert!(guard.is_err(), "a respelled path is still refused");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(requests.load(Ordering::SeqCst), 0, "nothing was sent");
 }

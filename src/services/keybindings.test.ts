@@ -25,7 +25,7 @@ import {
   UNBOUND_COMBO,
   getActionScope,
 } from "./keybindings";
-import { KeyCombo } from "@/types/keybindings";
+import { KeyBinding, KeyCombo } from "@/types/keybindings";
 
 function makeKeyEvent(
   key: string,
@@ -397,9 +397,23 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBeNull();
   });
 
-  it("finds close-tab-group for Ctrl+Shift+Q (relocated to free Ctrl+Shift+W for Close Tab)", () => {
-    const event = makeKeyEvent("Q", { ctrl: true, shift: true });
+  it("finds close-tab-group for Ctrl+Shift+F4 (#5316)", () => {
+    const event = makeKeyEvent("F4", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("close-tab-group");
+  });
+
+  it("leaves Ctrl+Shift+Q (the usual Linux quit chord) unbound (#5316)", () => {
+    const event = makeKeyEvent("Q", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBeNull();
+  });
+
+  it("keeps a user override of close-tab-group on the old Ctrl+Shift+Q (#5316)", () => {
+    setOverrides([{ action: "close-tab-group", key: "Ctrl+Shift+Q" }]);
+    expect(findMatchingAction(makeKeyEvent("Q", { ctrl: true, shift: true }))).toBe(
+      "close-tab-group"
+    );
+    expect(findMatchingAction(makeKeyEvent("F4", { ctrl: true, shift: true }))).toBeNull();
+    clearOverrides();
   });
 
   it("returns null for unrecognized keys", () => {
@@ -1062,5 +1076,69 @@ describe("landmark focus cycling (F6 / Shift+F6, #4773)", () => {
   it("can be unbound so F6 reaches the terminal", () => {
     unbindAction("focus-next-region");
     expect(isAppShortcut(makeKeyEvent("F6"))).toBe(false);
+  });
+});
+
+describe("default bindings never collide (#5316)", () => {
+  type Platform = "mac" | "winLinux";
+
+  /** Every default binding of an action on one platform: primary + alternates. */
+  function platformBindings(binding: KeyBinding, platform: Platform): KeyCombo[][] {
+    const primary = platform === "mac" ? binding.macDefault : binding.winLinuxDefault;
+    const alternates =
+      (platform === "mac" ? binding.macAlternates : binding.winLinuxAlternates) ?? [];
+    return [primary, ...alternates]
+      .filter((c): c is KeyCombo | KeyCombo[] => !!c)
+      .map((c) => (Array.isArray(c) ? c : [c]));
+  }
+
+  /** Same rule as checkConflict: chords clash on the full sequence, else on the leader. */
+  function clash(a: KeyCombo[], b: KeyCombo[]): boolean {
+    const same = (x: KeyCombo, y: KeyCombo) => serializeCombo(x) === serializeCombo(y);
+    if (a.length >= 2 && b.length >= 2) return same(a[0], b[0]) && same(a[1], b[1]);
+    return same(a[0], b[0]);
+  }
+
+  for (const platform of ["mac", "winLinux"] as const) {
+    it(`has no two ${platform} defaults on the same chord`, () => {
+      const clashes: string[] = [];
+      DEFAULT_BINDINGS.forEach((a, i) => {
+        DEFAULT_BINDINGS.slice(i + 1).forEach((b) => {
+          for (const ca of platformBindings(a, platform)) {
+            for (const cb of platformBindings(b, platform)) {
+              if (clash(ca, cb)) {
+                clashes.push(`${a.action} / ${b.action}: ${serializeBinding(ca)}`);
+              }
+            }
+          }
+        });
+      });
+      expect(clashes).toEqual([]);
+    });
+  }
+
+  it("binds no Win/Linux default to a desktop quit / close-window chord", () => {
+    // Ctrl+Shift+Q and Ctrl+Q quit many Linux apps; Alt+F4 closes the window.
+    const reserved = ["Ctrl+Shift+Q", "Ctrl+Q", "Alt+F4"];
+    for (const binding of DEFAULT_BINDINGS) {
+      for (const seq of platformBindings(binding, "winLinux")) {
+        expect(reserved, binding.action).not.toContain(serializeCombo(seq[0]));
+      }
+    }
+  });
+
+  it("binds no macOS default to Cmd+Q (Quit) or Cmd+H / Cmd+M (Hide / Minimize)", () => {
+    const reserved = ["Cmd+q", "Cmd+h", "Cmd+m"].map((s) => s.toLowerCase());
+    for (const binding of DEFAULT_BINDINGS) {
+      for (const seq of platformBindings(binding, "mac")) {
+        expect(reserved, binding.action).not.toContain(serializeCombo(seq[0]).toLowerCase());
+      }
+    }
+  });
+
+  it("moves Close Tab Group to Ctrl+Shift+F4 and keeps Cmd+Shift+W on macOS", () => {
+    const group = DEFAULT_BINDINGS.find((b) => b.action === "close-tab-group")!;
+    expect(group.winLinuxDefault).toEqual({ key: "F4", ctrl: true, shift: true });
+    expect(group.macDefault).toEqual({ key: "w", meta: true, shift: true });
   });
 });

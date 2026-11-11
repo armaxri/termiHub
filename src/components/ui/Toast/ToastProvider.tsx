@@ -1,5 +1,6 @@
 import { Toaster } from "sonner";
 import { CheckCircle2, XCircle, Info, Loader2, X } from "lucide-react";
+import { toastHotkey } from "./toastHotkey";
 import "./toast.css";
 
 /**
@@ -17,6 +18,9 @@ import "./toast.css";
  * success/error toast.
  *
  * Motion is left to the global reduced-motion rules in `toast.css`.
+ *
+ * `hotkey` replaces sonner's default Alt+T, which stole focus from a terminal
+ * running readline's transpose-words (#5316); see {@link toastHotkey}.
  */
 export function ToastProvider() {
   return (
@@ -25,6 +29,7 @@ export function ToastProvider() {
       gap={8}
       offset={16}
       closeButton
+      hotkey={toastHotkey()}
       toastOptions={{ className: "th-toast", unstyled: true, closeButtonAriaLabel: "Close" }}
       icons={{
         success: <CheckCircle2 className="th-toast__icon-svg" aria-hidden />,

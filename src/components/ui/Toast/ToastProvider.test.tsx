@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
 import { toast } from "./toast";
+import { toastHotkey } from "./toastHotkey";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -206,5 +207,62 @@ describe("ToastProvider dismiss before mount (#4812)", () => {
     await waitFor(() => (document.body.textContent ?? "").includes("Replacement error"));
     for (let i = 0; i < 10; i++) await tick();
     expect(document.body.textContent).toContain("Replacement error");
+  });
+});
+
+describe("ToastProvider hotkey (#5316)", () => {
+  let input: HTMLInputElement;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    input = document.createElement("input");
+    document.body.appendChild(input);
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+    input.remove();
+  });
+
+  function press(init: KeyboardEventInit) {
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })
+      );
+    });
+  }
+
+  async function showToast() {
+    render(<ToastProvider />);
+    act(() => {
+      toast.error("Hotkey toast");
+    });
+    await waitFor(() => document.querySelector("[data-sonner-toaster]") !== null);
+    input.focus();
+    expect(document.activeElement).toBe(input);
+  }
+
+  it("leaves focus where it is on Alt+T, so a terminal keeps transpose-words", async () => {
+    await showToast();
+    press({ key: "t", code: "KeyT", altKey: true });
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("moves focus into the toast list on the configured chord", async () => {
+    await showToast();
+    const chord = toastHotkey();
+    press({
+      key: chord.includes("F8") ? "F8" : "t",
+      code: chord.includes("F8") ? "F8" : "KeyT",
+      ctrlKey: chord.includes("ctrlKey"),
+      shiftKey: chord.includes("shiftKey"),
+      altKey: chord.includes("altKey"),
+      metaKey: chord.includes("metaKey"),
+    });
+    expect(document.activeElement).toBe(document.querySelector("[data-sonner-toaster]"));
   });
 });
