@@ -23,6 +23,22 @@ class PasswordPromptUi(HarnessMixin):
         """Whether the SSH password prompt modal is currently open."""
         return bool(self.driver.get_state("passwordPromptOpen"))
 
+    def _host_key_prompt_open(self) -> bool:
+        """Whether the host-key prompt is open — not merely still in the DOM.
+
+        An answered prompt stays mounted as ``data-state="closed"`` while its exit
+        animation runs. A jump-host connect asks twice (bastion, then target), and
+        a second :meth:`accept_host_key_prompt` that saw the closing bastion prompt
+        "accepted" it (a no-op click) and returned — leaving the target's real
+        prompt unanswered and the connect hung on it (#5413). A prompt that
+        follows straight on keeps the modal open, so it still counts.
+        """
+        prompt = "ssh-hostkey-prompt"
+        return (
+            self.driver.exists(prompt)
+            and self.driver.get_attribute(prompt, "data-state") == "open"
+        )
+
     def accept_host_key_prompt(self, *, remember: bool = True, timeout: float = 20.0) -> bool:
         """Accept the interactive SSH host-key trust prompt (#1959) if one appears.
 
@@ -59,7 +75,7 @@ class PasswordPromptUi(HarnessMixin):
         deadline = started + budget
         while time.monotonic() < deadline:
             try:
-                if self.driver.exists("ssh-hostkey-prompt"):
+                if self._host_key_prompt_open():
                     self.driver.click(button)
                     timing.record(op, time.monotonic() - started, budget)
                     return True

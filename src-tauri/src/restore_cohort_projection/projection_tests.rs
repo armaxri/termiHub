@@ -16,13 +16,10 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
-    SnapshotFrame,
-};
+use crate::projection::{Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector};
 use crate::restore_cohort_projection::projection::{publish_restore_cohort, restore_cohort_region};
 use crate::restore_cohort_projection::store::{RestoreCohortStore, TabOutcome};
-use crate::test_support::RecordingSink;
+use crate::test_support::{ClientCache, RecordingSink};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -93,27 +90,6 @@ fn required_str_array(intent: &Intent) -> Result<Vec<String>, (String, String)> 
                 .ok_or_else(|| ("bad_payload".to_string(), "invalid entry".to_string()))
         })
         .collect()
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-    }
 }
 
 fn intent(kind: &str, client: &str, payload: Value) -> Intent {

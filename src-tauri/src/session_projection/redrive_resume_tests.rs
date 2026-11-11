@@ -15,17 +15,15 @@
 //! headless half of the #2480 lane. The frontend half (the reconcile → effect
 //! re-run → re-attach chain) is covered by `Terminal.agent-reconnect*.test.tsx`.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
 use tauri::Manager;
 
 use termihub_core::connection::ConnectionTypeRegistry;
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::commands::projection::ProjectionState;
-use crate::connection::config::AgentSettings;
 use crate::session::manager::SessionManager;
 use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::redrive::AppReconnectRedrive;
@@ -35,13 +33,8 @@ use crate::session_projection::store::{
 use crate::session_projection::timer::{
     ReconnectRedrive, ReconnectScheduler, ReconnectTimerDriver,
 };
-use crate::terminal::agent_manager::{
-    AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
-    AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
-};
-use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
-use crate::utils::errors::TerminalError;
-use termihub_core::monitoring::provider::MonitoringSender;
+use crate::terminal::agent_manager::AgentRpcClient;
+use crate::test_support::FakeAgent;
 
 /// The armed one-shots a [`ManualScheduler`] records: `key → (delay, task)`.
 type ArmedTasks = std::collections::HashMap<String, (u64, Box<dyn FnOnce() + Send>)>;
@@ -71,273 +64,19 @@ impl ReconnectScheduler for ManualScheduler {
     }
 }
 
-/// Controllable fake agent: models the transport being down then up.
-struct FakeAgent {
-    connected: AtomicBool,
-    /// Whether a cold reconnect (reconnect_retained_agent) can re-establish.
-    reattach_ok: AtomicBool,
-    create_count: AtomicUsize,
-    /// Count of `attach_session` calls — the redrive's re-attach of the surviving
-    /// live session goes through here (via `reconnect_existing`), so this proves a
-    /// single reconnect performs exactly one re-attach and never double-attaches.
-    attach_count: AtomicUsize,
-    /// Count of explicit `reclaim_session` (takeover attach) calls (SM-003).
-    reclaim_count: AtomicUsize,
-    /// The live agent session ids `create_session` minted, so `list_sessions` can
-    /// report them as recoverable on reconnect (#2512).
-    created_ids: Mutex<Vec<String>>,
-    /// Whether the live agent session survived the drop and is recoverable. When
-    /// `false`, `list_sessions` returns empty (the agent hard-restarted / the
-    /// session aged out) so the redrive must fold session-lost, not create-new.
-    session_recoverable: AtomicBool,
-    /// Keep output senders alive so create_connection's reader does not end
-    /// (which would tear the session down + fold a drop).
-    senders: Mutex<Vec<OutputSender>>,
-    /// When set, a plain `attach_session` is refused because another desktop
-    /// holds the session (SM-003, #3404) — until a `reclaim_session`.
-    held_by_peer: AtomicBool,
+/// Controllable fake agent: the shared [`FakeAgent::session_host`] models the
+/// transport being down then up (`host().connected` / `host().reattach_ok`),
+/// mints `remote-{n}` sessions and lists them while `session_recoverable`.
+/// Its `attach_session` / `reclaim_session` calls are recorded, so a test can
+/// prove a single reconnect performs exactly one re-attach (via
+/// `reconnect_existing`) and never double-attaches; `held_by_peer` refuses a
+/// plain attach until a reclaim (SM-003, #3404).
+fn attaches(agent: &FakeAgent) -> usize {
+    agent.calls_to("attach_session").len()
 }
-impl FakeAgent {
-    fn new() -> Self {
-        Self {
-            connected: AtomicBool::new(true),
-            reattach_ok: AtomicBool::new(true),
-            create_count: AtomicUsize::new(0),
-            attach_count: AtomicUsize::new(0),
-            reclaim_count: AtomicUsize::new(0),
-            created_ids: Mutex::new(Vec::new()),
-            session_recoverable: AtomicBool::new(true),
-            senders: Mutex::new(Vec::new()),
-            held_by_peer: AtomicBool::new(false),
-        }
-    }
-}
-impl AgentRpcClient for FakeAgent {
-    fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn is_connected(&self, _agent_id: &str) -> bool {
-        self.connected.load(Ordering::SeqCst)
-    }
-    fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-        None
-    }
-    fn reconnect_retained_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
-        if self.connected.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        if self.reattach_ok.load(Ordering::SeqCst) {
-            self.connected.store(true, Ordering::SeqCst);
-            Ok(())
-        } else {
-            Err(TerminalError::RemoteError("transport down".into()))
-        }
-    }
-    fn shutdown_agent(&self, _agent_id: &str, _reason: Option<&str>) -> Result<u32, TerminalError> {
-        Ok(0)
-    }
-    fn send_request(
-        &self,
-        _agent_id: &str,
-        _method: &str,
-        _params: Value,
-    ) -> Result<Value, TerminalError> {
-        // "connection.types" → no types (capabilities parsing is skipped).
-        Ok(Value::Null)
-    }
-    fn create_session(
-        &self,
-        _agent_id: &str,
-        session_type: &str,
-        _config: Value,
-        _title: Option<&str>,
-        _definition_id: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        if !self.connected.load(Ordering::SeqCst) {
-            return Err(TerminalError::RemoteError("Agent not connected".into()));
-        }
-        let n = self.create_count.fetch_add(1, Ordering::SeqCst);
-        let session_id = format!("remote-{n}");
-        self.created_ids.lock().unwrap().push(session_id.clone());
-        Ok(AgentSessionInfo {
-            session_id,
-            title: "Shell".into(),
-            session_type: session_type.into(),
-            status: "running".into(),
-            attached: false,
-            definition_id: None,
-        })
-    }
-    fn attach_session(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
-        self.attach_count.fetch_add(1, Ordering::SeqCst);
-        if self.held_by_peer.load(Ordering::SeqCst) {
-            return Err(TerminalError::SessionHeldByPeer(
-                "Session is held by another desktop".into(),
-            ));
-        }
-        Ok(())
-    }
-    fn reclaim_session(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
-        self.reclaim_count.fetch_add(1, Ordering::SeqCst);
-        self.held_by_peer.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-    fn close_session(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        if !self.session_recoverable.load(Ordering::SeqCst) {
-            return Ok(vec![]);
-        }
-        Ok(self
-            .created_ids
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|id| AgentSessionInfo {
-                session_id: id.clone(),
-                title: "Shell".into(),
-                session_type: "local".into(),
-                status: "running".into(),
-                attached: false,
-                definition_id: None,
-            })
-            .collect())
-    }
-    fn list_connections_and_folders(
-        &self,
-        _agent_id: &str,
-    ) -> Result<AgentConnectionsData, TerminalError> {
-        Ok(AgentConnectionsData {
-            connections: vec![],
-            folders: vec![],
-        })
-    }
-    fn save_definition(
-        &self,
-        _agent_id: &str,
-        _definition: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _agent_id: &str,
-        _params: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn create_folder(
-        &self,
-        _agent_id: &str,
-        _name: &str,
-        _parent_id: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _agent_id: &str,
-        _params: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn register_session_output(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-        output_tx: OutputSender,
-    ) -> Result<(), TerminalError> {
-        self.senders.lock().unwrap().push(output_tx);
-        Ok(())
-    }
-    fn unregister_session_output(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn register_monitoring_output(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-        _monitoring_tx: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn unregister_monitoring_output(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn send_session_input(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-        _data: &[u8],
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn resize_session(
-        &self,
-        _agent_id: &str,
-        _remote_session_id: &str,
-        _cols: u16,
-        _rows: u16,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn apply_agent_settings(
-        &self,
-        _agent_id: &str,
-        _settings: &AgentSettings,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn connect_agent(
-        &self,
-        _agent_id: &str,
-        _config: &RemoteAgentConfig,
-        _agent_settings: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        self.connected.store(true, Ordering::SeqCst);
-        Ok(AgentConnectResult {
-            capabilities: serde_json::from_value(serde_json::json!({
-                "connection_types": [],
-                "max_sessions": 10
-            }))
-            .unwrap(),
-            agent_version: "test".into(),
-            protocol_version: "1".into(),
-        })
-    }
-    fn cancel_connect(&self, _agent_id: &str) -> bool {
-        false
-    }
-    fn retain_agent_config(&self, _agent_id: &str) -> bool {
-        true
-    }
+
+fn reclaims(agent: &FakeAgent) -> usize {
+    agent.calls_to("reclaim_session").len()
 }
 
 fn poll_until<F: Fn() -> bool>(cond: F, label: &str) {
@@ -355,7 +94,7 @@ fn agent_reconnect_resumes_after_transport_restore() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -413,8 +152,8 @@ fn agent_reconnect_resumes_after_transport_restore() {
     assert!(scheduler.armed("tab-1"), "timer armed on drop");
 
     // Transport is DOWN.
-    agent.connected.store(false, Ordering::SeqCst);
-    agent.reattach_ok.store(false, Ordering::SeqCst);
+    agent.host().connected.store(false, Ordering::SeqCst);
+    agent.host().reattach_ok.store(false, Ordering::SeqCst);
 
     // Fire attempt 1: redrive can't re-establish → folds reconnect_failed → re-arms.
     scheduler.fire("tab-1");
@@ -437,12 +176,12 @@ fn agent_reconnect_resumes_after_transport_restore() {
     );
 
     // Transport RESTORED.
-    agent.reattach_ok.store(true, Ordering::SeqCst);
+    agent.host().reattach_ok.store(true, Ordering::SeqCst);
 
     // Fire attempt 2: redrive re-establishes the transport and — since the live
     // agent session (`remote-0`) is still listed — RE-ATTACHES to it (#2512)
     // rather than minting a new one, publishing the new desktop session id.
-    let attaches_before = agent.attach_count.load(Ordering::SeqCst);
+    let attaches_before = attaches(&agent);
     scheduler.fire("tab-1");
     poll_until(
         || store.get("tab-1").map(|s| s.status) == Some(SessionStatus::Connected),
@@ -456,13 +195,13 @@ fn agent_reconnect_resumes_after_transport_restore() {
         "a fresh desktop session id is published for the frontend to re-attach"
     );
     assert_eq!(
-        agent.create_count.load(Ordering::SeqCst),
+        agent.host().minted().len(),
         1,
         "the live agent session is re-attached, NOT re-created — only the initial \
          create_session ran (#2512)"
     );
     assert_eq!(
-        agent.attach_count.load(Ordering::SeqCst) - attaches_before,
+        attaches(&agent) - attaches_before,
         1,
         "a single reconnect must perform exactly one re-attach of the live session \
          (no double-attach)"
@@ -478,7 +217,7 @@ fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -536,7 +275,10 @@ fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
     assert!(scheduler.armed("tab-1"), "timer armed on drop");
 
     // Transport comes back, but the live agent session did NOT survive.
-    agent.session_recoverable.store(false, Ordering::SeqCst);
+    agent
+        .host()
+        .session_recoverable
+        .store(false, Ordering::SeqCst);
 
     // Fire the attempt: transport re-establishes, `connection.list` no longer
     // reports remote-0 → session-lost, and no new session is created.
@@ -552,7 +294,7 @@ fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
         "a lost session leaves no backend id to re-attach to"
     );
     assert_eq!(
-        agent.create_count.load(Ordering::SeqCst),
+        agent.host().minted().len(),
         1,
         "session-lost must NOT mint a replacement shell — only the initial \
          create_session ran (#2512)"
@@ -650,7 +392,7 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -804,7 +546,7 @@ fn user_cancel_wins_over_agent_recover_fold_and_tears_the_session_down() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -924,7 +666,7 @@ fn fully_failed_agent_break_folds_region_failed_at_the_source() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -1049,7 +791,7 @@ fn unconfirmed_agent_break_settles_region_off_reconnecting_at_the_source() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -1349,7 +1091,7 @@ fn evicted_agent_tab_never_auto_reconnects_and_reclaim_flips_ownership() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -1443,16 +1185,12 @@ fn evicted_agent_tab_never_auto_reconnects_and_reclaim_flips_ownership() {
         &std::collections::HashSet::new(),
     ));
     assert_eq!(store.status("tab-1"), Some(SessionStatus::Evicted));
-    assert_eq!(
-        agent.reclaim_count.load(Ordering::SeqCst),
-        0,
-        "nothing reclaims on its own"
-    );
+    assert_eq!(reclaims(&agent), 0, "nothing reclaims on its own");
 
     // The explicit Reclaim: a takeover attach, then Evicted → Connected.
     tauri::async_runtime::block_on(manager_ref.reclaim_session("tab-1")).expect("reclaim");
     fold_agent_session_reclaimed(&handle, "tab-1");
-    assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 1);
+    assert_eq!(reclaims(&agent), 1);
     assert_eq!(store.status("tab-1"), Some(SessionStatus::Connected));
 
     // Reclaim of a tab with no agent session is a clean error, not a panic.
@@ -1474,7 +1212,7 @@ fn held_by_peer_reattach_folds_evicted_without_retry_and_reclaims() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
@@ -1530,7 +1268,7 @@ fn held_by_peer_reattach_folds_evicted_without_retry_and_reclaims() {
     assert!(scheduler.armed("tab-1"));
     agent.held_by_peer.store(true, Ordering::SeqCst);
 
-    let attaches_before = agent.attach_count.load(Ordering::SeqCst);
+    let attaches_before = attaches(&agent);
     scheduler.fire("tab-1");
     poll_until(
         || store.status("tab-1") == Some(SessionStatus::Evicted),
@@ -1542,15 +1280,11 @@ fn held_by_peer_reattach_folds_evicted_without_retry_and_reclaims() {
     assert_eq!(life.reconnect.phase, ReconnectPhase::Idle, "loop stopped");
     assert!(!scheduler.armed("tab-1"), "a held refusal is never retried");
     assert_eq!(
-        agent.attach_count.load(Ordering::SeqCst) - attaches_before,
+        attaches(&agent) - attaches_before,
         1,
         "exactly one plain attach"
     );
-    assert_eq!(
-        agent.reclaim_count.load(Ordering::SeqCst),
-        0,
-        "no implicit takeover"
-    );
+    assert_eq!(reclaims(&agent), 0, "no implicit takeover");
     let held_sid = life
         .backend_session_id
         .clone()
@@ -1565,7 +1299,7 @@ fn held_by_peer_reattach_folds_evicted_without_retry_and_reclaims() {
     // same desktop session the frontend already bound to.
     tauri::async_runtime::block_on(manager_ref.reclaim_session("tab-1")).expect("reclaim");
     fold_agent_session_reclaimed(&handle, "tab-1");
-    assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 1);
+    assert_eq!(reclaims(&agent), 1);
     let life = store.get("tab-1").unwrap();
     assert_eq!(life.status, SessionStatus::Connected);
     assert_eq!(life.backend_session_id.as_deref(), Some(held_sid.as_str()));
@@ -1615,7 +1349,7 @@ fn io_task_reconnect_fold_order_evicts_before_resolving() {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
-        let agent = Arc::new(FakeAgent::new());
+        let agent = Arc::new(FakeAgent::session_host());
         let manager = SessionManager::new(
             ConnectionTypeRegistry::new(),
             agent.clone() as Arc<dyn AgentRpcClient>,
@@ -1733,7 +1467,7 @@ fn io_task_reconnect_fold_order_evicts_before_resolving() {
         for tab in ["tab-1", "tab-2", "tab-3"] {
             assert!(!scheduler.armed(tab), "{tab}: no redrive armed");
         }
-        assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 0);
+        assert_eq!(reclaims(&agent), 0);
     }
 }
 
@@ -1748,7 +1482,7 @@ fn agent_reattach_keeps_the_saved_connection_and_fires_resume_triggers() {
     let app = tauri::test::mock_app();
     let handle = app.handle().clone();
 
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::session_host());
     let manager = SessionManager::new(
         ConnectionTypeRegistry::new(),
         agent.clone() as Arc<dyn AgentRpcClient>,
