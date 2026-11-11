@@ -9,7 +9,9 @@
 # different paths. This makes fish 3 the native sshd fixture user's login
 # shell, runs native_05b..05d with TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=fish3 and
 # the setup byte trace on (TERMIHUB_TEST_SSH_TRACE=1), requires all three to
-# pass, and puts the old login shell back afterwards.
+# pass, and puts the old login shell back afterwards. The suites recipe brings
+# the fixture up with --scratch-home, so fish reads config.fish and writes
+# fish_history below the fixture's scratch home, never the real one (#5296).
 #
 # It CHANGES THE CURRENT USER'S LOGIN SHELL (via `sudo usermod`) for the run,
 # so it refuses to run outside a throwaway CI runner unless
@@ -32,7 +34,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die() {
