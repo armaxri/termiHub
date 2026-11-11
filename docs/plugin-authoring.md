@@ -414,6 +414,11 @@ tokens. Only overridden colors need to be present. See
 [`solarized-night.json`](../examples/plugins/solarized-night-theme/themes/solarized-night.json)
 for a complete example.
 
+The terminal keeps every ANSI colour readable: when it renders, each of the 16
+`ansi*` colours is darkened or lightened (lightness only, hue kept) until it
+reaches 3:1 contrast against `terminalBg`. A colour that already passes is used
+as-is, so pick ANSI colours that pass and what you ship is what users see.
+
 ### `protocolParser` and `statusBarWidget`
 
 JavaScript extension points (`protocolParser` transforms terminal output;
