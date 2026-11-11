@@ -1,5 +1,6 @@
 pub mod browser;
 pub mod copy;
+pub mod copy_guard;
 pub mod local;
 pub mod ranged;
 pub mod transfer;

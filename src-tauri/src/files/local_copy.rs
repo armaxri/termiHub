@@ -128,6 +128,16 @@ pub async fn start(
     if meta.is_dir() {
         return start_folder(src_path, dest_path, registry, app_handle).await;
     }
+    // Refuse a copy onto itself before either path runs (#5325): the queued
+    // copy would only rewrite the file, but the refusal is the same either way.
+    {
+        let (src, dest) = (src_path.clone(), dest_path.clone());
+        blocking(move || {
+            termihub_core::files::copy_guard::ensure_local_copy_allowed_io(&src, &dest, false)
+                .map_err(TerminalError::Io)
+        })
+        .await?;
+    }
     if !local::should_queue_local_copy(meta.len()) {
         debug!(src_path, dest_path, "Local copy (direct)");
         blocking(move || crate::files::local::copy_file(&src_path, &dest_path, false)).await?;
