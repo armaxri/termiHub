@@ -454,6 +454,19 @@ export interface ReadFrontendLogCommand {
 }
 
 /**
+ * Read the JavaScript errors the page produced (#5364): every
+ * `unhandledrejection`, uncaught `error` and `console.error` since the bridge
+ * chunk loaded. With `since` only the records whose `seq` is at least `since`
+ * are returned; pass the previous answer's `cursor` to read just the new ones.
+ * Returns a {@link JsErrorsResult}. `pageId` changes when the page reloads (its
+ * buffer then restarts at `seq` 0). Read-only.
+ */
+export interface GetJsErrorsCommand {
+  action: "getJsErrors";
+  since?: number;
+}
+
+/**
  * Force a real GPU context loss on a terminal's WebGL renderer (#2988) via the
  * `WEBGL_lose_context` extension, so the harness can prove the renderer
  * degrades to the DOM renderer. Answers `true` when a live WebGL2 context was
@@ -952,6 +965,28 @@ export interface TerminalOutputTap {
   msSinceLastWrite: number | null;
 }
 
+/** One JavaScript error the page produced, returned by `getJsErrors`. */
+export interface JsErrorRecord {
+  /** Position in the page's buffer; increases by one per record. */
+  seq: number;
+  timestampMs: number;
+  kind: "unhandledrejection" | "error" | "console.error";
+  message: string;
+  /** The first few stack frames, when the value carried a stack. */
+  stack?: string;
+}
+
+/** The value of a {@link GetJsErrorsCommand}. */
+export interface JsErrorsResult {
+  /** Identifies this page load; a new id means the buffer restarted. */
+  pageId: string;
+  /** The `seq` the next record will get: pass it as `since` next time. */
+  cursor: number;
+  /** Records evicted from the bounded buffer so far. */
+  dropped: number;
+  errors: JsErrorRecord[];
+}
+
 /** One frontend Log Viewer entry, returned by `readFrontendLog`. */
 export interface FrontendLogRecord {
   timestampMs: number;
@@ -1044,6 +1079,7 @@ export type BridgeCommand =
   | ReadTerminalWebglFrameCommand
   | ReadTerminalOutputCommand
   | ReadFrontendLogCommand
+  | GetJsErrorsCommand
   | GetStateCommand
   | ScreenshotCommand
   | EmitEventCommand
