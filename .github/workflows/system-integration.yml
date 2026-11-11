@@ -633,11 +633,31 @@ jobs:
           env -u DISPLAY -u WAYLAND_DISPLAY dbus-run-session -- ./tests/system/pytest.sh -m integration
           tests/test_ssh_x11_wayland.py -v -n 1 --dist loadscope --reruns 0 -r aR
 
+      - name: Provision the native sshd fixture (macOS/Windows)
+        # #5176: the Docker SSH fixtures cannot run here, so the SSH/SFTP suites
+        # marked native_sshd log in to the platform's own OpenSSH server
+        # instead: a dedicated local user with password and key auth, plus a
+        # second sshd as the jump-host bastion on macOS. TERMIHUB_SYSTEM_SSH_TARGET
+        # points the harness at it (termihub_harness/native_ssh.py). The recipe
+        # lives in the checked-out script (a scheduled run uses main's workflow).
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            scripts/internal/native-sshd-fixture.sh up --github-env --password-login --jump-host >/dev/null
+          else
+            scripts/internal/native-sshd-fixture.sh up --github-env --password-login >/dev/null
+          fi
+          echo "TERMIHUB_SYSTEM_SSH_TARGET=native" >>"$GITHUB_ENV"
+
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
         # the app's own webview (WKWebView / WebView2) through the bridge. The
-        # Docker-fixture suites self-skip here (no Linux daemon); the app-launch
-        # and UI integration suites run natively. This is the coverage the bridge
+        # Docker-fixture suites self-skip here (no Linux daemon), except the SSH
+        # suites marked native_sshd, which log in to the native sshd fixture
+        # provisioned above (#5176); the app-launch and UI integration suites
+        # run natively. This is the coverage the bridge
         # newly unlocks on macOS, where `tauri-driver` never had a WKWebView
         # driver. Run under Git Bash on Windows so pytest.sh executes as written.
         #
@@ -811,6 +831,24 @@ jobs:
           path: tests/system/artifacts/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Tear down the native sshd fixture (macOS/Windows)
+        # Prints the fixture's sshd logs first when the job failed. On macOS the
+        # sshd ran as root, so its logs are root-owned.
+        if: always() && runner.os != 'Linux'
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" != "success" ] && [ -n "${TERMIHUB_NATIVE_SSHD_DIR:-}" ]; then
+            dir="$TERMIHUB_NATIVE_SSHD_DIR"
+            if [ "$RUNNER_OS" = Windows ]; then dir="$(cygpath -u "$dir")"; fi
+            for log in sshd.log jump_sshd.log; do
+              [ "$RUNNER_OS" = macOS ] && sudo -n tail -n 200 "$dir/$log" 2>/dev/null && continue
+              tail -n 200 "$dir/$log" 2>/dev/null || true
+            done
+          fi
+          scripts/internal/native-sshd-fixture.sh down
 
       - name: Tear down the fixtures
         # Linux only — nothing was brought up on the other legs.
