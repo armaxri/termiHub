@@ -107,7 +107,7 @@ describe("appStore — Move tabs carries unsaved editors (#4412)", () => {
     it("marks a dirty connection editor without a readable draft as not movable", async () => {
       const tabId = useAppStore
         .getState()
-        .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
+        .addTab("New connection", "local", undefined, { contentType: "connection-editor" });
       useAppStore.getState().setEditorDirty(tabId, true);
 
       await useAppStore.getState().prepareWindowClose(OTHERS);
@@ -186,12 +186,12 @@ describe("appStore — Move tabs carries unsaved editors (#4412)", () => {
       seedSessionTab("s1");
       const tabId = useAppStore
         .getState()
-        .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
+        .addTab("New connection", "local", undefined, { contentType: "connection-editor" });
       useAppStore.getState().setEditorDirty(tabId, true);
 
       await expect(
         useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" })
-      ).rejects.toThrow(/New Connection/);
+      ).rejects.toThrow(/New connection/);
 
       expect(sendHandoffToWindow).not.toHaveBeenCalled();
       expect(useAppStore.getState().movingSessionIds).toEqual([]);
