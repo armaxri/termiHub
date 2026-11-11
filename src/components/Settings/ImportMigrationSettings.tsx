@@ -10,6 +10,7 @@ import type { InventoryHost } from "@/types/connection";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import { frontendError } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { BulkSshImportDialog } from "@/components/Sidebar/BulkSshImportDialog";
 import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
 import "./CredentialVault.css";
@@ -33,6 +34,8 @@ type Discovery = { status: "checking" } | { status: "found"; path: string } | { 
  * - a link to Backup & Restore for whole-app backups.
  */
 export function ImportMigrationSettings() {
+  // RDP/VNC are named only while those types are ungated (#5365).
+  const experimental = useExperimentalFeatures();
   const setMobaxtermImportOpen = useAppStore((s) => s.setMobaxtermImportOpen);
   const setImportDialog = useAppStore((s) => s.setImportDialog);
   const setExportDialogOpen = useAppStore((s) => s.setExportDialogOpen);
@@ -173,8 +176,8 @@ export function ImportMigrationSettings() {
         <h3 className="settings-panel__section-title">Import from MobaXterm</h3>
         <p className="settings-panel__description">
           Bring your saved MobaXterm sessions into termiHub, folders included: SSH (with keys and
-          jump hosts), Telnet, Serial, RDP, VNC, FTP, local shell and WSL sessions. You see a
-          preview and choose what to import. Passwords are never imported.
+          jump hosts), Telnet, Serial, {experimental && "RDP, VNC, "}FTP, local shell and WSL
+          sessions. You see a preview and choose what to import. Passwords are never imported.
         </p>
         <p className="import-migration__hint" data-testid="import-migration-mobaxterm-hint">
           {discovery.status === "checking" && "Looking for MobaXterm on this computer…"}

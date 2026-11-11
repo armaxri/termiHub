@@ -29,6 +29,8 @@ import { exportCheatSheet } from "@/utils/cheatSheetPdf";
 import { Button, Checkbox, Field, Toggle, Tooltip, SearchInput, toast } from "@/components/ui";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { isShortcutCategoryVisible } from "@/utils/experimentalTypes";
 import "./KeyboardSettings.css";
 
 /**
@@ -101,6 +103,8 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const [, forceRender] = useState(0);
 
   const bindings = getDefaultBindings();
+  // Remote Desktop shortcuts are listed only while VNC/RDP are ungated (#5365).
+  const experimental = useExperimentalFeatures();
   const { query, setQuery, filtered: filteredBindings } = useListFilter(bindings, keybindingFields);
 
   const persistOverrides = useCallback(() => {
@@ -253,7 +257,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     category: cat,
     label: CATEGORY_LABELS[cat],
     bindings: filteredBindings.filter((b) => b.category === cat),
-  })).filter((g) => g.bindings.length > 0);
+  })).filter((g) => g.bindings.length > 0 && isShortcutCategoryVisible(g.category, experimental));
 
   return (
     <div className="settings-panel__category">

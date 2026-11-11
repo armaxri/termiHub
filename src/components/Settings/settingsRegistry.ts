@@ -32,6 +32,11 @@ export interface SettingDefinition {
   description: string;
   category: SettingsCategory;
   keywords: string[];
+  /**
+   * Only searchable while experimental features are enabled, because the
+   * setting belongs to a gated connection type (e.g. RDP, #5365).
+   */
+  experimental?: boolean;
 }
 
 export const CATEGORIES: CategoryDefinition[] = [
@@ -415,6 +420,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Remembered RDP Certificates",
     description: "Review and revoke RDP server certificates you chose to trust",
     category: "security",
+    experimental: true,
     keywords: [
       "rdp",
       "certificate",
@@ -1043,15 +1049,31 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
 ];
 
+/** Options for {@link filterSettings} and {@link getMatchingCategories}. */
+export interface SettingsFilterOptions {
+  /**
+   * Whether experimental features are enabled. When false (the default),
+   * entries marked `experimental` are never returned (#5365).
+   */
+  experimental?: boolean;
+}
+
 /**
  * Filter settings by a search query. Matches against label, description,
- * category, and keywords (case-insensitive).
+ * category, and keywords (case-insensitive). Experimental-only entries are
+ * excluded unless `options.experimental` is true.
  */
-export function filterSettings(query: string): SettingDefinition[] {
+export function filterSettings(
+  query: string,
+  { experimental = false }: SettingsFilterOptions = {}
+): SettingDefinition[] {
   const q = query.toLowerCase().trim();
-  if (!q) return SETTINGS_REGISTRY;
+  const available = experimental
+    ? SETTINGS_REGISTRY
+    : SETTINGS_REGISTRY.filter((setting) => !setting.experimental);
+  if (!q) return available;
 
-  return SETTINGS_REGISTRY.filter((setting) => {
+  return available.filter((setting) => {
     const haystack = [setting.label, setting.description, setting.category, ...setting.keywords]
       .join(" ")
       .toLowerCase();
@@ -1062,7 +1084,10 @@ export function filterSettings(query: string): SettingDefinition[] {
 /**
  * Return the set of categories that contain at least one matching setting.
  */
-export function getMatchingCategories(query: string): Set<SettingsCategory> {
-  const matched = filterSettings(query);
+export function getMatchingCategories(
+  query: string,
+  options: SettingsFilterOptions = {}
+): Set<SettingsCategory> {
+  const matched = filterSettings(query, options);
   return new Set(matched.map((s) => s.category));
 }
