@@ -14,7 +14,10 @@ fn mock_session() -> Box<FileConnection> {
 }
 
 async fn manager() -> SessionManager {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     manager.insert_test_session("fs", mock_session()).await;
     manager
 }

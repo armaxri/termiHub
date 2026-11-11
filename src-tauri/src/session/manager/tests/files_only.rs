@@ -98,7 +98,10 @@ fn manager() -> (SessionManager, Arc<tokio::sync::watch::Sender<bool>>) {
             })
         }),
     );
-    (SessionManager::new(registry, Arc::new(NullAgent)), switch)
+    (
+        SessionManager::new(registry, Arc::new(FakeAgent::offline())),
+        switch,
+    )
 }
 
 async fn open(manager: &SessionManager, emitter: &FilesOnlyEmitter, connect_id: &str) -> String {

@@ -32,8 +32,8 @@ use crate::credential::{CredentialStoreStatus, CredentialType};
 use crate::files::transfer::persist::PersistedAgentTarget;
 use crate::files::transfer::relaunch_credentials::RelaunchSources;
 use crate::files::transfer::{TransferPhase, TransferProgress, TransferStateTag};
-use crate::network::test_support::FakeAgent;
 use crate::terminal::backend::ConnectionConfig;
+use crate::test_support::FakeAgent;
 use termihub_core::connection::ConnectionTypeRegistry;
 
 // ── Fixtures ───────────────────────────────────────────────────────

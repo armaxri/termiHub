@@ -3,160 +3,35 @@
 
 use super::*;
 
-use std::sync::Mutex as StdMutex;
-
 use crate::commands::session::{
     close_session_with_disposition, tab_close_disposition, TabCloseDisposition,
 };
 use crate::session::remote_proxy::{ReattachOutcome, RemoteProxy};
+use crate::test_support::agent_rpc::Step;
 use crate::window::{OutputEmitTarget, WindowManager};
 
-// ── RecordingAgent ────────────────────────────────────────────────
-
-/// An `AgentRpcClient` that records the calls a close path makes, so a test can
-/// assert no `connection.close` (`close_session`) reached the agent.
-#[derive(Clone, Default)]
-struct RecordingAgent {
-    calls: Arc<StdMutex<Vec<String>>>,
-}
-
-impl RecordingAgent {
-    fn record(&self, call: String) {
-        self.calls.lock().expect("call log").push(call);
-    }
-
-    fn calls(&self) -> Vec<String> {
-        self.calls.lock().expect("call log").clone()
-    }
-}
-
-impl AgentRpcClient for RecordingAgent {
-    fn connect_agent(
-        &self,
-        _: &str,
-        _: &RemoteAgentConfig,
-        _: Option<&AgentSettings>,
-    ) -> Result<AgentConnectResult, TerminalError> {
-        unimplemented!()
-    }
-    fn cancel_connect(&self, _: &str) -> bool {
-        false
-    }
-    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn is_connected(&self, _: &str) -> bool {
-        true
-    }
-    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
-        None
-    }
-    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
-        unimplemented!()
-    }
-    fn send_request(&self, _: &str, method: &str, _: Value) -> Result<Value, TerminalError> {
-        self.record(format!("send_request:{method}"));
-        Ok(Value::Null)
-    }
-    fn create_session(
-        &self,
-        _: &str,
-        _: &str,
-        _: Value,
-        _: Option<&str>,
-        _: Option<&str>,
-    ) -> Result<AgentSessionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn close_session(&self, _: &str, remote_session_id: &str) -> Result<(), TerminalError> {
-        self.record(format!("close_session:{remote_session_id}"));
-        Ok(())
-    }
-    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        unimplemented!()
-    }
-    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn save_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionCreateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_definition(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::ConnectionUpdateParams,
-    ) -> Result<AgentDefinitionInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn create_folder(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn update_folder(
-        &self,
-        _: &str,
-        _: termihub_core::protocol::methods::FolderUpdateParams,
-    ) -> Result<AgentFolderInfo, TerminalError> {
-        unimplemented!()
-    }
-    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn register_session_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: OutputSender,
-    ) -> Result<(), TerminalError> {
-        Ok(())
-    }
-    fn unregister_session_output(&self, _: &str, sid: &str) -> Result<(), TerminalError> {
-        self.record(format!("unregister_session_output:{sid}"));
-        Ok(())
-    }
-    fn register_monitoring_output(
-        &self,
-        _: &str,
-        _: &str,
-        _: MonitoringSender,
-    ) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn unregister_monitoring_output(&self, _: &str, sid: &str) -> Result<(), TerminalError> {
-        self.record(format!("unregister_monitoring_output:{sid}"));
-        Ok(())
-    }
-    fn send_session_input(&self, _: &str, sid: &str, _: &[u8]) -> Result<(), TerminalError> {
-        self.record(format!("send_session_input:{sid}"));
-        Ok(())
-    }
-    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
-    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
-        unimplemented!()
-    }
+/// An agent that records the calls a close path makes, so a test can assert no
+/// `connection.close` (`close_session`) reached the agent.
+fn recording_agent() -> Arc<FakeAgent> {
+    Arc::new(
+        FakeAgent {
+            disconnected: true,
+            ..FakeAgent::default()
+        }
+        .always("send_request", Step::Ok)
+        .always("attach_session", Step::Ok)
+        .always("close_session", Step::Ok)
+        .always("register_session_output", Step::Ok)
+        .always("unregister_session_output", Step::Ok)
+        .always("send_session_input", Step::Ok),
+    )
 }
 
 /// A `SessionManager` holding one agent-proxied session (`sid` → remote `r1`)
 /// backed by a real [`RemoteProxy`] over the recording agent.
-async fn manager_with_agent_session(sid: &str) -> (SessionManager, RecordingAgent) {
-    let agent = RecordingAgent::default();
-    let client: Arc<dyn AgentRpcClient> = Arc::new(agent.clone());
+async fn manager_with_agent_session(sid: &str) -> (SessionManager, Arc<FakeAgent>) {
+    let agent = recording_agent();
+    let client: Arc<dyn AgentRpcClient> = agent.clone();
     let manager = SessionManager::new(ConnectionTypeRegistry::new(), client.clone());
     let (proxy, outcome) =
         RemoteProxy::reconnect_existing("agent-1".into(), "r1".into(), client).expect("proxy");
@@ -216,7 +91,10 @@ fn disposition_intentional_kill_always_closes() {
 /// close then closes it as before.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn non_owner_window_close_keeps_session_for_owner() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     let disconnected = Arc::new(AtomicBool::new(false));
     manager
         .insert_test_session("s1", Box::new(DisconnectSpy::new(disconnected.clone())))
@@ -274,17 +152,20 @@ async fn evicted_agent_tab_close_sends_no_connection_close() {
         !manager.has_session("s1").await,
         "the local view is dropped"
     );
-    let calls = agent.calls();
+    let calls = agent.call_log();
     assert!(
-        !calls.iter().any(|c| c.starts_with("close_session")),
+        agent.calls_to("close_session").is_empty(),
         "no connection.close for an evicted session; got {calls:?}"
     );
     assert!(
-        !calls.iter().any(|c| c.starts_with("send_request")),
-        "no RPC (detach/close) reaches the agent; got {calls:?}"
+        agent.requests().is_empty(),
+        "no RPC (detach/close) reaches the agent; got {:?}",
+        agent.requests()
     );
     assert!(
-        calls.contains(&"unregister_session_output:r1".to_string()),
+        agent
+            .calls_to("unregister_session_output")
+            .contains(&vec!["agent-1".to_string(), "r1".to_string()]),
         "the local output route is released; got {calls:?}"
     );
 }
@@ -300,16 +181,21 @@ async fn owner_agent_tab_close_still_closes_remote_session() {
 
     assert!(!manager.has_session("s1").await);
     assert!(
-        agent.calls().contains(&"close_session:r1".to_string()),
+        agent
+            .calls_to("close_session")
+            .contains(&vec!["agent-1".to_string(), "r1".to_string()]),
         "the owner's close ends the remote session; got {:?}",
-        agent.calls()
+        agent.call_log()
     );
 }
 
 /// A session with no agent route falls back to a normal close.
 #[tokio::test]
 async fn release_evicted_session_without_agent_route_closes() {
-    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    );
     let disconnected = Arc::new(AtomicBool::new(false));
     manager
         .insert_test_session("s1", Box::new(DisconnectSpy::new(disconnected.clone())))

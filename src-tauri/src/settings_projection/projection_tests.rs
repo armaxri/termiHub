@@ -12,8 +12,7 @@
 //! dead subscriber is reaped, and the client cache converges on the store's
 //! authority across a replace → patch → reset lifecycle.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
@@ -22,13 +21,14 @@ use tauri::Manager;
 use crate::commands::projection::ProjectionState;
 use crate::connection::manager::ConnectionManager;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
+    SnapshotFrame,
 };
 use crate::settings_projection::projection::{
     fold_settings_from_manager, publish_settings, SETTINGS_REGION,
 };
 use crate::settings_projection::store::SettingsStore;
+use crate::test_support::RecordingSink;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -70,44 +70,6 @@ fn required_object(intent: &Intent, key: &str) -> Result<Map<String, Value>, (St
     }
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/agents/session test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
 struct ClientCache {
     version: u64,
@@ -146,8 +108,18 @@ fn subscribe_returns_the_default_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SETTINGS_REGION, store.snapshot());
 
-    let snap_a = projector.subscribe(SETTINGS_REGION, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(SETTINGS_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(
+        SETTINGS_REGION,
+        "sub-a",
+        "A",
+        Arc::new(RecordingSink::new()),
+    );
+    let snap_b = projector.subscribe(
+        SETTINGS_REGION,
+        "sub-b",
+        "B",
+        Arc::new(RecordingSink::new()),
+    );
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -163,8 +135,8 @@ fn a_settings_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(SETTINGS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SETTINGS_REGION, "sub-a", "A", sink_a.clone());
     projector.subscribe(SETTINGS_REGION, "sub-b", "B", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -207,7 +179,7 @@ fn a_full_settings_lifecycle_advances_monotonically_and_converges() {
     projector.register_region(SETTINGS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(SETTINGS_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -251,7 +223,7 @@ fn an_intent_missing_its_object_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SETTINGS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SETTINGS_REGION, "sub", "A", sink.clone());
 
     // Missing `patch` field.
@@ -275,7 +247,7 @@ fn a_no_op_intent_advances_nothing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SETTINGS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(SETTINGS_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent(
@@ -311,7 +283,7 @@ fn test_manager() -> (ConnectionManager, tempfile::TempDir) {
 
 /// Wire a mock app with the managed state `setup()` builds for the settings
 /// region: the manager, the store, and a `ProjectionState` whose `settings`
-/// region is registered and has one `VecSink` subscribed. Returns the app, the
+/// region is registered and has one `RecordingSink` subscribed. Returns the app, the
 /// store, the sink, and the subscribe-time client cache.
 #[allow(clippy::type_complexity)]
 fn wire_app(
@@ -319,7 +291,7 @@ fn wire_app(
 ) -> (
     tauri::App<tauri::test::MockRuntime>,
     Arc<SettingsStore>,
-    Arc<VecSink>,
+    Arc<RecordingSink>,
     ClientCache,
 ) {
     let app = tauri::test::mock_app();
@@ -332,7 +304,7 @@ fn wire_app(
     projection
         .projector
         .register_region(SETTINGS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(SETTINGS_REGION, "sub", "C", sink.clone());
@@ -482,13 +454,13 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     projector.register_region(SETTINGS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(SETTINGS_REGION, "live", "A", live.clone());
     projector.subscribe(SETTINGS_REGION, "dead", "B", dead.clone());
     assert_eq!(projector.subscriber_count(SETTINGS_REGION), 2);
 
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
     dispatcher.dispatch(intent(
         "settings.patch",
         json!({ "patch": { "theme": "light" } }),

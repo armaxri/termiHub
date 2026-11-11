@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde_json::json;
 use termihub_core::protocol::methods::{ToolDoneNotification, TOOL_CANCEL, TOOL_START};
 
-use crate::network::test_support::FakeAgent;
+use crate::test_support::FakeAgent;
 
 type Emitted = Arc<Mutex<Vec<(&'static str, Value)>>>;
 

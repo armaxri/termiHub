@@ -26,7 +26,6 @@ use crate::files::transfer::persist::{PersistedTransfer, PersistedTransferStatus
 use crate::files::transfer::relaunch_auto::{due, note_blocked, CredentialWaits, WaitTrigger};
 use crate::files::transfer::relaunch_credentials::RelaunchBlocked;
 use crate::files::transfer::{TransferDirection, TransferRegistry};
-use crate::network::test_support::FakeAgent;
 use crate::session::manager::{SessionManager, SessionOrigin};
 use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::redrive::AppReconnectRedrive;
@@ -34,6 +33,7 @@ use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::session_projection::timer::{
     ReconnectRedrive, ReconnectScheduler, ReconnectTimerDriver,
 };
+use crate::test_support::FakeAgent;
 
 const SAVED: &str = "Work/build-box";
 const FIELD_SECRET: &str = "gateway-secret";

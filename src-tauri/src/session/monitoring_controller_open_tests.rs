@@ -32,8 +32,8 @@ use super::super::line_ending::LineEnding;
 use super::super::manager::session_io::SessionIo;
 use super::super::manager::SessionInfo;
 use super::*;
-use crate::network::test_support::FakeAgent;
 use crate::session::agent_monitor_stops;
+use crate::test_support::FakeAgent;
 
 pub(super) type Sessions = Mutex<HashMap<String, SessionEntry>>;
 pub(super) type Tasks = Mutex<HashMap<String, AbortHandle>>;

@@ -12,8 +12,7 @@
 //! dead subscriber is reaped, and the client cache converges on the store's
 //! authority across a full transfer lifecycle.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::Manager;
@@ -21,8 +20,9 @@ use tauri::Manager;
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
     apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
-    ProjectionError, ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    Projector, SnapshotFrame,
 };
+use crate::test_support::RecordingSink;
 use crate::transfers_projection::projection::{
     fold_transfer_progress, publish_transfers, seed_target_is_live, TRANSFERS_REGION,
 };
@@ -157,44 +157,6 @@ fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> 
         .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/tunnel/monitor test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
 struct ClientCache {
     version: u64,
@@ -233,8 +195,18 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(TRANSFERS_REGION, store.snapshot());
 
-    let snap_a = projector.subscribe(TRANSFERS_REGION, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(TRANSFERS_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(
+        TRANSFERS_REGION,
+        "sub-a",
+        "A",
+        Arc::new(RecordingSink::new()),
+    );
+    let snap_b = projector.subscribe(
+        TRANSFERS_REGION,
+        "sub-b",
+        "B",
+        Arc::new(RecordingSink::new()),
+    );
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -251,8 +223,8 @@ fn a_transfer_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(TRANSFERS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(TRANSFERS_REGION, "sub-a", "A", sink_a.clone());
     projector.subscribe(TRANSFERS_REGION, "sub-b", "B", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -295,7 +267,7 @@ fn a_full_transfer_lifecycle_advances_monotonically_and_converges() {
     projector.register_region(TRANSFERS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -336,7 +308,7 @@ fn replace_mirrors_a_whole_slice_in_one_diff_and_converges() {
     let projector = Arc::new(Projector::new());
     projector.register_region(TRANSFERS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -367,7 +339,7 @@ fn an_intent_missing_its_field_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(TRANSFERS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent("transfer.seed", json!({ "wrong": "field" })));
@@ -385,7 +357,7 @@ fn a_no_op_intent_advances_nothing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(TRANSFERS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent("transfer.remove", json!({ "id": "ghost" })));
@@ -402,13 +374,13 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     projector.register_region(TRANSFERS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(TRANSFERS_REGION, "live", "A", live.clone());
     projector.subscribe(TRANSFERS_REGION, "dead", "B", dead.clone());
     assert_eq!(projector.subscriber_count(TRANSFERS_REGION), 2);
 
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
     dispatcher.dispatch(intent(
         "transfer.progress",
         json!({ "progress": progress_payload("t1", "active", 300) }),
@@ -505,7 +477,7 @@ fn server_side_progress_fold_updates_store_and_region_without_client_dispatch() 
     projection
         .projector
         .register_region(TRANSFERS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(TRANSFERS_REGION, "sub", "C", sink.clone());
@@ -544,7 +516,7 @@ fn server_side_terminal_fold_settles_the_row() {
     projection
         .projector
         .register_region(TRANSFERS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projection
         .projector
         .subscribe(TRANSFERS_REGION, "sub", "C", sink.clone());
@@ -617,7 +589,7 @@ fn progress(id: &str, state: &str, transferred: u64) -> TransferProgress {
 fn assert_incremental_equals_full(
     projector: &Projector,
     store: &TransferStore,
-    sink: &VecSink,
+    sink: &RecordingSink,
     prev: &mut Value,
     label: &str,
 ) {
@@ -671,7 +643,7 @@ fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
 
     let projector = Projector::new();
     projector.register_region(TRANSFERS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
 
     // Clear the seed dirty set; the region baseline already equals the store, so
@@ -729,7 +701,7 @@ fn incremental_publish_coalesces_multi_entry_changes_identically() {
     }
     let projector = Projector::new();
     projector.register_region(TRANSFERS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
     assert!(publish_transfers(&projector, &store).is_empty());
 
@@ -751,7 +723,7 @@ fn incremental_publish_replace_matches_the_whole_region_diff() {
     let store = seeded_store();
     let projector = Projector::new();
     projector.register_region(TRANSFERS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
     assert!(publish_transfers(&projector, &store).is_empty());
 

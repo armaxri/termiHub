@@ -557,7 +557,7 @@ workflow's Linux legs (which run on any change to the pin file) prove it. Develo
 ### Cargo tool versions
 
 CI installs its cargo tools (cargo-deny, cargo-audit, cargo-about, cargo-cyclonedx, cargo-llvm-cov,
-cargo-machete, cargo-fuzz) with `taiki-e/install-action`. The action is SHA-pinned like every other
+cargo-machete, cargo-fuzz, cargo-nextest) with `taiki-e/install-action`. The action is SHA-pinned like every other
 action, but a bare `tool: cargo-deny` would install whatever release is newest on the day, so an
 upstream release could change a gate with no commit here. Every step therefore names an exact
 version, `tool: cargo-deny@X.Y.Z`, and the **one** source of truth for those versions is

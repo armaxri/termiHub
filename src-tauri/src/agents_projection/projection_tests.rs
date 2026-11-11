@@ -11,8 +11,7 @@
 //! dead subscriber is reaped, and the client cache converges on the store's
 //! authority across a full agent lifecycle.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::Manager;
@@ -23,9 +22,10 @@ use crate::agents_projection::store::{
 };
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
+    SnapshotFrame,
 };
+use crate::test_support::RecordingSink;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -156,44 +156,6 @@ fn parse_list<T: serde::de::DeserializeOwned>(
         .map_err(|e| ("bad_payload".to_string(), format!("invalid {key}: {e}")))
 }
 
-/// An in-memory sink recording delivered frames; can be killed to simulate a
-/// dead subscriber (mirrors the substrate/tunnel/session test double).
-struct VecSink {
-    frames: Mutex<Vec<ProjectionFrame>>,
-    alive: AtomicBool,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            frames: Mutex::new(Vec::new()),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    fn diffs(&self) -> Vec<DiffFrame> {
-        self.frames
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|f| match f {
-                ProjectionFrame::Diff(d) => Some(d.clone()),
-                ProjectionFrame::Snapshot(_) => None,
-            })
-            .collect()
-    }
-}
-
-impl ProjectionSink for VecSink {
-    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
-        if !self.alive.load(Ordering::SeqCst) {
-            return Err(ProjectionError::SinkClosed("killed".into()));
-        }
-        self.frames.lock().unwrap().push(frame.clone());
-        Ok(())
-    }
-}
-
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
 struct ClientCache {
     version: u64,
@@ -232,8 +194,8 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(AGENTS_REGION, store.snapshot());
 
-    let snap_a = projector.subscribe(AGENTS_REGION, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(AGENTS_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(AGENTS_REGION, "sub-a", "A", Arc::new(RecordingSink::new()));
+    let snap_b = projector.subscribe(AGENTS_REGION, "sub-b", "B", Arc::new(RecordingSink::new()));
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -256,8 +218,8 @@ fn an_agent_intent_produces_one_diff_fanned_to_two_subscribers() {
     projector.register_region(AGENTS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink_a = Arc::new(VecSink::new());
-    let sink_b = Arc::new(VecSink::new());
+    let sink_a = Arc::new(RecordingSink::new());
+    let sink_b = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(AGENTS_REGION, "sub-a", "A", sink_a.clone());
     projector.subscribe(AGENTS_REGION, "sub-b", "B", sink_b.clone());
     let mut cache_a = ClientCache::from_snapshot(&snap);
@@ -302,7 +264,7 @@ fn a_full_agent_lifecycle_advances_monotonically_and_converges() {
     projector.register_region(AGENTS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(AGENTS_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -359,7 +321,7 @@ fn an_intent_missing_the_id_is_rejected_without_advancing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(AGENTS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(AGENTS_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent("agent.status", json!({ "state": "connected" })));
@@ -377,7 +339,7 @@ fn a_no_op_intent_advances_nothing() {
     let projector = Arc::new(Projector::new());
     projector.register_region(AGENTS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projector.subscribe(AGENTS_REGION, "sub", "A", sink.clone());
 
     let ack = dispatcher.dispatch(intent(
@@ -397,13 +359,13 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     projector.register_region(AGENTS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let live = Arc::new(VecSink::new());
-    let dead = Arc::new(VecSink::new());
+    let live = Arc::new(RecordingSink::new());
+    let dead = Arc::new(RecordingSink::new());
     projector.subscribe(AGENTS_REGION, "live", "A", live.clone());
     projector.subscribe(AGENTS_REGION, "dead", "B", dead.clone());
     assert_eq!(projector.subscriber_count(AGENTS_REGION), 2);
 
-    dead.alive.store(false, Ordering::SeqCst);
+    dead.kill();
     dispatcher.dispatch(intent(
         "agent.status",
         json!({ "id": "a1", "state": "connecting" }),
@@ -430,7 +392,7 @@ fn replace_mirrors_a_whole_snapshot_in_one_diff_and_converges() {
     projector.register_region(AGENTS_REGION, store.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projector.subscribe(AGENTS_REGION, "sub", "A", sink.clone());
     let mut cache = ClientCache::from_snapshot(&snap);
 
@@ -529,7 +491,7 @@ fn server_side_status_fold_updates_store_and_region_without_client_dispatch() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
@@ -602,7 +564,7 @@ fn server_side_definition_fold_upserts_and_is_idempotent() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
@@ -645,7 +607,7 @@ fn server_side_create_folder_fold_converges_without_duplicate() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
@@ -680,7 +642,7 @@ fn server_side_close_session_fold_drops_the_session() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
@@ -743,7 +705,7 @@ fn server_side_list_load_fold_creates_membership_without_client_dispatch() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     let snap = projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
@@ -783,7 +745,7 @@ fn server_side_fold_creates_an_unknown_agent_entry() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
@@ -814,7 +776,7 @@ fn server_side_list_fold_preserves_live_status_on_reload() {
     projection
         .projector
         .register_region(AGENTS_REGION, store.snapshot());
-    let sink = Arc::new(VecSink::new());
+    let sink = Arc::new(RecordingSink::new());
     projection
         .projector
         .subscribe(AGENTS_REGION, "sub", "C", sink.clone());

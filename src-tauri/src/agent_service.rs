@@ -367,184 +367,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    use crate::connection::config::AgentSettings;
-    use crate::terminal::agent_manager::{
-        AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
-        AgentFolderInfo, AgentSessionInfo,
-    };
-    use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
-    use crate::utils::errors::TerminalError;
-    use serde_json::Value;
-    use termihub_core::monitoring::MonitoringSender;
-
-    /// A do-nothing [`AgentRpcClient`]. The poller hands it to
-    /// [`AgentStatusPollDelegate::poll`], which the test delegate ignores, so no
-    /// method is ever called — every stub is `unimplemented!()`.
-    struct NoopClient;
-
-    // allow(unused_variables): test-only stub whose every method body is
-    // `unimplemented!()`, so all trait-method parameters are intentionally unused.
-    #[allow(unused_variables)]
-    impl AgentRpcClient for NoopClient {
-        fn connect_agent(
-            &self,
-            agent_id: &str,
-            config: &RemoteAgentConfig,
-            agent_settings: Option<&AgentSettings>,
-        ) -> Result<AgentConnectResult, TerminalError> {
-            unimplemented!()
-        }
-        fn cancel_connect(&self, agent_id: &str) -> bool {
-            unimplemented!()
-        }
-        fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn is_connected(&self, agent_id: &str) -> bool {
-            unimplemented!()
-        }
-        fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
-            unimplemented!()
-        }
-        fn shutdown_agent(
-            &self,
-            agent_id: &str,
-            reason: Option<&str>,
-        ) -> Result<u32, TerminalError> {
-            unimplemented!()
-        }
-        fn send_request(
-            &self,
-            agent_id: &str,
-            method: &str,
-            params: Value,
-        ) -> Result<Value, TerminalError> {
-            unimplemented!()
-        }
-        #[allow(clippy::too_many_arguments)]
-        fn create_session(
-            &self,
-            agent_id: &str,
-            session_type: &str,
-            config: Value,
-            title: Option<&str>,
-            definition_id: Option<&str>,
-        ) -> Result<AgentSessionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn attach_session(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn close_session(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-            unimplemented!()
-        }
-        fn list_connections_and_folders(
-            &self,
-            agent_id: &str,
-        ) -> Result<AgentConnectionsData, TerminalError> {
-            unimplemented!()
-        }
-        fn save_definition(
-            &self,
-            agent_id: &str,
-            definition: termihub_core::protocol::methods::ConnectionCreateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn update_definition(
-            &self,
-            agent_id: &str,
-            params: termihub_core::protocol::methods::ConnectionUpdateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn create_folder(
-            &self,
-            agent_id: &str,
-            name: &str,
-            parent_id: Option<&str>,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn update_folder(
-            &self,
-            agent_id: &str,
-            params: termihub_core::protocol::methods::FolderUpdateParams,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn register_session_output(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-            output_tx: OutputSender,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn unregister_session_output(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn register_monitoring_output(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-            monitoring_tx: MonitoringSender,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn unregister_monitoring_output(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn send_session_input(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-            data: &[u8],
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn resize_session(
-            &self,
-            agent_id: &str,
-            remote_session_id: &str,
-            cols: u16,
-            rows: u16,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-        fn apply_agent_settings(
-            &self,
-            agent_id: &str,
-            settings: &AgentSettings,
-        ) -> Result<(), TerminalError> {
-            unimplemented!()
-        }
-    }
+    use crate::test_support::FakeAgent;
 
     /// A controllable delegate that records ticks and applied samples, so the
     /// generic loop's behaviour can be observed without a real service.
@@ -557,7 +380,8 @@ mod tests {
         any_remaining: Arc<AtomicBool>,
         /// When true, `snapshot_targets` returns no targets (skip the tick).
         targets_empty: Arc<AtomicBool>,
-        /// When true, `client` resolves to a `NoopClient`; otherwise `None`.
+        /// When true, `client` resolves to an offline [`FakeAgent`] (the test
+        /// delegate ignores it, so it is never called); otherwise `None`.
         with_client: bool,
     }
 
@@ -570,7 +394,7 @@ mod tests {
 
         fn client(&self) -> Option<Arc<dyn AgentRpcClient>> {
             if self.with_client {
-                Some(Arc::new(NoopClient))
+                Some(Arc::new(FakeAgent::offline()))
             } else {
                 None
             }

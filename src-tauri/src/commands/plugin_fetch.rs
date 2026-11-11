@@ -51,6 +51,14 @@ impl FetchPolicy {
         allow_plain_http: true,
     };
 
+    /// Test-bridge builds only: an initial `http://` URL on the harness's
+    /// loopback fixture server (`TERMIHUB_TEST_HTTP_BASE`, #5388). Release
+    /// builds do not compile it.
+    #[cfg(feature = "test-bridge")]
+    pub const TEST_HTTP_BASE: FetchPolicy = FetchPolicy {
+        allow_plain_http: true,
+    };
+
     /// Validate `url` for this policy.
     pub fn check_url(self, url: &str) -> Result<(), String> {
         if self.allow_plain_http && url.starts_with("http://") {

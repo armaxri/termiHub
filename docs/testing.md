@@ -508,6 +508,21 @@ suite flakes only under load, add its module path to `HEAVY_FILTERS` in the scri
 then run `scripts/internal/ci-rust-tests.sh list` to confirm the partition is still
 exact.
 
+The phases run under [cargo-nextest](https://nexte.st) with the `ci` profile in
+[`.config/nextest.toml`](../.config/nextest.toml) (#5345). Every test gets a per-test
+timeout: it is reported SLOW after 60s and killed after 180s, which fails the run with the
+test's name (`TIMEOUT`) instead of a hung test eating the whole job. A few tests whose own
+deadline is longer get a longer kill there. The run never stops at the first failure, and
+each phase writes a JUnit report to `target/nextest/ci/junit-<phase>.xml` (uploaded as an
+artifact when the leg fails). Doc-tests still run under `cargo test --doc`. Nextest runs
+every test in its own process, so serial_test's in-process `#[serial(key)]` lock no longer
+serializes anything across tests: each key needs a nextest test group of the same name
+with `max-threads = 1` in `.config/nextest.toml`, and `ci-rust-tests.sh list` fails when one
+is missing. To run the suite the CI way locally, install the version pinned in
+[`.github/cargo-tools.json`](../.github/cargo-tools.json) (`cargo install --locked
+cargo-nextest@<version>`) and run `cargo nextest run --profile ci --workspace --all-features`.
+Without nextest the script falls back to `cargo test`.
+
 The Windows legs (Code Quality's `Run Tests (windows-latest)` and `agent.yml`'s
 post-merge `build-windows`) also stage the sideloaded ConPTY host (#4121) with
 `scripts/internal/fetch-conpty.sh --dest` and export its directory as
@@ -919,6 +934,44 @@ issue that tracks the error:
 `pattern` and the optional `nodeid` are Python regexes (`re.search`) against the
 error key and the test id. Delete the file in the PR that fixes the issue. The
 machinery tests are in `tests/system/tests/test_js_errors.py`.
+
+### Hermetic app profile and egress probe
+
+The app under test must not reach the internet (#5388). Three layers keep it
+off:
+
+1. **Profile.** Before every launch, `AppInstance` seeds the app's
+   `settings.json` with `updates.autoCheck=false` and
+   `pluginUpdateCheckEnabled=false` (`termihub_harness/profile_defaults.py`).
+   Only missing keys are added, so a test that seeds its own value keeps it.
+   `AppInstance(hermetic=False)` opts out. The backend honours
+   `autoCheck=false` for the startup check, too.
+2. **Loopback feeds.** A test that grades the update or plugin-index client
+   sets `TERMIHUB_TEST_HTTP_BASE=http://127.0.0.1:<port>` through
+   `extra_app_env`. The app then fetches `https://<host>/<path>` from
+   `<base>/<host>/<path>`, for example
+   `<base>/api.github.com/repos/armaxri/termiHub/releases/latest`. Only
+   loopback bases are accepted. The seam exists only in test-bridge builds, and
+   `scripts/internal/assert-no-test-bridge.sh` fails a release binary that
+   carries the variable's name. `tests/test_update_check_hermetic.py` is the
+   worked example.
+3. **Egress probe.** From a test's setup to the end of its call phase,
+   conftest samples the app PID's connected sockets with `psutil` every 0.2 s
+   (`termihub_harness/egress.py`). Destinations that were already connected
+   when the test started do not count. Fixture networks never count either:
+   loopback, RFC 1918, ULA, link-local and CGNAT. Every other destination is
+   matched against `tests/system/egress-allowlist.d/`. Sampling is best
+   effort, so a connection that opens and closes between two samples is
+   missed.
+
+`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
+(the default), `fail` and `off`. The report goes to the terminal summary, the
+GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
+entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
+a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
+`issue` and a `reason`. The machinery tests are in
+`tests/system/tests/test_egress.py` and `test_profile_defaults.py`.
 
 ### Docker Hub resilience in CI (#4614)
 
@@ -3206,7 +3259,8 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)** — Automated. src-tauri/src/files/transfer/persist_manager.rs::prune_local_paths_under_drops_staging_records_only (#3629); src-tauri/src/files/transfer/persist.rs::folder_paste_link_round_trips_and_drops_only_recorded_pastes / folder_pastes_round_trip_dedupe_and_cap; …
 - **Transfer Queue panel: rows, controls, minimized state (#1337)** — Automated + Release gate. tests/system/tests/test_transfer_queue.py::test_active_row_shows_rising_percent_and_active_controls / test_paused_row_swaps_pause_for_resume / test_failed_row_offers_retry_and_remove / test_cancel_removes_the_row_when_the_backend_confirms / test_cancel_all_is_enabled_only_while_a_row_is_pending / test_clear_completed_keeps_unfinished_rows / test_minimize_collapses_to_the_indicator_and_restores / test_real_sftp_paste_populates_the_transfer_queue; src/components/TransferQueue/TransferQueue.test.tsx, TransferEntry.test.tsx, TransferControls.test.tsx; … · gate: MT-UI-40
 - **Monitoring auto-reconnect on a mid-stream drop (#1230)** — Automated. core/tests/monitoring_fault.rs::mon_fault_01_paused_host_goes_stale_reconnects_and_recovers (docker-paused live SSH host: Stale → Reconnecting → Live); core/src/backends/ssh/monitoring.rs::collect_loop_emits_stale_reconnecting_then_live_on_recovery / collect_loop_emits_offline_when_reconnect_exhausted; core/src/monitoring/exec_provider.rs::mid_stream_drop_resolves_to_offline; …
-- **Design tokens: pill radius + muted text (#1406)** — Automated. src/styles/tokenDiscipline.test.ts 'has no fallback-less var(--token) reference to an undefined token', 'has no fallback-bearing var(--token, …) reference to an undefined token', 'defines the core tokens it depends on (sanity check)'; src/themes/contrast.test.ts (AA contrast of --text-muted on dark/light; Solarized intentionally excluded)
+- **Design tokens: pill radius + muted text (#1406)** — Automated. src/styles/tokenDiscipline.test.ts 'has no fallback-less var(--token) reference to an undefined token', 'has no fallback-bearing var(--token, …) reference to an undefined token', 'defines the core tokens it depends on (sanity check)'; src/themes/contrast.test.ts (AA contrast of --text-muted in all four built-in themes)
+- **Built-in theme contrast: text on accent + Solarized text roles (#5164, #5190)** — Automated. src/themes/contrast.test.ts 'text on accent (WCAG 2.2 AA, #5164)' (white on accentColor and accentHover >= 4.5:1, hover distinct from base, tab indicator and focus ring >= 3:1, all four themes), 'primary text contrast (WCAG 2.2 AA, #5190)', 'solarized text tokens are canonical palette colours (#5190)', plus the muted/secondary/row-state AA cases now graded for Solarized Dark and Light
 - **WSL shell-integration note (`/mnt/&lt;drive>` translation, #1029)** — Automated. tests/system/tests/test_windows_shells.py::TestWsl::test_wsl_file_browser_follows_cwd (integration lane, Windows+WSL; MT-LOCAL-19 scalar PROMPT_COMMAND); core/src/session/shell.rs::osc7_bash_handles_array_prompt_command; …
 - **macOS Finder Quick Actions / Services registration (#1369)** — Automated + Release gate. src-tauri/src/spawn/registry.rs::macos::tests (cfg macos): install_creates_one_workflow_bundle_per_entry, document_wflow_carries_the_spawn_command_and_service_metadata, info_plist_declares_nsservices_menu_item_and_owner_marker, send_file_types_map_show_for_targets, xml_special_characters_in_name_are_escaped, install_is_idempotent, reinstall_drops_removed_entries, uninstall_removes_our_bundles, uninstall_preserves_foreign_bundles (steps 2 and 5 file-level) · gate: MT-SHI-05
 - **Linux file-manager registration (#1370)** — Automated + Release gate. src-tauri/src/spawn/registry.rs::linux::tests (cfg linux, Linux CI): install_writes_xdg_desktop_and_refreshes_database, xdg_desktop_only_for_directory_entries, nautilus_installed_when_detected_and_enabled, nautilus_skipped_when_toggle_off_and_foreign_scripts_preserved, kde_skipped_when_not_detected, thunar_appends_action_preserving_foreign, thunar_reinstall_keeps_single_owned_action, thunar_preserves_inter_action_comments_and_whitespace_on_edit_and_remove, uninstall_removes_all_four_and_preserves_foreign_thunar_action (file content, 0o755 mode, foreign preservation) · gate: MT-SHI-06
