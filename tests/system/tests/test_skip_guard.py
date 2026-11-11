@@ -250,6 +250,9 @@ _WINDOWS_NO_DAEMON_SKIPS = [
         ("telnet", "telnet container fixtures"),
         ("vnc", "VNC container fixtures"),
         ("ftp", "FTP container fixture"),
+        # #5175: with the sidecar built on Windows, test_rdp.py reaches its
+        # container fixture instead of skipping on "RDP sidecar not built".
+        ("rdp", "RDP container fixture"),
     ]
 ] + [
     sg.Skip(
@@ -277,6 +280,31 @@ def test_bulk_windows_admits_container_fixture_skips_when_the_daemon_is_unreacha
         skips=_WINDOWS_NO_DAEMON_SKIPS,
         allowlist=sg.load_allowlist(),
     )
+    assert verdict.ok, verdict.problems
+
+
+@pytest.mark.parametrize("lane", ["bulk-macos", "bulk-windows"])
+@pytest.mark.parametrize("module", ["test_rdp.py", "test_rdp_sidecar.py"])
+def test_an_unbuilt_rdp_sidecar_fails_the_macos_and_windows_lanes(lane, module):
+    """#5175: build-system-test-app.sh builds the sidecar on every OS, so a
+    missing one on macOS or Windows is a build gap the lane must red on."""
+    unbuilt = sg.Skip(
+        f"tests/{module}::T::test_x",
+        "RDP sidecar not built: no termihub-rdp-helper; run scripts/internal/build-system-test-app.sh",
+    )
+    verdict = sg.evaluate(lane, collected=500, skips=[unbuilt], allowlist=sg.load_allowlist())
+    assert not verdict.ok
+    assert verdict.unexpected == [unbuilt]
+
+
+def test_bulk_macos_admits_the_rdp_container_fixture_without_docker():
+    """#5175: test_rdp.py's xrdp suite still needs a Linux container."""
+    skip = sg.Skip(
+        "tests/test_rdp.py::T::test_x",
+        "RDP container fixture unavailable: no container runtime available — need Docker "
+        "or Podman (override the choice with CONTAINER_CMD=podman)",
+    )
+    verdict = sg.evaluate("bulk-macos", collected=500, skips=[skip], allowlist=sg.load_allowlist())
     assert verdict.ok, verdict.problems
 
 
