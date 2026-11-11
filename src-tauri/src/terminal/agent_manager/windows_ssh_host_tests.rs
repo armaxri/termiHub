@@ -83,6 +83,9 @@ use termihub_core::ipc::ndjson::LineSplitter;
 /// Update rollback through each `DefaultShell` (#5219).
 mod rollback;
 
+/// Update while a session daemon holds the installed exe (#5254).
+mod daemon_update;
+
 const PORT_ENV: &str = "TERMIHUB_NATIVE_SSHD_PORT";
 const USER_ENV: &str = "TERMIHUB_NATIVE_SSHD_USER";
 const KEY_ENV: &str = "TERMIHUB_NATIVE_SSHD_KEY";
