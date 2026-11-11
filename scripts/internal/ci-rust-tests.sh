@@ -34,6 +34,18 @@
 # not. Filters are libtest substring filters matched against the full test
 # path (e.g. `backends::local_shell::tests::foo`), across every binary.
 #
+# The non-doc tests run under cargo-nextest (`cargo nextest run --profile ci`,
+# #5345): every test gets a per-test timeout (.config/nextest.toml: SLOW after
+# 60s, killed and failed by name after 180s), the run never stops at the first
+# failure, and each phase leaves a JUnit report at
+# target/nextest/ci/junit-<phase>.xml. Nextest accepts libtest's filter syntax
+# (`-- --skip F` / `F`, substring against the full test path), so the
+# partition below is unchanged; it runs each test in its own process, so the
+# `#[serial(key)]` groups are mirrored as nextest test groups (`list` checks
+# every key has one). CI requires nextest (pinned in .github/cargo-tools.json);
+# a local run without it falls back to `cargo test`. Doc-tests stay on
+# `cargo test --doc` (nextest does not run them).
+#
 # CI_RUST_TESTS_COVERAGE=1 runs bulk, heavy and serial under cargo-llvm-cov
 # (`cargo llvm-cov --no-report` in place of `cargo test`), so a
 # coverage lane keeps the same partition and the same thread caps. The phases'
@@ -54,7 +66,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,64p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Contention-sensitive tests, as libtest substring filters. Add a module here
@@ -107,11 +119,25 @@ SERIAL_TIMEOUT_SECS="${CI_SERIAL_TIMEOUT_SECS:-1200}"
 SPLIT_SERIAL="${CI_RUST_TESTS_SPLIT_SERIAL:-0}"
 COVERAGE="${CI_RUST_TESTS_COVERAGE:-0}"
 
-# The command each run phase invokes: plain `cargo test`, or the instrumented
-# run of a coverage lane (profiles accumulate across phases; see the header).
+NEXTEST_PROFILE="${CI_NEXTEST_PROFILE:-ci}"
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+
+# The runner each run phase uses: nextest (see the header), or libtest via
+# `cargo test` -- the instrumented coverage run (profiles accumulate across
+# phases; see the header), or a local run without nextest installed.
 if [ "$COVERAGE" = "1" ]; then
+  runner=libtest
   test_cmd=(cargo llvm-cov --no-report)
+elif cargo nextest --version >/dev/null 2>&1; then
+  runner=nextest
+  test_cmd=(cargo nextest run --profile "$NEXTEST_PROFILE" --no-fail-fast --no-tests=warn)
+elif [ -n "${CI:-}" ]; then
+  echo "ci-rust-tests.sh: cargo-nextest is required on CI (#5345); install the version" >&2
+  echo "  pinned in .github/cargo-tools.json (taiki-e/install-action)" >&2
+  exit 1
 else
+  echo "note: cargo-nextest not found; running under plain cargo test (no per-test timeout)"
+  runner=libtest
   test_cmd=(cargo test)
 fi
 
@@ -151,6 +177,42 @@ if [ "$SPLIT_SERIAL" = "1" ]; then
     serial_skip_args+=(--skip "$filter")
   done
 fi
+
+# Set `run` to the phase's test command. $1: thread cap ("" = the runner's
+# default); $2: 1 = do not capture test output (serial phase); the rest: libtest
+# filter args, which nextest accepts after `--` too. Only the thread and capture
+# flags differ: nextest takes them before `--`, libtest after.
+set_run() {
+  local threads="$1" nocapture="$2"
+  shift 2
+  local before=() after=()
+  if [ "$runner" = "nextest" ]; then
+    if [ -n "$threads" ]; then before+=(--test-threads "$threads"); fi
+    if [ "$nocapture" = "1" ]; then before+=(--no-capture); fi
+  else
+    if [ -n "$threads" ]; then after+=(--test-threads="$threads"); fi
+    if [ "$nocapture" = "1" ]; then after+=(--nocapture); fi
+  fi
+  run=("${test_cmd[@]}" "${selection[@]}" "${targets[@]}" ${before[@]+"${before[@]}"}
+    -- ${after[@]+"${after[@]}"} "$@")
+}
+
+# Keep this phase's nextest JUnit report (each run overwrites junit.xml).
+keep_junit() {
+  local dir="$TARGET_DIR/nextest/$NEXTEST_PROFILE"
+  if [ "$runner" = "nextest" ] && [ -f "$dir/junit.xml" ]; then
+    mv -f "$dir/junit.xml" "$dir/junit-${phase}.xml"
+  fi
+}
+
+# Run the phase's tests; the exit status is the runner's.
+run_tests() {
+  set_run "$@"
+  local status=0
+  "${run[@]}" || status=$?
+  keep_junit
+  return "$status"
+}
 
 cores() {
   getconf _NPROCESSORS_ONLN 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-unknown}"
@@ -215,21 +277,68 @@ check_build_script_watches() {
 
 # `cargo test -- --list` output reduced to sorted "<binary> <test>" lines, so
 # identical test names in different binaries stay distinct.
-list_tests() {
+list_libtest() {
   CARGO_TERM_COLOR=never LC_ALL=C cargo test "${selection[@]}" "${targets[@]}" -- --list --format terse "$@" 2>&1 |
     awk '/^ *Running /{bin=$NF} / (test|benchmark)$/{sub(/: (test|benchmark)$/, ""); print bin, $0}' |
     sed -E 's/-[0-9a-f]{16}(\.exe)?\)$/)/' |
     LC_ALL=C sort
 }
 
+# The same for nextest: sorted "<binary-id> <test>" lines, ignored tests
+# included (libtest lists them too), with nextest's own filter matching.
+list_nextest() {
+  CARGO_TERM_COLOR=never LC_ALL=C cargo nextest list "${selection[@]}" "${targets[@]}" \
+    --run-ignored all --message-format oneline -- "$@" 2>/dev/null |
+    LC_ALL=C sort
+}
+
+# Partition with the runner the phases use, so `list` proves what CI runs.
+list_tests() {
+  if [ "$runner" = "nextest" ]; then
+    list_nextest "$@"
+  else
+    list_libtest "$@"
+  fi
+}
+
+# Every `#[serial(key)]` in the workspace needs a nextest test group of the same
+# name with max-threads = 1, assigned by an override in .config/nextest.toml:
+# nextest runs each test in its own process, where serial_test's in-process
+# lock serializes nothing (#5345). A bare `#[serial]` has no name to map, so it
+# is rejected too.
+check_serial_groups() {
+  local config=".config/nextest.toml" key missing=0 bare
+  bare="$(git grep -nE '^[[:space:]]*#\[(serial_test::)?serial\]' -- '*.rs' ':!rdp-sidecar' || true)"
+  if [ -n "$bare" ]; then
+    echo "a bare #[serial] cannot map to a nextest test group; give it a key:" >&2
+    echo "$bare" >&2
+    missing=1
+  fi
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    if ! grep -qE "^${key} *= *\{ *max-threads *= *1 *\}" "$config" ||
+      ! grep -qF "test-group = '${key}'" "$config"; then
+      echo "#[serial(${key})] has no max-threads = 1 test group assigned in ${config}" >&2
+      missing=1
+    fi
+  done < <(
+    git grep -hoE '^[[:space:]]*#\[(serial_test::)?serial\([A-Za-z0-9_, ]+\)\]' -- '*.rs' ':!rdp-sidecar' |
+      sed -E 's/.*serial\(([^)]*)\).*/\1/' | tr ',' '\n' | tr -d ' ' | LC_ALL=C sort -u
+  )
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+  echo "serial groups: every #[serial(key)] has a nextest test group"
+}
+
 case "$phase" in
   bulk)
-    echo "runner cores: $(cores); bulk phase: default parallelism, skipping ${#HEAVY_FILTERS[@]} heavy filter(s)"
+    echo "runner cores: $(cores); runner: ${runner}; bulk phase: default parallelism, skipping ${#HEAVY_FILTERS[@]} heavy filter(s)"
     if [ "$SPLIT_SERIAL" = "1" ]; then
       echo "  also skipping the serial set (runs in its own job): ${SERIAL_FILTERS[*]}"
     fi
     check_build_script_watches
-    "${test_cmd[@]}" "${selection[@]}" "${targets[@]}" -- "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
+    run_tests "" 0 "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
     if [ "$COVERAGE" = "1" ]; then
       echo "  doc-tests skipped (coverage run; see the header)"
     else
@@ -237,13 +346,12 @@ case "$phase" in
     fi
     ;;
   heavy)
-    echo "runner cores: $(cores); heavy phase: --test-threads=${HEAVY_TEST_THREADS}"
+    echo "runner cores: $(cores); runner: ${runner}; heavy phase: --test-threads=${HEAVY_TEST_THREADS}"
     printf '  filter: %s\n' "${HEAVY_FILTERS[@]}"
-    "${test_cmd[@]}" "${selection[@]}" "${targets[@]}" -- \
-      --test-threads="$HEAVY_TEST_THREADS" "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
+    run_tests "$HEAVY_TEST_THREADS" 0 "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
     ;;
   serial)
-    echo "runner cores: $(cores); serial phase: --test-threads=1, expecting >= ${SERIAL_MIN_TESTS} test(s), deadline ${SERIAL_TIMEOUT_SECS}s"
+    echo "runner cores: $(cores); runner: ${runner}; serial phase: --test-threads=1, expecting >= ${SERIAL_MIN_TESTS} test(s), deadline ${SERIAL_TIMEOUT_SECS}s"
     printf '  filter: %s\n' "${SERIAL_FILTERS[@]}"
     log="$(mktemp)"
     trap 'rm -f "$log"' EXIT
@@ -254,8 +362,8 @@ case "$phase" in
     # pipe then never reaches EOF: all 10 tests passed in 16s and the job still
     # hung until its 60-minute timeout (#3615, first run). A file has no EOF to
     # wait for, so we poll cargo itself and stream the log while it runs.
-    "${test_cmd[@]}" "${selection[@]}" "${targets[@]}" -- \
-      --test-threads=1 --nocapture "${SERIAL_FILTERS[@]}" >"$log" 2>&1 &
+    set_run 1 1 "${SERIAL_FILTERS[@]}"
+    "${run[@]}" >"$log" 2>&1 &
     cargo_pid=$!
     streamed=0
     stream_log() {
@@ -325,9 +433,22 @@ case "$phase" in
     ;;
   list)
     export LC_ALL=C
+    check_serial_groups
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
     list_tests >"$tmp/all"
+    if [ "$runner" = "nextest" ]; then
+      # Nextest must find exactly the tests libtest lists (names, with
+      # multiplicity), so moving to it dropped or added none.
+      list_libtest | cut -d' ' -f2- | LC_ALL=C sort >"$tmp/libtest-names"
+      cut -d' ' -f2- "$tmp/all" | LC_ALL=C sort >"$tmp/nextest-names"
+      if ! cmp -s "$tmp/libtest-names" "$tmp/nextest-names"; then
+        echo "nextest and libtest list different tests:" >&2
+        diff "$tmp/libtest-names" "$tmp/nextest-names" >&2 || true
+        exit 1
+      fi
+      echo "nextest lists the same $(wc -l <"$tmp/all" | tr -d ' ') tests as libtest"
+    fi
     list_tests "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} >"$tmp/bulk"
     list_tests "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} >"$tmp/heavy"
     : >"$tmp/serial"
