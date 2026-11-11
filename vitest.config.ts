@@ -76,6 +76,9 @@ export default defineConfig({
       //     SplitView.tsx 33.6 -> 92.6 % branches; floored ~3-4 points below)
       //   src/components/OpenConnections/** 92.01 / 81.86 / 91.84 / 93.24 (2026-11-11,
       //     #5275; OpenConnectionsModal.tsx 71.6 -> 94.3 % lines; floored ~3 points below)
+      //   src/components/Settings/** 86.93 / 84.35 / 84.12 / 88.53 (2026-11-11, #5304;
+      //     FileTypeSettings 60 -> 100 %, PortableModeSettings 61.4 -> 98.6 % lines;
+      //     floored ~3 points below)
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
       // recursively the subtree is only ~85%, so it is not uniformly covered.)
       // Raise a floor (never lower) as its directory's coverage climbs.
@@ -125,6 +128,12 @@ export default defineConfig({
           branches: 78.5,
           functions: 88.5,
           lines: 90,
+        },
+        "src/components/Settings/**": {
+          statements: 84,
+          branches: 81,
+          functions: 81,
+          lines: 85.5,
         },
         "src/store/*Bridge.ts": {
           statements: 93.5,
