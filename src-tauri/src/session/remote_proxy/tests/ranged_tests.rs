@@ -19,7 +19,7 @@ use super::*;
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
-fn types_reply(type_id: &str) -> serde_json::Value {
+pub(super) fn types_reply(type_id: &str) -> serde_json::Value {
     json!({
         "types": [{
             "typeId": type_id,

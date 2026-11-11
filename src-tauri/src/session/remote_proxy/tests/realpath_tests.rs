@@ -28,14 +28,14 @@ const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STA
 /// `<root>/data/f` (and the folder `<root>/data/sub`), reachable through
 /// the symlinked folder `<root>/link`. Unix-only, like the symlink tests.
 #[cfg(unix)]
-struct Tree {
+pub(super) struct Tree {
     _dir: tempfile::TempDir,
     root: String,
 }
 
 #[cfg(unix)]
 impl Tree {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = std::fs::canonicalize(dir.path())
             .expect("canonical tempdir")
@@ -47,7 +47,7 @@ impl Tree {
         Self { _dir: dir, root }
     }
 
-    fn path(&self, rel: &str) -> String {
+    pub(super) fn path(&self, rel: &str) -> String {
         format!("{}/{rel}", self.root)
     }
 }
@@ -65,7 +65,7 @@ fn agent_realpath(path: &str) -> Option<String> {
 
 /// An agent double over the real filesystem. With `realpath: false` it is an
 /// agent from before 0.36.0, which answers that method "not found".
-fn serve_host(realpath: bool) -> Box<Responder> {
+pub(super) fn serve_host(realpath: bool) -> Box<Responder> {
     Box::new(move |method, params| {
         let path = params["path"].as_str().unwrap_or_default().to_string();
         let fail = |message: String| Some(Err(TerminalError::RemoteError(message)));
@@ -124,7 +124,7 @@ async fn agent(realpath: bool) -> (Arc<MockAgentRpcClient>, RemoteProxy) {
     (mock, proxy)
 }
 
-fn methods(mock: &MockAgentRpcClient) -> Vec<String> {
+pub(super) fn methods(mock: &MockAgentRpcClient) -> Vec<String> {
     mock.sent_requests
         .lock()
         .unwrap()
