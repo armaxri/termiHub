@@ -117,7 +117,7 @@ def persisted_record(config_dir: Path, file_name: str) -> Optional[dict[str, Any
 @pytest.mark.integration
 @pytest.mark.category("sftp")
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestTransferRelaunch(
     TerminalUi,
     TabsUi,

@@ -1,8 +1,8 @@
 """The dual-pane transfer view against a live SSH host (PROD-007, #3558, #4007).
 
 ``TransferView.test.tsx`` covers the view with every IPC mocked. This drives the
-real app against the Docker ``ssh-password`` fixture (on macOS, the native sshd
-fixture, #5421) and checks the bytes, not just the listing:
+real app against the Docker ``ssh-password`` fixture (on macOS and Windows, the
+native sshd fixture, #5421, #5449) and checks the bytes, not just the listing:
 
 - **upload via the arrow** — a local file selected in the left pane and copied
   with the → button lands on the host, byte for byte;
@@ -67,7 +67,7 @@ def pane_row(side: str, name: str) -> str:
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestTransferViewLive(
     TerminalUi,
     TabsUi,

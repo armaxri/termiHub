@@ -47,6 +47,12 @@
     jump-start drop and restore only the bastion (and every session riding
     it); jump-sessions prints how many connections it is serving.
 
+    sessions / kill-sessions (#5449) let the system tests drop a connection
+    server-side, as the Docker and macOS twins do: sessions prints the main
+    sshd's master PID and every process below it as JSON (pid, ppid, name,
+    command line); kill-sessions -Pids '<pid> ...' ends each named connection
+    (a direct child of that master, nothing else) and then its processes.
+
     stop / start take the listener down and bring it back (state kept); stop
     also ends the sessions the fixture's sshd spawned. down removes the
     tasks, the test user and its profile, and the state dir. On any start or
@@ -64,7 +70,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('up', 'start', 'stop', 'env', 'down', 'jump-start', 'jump-stop', 'jump-sessions')]
+    [ValidateSet('up', 'start', 'stop', 'env', 'down', 'jump-start', 'jump-stop', 'jump-sessions',
+        'sessions', 'kill-sessions')]
     [string]$Action,
 
     [string]$Dir = (Join-Path $env:ProgramData 'termihub-native-sshd'),
@@ -80,7 +87,9 @@ param(
     [ValidateSet('cmd', 'powershell', 'bash')]
     [string]$DefaultShell = '',
 
-    [switch]$JumpHost
+    [switch]$JumpHost,
+
+    [string]$Pids = ''
 )
 
 Set-StrictMode -Version Latest
@@ -469,6 +478,73 @@ function Get-GatewaySessionCount {
             Where-Object { $_.Name -like 'sshd*' }).Count
 }
 
+function Get-DescendantProcess([int]$RootPid) {
+    # Every process below $RootPid, of any name, collected by parent PID.
+    $all = @(Get-CimInstance -ClassName Win32_Process)
+    $found = [Collections.Generic.List[object]]::new()
+    $seen = [Collections.Generic.HashSet[int]]::new()
+    $frontier = @($RootPid)
+    while ($frontier.Count -gt 0) {
+        $next = @($all | Where-Object {
+                $frontier -contains [int]$_.ParentProcessId -and [int]$_.ProcessId -ne $RootPid -and
+                -not $seen.Contains([int]$_.ProcessId)
+            })
+        foreach ($proc in $next) {
+            [void]$seen.Add([int]$proc.ProcessId)
+            $found.Add($proc)
+        }
+        $frontier = @($next | ForEach-Object { [int]$_.ProcessId })
+    }
+    # Unrolled on return: callers wrap in @(), so none yields an empty array.
+    return $found.ToArray()
+}
+
+function Write-FixtureSession {
+    # JSON for the harness (termihub_harness/native_ssh.py), which picks the
+    # login user's terminal connections out of it.
+    $masterPid = Get-SshdMasterPid
+    $procs = @()
+    if ($null -ne $masterPid) {
+        $procs = @(Get-DescendantProcess $masterPid | ForEach-Object {
+                [ordered]@{
+                    pid  = [int]$_.ProcessId
+                    ppid = [int]$_.ParentProcessId
+                    name = [string]$_.Name
+                    cmd  = [string]$_.CommandLine
+                }
+            })
+    }
+    Write-Output (ConvertTo-Json -InputObject ([ordered]@{ master = $masterPid; processes = $procs }) -Depth 4 -Compress)
+}
+
+function Stop-FixtureSession([string]$PidList) {
+    # Each PID must name a connection of the main sshd (a direct child of its
+    # master), so nothing else on the host is ever touched. The connection's
+    # process goes first, so the client sees the link drop rather than a
+    # clean shell exit; the processes below it (collected before) follow.
+    $masterPid = Get-SshdMasterPid
+    if ($null -eq $masterPid) {
+        throw 'the fixture sshd is not running'
+    }
+    $tokens = @($PidList -split '[\s,]+' | Where-Object { $_ })
+    if ($tokens.Count -eq 0) {
+        throw 'kill-sessions needs -Pids'
+    }
+    $below = @(Get-DescendantProcess $masterPid)
+    foreach ($token in $tokens) {
+        $id = [int]$token
+        $connection = @($below | Where-Object { [int]$_.ProcessId -eq $id -and [int]$_.ParentProcessId -eq $masterPid })
+        if ($connection.Count -eq 0) {
+            throw "pid $id is no connection of the fixture sshd (master $masterPid)"
+        }
+        $victims = @($id) + @(Get-DescendantProcess $id | ForEach-Object { [int]$_.ProcessId })
+        foreach ($victim in $victims) {
+            Stop-Process -Id $victim -Force -ErrorAction SilentlyContinue
+        }
+        Write-FixtureLog "dropped connection $id (pids $($victims -join ' '))"
+    }
+}
+
 function Test-Fixture([int]$TcpPort, [hashtable]$Sshd = $MainSshd) {
     $ssh = Join-Path $OpenSshDir 'ssh.exe'
     $opts = @('-i', $ClientKey, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
@@ -734,6 +810,8 @@ switch ($Action) {
     'jump-start' { Assert-Jump; Resume-Fixture $JumpSshd }
     'jump-stop' { Assert-Jump; Suspend-Fixture $JumpSshd; Write-FixtureLog "bastion sshd stopped (state kept in $Dir)" }
     'jump-sessions' { Assert-Jump; Write-Output (Get-GatewaySessionCount) }
+    'sessions' { Assert-State; Write-FixtureSession }
+    'kill-sessions' { Assert-State; Stop-FixtureSession $Pids }
     'env' { Assert-State; Write-FixtureEnvironment $GitHubEnv.IsPresent }
     'down' { Invoke-Down }
 }

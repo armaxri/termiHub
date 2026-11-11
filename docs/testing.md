@@ -1265,6 +1265,16 @@ the user-owned process drops the connection (checked on the unprivileged
 fixture), so the root-owned handler of a `--password-login` fixture is left
 alone. Off the native target it returns the Docker `SshServerControl` as before.
 
+On Windows (#5449) the same twin runs its steps in the fixture's Git Bash
+login shell. The script goes over stdin to `sh -s`, because Win32-OpenSSH does
+not hand quotes in an exec command to the `DefaultShell` intact. Paths are in
+SFTP form (`/C:/Users/termihubssh`, what the app's browser shows), and the twin
+passes them to Git Bash as `C:/...`. The connections run as SYSTEM, so the
+elevated PowerShell fixture lists them (`sessions`, as JSON) and ends them
+(`kill-sessions`, only direct children of its own sshd master). A connection
+counts when a non-sshd process runs below it and none carries the twin's own
+exec marker.
+
 **Deployed agent (#5424, macOS).** `remote_agent_fixtures` builds the
 `--features test-hooks` agent for the host
 (`scripts/internal/build-system-test-agent.sh --host`, into
@@ -1296,10 +1306,10 @@ sshd of a `--password-login` fixture and only runs on CI.
 
 Which suites run where:
 
-| Suite(s)                                                                                                                                                                                                                                                                                                                                                        | macOS | Windows                                                                                                                                                |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth, session output), `test_ssh_tunnels.py`, `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, SSH connect flash, jump host                                  | yes   | yes                                                                                                                                                    |
-| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring, server disconnect), SFTP VS Code handoff, `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py`, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below) | yes   | no: they check or control the server with POSIX tools (`NativeSshServerControl` is macOS only), read the remote's system stats, or deploy a host agent |
+| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | macOS | Windows                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth, session output, server disconnect), `test_ssh_tunnels.py`, `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, SSH connect flash, jump host, `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py` | yes   | yes                                                                                                                                                    |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring), SFTP VS Code handoff, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below)                                                                                                                                                                                                                                                              | yes   | no (#5449): the remote's system stats, the browser following a `cd` (a Windows host is followed only through the shell hook), or a deployed host agent |
 
 **What stays on the Linux lane in `tests/system/`.** These suites still skip on
 macOS and Windows. Each skip reason has a capped fragment in
