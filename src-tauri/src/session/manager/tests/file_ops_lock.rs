@@ -206,7 +206,7 @@ async fn manager_with_parked_listing() -> (
 ) {
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
-        Arc::new(NullAgent),
+        Arc::new(FakeAgent::offline()),
     ));
     let (browse_conn, browse) = browsing();
     let (other_conn, other) = browsing();

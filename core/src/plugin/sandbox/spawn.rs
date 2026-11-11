@@ -159,6 +159,10 @@ fn spawn_checked(
             ));
         }
         Some(pinned) => pinned.load_path().map_err(|e| unavailable(e.to_string()))?,
+        // A runner that does not exist cannot start: refuse it before the
+        // Windows confinement creates and grants the plugin's AppContainer
+        // profile, OS-wide state that would outlive the failed spawn (#5345).
+        None if !runner.is_file() => return Err(unavailable("not found".to_owned())),
         None => runner.to_owned(),
     };
     let confinement = confinement(&exec_path, sandbox)?;
@@ -624,6 +628,41 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let missing = tmp.path().join("no-such-runner");
         match spawn_runner(&missing, &ResourceLimits::default(), None) {
+            Err(HostError::RunnerUnavailable { path, .. }) => assert_eq!(path, missing),
+            Err(other) => panic!("expected RunnerUnavailable, got {other:?}"),
+            Ok(_) => panic!("spawning a missing runner succeeded"),
+        }
+    }
+
+    /// A missing runner is refused before any sandbox setup (#5345): no
+    /// AppContainer profile is created or granted for a runner that cannot
+    /// start. Parallel test processes loading one plugin id with a missing
+    /// runner otherwise raced on that OS-wide profile.
+    #[test]
+    fn a_missing_runner_is_unavailable_before_any_sandbox_setup() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let install = tmp.path().join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        let policy = SandboxPolicy {
+            install_dir: install.to_str().unwrap().to_owned(),
+            ..SandboxPolicy::default()
+        };
+        let id = format!("core-spawn-missing-{}", std::process::id());
+        let missing = tmp.path().join("no-such-runner");
+        let sandbox = RunnerSandbox {
+            plugin_id: &id,
+            policy: &policy,
+        };
+        let result = spawn_runner(&missing, &ResourceLimits::default(), Some(sandbox));
+        #[cfg(windows)]
+        {
+            let created = termihub_plugin_runner::appcontainer::profile_exists(&id).unwrap();
+            if created {
+                let _ = termihub_plugin_runner::appcontainer::delete_profile_revoking(&id, &[]);
+            }
+            assert!(!created, "no AppContainer profile for a missing runner");
+        }
+        match result {
             Err(HostError::RunnerUnavailable { path, .. }) => assert_eq!(path, missing),
             Err(other) => panic!("expected RunnerUnavailable, got {other:?}"),
             Ok(_) => panic!("spawning a missing runner succeeded"),

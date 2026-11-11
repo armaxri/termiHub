@@ -24,8 +24,8 @@ use super::open_tests::{
     advance, agent_refusing, app_with, count, maps_with_session, on_agent, Overrides,
 };
 use super::*;
-use crate::network::test_support::FakeAgent;
 use crate::session::agent_monitor_stops;
+use crate::test_support::FakeAgent;
 
 /// The interval of the last `connection.monitoring.subscribe` sent.
 fn last_subscribe_interval(agent: &FakeAgent) -> Option<u64> {

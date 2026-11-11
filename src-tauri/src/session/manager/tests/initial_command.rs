@@ -128,7 +128,10 @@ fn probing_manager(
             })
         }),
     );
-    (SessionManager::new(registry, Arc::new(NullAgent)), writes)
+    (
+        SessionManager::new(registry, Arc::new(FakeAgent::offline())),
+        writes,
+    )
 }
 
 async fn open(manager: &SessionManager, emitter: &MockEventEmitter) -> String {
@@ -302,7 +305,10 @@ fn recording_manager(
             })
         }),
     );
-    (SessionManager::new(registry, Arc::new(NullAgent)), writes)
+    (
+        SessionManager::new(registry, Arc::new(FakeAgent::offline())),
+        writes,
+    )
 }
 
 /// Typed as the initial command; its text never contains what it prints.

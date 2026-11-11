@@ -103,7 +103,7 @@ describe("KeyboardSettings", () => {
     });
 
     expect(exportCheatSheet).toHaveBeenCalledOnce();
-    expect(exportCheatSheet).toHaveBeenCalledWith("current");
+    expect(exportCheatSheet).toHaveBeenCalledWith("current", { experimental: false });
   });
 
   it("exports the all-platforms cheat sheet when the option is checked (#4711)", async () => {
@@ -124,7 +124,7 @@ describe("KeyboardSettings", () => {
       ).click();
     });
 
-    expect(exportCheatSheet).toHaveBeenCalledWith("all");
+    expect(exportCheatSheet).toHaveBeenCalledWith("all", { experimental: false });
   });
 
   it("filters bindings by search query", async () => {
