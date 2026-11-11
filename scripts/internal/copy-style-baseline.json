@@ -1,30 +1,4 @@
 {
-  "src/components/ActivityBar/ActivityBar.tsx": {
-    "sentence-case": {
-      "File Browser": 1,
-      "Network Tools": 1,
-      "Recent Sessions": 1,
-      "SSH Tunnels": 1
-    }
-  },
-  "src/components/AgentUpdateBanner/AgentUpdateBanner.tsx": {
-    "acknowledgement": {
-      "Dismiss": 1
-    },
-    "sentence-case": {
-      "Apply Now": 1
-    }
-  },
-  "src/components/CommandPalette/CommandPalette.tsx": {
-    "sentence-case": {
-      "Command Palette": 1,
-      "Launch Workspace: {…}": 1,
-      "Run Macro: {…}": 1,
-      "Run Workflow on Broadcast Group": 1,
-      "Run Workflow on Broadcast Group ( {…} {…} )…": 1,
-      "Run Workflow: {…}": 1
-    }
-  },
   "src/components/ConnectionEditor/AgentSettingsForm.tsx": {
     "sentence-case": {
       "Default Shell": 1,
@@ -86,34 +60,6 @@
       "Choose Icon": 1
     }
   },
-  "src/components/Diagnostics/AgentCrashReportNotice.tsx": {
-    "acknowledgement": {
-      "Dismiss": 1
-    },
-    "sentence-case": {
-      "Export Diagnostics…": 1,
-      "View Report": 1
-    }
-  },
-  "src/components/Diagnostics/CrashReportNotice.tsx": {
-    "acknowledgement": {
-      "Dismiss": 1
-    },
-    "sentence-case": {
-      "View Report": 1
-    }
-  },
-  "src/components/Diagnostics/CrashReportViewer.tsx": {
-    "sentence-case": {
-      "Crash Report": 1,
-      "Export Diagnostics…": 1
-    }
-  },
-  "src/components/Diagnostics/DiagnosticsExportDialog.tsx": {
-    "sentence-case": {
-      "Export Diagnostics": 1
-    }
-  },
   "src/components/DynamicForm/agentSchema.ts": {
     "sentence-case": {
       "Auth Method": 1,
@@ -122,120 +68,6 @@
       "SSH Agent": 1,
       "SSH Key": 1,
       "Update Strategy": 1
-    }
-  },
-  "src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx": {
-    "sentence-case": {
-      "Edit Service": 1,
-      "I Understand": 1,
-      "New Service": 1,
-      "Root Directory": 1,
-      "Username / Password": 1
-    }
-  },
-  "src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx": {
-    "sentence-case": {
-      "New Service": 1
-    }
-  },
-  "src/components/ExportImport/ImportDialog.tsx": {
-    "acknowledgement": {
-      "Done": 1
-    },
-    "sentence-case": {
-      "Import Connections": 1,
-      "Import with Credentials": 1,
-      "Skip Credentials": 1
-    }
-  },
-  "src/components/ExportImport/MobaxtermGlobalAppearanceSection.tsx": {
-    "us-spelling": {
-      "” from MobaXterm’s colours and use it": 1
-    }
-  },
-  "src/components/FileEditor/FileEditor.tsx": {
-    "sentence-case": {
-      "Save As…": 1,
-      "Save File": 1
-    }
-  },
-  "src/components/KeyboardShortcuts/ShortcutsOverlay.tsx": {
-    "sentence-case": {
-      "Keyboard Shortcuts": 1
-    }
-  },
-  "src/components/MacroSidebar/MacroEditorDialog.tsx": {
-    "sentence-case": {
-      "Add Step": 1,
-      "Edit Macro": 1,
-      "New Macro": 1
-    }
-  },
-  "src/components/MacroSidebar/MacroSidebar.tsx": {
-    "sentence-case": {
-      "New Macro": 1,
-      "Record New Macro": 1
-    }
-  },
-  "src/components/NetworkTools/DnsLookupPanel.tsx": {
-    "cancel-left": {
-      "Export | Cancel | Run": 1
-    }
-  },
-  "src/components/NetworkTools/NetworkToolsSidebar.tsx": {
-    "sentence-case": {
-      "DNS Lookup…": 1,
-      "New Monitor": 1,
-      "Ping Host…": 1,
-      "Ping Sweep…": 1,
-      "Scan Ports…": 1,
-      "View Open Ports": 1
-    }
-  },
-  "src/components/NetworkTools/OpenPortsPanel.tsx": {
-    "sentence-case": {
-      "Local Address": 1
-    }
-  },
-  "src/components/NetworkTools/PingSweepPanel.tsx": {
-    "sentence-case": {
-      "Subnet / Range": 1
-    }
-  },
-  "src/components/NetworkTools/TraceroutePanel.tsx": {
-    "sentence-case": {
-      "Max Hops": 1
-    }
-  },
-  "src/components/NetworkTools/WolPanel.tsx": {
-    "sentence-case": {
-      "MAC Address": 1,
-      "Save Current": 1,
-      "Save Wake-on-LAN Device": 1
-    }
-  },
-  "src/components/OpenConnections/OpenConnectionsModal.tsx": {
-    "us-spelling": {
-      "All transfers cancelled": 1,
-      "Connect cancelled": 1,
-      "Transfer cancelled": 1
-    }
-  },
-  "src/components/OpenConnections/XServerSetupContent.tsx": {
-    "sentence-case": {
-      "Install App Installer": 1
-    }
-  },
-  "src/components/Plugins/PluginInstallDialog.tsx": {
-    "sentence-case": {
-      "Install Plugin": 1
-    }
-  },
-  "src/components/Plugins/pluginPresentation.ts": {
-    "sentence-case": {
-      "Protocol Parser": 1,
-      "Status Bar Widget": 1,
-      "Terminal Backend": 1
     }
   },
   "src/components/RecentSessionsSidebar/RecentSessionsSidebar.tsx": {
@@ -248,12 +80,6 @@
       "Save Connection": 1,
       "Save as Connection": 1,
       "Set Icon": 1
-    }
-  },
-  "src/components/Schedules/ScheduleEditorDialog.tsx": {
-    "sentence-case": {
-      "Edit Schedule": 1,
-      "New Schedule": 1
     }
   },
   "src/components/SessionRestoreDialog.tsx": {
@@ -572,103 +398,9 @@
       "Install Now": 1
     }
   },
-  "src/components/Sidebar/AgentNode.tsx": {
-    "us-spelling": {
-      "Connect cancelled": 1
-    }
-  },
-  "src/components/Sidebar/AgentSetupDialog.tsx": {
-    "sentence-case": {
-      "Cancel Setup": 1,
-      "Setup Agent: {…}": 1,
-      "Start Setup": 1
-    },
-    "us-spelling": {
-      "Cancelling agent deploy to {…} …": 1,
-      "Cancelling…": 1
-    }
-  },
-  "src/components/Sidebar/ConfirmDeleteDialog.tsx": {
-    "sentence-case": {
-      "Confirm Delete": 1
-    }
-  },
-  "src/components/Sidebar/ConnectionErrorDialog.tsx": {
-    "one-primary": {
-      "Setup Agent | Force Reconnect": 1
-    },
-    "sentence-case": {
-      "Force Reconnect": 1,
-      "Setup Agent": 1
-    }
-  },
-  "src/components/Sidebar/ConnectionList.tsx": {
-    "sentence-case": {
-      "Connect Anyway": 1,
-      "Insecure Connection": 1,
-      "New Connection": 1,
-      "New Folder": 1
-    }
-  },
-  "src/components/Sidebar/ConnectionsEmptyState.tsx": {
-    "sentence-case": {
-      "New Connection": 1
-    }
-  },
-  "src/components/Sidebar/FileBrowser.tsx": {
-    "acknowledgement": {
-      "Dismiss": 1
-    },
-    "sentence-case": {
-      "New Terminal": 1
-    }
-  },
-  "src/components/Sidebar/FileMoveConflictDialog.tsx": {
-    "sentence-case": {
-      "Keep Both": 1,
-      "{…} and Replace": 1,
-      "{…} and Replace?": 1
-    }
-  },
-  "src/components/Sidebar/FolderAppearanceDialog.tsx": {
-    "sentence-case": {
-      "Folder Appearance": 1
-    }
-  },
-  "src/components/Sidebar/OwnerDialog.tsx": {
-    "sentence-case": {
-      "Change Owner": 1
-    }
-  },
-  "src/components/Sidebar/PermissionsDialog.tsx": {
-    "sentence-case": {
-      "Change Permissions": 1
-    }
-  },
-  "src/components/Sidebar/SymlinkDialog.tsx": {
-    "sentence-case": {
-      "Create Symlink": 1
-    }
-  },
-  "src/components/Sidebar/UpdateAgentDialog.tsx": {
-    "sentence-case": {
-      "Notify Others & Update": 1
-    }
-  },
-  "src/components/SplitView/EmptyWindowState.tsx": {
-    "sentence-case": {
-      "New Terminal": 1,
-      "Open Connection…": 1
-    }
-  },
   "src/components/SshKeyboardInteractivePrompt/SshKeyboardInteractivePrompt.tsx": {
     "sentence-case": {
       "SSH Authentication": 1
-    }
-  },
-  "src/components/StatusBar/StatusBar.tsx": {
-    "us-spelling": {
-      "Monitoring connect cancelled": 1
     }
   },
   "src/components/Terminal/BroadcastScopeDialog.tsx": {
@@ -735,105 +467,6 @@
   "src/components/Terminal/TerminalReconnectPrompt.tsx": {
     "sentence-case": {
       "Stay in View Mode": 1
-    }
-  },
-  "src/components/ThemeEditor/ThemeEditor.tsx": {
-    "sentence-case": {
-      "Save Theme": 1,
-      "Theme Editor": 1
-    }
-  },
-  "src/components/TransferQueue/TransferQueue.tsx": {
-    "sentence-case": {
-      "Cancel All": 1,
-      "Clear Completed": 1
-    },
-    "us-spelling": {
-      "Cancelling {…} transfer {…}": 1
-    }
-  },
-  "src/components/TunnelEditor/TunnelEditor.tsx": {
-    "cancel-left": {
-      "Save | Save & Start | Cancel": 1
-    },
-    "one-primary": {
-      "Save | Save & Start": 1
-    },
-    "sentence-case": {
-      "Local Host": 3,
-      "Local Port": 3,
-      "Remote Host": 2,
-      "Remote Port": 2,
-      "SSH Connection": 1,
-      "Save & Start": 1
-    }
-  },
-  "src/components/TunnelSidebar/TunnelSidebar.tsx": {
-    "sentence-case": {
-      "New Tunnel": 1
-    }
-  },
-  "src/components/UnlockDialog/UnlockDialog.tsx": {
-    "cancel-left": {
-      "Connect without saved password | Cancel | Resetting… / Reset store | Unlock": 1
-    },
-    "sentence-case": {
-      "Unlock Credential Store": 1
-    }
-  },
-  "src/components/UpdateNotification/UpdateNotification.tsx": {
-    "sentence-case": {
-      "Open Download Page": 1,
-      "Open Downloads Page": 1,
-      "Skip This Build": 1,
-      "Skip This Version": 1,
-      "What's New": 1
-    }
-  },
-  "src/components/WorkflowSidebar/WorkflowEditorDialog.tsx": {
-    "sentence-case": {
-      "Edit Workflow": 1,
-      "New Workflow": 1
-    }
-  },
-  "src/components/WorkflowSidebar/WorkflowRunOutput.tsx": {
-    "us-spelling": {
-      "Cancelled": 1
-    }
-  },
-  "src/components/WorkflowSidebar/WorkflowSidebar.tsx": {
-    "sentence-case": {
-      "New Workflow": 1
-    }
-  },
-  "src/components/WorkspaceEditor/ConnectionPicker.tsx": {
-    "sentence-case": {
-      "Add Connection": 1
-    }
-  },
-  "src/components/WorkspaceEditor/WorkspaceEditor.tsx": {
-    "cancel-left": {
-      "Save | Cancel": 1
-    },
-    "sentence-case": {
-      "Add Group": 1
-    }
-  },
-  "src/components/WorkspaceEditor/WorkspaceSettingsSection.tsx": {
-    "sentence-case": {
-      "Solarized Dark": 1,
-      "Solarized Light": 1
-    }
-  },
-  "src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx": {
-    "sentence-case": {
-      "Save Current Layout as Workspace": 1
-    }
-  },
-  "src/components/WorkspaceSidebar/WorkspaceSidebar.tsx": {
-    "sentence-case": {
-      "New Workspace": 1,
-      "Save Current Layout": 1
     }
   },
   "src/components/ui/Modal.tsx": {
