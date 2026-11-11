@@ -504,6 +504,7 @@ By default the file records **Info** level and above — enough to be readable w
 - **Auto-login (optional, off by default)** — set **Login** to _Auto-login_ and enter a username and password. termiHub types the username when the output ends with a login prompt (default `login:`, `username:`, or `user name:`) and the password at the password prompt (default `password:`). Matching is case-insensitive; alternatives are separated with `|`. A device that asks only for a password gets the password at the first prompt. If a prompt does not appear within the prompt timeout (default 10 s), or the login prompt reappears after the username was sent (the login was rejected), auto-login stops and the session stays interactive — it never retries.
   - The password is kept in the credential store (keychain or master-password vault) when **Save password** is on and is never written to the connection file or logged. Leave it empty to be asked on connect.
   - **Telnet is unencrypted**: the username and password travel in cleartext and can be read by anyone on the network path. Only use auto-login on trusted networks and prefer SSH where the device supports it.
+- **Auto-Reconnect (optional, off by default)** — switch on **Auto-Reconnect** to have a dropped telnet connection retried in the same tab with a growing pause (up to 10 attempts, pauses of at most 30 s), with the same reconnect strip, countdown and **Cancel** as SSH. Each retry opens a fresh telnet session (and runs auto-login again when it is set up); the remote session is not preserved.
 
 ## SSH Configuration
 
@@ -640,16 +641,27 @@ sudo usermod -a -G dialout $USER
 
 ### Configuration Parameters
 
-| Parameter    | Options                                                   | Default | Description                       |
-| ------------ | --------------------------------------------------------- | ------- | --------------------------------- |
-| Port         | Auto-detected or manual                                   | —       | Serial port path                  |
-| Baud Rate    | 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 | 9600    | Data transfer speed (bits/second) |
-| Data Bits    | 5, 6, 7, 8                                                | 8       | Number of data bits per frame     |
-| Stop Bits    | 1, 2                                                      | 1       | Number of stop bits per frame     |
-| Parity       | None, Odd, Even                                           | None    | Error-checking method             |
-| Flow Control | None, Hardware (RTS/CTS), Software (XON/XOFF)             | None    | Data flow regulation              |
+| Parameter      | Options                                                   | Default | Description                                             |
+| -------------- | --------------------------------------------------------- | ------- | ------------------------------------------------------- |
+| Port           | Auto-detected or manual                                   | —       | Serial port path                                        |
+| Baud Rate      | 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 | 9600    | Data transfer speed (bits/second)                       |
+| Data Bits      | 5, 6, 7, 8                                                | 8       | Number of data bits per frame                           |
+| Stop Bits      | 1, 2                                                      | 1       | Number of stop bits per frame                           |
+| Parity         | None, Odd, Even                                           | None    | Error-checking method                                   |
+| Flow Control   | None, Hardware (RTS/CTS), Software (XON/XOFF)             | None    | Data flow regulation                                    |
+| Auto-Reconnect | On, Off                                                   | On      | Reopen the port after the device comes back (see below) |
 
 **Common configurations:** Most embedded devices (Arduino, ESP32, STM32) use 115200/8/1/None/None. Legacy devices typically use 9600/8/1/None/None.
+
+### Auto-Reconnect
+
+When a serial port disappears — a USB adapter is unplugged or re-enumerates — the tab stays open and termiHub reopens the port when it comes back, like Tera Term's COM-port auto-reconnect. Auto-Reconnect is **on by default** for serial connections; switch it off per connection.
+
+- While the port is gone, the reconnect strip at the top of the tab shows the countdown and attempt number. termiHub checks for the port with a growing pause (up to 10 attempts, pauses of at most 30 s, about 3 minutes in all) and then shows **Reconnect failed** with **Try Again**.
+- Click **Cancel** on the strip to stop retrying. The tab then shows the manual reconnect prompt.
+- The port is reopened with the saved line settings (baud rate, data bits, stop bits, parity, flow control).
+- Only the port you configured is reopened. On Linux, termiHub also remembers the USB identity of the adapter (vendor, product and serial number). A different adapter that shows up under the same name is not opened; the strip says so and keeps waiting. If the same adapter comes back under a new name (for example `/dev/ttyUSB1` instead of `/dev/ttyUSB0`) and it reports a serial number, termiHub follows it to the new name. On macOS and Windows termiHub matches the port name only.
+- A serial connection hosted on a remote agent is not covered yet: termiHub does not reopen a port on the agent host after it drops.
 
 ### Terminal Size
 
