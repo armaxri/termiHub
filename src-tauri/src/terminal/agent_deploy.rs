@@ -458,6 +458,10 @@ pub fn install_agent_bytes(
             (posix_install_plan(remote_path, &upload_dir), None)
         };
 
+    // Delete images an earlier update renamed aside because a running agent
+    // held them, now that their processes may have exited (#5254).
+    cleanup_stale_images(session, &plan);
+
     // Before touching anything, settle a backup left by an earlier deploy that
     // died between backup and cleanup (#5207). `previous_version` is the version
     // of the working binary now at the install path, if there is one.
@@ -516,9 +520,11 @@ pub fn install_agent_bytes(
         let mut msg = format!("Install command failed: {e}");
         if backed_up {
             if let Err(why) = restore_previous_binary(session, &plan) {
-                msg.push_str(&format!(
-                    "; the previous agent could not be restored ({why}), a copy is at {}",
-                    plan.backup_path
+                msg.push_str(&failed_restore_note(
+                    &why,
+                    previous_version.as_deref(),
+                    probe_version(session, &plan.verify_command).ok().flatten(),
+                    &plan.backup_path,
                 ));
             }
         }
@@ -562,6 +568,7 @@ pub fn install_agent_bytes(
                     &format!("Update rolled back — kept agent v{restored_version}"),
                     1.0,
                 );
+                cleanup_stale_images(session, &plan);
                 Ok(AgentDeployResult::RolledBack {
                     reason: reason.to_string(),
                     restored_version,
@@ -587,6 +594,10 @@ pub fn install_agent_bytes(
             );
         }
     }
+
+    // The image the install renamed aside is free now unless a running agent
+    // still holds it; a locked one is retried by the next deploy (#5254).
+    cleanup_stale_images(session, &plan);
 
     let success = installed_version.is_some();
     progress(
@@ -663,6 +674,50 @@ fn recover_leftover_backup(
                 plan.backup_path
             ))
         })
+}
+
+/// Delete the stale images [`InstallPlan::cleanup_stale_command`] covers
+/// (Windows only, #5254). Best effort: a failure only leaves files for the next
+/// deploy, so it is logged and never fails the deploy.
+fn cleanup_stale_images(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    plan: &InstallPlan,
+) {
+    if let Some(command) = &plan.cleanup_stale_command {
+        if let Err(e) = run_remote_command(session, command) {
+            warn!("Could not clean up stale agent images: {e}");
+        }
+    }
+}
+
+/// The note added to "Install command failed" when the restore of the backup
+/// also failed (#5254). `previous_version` is what the install path ran before
+/// the deploy; `installed_version` is what it runs now (`None`: nothing runs).
+///
+/// An install that failed before it replaced the binary — on Windows, a running
+/// agent holding the exe — leaves the previous agent where it was, so a restore
+/// that cannot move the backup over it must not report the previous agent as
+/// gone. Only when nothing runs at the install path does the note say so.
+fn failed_restore_note(
+    why: &str,
+    previous_version: Option<&str>,
+    installed_version: Option<String>,
+    backup_path: &str,
+) -> String {
+    match installed_version {
+        Some(ver) if previous_version == Some(ver.as_str()) => format!(
+            "; the installed agent was not replaced and still runs (v{ver}); \
+             the backup could not be moved back ({why}) and is kept at {backup_path}"
+        ),
+        Some(ver) => format!(
+            "; the backup could not be moved back ({why}); the installed agent runs \
+             v{ver} and a copy of the previous binary is at {backup_path}"
+        ),
+        None => format!(
+            "; the previous agent could not be restored ({why}) and the host has no \
+             working agent; a copy of the previous binary is at {backup_path}"
+        ),
+    }
 }
 
 /// Move the backup back over the install path and prove it runs. Returns the
@@ -1014,6 +1069,37 @@ mod tests {
         assert!(json.contains("remotePath"));
         let parsed: AgentDeployConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.remote_path.as_deref(), Some("/opt/termihub-agent"));
+    }
+
+    #[test]
+    fn failed_restore_note_keeps_an_unreplaced_agent() {
+        let note = failed_restore_note("locked", Some("0.8.0"), Some("0.8.0".into()), "bak");
+        assert!(
+            note.contains("was not replaced and still runs (v0.8.0)"),
+            "{note}"
+        );
+        assert!(note.contains("kept at bak"), "{note}");
+        assert!(!note.contains("could not be restored"), "{note}");
+        assert!(!note.contains("no working agent"), "{note}");
+    }
+
+    #[test]
+    fn failed_restore_note_names_a_replaced_agent_that_runs() {
+        let note = failed_restore_note("locked", Some("0.8.0"), Some("0.9.0".into()), "bak");
+        assert!(note.contains("the installed agent runs v0.9.0"), "{note}");
+        assert!(!note.contains("no working agent"), "{note}");
+        // No previous version known (nothing ran before): a running install is
+        // still named, never reported as gone.
+        let note = failed_restore_note("locked", None, Some("0.9.0".into()), "bak");
+        assert!(note.contains("runs v0.9.0"), "{note}");
+    }
+
+    #[test]
+    fn failed_restore_note_reports_a_gone_agent_only_when_nothing_runs() {
+        let note = failed_restore_note("locked", Some("0.8.0"), None, "bak");
+        assert!(note.contains("could not be restored (locked)"), "{note}");
+        assert!(note.contains("no working agent"), "{note}");
+        assert!(note.contains("bak"), "{note}");
     }
 
     #[test]

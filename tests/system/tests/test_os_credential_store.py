@@ -38,7 +38,6 @@ from termihub_harness import (
     ConfigRecoveryUi,
     ConnectionsUi,
     CredentialStoreUi,
-    PasswordPromptUi,
     SettingsUi,
     SidebarUi,
     SystemTest,
@@ -67,7 +66,6 @@ class TestOsCredentialStore(
     SidebarUi,
     SettingsUi,
     CredentialStoreUi,
-    PasswordPromptUi,
     ConfigRecoveryUi,
     SystemTest,
 ):
@@ -111,52 +109,29 @@ class TestOsCredentialStore(
         self.switch_to_connections_sidebar()
 
     def _save_password(self, label: str) -> tuple[str, str]:
-        """Save ``_SECRET`` for a new (server-less) SSH connection via the real prompt.
+        """Save ``_SECRET`` for a new (server-less) SSH connection via the editor.
 
-        The prompt persists the secret the moment it is answered, before the
-        connect to port 1 fails, so no SSH server is needed. Returns the
-        connection name and its OS-store account.
+        The password is typed into the editor's Password field with **Save
+        credentials** on, so saving the connection writes it to the store. No
+        SSH server or connect is needed. A password typed into the connect
+        prompt is saved only once its connect succeeds (#5156), and port 1
+        never connects (#5262). Returns the connection name and its OS-store
+        account.
         """
         name = unique_name(label)
         self.create_ssh_connection(
-            name, host="127.0.0.1", port=1, username="os-store", auth_method="password"
+            name,
+            host="127.0.0.1",
+            port=1,
+            username="os-store",
+            auth_method="password",
+            password=_SECRET,
+            save_password=True,
         )
         account = credential_account(self.require_stable_connection(name)["id"])
         self.os_store.track(account)
         self.switch_to_connections_sidebar()
-        self.connect_connection(name)
-        self.wait(lambda: self.driver.exists("password-prompt-input"), what="the password prompt")
-        self._type_secret_into_prompt()
-        checkbox = "password-prompt-save-checkbox"
-        self.wait(lambda: self.driver.exists(checkbox), what="the Save password box")
-        if self.driver.get_attribute(checkbox, "aria-checked") != "true":
-            self.driver.click(checkbox)
-        # Re-check right before Connect: an empty prompt is answered, and saved,
-        # as an empty password (#4995).
-        self._type_secret_into_prompt()
-        self.driver.click("password-prompt-connect")
-        self.close_all_tabs()
         return name, account
-
-    def _type_secret_into_prompt(self) -> None:
-        """Type ``_SECRET`` into the password prompt and wait until the input holds it.
-
-        The field is controlled by React; if a re-render resets it after the
-        harness typed, it is typed again (and logged) rather than submitted
-        empty (#4995).
-        """
-        field = "password-prompt-input"
-
-        def holds_secret() -> bool:
-            if self.driver.get_value(field) == _SECRET:
-                return True
-            print(f"[os-store] {field} does not hold the password; typing it (again)")
-            self.driver.type(field, _SECRET)
-            return False
-
-        if self.driver.get_value(field) != _SECRET:
-            self.driver.type(field, _SECRET)
-        self.wait(holds_secret, what=f"{field} to hold the typed password")
 
     def _delete_connection(self, name: str) -> None:
         self.switch_to_connections_sidebar()
@@ -276,8 +251,8 @@ class TestOsCredentialStore(
         """MT-CRED-01 (Windows Credential Manager), MT-CRED-02 (macOS Keychain),
         MT-CRED-03 (Linux Secret Service).
 
-        In OS-keychain mode the harness saves a password through the real SSH
-        password prompt and reads the OS store: an item with service
+        In OS-keychain mode the harness saves a password through the connection
+        editor's Save credentials option and reads the OS store: an item with service
         ``termiHub`` and account ``<connection-id>:password`` holds the secret.
         Deleting the connection removes the item again.
         """
