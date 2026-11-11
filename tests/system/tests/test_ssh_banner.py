@@ -1,7 +1,9 @@
 """SSH pre-auth banner / MOTD system tests (ported from infrastructure/ssh-banner.test.js).
 
 Connects to the ssh-banner container (2206), which is configured with a pre-auth
-banner and a login MOTD, and verifies the terminal renders that content.
+banner and a login MOTD, and verifies the terminal renders that content. On the
+macOS native target the host is the fixture's ``banner`` variant (#5423): an
+sshd ``Banner`` plus a MOTD line its login shell prints.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("ssh_banner_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshBanner(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi, SystemTest):
     def test_pre_auth_banner_renders_terminal_content(self):
         name = unique_name("ssh-banner")

@@ -23,6 +23,12 @@ This drives the user's path end to end:
   native Save / Open dialogs are stubbed the same way, move the file over SFTP
   in both directions.
 
+On the macOS native target (#5423) the host is the native sshd's ``sftponly``
+variant (``ForceCommand internal-sftp`` for the fixture user). macOS has no
+``/etc/hostname`` and its ``/etc`` is a symlink, so there the root-owned file
+is ``/etc/hosts``, reached through ``/private/etc``; the host's files are read
+back over the main sshd's key-auth exec as the same user.
+
 The probes behind the fallback are covered without UI in
 ``src-tauri/src/files/sftp.rs``; the backend's files-only detection in
 ``core/tests/ssh_files_only.rs``.
@@ -30,7 +36,6 @@ The probes behind the fallback are covered without UI in
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -38,32 +43,36 @@ from pathlib import Path
 import pytest
 
 from termihub_harness import (
-    SSH_HOST,
-    ComposeFixture,
+    NATIVE_SSH_TARGET,
+    SSH_SFTP_ONLY_PORT,
+    SSH_SFTP_ONLY_SERVICE,
     ConnectionsUi,
-    ContainerRuntimeUnavailable,
     EditorUi,
     FilesUi,
     PasswordPromptUi,
     SftpUi,
     SidebarUi,
-    SshServerControl,
     SshUi,
     SystemTest,
     TabsUi,
     TerminalUi,
-    container_runtime,
+    native_ssh,
+    ssh_server_control,
     unique_name,
 )
-from termihub_harness.dev_local import compose_project, service_port
 
 pytestmark = pytest.mark.integration
 
-#: The SFTP-only SSH container (``tests/docker/ssh-sftp-only``).
-SSH_SFTP_ONLY_SERVICE = "ssh-sftp-only"
-SSH_SFTP_ONLY_PORT = service_port("TERMIHUB_TEST_SSH_SFTP_ONLY_PORT", 2215)
-#: The test user's home on that container (``useradd -m testuser``).
-SFTP_ONLY_HOME = "/home/testuser"
+#: The root-owned file the read-only fallback opens, and the directories the
+#: browser walks into from ``/`` to reach it: ``/etc/hostname`` on the Linux
+#: container; ``/etc/hosts`` through ``/private/etc`` on the macOS native host.
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_hosts():
+    ROOT_OWNED_DIRS: tuple[str, ...] = ("private", "etc")
+    ROOT_OWNED_NAME = "hosts"
+else:
+    ROOT_OWNED_DIRS = ("etc",)
+    ROOT_OWNED_NAME = "hostname"
+ROOT_OWNED_PATH = f"/etc/{ROOT_OWNED_NAME}"
 
 #: The files-only "no shell" panel over the terminal (#4078).
 FILES_ONLY_PANEL = "terminal-files-only-panel"
@@ -80,37 +89,26 @@ CTX_FILE_DOWNLOAD = "context-file-download"
 FILE_BROWSER_UPLOAD = "file-browser-upload"
 
 
-@pytest.fixture(scope="module")
-def sftp_only_fixture():
-    """Bring up ``ssh-sftp-only`` under this checkout's isolation, or skip."""
-    fixture = ComposeFixture()
-    try:
-        fixture.ensure(SSH_SFTP_ONLY_SERVICE, ports=[(SSH_HOST, SSH_SFTP_ONLY_PORT)])
-    except ContainerRuntimeUnavailable as exc:
-        pytest.skip(f"SSH container fixtures unavailable: {exc}")
-    return fixture
+def _host():
+    """Server-side control of the SFTP-only host: the container, or on the
+    macOS native target the main sshd's key-auth exec as the same user."""
+    host = ssh_server_control(SSH_SFTP_ONLY_SERVICE)
+    if not host.available:
+        pytest.skip("no server-side access to read the saved copy back")
+    return host
 
 
 def _container_read(path: str) -> str:
-    """``path`` read inside this checkout's ``ssh-sftp-only`` container."""
-    host = SshServerControl(SSH_SFTP_ONLY_SERVICE)
-    if not host.available:
-        pytest.skip("no container runtime to read the saved copy back")
-    return host.read_file(path)
+    """``path`` read on the SFTP-only host."""
+    return _host().read_file(path)
 
 
 def _container_remove(path: str) -> None:
-    """Best-effort removal of ``path`` inside the container (test cleanup)."""
-    runtime = container_runtime()
-    if runtime is None:
-        return
-    container = f"{compose_project()}-{SSH_SFTP_ONLY_SERVICE}"
-    subprocess.run(
-        [runtime, "exec", container, "rm", "-f", path],
-        check=False,
-        timeout=30,
-        capture_output=True,
-    )
+    """Best-effort removal of ``path`` on the host (test cleanup)."""
+    try:
+        _host().remove_path(path)
+    except Exception:  # noqa: BLE001 - cleanup must not mask the test's outcome
+        pass
 
 
 def _flip_eol(text: str) -> str:
@@ -120,7 +118,8 @@ def _flip_eol(text: str) -> str:
     return text.replace("\n", "\r\n")
 
 
-@pytest.mark.usefixtures("sftp_only_fixture")
+@pytest.mark.usefixtures("ssh_sftp_only_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSftpOnlyHostLive(
     TerminalUi,
     TabsUi,
@@ -168,7 +167,8 @@ class TestSftpOnlyHostLive(
             if self.file_browser_path() == "/":
                 break
             self.navigate_up()
-        self.enter_directory("etc")
+        for name in ROOT_OWNED_DIRS:
+            self.enter_directory(name)
 
     # -- tests -------------------------------------------------------------------
     def test_refused_shell_shows_the_panel_and_keeps_the_session(self):
@@ -191,7 +191,7 @@ class TestSftpOnlyHostLive(
         self._connect_files_only("sftp-only-fallback")
         self._open_files()
         self._browse_to_etc()
-        self.open_file_in_editor("hostname")
+        self.open_file_in_editor(ROOT_OWNED_NAME)
 
         self.wait_for_readonly()
         # The SFTP-only fallback: copy / download, never sudo, Save disabled.
@@ -199,13 +199,13 @@ class TestSftpOnlyHostLive(
         assert self.driver.exists(self.DOWNLOAD)
         assert not self.driver.exists(self.EDIT_WITH_SUDO)
 
-        original = _container_read("/etc/hostname")
+        original = _container_read(ROOT_OWNED_PATH)
         self.dirty_editor()
         # Even with a dirty buffer, Save stays disabled on the read-only file.
         assert self.driver.exists(self.SAVE)
         assert self.driver.get_attribute(self.SAVE, "disabled") is not None
 
-        copy_path = f"{SFTP_ONLY_HOME}/{unique_name('hostname-copy')}.txt"
+        copy_path = f"{_host().home()}/{unique_name('hostname-copy')}.txt"
         self.driver.click(self.SAVE_COPY)
         self.wait(lambda: self.driver.exists(SAVE_COPY_INPUT), what="the Save a copy dialog")
         self.driver.type(SAVE_COPY_INPUT, copy_path)
@@ -218,7 +218,7 @@ class TestSftpOnlyHostLive(
             assert _container_read(copy_path) == _flip_eol(original), (
                 "the copy in home must hold the edited buffer"
             )
-            assert _container_read("/etc/hostname") == original, (
+            assert _container_read(ROOT_OWNED_PATH) == original, (
                 "the root-owned original is untouched"
             )
         finally:
@@ -240,11 +240,11 @@ class TestSftpOnlyHostLive(
         self._connect_files_only("sftp-only-download")
         self._open_files()
         self._browse_to_etc()
-        self.open_file_in_editor("hostname")
+        self.open_file_in_editor(ROOT_OWNED_NAME)
         self.wait_for_readonly()
         self.wait(lambda: self.driver.exists(self.DOWNLOAD), what="the Download action")
 
-        target = Path(tempfile.mkdtemp(prefix="thub-sftp-download-")) / "hostname"
+        target = Path(tempfile.mkdtemp(prefix="thub-sftp-download-")) / ROOT_OWNED_NAME
         self.driver.stub_native_dialog("save", target)
         self.driver.click(self.DOWNLOAD)
         toast = self.wait(
@@ -252,8 +252,8 @@ class TestSftpOnlyHostLive(
             and self.driver.get_text(TRANSFER_DONE_TOAST),
             what="the Downloaded toast",
         )
-        assert "Downloaded hostname" in toast, f"unexpected toast: {toast!r}"
-        self._wait_local_file(target, _container_read("/etc/hostname"))
+        assert f"Downloaded {ROOT_OWNED_NAME}" in toast, f"unexpected toast: {toast!r}"
+        self._wait_local_file(target, _container_read(ROOT_OWNED_PATH))
 
     def test_file_browser_download_saves_the_file_locally(self):
         """The context-menu Download writes the remote file to the picked path."""
@@ -261,12 +261,12 @@ class TestSftpOnlyHostLive(
         self._open_files()
         self._browse_to_etc()
 
-        target = Path(tempfile.mkdtemp(prefix="thub-sftp-browser-download-")) / "hostname"
-        self.open_file_menu("hostname")
+        target = Path(tempfile.mkdtemp(prefix="thub-sftp-browser-download-")) / ROOT_OWNED_NAME
+        self.open_file_menu(ROOT_OWNED_NAME)
         self.wait(lambda: self.driver.exists(CTX_FILE_DOWNLOAD), what="the Download menu item")
         self.driver.stub_native_dialog("save", target)
         self.driver.click(CTX_FILE_DOWNLOAD)
-        self._wait_local_file(target, _container_read("/etc/hostname"))
+        self._wait_local_file(target, _container_read(ROOT_OWNED_PATH))
 
     def test_file_browser_upload_writes_the_picked_file_to_the_host(self):
         """The toolbar Upload copies the picked local file into the listed folder."""
