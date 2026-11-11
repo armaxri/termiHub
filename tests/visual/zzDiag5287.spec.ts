@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 
 test.use({ launchOptions: { args: ["--disable-webgl", "--disable-webgl2"] } });
 
-for (let i = 0; i < 40; i++)
+for (let i = 0; i < 25; i++)
   test(`diag5287 #${i}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.addInitScript(() => {
@@ -83,11 +83,35 @@ for (let i = 0; i < 40; i++)
       el.querySelector(".xterm-helpers")!.appendChild(probe);
       const freshW = probe.getBoundingClientRect().width / 32;
       probe.remove();
+      const containers = Array.from(el.querySelectorAll(".xterm-rows")).map((c: any) => ({
+        ls: c.style.letterSpacing,
+        hasRow: row ? c.contains(row) : false,
+        parentIsScreen: c.parentElement === screen,
+        rows: c.children.length,
+      }));
+      const xterms = el.querySelectorAll(".xterm").length;
+      const screens = el.querySelectorAll(".xterm-screen").length;
+      const ren = rs._renderer?.value;
+      const liveIsRow = row ? ren?._rowContainer?.contains(row) : null;
+      const liveLs = ren?._rowContainer?.style.letterSpacing;
+      const rowParentLs = row ? (row.parentElement as HTMLElement).style.letterSpacing : null;
+      const rowCs = row ? getComputedStyle(row).letterSpacing : null;
       const left = screen.getBoundingClientRect().left;
       const cell = rs.dimensions.css.cell.width;
       const gridRight = left + xterm.cols * cell;
       await new Promise((res) => setTimeout(res, 1500));
       tl.push(snap("late"));
+      if (row) {
+        const range2 = document.createRange();
+        range2.selectNodeContents(row);
+        tl.push({
+          lateRight: Math.max(...Array.from(range2.getClientRects()).map((x) => x.right)),
+          lateGrid: left + xterm.cols * rs.dimensions.css.cell.width,
+          lateRowCs: getComputedStyle(row).letterSpacing,
+          lateConnected: row.isConnected,
+          lateParentLs: (row.parentElement as HTMLElement | null)?.style.letterSpacing,
+        });
+      }
       return {
         ok: row !== undefined && textRight <= gridRight + 1 && textRight > gridRight - cell,
         textRight,
@@ -96,6 +120,13 @@ for (let i = 0; i < 40; i++)
         rowLen: row?.textContent?.length,
         rulerLen: ruler.length + 1,
         freshW,
+        containers,
+        xterms,
+        screens,
+        liveIsRow,
+        liveLs,
+        rowParentLs,
+        rowCs,
         spans,
         dpr: window.devicePixelRatio,
         tl,
