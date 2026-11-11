@@ -786,6 +786,11 @@ impl LocalAgentSshd {
         let registry_endpoint = dir.join("registry.sock");
         let xdg = dir.join("xdg");
         std::fs::create_dir_all(&xdg)?;
+        // A scratch HOME (and HISTFILE inside it) for every agent and shell this
+        // sshd launches, so the test's shells never read the developer's dotfiles
+        // or append the counter loops to their real shell history (#5339).
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home)?;
 
         let config = dir.join("sshd_config");
         // Loopback-only key auth, no PAM/strict-modes so it runs unprivileged
@@ -801,6 +806,7 @@ impl LocalAgentSshd {
         // `warn_if_no_parent_watchdog`.
         // `LLVM_PROFILE_FILE` sends an instrumented agent's coverage profile
         // (and its daemons') to the llvm-cov target instead of `$HOME` (#3831).
+        // `HOME`/`HISTFILE` point at the scratch home above (#5339).
         let cwd = std::env::current_dir()?;
         let profile_file = agent_profile_file(
             std::env::var_os(LLVM_PROFILE_FILE_ENV).as_deref(),
@@ -823,11 +829,13 @@ impl LocalAgentSshd {
                 "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={} \
                  TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15 \
                  TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120 \
-                 TERMIHUB_TEST_PARENT_PID={} {}",
+                 TERMIHUB_TEST_PARENT_PID={} {} {} {}",
                 registry_endpoint.display(),
                 xdg.display(),
                 std::process::id(),
                 sshd_setenv_token(LLVM_PROFILE_FILE_ENV, &profile_file.to_string_lossy()),
+                sshd_setenv_token("HOME", &home.to_string_lossy()),
+                sshd_setenv_token("HISTFILE", &home.join(".history").to_string_lossy()),
             ),
             String::new(),
         ]
@@ -2867,7 +2875,10 @@ fn sshd_session_env_carries_the_absolute_profile_path() {
         ])
         .arg(&harness.client_key)
         .arg(format!("{}@127.0.0.1", harness.username))
-        .arg(format!("printenv {LLVM_PROFILE_FILE_ENV}"))
+        // One name per `printenv`: the BSD one takes a single name.
+        .arg(format!(
+            "printenv {LLVM_PROFILE_FILE_ENV} && printenv HOME && printenv HISTFILE"
+        ))
         .stdin(Stdio::null())
         .output()
     {
@@ -2886,8 +2897,19 @@ fn sshd_session_env_carries_the_absolute_profile_path() {
         "ssh printenv failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let forwarded = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut lines = stdout.lines().map(str::trim);
+    let forwarded = lines.next().unwrap_or_default().to_string();
     // Exact match: sshd must not expand or strip `%p`-style patterns (#3831).
     assert_eq!(Path::new(&forwarded), harness.profile_file.as_path());
     assert!(Path::new(&forwarded).is_absolute(), "{forwarded}");
+    // #5339: the session's HOME and HISTFILE are the harness's scratch home,
+    // never the developer's real one.
+    let home = harness.dir.join("home");
+    assert_eq!(lines.next().map(Path::new), Some(home.as_path()), "{stdout}");
+    assert_eq!(
+        lines.next().map(Path::new),
+        Some(home.join(".history").as_path()),
+        "{stdout}"
+    );
 }
