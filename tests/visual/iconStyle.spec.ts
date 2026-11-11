@@ -3,8 +3,8 @@
  * icon colour and emoji, rendered in the real frontend.
  *
  * Seeds root connections with emoji icons, palette colours and a near-black
- * custom hex (harness/mockBackend.ts `ICON_STYLE_ROWS`), then, in the Dark and
- * the Light theme: checks each emoji row draws its emoji, each coloured row
+ * custom hex (harness/mockBackend.ts `ICON_STYLE_ROWS`), then, in every built-in
+ * theme (Solarized since #5190): checks each emoji row draws its emoji, each coloured row
  * keeps >= 3:1 contrast against the sidebar background (the renderer nudges
  * poor custom colours), and screenshots the sidebar for human review.
  */
@@ -24,7 +24,7 @@ declare global {
   }
 }
 
-const THEMES = ["dark", "light"] as const;
+const THEMES = ["dark", "light", "solarized-dark", "solarized-light"] as const;
 const EMOJI_ROWS: Record<string, string> = {
   "icon-emoji": "\u{1F680}",
   "icon-teal-emoji": "\u{1F433}",
@@ -76,7 +76,7 @@ async function iconContrast(page: Page, rowSelector: string): Promise<number> {
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
-test("connection rows show icon colours and emoji legibly in Dark and Light", async ({
+test("connection rows show icon colours and emoji legibly in every built-in theme", async ({
   page,
 }, testInfo) => {
   await boot(page, { iconStyles: true });
@@ -186,7 +186,7 @@ test("connection rows show icon colours and emoji legibly in Dark and Light", as
   expect(external, "the emoji picker made no network requests").toEqual([]);
 });
 
-test("a folder's Appearance dialog edits its icon colour and emoji in Dark and Light", async ({
+test("a folder's Appearance dialog edits its icon colour and emoji in every built-in theme", async ({
   page,
 }, testInfo) => {
   await boot(page, { iconStyles: true });

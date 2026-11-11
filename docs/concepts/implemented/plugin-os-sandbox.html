@@ -1567,7 +1567,11 @@ flowchart TD
             (<code>ReadFile</code>/<code>WriteFile</code>) and never loads Winsock, because Winsock
             cannot start under LPAC. <code>WSADuplicateSocketW</code> works into a plain
             AppContainer but not into LPAC. The <code>StreamData</code> proxy stays only as the
-            fallback for a socket that is not a kernel file handle (a non-IFS layered provider).
+            fallback for a socket that is not a kernel file handle (a non-IFS layered provider). The
+            host's <code>shutdown</code> does not complete a read already pending on the runner's
+            duplicate while the peer keeps the connection open, so on session close the host also
+            sends <code>StreamClosed</code> for a passed socket and the runner cancels its pending
+            I/O (<code>CancelIoEx</code>) itself (#5360).
           </li>
           <li>
             <strong>Semantics delta, host side only.</strong> <code>write_input</code> and

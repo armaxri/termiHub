@@ -30,14 +30,17 @@ export const solarizedDarkTheme: ThemeDefinition = {
     tabActiveBg: "#002b36",
     tabBorder: "#002b36",
 
-    // Text
-    textPrimary: "#839496", // base0
-    textSecondary: "#657b83", // base00
-    // Same as textSecondary: the Solarized palette is tracked separately (#5190).
-    textSecondaryOnSelection: "#657b83",
-    textMuted: "#586e75", // base01
-    // Same as textMuted: the Solarized palette is tracked separately (#5190).
-    textMutedOnSelection: "#586e75",
+    // Text — #5190: remapped within the canonical Solarized palette so every
+    // text role reaches WCAG AA. base0/base00/base01 measured 3.16-4.11 /
+    // 2.92 / 2.42:1 on the sidebar and selected rows. Each role moved up the
+    // base ramp to the first canonical tone that passes on its surfaces
+    // (locked by contrast.test.ts, which also checks palette membership).
+    textPrimary: "#eee8d5", // base2: 8.14:1 on bgActive, 10.61:1 on sidebar
+    textSecondary: "#93a1a1", // base1: 4.86:1 on bgSecondary / tabBg
+    // base1 drops to 4.28:1 on bgHover; hovered/selected rows use base2.
+    textSecondaryOnSelection: "#eee8d5", // base2
+    textMuted: "#93a1a1", // base1: 5.61:1 on bgPrimary, 4.86:1 on sidebar
+    textMutedOnSelection: "#eee8d5", // base2
     textDisabled: "#3d5862",
     textAccent: "#268bd2",
     textLink: "#268bd2",
@@ -47,8 +50,10 @@ export const solarizedDarkTheme: ThemeDefinition = {
     borderSecondary: "#073642",
 
     // Accent / focus
-    accentColor: "#268bd2",
-    accentHover: "#1a7bb8",
+    // #5164: blue darkened (same hue) so white button text reaches AA
+    // (#268bd2 measured 3.68:1). Now 4.56:1, hover 5.51:1.
+    accentColor: "#227bba",
+    accentHover: "#176ea5",
     focusBorder: "#268bd2",
     textOnAccent: "#ffffff",
 

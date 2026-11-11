@@ -88,6 +88,17 @@ fn resolve_index_url(configured: Option<&str>) -> String {
     }
 }
 
+/// Where to fetch the index at `url` from, and with which policy: the URL as
+/// given over HTTPS, or (test-bridge builds only, #5388) the same path on the
+/// harness's loopback fixture server.
+fn index_fetch_target(url: &str) -> (String, FetchPolicy) {
+    #[cfg(feature = "test-bridge")]
+    if let Some(rebased) = crate::utils::test_bridge::rebase_url(url) {
+        return (rebased, FetchPolicy::TEST_HTTP_BASE);
+    }
+    (url.to_string(), FetchPolicy::STRICT)
+}
+
 /// The signature policy for the index at `url`: the embedded plugin-index
 /// key, with a signature **required** only for the built-in default index in a
 /// release build. Custom indexes, and the default index in a dev/branch build
@@ -207,14 +218,20 @@ pub async fn fetch_plugin_index(
     connections: State<'_, ConnectionManager>,
 ) -> Result<PluginIndexResult, String> {
     let url = resolve_index_url(connections.get_settings().plugin_index_url.as_deref());
+    let (fetch_url, policy) = index_fetch_target(&url);
     let result = browse(
-        &url,
-        FetchPolicy::STRICT,
+        &fetch_url,
+        policy,
         &index_signature_policy(&url),
         &manager,
         &HostFacts::current(),
     )
-    .await;
+    .await
+    .map(|found| PluginIndexResult {
+        is_default: url == DEFAULT_PLUGIN_INDEX_URL,
+        url: url.clone(),
+        ..found
+    });
     if let Err(error) = &result {
         tracing::info!(%url, %error, "plugin index fetch failed");
     }
@@ -292,10 +309,11 @@ pub async fn download_plugin_from_index(
     connections: State<'_, ConnectionManager>,
 ) -> Result<String, String> {
     let url = resolve_index_url(connections.get_settings().plugin_index_url.as_deref());
+    let (fetch_url, policy) = index_fetch_target(&url);
     let path = download_index_entry(
-        &url,
+        &fetch_url,
         &plugin_id,
-        FetchPolicy::STRICT,
+        policy,
         &index_signature_policy(&url),
         &download_dir(&app)?,
         &manager,

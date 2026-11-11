@@ -431,6 +431,71 @@ describe("appStore — unified autoReconnect eligibility (PARITY-008)", () => {
   });
 });
 
+describe("appStore — per-type auto-reconnect (#5390)", () => {
+  let fake: FakeTransport;
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    fake = new FakeTransport();
+    setSessionTransportForTest(fake);
+  });
+
+  afterEach(() => {
+    stopSessionSubscription();
+    setSessionTransportForTest(null);
+  });
+
+  function addTab(type: "serial" | "telnet", config: Record<string, unknown>): string {
+    return useAppStore
+      .getState()
+      .addTab(type, type, { type, config }, { contentType: "terminal", sessionId: "sess-t" });
+  }
+
+  const serial = (extra: Record<string, unknown> = {}) =>
+    addTab("serial", { port: "/dev/ttyUSB0", baudRate: "115200", ...extra });
+  const telnet = (extra: Record<string, unknown> = {}) =>
+    addTab("telnet", { host: "switch01", port: 23, ...extra });
+
+  it("serial is on by default and honours an explicit opt-out", () => {
+    expect(isResilientReconnectTabId(serial())).toBe(true);
+    expect(isResilientReconnectTabId(serial({ autoReconnect: false }))).toBe(false);
+  });
+
+  it("telnet is off by default and on only when switched on", () => {
+    expect(isResilientReconnectTabId(telnet())).toBe(false);
+    expect(isResilientReconnectTabId(telnet({ autoReconnect: true }))).toBe(true);
+  });
+
+  it("a dropped serial port arms the shared reconnect loop", async () => {
+    const tabId = serial();
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    await flush();
+
+    expect(reconnectKinds(fake, tabId)).toContain("session.reconnect");
+    expect(currentSessionView()[tabId]?.status).toBe("reconnecting");
+  });
+
+  it("Stop on a reconnecting serial tab cancels the retry", async () => {
+    const tabId = serial();
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    await flush();
+
+    useAppStore.getState().cancelAutoReconnect(tabId);
+    await flush();
+    expect(reconnectKinds(fake, tabId)).toContain("session.cancelReconnect");
+  });
+
+  it("a dropped telnet tab without the switch shows the manual prompt", async () => {
+    const tabId = telnet();
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    await flush();
+
+    const kinds = reconnectKinds(fake, tabId);
+    expect(kinds).toContain("session.dropped");
+    expect(kinds).not.toContain("session.reconnect");
+  });
+});
+
 describe("appStore — plugin connections never auto-reconnect (PLG-004)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());

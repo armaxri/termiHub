@@ -28,6 +28,7 @@ use plugin_runner_support::{host_for, install_plugin, new_connection, runner_bin
 use termihub_core::connection::ConnectionTypeRegistry;
 use termihub_core::plugin::sandbox::{DenialReason, PluginRunnerConfig, SandboxedPlugin};
 use termihub_core::plugin::{HostError, PermissionError, PluginHost};
+use termihub_plugin_runner::ipc::{LIST_DIR_ENTRY_OVERHEAD, MAX_BRIDGE_CHUNK};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -367,9 +368,25 @@ async fn a_directory_larger_than_one_frame_lists_every_entry() {
     let outside = tempfile::TempDir::new().unwrap();
     let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
-    // 50k names of 24 bytes: ~1.5 MiB charged, several `list_dir` pages
-    // (#4220).
-    let mut names: Vec<String> = (0..50_000).map(|i| format!("entry-{i:018}")).collect();
+    // Several `list_dir` pages (#4220) from few files: long names fill a page
+    // with ~3k entries. Every file costs a create and a delete, which on
+    // Windows (Defender scanning each) made 50k short names take ~100 s
+    // (#5360); 7k names of 160 bytes span three pages instead. 160 keeps the
+    // full path well under Windows' 260-character `MAX_PATH`.
+    const ENTRIES: usize = 7_000;
+    const NAME_LEN: usize = 160;
+    let mut names: Vec<String> = (0..ENTRIES)
+        .map(|i| format!("entry-{i:05}-{}", "x".repeat(NAME_LEN - 12)))
+        .collect();
+    assert!(names.iter().all(|n| n.len() == NAME_LEN));
+    let charged: usize = names
+        .iter()
+        .map(|n| n.len() + LIST_DIR_ENTRY_OVERHEAD)
+        .sum();
+    assert!(
+        charged > 2 * MAX_BRIDGE_CHUNK,
+        "the listing must span at least three pages"
+    );
     for name in &names {
         std::fs::File::create(scoped.join(name)).unwrap();
     }
@@ -390,7 +407,7 @@ async fn a_directory_larger_than_one_frame_lists_every_entry() {
             "probePath": scoped.to_str().unwrap(),
         }))
         .await;
-    assert_eq!(summary, format!("LIST_SUMMARY:50000:{hash:016x}"));
+    assert_eq!(summary, format!("LIST_SUMMARY:{ENTRIES}:{hash:016x}"));
     // Paging is not a refusal.
     assert!(plugin.runner().bridge_denials().is_empty());
 }
