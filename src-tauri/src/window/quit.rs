@@ -77,6 +77,40 @@ use super::recover;
 #[cfg(target_os = "macos")]
 pub const QUIT_MENU_ID: &str = "termihub-quit";
 
+/// Id of the custom "Close Window" menu item that replaces the stock predefined
+/// Close Window on macOS (#5316). It has **no accelerator**, so Cmd+W belongs
+/// to the app's Close Tab shortcut alone; the item still closes the focused
+/// window (same `CloseRequested` path as the red title-bar button).
+#[cfg(target_os = "macos")]
+pub const CLOSE_WINDOW_MENU_ID: &str = "termihub-close-window";
+
+/// How a stock (predefined) item of Tauri's default macOS menu is replaced.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StockReplacement {
+    /// Stock Quit (`terminate:`, not preventable) → custom preventable Quit, Cmd+Q.
+    Quit,
+    /// Stock Close Window (`performClose:`, Cmd+W) → custom Close Window without
+    /// an accelerator, so Cmd+W reaches the app's Close Tab binding (#5316).
+    CloseWindow,
+}
+
+/// Which replacement, if any, a stock menu item with label `label` needs.
+///
+/// Labels may still carry muda's `&` mnemonic markers (`C&lose Window`), so
+/// they are stripped before matching.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn stock_replacement(label: &str) -> Option<StockReplacement> {
+    let label = label.replace('&', "");
+    if label.starts_with("Quit") {
+        Some(StockReplacement::Quit)
+    } else if label == "Close Window" {
+        Some(StockReplacement::CloseWindow)
+    } else {
+        None
+    }
+}
+
 /// Event emitted to every window when an explicit quit needs their decision.
 pub const QUIT_REQUESTED_EVENT: &str = "app-quit-requested";
 
@@ -515,6 +549,10 @@ pub fn finish_if_ready(app: &tauri::AppHandle, outcome: ReadyOutcome) {
 /// the same label and accelerator that calls `AppHandle::exit(0)`, which the
 /// `ExitRequested` handler routes through the quit decision. Windows and Linux
 /// have no default menu bar (Tauri adds none), so the builder is unchanged there.
+///
+/// The stock File ▸ Close Window and Window ▸ Close Window items both carry a
+/// Cmd+W accelerator that competes with the app's Close Tab shortcut (#5316).
+/// They are swapped for a custom Close Window without an accelerator.
 pub fn install_quit_menu(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     #[cfg(target_os = "macos")]
     {
@@ -522,6 +560,20 @@ pub fn install_quit_menu(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<
             if event.id() == QUIT_MENU_ID {
                 tracing::info!("Quit chosen from the app menu (#4296)");
                 app.exit(0);
+            } else if event.id() == CLOSE_WINDOW_MENU_ID {
+                use tauri::Manager;
+                let focused = app
+                    .webview_windows()
+                    .into_values()
+                    .find(|w| w.is_focused().unwrap_or(false));
+                match focused {
+                    Some(window) => {
+                        if let Err(err) = window.close() {
+                            tracing::warn!("Close Window from the app menu failed: {err}");
+                        }
+                    }
+                    None => tracing::debug!("Close Window chosen with no focused window"),
+                }
             }
         })
     }
@@ -532,29 +584,49 @@ pub fn install_quit_menu(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<
 }
 
 /// Tauri's default macOS menu with the predefined Quit replaced by
-/// [`QUIT_MENU_ID`]. If the Quit item cannot be found, the stock menu is kept.
+/// [`QUIT_MENU_ID`] and every predefined Close Window replaced by
+/// [`CLOSE_WINDOW_MENU_ID`] (no Cmd+W). Items that cannot be found are kept
+/// as they are.
 #[cfg(target_os = "macos")]
 fn build_macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{Menu, MenuItem, MenuItemKind};
 
     let menu = Menu::default(app)?;
-    let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() else {
-        tracing::warn!("App menu not found; keeping the stock Quit (#4296)");
-        return Ok(menu);
-    };
-    let items = app_menu.items()?;
-    let quit_position = items.iter().position(|item| match item {
-        MenuItemKind::Predefined(p) => p.text().map(|t| t.starts_with("Quit")).unwrap_or(false),
-        _ => false,
-    });
-    let Some(position) = quit_position else {
+    let mut replaced_quit = false;
+    for top in menu.items()? {
+        let MenuItemKind::Submenu(submenu) = top else {
+            continue;
+        };
+        // Walk back to front so removing an item never shifts one not yet visited.
+        let items = submenu.items()?;
+        for (position, item) in items.iter().enumerate().rev() {
+            let MenuItemKind::Predefined(p) = item else {
+                continue;
+            };
+            let Some(kind) = p.text().ok().as_deref().and_then(stock_replacement) else {
+                continue;
+            };
+            let replacement = match kind {
+                StockReplacement::Quit => {
+                    replaced_quit = true;
+                    let label = format!("Quit {}", app.package_info().name);
+                    MenuItem::with_id(app, QUIT_MENU_ID, label, true, Some("CmdOrCtrl+Q"))?
+                }
+                StockReplacement::CloseWindow => MenuItem::with_id(
+                    app,
+                    CLOSE_WINDOW_MENU_ID,
+                    "Close Window",
+                    true,
+                    None::<&str>,
+                )?,
+            };
+            submenu.remove_at(position)?;
+            submenu.insert(&replacement, position)?;
+        }
+    }
+    if !replaced_quit {
         tracing::warn!("Predefined Quit item not found; keeping the stock Quit (#4296)");
-        return Ok(menu);
-    };
-    app_menu.remove_at(position)?;
-    let label = format!("Quit {}", app.package_info().name);
-    let quit = MenuItem::with_id(app, QUIT_MENU_ID, label, true, Some("CmdOrCtrl+Q"))?;
-    app_menu.insert(&quit, position)?;
+    }
     Ok(menu)
 }
 
@@ -898,5 +970,43 @@ mod tests {
         let q = QuitCoordinator::new();
         assert!(q.take_teardown());
         assert!(!q.take_teardown());
+    }
+
+    // ── stock_replacement (#5316) ────────────────────────────────────────
+
+    #[test]
+    fn stock_quit_is_replaced_with_the_preventable_quit() {
+        assert_eq!(
+            stock_replacement("Quit termiHub"),
+            Some(StockReplacement::Quit)
+        );
+        assert_eq!(stock_replacement("&Quit"), Some(StockReplacement::Quit));
+    }
+
+    #[test]
+    fn stock_close_window_is_replaced_so_cmd_w_stays_with_close_tab() {
+        // muda's label, with and without the mnemonic marker it carries in state.
+        assert_eq!(
+            stock_replacement("C&lose Window"),
+            Some(StockReplacement::CloseWindow)
+        );
+        assert_eq!(
+            stock_replacement("Close Window"),
+            Some(StockReplacement::CloseWindow)
+        );
+    }
+
+    #[test]
+    fn other_stock_items_are_kept() {
+        for label in [
+            "Minimize",
+            "Zoom",
+            "Hide termiHub",
+            "About termiHub",
+            "Copy",
+            "",
+        ] {
+            assert_eq!(stock_replacement(label), None, "{label}");
+        }
     }
 }
