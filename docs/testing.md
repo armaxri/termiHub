@@ -1490,8 +1490,12 @@ cargo test -p termihub-core --no-default-features --features "wsl,local-transfer
 
 The [`wsl-live.yml`](../.github/workflows/wsl-live.yml) lane installs WSL 2 +
 Debian 12 on `windows-latest` with
-[`Vampire/setup-wsl`](https://github.com/Vampire/setup-wsl) (cached rootfs) and
-runs them under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
+[`Vampire/setup-wsl`](https://github.com/Vampire/setup-wsl), wrapped by
+`.github/actions/setup-wsl-debian`. That action downloads the Debian file with
+`scripts/internal/fetch-wsl-distro.sh` (resumable, retried, SHA-256 pinned,
+cached) and tries the install twice. If the runner cannot provide WSL, the run
+shows a `WSL environment failure` annotation instead of a test failure (#5317).
+The lane runs the tests under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
 PRs that touch the WSL backend, the shell-integration commands or the local
 transfer executor. It is not part of the per-PR lane: installing WSL plus a
 Windows build of the core crate costs several minutes.
