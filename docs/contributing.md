@@ -1745,12 +1745,12 @@ Integration Lanes**, runs
 and refuses to publish unless the **newest** run of each of these is green on the tag's
 exact commit:
 
-| Required run                                                                                   | Event               | What it covers                                                                                                                                                        |
-| ---------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)              | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites) + `integration-fixtures.yml` (no path filter) |
-| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit)     | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                              |
-| [Dev Build](../.github/workflows/dev-build.yml) (post-merge push run on that commit)           | `push`              | the full app build on all five platforms plus all seven agent binaries, incl. Windows x64 and ARM64 (CI-015, #4302)                                                   |
-| [Security Audit](../.github/workflows/security-audit.yml) (post-merge push run on that commit) | `push`              | cargo audit/deny, the pnpm production and full-tree audits, the pnpm-overrides check and the third-party notices gate (#4282)                                         |
+| Required run                                                                                   | Event               | What it covers                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)              | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites, linux-arm64 core + agent tests) + `integration-fixtures.yml` (no path filter) + the linux-arm64 install smoke against the commit's Dev Build pre-release (#5178) |
+| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit)     | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                                                                                                                                                 |
+| [Dev Build](../.github/workflows/dev-build.yml) (post-merge push run on that commit)           | `push`              | the full app build on all five platforms plus all seven agent binaries, incl. Windows x64 and ARM64 (CI-015, #4302)                                                                                                                                                                      |
+| [Security Audit](../.github/workflows/security-audit.yml) (post-merge push run on that commit) | `push`              | cargo audit/deny, the pnpm production and full-tree audits, the pnpm-overrides check and the third-party notices gate (#4282)                                                                                                                                                            |
 
 The newest run decides, so a later red re-run outranks an earlier green one. A run that is
 still in progress fails the gate too.
@@ -1807,6 +1807,15 @@ and `core/Cargo.toml`. It is deliberately **not** widened to `agent/**` or `src-
 (the lane tests `termihub-core` only, so those changes would gain no coverage there) or to
 `Cargo.lock` (weekly lockfile bumps would run the Docker lane every time); the nightly run
 and this gate catch those before they ship.
+
+The candidate run also installs the **linux-arm64** packages before the tag ships (#5178):
+its `arm64-smoke-tag` job finds the Dev Build pre-release whose `target_commitish` is the
+candidate sha (`dev-latest` from `main`, `dev-develop-latest` from `develop`), waiting for
+an in-flight Dev Build of that sha, and calls
+[Release Linux arm64 Smoke](../.github/workflows/release-linux-arm64-smoke.yml) on it. When
+no pre-release was built from the sha, the job fails: let Dev Build finish on the
+candidate's branch and re-dispatch. The Release workflow runs the same smoke again on the
+published tag.
 
 ### Release Install Smokes
 

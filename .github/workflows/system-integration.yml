@@ -36,6 +36,13 @@ name: System Integration (nightly)
 # and on a dispatch with `-f arm64=always`. A real Pi (its kernel, page size and
 # LAN) and the physical USB serial adapter stay manual (docs/testing.md).
 #
+# Daily linux-arm64 core + agent tests (#5178): the cheap `arm64-core-agent-tests`
+# job runs `cargo test -p termihub-core -p termihub-agent` natively on
+# `ubuntu-24.04-arm` on EVERY run of this lane (the daily develop dispatch, the
+# weekly main cron, a release-candidate call), so an aarch64-only regression in
+# core or the agent is red within a day without paying for a daily arm64 harness.
+# `-f arm64=unit` runs that job alone (a cheap re-grade); `-f arm64=never` drops it.
+#
 # Trigger by hand from the Actions tab ("Run workflow") to validate a change to
 # the harness, the fixtures, or this workflow without waiting for the nightly run.
 
@@ -66,9 +73,11 @@ on:
         options: [both, develop, main, dispatched]
         default: both
       arm64:
-        description: "linux-arm64 legs: auto = Wednesdays UTC; only = arm64 legs alone (#4934)"
+        description: >-
+          linux-arm64 legs: auto = harness Wednesdays UTC, core/agent tests daily;
+          only = arm64 legs alone; unit = only the arm64 core/agent tests (#4934, #5178)
         type: choice
-        options: [auto, always, only, never]
+        options: [auto, always, only, unit, never]
         default: auto
   # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
   # commit (the release candidate), instead of the develop/main branch tips. The
@@ -114,6 +123,9 @@ jobs:
     outputs:
       branches: ${{ steps.pick.outputs.branches }}
       oses: ${{ steps.oses.outputs.oses }}
+      # "false" only for `-f arm64=unit` (#5178): the harness jobs are skipped
+      # and only the arm64 core/agent tests run.
+      harness: ${{ steps.oses.outputs.harness }}
     steps:
       - id: pick
         shell: bash
@@ -151,7 +163,9 @@ jobs:
         # weekly: on Wednesdays UTC (the weekly main cron and that day's develop
         # nightly), on every release-candidate call (the release gate covers
         # aarch64), and when a dispatch asks for them. `never` drops them;
-        # `only` runs the arm64 legs alone (a cheap re-grade of an arm64 fix).
+        # `only` runs the arm64 legs alone (a cheap re-grade of an arm64 fix);
+        # `unit` skips every harness job and runs only the daily arm64 core/agent
+        # tests (#5178).
         shell: bash
         env:
           RC_REF: ${{ inputs.ref }}
@@ -160,8 +174,16 @@ jobs:
           base='"ubuntu-latest","macos-latest","windows-latest"'
           arm=false
           case "${ARM64:-auto}" in
+            unit)
+              # The matrices of the skipped harness jobs still need a value.
+              echo 'oses=["ubuntu-24.04-arm"]' >> "$GITHUB_OUTPUT"
+              echo 'harness=false' >> "$GITHUB_OUTPUT"
+              echo "linux-arm64 core/agent tests only; harness jobs skipped"
+              exit 0
+              ;;
             only)
               echo 'oses=["ubuntu-24.04-arm"]' >> "$GITHUB_OUTPUT"
+              echo 'harness=true' >> "$GITHUB_OUTPUT"
               echo "linux-arm64 legs only"
               exit 0
               ;;
@@ -173,6 +195,7 @@ jobs:
               fi
               ;;
           esac
+          echo 'harness=true' >> "$GITHUB_OUTPUT"
           if [ "$arm" = true ]; then
             echo "oses=[${base},\"ubuntu-24.04-arm\"]" >> "$GITHUB_OUTPUT"
           else
@@ -182,6 +205,8 @@ jobs:
 
   system-integration:
     needs: setup
+    # Skipped only by `-f arm64=unit` (#5178).
+    if: needs.setup.outputs.harness != 'false'
     name: System-Test Harness (integration lane, ${{ matrix.os }} · ${{ matrix.branch }})
     runs-on: ${{ matrix.os }}
     # The lane builds the app (debug) and launches it once per suite against live
@@ -342,7 +367,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -368,7 +393,7 @@ jobs:
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
         uses: ./.github/actions/setup-uv
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
 
@@ -692,7 +717,7 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         env:
-          TERMIHUB_XDIST_WORKERS: '2'
+          TERMIHUB_XDIST_WORKERS: "2"
           TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'bulk-macos' || 'bulk-windows' }}
         #
         # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): same
@@ -836,6 +861,8 @@ jobs:
   # the app's own window (by pid) and need it alone on screen, unoccluded.
   display-grades:
     needs: setup
+    # Skipped only by `-f arm64=unit` (#5178).
+    if: needs.setup.outputs.harness != 'false'
     name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
     runs-on: ${{ matrix.os }}
     # Only the app+agent build plus two short grades — a fraction of the bulk
@@ -886,7 +913,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -901,7 +928,7 @@ jobs:
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
         uses: ./.github/actions/setup-uv
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
 
@@ -1095,6 +1122,8 @@ jobs:
   # and the suites are `#![cfg(unix)]`. Kept out of the per-PR gate on purpose.
   agent-docker-integration:
     needs: setup
+    # Skipped only by `-f arm64=unit` (#5178).
+    if: needs.setup.outputs.harness != 'false'
     name: Agent Docker integration (${{ matrix.branch }})
     runs-on: ubuntu-latest
     # Only a cargo build + nine short real-daemon tests; generous enough for a
@@ -1160,3 +1189,58 @@ jobs:
           echo "agent Docker tests passed: ${passed} (expected >= ${AGENT_DOCKER_MIN_TESTS})"
           test "$passed" -ge "$AGENT_DOCKER_MIN_TESTS"
           ! grep -q 'SKIPPED:' agent-docker.log
+
+  # Daily linux-arm64 core + agent tests (#5178, COV-021). The full arm64
+  # harness above is weekly (it costs a second full Linux run, #4119), so on its
+  # own an aarch64-only regression in core or the agent could sit for six days.
+  # This job is the cheap daily guard: the core and agent unit + integration
+  # test binaries, natively on the `ubuntu-24.04-arm` runner, with no app build,
+  # no Docker fixtures and no harness. Fixture-backed tests self-skip here (none
+  # of the TERMIHUB_REQUIRE_* gates is set); the weekly harness legs and
+  # integration-fixtures.yml run them for real.
+  #
+  # It runs on every run of this lane: the daily develop dispatch
+  # (scheduled-dispatch.yml, so the lane's 36 h heartbeat covers it), the weekly
+  # main cron, and every release-candidate call. `-f arm64=never` drops it;
+  # `-f arm64=unit` runs it alone.
+  #
+  # Plain `cargo test`, the same selection as code-quality.yml's "Agent Live
+  # Tests (Windows, serial)" build (`--all-features`, core's test-support
+  # features included). Linux-only: Windows-on-ARM tests are out of scope for now
+  # (maintainer decision on #5178, 2026-11-11).
+  arm64-core-agent-tests:
+    needs: setup
+    if: github.event.inputs.arm64 != 'never'
+    name: Core + agent tests (linux-arm64 · ${{ matrix.branch }})
+    runs-on: ubuntu-24.04-arm
+    # A cold debug build of core + agent plus the test run; the tests alone take
+    # a few minutes. Bounds a wedged test without reading it as success.
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.branch }}
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on
+          # develop/main. The cache key carries the host triple, so this aarch64
+          # entry never collides with the x86_64 ones.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Run core + agent tests (linux-arm64)
+        # No apt step: core and the agent build and test with the runner's
+        # preinstalled toolchain (no webkit/GTK, unlike the desktop crate).
+        run: cargo test --locked -p termihub-core -p termihub-agent --all-features

@@ -698,6 +698,25 @@ release is always graded on aarch64. Add it to any dispatch with `-f arm64=alway
 gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched -f arm64=always
 ```
 
+**Daily linux-arm64 core + agent tests (#5178).** Between the weekly harness legs, the
+cheap `arm64-core-agent-tests` job in the same workflow runs
+`cargo test --locked -p termihub-core -p termihub-agent --all-features` natively on
+`ubuntu-24.04-arm`. It runs on **every** run of the lane (the daily `develop`
+dispatch, the weekly `main` cron and every release-candidate call), with no app build,
+no Docker fixtures and no harness, so an aarch64-only regression in core or the agent
+is red within a day and the daily lane's 36 h heartbeat
+([Scheduled lanes](contributing.md#scheduled-lanes-stay-dark-until-they-reach-main)) watches it. Fixture-backed tests
+self-skip there; the weekly arm64 harness and the fixtures lane run them. `-f arm64=never`
+drops the job; `-f arm64=unit` runs it alone (every harness job is skipped), the cheap way
+to re-grade an aarch64 fix:
+
+```bash
+gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched -f arm64=unit
+```
+
+Windows-on-ARM test execution is out of scope for now (maintainer decision on #5178):
+only the release smoke runs the Windows arm64 agent.
+
 This covers most of what the Raspberry Pi sessions checked: the agent binary on
 aarch64 (#470), SSH and agent flows from an aarch64 client (#473), and the
 integration suite on aarch64 (#585). The arm64 `.deb` GUI launch is covered by
