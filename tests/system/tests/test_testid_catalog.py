@@ -300,3 +300,15 @@ def test_catalog_contains_widened_form_ids(generated_catalog: str):
         "`connection-list-group-toggle`",
     ):
         assert pattern in generated_catalog, f"{pattern} missing from catalog"
+
+
+def test_catalog_marks_how_each_template_is_matched():
+    # #5341: the dynamic section says which globs are registry-expanded and which
+    # are left as plain globs on purpose.
+    buckets = mod.collect()
+    catalog = mod.render(buckets, mod.classify_templates(buckets))
+    rows = {line.split(" | ")[0]: line for line in catalog.splitlines()}
+    assert "registry: " in rows["| `settings-nav-*`"]
+    assert "appearance" in rows["| `settings-nav-*`"]
+    assert "dynamic: file or directory name" in rows["| `file-row-*`"]
+    assert "caller stem" in rows["| `*-confirm`"]
