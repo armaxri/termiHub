@@ -484,8 +484,9 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
 /// setup text, no function, `PROMPT_COMMAND` / `precmd` / `PS1` untouched —
 /// and the file browser still follows the shell: OSC 7 for the start
 /// directory and after a `cd`, read over a side channel. (History is checked
-/// by the hermetic local test; the fixture logs in as the real CI/dev user,
-/// whose history other sessions write to.)
+/// by the hermetic local test: the fixture logs in as the real CI/dev user,
+/// and on macOS/Linux its scratch home holds a history the other tests of
+/// this binary write to as well.)
 #[tokio::test]
 async fn native_05e_default_session_follows_cwd_without_touching_the_shell() {
     let sshd = require_native_sshd!();
@@ -1420,9 +1421,14 @@ async fn native_06_sftp_file_journey_is_byte_exact() {
     // Home as the server reports it: `/Users/x`, `/home/x`, or `/C:/Users/x`.
     let home = sftp.realpath(".").await.expect("realpath of the home dir");
     assert!(home.starts_with('/'), "SFTP home is absolute: {home:?}");
+    // The SFTP session starts in the login user's real home even under
+    // `--scratch-home` (sshd changes into the passwd home), so work below the
+    // fixture's scratch home when it has one (#5296). Only the Windows
+    // fixture, whose user is a dedicated test account, has none.
+    let root = sshd.scratch_home.clone().unwrap_or(home);
     let base = format!(
         "{}/termihub-native-{}-{}",
-        home.trim_end_matches('/'),
+        root.trim_end_matches('/'),
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
