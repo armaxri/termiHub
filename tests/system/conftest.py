@@ -343,7 +343,7 @@ def _write_step_summary(title, lines):
 # ── Egress probe (#5388) ─────────────────────────────────────────────────────
 # The app under test must not reach the internet. Each test's new non-fixture
 # destinations (psutil, app PID) are matched against egress-allowlist.d/;
-# TERMIHUB_EGRESS_GATE=fail fails the test on a new one, annotate (default)
+# TERMIHUB_EGRESS_GATE=fail (default) fails the test on a new one, annotate
 # only reports. See egress.py.
 _EGRESS_KEY = "termihub_egress"
 
