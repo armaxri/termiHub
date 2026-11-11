@@ -1,0 +1,10 @@
+{
+  "reason": "^the Linux clipboard owners are Linux-only$",
+  "nodeid": "test_linux_clipboard_owner\\.py",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "#5170: the delayed-render clipboard owners (src-tauri/src/linux_clipboard) exist only on Linux; their macOS/Windows siblings are unit-tested in macos_clipboard.rs / windows_clipboard.rs. Budget: the suite's 6 tests",
+  "max_skips": {
+    "bulk-macos": 6,
+    "bulk-windows": 6
+  }
+}
