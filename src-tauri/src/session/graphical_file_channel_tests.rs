@@ -774,6 +774,7 @@ mod live {
                 }),
         };
 
+        let side = backend.session.clone().expect("the tunnel's session");
         let result = resolve_file_channel(&ctx(settings, None), backend, None).await;
         let RemoteDesktopFileChannel::Ready {
             channel,
@@ -791,7 +792,65 @@ mod live {
             default_dir == "/home/testuser" || default_dir == "/home/testuser/Desktop",
             "{default_dir}"
         );
+        // The side channel's browser is the tunnel's server, as a direct SFTP
+        // session to it sees it: a paste onto itself between them is refused
+        // (#5439).
+        let direct = fixture_ssh(ssh_port);
+        assert_side_channel_is_the_server(&side, &direct, &default_dir).await;
         vnc.disconnect().await.expect("disconnect");
+    }
+
+    /// The `ssh-password` fixture as a direct SFTP session dials it.
+    fn fixture_ssh(port: u16) -> SshConfig {
+        SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "testuser".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("testpass".to_string()),
+            ..SshConfig::default()
+        }
+    }
+
+    /// `side`'s SFTP browser reports `direct`'s server, and a copy of a file
+    /// in `dir` onto itself between the two is refused before anything is
+    /// written (#5439). Bounded, so a stalled fixture fails the test.
+    async fn assert_side_channel_is_the_server(
+        side: &SideChannelSsh,
+        direct: &SshConfig,
+        dir: &str,
+    ) {
+        use termihub_core::files::shared_fs::FilesystemId;
+        use termihub_core::files::transfer::remote_copy::{
+            ensure_copy_across_allowed, RemoteCopyEndpoint,
+        };
+        let check = async {
+            let browser = side.sftp_browser().await.expect("sftp on the side channel");
+            assert_eq!(browser.filesystem_id(), FilesystemId::ssh(direct));
+            let file = format!("{dir}/termihub-5439-{}.txt", std::process::id());
+            let direct_browser = termihub_core::backends::ssh::SftpFileBrowser::new(direct.clone());
+            direct_browser
+                .write_file(&file, b"keep me")
+                .await
+                .expect("seed the source");
+            let err = ensure_copy_across_allowed(
+                &RemoteCopyEndpoint::Sftp(Arc::new(browser)),
+                &file,
+                &RemoteCopyEndpoint::Sftp(Arc::new(direct_browser.clone())),
+                &file,
+            )
+            .await
+            .expect_err("the same file through the side channel");
+            assert!(err.to_string().ends_with("same file"), "{err}");
+            assert_eq!(
+                direct_browser.read_file(&file).await.expect("read"),
+                b"keep me"
+            );
+            let _ = direct_browser.delete(&file).await;
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(60), check)
+            .await
+            .expect("the fixture answers");
     }
 
     /// The saved `ssh-password` fixture linked to a direct VNC connection.
@@ -855,13 +914,14 @@ mod live {
         let (_, second) =
             resolve_file_channel_routed(&context, BackendSideChannel::default(), None, Some(&link))
                 .await;
+        let first = first.expect("session");
         assert!(
-            Arc::ptr_eq(
-                &first.expect("session").session,
-                &second.expect("session").session
-            ),
+            Arc::ptr_eq(&first.session, &second.expect("session").session),
             "the linked session is reused"
         );
+        // The linked session's browser is the saved connection's server
+        // (#5439).
+        assert_side_channel_is_the_server(&first, &fixture_ssh(ssh_port), &default_dir).await;
     }
 }
 

@@ -154,3 +154,61 @@ async fn a_loopback_server_under_two_names_refuses_a_copy_onto_itself() {
     })
     .await;
 }
+
+/// A browser riding a session another owner dialled (a VNC tunnel's, a
+/// linked saved connection's), identified with `config` or not (#5439).
+async fn riding_end(config: &SshConfig, identified: bool) -> RemoteCopyEndpoint {
+    let (stream, _observed) = serve();
+    let (session, _registry, _liveness) = super::super::auth::handshake_and_authenticate_with(
+        config,
+        stream,
+        Some(Arc::new(TrustAll)),
+    )
+    .await
+    .expect("login");
+    let session = Arc::new(session);
+    let browser = if identified {
+        SftpFileBrowser::from_session_identified(
+            session,
+            crate::files::shared_fs::FilesystemIdentity::ssh(config),
+        )
+        .await
+    } else {
+        SftpFileBrowser::from_session(session).await
+    }
+    .expect("sftp on the borrowed session");
+    RemoteCopyEndpoint::Sftp(Arc::new(browser))
+}
+
+/// A side-channel browser identified with its owner's config is the server
+/// a direct session reaches: a copy onto itself between them is refused.
+/// Unidentified, or identified as another server, it is never refused.
+#[tokio::test]
+async fn a_side_channel_browser_is_the_server_its_owner_dialled() {
+    bounded(async {
+        let server = config("files-5439.invalid", 22);
+        let direct = sftp_end(server.clone()).await;
+        let side = riding_end(&server, true).await;
+        let err = ensure_copy_across_allowed(&side, "/etc/hostname", &direct, "/etc/hostname")
+            .await
+            .expect_err("the same file through the side channel");
+        assert!(err.to_string().ends_with("same file"), "{err}");
+        let RemoteCopyEndpoint::Sftp(browser) = &side else {
+            panic!("an SFTP end")
+        };
+        assert_eq!(
+            browser.filesystem_id(),
+            crate::files::shared_fs::FilesystemId::ssh(&server)
+        );
+
+        let anonymous = riding_end(&server, false).await;
+        ensure_copy_across_allowed(&anonymous, "/etc/hostname", &direct, "/etc/hostname")
+            .await
+            .expect("no identity, no refusal");
+        let elsewhere = riding_end(&config("other-5439.invalid", 22), true).await;
+        ensure_copy_across_allowed(&elsewhere, "/etc/hostname", &direct, "/etc/hostname")
+            .await
+            .expect("another server");
+    })
+    .await;
+}

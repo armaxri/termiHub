@@ -13,8 +13,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use termihub_core::errors::FileError;
 use termihub_core::files::shared_fs::FilesystemHint;
 use termihub_core::files::transfer::remote_copy::RemoteCopyEndpoint;
+use termihub_core::files::{FileEntry, RangedFileAccess};
 
 use super::ranged_tests::{owned_proxy, types_reply};
 use super::realpath_tests::methods;
@@ -77,29 +79,34 @@ fn serve_view(root: String) -> Box<Responder> {
                     None => fail(format!("not found: {path}")),
                 }
             }
-            "connection.files.stat" => match std::fs::metadata(&disk) {
-                Ok(meta) => {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or_default();
-                    Some(Ok(json!({
-                        "name": "x",
-                        "path": path,
-                        "isDirectory": meta.is_dir(),
-                        "size": meta.len(),
-                        "modified": format!("{mtime}"),
-                        "permissions": format!("{:o}", meta.permissions().mode() & 0o777),
-                        "writable": null
-                    })))
-                }
-                Err(e) => fail(format!("{path}: {e}")),
+            "connection.files.stat" => match stat_json(&disk, path) {
+                Ok(entry) => Some(Ok(entry)),
+                Err(e) => fail(e),
             },
             _ => None,
         }
     })
+}
+
+/// `stat` of the file `disk`, reported as `path` with its real mtime and
+/// mode, the way an agent and an SFTP server report them.
+fn stat_json(disk: &str, path: &str) -> Result<serde_json::Value, String> {
+    let meta = std::fs::metadata(disk).map_err(|e| format!("{path}: {e}"))?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    Ok(json!({
+        "name": "x",
+        "path": path,
+        "isDirectory": meta.is_dir(),
+        "size": meta.len(),
+        "modified": format!("{mtime}"),
+        "permissions": format!("{:o}", meta.permissions().mode() & 0o777),
+        "writable": null
+    }))
 }
 
 /// An agent-hosted SSH session on `agent-1` with `config`, served from
@@ -275,6 +282,140 @@ async fn sessions_of_one_definition_refuse_a_paste_onto_itself() {
         )
         .await
         .expect("another agent");
+    })
+    .await;
+}
+
+/// A direct SFTP session's view of `root` (#5439): the guard only needs its
+/// identity, real paths and `stat`. It reports what `SftpFileBrowser` reports
+/// for `server`.
+struct DirectView {
+    root: String,
+    server: termihub_core::config::SshConfig,
+}
+
+#[async_trait::async_trait]
+impl RangedFileAccess for DirectView {
+    async fn read_range(&self, _path: &str, _offset: u64, _len: u32) -> Result<Vec<u8>, FileError> {
+        Err(FileError::NotSupported)
+    }
+    async fn write_range(&self, path: &str, _offset: u64, _data: &[u8]) -> Result<(), FileError> {
+        panic!("the guard let a write reach {path}");
+    }
+}
+
+#[async_trait::async_trait]
+impl termihub_core::files::transfer::ranged::RangedTransferTarget for DirectView {
+    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+        let value =
+            stat_json(&format!("{}{path}", self.root), path).map_err(FileError::NotFound)?;
+        serde_json::from_value(value).map_err(|e| FileError::OperationFailed(e.to_string()))
+    }
+    async fn remove_file(&self, _path: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        Ok(termihub_core::files::paste_guard::normalize_lexically(path))
+    }
+    fn filesystem_id(&self) -> Option<termihub_core::files::shared_fs::FilesystemId> {
+        termihub_core::backends::ssh::SftpFileBrowser::new(self.server.clone()).filesystem_id()
+    }
+    fn filesystem_hint(&self) -> Option<FilesystemHint> {
+        termihub_core::backends::ssh::SftpFileBrowser::new(self.server.clone()).filesystem_hint()
+    }
+}
+
+/// The server an agent was dialled to, as a direct session dials it.
+fn agent_server(host: &str, user: &str) -> termihub_core::config::SshConfig {
+    termihub_core::config::SshConfig {
+        host: host.to_string(),
+        port: 22,
+        username: user.to_string(),
+        auth_method: "agent".to_string(),
+        ..termihub_core::config::SshConfig::default()
+    }
+}
+
+/// A local session on an agent dialled to `server`, browsing `root`.
+async fn agent_local_session(root: &str, server: &termihub_core::config::SshConfig) -> RemoteProxy {
+    let mut mock = MockAgentRpcClient::with_capabilities(types_reply("local"));
+    mock.session_files = Some(true);
+    mock.file_ranges = Some(true);
+    mock.responder = Some(serve_view(root.to_string()));
+    mock.agent_host_hint = FilesystemHint::ssh(server);
+    let mut proxy = RemoteProxy::new("agent-1".to_string(), Arc::new(mock));
+    proxy
+        .connect(json!({ "type": "local", "config": {} }))
+        .await
+        .expect("connect should succeed");
+    proxy
+}
+
+/// An agent's local session and a direct SFTP session to the host the agent
+/// was dialled to (#5439): the source shows the same entry through both, so
+/// a paste onto it is refused before anything is written.
+#[tokio::test]
+async fn an_agent_host_and_a_direct_session_to_it_refuse_a_paste_onto_itself() {
+    bounded(async {
+        let view = View::new(1_700_000_000);
+        let server = agent_server("build.example", "ci");
+        let local = agent_local_session(&view.root, &server).await;
+        assert_eq!(
+            local.file_browser().expect("browser").filesystem_hint(),
+            termihub_core::backends::ssh::SftpFileBrowser::new(server.clone()).filesystem_hint(),
+            "the agent host is the direct session's server"
+        );
+        let direct = RemoteCopyEndpoint::Ranged(Arc::new(DirectView {
+            root: view.root.clone(),
+            server: server.clone(),
+        }));
+        for (src, dest) in [("/srv/f", "/srv/f"), ("/srv/f", "/srv/sub/../f")] {
+            let err = ensure_remote_copy_allowed(
+                ("agent", &ranged(&local), src),
+                ("direct", &direct, dest),
+            )
+            .await
+            .expect_err("the same file");
+            assert!(err.to_string().ends_with("same file"), "{err}");
+            ensure_remote_copy_allowed(("direct", &direct, src), ("agent", &ranged(&local), dest))
+                .await
+                .expect_err("the same file, the other way");
+        }
+        assert_eq!(std::fs::read(view.disk("/srv/f")).unwrap(), b"payload");
+    })
+    .await;
+}
+
+/// The same path on another host, or in another login's jail, copies.
+#[tokio::test]
+async fn an_agent_host_and_another_server_copy_the_same_path() {
+    bounded(async {
+        let view = View::new(1_700_000_000);
+        let server = agent_server("build.example", "ci");
+        let local = agent_local_session(&view.root, &server).await;
+        // Another server with the same files at the same path.
+        let other = RemoteCopyEndpoint::Ranged(Arc::new(DirectView {
+            root: view.root.clone(),
+            server: agent_server("other.example", "ci"),
+        }));
+        ensure_remote_copy_allowed(
+            ("agent", &ranged(&local), "/srv/f"),
+            ("direct", &other, "/srv/f"),
+        )
+        .await
+        .expect("another server");
+        // The agent's server, another login in its own jail.
+        let jail = View::new(1_700_000_900);
+        let jailed = RemoteCopyEndpoint::Ranged(Arc::new(DirectView {
+            root: jail.root.clone(),
+            server: agent_server("build.example", "guest"),
+        }));
+        ensure_remote_copy_allowed(
+            ("agent", &ranged(&local), "/srv/f"),
+            ("direct", &jailed, "/srv/f"),
+        )
+        .await
+        .expect("another jail");
     })
     .await;
 }
