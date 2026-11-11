@@ -41,9 +41,8 @@ fn startup_files(home: &Path) {
         ),
     )
     .expect("zshrc");
-    let bash_rc = format!(
-        "read -r -n 1 -p '{QUESTION} ' a; echo; echo \"ANSWER-$a\"\nPS1='{PROMPT} '\n"
-    );
+    let bash_rc =
+        format!("read -r -n 1 -p '{QUESTION} ' a; echo; echo \"ANSWER-$a\"\nPS1='{PROMPT} '\n");
     std::fs::write(home.join(".bash_profile"), &bash_rc).expect("profile");
     std::fs::write(home.join(".bashrc"), &bash_rc).expect("bashrc");
 }
@@ -65,7 +64,11 @@ impl Session {
             d.to_string_lossy().to_string()
         };
         let home_str = home.path().to_string_lossy().to_string();
-        let histfile = home.path().join(".th_history").to_string_lossy().to_string();
+        let histfile = home
+            .path()
+            .join(".th_history")
+            .to_string_lossy()
+            .to_string();
         let settings = serde_json::json!({
             "shell": shell_name,
             "shellIntegration": true,
@@ -140,14 +143,16 @@ async fn assert_question_waits_for_the_user(shell_name: &str) {
         "{shell_name}: something answered the startup question: {text:?}"
     );
 
-    // The user answers; the shell reaches its prompt and the setup runs there.
+    // The user answers. Their keys could still sit in the line editor, so
+    // the setup waits for the prompt after their first command.
     s.shell.write(b"y").expect("write");
-    s.read_until("the user's answer and the integrated prompt", |t| {
-        t.contains("ANSWER-y") || t.contains("ANSWER-Y")
+    s.read_until("the user's answer and the prompt", |t| {
+        (t.contains("ANSWER-y") || t.contains("ANSWER-Y")) && t.contains(PROMPT)
     })
     .await;
-    s.read_until("the integrated prompt", |t| {
-        t.contains("\x1b]133;A") && t.contains(PROMPT)
+    s.shell.write(b"echo FIRST_$((1+1))\r").expect("write");
+    s.read_until("the first command and the integrated prompt", |t| {
+        t.contains("FIRST_2") && t.contains("\x1b]133;A")
     })
     .await;
     s.shell.write(b"echo TH_$((40+2))\r").expect("write");

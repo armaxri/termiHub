@@ -28,6 +28,7 @@ use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 use super::cwd_follow_thread::CwdFollowThread;
 pub use super::local_shell_env::set_shell_env_override;
+use super::local_shell_ready::{ready_signal, ReadySignal};
 use super::local_shell_setup::TypedSetup;
 
 use crate::output::early::EarlyOutput;
@@ -710,10 +711,18 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // The shell-integration line typed into bash / zsh, hidden where the
         // line editor is observable (#5009).
         let setup = osc7_for_stdin.map(|line| {
+            let observable = spawned.line_editor_reading.is_some();
+            // Only where the line editor is observable can its mark be awaited.
+            let signal = if observable {
+                ready_signal(&final_cmd.program)
+            } else {
+                ReadySignal::Canonical
+            };
             let setup = TypedSetup::new(
                 line,
-                spawned.line_editor_reading.is_some(),
+                observable,
                 bootstrapped,
+                signal,
                 writer.clone(),
                 self.output_tx.clone(),
             );
