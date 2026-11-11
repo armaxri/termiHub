@@ -6,6 +6,7 @@ import path from "path";
 import {
   checkRepo,
   findIgnores,
+  guidedIdsInModule,
   inventoryRows,
   jobBlock,
   laneSelects,
@@ -123,6 +124,26 @@ describe("inventoryRows", () => {
   });
 });
 
+describe("guidedIdsInModule", () => {
+  it("reads ids from test docstrings of a manual-marked module only", () => {
+    const text = [
+      '"""Module docstring names MT-AAA-9, which does not count."""',
+      "import pytest",
+      "pytestmark = [pytest.mark.integration, pytest.mark.manual]",
+      "class TestX:",
+      '    @pytest.mark.manual(platforms=["macos"])',
+      "    def test_one(self, x: int) -> None:",
+      '        """MT-RUST-01: one.',
+      "",
+      '        Also MT-RUST-02."""',
+      "    def helper(self):",
+      '        """MT-BBB-3 is not a test docstring."""',
+    ].join("\n");
+    expect(guidedIdsInModule(text)).toEqual(["MT-RUST-01", "MT-RUST-02"]);
+    expect(guidedIdsInModule(text.replace(/mark\.manual/g, "mark.slow"))).toEqual([]);
+  });
+});
+
 describe("checkRepo", () => {
   let dir;
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
@@ -159,6 +180,13 @@ describe("checkRepo", () => {
       ...tests.map((t) => `| \`c/src/lib.rs\` | \`${t}\` | why | binding |`),
       "<!-- ignored-tests:end -->",
     ].join("\n");
+  const guided = (id) =>
+    [
+      "import pytest",
+      "pytestmark = [pytest.mark.manual]",
+      "def test_walk():",
+      `    """${id}: walked by hand."""`,
+    ].join("\n");
   const src = (...attrs) =>
     attrs.map(([reason, test]) => `#[test]\n#[ignore = "${reason}"]\nfn ${test}() {}\n`).join("");
 
@@ -175,6 +203,7 @@ describe("checkRepo", () => {
           ["x; helper: parent", "child"]
         ) + 'fn parent() { cmd.args(["child", "--ignored"]); }\n',
       "docs/testing.md": docs("good", "via_script", "by_hand", "flaky", "child"),
+      "tests/system/tests/test_guided_x.py": guided("MT-RUST-01"),
     });
     expect(checkRepo(root, lanes).problems).toEqual([]);
   });
@@ -190,9 +219,20 @@ describe("checkRepo", () => {
           ["x; lane: w.yml#lint", "lint_only"],
           ["x; lane: w.yml#runs", "renamed"],
           ["x; manual: MT-RUST-99", "undefined_id"],
+          ["x; manual: MT-RUST-01", "unwalked"],
           ["x; helper: missing_parent", "orphan"]
         ),
-      "docs/testing.md": docs("bare", "unbound", "unregistered", "lint_only", "renamed", "gone"),
+      "docs/testing.md": docs(
+        "bare",
+        "unbound",
+        "unregistered",
+        "lint_only",
+        "renamed",
+        "unwalked",
+        "gone"
+      ),
+      // Named only by a module that is not manual-marked: does not count.
+      "tests/system/tests/test_auto.py": guided("MT-RUST-01").replace("pytest.mark.manual", "x"),
     });
     const problems = checkRepo(root, lanes).problems.join("\n");
     expect(problems).toMatch(/\(bare\): bare #\[ignore\]/);
@@ -201,6 +241,7 @@ describe("checkRepo", () => {
     expect(problems).toMatch(/\(lint_only\): lane w\.yml#lint: never runs ignored tests/);
     expect(problems).toMatch(/\(renamed\): lane w\.yml#runs never names this test/);
     expect(problems).toMatch(/\(undefined_id\): manual id MT-RUST-99 is not defined/);
+    expect(problems).toMatch(/\(unwalked\): manual id MT-RUST-01 is named by no guided-manual/);
     expect(problems).toMatch(/\(orphan\): helper parent missing_parent is not in this file/);
     expect(problems).toMatch(/inventory table is missing c\/src\/lib\.rs::undefined_id/);
     expect(problems).toMatch(/stale inventory row c\/src\/lib\.rs::gone/);
