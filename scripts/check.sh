@@ -137,6 +137,15 @@ else
 fi
 
 echo ""
+echo "=== GitHub Actions cache save gates ==="
+# Every cache save in CI is gated to develop/main (#5328, #3328 reader/writer split).
+if node scripts/internal/check-cache-save-gates.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== apt download retries ==="
 # Every apt-get update/install in CI, Dockerfiles and scripts retries downloads (#5152).
 if node scripts/internal/check-apt-retries.mjs; then

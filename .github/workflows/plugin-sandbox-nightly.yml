@@ -116,13 +116,15 @@ jobs:
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           workspaces: plugin-runner/fuzz
 
       - name: Restore the fuzz corpus
         # Grow the corpus across nights: restore the newest one for this
-        # branch, save under a fresh key at the end. gen-seeds re-adds the real
-        # encoder's frames every run, so a cold cache still starts seeded.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # branch, save under a fresh key after the fuzz run. gen-seeds re-adds
+        # the real encoder's frames every run, so a cold cache still starts seeded.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: plugin-runner/fuzz/corpus
           key: plugin-ipc-fuzz-corpus-${{ matrix.branch }}-${{ github.run_id }}
@@ -132,6 +134,15 @@ jobs:
         env:
           FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '60' }}
         run: scripts/internal/plugin-ipc-fuzz.sh --seconds "$FUZZ_SECONDS"
+
+      - name: Save the fuzz corpus
+        # Only runs started from develop/main save (the scheduled run's ref is
+        # main), so a dispatch from a feature branch cannot add entries (#5328).
+        if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: plugin-runner/fuzz/corpus
+          key: plugin-ipc-fuzz-corpus-${{ matrix.branch }}-${{ github.run_id }}
 
       - name: Upload crash reproducers
         if: failure()
@@ -168,6 +179,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Run the performance gate (release)
         env:
@@ -229,6 +243,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Handshake with github.com from the sandboxed plugin
         # `--ignored` runs exactly the network test; per-PR CI never passes it.

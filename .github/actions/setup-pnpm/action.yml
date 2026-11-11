@@ -4,6 +4,17 @@ description: >-
   self-installer. The installer (run via npm) intermittently exits non-zero on
   GitHub runners — Windows especially — which would otherwise fail the whole job
   on a transient hiccup. The pnpm version is read from package.json as usual.
+  With `cache: "true"` it also caches the pnpm store. It restores on every ref,
+  but only develop and main save (the #3328 reader/writer split, #5328).
+  actions/setup-node's own `cache: pnpm` cannot do that: it saves on every ref,
+  and those feature-branch and PR entries crowd develop's out of the 10 GB
+  Actions cache budget. Workflows use this input instead of setup-node's.
+
+inputs:
+  cache:
+    description: 'Cache the pnpm store: "true" or "false" (default)'
+    required: false
+    default: "false"
 
 runs:
   using: 'composite'
@@ -38,3 +49,32 @@ runs:
         msg="pnpm/action-setup needed ${attempts} attempts to install pnpm (flaky installer retried)."
         echo "::notice title=Setup pnpm retried::${msg}"
         echo ":repeat: ${msg}" >> "$GITHUB_STEP_SUMMARY"
+
+    # The pnpm store cache (#5328). On develop/main, actions/cache restores now
+    # and saves in its post step at the end of the job, after `pnpm install`
+    # has filled the store. Every other ref only restores.
+    - name: Locate the pnpm store
+      id: store
+      if: inputs.cache == 'true'
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the pnpm store
+      if: >-
+        inputs.cache == 'true' &&
+        !(github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Restore and save the pnpm store
+      if: >-
+        inputs.cache == 'true' &&
+        (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-${{ runner.arch }}-

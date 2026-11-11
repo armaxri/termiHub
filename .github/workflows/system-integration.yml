@@ -336,12 +336,13 @@ jobs:
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
+        with:
+          cache: "true"
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
-          cache: 'pnpm'
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -359,6 +360,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Setup uv
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
@@ -876,18 +880,22 @@ jobs:
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
+        with:
+          cache: "true"
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
-          cache: 'pnpm'
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Setup uv
         # uv version comes from .github/uv-version (#1552, WA-CI-017).
@@ -1121,6 +1129,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Verify the Docker daemon is reachable
         # Fail loudly if Docker is unavailable rather than letting the suites
