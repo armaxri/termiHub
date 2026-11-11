@@ -28,6 +28,7 @@ carries the same keys (its menu shows Connect, F2 opens its editor).
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import pytest
@@ -57,6 +58,8 @@ RENAME_INPUT = "inline-folder-name-input"
 FOLDER_UNDO_TOAST = "folder-delete-undo-toast"
 #: The toast's Undo button: ``showUndoToast`` tags it ``<toast testid>-undo``.
 FOLDER_UNDO = f"{FOLDER_UNDO_TOAST}-undo"
+#: How long a delete stays undoable (``UNDO_WINDOW_MS`` in src/utils/undoableDelete.ts).
+UNDO_WINDOW_S = 10
 
 #: The two keys that open a row's context menu: (key, shift held).
 MENU_KEYS = [("F10", True), ("ContextMenu", False)]
@@ -232,11 +235,18 @@ class TestTreeRowKeys(TabsUi, SidebarUi, SettingsUi, AgentUi, ConnectionsUi, Sys
         self.driver.press_key("Delete", row)
         self.wait(lambda: self.driver.exists(CONFIRM_DELETE), what="the confirm, again")
         self.driver.click(CONFIRM_DELETE)
-        self.wait(lambda: self.find_folder(name) is None, what="the folder to go")
-        # The Undo window is 10 s; press it straight away.
+        # The delete is held back for the 10 s undo window: only the tree hides
+        # the row, while the store (the backend's region) still lists the folder
+        # until the window ends. So grade the row in the DOM, and press Undo
+        # well inside the window.
+        self.wait(lambda: not self.driver.exists(row), what="the folder row to go")
         self.wait(lambda: self.driver.exists(FOLDER_UNDO), what="the Undo toast")
         self.driver.click(FOLDER_UNDO)
-        self.wait(lambda: self.find_folder(name) is not None, what="Undo to restore the folder")
+        self.wait(lambda: self.driver.exists(row), what="Undo to bring the folder row back")
+        # Undo dropped the delete: the folder is still saved after the window.
+        time.sleep(UNDO_WINDOW_S + 1)
+        assert self.find_folder(name) is not None, "the undone delete was committed"
+        assert self.driver.exists(row), "the folder row went after the undo window"
 
     # ── agent row ───────────────────────────────────────────────────────────────
     def test_agent_row_keys(self):
