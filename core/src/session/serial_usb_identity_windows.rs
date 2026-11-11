@@ -82,7 +82,7 @@ fn find_port_dev_inst(class: &GUID, port: &str) -> Option<u32> {
         // SAFETY: `set.0` and `data` describe a device of that set.
         let key =
             unsafe { SetupDiOpenDevRegKey(set.0, &data, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ) };
-        if key == INVALID_HANDLE_VALUE as HKEY {
+        if std::ptr::eq(key, INVALID_HANDLE_VALUE) {
             continue;
         }
         let name = read_registry_string(key, "PortName");
