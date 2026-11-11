@@ -237,4 +237,32 @@ describe("Terminal output repaint (#1849)", () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
     expect(mockRefresh).toHaveBeenCalledWith(0, 23);
   });
+
+  it("skips the post-write scroll and repaint when the tab unmounts before the frame (#5464)", async () => {
+    // A tab that closes (or reconnects) between a write and its next frame has
+    // its xterm disposed; xterm's renderer is then gone and scrolling it threw an
+    // uncaught "reading 'dimensions'" TypeError.
+    renderTerminal();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    if (outputCallback) {
+      act(() => {
+        outputCallback!(new Uint8Array([71, 72, 73]));
+      });
+    }
+    act(() => flushRaf());
+    expect(capturedWriteCallback).not.toBeNull();
+    act(() => capturedWriteCallback!());
+    mockScrollToBottom.mockClear();
+    mockRefresh.mockClear();
+
+    act(() => root.unmount());
+    flushRaf();
+
+    expect(mockScrollToBottom).not.toHaveBeenCalled();
+    expect(mockRefresh).not.toHaveBeenCalled();
+    // afterEach unmounts again; give it a fresh root.
+    root = createRoot(container);
+  });
 });
