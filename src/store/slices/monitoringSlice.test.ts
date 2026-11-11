@@ -128,6 +128,26 @@ describe("monitoringSlice", () => {
       mockedClose.mockRejectedValueOnce(new Error("close boom"));
       await expect(store.getState().disconnectMonitoring("sess-a")).resolves.toBeUndefined();
     });
+
+    it("re-throws the close error when asked, after attempting every key (#5277)", async () => {
+      seedMonitors({
+        "sess-a": entry({ monitorSessionId: "backend-1" }),
+        "sess-b": entry({ monitorSessionId: "backend-2" }),
+      });
+      mockedClose.mockRejectedValueOnce(new Error("close boom"));
+      await expect(
+        store.getState().disconnectMonitoring(undefined, { throwOnFailure: true })
+      ).rejects.toThrow("close boom");
+      expect(mockedClose).toHaveBeenCalledWith("backend-1");
+      expect(mockedClose).toHaveBeenCalledWith("backend-2");
+    });
+
+    it("resolves with throwOnFailure when every close succeeds", async () => {
+      seedMonitors({ "sess-a": entry({ monitorSessionId: "backend-1" }) });
+      await expect(
+        store.getState().disconnectMonitoring("sess-a", { throwOnFailure: true })
+      ).resolves.toBeUndefined();
+    });
   });
 
   describe("clearMonitoringError", () => {

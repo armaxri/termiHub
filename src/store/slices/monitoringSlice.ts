@@ -53,8 +53,14 @@ export interface MonitoringSlice {
     host?: string | null,
     runLocation?: RunLocation
   ) => Promise<void>;
-  /** Disconnect one monitor by key, or every monitor when `key` is omitted. */
-  disconnectMonitoring: (key?: string) => Promise<void>;
+  /**
+   * Disconnect one monitor by key, or every monitor when `key` is omitted.
+   * Close errors are logged and swallowed by default (the backend drops the
+   * entry regardless); pass `{ throwOnFailure: true }` to re-throw the first
+   * one after every key was attempted, so a user-facing caller can report it
+   * (the Open Connections per-row Kill, #5277).
+   */
+  disconnectMonitoring: (key?: string, options?: { throwOnFailure?: boolean }) => Promise<void>;
   /** Clear a lingering error on one entry so a stale tooltip cannot persist (audit gap G9). */
   clearMonitoringError: (key: string) => void;
   /**
@@ -140,12 +146,14 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
     await sessionMonitoringOpen(key, host ?? key, intervalMs, location);
   },
 
-  disconnectMonitoring: async (key) => {
+  disconnectMonitoring: async (key, options) => {
     // Kill exactly one entry when a key is given, or every entry otherwise
     // (Open Connections "Kill All", global toggle-off). The current set is read
     // from the authoritative region (#2224).
     const monitors = currentMonitorsView().monitors;
     const keys = key !== undefined ? [key] : Object.keys(monitors);
+    let firstFailure: unknown = undefined;
+    let failed = false;
 
     for (const k of keys) {
       const entry = monitors[k];
@@ -162,6 +170,10 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
             "monitoring",
             `close monitor ${entry.monitorSessionId} failed: ${errorMessage(err)}`
           );
+          if (!failed) {
+            failed = true;
+            firstFailure = err;
+          }
         }
       } else {
         // A still-connecting or failed entry has no backend session to close, so
@@ -169,6 +181,7 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
         dispatchMonitorIntentBestEffort("monitor.close", { key: k });
       }
     }
+    if (failed && options?.throwOnFailure) throw firstFailure;
   },
 
   setMonitoringPaused: async (key, paused) => {

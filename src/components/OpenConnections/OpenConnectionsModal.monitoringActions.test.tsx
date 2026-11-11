@@ -223,6 +223,50 @@ describe("OpenConnectionsModal — monitoring row actions reach the backend (COV
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
+  it("each monitoring row offers exactly one Kill button beside its controls (#5277)", async () => {
+    seed([monitorEntry(KEY), monitorEntry(OTHER, { status: "offline" })]);
+    await renderModal();
+
+    for (const key of [KEY, OTHER]) {
+      const kill = document.querySelector<HTMLButtonElement>(`[data-testid="monitor-kill-${key}"]`);
+      expect(kill, `kill button for ${key}`).not.toBeNull();
+      expect(kill!.textContent).toBe("Kill");
+      expect(kill!.getAttribute("aria-label")).toBe(`Kill monitoring of ${key}`);
+      const row = kill!.closest(".oc-row")!;
+      expect(row.querySelectorAll(".oc-row__kill")).toHaveLength(1);
+      // The per-host controls stay alongside it.
+      expect(row.querySelector(`[data-testid="monitor-interval-${key}"]`)).not.toBeNull();
+    }
+  });
+
+  it("Kill on one row closes only that host's backend session (#5277)", async () => {
+    seed([monitorEntry(KEY), monitorEntry(OTHER)]);
+    await renderModal();
+
+    await click(`monitor-kill-${KEY}`);
+
+    expect(sessionMonitoringClose).toHaveBeenCalledTimes(1);
+    expect(sessionMonitoringClose).toHaveBeenCalledWith(`mon-${KEY}`);
+    expect(toastSuccess).toHaveBeenCalledWith("Monitoring stopped");
+    expect(toastError).not.toHaveBeenCalled();
+    // No confirmation step for a single-host kill, matching the other rows.
+    expect(document.querySelector('[data-testid="confirm-dialog-confirm"]')).toBeNull();
+  });
+
+  it("a failed per-row Kill toasts the reason and leaves other hosts alone (#5277)", async () => {
+    sessionMonitoringClose.mockRejectedValue(new Error("provider gone"));
+    seed([monitorEntry(KEY), monitorEntry(OTHER)]);
+    await renderModal();
+
+    await click(`monitor-kill-${KEY}`);
+
+    expect(sessionMonitoringClose).toHaveBeenCalledTimes(1);
+    expect(sessionMonitoringClose).toHaveBeenCalledWith(`mon-${KEY}`);
+    expect(toastError).toHaveBeenCalledWith("Failed to stop monitoring: provider gone");
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(document.querySelector(`[data-testid="monitor-kill-${OTHER}"]`)).not.toBeNull();
+  });
+
   it("Kill All closes every monitor's backend session", async () => {
     seed([monitorEntry(KEY), monitorEntry(OTHER)]);
     await renderModal();

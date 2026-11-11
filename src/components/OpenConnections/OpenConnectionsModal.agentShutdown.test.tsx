@@ -131,6 +131,8 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
     expect(row).toBeTruthy();
     expect(row?.querySelector('[data-testid="oc-agent-disconnect-a1"]')).toBeTruthy();
     expect(row?.querySelector('[data-testid="oc-agent-shutdown-a1"]')).toBeTruthy();
+    // Custom actions replace the generic Kill — an agent row gains none (#5277).
+    expect(row?.querySelector(".oc-row__kill")).toBeNull();
   });
 
   it("Disconnect invokes the detach path (disconnectRemoteAgent)", async () => {

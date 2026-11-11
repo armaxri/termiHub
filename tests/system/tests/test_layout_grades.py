@@ -47,8 +47,13 @@ pytestmark = pytest.mark.integration
 _WIN = sys.platform == "win32"
 _ZOOM_MOD = {"meta": True} if sys.platform == "darwin" else {"ctrl": True}
 CTX_HSCROLL = "tab-context-horizontal-scroll"
-#: Terminal.css `--hscroll-bar`: the horizontal bar's height in that mode.
-HSCROLL_BAR_PX = 10
+#: Terminal.css `--hscroll-bar-styled`: the bar height the reserve assumes when
+#: the bar takes no layout space (overlay scrollbars). A laid-out bar is measured
+#: instead, because engines that honour `scrollbar-width` size it themselves
+#: (13 px on the macOS runner, #5280).
+HSCROLL_BAR_OVERLAY_PX = 10
+#: `--spacing-xs`: the gap the reserve keeps between the bar and the last row.
+HSCROLL_GAP_PX = 4
 # Prints READY, then reads ONE raw key and prints its code as K:<n> (ESC = 27).
 # The READY marker is split in the typed text so only the output matches it.
 _READ_ONE_KEY = (
@@ -193,11 +198,18 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
             bar, paint = m["scrollbar"], m["paint"]
             assert bar["thumbVisible"], bar
             assert bar["thumbLeft"] >= paint["textRight"] - 0.5, f"thumb over text: {bar} {paint}"
-            # The strip under the last row holds the whole horizontal bar, whether
-            # the engine lays it out (classic: it shrinks the client area) or
-            # overlays it (GTK overlay scrollbars: client area unchanged).
+            # The reserve is the real bar plus the gap (#5280): the bar the engine
+            # lays out (classic: it shrinks the client area), or the CSS default
+            # for an overlay bar (GTK/macOS overlay scrollbars: client area
+            # unchanged, measured 0).
+            bar_px = paint["hscrollBarHeight"] or HSCROLL_BAR_OVERLAY_PX
+            reserve = bar_px + HSCROLL_GAP_PX
+            assert abs(paint["hscrollReserve"] - reserve) <= 0.5, (
+                f"the reserve does not follow the {bar_px}px bar: {_layout(m)}"
+            )
+            # The strip under the last row holds the whole bar and the gap.
             strip = paint["viewportClientBottom"] + paint["hscrollBarHeight"] - paint["rowsBottom"]
-            assert strip >= HSCROLL_BAR_PX - 0.5, (
+            assert strip >= reserve - 0.5, (
                 f"the horizontal bar covers the last row: {_layout(m)}; before: {_layout(before)}"
             )
         finally:
