@@ -994,6 +994,38 @@ flowchart TD
     W -->|Cancel| X[Disconnected]
 ```
 
+An **agent-hosted serial** tab (#5396) cannot use that redrive: the port is on the agent
+host. The agent's session daemon wraps the serial backend in `SerialReopen`
+(`agent/src/daemon/serial_reopen.rs`) when the connection's Auto-Reconnect is on. When
+the port drops, the session stays the same session: the wrapper runs the shared policy
+itself, asks the same resolver with the agent host's port probe before every attempt,
+and reports each step (`waiting`, `connecting`, `reconnected`, `gaveUp`) to the worker
+(`MSG_RECONNECT`) and on to the desktop as a `connection.reconnect` notification. The
+desktop folds the steps onto the tab's region entry, so the reconnect strip shows them;
+the timer arms no desktop redrive for such a tab, and Stop closes the agent session. A
+give-up ends the session, as a drop did before. An older agent never sends the steps.
+
+```mermaid
+sequenceDiagram
+    participant P as Serial port (agent host)
+    participant D as Session daemon (SerialReopen)
+    participant W as Agent worker
+    participant T as Desktop store / strip
+    P-->>D: output ends (adapter unplugged)
+    D->>W: MSG_RECONNECT waiting(n, delay, reason)
+    W->>T: connection.reconnect → Reconnecting, attempt n
+    D->>D: resolve_reconnect_port (agent probe)
+    alt original device back
+        D->>P: reopen with saved settings
+        D->>W: MSG_RECONNECT reconnected
+        W->>T: Connected, output continues
+    else limit reached
+        D->>W: MSG_RECONNECT gaveUp(reason), then exit
+        W->>T: Failed with reason
+    end
+    T->>D: Stop → connection.close (cancels the loop)
+```
+
 **Agent tabs: no compounding.** An agent-hosted tab has two loops that could look
 nested. A transient break of the agent's SSH transport is owned by the agent's
 **in-task** loop (10 attempts); while it runs, the hosted tabs show "reconnecting"

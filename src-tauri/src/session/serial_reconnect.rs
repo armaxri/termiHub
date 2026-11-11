@@ -14,7 +14,8 @@
 //!   loop backs off and gives up on the shared policy.
 //!
 //! Only **direct** serial tabs go through here. An agent-hosted serial session
-//! lives on the agent and reconnects through the agent path.
+//! lives on the agent, which reopens the port on its own host and reports each
+//! step with `connection.reconnect` (#5396, `agent/src/daemon/serial_reopen.rs`).
 
 use serde_json::Value;
 use termihub_core::config::SerialConfig;

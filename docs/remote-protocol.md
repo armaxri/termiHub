@@ -337,7 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.24.0          | 0.36.0        | Yes (the desktop requests 0.24.0; `connection.files.realpath` lets a same-session paste see through a symlink alias)                  |
+| 0.24.0          | 0.37.0        | Yes (the desktop requests 0.24.0; a serial session reopens its port in place and reports it with `connection.reconnect`)              |
 | 0.24.0          | 0.35.0        | Yes (the desktop requests 0.24.0; a refused, unreachable or unresolvable host gets its own connect hint)                              |
 | 0.24.0          | 0.34.0        | Yes (the desktop requests 0.24.0; `serialPortRescan` lets the Port field of an agent-hosted serial connection follow plug / unplug)   |
 | 0.24.0          | 0.33.0        | Yes (the desktop requests 0.24.0; `definitionIconStyle` shows the icon colour / emoji controls for agent connections)                 |
@@ -418,6 +418,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.37.0 (additive, minor)** — adds the [`connection.reconnect`](#connectionreconnect) notification (#5396): a serial session whose Auto-Reconnect is on (the serial default) no longer ends when its port drops. The agent keeps the session and reopens the port on its own host on the shared reconnect policy, reopening only the device that was open before (a renamed port is followed only on a unique serial-number match), and reports each step. A give-up still ends the session with [`connection.exit`](#connectionexit). [`connection.close`](#connectionclose) stops the loop. An older agent ends the session on a drop as before and never sends the notification; an older desktop ignores it, and the session's output simply resumes once the port is back.
 
 **0.36.0 (additive, minor)** — adds [`connection.files.realpath`](#connectionfilesrealpath) (#5333): the real spelling of a path on the agent host or inside an agent-hosted session, a missing final name resolved through its parent folder. The desktop resolves both paths of a same-session paste through it before anything is written, so a paste through a symlink alias can no longer empty its source or delete its own copy. An older agent answers `-32601` and a backend that cannot resolve answers `-32013`; either way the desktop keeps its lexical check (`.`, `..`, repeated slashes).
 
@@ -4117,6 +4119,49 @@ A session's process has exited.
 | ------------ | ---------- | ----------------------------------------------------------------- |
 | `session_id` | `string`   | Exited session UUID                                               |
 | `exit_code`  | `integer?` | Exit code if available (`null` for signals or serial disconnects) |
+
+### `connection.reconnect`
+
+A session is reopening its backend in place after it dropped (0.37.0+, #5396). Today this is a
+serial session whose Auto-Reconnect is on (the serial default): when its USB adapter is unplugged,
+the session stays alive and the agent retries on the shared reconnect policy (10 attempts, pauses
+doubling from 1 s up to 30 s). Before each attempt it checks the port on the agent host with the
+same rules as a direct serial tab: only the configured port, only the device that was open before
+when the host can read its USB identity, and a renamed port only on a unique serial-number match.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.reconnect",
+  "params": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "seq": 3,
+    "state": "waiting",
+    "attempt": 1,
+    "delay_ms": 2000,
+    "reason": "Serial port /dev/ttyUSB0 is not present."
+  }
+}
+```
+
+| Param        | Type      | Description                                                                                                  |
+| ------------ | --------- | ------------------------------------------------------------------------------------------------------------ |
+| `session_id` | `string`  | Affected session UUID                                                                                        |
+| `seq`        | `integer` | Grows with every step of the session; drop a step whose `seq` is not above the last one applied              |
+| `state`      | `string`  | `waiting` (backoff window), `connecting` (attempt running), `reconnected` (output continues), `gaveUp`       |
+| `attempt`    | `integer` | `waiting` / `connecting`: attempts started so far (the running one included while `connecting`)              |
+| `delay_ms`   | `integer` | `waiting`: the backoff window before the next attempt                                                        |
+| `reason`     | `string?` | `waiting` / `connecting` / `gaveUp`: why the session is reconnecting, or why the last attempt did not reopen |
+
+After `gaveUp` the session ends with [`connection.exit`](#connectionexit). Closing the session
+([`connection.close`](#connectionclose)) stops the loop; this is what the desktop's Stop does. A
+desktop that attaches while a reopen is running receives the current `waiting` / `connecting` step
+right after the attach.
+
+**Session-daemon frame:** the daemon sends each step to the attached worker as `MSG_RECONNECT`
+(`0x8F`, daemon → agent, JSON payload: the params above without `session_id`), and repeats a
+running step right after `MSG_READY` to a worker that attaches mid-reopen. A pre-0.37.0 worker logs
+the unknown frame type and carries on.
 
 ### `connection.evicted`
 

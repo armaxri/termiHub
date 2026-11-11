@@ -661,7 +661,7 @@ When a serial port disappears â€” a USB adapter is unplugged or re-enumerates â€
 - Click **Cancel** on the strip to stop retrying. The tab then shows the manual reconnect prompt.
 - The port is reopened with the saved line settings (baud rate, data bits, stop bits, parity, flow control).
 - Only the port you configured is reopened. On Linux, termiHub also remembers the USB identity of the adapter (vendor, product and serial number). A different adapter that shows up under the same name is not opened: termiHub keeps waiting for the original, and if it gives up, the **Reconnect failed** notice names the other device. If the same adapter comes back under a new name (for example `/dev/ttyUSB1` instead of `/dev/ttyUSB0`) and it reports a serial number, termiHub follows it to the new name. On macOS and Windows termiHub matches the port name only.
-- A serial connection hosted on a remote agent is not covered yet: termiHub does not reopen a port on the agent host after it drops.
+- A serial connection hosted on a remote agent reconnects too. The agent reopens the port on its own host, in the same session, with the same rules: the same countdown and attempts, only the configured adapter, and a rename followed only on a matching serial number. **Cancel** stops the agent from retrying and closes the session. This needs an up-to-date agent (protocol 0.37.0 or later); with an older agent the session ends when the port drops, as before.
 
 ### Terminal Size
 
