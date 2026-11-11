@@ -256,6 +256,9 @@ async fn answer_cert_prompt(
         reviewer,
         cancel,
     } = *ctx;
+    // A followed RDP server redirection (#5137) names the server the
+    // certificate belongs to; trust is keyed on it, never on the broker.
+    let host = prompt.host.as_deref().unwrap_or(host);
     let lookup = trust_store.map_or(TrustLookup::Unknown, |store| {
         store.lookup(host, &prompt.fingerprint)
     });

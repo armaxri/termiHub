@@ -1592,7 +1592,11 @@ pub(crate) async fn cert_pump<S: GraphicalEventSink>(
             fingerprint,
             subject,
             issuer,
+            host: redirected_to,
         } = prompt;
+        // A followed RDP server redirection (#5137) presents the new server's
+        // certificate under that server's own name, never the broker's.
+        let host = redirected_to.unwrap_or_else(|| host.clone());
 
         match trust_store.lookup(&host, &fingerprint) {
             TrustLookup::Trusted => {
@@ -2365,6 +2369,7 @@ mod tests {
             fingerprint: fingerprint.to_string(),
             subject: None,
             issuer: None,
+            host: None,
         })
         .await
         .unwrap();

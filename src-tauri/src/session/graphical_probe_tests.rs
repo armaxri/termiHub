@@ -91,6 +91,7 @@ impl ProbeFake {
                 fingerprint: fingerprint.clone(),
                 subject: None,
                 issuer: None,
+                host: None,
             })
             .expect("queue the prompt");
             *self.prompts.lock().unwrap() = Some(rx);
