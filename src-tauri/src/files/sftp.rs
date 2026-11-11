@@ -25,6 +25,107 @@ pub(crate) fn sftp_op_error(err: termihub_core::errors::FileError) -> TerminalEr
     }
 }
 
+/// Pure unit tests of the desktop SFTP error mapping (#5320): every core
+/// [`FileError`](termihub_core::errors::FileError) variant must reach the user
+/// as a specific, readable `SFTP error: …` message, and a session's SFTP
+/// browser must not be labelled a remote-agent error.
+#[cfg(test)]
+mod error_mapping_tests {
+    use super::*;
+    use crate::utils::errors::IpcErrorCode;
+    use termihub_core::backends::ssh::SftpFileBrowser;
+    use termihub_core::config::SshConfig;
+    use termihub_core::errors::FileError;
+    use termihub_core::files::LocalFileBrowser;
+
+    /// Every variant, with the exact text the file browser shows.
+    fn every_variant() -> Vec<(FileError, &'static str)> {
+        vec![
+            (
+                FileError::NotFound("/srv/a.txt".into()),
+                "SFTP error: File not found: /srv/a.txt",
+            ),
+            (
+                FileError::PermissionDenied("cannot change the permissions of /etc/passwd".into()),
+                "SFTP error: Permission denied: cannot change the permissions of /etc/passwd",
+            ),
+            (
+                FileError::AlreadyExists("/srv/a.txt".into()),
+                "SFTP error: File already exists: /srv/a.txt",
+            ),
+            (
+                // The operation-specific message is kept, without the generic
+                // "Operation failed:" prefix in front of it.
+                FileError::OperationFailed("readdir failed: Failure: Failure".into()),
+                "SFTP error: readdir failed: Failure: Failure",
+            ),
+            (
+                FileError::TooLarge {
+                    size: 2048,
+                    limit: 1024,
+                },
+                "SFTP error: file too large: 2048 bytes exceeds the 1024 byte limit",
+            ),
+            (
+                FileError::NotSupported,
+                "SFTP error: File browsing not supported for this connection type",
+            ),
+            (
+                FileError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "channel closed",
+                )),
+                "SFTP error: I/O error: channel closed",
+            ),
+        ]
+    }
+
+    #[test]
+    fn sftp_op_error_gives_every_variant_a_specific_message() {
+        for (err, expected) in every_variant() {
+            let mapped = sftp_op_error(err);
+            assert!(matches!(mapped, TerminalError::SftpError(_)), "{mapped:?}");
+            assert_eq!(mapped.code(), IpcErrorCode::SftpError);
+            let shown = mapped.to_string();
+            assert_eq!(shown, expected);
+            assert!(!shown.contains("Operation failed: "), "{shown}");
+            assert!(!shown.contains("Remote agent"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn sftp_op_error_serializes_the_shown_message() {
+        let mapped = sftp_op_error(FileError::PermissionDenied(
+            "cannot create the symlink /ro/link".into(),
+        ));
+        let envelope = serde_json::to_value(&mapped).expect("serialize");
+        assert_eq!(envelope["code"], "sftp_error");
+        assert_eq!(
+            envelope["message"],
+            "SFTP error: Permission denied: cannot create the symlink /ro/link"
+        );
+    }
+
+    #[test]
+    fn map_file_error_maps_an_sftp_browser_like_sftp_op_error() {
+        let browser = SftpFileBrowser::new(SshConfig::default());
+        for (err, expected) in every_variant() {
+            assert_eq!(map_file_error(&browser, err).to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn map_file_error_keeps_other_backends_on_the_remote_error_path() {
+        let browser = LocalFileBrowser::new();
+        let mapped = map_file_error(&browser, FileError::NotFound("/x".into()));
+        assert!(
+            matches!(mapped, TerminalError::RemoteError(_)),
+            "{mapped:?}"
+        );
+        assert_eq!(mapped.to_string(), "Remote agent error: File not found: /x");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
