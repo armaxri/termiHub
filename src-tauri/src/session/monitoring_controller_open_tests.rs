@@ -176,11 +176,7 @@ fn agent_refusing(times: Vec<(&'static str, usize)>) -> Arc<FakeAgent> {
 }
 
 fn count(agent: &FakeAgent, method: &str) -> usize {
-    agent
-        .requests()
-        .iter()
-        .filter(|(m, _)| m == method)
-        .count()
+    agent.requests().iter().filter(|(m, _)| m == method).count()
 }
 
 fn routes(agent: &FakeAgent) -> usize {

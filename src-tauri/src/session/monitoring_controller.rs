@@ -198,7 +198,9 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
                 // default. Applied to the provider just subscribed, so a session
                 // removed meanwhile cannot fail the start with a live loop.
                 if let Some(ms) = interval_ms {
-                    provider.set_interval(Duration::from_millis(ms.max(1))).await;
+                    provider
+                        .set_interval(Duration::from_millis(ms.max(1)))
+                        .await;
                 }
                 subscription
             }
