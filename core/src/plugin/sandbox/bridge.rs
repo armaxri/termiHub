@@ -274,16 +274,31 @@ impl BridgeHost {
     pub(super) fn close_session(&self, session_id: u32) {
         lock(&self.sessions).remove(&session_id);
         lock(&self.listings).retain(|_, l| l.session_id != session_id);
-        let gone: Vec<HostConn> = {
+        let gone: Vec<(u64, HostConn)> = {
             let mut conns = lock(&self.conns);
             let ids: Vec<u64> = conns
                 .iter()
                 .filter(|(_, c)| c.session_id == session_id)
                 .map(|(id, _)| *id)
                 .collect();
-            ids.into_iter().filter_map(|id| conns.remove(&id)).collect()
+            ids.into_iter()
+                .filter_map(|id| conns.remove(&id).map(|c| (id, c)))
+                .collect()
         };
-        close_conns(gone);
+        #[cfg(windows)]
+        let passed: Vec<u64> = gone
+            .iter()
+            .filter(|(_, c)| c.passed.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        close_conns(gone.into_iter().map(|(_, c)| c).collect());
+        // The shutdown above does not complete a read already pending on the
+        // runner's duplicate while the peer keeps the connection open (#5360):
+        // tell the runner, which ends its copy itself.
+        #[cfg(windows)]
+        for conn_id in passed {
+            self.send(&Message::StreamClosed(ConnRef { conn_id }));
+        }
     }
 
     /// The runner is gone: drop every session and connection.
@@ -803,7 +818,9 @@ fn close_conns(conns: Vec<HostConn>) {
         if let Some(proxy) = &conn.proxy {
             proxy.close();
         }
-        // Ends the runner's duplicate too: it is the same connection.
+        // Ends the connection under the runner's duplicate too (later reads
+        // and writes there fail), though a read already pending there only
+        // returns once the runner closes it (see `close_session`).
         #[cfg(windows)]
         if let Some(socket) = &conn.passed {
             let _ = socket.shutdown(std::net::Shutdown::Both);
