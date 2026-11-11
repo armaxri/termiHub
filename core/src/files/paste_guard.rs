@@ -3,7 +3,7 @@
 //!
 //! A same-session paste is not always a same-backend copy. A file pasted
 //! between two streaming ends of one session runs through the remote→remote
-//! executor ([`remote_copy`](crate::files::transfer::remote_copy)), which
+//! executor (`core::files::transfer::remote_copy`), which
 //! creates (truncates) the destination before it reads the source. When both
 //! are the same file, the source is emptied while it is read. A byte-based
 //! folder paste (FTP, older agents) creates the destination folder and then
