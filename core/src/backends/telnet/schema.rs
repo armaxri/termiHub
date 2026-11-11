@@ -99,7 +99,33 @@ fn connection_group() -> SettingsGroup {
                 ..field("terminalType", "Terminal Type", FieldType::Text)
             },
             input_mode_field(),
+            auto_reconnect_field(),
         ],
+    }
+}
+
+/// The telnet "Auto-Reconnect" switch (#5390): **off by default** — retrying a
+/// closed telnet session is opt-in per connection.
+fn auto_reconnect_field() -> SettingsField {
+    SettingsField {
+        description: Some("Retry a dropped connection with backoff into the same tab".to_string()),
+        help_text: Some(
+            "Off by default. When on, termiHub re-establishes a dropped telnet \
+             connection with a growing pause (up to 10 attempts, pauses of at most \
+             30 s) instead of showing the manual reconnect prompt. The remote session \
+             is not preserved: the reconnect opens a fresh telnet session (and runs \
+             auto-login again when it is set up). Stop the retry with Cancel on the \
+             reconnect strip."
+                .to_string(),
+        ),
+        default: Some(serde_json::json!(
+            crate::connection::auto_reconnect_default_for("telnet")
+        )),
+        ..field(
+            crate::connection::AUTO_RECONNECT_KEY,
+            "Auto-Reconnect",
+            FieldType::Boolean,
+        )
     }
 }
 

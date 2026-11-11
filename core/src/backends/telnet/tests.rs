@@ -105,7 +105,8 @@ fn schema_has_all_fields() {
             "port",
             "connectTimeoutSecs",
             "terminalType",
-            "inputMode"
+            "inputMode",
+            "autoReconnect"
         ]
     );
     assert_eq!(schema.groups[1].key, "login");
@@ -568,6 +569,14 @@ fn schema_terminal_type_defaults_to_xterm_256color() {
     let field = schema_field("terminalType");
     assert!(!field.required);
     assert_eq!(field.default, Some(serde_json::json!("xterm-256color")));
+}
+
+#[test]
+fn schema_auto_reconnect_is_off_by_default() {
+    // #5390: retrying a closed telnet session is opt-in.
+    let field = schema_field("autoReconnect");
+    assert!(matches!(field.field_type, FieldType::Boolean));
+    assert_eq!(field.default, Some(serde_json::json!(false)));
 }
 
 #[test]

@@ -307,6 +307,38 @@ async fn run_serial_writer<W: SerialByteWriter>(
     }
 }
 
+/// The serial "Auto-Reconnect" switch (#5390): **on by default**, like Tera
+/// Term's COM-port auto-reconnect.
+fn auto_reconnect_field() -> SettingsField {
+    SettingsField {
+        key: crate::connection::AUTO_RECONNECT_KEY.to_string(),
+        label: "Auto-Reconnect".to_string(),
+        description: Some("Reopen the port when the device comes back".to_string()),
+        help_text: Some(
+            concat!(
+                "On by default. When the port disappears (a USB adapter is unplugged or ",
+                "re-enumerates), termiHub keeps the tab and checks for the port with a ",
+                "growing pause (up to 10 attempts, pauses of at most 30 s). When the same ",
+                "port is back it is reopened with the saved line settings. Stop the retry ",
+                "with Cancel on the reconnect strip.\n\n",
+                "Only the configured port is reopened. Where termiHub can read the USB ",
+                "identity (Linux), a different adapter that appears under the same name ",
+                "is not opened.",
+            )
+            .to_string(),
+        ),
+        field_type: FieldType::Boolean,
+        required: false,
+        default: Some(serde_json::json!(
+            crate::connection::auto_reconnect_default_for("serial")
+        )),
+        placeholder: None,
+        supports_env_expansion: false,
+        supports_tilde_expansion: false,
+        visible_when: None,
+    }
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Serial {
     fn type_id(&self) -> &str {
@@ -419,6 +451,7 @@ impl ConnectionType for Serial {
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
+                    auto_reconnect_field(),
                 ],
             }],
         }
@@ -620,7 +653,21 @@ mod tests {
         assert!(keys.contains(&"stopBits"));
         assert!(keys.contains(&"parity"));
         assert!(keys.contains(&"flowControl"));
-        assert_eq!(keys.len(), 6);
+        assert!(keys.contains(&"autoReconnect"));
+        assert_eq!(keys.len(), 7);
+    }
+
+    #[test]
+    fn schema_auto_reconnect_is_on_by_default() {
+        // #5390: serial reopens its port after a drop unless switched off.
+        let schema = Serial::new().settings_schema();
+        let field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "autoReconnect")
+            .expect("autoReconnect field");
+        assert!(matches!(field.field_type, FieldType::Boolean));
+        assert_eq!(field.default, Some(serde_json::json!(true)));
     }
 
     #[test]
