@@ -28,11 +28,28 @@
 )))]
 fn main() {}
 
+/// The one test this target runs, as cargo-nextest lists and runs it.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+const TEST_NAME: &str = "namespaces_enter_or_skip_cleanly";
+
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 fn main() {
+    // Answer libtest's list protocol, which cargo-nextest uses to discover
+    // tests (#5345): `--list` names the one test (`--ignored`: none). Any other
+    // invocation, including nextest's `<name> --exact`, runs it.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--list") {
+        if !args.iter().any(|a| a == "--ignored") {
+            println!("{TEST_NAME}: test");
+        }
+        return;
+    }
     linux::run();
 }
 
