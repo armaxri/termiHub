@@ -26,6 +26,12 @@ vi.mock("@/store/appStore", () => ({
   ) => selector({ credentialStoreStatus: credStatus.value }),
 }));
 
+const { ensureStorageMock } = vi.hoisted(() => ({ ensureStorageMock: vi.fn() }));
+vi.mock("@/utils/credentialStorageChoice", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/credentialStorageChoice")>()),
+  ensureCredentialStorageForSave: ensureStorageMock,
+}));
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -214,5 +220,61 @@ describe("SaveAsConnectionDialog", () => {
     expect(storeCredentialMock).toHaveBeenCalledTimes(1);
     expect(onSave).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalled();
+  });
+
+  describe("first-use storage chooser (#5187)", () => {
+    const fresh: CredentialStoreStatusInfo = {
+      mode: "none",
+      status: "unavailable",
+      storageChosen: false,
+    };
+
+    it("keeps the save box live before any storage choice exists", () => {
+      credStatus.value = fresh;
+      render();
+      const box = query("save-as-connection-save-password") as HTMLButtonElement;
+      expect(box.disabled).toBe(false);
+      expect(box.getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("asks where to store, then saves into the chosen store", async () => {
+      credStatus.value = fresh;
+      ensureStorageMock.mockImplementation(() => {
+        credStatus.value = { mode: "os_keychain", status: "unlocked", storageChosen: true };
+        return Promise.resolve(true);
+      });
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render({ onSave });
+
+      await act(async () => {
+        (query("save-as-connection-save-password") as HTMLButtonElement).click();
+        await Promise.resolve();
+      });
+      expect(ensureStorageMock).toHaveBeenCalledTimes(1);
+      render({ onSave }); // the store status changed: re-render from it
+      typeInto(query("save-as-connection-password") as HTMLInputElement, "s3cret");
+      await clickSave();
+
+      expect(storeCredentialMock).toHaveBeenCalledTimes(1);
+      expect(storeCredentialMock.mock.calls[0][2]).toBe("s3cret");
+    });
+
+    it("saves no password when the chooser is canceled", async () => {
+      credStatus.value = fresh;
+      ensureStorageMock.mockResolvedValue(false);
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render({ onSave });
+
+      await act(async () => {
+        (query("save-as-connection-save-password") as HTMLButtonElement).click();
+        await Promise.resolve();
+      });
+      expect(query("save-as-connection-password")).toBeNull();
+      await clickSave();
+
+      expect(storeCredentialMock).not.toHaveBeenCalled();
+      const [connection] = onSave.mock.calls[0] as [SavedConnection];
+      expect(connection.config.config).not.toHaveProperty("savePassword");
+    });
   });
 });

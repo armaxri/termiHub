@@ -150,4 +150,36 @@ describe("credentialStoreSlice — connect fall-through (#5188)", () => {
     store.getState().resolveUnlock(true);
     await expect(unlocked).resolves.toBe("unlocked");
   });
+
+  describe("first-use storage chooser (#5187)", () => {
+    let store: ReturnType<typeof makeStore>;
+    beforeEach(() => {
+      store = makeStore();
+    });
+
+    it("starts closed with nothing pending", () => {
+      expect(store.getState().storageChooserOpen).toBe(false);
+      expect(store.getState().storageChooserResolvers).toEqual([]);
+    });
+
+    it("opens on request and settles every waiter on the single exit", async () => {
+      const first = store.getState().requestStorageChoice();
+      const second = store.getState().requestStorageChoice();
+      expect(store.getState().storageChooserOpen).toBe(true);
+      expect(store.getState().storageChooserResolvers).toHaveLength(2);
+
+      store.getState().resolveStorageChoice("os_keychain");
+
+      await expect(Promise.all([first, second])).resolves.toEqual(["os_keychain", "os_keychain"]);
+      expect(store.getState().storageChooserOpen).toBe(false);
+      expect(store.getState().storageChooserResolvers).toEqual([]);
+    });
+
+    it("settles a cancel as canceled and ignores a second settle", async () => {
+      const pending = store.getState().requestStorageChoice();
+      store.getState().resolveStorageChoice("canceled");
+      store.getState().resolveStorageChoice("os_keychain");
+      await expect(pending).resolves.toBe("canceled");
+    });
+  });
 });
