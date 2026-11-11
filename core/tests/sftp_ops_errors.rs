@@ -52,7 +52,10 @@ async fn scratch_dir(browser: &SftpFileBrowser, tag: &str) -> String {
         "/home/testuser/termihub-5320-{tag}-{}-{nanos}",
         std::process::id()
     );
-    browser.mkdir(&dir).await.expect("create the scratch folder");
+    browser
+        .mkdir(&dir)
+        .await
+        .expect("create the scratch folder");
     dir
 }
 
@@ -90,7 +93,10 @@ async fn chmod_on_a_root_owned_file_is_permission_denied() {
     // above is the server's answer, not a broken session.
     let dir = scratch_dir(&browser, "chmod").await;
     let own = format!("{dir}/own.txt");
-    browser.write_file(&own, b"x").await.expect("write own file");
+    browser
+        .write_file(&own, b"x")
+        .await
+        .expect("write own file");
     browser
         .set_permissions(&own, 0o600)
         .await
@@ -159,7 +165,10 @@ async fn symlink_into_a_read_only_folder_is_permission_denied() {
         .await
         .expect("write the link target");
     let locked = format!("{dir}/locked");
-    browser.mkdir(&locked).await.expect("create the locked folder");
+    browser
+        .mkdir(&locked)
+        .await
+        .expect("create the locked folder");
     browser
         .set_permissions(&locked, 0o555)
         .await
@@ -205,9 +214,7 @@ async fn copying_a_file_onto_itself_is_refused_and_keeps_its_contents() {
 
     let same = browser.copy(&file, &file).await;
     // The same file spelled differently must be caught as well.
-    let respelled = browser
-        .copy(&file, &format!("{dir}/./data.txt"))
-        .await;
+    let respelled = browser.copy(&file, &format!("{dir}/./data.txt")).await;
     let contents = browser.read_file(&file).await;
     remove_tree(&browser, &dir).await;
 
