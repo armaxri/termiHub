@@ -158,6 +158,12 @@ pub fn local_open_folder<R: tauri::Runtime>(
     use tauri_plugin_opener::OpenerExt;
 
     let opened = match resolve_folder_target(&path)? {
+        // Windows: `explorer.exe "<dir>"`, not the opener's
+        // `SHOpenFolderAndSelectItems`, which left a new Explorer window on the
+        // user's home folder instead of `dir` (#5290).
+        #[cfg(windows)]
+        FolderTarget::Open(dir) => return crate::files::open_folder::open_in_explorer(&dir),
+        #[cfg(not(windows))]
         FolderTarget::Open(dir) => app.opener().open_path(dir.to_string_lossy(), None::<&str>),
         FolderTarget::Reveal(entry) => app.opener().reveal_item_in_dir(entry),
     };

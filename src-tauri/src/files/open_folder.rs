@@ -117,6 +117,54 @@ pub fn resolve_folder_target(path: &str) -> Result<FolderTarget, TerminalError> 
     })
 }
 
+/// The `explorer.exe` that opens folders on Windows: `%SystemRoot%\explorer.exe`,
+/// by absolute path so a stray `explorer.exe` earlier on `PATH` is never run.
+pub fn explorer_program(system_root: Option<&std::ffi::OsStr>) -> PathBuf {
+    let root = system_root
+        .filter(|root| !root.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    root.join("explorer.exe")
+}
+
+/// The raw command-line argument that makes `explorer.exe` open `dir` itself.
+///
+/// Explorer splits an unquoted argument at commas and reads a leading `/` as an
+/// option (`/select,…`, `/root,…`), so the folder is always passed in double
+/// quotes (a Windows path cannot contain `"`). Only an absolute folder from
+/// [`resolve_folder_target`] reaches here; anything option-shaped or carrying a
+/// quote is refused rather than handed to Explorer.
+pub fn explorer_open_arg(dir: &Path) -> Result<String, TerminalError> {
+    let text = dir.to_string_lossy();
+    if text.is_empty() || text.starts_with('/') || text.starts_with('-') || text.contains('"') {
+        return Err(TerminalError::InvalidParams(format!(
+            "not a folder Explorer can open: {text}"
+        )));
+    }
+    Ok(format!("\"{text}\""))
+}
+
+/// Open `dir` in a new Explorer window on Windows (#5290).
+///
+/// Runs `explorer.exe "<dir>"` instead of the opener plugin's
+/// `SHOpenFolderAndSelectItems(dir, [dir])`. On the Server 2025 / Windows 11
+/// Explorer that call created a window but left it on the user's home folder
+/// (`C:\Users\<user>`) instead of `dir`; Explorer navigates a window it starts
+/// from its command line straight to the folder. Explorer's exit code carries
+/// no meaning (it is 1 on success), so only a failure to start it is an error.
+#[cfg(windows)]
+pub fn open_in_explorer(dir: &Path) -> Result<(), TerminalError> {
+    use std::os::windows::process::CommandExt;
+
+    let arg = explorer_open_arg(dir)?;
+    let program = explorer_program(std::env::var_os("SystemRoot").as_deref());
+    std::process::Command::new(program)
+        .raw_arg(arg)
+        .spawn()
+        .map(drop)
+        .map_err(|e| TerminalError::EditorError(format!("could not start Explorer: {e}")))
+}
+
 #[cfg(test)]
 #[path = "open_folder_tests.rs"]
 mod tests;

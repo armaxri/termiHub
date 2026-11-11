@@ -297,17 +297,19 @@ def title_names_folder(title: str, folder: str) -> bool:
 # use no ``PATH`` lookup, so there the harness asks the file manager which
 # folders it shows instead.
 #
-# Windows has two views of that, and the grade needs both (#5290):
+# Windows has two views of that, and the grade reads both (#5290):
 #
 # * The ``Shell.Application`` COM object's ``Windows()`` list, which names each
-#   window's folder by path. On the Windows 11 / Server 2025 tabbed Explorer it
-#   does not reliably list a folder that opened as a *tab* of an existing window:
-#   the runners showed one stale ``C:\Users\runneradmin`` entry while the folder
-#   the app opened was not listed at all.
+#   window's folder by path. On the Windows 11 / Server 2025 tabbed Explorer a
+#   folder opened as a *tab* of an existing window is not reliably listed.
 # * The Explorer windows themselves: every tab is a ``ShellTabWindowClass``
 #   child of a ``CabinetWClass`` frame, titled with the folder's display name
 #   (and the frame takes the active tab's title). :func:`explorer_folder_titles`
 #   reads those with ``EnumWindows``, limited to ``explorer.exe`` processes.
+#
+# Snapshotting both before the click is what showed #5290 was an app bug: with no
+# Explorer window before the click, the app's hand-off produced one new window on
+# ``C:\Users\runneradmin`` (the home folder), never the folder it was asked for.
 
 #: Opt-in for a local macOS run to query Finder over Apple Events. It triggers
 #: the Automation permission prompt for the terminal app, so it is off unless

@@ -115,3 +115,51 @@ fn verbatim_prefixes_are_stripped() {
         PathBuf::from("/home/me")
     );
 }
+
+#[test]
+fn explorer_is_run_by_absolute_path_from_system_root() {
+    let program = explorer_program(Some(std::ffi::OsStr::new(r"D:\Win")));
+    assert_eq!(program, PathBuf::from(r"D:\Win").join("explorer.exe"));
+    let fallback = explorer_program(None);
+    assert_eq!(fallback, PathBuf::from(r"C:\Windows").join("explorer.exe"));
+    let empty = explorer_program(Some(std::ffi::OsStr::new("")));
+    assert_eq!(empty, fallback);
+}
+
+#[test]
+fn explorer_gets_the_folder_itself_quoted_never_an_option() {
+    // The folder itself (not `/select,` = reveal in parent), quoted so commas
+    // and spaces stay one argument.
+    let arg = explorer_open_arg(Path::new(
+        r"C:\Users\runneradmin\AppData\Local\Temp\thub_handoff_x",
+    ))
+    .unwrap();
+    assert_eq!(
+        arg,
+        r#""C:\Users\runneradmin\AppData\Local\Temp\thub_handoff_x""#
+    );
+    assert_eq!(
+        explorer_open_arg(Path::new(r"C:\a b,c\d")).unwrap(),
+        r#""C:\a b,c\d""#
+    );
+    assert_eq!(
+        explorer_open_arg(Path::new(r"\\server\share\dir")).unwrap(),
+        r#""\\server\share\dir""#
+    );
+    for bad in ["", "/select,C:\\x", "/root,C:\\x", "-x", "C:\\a\"b"] {
+        assert!(
+            explorer_open_arg(Path::new(bad)).is_err(),
+            "{bad:?} must be refused"
+        );
+    }
+}
+
+#[test]
+fn a_verbatim_canonical_folder_reaches_explorer_without_its_prefix() {
+    // `canonicalize` on Windows yields `\\?\C:\…`; Explorer must get `C:\…`.
+    let folder = strip_verbatim_prefix(PathBuf::from(r"\\?\C:\Users\runneradmin\x"));
+    assert_eq!(
+        explorer_open_arg(&folder).unwrap(),
+        r#""C:\Users\runneradmin\x""#
+    );
+}
