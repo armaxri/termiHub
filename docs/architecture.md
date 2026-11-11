@@ -1570,6 +1570,29 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
 
 Credential storage is managed through the Security section in Settings.
 
+#### First-use storage chooser
+
+A new installation starts in **None** mode without a storage choice. The first attempt to save
+a secret — ticking "Save password" in the connect-time prompt or in credential re-entry, turning
+on the editor's "Save credentials" toggle, or "Save password to credential store" when saving a
+recent session as a connection — opens a one-time chooser, "Where should termiHub keep
+passwords?", with **OS Keychain** pre-selected, **Master Password** and **Don't save
+passwords** (`src/components/CredentialStorage/CredentialStorageChooser.tsx`).
+
+- Choosing a store switches to it (`switch_credential_store`); Master Password first asks for the
+  new master password with the same setup fields as Settings → Security. Only then does the
+  waiting save write the secret, through its normal path — nothing is written before the choice
+  is confirmed.
+- "Don't save passwords" keeps None mode and records the choice
+  (`mark_credential_storage_chosen`).
+- Cancel records nothing and saves nothing; the next save asks again.
+
+The choice is persisted as the backend-owned `credentialStorageChosen` setting and reported as
+`storageChosen` on the credential-store status. Any store switch records it, and an install with
+a persisted storage mode or an active store counts as chosen (`storage_choice_made`), so existing
+users are never asked. The frontend's whole-document settings save never changes the storage
+mode or the choice. Both stay changeable under Settings → Security → Credential Storage.
+
 #### Credential vault export / import
 
 Settings → Security → **Credential Vault Backup** exports every saved credential to an encrypted
