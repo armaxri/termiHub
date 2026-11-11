@@ -868,6 +868,49 @@ files. `baseline.json` holds the per-lane budgets migrated from the old file;
 lower a number there only when a lane measurably needs fewer skips. On a
 budget overrun the guard lists each contributing fragment and its count.
 
+### Rerun report and rerun budget (#5167)
+
+The bulk and OS-input lanes run `--reruns 2` (#2698), so a test that fails and
+then passes on a retry is green. The rerun count is the lane's flake metric, so
+the harness publishes it and puts a limit on it:
+
+- **Report.** Every run lists the tests that needed a rerun. For each test it
+  gives the node id, the attempts, the final outcome and the first failure's
+  message. The list goes to the terminal summary, to
+  `artifacts/reruns/<lane>.json` (uploaded with the lane's artifacts) and to a
+  "Pytest reruns" table in the GitHub step summary. A lane publishes all three
+  even when nothing reran. A local run without a lane prints the list only when
+  a test reran. The full first-attempt traceback stays in that test's
+  `attempt-1-failure.txt`.
+- **Budget.** A lane that names itself in `TERMIHUB_SKIP_GUARD_LANE` fails when
+  its **absorbed** reruns exceed its budget. A rerun is absorbed when the test
+  then passed. A test that still failed after every retry reds the lane anyway,
+  so its retries appear in the list but do not count. The failure message names
+  every test that passed only on a retry.
+
+Budgets are fragments in
+[`tests/system/rerun-budget.d/`](../tests/system/rerun-budget.d/), in the same
+style as the skip allowlist:
+
+```json
+{
+  "why": "known flake in the jump-host reconnect, tracked in #1234",
+  "max_reruns": { "bulk-linux": 1 }
+}
+```
+
+A lane's budget is the sum of `max_reruns` over every fragment that names it. A
+lane that no fragment names allows no absorbed rerun. The `--reruns 0` display
+lanes therefore need no fragment. Keys that start with `_` are comments. The
+seed fragments are `<lane>.json`, and each one records in `_seed` the nightly
+counts it came from. To raise a budget, **add** a fragment named
+`<issue>-<slug>.json`; do not edit a seed number. Fixing the race is always the
+better change.
+
+Tests that rerun on two consecutive nights get a tracking issue. The coordinator
+files it from the JSON artifact or the step summary. Nothing in the harness files
+issues. The machinery tests are in `tests/system/tests/test_rerun_budget.py`.
+
 ### JS error gate
 
 The real app can throw on every tab open and a bridge test still passes, so the
