@@ -334,6 +334,7 @@ class ConnectionsUi(HarnessMixin):
         username: str,
         auth_method: str = "password",
         key_path: Optional[str] = None,
+        password: Optional[str] = None,
         save_password: bool = False,
         auto_reconnect: bool = True,
         connect: bool = False,
@@ -349,6 +350,11 @@ class ConnectionsUi(HarnessMixin):
         raise the key-passphrase prompt on the sidebar-connect path. That field is
         only present when the credential store is not in ``"none"`` mode (see
         :class:`~termihub_harness.ui.CredentialStoreUi`).
+        ``password`` types the password into the form's own Password field. With
+        ``save_password=True`` the save itself writes it to the credential store
+        (``prepare_for_storage``), with no connect — the way to save a password
+        for a connection that never connects. A password typed into the connect
+        prompt is saved only once the connect succeeds (#5156, #5262).
         ``auto_reconnect=False`` flips the default-on "Auto-Reconnect" toggle off
         (PARITY-008), for a test that exercises the manual disconnect overlay
         rather than the automatic reconnect loop.
@@ -363,6 +369,7 @@ class ConnectionsUi(HarnessMixin):
             username=username,
             auth_method=auth_method,
             key_path=key_path,
+            password=password,
             save_password=save_password,
             auto_reconnect=auto_reconnect,
         )
@@ -379,6 +386,7 @@ class ConnectionsUi(HarnessMixin):
         username: str,
         auth_method: str = "password",
         key_path: Optional[str] = None,
+        password: Optional[str] = None,
         save_password: bool = False,
         auto_reconnect: bool = True,
     ) -> None:
@@ -408,6 +416,8 @@ class ConnectionsUi(HarnessMixin):
                 what="the SSH key-path field",
             )
             self.driver.type(self.KEY_PATH_INPUT, str(key_path))
+        if password is not None:
+            self._type_form_password(password)
         if save_password:
             # The "Save credentials" toggle is a checkbox; a click flips it on so
             # key auth prompts for (and would store) the key passphrase.
@@ -415,13 +425,39 @@ class ConnectionsUi(HarnessMixin):
                 lambda: self.driver.exists("field-savePassword"),
                 what="the Save credentials toggle",
             )
-            self.driver.click("field-savePassword")
+            if self.driver.get_attribute("field-savePassword", "aria-checked") != "true":
+                self.driver.click("field-savePassword")
+            self.wait(
+                lambda: self.driver.get_attribute("field-savePassword", "aria-checked") == "true",
+                what="the Save credentials toggle to be on",
+            )
         if not auto_reconnect:
             self.wait(
                 lambda: self.driver.exists("field-autoReconnect"),
                 what="the Auto-Reconnect toggle",
             )
             self.driver.click("field-autoReconnect")
+
+    def _type_form_password(self, password: str) -> None:
+        """Type ``password`` into the SSH form's Password field and wait until it holds it.
+
+        The field is controlled by React; if a re-render resets it after the
+        harness typed, it is typed again rather than saved empty (as for the
+        connect prompt, #4995).
+        """
+        field = "field-password"
+        self.wait(lambda: self.driver.exists(field), what="the SSH Password field")
+
+        def holds_password() -> bool:
+            if self.driver.get_value(field) == password:
+                return True
+            print(f"[connections] {field} does not hold the password; typing it (again)")
+            self.driver.type(field, password)
+            return False
+
+        if self.driver.get_value(field) != password:
+            self.driver.type(field, password)
+        self.wait(holds_password, what=f"{field} to hold the typed password")
 
     def _click_editor_save(self, connect: bool) -> None:
         """Click Save / Save & Connect once the form reports itself valid.

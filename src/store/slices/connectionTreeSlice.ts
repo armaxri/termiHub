@@ -63,7 +63,13 @@ export interface ConnectionTreeSlice {
   /** Reload connections from the backend using the versioned reload guard. */
   reloadConnectionsFromBackend: () => void;
   toggleFolder: (folderId: string) => void;
-  addConnection: (connection: SavedConnection) => void;
+  /**
+   * Add a connection: optimistic overlay, then persist. Resolves with the id it
+   * was stored under (the backend recomputes it from folder + name), or `null`
+   * when the persist failed (already toasted). Callers may ignore the promise;
+   * Save & Connect awaits it to bind its tab to the saved connection (#5257).
+   */
+  addConnection: (connection: SavedConnection) => Promise<string | null>;
   bulkAddConnections: (connections: SavedConnection[]) => void;
   /**
    * Persist an imported folder tree (#4850): `folders` (parents first) are
@@ -76,7 +82,12 @@ export interface ConnectionTreeSlice {
     folders: ConnectionFolder[],
     connections: SavedConnection[]
   ) => Promise<void>;
-  updateConnection: (connection: SavedConnection) => void;
+  /**
+   * Replace a connection: optimistic overlay, then persist. Resolves with the id
+   * it is stored under now (a rename changes it), or `null` when the persist
+   * failed (already toasted). See {@link addConnection}.
+   */
+  updateConnection: (connection: SavedConnection) => Promise<string | null>;
   deleteConnection: (connectionId: string) => void;
   bulkDeleteConnections: (connectionIds: string[]) => void;
   addFolder: (folder: ConnectionFolder) => void;
@@ -317,17 +328,19 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // the preview gives way to the persisted row the moment that fold lands —
       // never shown next to it (#3961). A rejected persist drops the overlay (#2831).
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
-      persistWithOverlay(
+      return persistWithOverlay(
         upsertConnection(connection),
         () => persistConnection(stripPassword(connection)),
         { previewId: connection.id }
       )
-        .then(() => {
+        .then((persistedId): string | null => {
           toast.success(`Saved ${connection.name}`);
+          return persistedId || connection.id;
         })
-        .catch((err) => {
+        .catch((err): string | null => {
           frontendLog("app_store", `Failed to persist new connection: ${errorMessage(err)}`);
           toast.error(`Failed to save ${connection.name}: ${errorMessage(err)}`);
+          return null;
         });
     },
 
@@ -381,15 +394,17 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // save resolves reads the correct id (#875). A rejected persist drops the
       // overlay, leaving the on-disk value (FES-005, #2831).
       frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
-      persistWithOverlay(replaceConnection(connection), () =>
+      return persistWithOverlay(replaceConnection(connection), () =>
         persistConnection(stripPassword(connection))
       )
-        .then(() => {
+        .then((persistedId): string | null => {
           toast.success(`Saved ${connection.name}`);
+          return persistedId || connection.id;
         })
-        .catch((err) => {
+        .catch((err): string | null => {
           frontendLog("app_store", `Failed to persist connection update: ${errorMessage(err)}`);
           toast.error(`Failed to save ${connection.name}: ${errorMessage(err)}`);
+          return null;
         });
     },
 

@@ -185,6 +185,20 @@ const AGENT_HEADER_SELECTOR = ".connection-list__group-header--agent";
 /** Every agent header's toggle, in section order. */
 const AGENT_TOGGLE_SELECTOR = `${AGENT_HEADER_SELECTOR} .${AGENT_TOGGLE_CLASS}`;
 
+/**
+ * The list holding every agent header — the focus-rescue scope of an agent
+ * delete (#5248): the Remote Agents list (`data-agent-list`), or the element
+ * the agent node is rendered into when it stands alone. Never the document, or
+ * the rescue would land on an unrelated header.
+ */
+function agentListScope(header: HTMLElement): Element | undefined {
+  return (
+    header.closest("[data-agent-list]") ??
+    header.closest('[data-testid^="agent-node-"]')?.parentElement ??
+    undefined
+  );
+}
+
 // ── Agent connection item ────────────────────────────────────────────
 
 interface AgentConnectionItemProps extends AgentItemNavProps {
@@ -476,8 +490,9 @@ function AgentConnectionItem({
           message={`Delete connection “${definition.name}” from this agent? This cannot be undone.`}
           onConfirm={() => {
             setConfirmingDelete(false);
-            void deleteAgentDef(agentId, definition.id);
-            if (deleteFocusRef.current) rescueFocusAfterRemoval(deleteFocusRef.current);
+            const settled = deleteAgentDef(agentId, definition.id);
+            if (deleteFocusRef.current)
+              rescueFocusAfterRemoval(deleteFocusRef.current, { settled });
             deleteFocusRef.current = null;
           }}
           onCancel={() => {
@@ -756,8 +771,9 @@ function AgentFolderNode({
           message={agentFolderDeleteMessage(folder.name, childDefinitions.length)}
           onConfirm={() => {
             setConfirmingDelete(false);
-            void deleteAgentFolder(agentId, folder.id);
-            if (deleteFocusRef.current) rescueFocusAfterRemoval(deleteFocusRef.current);
+            const settled = deleteAgentFolder(agentId, folder.id);
+            if (deleteFocusRef.current)
+              rescueFocusAfterRemoval(deleteFocusRef.current, { settled });
             deleteFocusRef.current = null;
           }}
           onCancel={() => {
@@ -1117,7 +1133,7 @@ export function AgentNode({
               deleteFocusRef.current = captureNeighborFocus(
                 row,
                 isToggle ? AGENT_TOGGLE_SELECTOR : AGENT_HEADER_SELECTOR,
-                row.ownerDocument.body
+                agentListScope(row)
               );
               setConfirmingDelete(true);
             },

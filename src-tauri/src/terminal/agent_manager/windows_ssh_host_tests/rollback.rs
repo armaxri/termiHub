@@ -23,16 +23,19 @@
 //! deploy/connect/reattach test of the same shell.
 
 use super::*;
-use crate::terminal::agent_install::InstallPlan;
+use crate::terminal::agent_install::{
+    windows_cleanup_stale_command, windows_free_slot_command, InstallPlan, WINDOWS_STALE_PREFIX,
+};
 use crate::utils::remote_exec::run_remote_command_checked;
 use termihub_core::backends::ssh::handler::SshSession;
 
 /// Bytes that are not a Windows executable: running them fails at once (no
 /// stdout), exactly like a corrupt or wrong-architecture download.
-const BROKEN_AGENT: &[u8] = b"not a Windows executable: termiHub #5219 rollback test\r\n";
+pub(super) const BROKEN_AGENT: &[u8] =
+    b"not a Windows executable: termiHub #5219 rollback test\r\n";
 
 /// A command (in `shell`'s syntax) printing `PRESENT` or `ABSENT` for `path`.
-fn exists_probe(shell: WindowsShell, path: &str) -> String {
+pub(super) fn exists_probe(shell: WindowsShell, path: &str) -> String {
     match shell {
         WindowsShell::Cmd => format!(r#"if exist "{path}" (echo PRESENT) else (echo ABSENT)"#),
         WindowsShell::PowerShell => {
@@ -42,7 +45,7 @@ fn exists_probe(shell: WindowsShell, path: &str) -> String {
 }
 
 /// A command (in `shell`'s syntax) printing the size of `path` in bytes.
-fn size_probe(shell: WindowsShell, path: &str) -> String {
+pub(super) fn size_probe(shell: WindowsShell, path: &str) -> String {
     match shell {
         WindowsShell::Cmd => format!(r#"for %I in ("{path}") do @echo %~zI"#),
         WindowsShell::PowerShell => format!(r#"(Get-Item -Path "{path}").Length"#),
@@ -64,24 +67,26 @@ fn break_probe(shell: WindowsShell, path: &str) -> String {
 /// the install, the backup and the upload temp file. Best effort: absent files
 /// and no running agent are fine.
 ///
-/// An agent left running by the earlier test (its session daemon) locks the
-/// exe, and on the cmd leg `taskkill` gets "Access denied" for it. Windows
-/// lets a running exe be renamed, so whatever cannot be deleted is renamed
-/// aside (`*.stale-<n>.exe`): the install path is free either way.
+/// An agent left running by an earlier test (its session daemon) locks the
+/// exe, and on the cmd leg `taskkill` gets "Access denied" for it. The reset
+/// then frees the paths with the production commands (#5254): what cannot be
+/// deleted is renamed aside to a stale name, and stale images nothing runs any
+/// more are deleted.
 fn reset_command(shell: WindowsShell, plan: &InstallPlan) -> String {
-    let (dst, bak) = (&plan.install_path, &plan.backup_path);
+    let free_dst = windows_free_slot_command(shell, &plan.install_path);
+    let free_bak = &plan.discard_backup_command;
+    let cleanup = windows_cleanup_stale_command(shell);
     match shell {
         WindowsShell::Cmd => format!(
-            r#"taskkill /F /IM {WINDOWS_AGENT_EXE} >nul 2>&1 & ping -n 2 127.0.0.1 >nul & del /F /Q "{dst}" "{bak}" "%USERPROFILE%\{WINDOWS_UPLOAD_NAME}" >nul 2>&1 & (if exist "{dst}" ren "{dst}" "{STALE_PREFIX}%RANDOM%.exe") & (if exist "{bak}" ren "{bak}" "{STALE_PREFIX}b%RANDOM%.exe") & echo RESET"#
+            r#"taskkill /F /IM {WINDOWS_AGENT_EXE} >nul 2>&1 & ping -n 2 127.0.0.1 >nul & del /F /Q "%USERPROFILE%\{WINDOWS_UPLOAD_NAME}" >nul 2>&1 & {free_dst} & {free_bak} & {cleanup} & echo RESET"#
         ),
+        // The set-aside stops on a failed rename; `try` keeps the reset going
+        // so the caller's probe reports what is left.
         WindowsShell::PowerShell => format!(
-            r#"Get-Process -Name termihub-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Remove-Item -Force -ErrorAction SilentlyContinue -Path "{dst}", "{bak}", "$env:USERPROFILE\{WINDOWS_UPLOAD_NAME}"; foreach ($p in "{dst}", "{bak}") {{ if (Test-Path -Path $p) {{ Rename-Item -ErrorAction SilentlyContinue -Path $p -NewName ("{STALE_PREFIX}" + (Get-Random) + ".exe") }} }}; 'RESET'"#
+            r#"Get-Process -Name termihub-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Remove-Item -Force -ErrorAction SilentlyContinue -Path "$env:USERPROFILE\{WINDOWS_UPLOAD_NAME}"; try {{ {free_dst} }} catch {{ }}; try {{ {free_bak} }} catch {{ }}; {cleanup}; 'RESET'"#
         ),
     }
 }
-
-/// File-name prefix of an install or backup the reset had to rename aside.
-const STALE_PREFIX: &str = "termihub-agent.stale-";
 
 /// A command (in `shell`'s syntax) listing the running agents with their
 /// command lines, to log what a reset found holding the exe.
@@ -100,13 +105,13 @@ fn agent_processes_probe(shell: WindowsShell) -> String {
 }
 
 /// Run `command`, failing the test with `what` and the full exec report.
-fn run(session: &SshSession, command: &str, what: &str) -> String {
+pub(super) fn run(session: &SshSession, command: &str, what: &str) -> String {
     run_remote_command(session, command)
         .unwrap_or_else(|e| panic!("{what} (`{command}`) failed: {e}"))
 }
 
 /// Run `command` with its exit status checked; it must succeed.
-fn run_checked(session: &SshSession, command: &str, what: &str) {
+pub(super) fn run_checked(session: &SshSession, command: &str, what: &str) {
     if let Err(e) = run_remote_command_checked(session, command) {
         panic!(
             "{what} (`{command}`) failed: {e}\n  => {}",
@@ -119,9 +124,11 @@ fn run_checked(session: &SshSession, command: &str, what: &str) {
 /// with the errors shown: why a reset left it behind.
 fn reset_diagnostics(shell: WindowsShell, path: &str) -> String {
     match shell {
-        WindowsShell::Cmd => format!(r#"del /F /Q "{path}" & ren "{path}" "{STALE_PREFIX}x.exe""#),
+        WindowsShell::Cmd => {
+            format!(r#"del /F /Q "{path}" & ren "{path}" "{WINDOWS_STALE_PREFIX}x.exe""#)
+        }
         WindowsShell::PowerShell => format!(
-            r#"Remove-Item -Force -Path "{path}"; Rename-Item -Path "{path}" -NewName "{STALE_PREFIX}x.exe""#
+            r#"Remove-Item -Force -Path "{path}"; Rename-Item -Path "{path}" -NewName "{WINDOWS_STALE_PREFIX}x.exe""#
         ),
     }
 }
@@ -129,7 +136,7 @@ fn reset_diagnostics(shell: WindowsShell, path: &str) -> String {
 /// Start from a host with no file at the install or backup path and no staged
 /// upload. A killed agent can hold its exe for a moment, so the reset is
 /// retried a few times; the running agents are logged first.
-fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
+pub(super) fn reset(session: &SshSession, shell: WindowsShell, plan: &InstallPlan) {
     const ATTEMPTS: u32 = 5;
     eprintln!(
         "{shell:?}: running agents before the reset:\n  => {}",
@@ -195,12 +202,12 @@ fn assert_failed_steps_exit_non_zero(session: &SshSession, plan: &InstallPlan) {
 }
 
 /// Install `bytes` with the production deploy, failing the test on an error.
-fn install(session: &SshSession, bytes: &[u8], what: &str) -> DeployOutcome {
+pub(super) fn install(session: &SshSession, bytes: &[u8], what: &str) -> DeployOutcome {
     deploy_bytes(session, bytes).unwrap_or_else(|e| panic!("{what}: deploy failed: {e}"))
 }
 
 /// Assert a deploy of a working agent succeeded and left no backup behind.
-fn assert_clean_install(
+pub(super) fn assert_clean_install(
     session: &SshSession,
     outcome: &DeployOutcome,
     want: WindowsShell,
@@ -223,7 +230,7 @@ fn assert_clean_install(
 
 /// Assert `outcome` rolled back and the original agent (`original_len` bytes)
 /// is back at the install path, runs, and the backup is gone (moved back).
-fn assert_rolled_back(
+pub(super) fn assert_rolled_back(
     fixture: &Fixture,
     session: &SshSession,
     outcome: &DeployOutcome,
@@ -347,6 +354,7 @@ fn leave_backup_next_to_a_broken_install(
         &plan.backup_command,
         "copying the install to the backup",
     );
+    // The copy leaves the install in place; break it so it no longer runs.
     run_checked(
         session,
         &break_probe(shell, &plan.install_path),
@@ -415,7 +423,12 @@ fn reset_removes_install_backup_and_upload() {
         assert!(cmd.contains(&plan.backup_path), "{cmd}");
         assert!(cmd.contains(WINDOWS_UPLOAD_NAME), "{cmd}");
         assert!(cmd.ends_with("RESET") || cmd.ends_with("'RESET'"), "{cmd}");
-        assert!(cmd.contains(STALE_PREFIX), "a locked exe is renamed: {cmd}");
+        assert!(
+            cmd.contains(&windows_free_slot_command(shell, &plan.install_path)),
+            "a locked install is freed with the production command: {cmd}"
+        );
+        assert!(cmd.contains(&plan.discard_backup_command), "{cmd}");
+        assert!(cmd.contains(&windows_cleanup_stale_command(shell)), "{cmd}");
     }
 }
 
