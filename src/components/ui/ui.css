@@ -85,7 +85,7 @@
   background: var(--accent-color);
   color: var(--text-on-accent);
 }
-.ui-btn--primary:hover {
+.ui-btn--primary:hover:not([aria-disabled="true"]) {
   background: var(--accent-hover);
 }
 
@@ -94,7 +94,7 @@
   color: var(--text-primary);
   border-color: var(--border-primary);
 }
-.ui-btn--secondary:hover {
+.ui-btn--secondary:hover:not([aria-disabled="true"]) {
   background: var(--bg-hover);
 }
 
@@ -102,7 +102,7 @@
   background: transparent;
   color: var(--text-secondary);
 }
-.ui-btn--ghost:hover {
+.ui-btn--ghost:hover:not([aria-disabled="true"]) {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
@@ -112,13 +112,25 @@
   color: var(--color-error);
   border-color: var(--color-error);
 }
-.ui-btn--danger:hover {
+.ui-btn--danger:hover:not([aria-disabled="true"]) {
   background: var(--bg-hover);
 }
 
-.ui-btn[disabled] {
+/*
+ * Unavailable look. `[aria-disabled="true"]` (#5286) is the keyboard-reachable
+ * twin of `[disabled]`: an invalid editor's Save stays focusable and, when
+ * activated, focuses the first invalid field (#2467, #5285) — so it shares the
+ * dimmed look and `not-allowed` cursor, keeps its `:focus-visible` ring, and
+ * gets no hover highlight (the variant `:hover` rules exclude it). Unlike
+ * `[disabled]` it must keep pointer events, or the click that explains why the
+ * save did not happen would never reach the handler.
+ */
+.ui-btn[disabled],
+.ui-btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.ui-btn[disabled] {
   pointer-events: none;
 }
 
