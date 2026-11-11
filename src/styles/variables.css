@@ -15,7 +15,7 @@
   /* Activity bar */
   --activity-bar-bg: #0b0d12;
   --activity-bar-active: #e4e8f4;
-  --activity-bar-inactive: #525d6e;
+  --activity-bar-inactive: #545f70;
   --activity-bar-indicator: #3d7de8;
   --activity-bar-width: 48px;
   /* Hover/active tint on activity-bar items. The activity bar stays dark in
