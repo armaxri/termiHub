@@ -107,7 +107,7 @@ fn split_parent(path: &str) -> (&str, &str) {
 /// Resolve `path` with `canon`. When `canon` cannot resolve it (a copy
 /// destination that does not exist yet), resolve its parent folder and
 /// append the final name. `None` when neither resolves.
-pub(crate) async fn resolve_through_parent<F, Fut>(path: &str, canon: F) -> Option<String>
+pub async fn resolve_through_parent<F, Fut>(path: &str, canon: F) -> Option<String>
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Option<String>>,
@@ -158,7 +158,7 @@ where
 pub enum PathResolver {
     /// The SFTP server's `realpath`.
     #[cfg(feature = "ssh")]
-    Sftp(SftpFileBrowser),
+    Sftp(Box<SftpFileBrowser>),
     /// `readlink -f` / `pwd -P` inside the container.
     #[cfg(feature = "docker")]
     Docker(DockerTransferTarget),
@@ -187,7 +187,7 @@ impl PathResolver {
             .as_any()
             .and_then(|any| any.downcast_ref::<SftpFileBrowser>())
         {
-            return PathResolver::Sftp(sftp.clone());
+            return PathResolver::Sftp(Box::new(sftp.clone()));
         }
         #[cfg(feature = "docker")]
         if let Some(target) = crate::backends::docker::docker_transfer_target_of(browser) {

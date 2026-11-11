@@ -116,7 +116,9 @@ impl RemoteCopyEndpoint {
     pub fn path_resolver(&self) -> PathResolver {
         match self {
             #[cfg(feature = "ssh")]
-            RemoteCopyEndpoint::Sftp(browser) => PathResolver::Sftp(browser.as_ref().clone()),
+            RemoteCopyEndpoint::Sftp(browser) => {
+                PathResolver::Sftp(Box::new(browser.as_ref().clone()))
+            }
             #[cfg(feature = "docker")]
             RemoteCopyEndpoint::Docker(target) => PathResolver::Docker(target.clone()),
             #[cfg(feature = "local-transfer")]
