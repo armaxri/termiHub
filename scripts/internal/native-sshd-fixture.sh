@@ -458,7 +458,7 @@ EOF
     [ -n "${GITHUB_ENV:-}" ] || die "--github-env given but GITHUB_ENV is not set"
     if [ -s "$PASSWORD_FILE" ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
       # A throwaway test password, but keep it out of the job log anyway.
-      echo "::add-mask::$(cat "$PASSWORD_FILE")"
+      echo "::add-mask::$(cat "$PASSWORD_FILE")" >&2
     fi
     printf '%s\n' "$lines" >>"$GITHUB_ENV"
   fi

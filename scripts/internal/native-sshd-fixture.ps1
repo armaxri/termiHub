@@ -27,7 +27,11 @@
       * prints `export NAME='value'` lines (POSIX form, for the Git Bash
         wrapper to eval) and, with -GitHubEnv, appends NAME=value to $GITHUB_ENV:
         TERMIHUB_NATIVE_SSHD=1, _PORT, _USER, _KEY, _HOST_PUBKEY, _DIR and,
-        with -AgentBinary, _AGENT_BIN (a copy the test user can execute).
+        with -AgentBinary, _AGENT_BIN (a copy the test user can execute);
+        with -PasswordLogin, _PASSWORD (the test user's password).
+
+    -PasswordLogin (#5176) also turns on password auth for the test user, so
+    the system-test SSH suites that log in with a password can target it.
 
     stop / start take the listener down and bring it back (state kept); stop
     also ends the sessions the fixture's sshd spawned. down removes the
@@ -55,7 +59,9 @@ param(
 
     [switch]$GitHubEnv,
 
-    [string]$AgentBinary = ''
+    [string]$AgentBinary = '',
+
+    [switch]$PasswordLogin
 )
 
 Set-StrictMode -Version Latest
@@ -75,6 +81,7 @@ $Config = Join-Path $Dir 'sshd_config'
 $LogFile = Join-Path $Dir 'sshd.log'
 $PortFile = Join-Path $Dir 'port'
 $AgentCopy = Join-Path $Dir 'agent\termihub-agent.exe'
+$PasswordFile = Join-Path $Dir 'password'
 
 # Well-known SIDs, so the ACLs do not depend on the OS display language.
 $SidSystem = '*S-1-5-18'
@@ -179,8 +186,8 @@ function Initialize-TestUser {
     $rng.GetBytes($bytes)
     $rng.Dispose()
     # Hex plus a fixed prefix: meets complexity rules, and holds no `/` that
-    # net.exe would read as a switch. Key auth only; the password is never used
-    # or exported. `/y` answers net.exe's ">14 characters" confirmation prompt.
+    # net.exe would read as a switch. Used and exported only with
+    # -PasswordLogin. `/y` answers net.exe's ">14 characters" confirmation prompt.
     $password = 'Tn!' + ([BitConverter]::ToString($bytes) -replace '-', '')
     if ($null -ne (Get-TestUserSid)) {
         Invoke-Native 'net.exe' @('user', $TestUser, $password, '/y') | Out-Null
@@ -188,6 +195,7 @@ function Initialize-TestUser {
         Invoke-Native 'net.exe' @('user', $TestUser, $password, '/add', '/expires:never', '/y') | Out-Null
     }
     Write-FixtureLog "local test user $TestUser ready"
+    return $password
 }
 
 function Unregister-TestUser {
@@ -247,7 +255,7 @@ function Write-SshdConfig([int]$TcpPort) {
         "HostKey $(& $fwd $HostKey)"
         "AuthorizedKeysFile $(& $fwd $AuthKeys)"
         'PubkeyAuthentication yes'
-        'PasswordAuthentication no'
+        "PasswordAuthentication $(if ($PasswordLogin) { 'yes' } else { 'no' })"
         'AllowTcpForwarding yes'
         "AllowUsers $TestUser"
         'Subsystem sftp sftp-server.exe'
@@ -444,12 +452,19 @@ function Write-FixtureEnvironment([bool]$ToGitHubEnv) {
     if (Test-Path -LiteralPath $AgentCopy) {
         $vars['TERMIHUB_NATIVE_SSHD_AGENT_BIN'] = $AgentCopy
     }
+    if (Test-Path -LiteralPath $PasswordFile) {
+        $vars['TERMIHUB_NATIVE_SSHD_PASSWORD'] = (Get-Content -LiteralPath $PasswordFile).Trim()
+    }
     foreach ($name in $vars.Keys) {
         Write-Output "export $name='$($vars[$name])'"
     }
     if ($ToGitHubEnv) {
         if (-not $env:GITHUB_ENV) {
             throw '-GitHubEnv given but GITHUB_ENV is not set'
+        }
+        if ($vars.Contains('TERMIHUB_NATIVE_SSHD_PASSWORD') -and $env:GITHUB_ACTIONS) {
+            # A throwaway test password, but keep it out of the job log anyway.
+            [Console]::Error.WriteLine("::add-mask::$($vars['TERMIHUB_NATIVE_SSHD_PASSWORD'])")
         }
         $vars.Keys | ForEach-Object { "$_=$($vars[$_])" } |
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
@@ -464,7 +479,7 @@ function Invoke-Up([int]$ListenPort, [string]$AgentSource, [bool]$ToGitHubEnv) {
         Invoke-Down
     }
     Install-OpenSshServer
-    Initialize-TestUser
+    $userPassword = Initialize-TestUser
 
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
     # The test user may read/execute inside (the agent copy); keys are tightened below.
@@ -482,6 +497,10 @@ function Invoke-Up([int]$ListenPort, [string]$AgentSource, [bool]$ToGitHubEnv) {
     Protect-FixtureFile $HostKey @("${SidSystem}:F", "${SidAdmins}:F")
     Protect-FixtureFile $ClientKey @("${SidSystem}:F", "${SidAdmins}:F", "$([Environment]::UserName):F")
     Protect-FixtureFile $AuthKeys @("${SidSystem}:F", "${SidAdmins}:F", "${TestUser}:R")
+    if ($PasswordLogin) {
+        [IO.File]::WriteAllText($PasswordFile, $userPassword + "`n", $utf8NoBom)
+        Protect-FixtureFile $PasswordFile @("${SidSystem}:F", "${SidAdmins}:F", "$([Environment]::UserName):F")
+    }
 
     if ($AgentSource) {
         New-Item -ItemType Directory -Path (Split-Path $AgentCopy) -Force | Out-Null
