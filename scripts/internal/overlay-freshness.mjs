@@ -14,9 +14,11 @@
 //
 //   * prints each overlay's source sha, age in days, commits behind HEAD and
 //     its stale-file count and share into the job summary (--summary);
-//   * fails (exit 1) when an overlay is missing, older than
-//     MAX_OVERLAY_AGE_DAYS, or more than MAX_STALE_SHARE of its files are
-//     stale, naming the lane that went dark and linking its latest run.
+//   * fails (exit 1) when an overlay is missing or older than
+//     MAX_OVERLAY_AGE_DAYS, naming the lane that went dark and linking its
+//     latest run;
+//   * WARNS (never fails) when more than WARN_STALE_SHARE of an overlay's files
+//     are stale: develop churns fast enough that a day-old overlay can cross it.
 //
 // It runs as its own step ("Integration overlay freshness") AFTER the ratchet,
 // so the unit-coverage ratchet's verdict never depends on it. The verdict only
@@ -36,10 +38,14 @@ import { normalizePath, parseLcov } from "./lcov-merge.mjs";
 export const MAX_OVERLAY_AGE_DAYS = 3;
 /**
  * More than this share of the overlay's own files changed since it was
- * measured means most of what it would add is skipped as stale, so the
- * "unit + integration" number is close to unit-only.
+ * measured means much of what it would add is skipped as stale, so the
+ * "unit + integration" number drifts toward unit-only. This is a WARNING, not a
+ * failure: develop takes hundreds of commits a day, so even a healthy overlay
+ * measured a day earlier can be over 10 % stale (12.1 % for the harness at
+ * 1.1 days on 2026-11-11). A gate that is red most nights gets ignored. AGE is
+ * the signal that a lane went dark, so only age (and a missing overlay) fails.
  */
-export const MAX_STALE_SHARE = 0.1;
+export const WARN_STALE_SHARE = 0.1;
 /** Branches whose overlays the nightlies produce; elsewhere the gate only warns. */
 export const GATED_BRANCHES = new Set(["develop"]);
 export const STATUS_FILE = "overlay-status.json";
@@ -69,34 +75,34 @@ export function staleShare(overlayFiles, staleFiles) {
 }
 
 /**
- * The problems with one lane's overlay: missing, too old, too stale.
- * `lane` is an overlay-status.json entry. Returns a list of phrases.
+ * One lane's overlay verdict. `problems` (missing, too old) fail the gate;
+ * `warnings` (too stale) never do. `lane` is an overlay-status.json entry.
  */
 export function evaluateOverlay(lane, now) {
-  if (!lane.present) return [`no usable overlay (${lane.note ?? "nothing fetched"})`];
+  if (!lane.present) {
+    return { problems: [`no usable overlay (${lane.note ?? "nothing fetched"})`], warnings: [] };
+  }
   const problems = [];
+  const warnings = [];
   const age = ageDays(lane.measuredAt, now);
   if (age === null) problems.push("its measurement time is unknown");
   else if (age > MAX_OVERLAY_AGE_DAYS) {
     problems.push(`it is ${age.toFixed(1)} days old (limit ${MAX_OVERLAY_AGE_DAYS})`);
   }
-  if (lane.overlayFiles > 0 && lane.staleOverlayFiles / lane.overlayFiles > MAX_STALE_SHARE) {
-    problems.push(
+  if (lane.overlayFiles > 0 && lane.staleOverlayFiles / lane.overlayFiles > WARN_STALE_SHARE) {
+    warnings.push(
       `${lane.staleOverlayFiles} of its ${lane.overlayFiles} files ` +
         `(${pct(lane.staleOverlayFiles / lane.overlayFiles)}) changed since ` +
-        `(limit ${pct(MAX_STALE_SHARE)})`
+        `(warning above ${pct(WARN_STALE_SHARE)})`
     );
   }
-  return problems;
+  return { problems, warnings };
 }
 
 /** Evaluate every lane; `gated` says whether problems fail the step. */
 export function evaluateStatus(status, now) {
   const gated = GATED_BRANCHES.has(status.branch);
-  const lanes = (status.lanes ?? []).map((lane) => ({
-    lane,
-    problems: evaluateOverlay(lane, now),
-  }));
+  const lanes = (status.lanes ?? []).map((lane) => ({ lane, ...evaluateOverlay(lane, now) }));
   return { gated, lanes, failed: gated && lanes.some((l) => l.problems.length > 0) };
 }
 
@@ -107,6 +113,21 @@ export function latestRunLink(lane) {
     return `[run ${lane.latestRun.id}](${lane.latestRun.url}) (${c})`;
   }
   return lane.workflowUrl ? `[${lane.workflow}](${lane.workflowUrl})` : lane.workflow;
+}
+
+/** One line per lane whose overlay is stale but not dark, for a ::warning. */
+export function staleMessage(lane, warnings) {
+  return (
+    `${lane.lane} overlay (${lane.workflow}) is stale: ${warnings.join("; ")}. ` +
+    "Not a failure: develop churns fast; only age or a missing overlay fails."
+  );
+}
+
+/** Verdict cell: dark (fails) beats stale (warns) beats ok. */
+export function verdictCell(problems, warnings) {
+  if (problems.length > 0) return `**dark**: ${problems.join("; ")}`;
+  if (warnings.length > 0) return `**warning, stale**: ${warnings.join("; ")}`;
+  return "ok";
 }
 
 /** One line per lane that went dark, for the log / an ::error annotation. */
@@ -123,13 +144,13 @@ export function formatSummary(status, evaluation, now) {
     "### Integration overlay freshness",
     "",
     `Graded branch \`${status.branch}\`, HEAD \`${short(status.head)}\`. ` +
-      `Limits: ${MAX_OVERLAY_AGE_DAYS} days old, ${pct(MAX_STALE_SHARE)} of the overlay's ` +
-      `files stale. ${evaluation.gated ? "Gated" : "Not gated on this branch (warnings only)"}.`,
+      `Fails above ${MAX_OVERLAY_AGE_DAYS} days old or when missing; warns above ` +
+      `${pct(WARN_STALE_SHARE)} of the overlay's files stale. ${evaluation.gated ? "Gated" : "Not gated on this branch (warnings only)"}.`,
     "",
     "| Lane | Source sha | Age (days) | Commits behind | Changed files | Stale overlay files | Verdict | Latest run |",
     "| --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
   ];
-  for (const { lane, problems } of evaluation.lanes) {
+  for (const { lane, problems, warnings } of evaluation.lanes) {
     const age = lane.present ? ageDays(lane.measuredAt, now) : null;
     const staleCell =
       lane.present && lane.overlayFiles > 0
@@ -139,7 +160,7 @@ export function formatSummary(status, evaluation, now) {
       `| ${lane.lane} | ${lane.present && lane.sha ? `\`${short(lane.sha)}\`` : "-"} | ` +
         `${age === null ? "-" : age.toFixed(1)} | ${lane.present ? (lane.behindBy ?? "-") : "-"} | ` +
         `${lane.present ? (lane.changedFiles ?? "-") : "-"} | ${staleCell} | ` +
-        `${problems.length === 0 ? "ok" : `**dark**: ${problems.join("; ")}`} | ` +
+        `${verdictCell(problems, warnings)} | ` +
         `${latestRunLink(lane)} |`
     );
   }
@@ -191,11 +212,12 @@ function main(argv) {
   process.stdout.write(summary);
   if (opts.summary) appendFileSync(opts.summary, summary);
   const level = evaluation.gated ? "error" : "warning";
-  for (const { lane, problems } of evaluation.lanes) {
-    if (problems.length === 0) continue;
-    console.log(
-      `::${level} title=Integration overlay (${lane.lane})::${darkMessage(lane, problems)}`
-    );
+  for (const { lane, problems, warnings } of evaluation.lanes) {
+    const title = `Integration overlay (${lane.lane})`;
+    if (problems.length > 0)
+      console.log(`::${level} title=${title}::${darkMessage(lane, problems)}`);
+    if (warnings.length > 0)
+      console.log(`::warning title=${title}::${staleMessage(lane, warnings)}`);
   }
   return evaluation.failed ? 1 : 0;
 }

@@ -199,10 +199,11 @@ jobs:
 
       # The overlays' own gate (#5346, COV-022), after the ratchet so its verdict
       # never depends on them. It prints each overlay's source sha, age, commits
-      # behind HEAD and stale-file share into the summary, and FAILS when an
-      # overlay is missing, older than 3 days or more than 10 % stale on develop
-      # (overlay-freshness.mjs holds the thresholds): its nightly lane went dark.
-      # The error names the lane and links its latest run. Other branches warn.
+      # behind HEAD and stale-file share into the summary, and FAILS on develop
+      # when an overlay is missing or older than 3 days: its nightly lane went
+      # dark. The error names the lane and links its latest run. More than 10 %
+      # stale only WARNS (develop churns past that within a day). Other
+      # branches only warn. overlay-freshness.mjs holds the thresholds.
       # Keep the step name in sync with `gateSteps` in scheduled-lanes.mjs.
       - name: Integration overlay freshness
         if: always()

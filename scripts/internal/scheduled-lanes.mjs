@@ -147,7 +147,7 @@ export const LANES = [
     // overlay-freshness step means an integration nightly went dark (#5346).
     gateSteps: {
       "Coverage ratchet": "ratchet drop",
-      "Integration overlay freshness": "integration overlay stale",
+      "Integration overlay freshness": "integration overlay dark",
     },
   },
   {
