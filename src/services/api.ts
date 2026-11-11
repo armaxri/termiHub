@@ -2271,9 +2271,7 @@ export async function sessionCheckPaste(
   src: string,
   dest: string
 ): Promise<void> {
-  void sessionId;
-  void src;
-  void dest; // stub
+  await invoke("session_check_paste", { sessionId, src, dest });
 }
 
 /**
