@@ -153,3 +153,24 @@ export function isAgentReportedError(error: unknown): boolean {
 export function backendErrorMessage(error: unknown): string {
   return parseBackendError(error).message;
 }
+
+/**
+ * Codes a session command fails with once the session it addresses is gone
+ * (#5384): `session_not_found` when the backend already dropped the session,
+ * and `write_failed` when its transport is dead (`session disconnected`).
+ */
+const SESSION_ENDED_CODES: ReadonlySet<IpcErrorCode> = new Set<IpcErrorCode>([
+  "session_not_found",
+  "write_failed",
+]);
+
+/**
+ * True when a call on a terminal session failed because that session has
+ * already ended or is closing (#5384) — a race between teardown and a late
+ * keystroke, focus report or terminal query reply, not a fault of the call.
+ * Typed code only, never message text.
+ */
+export function isSessionEndedError(error: unknown): boolean {
+  const code = parseBackendError(error).code;
+  return code !== undefined && SESSION_ENDED_CODES.has(code as IpcErrorCode);
+}

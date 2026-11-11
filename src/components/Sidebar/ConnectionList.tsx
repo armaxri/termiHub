@@ -103,6 +103,7 @@ import "./ConnectionList.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { resolveConnectionDrop } from "@/utils/connectionDropTarget";
 import { startSavedPersistentSession } from "@/utils/startSavedPersistentSession";
+import { ConfirmStopSessionDialog } from "./ConfirmStopSessionDialog";
 import {
   agentReorderIndices,
   connectionReorderIndices,
@@ -478,7 +479,11 @@ function ConnectionItem({
     void attachPersistentSession(connection.id);
   }, [attachPersistentSession, connection.id]);
 
-  const handleStopPersistent = useCallback(() => {
+  // A persistent session exists so that it survives, so Stop asks first (#5375).
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  const handleStopPersistent = useCallback(() => setConfirmingStop(true), []);
+  const confirmStopPersistent = useCallback(() => {
+    setConfirmingStop(false);
     void stopPersistentSession(connection.id);
   }, [stopPersistentSession, connection.id]);
 
@@ -507,6 +512,13 @@ function ConnectionItem({
 
   return (
     <>
+      {confirmingStop && (
+        <ConfirmStopSessionDialog
+          name={connection.name}
+          onConfirm={confirmStopPersistent}
+          onCancel={() => setConfirmingStop(false)}
+        />
+      )}
       {showConnectionPath && (
         <ConnectionPathDialog
           open={showConnectionPath}

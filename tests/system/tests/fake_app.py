@@ -118,6 +118,7 @@ def dispatcher_like(
     cell_rows: list | None = None,
     output_tap: dict | None = None,
     frontend_log: list | None = None,
+    js_errors: list | None = None,
     screenshot: str | None = None,
     coverage: str | None = None,
     coverage_chunk: int = 4 * 1024 * 1024,
@@ -139,7 +140,8 @@ def dispatcher_like(
     ``compose`` command under ``compositions``.
     ``output_tap`` is the value ``readTerminalOutput`` returns (tab ids recorded
     under ``outputReads``); ``frontend_log`` the entries ``readFrontendLog``
-    filters by its ``contains`` substring.
+    filters by its ``contains`` substring; ``js_errors`` the records
+    ``getJsErrors`` answers from its ``since`` cursor (``seq`` = list index).
     ``screenshot`` is the data URL returned by the ``screenshot`` command.
     ``coverage`` is the serialized ``window.__coverage__`` that ``readCoverage``
     pages through in ``coverage_chunk``-character chunks (``None`` = an
@@ -264,6 +266,16 @@ def dispatcher_like(
                 "msSinceLastWrite": 0,
             }
             return {"ok": True, "action": "readTerminalOutput", "value": tap}
+        if action == "getJsErrors":
+            since = command.get("since") or 0
+            errors = [e for e in (js_errors or []) if e.get("seq", 0) >= since]
+            value = {
+                "pageId": "fake-page",
+                "cursor": len(js_errors or []),
+                "dropped": 0,
+                "errors": errors,
+            }
+            return {"ok": True, "action": "getJsErrors", "value": value}
         if action == "readFrontendLog":
             needle = command.get("contains")
             entries = [

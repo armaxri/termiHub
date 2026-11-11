@@ -4,7 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
-import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
+import { Button, ConfirmDialog, Input, Tooltip, EmptyState } from "@/components/ui";
 import { compareNames } from "@/utils/locale";
 import { isImeComposing } from "@/utils/imeComposition";
 
@@ -93,7 +93,10 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
     [userMappings, settings, updateSettings]
   );
 
+  // Reset All removes every custom mapping, so it asks first (#5375).
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const handleResetAll = useCallback(() => {
+    setConfirmingReset(false);
     updateSettings({ ...settings, fileLanguageMappings: undefined });
   }, [settings, updateSettings]);
 
@@ -124,8 +127,9 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                     variant="danger"
                     size="sm"
                     icon={<RotateCcw size={14} />}
-                    onClick={handleResetAll}
+                    onClick={() => setConfirmingReset(true)}
                     title="Remove all custom mappings"
+                    data-testid="file-type-reset-all"
                   >
                     Reset All
                   </Button>
@@ -283,6 +287,18 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
           </div>
         </>
       )}
+      <ConfirmDialog
+        open={confirmingReset}
+        title="Reset all file type mappings?"
+        variant="danger"
+        message={`${userEntries.length} custom mapping${userEntries.length === 1 ? "" : "s"} will be removed. Files then open with the built-in language detection.`}
+        confirmLabel="Reset all"
+        confirmVariant="danger"
+        testIdBase="confirm-file-type-reset"
+        data-testid="confirm-file-type-reset-dialog"
+        onConfirm={handleResetAll}
+        onCancel={() => setConfirmingReset(false)}
+      />
     </div>
   );
 }

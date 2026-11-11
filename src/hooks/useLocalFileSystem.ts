@@ -191,7 +191,7 @@ export function useLocalFileSystem() {
 
   const downloadFile = useCallback(async (filePath: string, fileName: string) => {
     const localPath = await pickPathOrReport(`Save "${fileName}"`, () =>
-      save({ title: "Save file as...", defaultPath: fileName })
+      save({ title: "Save file as…", defaultPath: fileName })
     );
     if (!localPath) return;
     // A local Save-as: a large file is a queued copy (the backend also detects a

@@ -981,7 +981,7 @@ fn open_duplicated(
             // SAFETY: the host duplicated this handle into this process for
             // this reply.
             let socket = unsafe { adopt(handle) }.expect("a socket handle");
-            (conn_id, SocketStream::new(socket))
+            (conn_id, SocketStream::new(socket).unwrap())
         }
         other => panic!("expected a duplicated socket, got {other:?}"),
     }
@@ -1019,21 +1019,39 @@ fn an_approved_connection_duplicates_the_socket_into_the_runner() {
 }
 
 /// Windows: closing the session ends a passed connection the plugin still
-/// holds — a blocked read in the runner returns.
+/// holds, even while the peer keeps it open. The host's shutdown alone does
+/// not complete the read pending in the runner (only the ~120 s half-close
+/// timeout would, #5360), so the host also sends `StreamClosed` and the
+/// runner closes its copy: the blocked read returns at once.
 #[cfg(windows)]
 #[test]
 fn closing_the_session_ends_a_duplicated_socket() {
     let mut h = duplicating_harness();
     let id = h.session(PermissionSet::from_parts([PluginPermission::Network], &[]));
-    let (_conn_id, sock) = open_duplicated(&mut h, id, echo_server());
-    let reader = std::thread::spawn(move || {
+    // A peer that never closes its side.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (conn_id, sock) = open_duplicated(&mut h, id, port);
+    let (_held, _) = listener.accept().unwrap();
+    let closer = sock.closer();
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = [0u8; 8];
-        (&sock).read(&mut buf)
+        let _ = done.send((&sock).read(&mut buf).map_err(|e| e.kind()));
     });
     std::thread::sleep(Duration::from_millis(50));
     h.shared.bridge.close_session(id);
-    assert!(matches!(reader.join().unwrap(), Ok(0) | Err(_)));
     assert_eq!(h.shared.bridge.open_connections(), 0);
+    match h.next_frame() {
+        Message::StreamClosed(ConnRef { conn_id: closed }) => assert_eq!(closed, conn_id),
+        other => panic!("expected StreamClosed, got {other:?}"),
+    }
+    // What the runner does on that frame.
+    closer.close();
+    let read = result
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the blocked read must end at once");
+    assert_eq!(read, Ok(0));
 }
 
 /// Windows: the forced relay still proxies where duplication is possible.

@@ -263,7 +263,7 @@ export function useSessionFileSystem() {
       const targetDir = await pickPathOrReport(label, async () => {
         const { open } = await import("@/services/nativeDialog");
         return open({
-          title: `Download folder "${folderName}" to...`,
+          title: `Download folder "${folderName}" to…`,
           directory: true,
           multiple: false,
         });
@@ -291,7 +291,7 @@ export function useSessionFileSystem() {
         return;
       }
       const localPath = await pickPathOrReport(`Download "${fileName}"`, () =>
-        save({ title: "Save file as...", defaultPath: fileName })
+        save({ title: "Save file as…", defaultPath: fileName })
       );
       if (!localPath) return;
       const remote = { sessionId: sessionFileBrowserId, queueCapable: transferQueueCapable };

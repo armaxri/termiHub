@@ -377,6 +377,20 @@ violation). The seed covers the shared `ui/` primitives plus key dialogs
 must be fixed, never suppressed**: if one is too large to fix in scope, leave that component
 out of the net and file a `Ready2Implement` follow-up rather than shipping a red suite.
 
+### Lazy-import guard (#5370)
+
+A test that ends while a `React.lazy` import is still loading corrupts the
+coverage report of the lazily imported module. V8 reports the half-loaded module
+with `startOffset` 0, and when `@vitest/coverage-v8` reads that entry last, every
+range in the file shifts by the module-wrapper length (#5358).
+
+`src/test/lazyImportGuard.ts` (installed from the setup file, which wraps
+`React.lazy` through `vi.mock("react")`) prevents this. After each test and each
+test file, it waits for any lazy import still in flight and then **fails** the
+test, naming the module. To fix a flagged test, stub the lazy surface with
+`vi.mock` when the test does not need it, or await what the lazy component
+renders when it does.
+
 ### Console output guard and `act()` (#3356)
 
 Component tests drive React directly (`createRoot` + `act` from `"react"`).
@@ -853,6 +867,90 @@ conflict), and keep the `why` specific so two PRs never add byte-identical
 files. `baseline.json` holds the per-lane budgets migrated from the old file;
 lower a number there only when a lane measurably needs fewer skips. On a
 budget overrun the guard lists each contributing fragment and its count.
+
+### JS error gate
+
+The real app can throw on every tab open and a bridge test still passes, so the
+harness checks every test for JavaScript errors in the app under test (#5364):
+
+1. Before a test's setup, conftest records where the app's error stream stands.
+2. After the call phase, it reads the errors added since then. The preferred
+   source is the bridge verb `getJsErrors` (see
+   [test-bridge.md](test-bridge.md#javascript-errors-getjserrors)). That buffer
+   records every `unhandledrejection`, uncaught `error` and `console.error`, and
+   it exists only in the test-bridge bundle. If the bridge cannot answer (the
+   page is dead, or the build predates the verb), the source is the `app.log`
+   lines `ERROR frontend: [unhandled] …` and `CONSOLE JS ERROR …` instead.
+3. Each distinct error (`<kind>: <first message line>`) is matched against
+   `tests/system/js-error-allowlist.d/`.
+
+`TERMIHUB_JS_ERROR_GATE` picks what happens next:
+
+| Value                | Effect                                                  |
+| -------------------- | ------------------------------------------------------- |
+| `annotate` (default) | Report every unique error with its tests (see below)    |
+| `fail`               | Report, and fail a passing test with an uncovered error |
+| `off`                | No collection                                           |
+
+The report goes to the terminal summary, the GitHub step summary and
+`artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
+
+The default is `annotate` while the current offenders are moved into the
+allowlist with tracking issues. A later change switches the nightly to `fail`.
+
+An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
+issue that tracks the error:
+
+```json
+{
+  "pattern": "^unhandledrejection: Canceled$",
+  "issue": 1234,
+  "reason": "xterm addon disposal rejects with Canceled on tab close",
+  "nodeid": "test_ssh_jump_host\\.py"
+}
+```
+
+`pattern` and the optional `nodeid` are Python regexes (`re.search`) against the
+error key and the test id. Delete the file in the PR that fixes the issue. The
+machinery tests are in `tests/system/tests/test_js_errors.py`.
+
+### Hermetic app profile and egress probe
+
+The app under test must not reach the internet (#5388). Three layers keep it
+off:
+
+1. **Profile.** Before every launch, `AppInstance` seeds the app's
+   `settings.json` with `updates.autoCheck=false` and
+   `pluginUpdateCheckEnabled=false` (`termihub_harness/profile_defaults.py`).
+   Only missing keys are added, so a test that seeds its own value keeps it.
+   `AppInstance(hermetic=False)` opts out. The backend honours
+   `autoCheck=false` for the startup check, too.
+2. **Loopback feeds.** A test that grades the update or plugin-index client
+   sets `TERMIHUB_TEST_HTTP_BASE=http://127.0.0.1:<port>` through
+   `extra_app_env`. The app then fetches `https://<host>/<path>` from
+   `<base>/<host>/<path>`, for example
+   `<base>/api.github.com/repos/armaxri/termiHub/releases/latest`. Only
+   loopback bases are accepted. The seam exists only in test-bridge builds, and
+   `scripts/internal/assert-no-test-bridge.sh` fails a release binary that
+   carries the variable's name. `tests/test_update_check_hermetic.py` is the
+   worked example.
+3. **Egress probe.** From a test's setup to the end of its call phase,
+   conftest samples the app PID's connected sockets with `psutil` every 0.2 s
+   (`termihub_harness/egress.py`). Destinations that were already connected
+   when the test started do not count. Fixture networks never count either:
+   loopback, RFC 1918, ULA, link-local and CGNAT. Every other destination is
+   matched against `tests/system/egress-allowlist.d/`. Sampling is best
+   effort, so a connection that opens and closes between two samples is
+   missed.
+
+`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
+(the default), `fail` and `off`. The report goes to the terminal summary, the
+GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
+entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
+a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
+`issue` and a `reason`. The machinery tests are in
+`tests/system/tests/test_egress.py` and `test_profile_defaults.py`.
 
 ### Docker Hub resilience in CI (#4614)
 
@@ -3083,7 +3181,8 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)** — Automated. src-tauri/src/files/transfer/persist_manager.rs::prune_local_paths_under_drops_staging_records_only (#3629); src-tauri/src/files/transfer/persist.rs::folder_paste_link_round_trips_and_drops_only_recorded_pastes / folder_pastes_round_trip_dedupe_and_cap; …
 - **Transfer Queue panel: rows, controls, minimized state (#1337)** — Automated + Release gate. tests/system/tests/test_transfer_queue.py::test_active_row_shows_rising_percent_and_active_controls / test_paused_row_swaps_pause_for_resume / test_failed_row_offers_retry_and_remove / test_cancel_removes_the_row_when_the_backend_confirms / test_cancel_all_is_enabled_only_while_a_row_is_pending / test_clear_completed_keeps_unfinished_rows / test_minimize_collapses_to_the_indicator_and_restores / test_real_sftp_paste_populates_the_transfer_queue; src/components/TransferQueue/TransferQueue.test.tsx, TransferEntry.test.tsx, TransferControls.test.tsx; … · gate: MT-UI-40
 - **Monitoring auto-reconnect on a mid-stream drop (#1230)** — Automated. core/tests/monitoring_fault.rs::mon_fault_01_paused_host_goes_stale_reconnects_and_recovers (docker-paused live SSH host: Stale → Reconnecting → Live); core/src/backends/ssh/monitoring.rs::collect_loop_emits_stale_reconnecting_then_live_on_recovery / collect_loop_emits_offline_when_reconnect_exhausted; core/src/monitoring/exec_provider.rs::mid_stream_drop_resolves_to_offline; …
-- **Design tokens: pill radius + muted text (#1406)** — Automated. src/styles/tokenDiscipline.test.ts 'has no fallback-less var(--token) reference to an undefined token', 'has no fallback-bearing var(--token, …) reference to an undefined token', 'defines the core tokens it depends on (sanity check)'; src/themes/contrast.test.ts (AA contrast of --text-muted on dark/light; Solarized intentionally excluded)
+- **Design tokens: pill radius + muted text (#1406)** — Automated. src/styles/tokenDiscipline.test.ts 'has no fallback-less var(--token) reference to an undefined token', 'has no fallback-bearing var(--token, …) reference to an undefined token', 'defines the core tokens it depends on (sanity check)'; src/themes/contrast.test.ts (AA contrast of --text-muted in all four built-in themes)
+- **Built-in theme contrast: text on accent + Solarized text roles (#5164, #5190)** — Automated. src/themes/contrast.test.ts 'text on accent (WCAG 2.2 AA, #5164)' (white on accentColor and accentHover >= 4.5:1, hover distinct from base, tab indicator and focus ring >= 3:1, all four themes), 'primary text contrast (WCAG 2.2 AA, #5190)', 'solarized text tokens are canonical palette colours (#5190)', plus the muted/secondary/row-state AA cases now graded for Solarized Dark and Light
 - **WSL shell-integration note (`/mnt/&lt;drive>` translation, #1029)** — Automated. tests/system/tests/test_windows_shells.py::TestWsl::test_wsl_file_browser_follows_cwd (integration lane, Windows+WSL; MT-LOCAL-19 scalar PROMPT_COMMAND); core/src/session/shell.rs::osc7_bash_handles_array_prompt_command; …
 - **macOS Finder Quick Actions / Services registration (#1369)** — Automated + Release gate. src-tauri/src/spawn/registry.rs::macos::tests (cfg macos): install_creates_one_workflow_bundle_per_entry, document_wflow_carries_the_spawn_command_and_service_metadata, info_plist_declares_nsservices_menu_item_and_owner_marker, send_file_types_map_show_for_targets, xml_special_characters_in_name_are_escaped, install_is_idempotent, reinstall_drops_removed_entries, uninstall_removes_our_bundles, uninstall_preserves_foreign_bundles (steps 2 and 5 file-level) · gate: MT-SHI-05
 - **Linux file-manager registration (#1370)** — Automated + Release gate. src-tauri/src/spawn/registry.rs::linux::tests (cfg linux, Linux CI): install_writes_xdg_desktop_and_refreshes_database, xdg_desktop_only_for_directory_entries, nautilus_installed_when_detected_and_enabled, nautilus_skipped_when_toggle_off_and_foreign_scripts_preserved, kde_skipped_when_not_detected, thunar_appends_action_preserving_foreign, thunar_reinstall_keeps_single_owned_action, thunar_preserves_inter_action_comments_and_whitespace_on_edit_and_remove, uninstall_removes_all_four_and_preserves_foreign_thunar_action (file content, 0o755 mode, foreign preservation) · gate: MT-SHI-06
