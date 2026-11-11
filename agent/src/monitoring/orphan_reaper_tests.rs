@@ -19,7 +19,10 @@ const GRACE: Duration = ORPHAN_GRACE;
 /// Comfortably less than the grace, and its complement.
 const SHORT: Duration = Duration::from_secs(10);
 
-fn manager() -> (Arc<MonitoringManager>, UnboundedReceiver<JsonRpcNotification>) {
+fn manager() -> (
+    Arc<MonitoringManager>,
+    UnboundedReceiver<JsonRpcNotification>,
+) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let tmp = std::env::temp_dir().join(format!(
         "termihub-orphan-reaper-test-{}.json",
@@ -108,7 +111,11 @@ async fn reconnect_within_grace_keeps_the_subscription_without_a_gap() {
 
     assert_eq!(hosts(&manager).await, ["s1"]);
     assert_eq!(unsubscribes(&provider), 0, "the collect loop never stopped");
-    let subscribes = provider.calls().iter().filter(|c| *c == "subscribe").count();
+    let subscribes = provider
+        .calls()
+        .iter()
+        .filter(|c| *c == "subscribe")
+        .count();
     assert_eq!(subscribes, 1, "the same subscription, not a new one");
 
     // The reconnected client still receives the original loop's samples.
