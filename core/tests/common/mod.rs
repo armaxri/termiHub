@@ -271,7 +271,7 @@ pub fn require_native_sshd_fixture() -> Option<NativeSshd> {
         required,
         format_args!(
             "native sshd fixture not reachable (port {port}; start with: \
-             eval \"$(scripts/internal/native-sshd-fixture.sh up)\")"
+             eval \"$(scripts/internal/native-sshd-fixture.sh up --scratch-home)\")"
         ),
         format_args!(
             "fixture unavailable: native sshd not reachable on port {port} but \

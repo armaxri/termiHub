@@ -21,7 +21,7 @@
 //! missing fixture is a hard failure. Run locally with:
 //!
 //! ```sh
-//! eval "$(scripts/internal/native-sshd-fixture.sh up)"
+//! eval "$(scripts/internal/native-sshd-fixture.sh up --scratch-home)"
 //! cargo test -p termihub-core --features ssh --test ssh_native
 //! scripts/internal/native-sshd-fixture.sh down
 //! ```

@@ -961,8 +961,14 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
     `HISTFILE` of every SSH session to a `home` dir in the state dir, plus a
     private agent registry endpoint. It exports that dir as
     `TERMIHUB_NATIVE_SSHD_HOME`. An agent deployed through the fixture then
-    never writes into the login user's real home. The Windows fixture ignores
-    the flag, because its login user is already a dedicated test account.
+    never writes into the login user's real home. The login shell reads its
+    dotfiles from that home and writes its history there, and it gets an empty
+    `.zshrc`, so a zsh login shell starts at a prompt rather than at
+    `zsh-newuser-install`. The session's working directory is still the real
+    home (sshd changes into the passwd home), so a test that writes files uses
+    an absolute path below `TERMIHUB_NATIVE_SSHD_HOME`. The Windows fixture
+    ignores the flag, because its login user is already a dedicated test
+    account.
 - **Suite:** [`core/tests/ssh_native.rs`](../core/tests/ssh_native.rs) covers
   key login, the whole fixture key-type matrix, rejection of an unauthorized key
   and a wrong passphrase, exec stdout/stderr/exit status/stdin, an interactive
@@ -974,7 +980,7 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
 - **Nightly:** the `native-sshd` job in
   [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
   runs [`scripts/internal/run-native-sshd-suites.sh`](../scripts/internal/run-native-sshd-suites.sh)
-  (fixture up → suite → sshd log on failure → teardown) on `ubuntu-latest`,
+  (fixture up with `--scratch-home` → suite → sshd log on failure → teardown) on `ubuntu-latest`,
   `macos-latest` and `windows-latest`. It also runs on manual dispatch and in the
   release gate, but not on the path-filtered PR runs. Its ubuntu leg then grades
   the hidden fish setup on a real **fish 3.x** login shell too:
@@ -991,12 +997,33 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
   Nothing in the recipe lives in the workflow file, so it cannot drift from the
   code it runs.
 
+**Scratch home (#5296).** On macOS/Linux the fixture runs as the login user,
+so without `--scratch-home` every session would start the real login shell with
+the real dotfiles and write to the real shell history. The recipe therefore
+brings the fixture up with `--scratch-home` and fails when no
+`TERMIHUB_NATIVE_SSHD_HOME` is exported. No case needs the real home:
+
+- the shell cases (`native_05`, `05b`..`05f`) start the login shell, which
+  reads its rc files and writes its history below the scratch home;
+- `native_06` (SFTP) starts in the real home, so it creates its test dir below
+  `TERMIHUB_NATIVE_SSHD_HOME` instead (the Windows fixture has none, and its
+  dedicated user's home is used as before);
+- `native_05e` changes into a temp dir; the exec, key, forward and Windows-only
+  cases write nothing.
+
+The fish 3 recipe runs through `run-native-sshd-suites.sh`, so it gets the
+scratch home too: fish reads `config.fish` from `XDG_CONFIG_HOME` and writes
+`fish_history` below `XDG_DATA_HOME`, both in the scratch home. A local macOS
+run (all 17 cases) left every shell history, rc file and `~/.ssh/known_hosts`
+byte-identical, and `find "$HOME" -maxdepth 2 -newer <marker>` (without
+`~/Library`) found nothing.
+
 Run it locally:
 
 ```bash
 scripts/internal/run-native-sshd-suites.sh            # up → ssh_native → down
-# or by hand:
-eval "$(scripts/internal/native-sshd-fixture.sh up)"
+# or by hand (keep --scratch-home, or the real login shell writes to your history):
+eval "$(scripts/internal/native-sshd-fixture.sh up --scratch-home)"
 cargo test -p termihub-core --features ssh --test ssh_native
 scripts/internal/native-sshd-fixture.sh down
 ```
