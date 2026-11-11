@@ -422,6 +422,28 @@ jobs:
           session::manager::tests::initial_command::ssh_
           utils::remote_exec::tests::agent_deploy
 
+      - name: Run the live VNC-through-a-real-agent test against the fixtures
+        # src-tauri/src/session/agent_port_forward_tests.rs
+        # `live::live_vnc_through_a_real_agent_binary` (#5169, COV-009): the
+        # desktop's graphical session manager reaches the `vnc` profile's
+        # vnc-server (:2501, VncAuth `testpass`) through a real termihub-agent
+        # over --stdio (agent.forward.* port forwarding, #3241) and must receive
+        # a decoded frame, then disconnect and leave no forward stream open. It
+        # is `#[ignore]` because it needs those TERMIHUB_LIVE_* inputs; this is
+        # the lane that sets them. The grep rejects a run where it did not
+        # execute. Runs even when an earlier suite failed.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_LIVE_VNC_PORT: "2501"
+          TERMIHUB_LIVE_VNC_PASSWORD: testpass
+        run: |
+          cargo build -p termihub-agent
+          TERMIHUB_LIVE_AGENT_BIN="$GITHUB_WORKSPACE/target/debug/termihub-agent" \
+            cargo test -p termihub --lib -- --ignored --exact --nocapture \
+            session::agent_port_forward::tests::live::live_vnc_through_a_real_agent_binary \
+            2>&1 | tee live-vnc.log
+          grep -q "test result: ok. 1 passed" live-vnc.log
+
       - name: Run the agent ssh-agent relay suite against the fixtures
         # agent/tests/agent_forward_integration.rs (#4005, #1719/#1727): the real
         # termihub-agent, over --stdio and over --listen TCP, opens an SSH
