@@ -103,6 +103,7 @@ use notifications::{
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
 mod agent_stderr;
 mod alive;
+mod backoff_clock;
 mod capabilities;
 pub(crate) mod files_only;
 mod io_lanes;
@@ -3713,6 +3714,9 @@ mod tests;
 mod connect_off_lock_tests;
 #[cfg(test)]
 mod fake_agent_sshd;
+// Virtual backoff clock for the reconnect backoff/park tests (#5339).
+#[cfg(test)]
+mod virtual_backoff_clock;
 // Output flow control + lossless output delivery for agent sessions (#4416).
 #[cfg(test)]
 mod output_flow_tests;
