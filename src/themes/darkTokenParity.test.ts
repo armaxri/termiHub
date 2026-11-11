@@ -4,7 +4,6 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { darkTheme } from "./dark";
 import { COLOR_TO_CSS_VAR } from "./engine";
-import { contrastRatio } from "./contrast";
 import type { ThemeColors } from "./types";
 
 /**
@@ -76,12 +75,10 @@ describe("dark theme token parity with variables.css (UI-001)", () => {
     expect(normalizeColor(darkTheme.colors[key])).toBe(normalizeColor(cssValue!));
   });
 
-  it("ansiBlack sits on the 3:1 floor above the terminal background (#5191)", () => {
-    // ansiBlack used to equal terminalBg, which printed black text invisibly.
-    // It is now the terminal background's grey lifted just to the ANSI floor.
-    const ratio = contrastRatio(darkTheme.colors.ansiBlack, darkTheme.colors.terminalBg);
-    expect(ratio).toBeGreaterThanOrEqual(3);
-    expect(ratio).toBeLessThan(3.1);
+  it("ansiBlack tracks the terminal background", () => {
+    expect(normalizeColor(darkTheme.colors.ansiBlack)).toBe(
+      normalizeColor(darkTheme.colors.terminalBg)
+    );
   });
 });
 

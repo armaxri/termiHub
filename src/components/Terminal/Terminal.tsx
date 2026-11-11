@@ -76,6 +76,7 @@ import {
 } from "@/services/sessionInputGate";
 import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth, remeasureCharSize } from "./xtermDimensions";
+import { TERMINAL_MIN_CONTRAST_RATIO } from "./terminalContrast";
 import {
   CommandMarkTracker,
   type CommandMarksSnapshot,
@@ -1520,6 +1521,8 @@ export function Terminal({
       // Opt-in screen-reader mode (#2071): mirrors output into a live region for
       // assistive technology. Off by default (adds rendering overhead).
       screenReaderMode: appSettings.screenReaderMode ?? false,
+      // ANSI text readability floor, enforced per cell at render time (#5309).
+      minimumContrastRatio: TERMINAL_MIN_CONTRAST_RATIO,
       allowProposedApi: true,
     });
 
