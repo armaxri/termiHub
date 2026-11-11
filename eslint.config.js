@@ -4,6 +4,7 @@ import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 import { importX } from "eslint-plugin-import-x";
 import { createTypeScriptImportResolver } from "eslint-import-resolver-typescript";
+import { copyStylePlugin } from "./scripts/internal/eslint-copy-style.mjs";
 
 /**
  * Silent value-fallback policy (#4520): `.catch(() => null)` (or `undefined`,
@@ -150,6 +151,18 @@ export default tseslint.config(
     rules: {
       "no-restricted-syntax": ["error", ...RESTRICTED_SYNTAX, SILENT_FALLBACK_CATCH],
     },
+  },
+  {
+    // Copy style policy (#5391, UX-028): the mechanically checkable parts of
+    // docs/copy-style.md — sentence case on buttons, dialog titles and labels,
+    // "Close" to acknowledge, "Discard changes" to discard, US spelling, one
+    // primary button per footer, Cancel first. Today's violations sit in
+    // scripts/internal/copy-style-baseline.json; a new one fails the lint, and
+    // fixing copy only deletes baseline entries (`... copy-style-baseline.mjs --prune`).
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/testbridge/**"],
+    plugins: { copy: copyStylePlugin },
+    rules: { "copy/copy-style": "error" },
   },
   {
     // The durable-log forwarder in frontendLog.ts must stay silent: logging its
