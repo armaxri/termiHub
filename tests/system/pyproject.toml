@@ -52,5 +52,6 @@ testpaths = ["tests"]
 markers = [
     "integration: launches the real built app/agent (needs `pnpm tauri build`)",
     "manual: guided-manual test — automated setup then an operator prompt (skipped unless --manual + TTY)",
+    "requires_tools(*tools, platforms=None): runner tools the test needs; checked once at session start (termihub_harness/tool_preflight.py, #5340)",
     "category: optional feature-category override for the test inventory (scripts/build-test-inventory.py); e.g. @pytest.mark.category(\"ssh\")",
 ]
