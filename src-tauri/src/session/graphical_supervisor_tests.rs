@@ -15,7 +15,7 @@ use termihub_core::connection::{
     DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, GraphicalState,
     InputEvent, OutputReceiver, SettingsSchema, MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
 };
-use termihub_core::errors::SessionError;
+use termihub_core::errors::{ConnectFailureKind, SessionError};
 use termihub_core::files::FileBrowser;
 use termihub_core::monitoring::MonitoringProvider;
 
@@ -52,7 +52,13 @@ enum Fatal {
     Protocol,
     /// The server ended the session on purpose — a remote logoff (#4321).
     ServerClosed,
+    /// A typed TCP connect failure (#5380) — the RDP sidecar's refused /
+    /// unreachable / DNS / timeout categories.
+    Typed(ConnectFailureKind),
 }
+
+/// The OS detail a [`Fatal::Typed`] backend reports.
+const TYPED_DETAIL: &str = "RDP TCP connect to h:3389 failed: Connection refused (os error 61)";
 
 /// The reason a [`Fatal::ServerClosed`] backend reports.
 const SERVER_CLOSE_REASON: &str = "The user logged off.";
@@ -68,6 +74,7 @@ impl Fatal {
             Fatal::Connect => SessionError::ConnectionFailed("tcp refused".into()),
             Fatal::Protocol => SessionError::ProtocolError(PROTOCOL_REASON.into()),
             Fatal::ServerClosed => SessionError::ServerClosed(SERVER_CLOSE_REASON.into()),
+            Fatal::Typed(kind) => SessionError::classified(kind, TYPED_DETAIL),
         }
     }
 }
@@ -818,6 +825,74 @@ async fn async_connect_failure_on_first_connect_rests_connect_failed() {
     assert_eq!(h.sink.tail(3), vec![(GraphicalState::ConnectFailed, 0)]);
     let message = h.sink.last().and_then(|e| e.message).unwrap_or_default();
     assert!(message.contains("tcp refused"), "{message}");
+}
+
+/// A typed asynchronous connect failure (#5380) rests in `ConnectFailed`
+/// carrying the same `IpcErrorCode` the IPC envelope would, with the OS detail
+/// (no `Spawn failed:` prefix) as the message.
+#[tokio::test(start_paused = true)]
+async fn typed_async_connect_failure_carries_its_code() {
+    use crate::utils::errors::IpcErrorCode;
+    let cases = [
+        (ConnectFailureKind::Refused, IpcErrorCode::Refused),
+        (ConnectFailureKind::Unreachable, IpcErrorCode::Unreachable),
+        (ConnectFailureKind::Dns, IpcErrorCode::Dns),
+        (ConnectFailureKind::Timeout, IpcErrorCode::Timeout),
+    ];
+    for (kind, code) in cases {
+        let h = open_first(
+            serde_json::json!({}),
+            Dial::OkThenFail(Fatal::Typed(kind)),
+            Vec::new(),
+        )
+        .await;
+        wait_until("connect failed", || {
+            last_state(&h.sink) == Some(GraphicalState::ConnectFailed)
+        })
+        .await;
+        idle().await;
+        let last = h.sink.last().expect("a resting state");
+        assert_eq!(last.code, Some(code), "{kind:?}");
+        assert_eq!(last.message.as_deref(), Some(TYPED_DETAIL));
+        let json = serde_json::to_value(&last).expect("serialize");
+        assert_eq!(json["code"], kind.code());
+    }
+}
+
+/// An unclassified failure and an auth rejection keep today's shape: no code
+/// for the former, `auth_failed` for the latter (#5380).
+#[tokio::test(start_paused = true)]
+async fn untyped_and_auth_failures_carry_the_expected_code() {
+    use crate::utils::errors::IpcErrorCode;
+    let h = open_first(
+        serde_json::json!({}),
+        Dial::OkThenFail(Fatal::Connect),
+        Vec::new(),
+    )
+    .await;
+    wait_until("connect failed", || {
+        last_state(&h.sink) == Some(GraphicalState::ConnectFailed)
+    })
+    .await;
+    let last = h.sink.last().expect("a resting state");
+    assert_eq!(last.code, None);
+    let json = serde_json::to_value(&last).expect("serialize");
+    assert!(json.get("code").is_none(), "{json}");
+
+    let h = open_first(
+        serde_json::json!({}),
+        Dial::OkThenFail(Fatal::Auth),
+        Vec::new(),
+    )
+    .await;
+    wait_until("auth failed", || {
+        last_state(&h.sink) == Some(GraphicalState::AuthFailed)
+    })
+    .await;
+    assert_eq!(
+        h.sink.last().and_then(|e| e.code),
+        Some(IpcErrorCode::AuthFailed)
+    );
 }
 
 #[tokio::test(start_paused = true)]

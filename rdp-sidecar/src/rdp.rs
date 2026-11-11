@@ -337,7 +337,7 @@ where
         deadline,
         timeout,
         &target,
-        TcpStream::connect((hop.address.as_str(), hop.port)),
+        dial_tcp(hop.address.as_str(), hop.port),
     )
     .await?
     .with_context(|| format!("RDP TCP connect to {target} failed"))?;
@@ -564,6 +564,30 @@ where
         },
     )
     .await;
+}
+
+/// Resolve `address` and open a TCP connection to the first address that
+/// accepts, like [`TcpStream::connect`], but with a typed
+/// [`failure::TcpDialFailed`] on failure (#5380): a resolver error is a DNS
+/// failure, and a connect error keeps its refused / unreachable / timeout
+/// category, so the desktop shows the same heading a terminal tab does.
+async fn dial_tcp(
+    address: &str,
+    port: u16,
+) -> std::result::Result<TcpStream, failure::TcpDialFailed> {
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((address, port))
+        .await
+        .map_err(failure::TcpDialFailed::dns)?
+        .collect();
+    if addrs.is_empty() {
+        return Err(failure::TcpDialFailed::dns(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("host '{address}' resolved to no addresses"),
+        )));
+    }
+    TcpStream::connect(addrs.as_slice())
+        .await
+        .map_err(failure::TcpDialFailed::connect)
 }
 
 /// Run one connect step against `deadline`, failing with the typed
@@ -1219,14 +1243,9 @@ async fn probe_identity(
     let timeout = cfg.connect_timeout();
     let target = format!("{address}:{port}");
     let deadline = tokio::time::Instant::now() + timeout;
-    let tcp = within(
-        deadline,
-        timeout,
-        &target,
-        TcpStream::connect((address, port)),
-    )
-    .await?
-    .with_context(|| format!("RDP TCP connect to {target} failed"))?;
+    let tcp = within(deadline, timeout, &target, dial_tcp(address, port))
+        .await?
+        .with_context(|| format!("RDP TCP connect to {target} failed"))?;
     let client_addr = tcp.local_addr().context("RDP local address failed")?;
     let mut connector = ClientConnector::new(preflight_connector_config(cfg)?, client_addr);
     let mut framed = TokioFramed::new(tcp);

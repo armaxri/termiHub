@@ -47,6 +47,7 @@ use ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu;
 use ironrdp_session::GracefulDisconnectReason;
 use termihub_core::backends::rdp_sidecar::protocol::SidecarFailureKind;
 use termihub_core::connection::GraphicalState;
+use termihub_core::errors::ConnectFailureKind;
 
 use crate::redirect::RedirectRefused;
 
@@ -296,11 +297,92 @@ impl fmt::Display for ConnectTimedOut {
 
 impl std::error::Error for ConnectTimedOut {}
 
+/// The TCP dial to an RDP server (or redirect target) failed — its name did
+/// not resolve, or the connect itself failed (#5380). Carried as the source of
+/// the sidecar's fatal error so [`classify`] reports the typed category
+/// (refused / unreachable / DNS / timeout) instead of a bare connect failure.
+/// The category is decided from the typed [`std::io::Error`] kind by
+/// [`classify_dial_io`] — never from the OS-localized message text.
+#[derive(Debug)]
+pub struct TcpDialFailed {
+    /// The typed category, or [`SidecarFailureKind::Connect`] when the error is
+    /// none of the curated ones.
+    pub kind: SidecarFailureKind,
+    /// The underlying OS error (shown as the failure detail).
+    pub source: std::io::Error,
+}
+
+impl TcpDialFailed {
+    /// A failed name resolution of the target host.
+    pub fn dns(source: std::io::Error) -> Self {
+        Self {
+            kind: SidecarFailureKind::Dns,
+            source,
+        }
+    }
+
+    /// A failed TCP connect, classified from the typed OS error.
+    pub fn connect(source: std::io::Error) -> Self {
+        Self {
+            kind: dial_kind(classify_dial_io(&source)),
+            source,
+        }
+    }
+}
+
+impl fmt::Display for TcpDialFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.source, f)
+    }
+}
+
+// No `source()`: the display already is the OS error, and a chained source
+// would repeat it in the sidecar's `{error:#}` failure message.
+impl std::error::Error for TcpDialFailed {}
+
+/// The typed connect category of a TCP connect [`std::io::Error`] (#5380),
+/// decided from its [`std::io::ErrorKind`] — the standard library maps
+/// `ECONNREFUSED` / `WSAECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`,
+/// `ENETDOWN` and the timeouts on every platform. The same curated categories
+/// as the desktop's `termihub_core::net::classify_connect_error`, which the
+/// sidecar cannot link (it is gated on the SSH / Telnet features).
+pub fn classify_dial_io(err: &std::io::Error) -> Option<ConnectFailureKind> {
+    use std::io::ErrorKind as K;
+    match err.kind() {
+        K::ConnectionRefused => Some(ConnectFailureKind::Refused),
+        K::TimedOut => Some(ConnectFailureKind::Timeout),
+        K::HostUnreachable | K::NetworkUnreachable | K::NetworkDown => {
+            Some(ConnectFailureKind::Unreachable)
+        }
+        _ => None,
+    }
+}
+
+/// The sidecar failure kind for a classified TCP connect error (#5380). Only
+/// the transport categories a dial can produce are refined; anything else
+/// stays a plain [`SidecarFailureKind::Connect`].
+pub fn dial_kind(kind: Option<ConnectFailureKind>) -> SidecarFailureKind {
+    match kind {
+        Some(ConnectFailureKind::Refused) => SidecarFailureKind::Refused,
+        Some(ConnectFailureKind::Unreachable) => SidecarFailureKind::Unreachable,
+        Some(ConnectFailureKind::Dns) => SidecarFailureKind::Dns,
+        Some(ConnectFailureKind::Timeout) => SidecarFailureKind::Timeout,
+        _ => SidecarFailureKind::Connect,
+    }
+}
+
 /// Classify a fatal sidecar error (the whole `anyhow` chain) as auth vs
-/// timeout vs redirection vs any other connect failure.
+/// timeout vs redirection vs a typed TCP dial failure vs any other connect
+/// failure.
 pub fn classify(error: &anyhow::Error) -> SidecarFailureKind {
     if error.chain().any(|cause| cause.is::<ConnectTimedOut>()) {
         return SidecarFailureKind::Timeout;
+    }
+    if let Some(dial) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TcpDialFailed>())
+    {
+        return dial.kind;
     }
     if error.chain().any(|cause| cause.is::<RedirectRefused>()) {
         return SidecarFailureKind::Protocol;
@@ -326,7 +408,11 @@ pub fn classify(error: &anyhow::Error) -> SidecarFailureKind {
 pub fn failure_state(kind: SidecarFailureKind) -> GraphicalState {
     match kind {
         SidecarFailureKind::Auth => GraphicalState::AuthFailed,
-        SidecarFailureKind::Connect | SidecarFailureKind::Timeout => GraphicalState::ConnectFailed,
+        SidecarFailureKind::Connect
+        | SidecarFailureKind::Timeout
+        | SidecarFailureKind::Refused
+        | SidecarFailureKind::Unreachable
+        | SidecarFailureKind::Dns => GraphicalState::ConnectFailed,
         SidecarFailureKind::ServerClosed => GraphicalState::ServerClosed,
         SidecarFailureKind::Protocol => GraphicalState::Disconnected,
     }
@@ -678,6 +764,49 @@ mod tests {
         assert_eq!(classify(&err), SidecarFailureKind::Connect);
     }
 
+    /// A typed TCP dial failure keeps its category through the `anyhow`
+    /// context (#5380); the OS error kind decides it, never the text.
+    #[test]
+    fn tcp_dial_failures_are_typed_by_their_io_kind() {
+        use std::io::{Error, ErrorKind};
+        let cases = [
+            (ErrorKind::ConnectionRefused, SidecarFailureKind::Refused),
+            (ErrorKind::HostUnreachable, SidecarFailureKind::Unreachable),
+            (
+                ErrorKind::NetworkUnreachable,
+                SidecarFailureKind::Unreachable,
+            ),
+            (ErrorKind::TimedOut, SidecarFailureKind::Timeout),
+            (ErrorKind::ConnectionReset, SidecarFailureKind::Connect),
+        ];
+        for (io_kind, expected) in cases {
+            let dial = TcpDialFailed::connect(Error::new(io_kind, "boom"));
+            let err = anyhow::Error::new(dial).context("RDP TCP connect to host:3389 failed");
+            assert_eq!(classify(&err), expected, "{io_kind:?}");
+            assert_eq!(failure_state(expected), GraphicalState::ConnectFailed);
+        }
+        let dns = TcpDialFailed::dns(Error::other("no such host"));
+        let err = anyhow::Error::new(dns).context("RDP TCP connect to nowhere:3389 failed");
+        assert_eq!(classify(&err), SidecarFailureKind::Dns);
+        assert_eq!(
+            format!("{err:#}"),
+            "RDP TCP connect to nowhere:3389 failed: no such host"
+        );
+    }
+
+    #[test]
+    fn dial_kind_refines_only_transport_categories() {
+        assert_eq!(dial_kind(None), SidecarFailureKind::Connect);
+        assert_eq!(
+            dial_kind(Some(ConnectFailureKind::Busy)),
+            SidecarFailureKind::Connect
+        );
+        assert_eq!(
+            dial_kind(Some(ConnectFailureKind::Dns)),
+            SidecarFailureKind::Dns
+        );
+    }
+
     #[test]
     fn server_logon_rejected_is_auth_through_context() {
         let err = anyhow::Error::new(ServerLogonRejected("privileges".into()));
@@ -723,6 +852,13 @@ mod tests {
             failure_state(SidecarFailureKind::ServerClosed),
             GraphicalState::ServerClosed
         );
+        for kind in [
+            SidecarFailureKind::Refused,
+            SidecarFailureKind::Unreachable,
+            SidecarFailureKind::Dns,
+        ] {
+            assert_eq!(failure_state(kind), GraphicalState::ConnectFailed);
+        }
         assert_eq!(
             failure_state(SidecarFailureKind::Protocol),
             GraphicalState::Disconnected

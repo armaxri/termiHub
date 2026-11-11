@@ -35,9 +35,10 @@ pub async fn connect_transport(
         let stream = crate::backends::proxy_dial::connect_tcp(&host, port, Some(proxy)).await?;
         Ok((stream, None))
     } else {
-        let stream = TcpStream::connect((host.as_str(), port))
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("VNC connect failed: {e}")))?;
+        // The shared direct dial, so a refused / unreachable / unresolvable /
+        // timed-out host carries its typed connect category (#5380) like every
+        // other backend.
+        let stream = crate::backends::proxy_dial::connect_tcp(&host, port, None).await?;
         Ok((stream, None))
     }
 }
@@ -65,8 +66,12 @@ mod tests {
             port: 1, // privileged/closed on the test host → connect fails fast
             ..VncConfig::default()
         };
-        let result = connect_transport(&cfg).await;
-        assert!(result.is_err());
+        let err = connect_transport(&cfg).await.unwrap_err();
+        assert_eq!(
+            err.connect_failure_kind(),
+            Some(crate::errors::ConnectFailureKind::Refused),
+            "{err:?}"
+        );
     }
 
     // --- Direct connection through an outbound proxy (#4897) ---

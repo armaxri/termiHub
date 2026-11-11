@@ -37,7 +37,7 @@ use termihub_core::connection::{
     FrameUpdate, GraphicalState, InputEvent, MonitorLayout, MonitorRect, RemoteClipboardFile,
     SessionStateMachine, CONNECT_TIMEOUT_KEY,
 };
-use termihub_core::errors::SessionError;
+use termihub_core::errors::{ConnectFailureKind, SessionError};
 
 use crate::session::agent_port_forward::{
     agent_route, rewrite_for_forward, AgentClientTransport, AgentPortForward, AgentRoute,
@@ -55,7 +55,7 @@ use crate::session::graphical_supervisor::{
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 use crate::session::remote_desktop_frames::{encode_cursor, RemoteDesktopFrameChannels};
 use crate::terminal::agent_manager::AgentRpcClient;
-use crate::utils::errors::TerminalError;
+use crate::utils::errors::{IpcErrorCode, TerminalError};
 
 /// Maximum concurrent graphical sessions.
 const MAX_GRAPHICAL_SESSIONS: usize = 16;
@@ -161,6 +161,40 @@ pub struct RemoteDesktopStateEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub message: Option<String>,
+    /// The typed failure category of a `connectFailed` / `authFailed` state
+    /// (#5380) — the same [`IpcErrorCode`] the structured IPC error envelope
+    /// carries (`refused`, `unreachable`, `dns`, `timeout`, `auth_failed`, …),
+    /// so the frontend shows the same heading and hint a terminal tab does,
+    /// with `message` as the OS detail. Absent for an unclassified failure and
+    /// for every non-failure state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "import(\"./IpcErrorCode\").IpcErrorCode"))]
+    pub code: Option<IpcErrorCode>,
+}
+
+/// The typed [`IpcErrorCode`] a graphical connect failure carries on its
+/// `remote-desktop-state` event (#5380), from the same classification the IPC
+/// error envelope uses: a credential rejection is `auth_failed`, a typed core
+/// connect failure ([`SessionError::Classified`]) its kind's code. Any other
+/// error is unclassified (`None`), and the frontend falls back to the generic
+/// "Connection failed".
+pub(crate) fn failure_code(err: &SessionError) -> Option<IpcErrorCode> {
+    match err {
+        SessionError::AuthFailed => Some(IpcErrorCode::AuthFailed),
+        other => other
+            .connect_failure_kind()
+            .map(IpcErrorCode::from_connect_failure_kind),
+    }
+}
+
+/// The user-facing detail of a graphical connect failure: a typed failure's
+/// own description, without the `Spawn failed:` prefix its `Display` adds
+/// (#5183) — the UI supplies the headline from the code.
+pub(crate) fn failure_message(err: &SessionError) -> String {
+    match err.connect_failure_kind() {
+        Some(_) => err.user_message(),
+        None => err.to_string(),
+    }
 }
 
 /// `remote-desktop-cert-prompt` payload: an untrusted server certificate needs
@@ -706,7 +740,22 @@ impl GraphicalSessionManager {
                 ConnectAbort::Backend(e) => routed
                     .as_ref()
                     .and_then(|r| r.forward.last_error())
-                    .unwrap_or_else(|| e.to_string()),
+                    .unwrap_or_else(|| failure_message(e)),
+            };
+            // The typed category the frontend humanises (#5380). A tunnel
+            // failure replaced the backend's reason, so it stays unclassified.
+            let tunnel_failed = routed
+                .as_ref()
+                .is_some_and(|r| r.forward.last_error().is_some());
+            let kind = match &abort {
+                ConnectAbort::Cancelled => None,
+                ConnectAbort::TimedOut(_) => Some(ConnectFailureKind::Timeout),
+                ConnectAbort::Backend(_) if tunnel_failed => None,
+                ConnectAbort::Backend(e) => e.connect_failure_kind(),
+            };
+            let code = match &abort {
+                ConnectAbort::Backend(e) if !tunnel_failed => failure_code(e),
+                _ => kind.map(IpcErrorCode::from_connect_failure_kind),
             };
             warn!(session_id = %session_id, error = %msg, "graphical connect failed");
             let mut sm = state.lock().await;
@@ -720,11 +769,16 @@ impl GraphicalSessionManager {
             } else {
                 sm.connect_failed()
             };
-            emit_state(&sink, &session_id, failed, 0, Some(msg.clone()));
-            return Err(if auth {
-                TerminalError::AuthFailed(msg)
-            } else {
-                TerminalError::ConnectionFailed(msg)
+            emit_coded_state(&sink, &session_id, failed, 0, Some(msg.clone()), code);
+            return Err(match kind {
+                _ if auth => TerminalError::AuthFailed(msg),
+                // Tag the typed category so the envelope `code` matches the
+                // event's (#5380); the envelope message drops the marker.
+                Some(kind) => TerminalError::ConnectionFailed(termihub_core::errors::with_code(
+                    kind.code(),
+                    &msg,
+                )),
+                _ => TerminalError::ConnectionFailed(msg),
             });
         }
 
@@ -1401,11 +1455,25 @@ pub(crate) fn emit_state<S: GraphicalEventSink>(
     reconnect_attempt: u32,
     message: Option<String>,
 ) {
+    emit_coded_state(sink, session_id, state, reconnect_attempt, message, None);
+}
+
+/// [`emit_state`] for a failure state carrying its typed [`IpcErrorCode`]
+/// (#5380).
+pub(crate) fn emit_coded_state<S: GraphicalEventSink>(
+    sink: &S,
+    session_id: &str,
+    state: GraphicalState,
+    reconnect_attempt: u32,
+    message: Option<String>,
+    code: Option<IpcErrorCode>,
+) {
     sink.emit_state(&RemoteDesktopStateEvent {
         session_id: session_id.to_string(),
         state,
         reconnect_attempt,
         message,
+        code,
     });
 }
 
@@ -1847,6 +1915,28 @@ mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
+
+    /// The state-event code follows the IPC envelope's classification (#5380):
+    /// every typed core connect kind maps to its code, auth to `auth_failed`,
+    /// and an untyped failure stays unclassified.
+    #[test]
+    fn failure_code_matches_the_envelope_classification() {
+        for kind in ConnectFailureKind::ALL {
+            let err = SessionError::classified(kind, "h:3389: boom");
+            assert_eq!(
+                failure_code(&err),
+                Some(IpcErrorCode::from_connect_failure_kind(kind))
+            );
+            assert_eq!(failure_message(&err), "h:3389: boom");
+        }
+        assert_eq!(
+            failure_code(&SessionError::AuthFailed),
+            Some(IpcErrorCode::AuthFailed)
+        );
+        let untyped = SessionError::ConnectionFailed("tls failed".into());
+        assert_eq!(failure_code(&untyped), None);
+        assert_eq!(failure_message(&untyped), "Connection failed: tls failed");
+    }
 
     /// Recording sink for assertions without a Tauri runtime.
     #[derive(Clone, Default)]

@@ -233,6 +233,17 @@ pub enum SidecarFailureKind {
     /// Maps to the shared terminal protocol error. Appended for wire
     /// compatibility.
     Protocol,
+    /// The host answered but refused the TCP connection — nothing listens on
+    /// the RDP port (#5380). A typed [`Connect`](Self::Connect) refinement so
+    /// the desktop can show the same "Connection refused" heading a terminal
+    /// tab does. Appended for wire compatibility.
+    Refused,
+    /// No route to the host or its network (#5380): the host is offline, or a
+    /// VPN / network link is down. Appended for wire compatibility.
+    Unreachable,
+    /// The host name could not be resolved (#5380). Appended for wire
+    /// compatibility.
+    Dns,
 }
 
 /// Serialize `msg` and write it as one length-prefixed MessagePack frame.
@@ -492,6 +503,9 @@ mod tests {
             SidecarFailureKind::Timeout,
             SidecarFailureKind::ServerClosed,
             SidecarFailureKind::Protocol,
+            SidecarFailureKind::Refused,
+            SidecarFailureKind::Unreachable,
+            SidecarFailureKind::Dns,
         ] {
             let msg = SidecarMessage::Failure {
                 kind,

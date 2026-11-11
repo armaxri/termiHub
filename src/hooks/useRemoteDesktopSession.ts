@@ -219,8 +219,13 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     setState(payload.state);
     setReconnectAttempt(payload.reconnect_attempt);
     setMessage(payload.message ?? null);
-    // A state event carries no error code: only an auth rejection is typed.
-    setErrorKind(payload.state === "authFailed" ? "auth" : "other");
+    // A failure state carries the typed envelope code (#5380): a refused /
+    // unreachable / unresolvable / timed-out host gets the terminal's heading
+    // and hint, with `message` as the Details. An `authFailed` state is always
+    // an auth failure, even from an older backend that sends no code.
+    setErrorKind(
+      payload.state === "authFailed" ? "auth" : connectionErrorKindFromCode(payload.code)
+    );
     setAborted(false);
   }, []);
 
