@@ -440,7 +440,15 @@ pub fn create_symlink_sync(target: &str, link_path: &str) -> std::io::Result<()>
 /// function (like [`list_dir_sync`] / [`stat_sync`]) rather than a trait method:
 /// only the local filesystem needs it, and the remote backends' chunked copy is
 /// a separate transport concern (DUP-025).
+///
+/// A copy of a file onto itself (by any spelling, a symlink or a hard link) or
+/// of a folder onto or into itself is refused with an
+/// [`InvalidInput`](std::io::ErrorKind::InvalidInput) error before anything is
+/// created or truncated (#5325): `std::fs::copy` truncates its destination, so
+/// it would empty the source, and the folder copy would recurse into its own
+/// output.
 pub fn copy_sync(src: &str, dest: &str, is_directory: bool) -> std::io::Result<()> {
+    super::copy_guard::ensure_local_copy_allowed_io(src, dest, is_directory)?;
     if is_directory {
         copy_dir_recursive(Path::new(src), Path::new(dest))
     } else {
@@ -676,6 +684,9 @@ impl super::browser::FileBrowser for LocalFileBrowser {
         let entry = super::browser::FileBrowser::stat(self, &src).await?;
         let is_directory = entry.is_directory;
         tokio::task::spawn_blocking(move || {
+            // Refuse a copy onto or into itself as its own typed error (#5325),
+            // before `copy_sync` (which checks again for its other callers).
+            super::copy_guard::ensure_local_copy_allowed(&src, &dest, is_directory)?;
             copy_sync(&src, &dest, is_directory).map_err(|e| map_io_error(e, &src))
         })
         .await
@@ -1510,3 +1521,7 @@ mod tests {
         assert_send::<LocalFileBrowser>();
     }
 }
+
+#[cfg(test)]
+#[path = "local_copy_self_tests.rs"]
+mod copy_self_tests;
