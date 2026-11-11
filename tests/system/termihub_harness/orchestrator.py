@@ -32,6 +32,7 @@ from . import app_leaks
 from . import coverage
 from . import known_hosts
 from . import portable as portable_staging
+from . import profile_defaults
 from . import psreadline
 from .relaunch import describe_candidates, find_relaunched_app
 
@@ -323,8 +324,14 @@ class AppInstance:
         sandbox_profile: bool = False,
         unset_env: Sequence[str] = (),
         extra_env: Optional[Mapping[str, str]] = None,
+        hermetic: bool = True,
     ) -> None:
         """Create an unstarted instance.
+
+        ``hermetic`` (default) seeds the harness's network-quiet settings before
+        every launch: no automatic update or plugin update check (#5388, see
+        :mod:`termihub_harness.profile_defaults`). Only missing keys are added,
+        so a test that seeds its own value keeps it.
 
         ``unset_env`` names variables the app (and :meth:`run_cli`) must not
         inherit from the harness, e.g. ``SSH_AUTH_SOCK`` for a suite that needs
@@ -352,6 +359,7 @@ class AppInstance:
         binary = app_binary_path()
         self._unset_env = tuple(unset_env)
         self._extra_env = dict(extra_env or {})
+        self._hermetic = hermetic
         self._portable = portable
         self._portable_root: Optional[Path] = None
         self._profile_home: Optional[Path] = None
@@ -613,6 +621,9 @@ class AppInstance:
         self._started_at = time.time()
         if self._first_started_at is None:
             self._first_started_at = self._started_at
+        if self._hermetic:
+            # No update / plugin-index egress unless the test asks (#5388).
+            profile_defaults.seed(self._config_dir)
         env = self.launch_env()
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
