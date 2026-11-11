@@ -313,6 +313,24 @@ impl Drop for TcpServer {
     }
 }
 
+/// Serve one connection over an in-memory stream, for a client in this
+/// process: the client's end of the stream plus what the server observed.
+/// Must be called inside a Tokio runtime, which then drives the server.
+pub fn serve() -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) {
+    let observed = Arc::new(Mutex::new(Observed::default()));
+    let handler = FilesOnlyServer {
+        observed: observed.clone(),
+        channels: HashMap::new(),
+    };
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        if let Ok(running) = russh::server::run_stream(server_config(), server_io, handler).await {
+            let _ = running.await;
+        }
+    });
+    (client_io, observed)
+}
+
 /// Start the server on `127.0.0.1:0`. Must be called inside a Tokio runtime,
 /// which then drives the server.
 pub async fn serve_tcp() -> std::io::Result<TcpServer> {

@@ -921,6 +921,10 @@ impl SftpAdvancedOps for SftpFileBrowser {
 }
 
 #[cfg(test)]
+#[path = "file_browser_shared_fs_tests.rs"]
+mod shared_fs_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

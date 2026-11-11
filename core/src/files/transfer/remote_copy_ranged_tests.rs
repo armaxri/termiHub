@@ -32,6 +32,8 @@ struct MemRanged {
     /// `realpath` (#5333); `None` is an agent without
     /// `connection.files.realpath`.
     links: Option<HashMap<String, String>>,
+    /// The filesystem this end reports (#5355); `None` cannot tell.
+    fs_id: Option<crate::files::shared_fs::FilesystemId>,
 }
 
 impl MemRanged {
@@ -183,6 +185,10 @@ impl RangedTransferTarget for MemRanged {
             }
         }
         Ok(real)
+    }
+
+    fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
+        self.fs_id.clone()
     }
 }
 
@@ -608,3 +614,8 @@ async fn an_end_without_realpath_keeps_the_lexical_check() {
         .await
         .expect("an alias is invisible without realpath, as before");
 }
+
+/// Copies between two **different** sessions that reach one filesystem
+/// (#5355).
+#[path = "remote_copy_across_tests.rs"]
+mod across;
