@@ -79,6 +79,18 @@ def test_marked_suite_runs_only_on_its_platforms():
     )
 
 
+def test_a_test_that_also_needs_another_container_keeps_that_reason():
+    """VNC over an SSH tunnel: the VNC container, not the SSH side, keeps it
+    off, so it is left to that fixture's own skip at setup (#5176)."""
+    names = ["ssh_password_fixtures", "vnc_fixtures"]
+    containers = {"vnc_fixtures", "ssh_fixtures", "ssh_password_fixtures"}
+    assert (
+        skip_reason(names, None, target=TARGET, platform="darwin", container_fixtures=containers)
+        is None
+    )
+    assert skip_reason(names, None, target=TARGET, platform="darwin") == NOT_PORTED_REASON
+
+
 def test_jump_host_suite_needs_the_bastion():
     no_jump = NativeSshTarget(port=1, username="u", password="p", state_dir="/s")
     names = ["ssh_bastion_fixtures"]

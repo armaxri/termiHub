@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { FolderOpen, AlertCircle, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Ban, FolderOpen } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { Button, ContentOverlay, toast } from "@/components/ui";
@@ -10,9 +10,31 @@ import {
   connectTypeLabel,
   stepsFor,
 } from "@/utils/connectStages";
-import { createTerminal, closeTerminal } from "@/services/api";
+import { cancelConnecting, createTerminal, closeTerminal } from "@/services/api";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { errorMessage } from "@/utils/errorMessage";
+import { backendErrorMessage, parseBackendError } from "@/utils/backendErrorCode";
+import {
+  backendFamilyFromSessionType,
+  connectionErrorHint,
+  connectionErrorKindFromCode,
+  isNetworkErrorKind,
+  type ConnectionErrorKind,
+} from "@/utils/connectionErrorHints";
+import { CONNECTING_TIMEOUT_MS, connectTimeoutMessage } from "@/utils/connectTimeout";
+import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import { closeTabById, editConnectionForFailure } from "@/utils/connectFailureActions";
+import { passwordReentryTarget, setTabPassword } from "@/utils/passwordReentry";
+import type { CredentialReentryInput, CredentialReentryTarget } from "@/utils/credentialReentry";
+import { formatElapsed } from "@/utils/formatters";
+import { getPlatform } from "@/utils/platform";
+import { CredentialReentry } from "./CredentialReentry";
+import {
+  ConnectErrorDetails,
+  ConnectFailureActions,
+  ConnectFailureHint,
+  restingConnectHeading,
+  restingConnectPhase,
+} from "./ConnectFailure";
 import "./FileBrowserTab.css";
 
 interface FileBrowserTabProps {
@@ -20,7 +42,18 @@ interface FileBrowserTabProps {
   isVisible: boolean;
 }
 
-type Phase = "connecting" | "connected" | "error";
+/** Why the last connect ended without a session (#5377). */
+interface ConnectFailure {
+  kind: ConnectionErrorKind;
+  message: string;
+  aborted: boolean;
+}
+
+/** One connect attempt: its backend `connectId` and whether it was given up. */
+interface ConnectAttempt {
+  connectId: string;
+  abandoned: boolean;
+}
 
 /**
  * Tab body for a terminal-less connection (`Capabilities.terminal === false`,
@@ -30,28 +63,50 @@ type Phase = "connecting" | "connected" | "error";
  * to `tab.sessionId`. The body shows an informational placeholder; the actual
  * browsing happens in the sidebar file browser (#1335).
  *
+ * The connect behaves like a terminal tab's (#5377): Abort while connecting,
+ * the same client-side deadline ({@link CONNECTING_TIMEOUT_MS}), and a failure
+ * screen with a humanised reason, Retry, Edit connection and Close tab.
+ *
  * Session lifecycle mirrors `Terminal.tsx`: a session already present on the tab
  * (e.g. pre-minted during credential validation) is adopted rather than
  * re-created, and the owned session is closed on unmount with a short deferral
  * so React StrictMode's mount→unmount→mount does not tear down a live session.
  */
 export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
-  const [phase, setPhase] = useState<Phase>("connecting");
-  const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"connecting" | "connected" | "failed">("connecting");
+  const [failure, setFailure] = useState<ConnectFailure | null>(null);
   // Bumped by the retry button to re-run the connect effect.
   const [retryNonce, setRetryNonce] = useState(0);
 
   const sessionIdRef = useRef<string | null>(null);
   const pendingCloseRef = useRef<number | null>(null);
+  const attemptRef = useRef<ConnectAttempt | null>(null);
 
   const setTabSessionId = useAppStore((s) => s.setTabSessionId);
   // Title is reactive so a rename shows through; the config is read once in the
   // effect since it is stable for the tab's lifetime.
   const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
   const config = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.config);
+  const connectionId = useAppStore(
+    (s) => activeTreeTabs(s).find((t) => t.id === tabId)?.connectionId
+  );
   const identity = connectOverlayIdentity(config ?? { type: "" });
   // The connect ring's elapsed readout counts from the attempt's start.
   const [startedAt, setStartedAt] = useState(() => Date.now());
+
+  /** Give up the in-flight attempt (abort or deadline) and rest on `next`. */
+  const abandonAttempt = useCallback((next: ConnectFailure) => {
+    const attempt = attemptRef.current;
+    if (!attempt) return;
+    attempt.abandoned = true;
+    attemptRef.current = null;
+    fireAndForget(
+      cancelConnecting(attempt.connectId),
+      `cancel file-browser connect ${attempt.connectId}`
+    );
+    setFailure(next);
+    setPhase("failed");
+  }, []);
 
   useEffect(() => {
     let canceled = false;
@@ -75,22 +130,29 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         return;
       }
 
+      const attempt: ConnectAttempt = {
+        connectId: `${tabId}:fb:${crypto.randomUUID()}`,
+        abandoned: false,
+      };
+      attemptRef.current = attempt;
       setPhase("connecting");
       setStartedAt(Date.now());
-      setError(null);
+      setFailure(null);
       try {
         // Name the saved connection (#3876) so a transfer on this session can
         // be resumed after the session is gone.
         const sessionId = await createTerminal(
           tab.config,
-          undefined,
+          attempt.connectId,
           undefined,
           undefined,
           undefined,
           tab.connectionId
         );
-        if (canceled) {
-          // Superseded by a StrictMode remount — tear down the orphan session.
+        if (attemptRef.current === attempt) attemptRef.current = null;
+        if (canceled || attempt.abandoned) {
+          // Superseded by a StrictMode remount, aborted or timed out — tear
+          // down the orphan session.
           fireAndForget(
             closeTerminal(sessionId),
             `close orphaned file-browser session ${sessionId}`
@@ -103,11 +165,16 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         frontendLog("file_browser_tab", `session ${sessionId} opened for tab ${tabId}`);
         toast.success("Connected", { description: tab.title });
       } catch (err) {
-        if (canceled) return;
+        if (attemptRef.current === attempt) attemptRef.current = null;
+        if (canceled || attempt.abandoned) return;
         // The backend rejects with a structured `{ code, message }` envelope,
         // not an Error — String() rendered it as "[object Object]" (#4017).
-        setError(errorMessage(err));
-        setPhase("error");
+        setFailure({
+          kind: connectionErrorKindFromCode(parseBackendError(err).code),
+          message: backendErrorMessage(err),
+          aborted: false,
+        });
+        setPhase("failed");
       }
     };
 
@@ -115,6 +182,17 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
 
     return () => {
       canceled = true;
+      // Closing the tab while connecting aborts the backend connect instead of
+      // letting it run on to its timeout.
+      const attempt = attemptRef.current;
+      if (attempt) {
+        attempt.abandoned = true;
+        attemptRef.current = null;
+        fireAndForget(
+          cancelConnecting(attempt.connectId),
+          `cancel file-browser connect ${attempt.connectId} on tab close`
+        );
+      }
       const sid = sessionIdRef.current;
       if (sid) {
         // Defer the close so a StrictMode remount can cancel it (above) before
@@ -129,12 +207,55 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
     };
   }, [tabId, setTabSessionId, retryNonce]);
 
-  // The error text is part of the failure overlay's accessible description.
-  const errorTextId = useId();
+  // Client-side deadline, the same as a terminal tab's (#1129, #5377): a host
+  // that never answers cannot park the tab on the spinner forever.
+  useEffect(() => {
+    if (phase !== "connecting") return;
+    const id = setTimeout(
+      () =>
+        abandonAttempt({
+          kind: "timeout",
+          message: connectTimeoutMessage("connecting"),
+          aborted: false,
+        }),
+      Math.max(0, startedAt + CONNECTING_TIMEOUT_MS - Date.now())
+    );
+    return () => clearTimeout(id);
+  }, [phase, startedAt, abandonAttempt]);
+
+  const handleAbort = useCallback(() => {
+    abandonAttempt({ kind: "other", message: ABORTED_CONNECT_MESSAGE, aborted: true });
+  }, [abandonAttempt]);
 
   const handleRetry = useCallback(() => {
     setRetryNonce((n) => n + 1);
   }, []);
+
+  const handleClose = useCallback(() => closeTabById(tabId), [tabId]);
+
+  const failureKind = failure?.kind ?? "other";
+  const handleEdit = useCallback(() => {
+    if (connectionId) editConnectionForFailure(connectionId, failureKind);
+  }, [connectionId, failureKind]);
+
+  // A rejected password is re-entered inline, for this attempt only (#5377).
+  const reentryTarget = useMemo(
+    () => passwordReentryTarget(config, connectionId, false),
+    [config, connectionId]
+  );
+  const handleReenter = useCallback(
+    async (_target: CredentialReentryTarget, input: CredentialReentryInput) => {
+      setTabPassword(tabId, input.secret);
+      setRetryNonce((n) => n + 1);
+      return true;
+    },
+    [tabId]
+  );
+
+  const connectingTarget = title || "the connection";
+  const typeLabel = connectTypeLabel(identity.sessionType);
+  const typeIcon = <FolderOpen size={20} aria-hidden />;
+  const target = identity.target || connectingTarget;
 
   return (
     <div
@@ -146,14 +267,26 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         <ConnectProgress
           phase="connecting"
           heading="Connecting…"
-          target={identity.target || title || "the connection"}
-          typeLabel={connectTypeLabel(identity.sessionType)}
-          typeIcon={<FolderOpen size={20} aria-hidden />}
+          target={target}
+          typeLabel={typeLabel}
+          typeIcon={typeIcon}
           details={identity.details}
           stages={buildStages(stepsFor(identity.sessionType), undefined)}
-          status={`Opening ${title || "the connection"}.`}
-          announcement={`Connecting… Opening ${title || "the connection"}.`}
+          status={`Opening ${connectingTarget}.`}
+          announcement={`Connecting… Opening ${connectingTarget}.`}
           startedAt={startedAt}
+          deadlineAt={startedAt + CONNECTING_TIMEOUT_MS}
+          actions={
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="file-browser-tab-abort"
+            >
+              Abort
+            </Button>
+          }
           data-testid="file-browser-tab-connecting"
         />
       )}
@@ -173,40 +306,100 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         />
       )}
 
-      {phase === "error" && (
-        <ContentOverlay
-          icon={
-            <AlertCircle
-              size={32}
-              className="file-browser-tab__icon file-browser-tab__icon--error"
-              aria-hidden
-            />
+      {phase === "failed" && failure && (
+        <FailureScreen
+          failure={failure}
+          target={target}
+          title={connectingTarget}
+          typeLabel={typeLabel}
+          typeIcon={typeIcon}
+          sessionType={identity.sessionType}
+          startedAt={startedAt}
+          isVisible={isVisible}
+          onRetry={handleRetry}
+          onEdit={connectionId ? handleEdit : undefined}
+          onClose={handleClose}
+          reentry={
+            <CredentialReentry tabId={tabId} target={reentryTarget} onSubmit={handleReenter} />
           }
-          heading="Could not open connection"
-          announce="assertive"
-          announcement={error ? "Could not open connection. ".concat(error) : undefined}
-          describedBy={error ? errorTextId : undefined}
-          autoFocusPrimaryAction={isVisible}
-          data-testid="file-browser-tab-error"
-          actions={
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<RefreshCw size={14} />}
-              onClick={handleRetry}
-              data-testid="file-browser-tab-retry"
-            >
-              Retry
-            </Button>
-          }
-        >
-          {error && (
-            <p id={errorTextId} className="file-browser-tab__error">
-              {error}
-            </p>
-          )}
-        </ContentOverlay>
+        />
       )}
     </div>
+  );
+}
+
+/** Props for {@link FailureScreen}. */
+interface FailureScreenProps {
+  failure: ConnectFailure;
+  target: string;
+  title: string;
+  typeLabel: string;
+  typeIcon: React.ReactNode;
+  sessionType: string;
+  startedAt: number;
+  isVisible: boolean;
+  onRetry: () => void;
+  onEdit?: () => void;
+  onClose: () => void;
+  reentry: React.ReactNode;
+}
+
+/** The resting failed / timed-out / aborted screen, worded like a terminal tab's. */
+function FailureScreen({
+  failure,
+  target,
+  title,
+  typeLabel,
+  typeIcon,
+  sessionType,
+  startedAt,
+  isVisible,
+  onRetry,
+  onEdit,
+  onClose,
+  reentry,
+}: FailureScreenProps) {
+  const phase = restingConnectPhase(failure.aborted, failure.kind);
+  const heading = restingConnectHeading(phase, failure.kind);
+  const networkFailure =
+    phase === "failed" && isNetworkErrorKind(failure.kind) && failure.message !== "";
+  const hint = failure.aborted
+    ? null
+    : connectionErrorHint(backendFamilyFromSessionType(sessionType), failure.kind, getPlatform());
+  return (
+    <ConnectProgress
+      phase={phase}
+      heading={heading}
+      target={target}
+      typeLabel={typeLabel}
+      typeIcon={typeIcon}
+      startedAt={startedAt}
+      error={networkFailure ? undefined : failure.message}
+      announcement={[`${heading}.`, `${title}:`, failure.message].join(" ")}
+      autoFocusPrimaryAction={isVisible}
+      // Only the client's own deadline knows how long it waited.
+      timeText={
+        failure.message === connectTimeoutMessage("connecting")
+          ? `Gave up after ${formatElapsed(Math.round(CONNECTING_TIMEOUT_MS / 1000))}`
+          : ""
+      }
+      actions={
+        <ConnectFailureActions
+          onRetry={onRetry}
+          onEdit={phase === "aborted" ? undefined : onEdit}
+          onClose={onClose}
+          testIds={{
+            retry: "file-browser-tab-retry",
+            edit: "file-browser-tab-edit",
+            close: "file-browser-tab-close",
+          }}
+        />
+      }
+      data-testid="file-browser-tab-error"
+    >
+      <ConnectFailureHint hint={hint} />
+      {networkFailure && <ConnectErrorDetails error={failure.message} />}
+      {failure.kind === "auth" && reentry}
+    </ConnectProgress>
   );
 }

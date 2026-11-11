@@ -107,6 +107,28 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
         let type_id = request.type_id.clone();
         let settings = without_first_connect_only_settings(request.settings.clone());
         let agent_id = request.agent_id.clone();
+        // A direct serial tab reopens its port only when the configured device
+        // is back (#5390); otherwise this attempt fails with the reason and the
+        // loop backs off or gives up on the shared policy. A no-op for every
+        // other request.
+        let settings = match crate::session::serial_reconnect::gate_serial_reconnect(
+            &type_id,
+            agent_id.as_deref(),
+            settings,
+            request.serial_identity.as_ref(),
+            &termihub_core::session::serial_reconnect::SystemSerialPortProbe,
+        ) {
+            Ok(settings) => settings,
+            Err(reason) => {
+                drop(request);
+                fold_session_transition(&self.app, |store| {
+                    store.reconnect_failed(tab_id, Some(reason));
+                });
+                sync_timer(&self.app, tab_id);
+                clear_retained_on_giveup(&self.app, tab_id);
+                return;
+            }
+        };
         // The live agent session id this tab is attached to (#2512). `Some` for a
         // resilient agent tab: the redrive re-attaches to *this* live session
         // (running process continues) instead of minting a new one, and emits
