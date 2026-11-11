@@ -103,13 +103,14 @@ pub const RECONNECT_GIVE_UP_WINDOW_MS: i64 = 181_000;
 /// The reconnect loops of the workspace, keyed by what they re-establish
 /// (#3730). [`policy_for`] maps each to its retry policy.
 ///
-/// Telnet and serial connections have no automatic reconnect (they do not
-/// expose the Auto-Reconnect setting); a dropped telnet/serial tab shows the
-/// manual reconnect prompt, so there is no loop to configure for them.
+/// Serial and telnet terminal tabs share the [`ReconnectKind::Terminal`] loop
+/// (#5390): serial reopens its port (on by default), telnet retries when the
+/// user switched Auto-Reconnect on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReconnectKind {
     /// A terminal tab's backend-driven reconnect loop (the session-lifecycle
-    /// store): direct SSH tabs with Auto-Reconnect on, and agent-hosted tabs.
+    /// store): direct SSH, serial and telnet tabs with Auto-Reconnect on, and
+    /// agent-hosted tabs.
     Terminal,
     /// The remote agent's in-task transport reconnect loop (re-dials the agent's
     /// SSH transport after a transient break).
