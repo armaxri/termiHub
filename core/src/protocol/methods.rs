@@ -216,6 +216,14 @@ pub const CONNECTION_EVICTED: &str = "connection.evicted";
 /// every later attach of a session that is still files-only. Additive (0.25.0):
 /// an older agent never sends it, an older desktop ignores it.
 pub const CONNECTION_FILES_ONLY: &str = "connection.filesOnly";
+/// A hosted session is reopening its backend in place after it dropped (#5396):
+/// today an agent-hosted serial port whose USB adapter was unplugged. Params:
+/// [`ConnectionReconnectNotification`]. The session stays the same session
+/// while the agent retries on the shared reconnect policy; the desktop shows
+/// the attempts, the reason and the give-up on the tab. Additive (0.37.0): an
+/// older agent never sends it (its session ends on a drop, as before), and an
+/// older desktop ignores it.
+pub const CONNECTION_RECONNECT: &str = "connection.reconnect";
 pub const CONNECTION_MONITORING_DATA: &str = "connection.monitoring.data";
 /// A monitored host's collect-loop status changed (#3321). Optional: older
 /// agents never send it, older desktops ignore it.
@@ -912,6 +920,56 @@ pub struct ConnectionEvictedNotification {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectionFilesOnlyNotification {
     pub session_id: String,
+}
+
+/// One step of a hosted session's in-place reconnect (#5396), the payload of a
+/// [`CONNECTION_RECONNECT`] notification without its session id. Tagged by
+/// `state`; the numbers follow the shared reconnect engine
+/// ([`crate::reconnect_backoff::ReconnectState`]): `attempt` counts the
+/// attempts started so far.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum SessionReconnectStatus {
+    /// Waiting `delay_ms` before the next attempt.
+    Waiting {
+        /// Attempts started so far in this loop.
+        attempt: i64,
+        /// The backoff window, in ms.
+        delay_ms: i64,
+        /// Why the session is reconnecting (the drop, or why the last attempt
+        /// did not reopen it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// An attempt is running.
+    Connecting {
+        /// Attempts started so far, this one included.
+        attempt: i64,
+        /// Why the session is reconnecting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// The session is back; output continues.
+    Reconnected,
+    /// The loop stopped at the policy's attempt limit. The session ends next.
+    GaveUp {
+        /// Why the last attempt failed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
+/// Payload of a [`CONNECTION_RECONNECT`] notification (agent → desktop, #5396).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionReconnectNotification {
+    pub session_id: String,
+    /// Increases with every status the session sends, across all of its
+    /// reconnect loops. A desktop drops a status whose `seq` is not above the
+    /// last one it applied, so a late or replayed status never undoes a newer one.
+    pub seq: u64,
+    /// The step.
+    #[serde(flatten)]
+    pub status: SessionReconnectStatus,
 }
 
 // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────────
@@ -4299,6 +4357,7 @@ mod tests {
         assert_eq!(CONNECTION_EXIT, "connection.exit");
         assert_eq!(CONNECTION_EVICTED, "connection.evicted");
         assert_eq!(CONNECTION_FILES_ONLY, "connection.filesOnly");
+        assert_eq!(CONNECTION_RECONNECT, "connection.reconnect");
         assert_eq!(CONNECTION_MONITORING_DATA, "connection.monitoring.data");
         assert_eq!(CONNECTION_MONITORING_STATUS, "connection.monitoring.status");
         assert_eq!(AGENT_UPDATE_PENDING, "agent.update_pending");
@@ -4938,6 +4997,34 @@ mod tests {
             serde_json::from_value(files_only.clone()).unwrap();
         assert_eq!(n.session_id, "s-1");
         assert_eq!(serde_json::to_value(&n).unwrap(), files_only);
+
+        let reconnect = json!({
+            "session_id": "s-1",
+            "seq": 3,
+            "state": "waiting",
+            "attempt": 1,
+            "delay_ms": 2000,
+            "reason": "Serial port /dev/ttyUSB0 is not present."
+        });
+        let n: ConnectionReconnectNotification =
+            serde_json::from_value(reconnect.clone()).unwrap();
+        assert_eq!(n.seq, 3);
+        assert_eq!(
+            n.status,
+            SessionReconnectStatus::Waiting {
+                attempt: 1,
+                delay_ms: 2000,
+                reason: Some("Serial port /dev/ttyUSB0 is not present.".into()),
+            }
+        );
+        assert_eq!(serde_json::to_value(&n).unwrap(), reconnect);
+        let done = json!({ "session_id": "s-1", "seq": 4, "state": "reconnected" });
+        let n: ConnectionReconnectNotification = serde_json::from_value(done.clone()).unwrap();
+        assert_eq!(n.status, SessionReconnectStatus::Reconnected);
+        assert_eq!(serde_json::to_value(&n).unwrap(), done);
+        let gave_up = json!({ "session_id": "s-1", "seq": 5, "state": "gaveUp" });
+        let n: ConnectionReconnectNotification = serde_json::from_value(gave_up).unwrap();
+        assert_eq!(n.status, SessionReconnectStatus::GaveUp { reason: None });
 
         let open = json!({ "stream_id": "st-1" });
         let n: AgentForwardOpenParams = serde_json::from_value(open.clone()).unwrap();
