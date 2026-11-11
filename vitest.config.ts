@@ -49,7 +49,8 @@ export default defineConfig({
       // improves — they are a ratchet, not a target. Ratcheted 2026-09-30 (#2979)
       // to ~1 point under the measured statements 86.56%, branches 80.58%,
       // functions 83.98%, lines 87.89%. Ratcheted 2026-11-11 (#5348) to ~1 point under
-      // the measured statements 91.54%, branches 86.59%, functions 89.98%, lines 93.10%.
+      // the lower of the macOS and ubuntu-CI values that vitest reports: statements
+      // 91.54%, branches 86.37% (CI), functions 89.98%, lines 93.09% (CI).
       //
       // Per-directory floors (TFE-011): the global thresholds are a loose ratchet
       // on the whole-app average, so a single new untested file can hide under it.
@@ -81,11 +82,14 @@ export default defineConfig({
       //   src/components/Settings/** 86.93 / 84.35 / 84.12 / 88.53 (2026-11-11, #5304;
       //     FileTypeSettings 60 -> 100 %, PortableModeSettings 61.4 -> 98.6 % lines;
       //     floored ~3 points below)
-      //   src/components/Sidebar/** 86.94 / 79.98 / 86.44 / 88.27 (2026-11-11, #5348;
+      //   (#5348 values: vitest's own per-glob figures, i.e. the CI text-report
+      //   directory row — these directories are flat — and agree with the CI lcov.)
+      //   src/components/Sidebar/** 86.93 / 79.98 / 86.43 / 88.27 (2026-11-11, #5348;
       //     floored ~3 points below)
-      //   src/components/FileEditor/** 80.28 / 78.34 / 80.65 / 85.23 (2026-11-11, #5348;
-      //     floored ~3 points below)
-      //   src/components/WorkflowSidebar/** 81.71 / 71.75 / 81.21 / 83.42 (2026-11-11,
+      //   src/components/FileEditor/** 80.27 / 65.20 / 80.64 / 83.82 (2026-11-11, #5348;
+      //     the lower of macOS and ubuntu CI per metric. FileEditor.tsx branches differ by
+      //     platform: 78.7 % on macOS, 64.0 % on ubuntu; floored ~3 points below)
+      //   src/components/WorkflowSidebar/** 81.71 / 71.74 / 81.20 / 83.41 (2026-11-11,
       //     #5348; floored ~3 points below)
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
       // recursively the subtree is only ~85%, so it is not uniformly covered.)
@@ -94,7 +98,7 @@ export default defineConfig({
         lines: 92,
         statements: 90.5,
         functions: 89,
-        branches: 85.5,
+        branches: 85.3,
         "src/themes/**": {
           statements: 95,
           branches: 88,
@@ -139,9 +143,9 @@ export default defineConfig({
         },
         "src/components/FileEditor/**": {
           statements: 77,
-          branches: 75,
+          branches: 62,
           functions: 77.5,
-          lines: 82,
+          lines: 80.5,
         },
         "src/components/WorkflowSidebar/**": {
           statements: 78.5,
