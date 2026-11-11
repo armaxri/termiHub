@@ -55,7 +55,11 @@ from termihub_harness.ui.windows import (
     window_tabs,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # The suite starts openbox and injects with xdotool on the Xvfb display (#5340).
+    pytest.mark.requires_tools("openbox", "xprop", "xdotool", platforms=("linux",)),
+]
 
 SPLIT_H = "terminal-view-split-horizontal"
 

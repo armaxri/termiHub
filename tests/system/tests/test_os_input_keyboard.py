@@ -52,7 +52,11 @@ from termihub_harness.ui.os_input_ui import has_line, linux_window_manager, term
 from termihub_harness.ui.terminal import NEW_TERMINAL
 from termihub_harness.ui.windows import CLOSE_DIALOG_END, window_tabs
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # The suite starts openbox and injects with xdotool on the Xvfb display (#5340).
+    pytest.mark.requires_tools("openbox", "xprop", "xdotool", platforms=("linux",)),
+]
 
 MOD = primary_modifier()
 #: Copy / paste in a terminal: Cmd+C/V on macOS, Ctrl+Shift+C/V elsewhere.

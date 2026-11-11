@@ -66,7 +66,11 @@ from termihub_harness.ui.native_capture import NativeCaptureUi, TerminalCapture
 from termihub_harness.ui.theme import ThemeUi
 from termihub_harness.window_capture import Rect
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    # The Linux window capture finds the app window with xdotool (#5340).
+    pytest.mark.requires_tools("xdotool", platforms=("linux",)),
+]
 
 ESC = "\x1b"
 PAYLOAD = "th_capture_payload.txt"
