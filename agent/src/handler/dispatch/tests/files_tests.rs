@@ -847,3 +847,54 @@ async fn ranged_slices_of_a_session_held_elsewhere_are_refused() {
     .await;
     assert_eq!(r["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{r}");
 }
+
+/// A host-level copy of a file onto itself — by its own path or a respelled
+/// one — is refused and the file keeps every byte; a folder copied into itself
+/// is refused and nothing is created (#5325).
+#[tokio::test]
+async fn a_host_copy_onto_or_into_itself_is_refused() {
+    let handler = make_handler();
+    init_handler(&handler).await;
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    let file = src.join("f");
+    std::fs::write(&file, b"precious").unwrap();
+    let f = file.to_str().unwrap();
+
+    let mut id = 2;
+    for dest in [file.clone(), src.join(".").join("f")] {
+        let r = dispatch(
+            &handler,
+            pm::CONNECTION_FILES_COPY,
+            json!({"src": f, "dest": dest.to_str().unwrap()}),
+            id,
+        )
+        .await;
+        id += 1;
+        assert_eq!(r["error"]["code"], errors::FILE_OPERATION_FAILED, "{r}");
+        let msg = r["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            msg.ends_with("refused: source and destination are the same file"),
+            "{r}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"precious");
+    }
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_COPY,
+        json!({"src": src.to_str().unwrap(),
+               "dest": src.join("copy").to_str().unwrap()}),
+        id,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::FILE_OPERATION_FAILED, "{r}");
+    let msg = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        msg.ends_with("refused: the destination is inside the source folder"),
+        "{r}"
+    );
+    let entries: Vec<_> = std::fs::read_dir(&src).unwrap().collect();
+    assert_eq!(entries.len(), 1, "nothing created beside f");
+}

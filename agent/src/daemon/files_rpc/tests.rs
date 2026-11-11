@@ -737,3 +737,48 @@ fn ranged_operations_are_transfers() {
     }
     .is_transfer());
 }
+
+/// The daemon serves a local session's copy through the core local browser,
+/// so a copy onto itself or into itself comes back as the typed refusal and
+/// the disk is untouched (#5325).
+#[tokio::test]
+async fn serve_refuses_a_local_copy_onto_or_into_itself() {
+    let browser = termihub_core::files::LocalFileBrowser::new();
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    let file = src.join("f");
+    std::fs::write(&file, b"precious").unwrap();
+
+    let cases = [
+        (
+            file.clone(),
+            src.join("..").join("src").join("f"),
+            "source and destination are the same file",
+        ),
+        (
+            src.clone(),
+            src.join("copy"),
+            "the destination is inside the source folder",
+        ),
+    ];
+    for (from, to, reason) in cases {
+        let (outcome, _) = serve(
+            &browser,
+            FileOp::Copy {
+                src: from.to_str().unwrap().into(),
+                dest: to.to_str().unwrap().into(),
+            },
+            Vec::new(),
+        )
+        .await;
+        match outcome {
+            FileOutcome::Failed {
+                error: WireFileError::OperationFailed { message },
+            } => assert!(message.ends_with(&format!("refused: {reason}")), "{message}"),
+            other => panic!("expected the refusal, got {other:?}"),
+        }
+        assert_eq!(std::fs::read(&file).unwrap(), b"precious");
+        assert_eq!(std::fs::read_dir(&src).unwrap().count(), 1);
+    }
+}
