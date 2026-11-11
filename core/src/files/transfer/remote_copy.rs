@@ -33,7 +33,9 @@ use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, warn};
 
+use crate::errors::FileError;
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
+use crate::files::paste_guard::PathResolver;
 
 use super::attempt::{
     apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
@@ -105,6 +107,40 @@ impl RemoteCopyEndpoint {
             RemoteCopyEndpoint::Ranged(target) => Arc::new(endpoints::RangedEndpoint::new(target)),
         }
     }
+}
+
+impl RemoteCopyEndpoint {
+    /// How this end resolves a path to its real spelling (#5330): the SFTP
+    /// server's `realpath`, the container's `readlink -f`, or a lexical
+    /// normalisation for a ranged (agent-hosted) end.
+    pub fn path_resolver(&self) -> PathResolver {
+        match self {
+            #[cfg(feature = "ssh")]
+            RemoteCopyEndpoint::Sftp(browser) => PathResolver::Sftp(browser.as_ref().clone()),
+            #[cfg(feature = "docker")]
+            RemoteCopyEndpoint::Docker(target) => PathResolver::Docker(target.clone()),
+            #[cfg(feature = "local-transfer")]
+            RemoteCopyEndpoint::Ranged(_) => PathResolver::Lexical,
+        }
+    }
+}
+
+/// Refuse a copy whose source and destination are on the **same** end and
+/// resolve to the same file (#5330), before anything is opened.
+///
+/// The executor creates (truncates) the destination before it reads the
+/// source, so a copy of a file onto itself (the same path, a respelled path
+/// or a symlink alias) would empty it. The caller passes the one end both
+/// paths live on, so call this only when the two ends of a copy are the same
+/// session. A path the end cannot resolve is not a refusal.
+pub async fn ensure_copy_within_allowed(
+    end: &RemoteCopyEndpoint,
+    src_path: &str,
+    dst_path: &str,
+) -> Result<(), FileError> {
+    end.path_resolver()
+        .ensure_copy_allowed(src_path, dst_path, false)
+        .await
 }
 
 impl std::fmt::Debug for RemoteCopyEndpoint {
