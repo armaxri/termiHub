@@ -1173,6 +1173,14 @@ def container_swap_host() -> AgentSwapHost:
     )
 
 
+def _native_host_failed(exc: Exception) -> RuntimeError:
+    """A native agent host that could not come up: a skip off CI, an error on CI."""
+    detail = f"native agent host failed: {exc}"
+    if _strict_fixtures():
+        return ComposeFixtureFailed(detail)
+    return ContainerRuntimeUnavailable(detail)
+
+
 def native_pending_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.NativeAgentVariant":
     """The armed agent host on the native sshd (#5444).
 
@@ -1182,8 +1190,11 @@ def native_pending_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.
     """
     binary = build_host_test_agent()
     variant = native_ssh.NativeAgentVariant(target, "pending")
-    home = variant.ensure({PENDING_UPDATE_ENV: REMOTE_AGENT_PENDING_VERSION})
-    variant.control.install_agent(binary, home=home)
+    try:
+        home = variant.ensure({PENDING_UPDATE_ENV: REMOTE_AGENT_PENDING_VERSION})
+        variant.control.install_agent(binary, home=home)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
     return variant
 
 
@@ -1195,8 +1206,11 @@ def native_kbdint_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.N
     """
     binary = build_host_test_agent()
     variant = native_ssh.NativeAgentVariant(target, "kbdint")
-    home = variant.ensure(kbdint=True)
-    variant.control.install_agent(binary, home=home)
+    try:
+        home = variant.ensure(kbdint=True)
+        variant.control.install_agent(binary, home=home)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
     return variant
 
 
@@ -1209,9 +1223,16 @@ def native_swap_host(target: "native_ssh.NativeSshTarget") -> AgentSwapHost:
     staged in the agent's own ``<config>/updates`` (AGT-003 confinement), as
     the ``update-swap`` image does.
     """
+    binary = build_host_test_agent()
+    try:
+        return _stage_native_swap_host(target, binary)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
+
+
+def _stage_native_swap_host(target: "native_ssh.NativeSshTarget", binary: Path) -> AgentSwapHost:
     from . import ed25519
 
-    binary = build_host_test_agent()
     staged_bytes = binary.read_bytes() + SWAP_TRAILER
     digest = hashlib.sha256(staged_bytes).hexdigest()
     variant = native_ssh.NativeAgentVariant(target, "swap")
