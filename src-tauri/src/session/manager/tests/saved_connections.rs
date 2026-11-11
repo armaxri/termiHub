@@ -4,7 +4,10 @@
 use super::*;
 
 fn manager() -> SessionManager {
-    SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent))
+    SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(FakeAgent::offline()),
+    )
 }
 
 async fn open(manager: &SessionManager, session_id: &str) {
@@ -106,6 +109,7 @@ fn retain_for_tab(manager: &SessionManager, session_id: &str, tab_id: &str) {
             agent_session_id: None,
             saved_connection_id: None,
             resilient: true,
+            serial_identity: None,
         },
     );
 }

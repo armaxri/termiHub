@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use termihub_core::protocol::methods::TOOL_START;
 
 use crate::network::events::name;
-use crate::network::test_support::FakeAgent;
+use crate::test_support::FakeAgent;
 use crate::utils::errors::IpcErrorCode;
 
 type Emitted = Arc<Mutex<Vec<(&'static str, Value)>>>;
