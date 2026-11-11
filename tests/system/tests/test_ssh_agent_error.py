@@ -13,9 +13,11 @@ The SSH ConnectionType schema offers ``agent`` as an ``authMethod``
 wrong premise that the option did not exist (#4339).
 
 The suite's app is launched without ``SSH_AUTH_SOCK``, so on macOS/Linux no
-agent is reachable whatever the runner has running. The ``ssh-password``
-container is Linux-only, so the suite skips where no container runtime is
-available.
+agent is reachable whatever the runner has running. On Windows the app dials
+the system OpenSSH agent pipe instead, and the runner's ``ssh-agent`` service
+is not running, so the native sshd lane (#5422) gets the same failure. The
+``ssh-password`` container is Linux-only; macOS and Windows log in to the
+native sshd fixture instead.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ OVERLAY = "terminal-connection-overlay"
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestSshAgentAuthError(TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-AGENT-ERROR: agent auth with no agent fails gracefully."""
 

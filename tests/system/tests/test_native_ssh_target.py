@@ -19,6 +19,8 @@ from termihub_harness.native_ssh import (
     NativeBastionControl,
     NativeSshTarget,
     NativeSshTargetError,
+    fixture_argv,
+    gateway_count_from_output,
     per_connection_children,
     skip_reason,
     target_from_env,
@@ -138,7 +140,7 @@ def test_gateway_count_is_the_masters_children():
 
 def test_gateway_count_reads_the_bastion_pid(tmp_path, monkeypatch):
     target = NativeSshTarget(port=1, username="u", password="p", state_dir=str(tmp_path), jump_port=2)
-    bastion = NativeBastionControl(target)
+    bastion = NativeBastionControl(target, platform="darwin")
     assert bastion.gateway_sessions() == 0, "no pid file: the bastion is down"
     (tmp_path / "jump_sshd.pid").write_text("4242\n", encoding="utf-8")
     calls = []
@@ -153,6 +155,54 @@ def test_gateway_count_reads_the_bastion_pid(tmp_path, monkeypatch):
     monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
     assert bastion.gateway_sessions() == 1
     assert calls == [["pgrep", "-P", "4242"]]
+
+
+def test_fixture_runs_through_the_sh_off_windows_and_the_ps1_on_windows():
+    posix = fixture_argv("jump-stop", "/s", platform="darwin")
+    assert posix[0] == "bash" and posix[1].endswith("native-sshd-fixture.sh")
+    assert posix[2:] == ["jump-stop", "--dir", "/s"]
+    win = fixture_argv("jump-stop", "C:\\state", platform="win32")
+    assert win[0] == "pwsh" and "bash" not in win, "no bare bash: it can resolve to WSL's"
+    assert win[win.index("-File") + 1].endswith("native-sshd-fixture.ps1")
+    assert win[-4:] == ["-Action", "jump-stop", "-Dir", "C:\\state"]
+
+
+def test_windows_bastion_is_driven_by_the_powershell_fixture(monkeypatch):
+    bastion = NativeBastionControl(TARGET, platform="win32")
+    calls = []
+
+    class _Done:
+        returncode = 0
+        stderr = ""
+        stdout = "native-sshd: ignored\r\n2\r\n"
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return _Done()
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    bastion.stop()
+    bastion.start()
+    assert bastion.gateway_sessions() == 2
+    assert [cmd[0] for cmd in calls] == ["pwsh", "pwsh", "pwsh"]
+    assert [cmd[cmd.index("-Action") + 1] for cmd in calls] == [
+        "jump-stop",
+        "jump-start",
+        "jump-sessions",
+    ]
+
+
+def test_windows_gateway_count_needs_a_number():
+    assert gateway_count_from_output("0\n") == 0
+    with pytest.raises(RuntimeError):
+        gateway_count_from_output("")
+    with pytest.raises(RuntimeError):
+        gateway_count_from_output("oops\n")
+
+
+def test_jump_host_suite_runs_on_windows_with_the_bastion():
+    names = ["ssh_bastion_fixtures"]
+    assert skip_reason(names, ("darwin", "win32"), target=TARGET, platform="win32") is None
 
 
 def test_bastion_control_needs_a_jump_port():

@@ -190,7 +190,7 @@ class TestSshConnectionFailure(ConnectionsUi, PasswordPromptUi, SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-05: the SSH terminal is interactive and streams command output."""
 

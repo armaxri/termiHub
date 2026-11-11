@@ -3,8 +3,9 @@
 The Docker SSH fixtures need a Linux container daemon, which the hosted macOS
 and Windows runners do not have, so every SSH/SFTP suite used to skip there.
 The macOS/Windows lanes therefore bring up the platform's own OpenSSH server
-(``scripts/internal/native-sshd-fixture.sh up --password-login [--jump-host]``)
-and set :data:`TARGET_ENV` to ``native``. Then:
+(``scripts/internal/native-sshd-fixture.sh up --password-login --jump-host``,
+plus ``--default-shell bash`` on Windows, #5422) and set :data:`TARGET_ENV` to
+``native``. Then:
 
 * :mod:`.fixtures` points the SSH coordinates (``SSH_PASSWORD_PORT``,
   ``SSH_KEYS_PORT``, ``SSH_USERNAME``, ``SSH_PASSWORD``, the jump-host bastion
@@ -13,7 +14,8 @@ and set :data:`TARGET_ENV` to ``native``. Then:
   fixtures return the :class:`NativeSshTarget` instead of starting containers;
 * only suites marked ``@pytest.mark.native_sshd`` (optionally
   ``platforms=(...)``) run against it. They are the ones that need nothing but
-  an sshd: password or key login, a POSIX shell (macOS) and SFTP. Every other
+  an sshd: password or key login, a POSIX shell (macOS, and Git Bash as the
+  Windows login shell) and SFTP. Every other
   test that asks for one of those fixtures is skipped with
   :data:`NOT_PORTED_REASON`, which the skip guard budgets per lane.
 
@@ -65,8 +67,9 @@ AGENT_FIXTURES = frozenset(
 VARIANT_PORT_OFFSETS: Mapping[str, int] = {"pending": 10, "swap": 11, "kbdint": 12}
 
 #: Where the native target serves :data:`AGENT_FIXTURES`: the agent is built
-#: for the host and installed over a POSIX ``sh`` exec, so macOS only (the
-#: Windows fixture's login shell is ``cmd.exe``).
+#: for the host and installed over a POSIX ``sh`` exec into ``~/.local/bin``,
+#: so macOS only (a Windows host gets a ``.exe`` under Windows paths, which
+#: this installer does not do).
 AGENT_PLATFORMS: tuple[str, ...] = ("darwin",)
 
 
@@ -94,6 +97,32 @@ _REQUIRED = (
 )
 
 _FIXTURE_SH = Path(__file__).resolve().parents[3] / "scripts" / "internal" / "native-sshd-fixture.sh"
+#: Its PowerShell twin, which the ``.sh`` hands over to on Windows (#5422).
+_FIXTURE_PS1 = _FIXTURE_SH.with_suffix(".ps1")
+
+
+def fixture_argv(action: str, state_dir: str, *, platform: str = sys.platform) -> list[str]:
+    """The command that runs fixture ``action`` on the fixture in ``state_dir``.
+
+    On Windows the PowerShell twin is called directly: a bare ``bash`` from a
+    Windows Python can resolve to ``System32\\bash.exe`` (WSL) ahead of Git
+    Bash, and the ``.sh`` only hands over to the ``.ps1`` anyway.
+    """
+    if platform == "win32":
+        return [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(_FIXTURE_PS1),
+            "-Action",
+            action,
+            "-Dir",
+            state_dir,
+        ]
+    return ["bash", str(_FIXTURE_SH), action, "--dir", state_dir]
 
 
 class NativeSshTargetError(RuntimeError):
@@ -210,27 +239,38 @@ def per_connection_children(pgrep_output: str) -> int:
     return sum(1 for line in pgrep_output.split() if line.strip().isdigit())
 
 
+def gateway_count_from_output(output: str) -> int:
+    """The count the Windows fixture's ``jump-sessions`` printed (its last line)."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines or not lines[-1].isdigit():
+        raise RuntimeError(f"native sshd fixture 'jump-sessions' printed no count: {output!r}")
+    return int(lines[-1])
+
+
 class NativeBastionControl:
     """:class:`~termihub_harness.fixtures.BastionControl` for the native bastion.
 
     The fixture's ``--jump-host`` bastion is a second sshd: ``stop`` drops it
     (and every session riding it) with ``jump-stop``, ``restore`` brings it back
     with ``jump-start``, and :meth:`gateway_sessions` counts the connections
-    its master sshd is serving -- one per gateway session.
+    its master sshd is serving -- one per gateway session. On Windows (#5422)
+    the bastion is a second scheduled-task sshd and the PowerShell fixture
+    counts them (``jump-sessions``).
     """
 
     available = True
 
-    def __init__(self, target: NativeSshTarget) -> None:
+    def __init__(self, target: NativeSshTarget, *, platform: str = sys.platform) -> None:
         if target.jump_port is None:
             raise NativeSshTargetError(NO_BASTION_REASON)
         self._target = target
+        self._platform = platform
         self.port: int = target.jump_port
         self.container = f"native bastion sshd 127.0.0.1:{self.port}"
 
-    def _fixture(self, action: str) -> None:
+    def _fixture(self, action: str) -> str:
         result = subprocess.run(
-            ["bash", str(_FIXTURE_SH), action, "--dir", self._target.state_dir],
+            fixture_argv(action, self._target.state_dir, platform=self._platform),
             capture_output=True,
             text=True,
             timeout=120,
@@ -240,6 +280,7 @@ class NativeBastionControl:
                 f"native sshd fixture '{action}' failed ({result.returncode}): "
                 f"{result.stderr.strip() or result.stdout.strip()}"
             )
+        return result.stdout
 
     def stop(self) -> None:
         self._fixture("jump-stop")
@@ -256,6 +297,8 @@ class NativeBastionControl:
 
     def gateway_sessions(self) -> int:
         """Connections the bastion is serving right now (0 while it is down)."""
+        if self._platform == "win32":
+            return gateway_count_from_output(self._fixture("jump-sessions"))
         pid_file = Path(self._target.state_dir) / "jump_sshd.pid"
         try:
             pid = pid_file.read_text(encoding="utf-8").strip()
@@ -337,8 +380,8 @@ class NativeSshServerControl:
     only this fixture's connections are ever touched.
 
     The commands are POSIX ``sh`` with BSD/GNU-neutral tools, so the twin
-    serves the macOS fixture; on Windows (``cmd.exe`` login shell, no ``ps``)
-    it reports itself unavailable.
+    serves the macOS fixture; on Windows (no PID file, no ``ps`` view of the
+    SYSTEM-run sshd's sessions) it reports itself unavailable.
     """
 
     def __init__(self, target: NativeSshTarget, *, platform: str = sys.platform) -> None:

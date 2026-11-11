@@ -1210,8 +1210,8 @@ all three OSes.
 The app-driven SSH/SFTP suites in `tests/system/` run on macOS and Windows
 too, against the same fixture. The macOS/Windows integration lane in
 [`system-integration.yml`](../.github/workflows/system-integration.yml) brings it
-up with `--password-login` (and `--jump-host` on macOS) and sets
-`TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
+up with `--password-login --jump-host` (plus `--default-shell bash` on Windows)
+and sets `TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
 [`termihub_harness/native_ssh.py`](../tests/system/termihub_harness/native_ssh.py)
 takes over:
 
@@ -1238,10 +1238,19 @@ gets the account by accident. On Windows the fixture's own test user gets
 password auth. The password is exported as `TERMIHUB_NATIVE_SSHD_PASSWORD` and
 masked in the job log.
 
-**Jump host (macOS).** `--jump-host` starts a second sshd on the next free port
-with the same user and keys. `jump-stop` / `jump-start` drop and restore only
-that bastion. The jump-host reconnect suite counts gateway sessions as the
-bastion master's per-connection children.
+**Jump host.** `--jump-host` starts a second sshd on the next free port with
+the same user and keys. `jump-stop` / `jump-start` drop and restore only that
+bastion. The jump-host reconnect suite counts gateway sessions as the bastion
+master's per-connection children. On Windows (#5422) the bastion is a second
+scheduled task (`termihub-native-sshd-jump`); the harness calls the PowerShell
+fixture directly there, and its `jump-sessions` action does the count.
+
+**Windows login shell (#5422).** Win32-OpenSSH starts `cmd.exe` by default,
+and many suites type POSIX commands (`echo`, `touch`, `exit`). The lane passes
+`--default-shell bash`, which sets the OpenSSH `DefaultShell` to Git for
+Windows' `bin\bash.exe` for the fixture's lifetime, as
+`run-windows-ssh-host-suite.sh` does for its Git Bash leg. `down` restores the
+value it replaced. `cmd` and `powershell` are accepted too.
 
 **Server-side checks (#5421).** Suites that inspect or control the server
 call `ssh_server_control()` instead of building `SshServerControl` directly. On
@@ -1287,10 +1296,10 @@ sshd of a `--password-login` fixture and only runs on CI.
 
 Which suites run where:
 
-| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | macOS | Windows                                                                                                                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py`                                                                                                                                                                                                                                                                                                | yes   | yes                                                                                                                                       |
-| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output, monitoring), SSH connect flash, SFTP VS Code handoff, jump host, `test_ssh.py` (server disconnect), `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py`, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below) | yes   | no: they type POSIX shell commands or check the server with POSIX tools, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+| Suite(s)                                                                                                                                                                                                                                                                                                                                                        | macOS | Windows                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth, session output), `test_ssh_tunnels.py`, `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, SSH connect flash, jump host                                  | yes   | yes                                                                                                                                                    |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring, server disconnect), SFTP VS Code handoff, `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py`, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below) | yes   | no: they check or control the server with POSIX tools (`NativeSshServerControl` is macOS only), read the remote's system stats, or deploy a host agent |
 
 **What stays on the Linux lane in `tests/system/`.** These suites still skip on
 macOS and Windows. Each skip reason has a capped fragment in
