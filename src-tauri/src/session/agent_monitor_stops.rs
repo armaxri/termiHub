@@ -93,10 +93,23 @@ pub(crate) async fn begin_subscribe(
     agent_id: &str,
     host: &str,
 ) -> tokio::sync::OwnedMutexGuard<()> {
-    let state = host_state(agent_id, host);
-    let guard = state.gate.clone().lock_owned().await;
-    state.generation.fetch_add(1, Ordering::SeqCst);
+    let guard = hold_host(agent_id, host).await;
+    supersede(agent_id, host);
     guard
+}
+
+/// Mark a new subscription on `agent_id`'s `host`, superseding any deferred
+/// stop for it — for a re-subscribe (resume, interval change) that first had
+/// to check, under the gate, that the monitor is still meant to run (#5318).
+///
+/// The caller must hold the host's gate ([`hold_host`]), so a retry of the
+/// superseded stop cannot be sending its unsubscribe concurrently.
+pub(crate) fn supersede(agent_id: &str, host: &str) {
+    let state = host_state(agent_id, host);
+    state.generation.fetch_add(1, Ordering::SeqCst);
+    // No stop is owed any more; a running retry task sees the mismatch on its
+    // next wake and ends.
+    lock_pending(&state).target = None;
 }
 
 /// Hold `agent_id`'s `host` gate without starting a new subscription (#5305).
