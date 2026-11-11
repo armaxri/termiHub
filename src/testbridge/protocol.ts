@@ -850,6 +850,8 @@ export interface TerminalPaint {
   viewportClientBottom: number | null;
   /** Laid-out height of the native horizontal scrollbar (`0` when none). */
   hscrollBarHeight: number;
+  /** Strip reserved under the last row for that bar (`.xterm` padding-bottom; `0` outside horizontal mode). */
+  hscrollReserve: number;
 }
 
 /** One rendered xterm decoration (OSC 133 gutter bar, prompt flash), #4930. */

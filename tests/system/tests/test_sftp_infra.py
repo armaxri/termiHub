@@ -16,9 +16,13 @@ maps to a bridge step and each assertion to a check, reusing the existing
 Scenarios that the in-webview bridge cannot drive faithfully stay as manual
 tests (see ``docs/testing.md``):
 
-- **Serial "no filesystem" placeholder** (MT-FB-06) — needs a serial connection,
-  but the virtual socat PTY is not OS-enumerated, so it cannot be selected
-  through the bridge (same constraint as the serial port field in #813).
+- **File Browser placeholder** (MT-FB-06) — with no tab open it reads "Open a
+  terminal or connection to browse its files" and offers New Terminal; an
+  unsupported type names itself ("Serial connections have no file system").
+  The serial case needs a serial connection, but the virtual socat PTY is not
+  OS-enumerated, so it cannot be selected through the bridge (same constraint as
+  the serial port field in #813). Both states are covered by component tests
+  (``FileBrowser.empty-states.test.tsx``, #5299).
 - **Actual SFTP upload / download transfer** (MT-FB-02/03 beyond menu presence)
   and **mid-session SFTP loss** (MT-FB-17) — drive an OS-native file dialog and
   fault injection respectively, outside the in-app bridge's reach.

@@ -1906,4 +1906,94 @@ mod tests {
             "completed task must no longer be registered"
         );
     }
+
+    // ── Task lifecycle (ping / scan / traceroute runs, #5288) ────────────────
+
+    #[test]
+    fn cancel_task_cancels_its_token_and_forgets_it() {
+        let mgr = NetworkManager::new();
+        let (id, token) = mgr.register_task();
+        assert!(!token.is_cancelled());
+
+        mgr.cancel_task(&id).expect("a registered task cancels");
+        assert!(token.is_cancelled(), "the running trace sees the cancel");
+        // Gone: a second cancel is NotFound.
+        assert!(matches!(
+            mgr.cancel_task(&id),
+            Err(TerminalError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn complete_task_forgets_it_without_cancelling() {
+        let mgr = NetworkManager::new();
+        let (id, token) = mgr.register_task();
+        mgr.complete_task(&id);
+        assert!(!token.is_cancelled(), "a finished run is not cancelled");
+        assert!(matches!(
+            mgr.cancel_task(&id),
+            Err(TerminalError::NotFound(_))
+        ));
+        // Completing an unknown task is a harmless no-op.
+        mgr.complete_task("never-registered");
+    }
+
+    #[test]
+    fn concurrent_tasks_get_distinct_ids_and_cancel_independently() {
+        let mgr = NetworkManager::new();
+        let (a, token_a) = mgr.register_task();
+        let (b, token_b) = mgr.register_task();
+        assert_ne!(a, b);
+        mgr.cancel_task(&a).unwrap();
+        assert!(token_a.is_cancelled());
+        assert!(!token_b.is_cancelled(), "the other run keeps going");
+        mgr.cancel_task(&b).unwrap();
+    }
+
+    // ── WoL devices ──────────────────────────────────────────────────────────
+
+    fn wol_device(id: &str, name: &str) -> WolDevice {
+        WolDevice {
+            id: id.to_string(),
+            name: name.to_string(),
+            mac: "AA:BB:CC:DD:EE:FF".to_string(),
+            broadcast: "255.255.255.255".to_string(),
+            port: 9,
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn wol_devices_save_replace_and_delete_persist() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+        mgr.save_wol_device(wol_device("nas", "NAS")).unwrap();
+        mgr.save_wol_device(wol_device("pc", "PC")).unwrap();
+        // Same id replaces in place rather than appending.
+        mgr.save_wol_device(wol_device("nas", "NAS (renamed)"))
+            .unwrap();
+        let names: Vec<String> = mgr.list_wol_devices().into_iter().map(|d| d.name).collect();
+        assert_eq!(names, ["NAS (renamed)", "PC"]);
+
+        mgr.delete_wol_device("pc").unwrap();
+        let on_disk = wol_storage::load_wol_devices_with_recovery(dir.path())
+            .expect("load")
+            .data;
+        assert_eq!(on_disk.len(), 1);
+        assert_eq!(on_disk[0].name, "NAS (renamed)");
+    }
+
+    #[test]
+    fn deleting_an_unknown_wol_device_is_not_found_and_writes_nothing() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+        assert!(matches!(
+            mgr.delete_wol_device("ghost"),
+            Err(TerminalError::NotFound(_))
+        ));
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().next().is_none(),
+            "a failed delete does not create the file"
+        );
+    }
 }

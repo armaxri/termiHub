@@ -3027,6 +3027,12 @@ Start periodic system monitoring for a host. The agent will send `connection.mon
   an SSH, Docker or WSL session is monitored through its own backend, 0.21.0+, #3871); otherwise a
   saved connection ID, which only supports SSH connections
 - CPU usage is computed from `/proc/stat` deltas — the first notification returns 0% CPU
+- A `--listen` agent keeps subscriptions across a client disconnect, so a client that reconnects
+  keeps receiving samples without re-subscribing. Once no client has been connected for a grace
+  period (300 s by default; `TERMIHUB_AGENT_MONITORING_ORPHAN_GRACE_SECS` on the agent overrides it),
+  the agent stops every subscription, and a client that connects later subscribes again (#5306). A
+  stdio agent exits with its client, which stops its subscriptions. No wire change, so no version
+  bump.
 
 ---
 

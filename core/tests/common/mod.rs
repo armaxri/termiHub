@@ -142,6 +142,40 @@ pub struct NativeSshd {
     pub user: String,
     /// Unencrypted ed25519 client private key authorized for `user`.
     pub key_path: String,
+    /// This test's hold on the fixture user, kept as long as any clone of the
+    /// fixture lives (see [`NativeSshd::leased`]).
+    pub lease: Option<FixtureUserLease>,
+}
+
+/// Every native-sshd test logs in as the one fixture user, and libtest runs
+/// the tests of a binary in parallel. A test that counts what the user's own
+/// startup files ran (a cmd.exe AutoRun, a PowerShell profile; #5289) would
+/// count every other test's login shell and exec channel too, since those run
+/// the same files: on the parallel native-sshd lane a hooked session read 8
+/// and 9 AutoRun runs where the serial Windows SSH Host lane read 1. Such a
+/// test takes the user exclusively; every other test shares it.
+static FIXTURE_USER: std::sync::LazyLock<std::sync::Arc<tokio::sync::RwLock<()>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// A test's hold on the native-sshd fixture user: shared, or exclusive for a
+/// test that changes or counts the user's startup files (see [`FIXTURE_USER`]).
+#[derive(Clone)]
+pub struct FixtureUserLease(std::sync::Arc<LeaseGuard>);
+
+/// The guard behind a [`FixtureUserLease`]; only held, never read.
+enum LeaseGuard {
+    Shared(tokio::sync::OwnedRwLockReadGuard<()>),
+    Exclusive(tokio::sync::OwnedRwLockWriteGuard<()>),
+}
+
+impl std::fmt::Debug for FixtureUserLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match *self.0 {
+            LeaseGuard::Shared(_) => "shared",
+            LeaseGuard::Exclusive(_) => "exclusive",
+        };
+        write!(f, "FixtureUserLease({kind})")
+    }
 }
 
 impl NativeSshd {
@@ -157,7 +191,22 @@ impl NativeSshd {
             port,
             user: std::env::var("TERMIHUB_NATIVE_SSHD_USER").unwrap_or_default(),
             key_path: std::env::var("TERMIHUB_NATIVE_SSHD_KEY").unwrap_or_default(),
+            lease: None,
         })
+    }
+
+    /// This fixture with a hold on its user (see [`FIXTURE_USER`]): shared,
+    /// or with `exclusive` the only one, once every shared hold is dropped.
+    /// The hold lasts while any clone of the returned fixture lives.
+    pub async fn leased(mut self, exclusive: bool) -> Self {
+        let user = FIXTURE_USER.clone();
+        let guard = if exclusive {
+            LeaseGuard::Exclusive(user.write_owned().await)
+        } else {
+            LeaseGuard::Shared(user.read_owned().await)
+        };
+        self.lease = Some(FixtureUserLease(std::sync::Arc::new(guard)));
+        self
     }
 
     /// `SshConfig` authenticating with the fixture's own client key.
@@ -232,13 +281,23 @@ pub fn require_native_sshd_fixture() -> Option<NativeSshd> {
 /// `let sshd = require_native_sshd!();` — the native-sshd counterpart of
 /// [`require_docker!`] (see [`require_native_sshd_fixture`]). Also registers
 /// the trust-all loopback host-key verifier, since the fixture's host key is
-/// freshly generated per run.
+/// freshly generated per run. The fixture holds a shared lease on its user
+/// ([`NativeSshd::leased`]); `require_native_sshd!(exclusive)` waits for the
+/// user to itself instead, for a test that counts the user's startup files.
+/// Only usable in an `async` test.
 #[allow(unused_macros)]
 macro_rules! require_native_sshd {
     () => {{
         common::trust_fixture_host_keys();
         match common::require_native_sshd_fixture() {
-            Some(fixture) => fixture,
+            Some(fixture) => fixture.leased(false).await,
+            None => return,
+        }
+    }};
+    (exclusive) => {{
+        common::trust_fixture_host_keys();
+        match common::require_native_sshd_fixture() {
+            Some(fixture) => fixture.leased(true).await,
             None => return,
         }
     }};

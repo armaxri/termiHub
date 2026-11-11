@@ -10,6 +10,7 @@ use crate::io::auth::{authenticate_connection, AuthOutcome, ListenAuthToken};
 use crate::io::transport::run_transport_loop_with_priority;
 use crate::io::update_auth::UpdateAuth;
 use crate::ki_prompt::KiPromptHub;
+use crate::monitoring::orphan_reaper::orphan_grace_from_env;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
@@ -30,7 +31,9 @@ const AUTH_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// JSON-RPC transport loop for each connection. The `SessionManager`, the
 /// hosted-service registry and the notification channel are shared across
 /// connections, so sessions and agent-hosted services (#3910) persist when a
-/// client disconnects and reconnects.
+/// client disconnects and reconnects. Monitoring subscriptions persist too,
+/// but only for a grace period after the client disconnects (#5306, see
+/// [`crate::monitoring::orphan_reaper`]).
 ///
 /// The accept loop exits when the cancellation token is triggered.
 pub async fn run_tcp_listener(
@@ -55,6 +58,10 @@ pub async fn run_tcp_listener(
         notification_tx,
         connection_store.clone(),
     ));
+    // Monitors outlive a client disconnect so a reconnect keeps streaming, but
+    // only for this grace: then no client can receive them and they are
+    // stopped (#5306).
+    let monitoring_orphan_grace = orphan_grace_from_env();
 
     // Join the host-wide registry (ADR-11). One per process, shared by every
     // client this listener serves — the same lifetime as the `SessionManager`
@@ -225,6 +232,10 @@ pub async fn run_tcp_listener(
                     }
                 };
 
+                // Counted from here to the disconnect below, so a reap armed by
+                // the previous client's disconnect is cancelled (#5306).
+                monitoring_manager.client_connected();
+
                 let result = run_transport_loop_with_priority(
                     &mut reader,
                     &mut writer_half,
@@ -246,6 +257,10 @@ pub async fn run_tcp_listener(
 
                 // Detach all sessions so they remain alive for the next client
                 session_manager.detach_all().await;
+
+                // Arm the orphan-monitor reap: stopped after the grace unless
+                // a client connects first (#5306).
+                monitoring_manager.client_disconnected(monitoring_orphan_grace);
             }
         }
     }

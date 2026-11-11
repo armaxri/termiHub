@@ -29,11 +29,20 @@ pub(crate) struct FakeAgent {
     pub(crate) disconnected: bool,
     /// Refuse `tool.start` (e.g. the per-connection run limit).
     pub(crate) refuse_start: bool,
+    /// Methods every request to which fails with a remote error, e.g.
+    /// `service.start` refused by the agent (#5288).
+    pub(crate) refuse: Vec<&'static str>,
+    /// Methods whose first `n` requests fail with a remote error before they
+    /// start succeeding, e.g. an unsubscribe that only lands on a retry (#5301).
+    pub(crate) refuse_times: Mutex<Vec<(&'static str, usize)>>,
     /// The reply to a `tool.run` request; `None` answers `-32601`-style failure.
     pub(crate) tool_run_reply: Option<Value>,
     pub(crate) route: Mutex<Option<ToolRunSender>>,
     pub(crate) unregistered: Mutex<Vec<String>>,
     pub(crate) requests: Mutex<Vec<(String, Value)>>,
+    /// Registered monitoring output routes by host, as the agent manager's
+    /// I/O task holds them (#5301).
+    pub(crate) monitoring_routes: Mutex<Vec<(String, MonitoringSender)>>,
 }
 
 impl FakeAgent {
@@ -144,6 +153,19 @@ impl AgentRpcClient for FakeAgent {
             .lock()
             .unwrap()
             .push((method.to_string(), params.clone()));
+        if self.refuse.contains(&method) {
+            return Err(TerminalError::RemoteError(format!("{method} refused")));
+        }
+        if let Some((_, left)) = self
+            .refuse_times
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|(m, left)| *m == method && *left > 0)
+        {
+            *left -= 1;
+            return Err(TerminalError::RemoteError(format!("{method} refused")));
+        }
         if method == TOOL_START && self.refuse_start {
             return Err(TerminalError::RemoteError("too many runs".to_string()));
         }
@@ -248,14 +270,21 @@ impl AgentRpcClient for FakeAgent {
         remote_session_id: &str,
         monitoring_tx: MonitoringSender,
     ) -> Result<(), TerminalError> {
-        unimplemented!()
+        let mut routes = self.monitoring_routes.lock().unwrap();
+        routes.retain(|(host, _)| host != remote_session_id);
+        routes.push((remote_session_id.to_string(), monitoring_tx));
+        Ok(())
     }
     fn unregister_monitoring_output(
         &self,
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
-        unimplemented!()
+        self.monitoring_routes
+            .lock()
+            .unwrap()
+            .retain(|(host, _)| host != remote_session_id);
+        Ok(())
     }
     fn send_session_input(
         &self,
