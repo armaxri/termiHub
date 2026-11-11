@@ -111,6 +111,7 @@ import {
 } from "@/utils/treeRowKeys";
 import { agentFolderDeleteMessage, remoteAgentDeleteMessage } from "./agentDeleteMessages";
 import { InlineFolderInput, type InlineFolderCancelReason } from "./InlineFolderInput";
+import { useOpenAfterMenuClose } from "./useOpenAfterMenuClose";
 import { folderRenameError } from "@/utils/folderRename";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
@@ -617,10 +618,9 @@ function AgentFolderNode({
   const deleteFocusRef = useRef<FocusTarget | null>(null);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
-  // Set by the menu's New Subfolder item. The input opens only once the menu
-  // has closed: opened earlier, the menu's focus handling takes focus back,
-  // which blurs (and so cancels) the input that just appeared (#5322).
-  const subfolderAfterMenuRef = useRef(false);
+  // The New Subfolder input opens only once the menu has closed: opened
+  // earlier, the menu's focus return blurs (and so cancels) it (#5322).
+  const subfolderMenu = useOpenAfterMenuClose(() => setCreatingSubfolder(true));
 
   // Under an active filter, matched folders are force-expanded regardless of
   // their stored state (auto-expand matches).
@@ -744,21 +744,14 @@ function AgentFolderNode({
               aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
             />
           </ContextMenuTrigger>
-          <ContextMenuContent
-            onCloseAutoFocus={(e) => {
-              if (!subfolderAfterMenuRef.current) return;
-              subfolderAfterMenuRef.current = false;
-              e.preventDefault();
-              setCreatingSubfolder(true);
-            }}
-          >
+          <ContextMenuContent onCloseAutoFocus={subfolderMenu.onCloseAutoFocus}>
             <MenuItem onSelect={() => onNewConnection(folder.id)}>
               <Plus size={14} />
               New Connection
             </MenuItem>
             <MenuItem
               onSelect={() => {
-                subfolderAfterMenuRef.current = true;
+                subfolderMenu.request();
                 // The input renders inside the children, so open the folder.
                 if (!expanded) onToggleFolder(folder.id);
               }}
