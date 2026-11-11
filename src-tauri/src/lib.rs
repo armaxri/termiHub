@@ -547,52 +547,15 @@ pub fn run() -> anyhow::Result<()> {
 
     builder
         .setup(move |app| {
-            boot::init_platform_and_capture(app, &app_handle_slot);
-
-            let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
-
-            // Resolve + materialize the effective config directory, publish it as
-            // managed state, and store the detected app mode (ORDER: the
-            // ConfigDirOverride is managed before any storage module is built).
-            let config_dir = boot::resolve_and_manage_config_dir(app, &mut recovery_warnings);
-
-            // Build the shared connection-type registry (ORDER: before both the
-            // PluginHost, built here, and the SessionManager, built below — both
-            // share it by Arc).
-            let connection_registry = boot::init_plugin_host(app, &config_dir);
-
-            // Capture path for the connections file watcher before config_dir is moved.
-            let connections_file = config_dir.join("connections.json");
-
-            boot::init_network(app, config_dir.clone(), &mut recovery_warnings);
-
-            // ORDER: the credential manager is built before the ConnectionManager,
-            // which consumes it; config_dir is moved in here (its last use).
-            boot::init_credentials_and_connections(app, config_dir, &mut recovery_warnings);
-
-            boot::init_session_managers(
+            // The phases run in the order fixed (and documented) by
+            // `boot::sequence::run_setup_phases`.
+            boot::sequence::run_setup_phases(&mut boot::sequence::LivePhases {
                 app,
-                connection_registry,
-                &x_server_manager,
-                &x_server_consent_registry,
-                &mut recovery_warnings,
-            );
-
-            // ORDER: the tunnel manager is managed before the projection Pass B
-            // seeds the tunnels region below.
-            boot::init_tunnels(app, &mut recovery_warnings);
-
-            // ORDER: the ConnectionManager (managed above) must exist before the
-            // projection Pass B seeds the agents/connections/settings regions.
-            boot::init_projection(app);
-
-            boot::init_secondary_managers(app, &mut recovery_warnings);
-
-            boot::init_spawn_ipc(app, pending_spawn);
-
-            // ORDER: recovery_warnings is managed last, after every push/extend
-            // site above.
-            boot::finalize(app, recovery_warnings, connections_file);
+                app_handle_slot: &app_handle_slot,
+                x_server_manager: &x_server_manager,
+                x_server_consent_registry: &x_server_consent_registry,
+                pending_spawn,
+            });
 
             Ok(())
         })
