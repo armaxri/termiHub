@@ -17,6 +17,7 @@ pub(crate) mod builder;
 pub(crate) mod connection_id_changes;
 pub(crate) mod early_log;
 pub(crate) mod logging;
+pub(crate) mod sequence;
 
 pub(crate) fn init_platform_and_capture(
     app: &tauri::App,
@@ -122,6 +123,39 @@ pub(crate) fn resolve_and_manage_config_dir(
     // base directory everywhere core expands config paths (#4571).
     utils::portable::publish_portable_base_dir(&app_mode);
 
+    let inputs = ConfigDirInputs {
+        external_override: std::env::var("TERMIHUB_CONFIG_DIR").ok().map(PathBuf::from),
+        app_mode,
+        temp_root: std::env::temp_dir(),
+    };
+    resolve_and_manage_config_dir_with(app, inputs, recovery_warnings)
+}
+
+/// The process-environment inputs of [`resolve_and_manage_config_dir`], passed
+/// explicitly so the resolution can run against a mock app and temp dirs
+/// without reading or mutating the real environment (#5311).
+pub(crate) struct ConfigDirInputs {
+    /// The external `TERMIHUB_CONFIG_DIR` override, if set.
+    pub(crate) external_override: Option<PathBuf>,
+    /// The detected installed/portable app mode.
+    pub(crate) app_mode: utils::portable::AppMode,
+    /// The directory that holds the temp-storage fallbacks (`std::env::temp_dir()`).
+    pub(crate) temp_root: PathBuf,
+}
+
+/// [`resolve_and_manage_config_dir`] after the environment was read: resolves,
+/// materializes, and manages the config dir from explicit `inputs`.
+pub(crate) fn resolve_and_manage_config_dir_with<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    inputs: ConfigDirInputs,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+) -> std::path::PathBuf {
+    let ConfigDirInputs {
+        external_override,
+        app_mode,
+        temp_root,
+    } = inputs;
+
     // Resolve the effective config directory once, explicitly. Priority:
     //   1. an external `TERMIHUB_CONFIG_DIR` override (public knob used by
     //      the system-test harness, README, and power users);
@@ -135,17 +169,17 @@ pub(crate) fn resolve_and_manage_config_dir(
     // WA-RS-003): a read-only portable medium, a locked-down profile, a
     // full disk, or a config path that exists as a file must not kill
     // launch.
-    let temp_config_fallback = std::env::temp_dir().join("termihub-config");
-    let resolved_config_dir: PathBuf = if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
+    let temp_config_fallback = temp_root.join("termihub-config");
+    let resolved_config_dir: PathBuf = if let Some(dir) = external_override {
         // 1. External override wins, exactly as before — portable mode
         //    never redirects when the user has set this explicitly.
-        PathBuf::from(dir)
+        dir
     } else if let Some(portable_dir) = app_mode.data_dir().and_then(|data_dir| {
         // 2. Portable: create the `data/` dir, degrading to a temp
         //    directory. On total failure the portable override is
         //    dropped (None) so resolution falls through to the OS
         //    default, matching the previous behavior.
-        let temp_fallback = std::env::temp_dir().join("termihub-portable-data");
+        let temp_fallback = temp_root.join("termihub-portable-data");
         let outcome = utils::config_paths::create_dir_with_fallback(data_dir, &temp_fallback);
         let (storage_dir, warning) =
             resolve_startup_dir(outcome, StartupStorage::PortableData, data_dir);
@@ -359,6 +393,63 @@ pub(crate) fn init_credentials_and_connections(
     config_dir: std::path::PathBuf,
     recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
 ) {
+    init_credentials_and_connections_with(
+        app,
+        config_dir,
+        recovery_warnings,
+        |credential_manager, auto_lock_minutes| {
+            attach_credential_runtime(app, credential_manager, auto_lock_minutes)
+        },
+    );
+}
+
+/// The `AppHandle`-bound part of [`init_credentials_and_connections`]: hand the
+/// credential manager the app handle and start its auto-lock timer.
+fn attach_credential_runtime(
+    app: &tauri::App,
+    credential_manager: &Arc<CredentialManager>,
+    auto_lock_minutes: Option<u32>,
+) {
+    credential_manager.set_app_handle(app.handle().clone());
+
+    // Set up auto-lock timer for master password mode.
+    //
+    // Fail-safe (WA-RS-004): a thread-spawn failure must not panic. If the
+    // timer thread cannot start we install no timer and force the store
+    // locked. The unlock commands refuse to unlock while no timer is
+    // installed (see `has_auto_lock_timer`), so credentials are never left
+    // unlocked with nothing to auto-lock them after inactivity.
+    match AutoLockTimer::new(
+        app.handle().clone(),
+        credential_manager.clone(),
+        auto_lock_minutes,
+    ) {
+        Ok(auto_lock_timer) => {
+            credential_manager.set_auto_lock_timer(auto_lock_timer);
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "Failed to spawn auto-lock timer thread; keeping credential store \
+                 locked and refusing unlock until the app is restarted"
+            );
+            // Belt-and-suspenders: ensure the store is locked even if a
+            // credentials file existed and something had unlocked it.
+            credential_manager.with_master_password_store(|s| s.lock());
+        }
+    }
+}
+
+/// [`init_credentials_and_connections`] with the `AppHandle`-bound credential
+/// wiring injected as `attach` (called with the manager and the auto-lock
+/// minutes at the point the inline code did it), so the phase runs on a mock
+/// app (#5311).
+pub(crate) fn init_credentials_and_connections_with<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    config_dir: std::path::PathBuf,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+    attach: impl FnOnce(&Arc<CredentialManager>, Option<u32>),
+) {
     let settings = match SettingsStorage::new(app.handle()) {
         Ok(storage) => match storage.load_with_recovery() {
             Ok(result) => {
@@ -416,35 +507,8 @@ pub(crate) fn init_credentials_and_connections(
             .unwrap_or(false);
 
     let credential_manager = Arc::new(credential_manager);
-    credential_manager.set_app_handle(app.handle().clone());
-
-    // Set up auto-lock timer for master password mode.
-    //
-    // Fail-safe (WA-RS-004): a thread-spawn failure must not panic. If the
-    // timer thread cannot start we install no timer and force the store
-    // locked. The unlock commands refuse to unlock while no timer is
-    // installed (see `has_auto_lock_timer`), so credentials are never left
-    // unlocked with nothing to auto-lock them after inactivity.
     let auto_lock_minutes = settings.credential_auto_lock_minutes.or(Some(15));
-    match AutoLockTimer::new(
-        app.handle().clone(),
-        credential_manager.clone(),
-        auto_lock_minutes,
-    ) {
-        Ok(auto_lock_timer) => {
-            credential_manager.set_auto_lock_timer(auto_lock_timer);
-        }
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                "Failed to spawn auto-lock timer thread; keeping credential store \
-                 locked and refusing unlock until the app is restarted"
-            );
-            // Belt-and-suspenders: ensure the store is locked even if a
-            // credentials file existed and something had unlocked it.
-            credential_manager.with_master_password_store(|s| s.lock());
-        }
-    }
+    attach(&credential_manager, auto_lock_minutes);
 
     // Initialize connection manager with recovery loading.
     // On failure, the app still starts but with no connections.
@@ -1489,3 +1553,7 @@ pub(crate) fn finalize(
         });
     }
 }
+
+#[cfg(test)]
+#[path = "phases_tests.rs"]
+mod phases_tests;

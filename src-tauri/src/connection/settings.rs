@@ -3,12 +3,12 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::id_changes::ConnectionIdRemap;
 use super::recovery::RecoveryResult;
 use super::shell_integration::ShellIntegrationSettings;
-use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::config_paths::{resolve_app_config_dir, resolve_config_dir};
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{
     guard_not_newer, load_store_with_recovery, load_versioned, LoadOutcome, VersionedStore,
@@ -838,8 +838,8 @@ impl SettingsStorage {
     /// Create a new settings storage instance, resolving the config directory.
     ///
     /// Uses the same directory as `ConnectionStorage` (respects `TERMIHUB_CONFIG_DIR`).
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let config_dir = resolve_config_dir(Some(app_handle))?;
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
+        let config_dir = resolve_app_config_dir(app_handle)?;
 
         fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
