@@ -122,6 +122,21 @@ COVERAGE="${CI_RUST_TESTS_COVERAGE:-0}"
 NEXTEST_PROFILE="${CI_NEXTEST_PROFILE:-ci}"
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 
+phase="${1:-}"
+case "$phase" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  bulk | heavy | serial | list)
+    shift
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
 # The runner each run phase uses: nextest (see the header), or libtest via
 # `cargo test` -- the instrumented coverage run (profiles accumulate across
 # phases; see the header), or a local run without nextest installed.
@@ -140,21 +155,6 @@ else
   runner=libtest
   test_cmd=(cargo test)
 fi
-
-phase="${1:-}"
-case "$phase" in
-  -h | --help)
-    usage
-    exit 0
-    ;;
-  bulk | heavy | serial | list)
-    shift
-    ;;
-  *)
-    usage >&2
-    exit 2
-    ;;
-esac
 
 selection=("$@")
 if [ "${#selection[@]}" -eq 0 ]; then
@@ -177,6 +177,12 @@ if [ "$SPLIT_SERIAL" = "1" ]; then
     serial_skip_args+=(--skip "$filter")
   done
 fi
+
+# The log as plain text: no CR (Windows) and no colour escapes (nextest colours
+# its output on CI, so "Summary"/"START" do not start their lines otherwise).
+plain_log() {
+  tr -d '\r' <"$1" | sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'
+}
 
 # Set `run` to the phase's test command. $1: thread cap ("" = the runner's
 # default); $2: 1 = do not capture test output (serial phase); the rest: libtest
@@ -413,7 +419,7 @@ case "$phase" in
     if [ "$timed_out" = "1" ]; then
       # The last "test NAME ..." line with no result after it is the wedged one.
       # (libtest: "test NAME ..."; nextest: "START [ ] (n/N) BINARY NAME").
-      hung="$(tr -d '\r' <"$log" | grep -oE '^test [^ ]+ \.\.\.|START .*' | tail -n 1 || true)"
+      hung="$(plain_log "$log" | grep -oE '^test [^ ]+ \.\.\.|START .*' | tail -n 1 || true)"
       echo "serial phase: TIMED OUT after ${SERIAL_TIMEOUT_SECS}s (CI_SERIAL_TIMEOUT_SECS)." >&2
       echo "  last test started: ${hung:-<none -- still building?>}" >&2
       exit 124
@@ -433,19 +439,18 @@ case "$phase" in
       # never runs an ignored test (so it never reports one), so list them: the
       # ignored tests the serial filters select.
       read -r passed failed < <(
-        tr -d '\r' <"$log" | grep -E '^ *Summary \[' | tail -n 1 |
-          awk '{p = 0; f = 0
-            for (i = 2; i <= NF; i++) {
+        plain_log "$log" | grep -E '^ *Summary \[' | tail -n 1 |
+          awk '{for (i = 2; i <= NF; i++) {
               if ($i ~ /^passed/) p = $(i - 1)
               if ($i ~ /^failed/) f = $(i - 1)
-            }
-            print p + 0, f + 0}'
+            }}
+            END {print p + 0, f + 0}'
       )
       ignored="$(list_nextest_ignored "${SERIAL_FILTERS[@]}" | wc -l | tr -d ' ')"
     else
       # Sum libtest's per-binary summaries.
       read -r passed failed ignored < <(
-        tr -d '\r' <"$log" |
+        plain_log "$log" |
           grep -oE 'test result: [A-Za-z]+\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored' |
           awk '{p += $4; f += $6; i += $8} END {print p + 0, f + 0, i + 0}'
       )
