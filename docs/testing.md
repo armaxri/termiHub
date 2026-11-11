@@ -854,6 +854,52 @@ files. `baseline.json` holds the per-lane budgets migrated from the old file;
 lower a number there only when a lane measurably needs fewer skips. On a
 budget overrun the guard lists each contributing fragment and its count.
 
+### JS error gate
+
+The real app can throw on every tab open and a bridge test still passes, so the
+harness checks every test for JavaScript errors in the app under test (#5364):
+
+1. Before a test's setup, conftest records where the app's error stream stands.
+2. After the call phase, it reads the errors added since then. The preferred
+   source is the bridge verb `getJsErrors` (see
+   [test-bridge.md](test-bridge.md#javascript-errors-getjserrors)). That buffer
+   records every `unhandledrejection`, uncaught `error` and `console.error`, and
+   it exists only in the test-bridge bundle. If the bridge cannot answer (the
+   page is dead, or the build predates the verb), the source is the `app.log`
+   lines `ERROR frontend: [unhandled] …` and `CONSOLE JS ERROR …` instead.
+3. Each distinct error (`<kind>: <first message line>`) is matched against
+   `tests/system/js-error-allowlist.d/`.
+
+`TERMIHUB_JS_ERROR_GATE` picks what happens next:
+
+| Value                | Effect                                                  |
+| -------------------- | ------------------------------------------------------- |
+| `annotate` (default) | Report every unique error with its tests (see below)    |
+| `fail`               | Report, and fail a passing test with an uncovered error |
+| `off`                | No collection                                           |
+
+The report goes to the terminal summary, the GitHub step summary and
+`artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
+
+The default is `annotate` while the current offenders are moved into the
+allowlist with tracking issues. A later change switches the nightly to `fail`.
+
+An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
+issue that tracks the error:
+
+```json
+{
+  "pattern": "^unhandledrejection: Canceled$",
+  "issue": 1234,
+  "reason": "xterm addon disposal rejects with Canceled on tab close",
+  "nodeid": "test_ssh_jump_host\\.py"
+}
+```
+
+`pattern` and the optional `nodeid` are Python regexes (`re.search`) against the
+error key and the test id. Delete the file in the PR that fixes the issue. The
+machinery tests are in `tests/system/tests/test_js_errors.py`.
+
 ### Docker Hub resilience in CI (#4614)
 
 The container-fixture jobs pull their base images (`ubuntu`, `debian`,

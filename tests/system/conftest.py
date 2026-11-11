@@ -6,7 +6,14 @@ import sys
 
 import pytest
 
-from termihub_harness import app_leaks, hang_guard, skip_guard, timing, tool_preflight
+from termihub_harness import (
+    app_leaks,
+    hang_guard,
+    js_errors,
+    skip_guard,
+    timing,
+    tool_preflight,
+)
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     record_failed_attempt,
@@ -136,6 +143,10 @@ def pytest_configure(config):
     config._manual_session = ManualSession()
     _SESSION_CONFIG["config"] = config
     config._manual_started = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        config._termihub_js_gate = js_errors.Gate.from_env()
+    except (js_errors.GateConfigError, ValueError) as exc:
+        raise pytest.UsageError(f"JS error gate (#5364): {exc}") from exc
 
 
 def pytest_collection_modifyitems(config, items):
@@ -269,6 +280,7 @@ def _guarded_phase(phase, item):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_setup(item):
+    item.config._termihub_js_gate.start(item)  # JS error gate cursor (#5364)
     yield from _guarded_phase("setup", item)
 
 
@@ -299,6 +311,37 @@ def _report_leaks(terminalreporter):
     terminalreporter.section("termihub apps left running by a test (#5086)")
     for line in _LEAKS:
         terminalreporter.write_line(line)
+
+
+# ── JS error gate (#5364) ────────────────────────────────────────────────────
+# Unhandled rejections and console errors in the app under test used to pass
+# unseen. Each test's new errors (bridge getJsErrors, app.log fallback) are
+# matched against js-error-allowlist.d/; TERMIHUB_JS_ERROR_GATE=fail fails the
+# test on a new one, annotate (default) only reports. See js_errors.py.
+_JS_ERRORS_KEY = "termihub_js_errors"
+
+
+def _report_js_errors(terminalreporter, config):
+    gate = config._termihub_js_gate
+    lines = js_errors.format_summary(gate.records, gate.mode)
+    if not lines:
+        return
+    path = js_errors.write_report(
+        js_errors.report_path(ARTIFACT_ROOT, skip_guard.lane_from_env()), gate.records, gate.mode
+    )
+    terminalreporter.section("termihub JS errors in the app under test (#5364)")
+    for line in lines:
+        terminalreporter.write_line(line)
+    if path is not None:
+        terminalreporter.write_line(f"details: {path}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write("## JS errors in the app under test\n\n```\n")
+                fh.write("\n".join(lines[:200]) + "\n```\n\n")
+        except OSError:
+            pass
 
 
 # ── Skip report + skip guard (#4315) ─────────────────────────────────────────
@@ -406,6 +449,7 @@ def pytest_testnodedown(node, error):
     """xdist controller: fold a finished worker's timing samples into this process."""
     output = getattr(node, "workeroutput", {})
     samples = output.get(_TIMING_KEY)
+    _SESSION_CONFIG["config"]._termihub_js_gate.records.extend(output.get(_JS_ERRORS_KEY) or [])
     if samples:
         timing.merge(samples)
     _LEAKS.extend(output.get(_LEAKS_KEY) or [])
@@ -423,6 +467,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     _report_preflight(terminalreporter, config)
     _report_skips(terminalreporter, config)
     _report_leaks(terminalreporter)
+    _report_js_errors(terminalreporter, config)
     if not timing.enabled():
         return
     lines = timing.format_lines(timing.summarize(timing.os_name()))
@@ -443,6 +488,7 @@ def pytest_sessionfinish(session, exitstatus):
     if hasattr(config, "workeroutput"):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()
         config.workeroutput[_LEAKS_KEY] = list(_LEAKS)
+        config.workeroutput[_JS_ERRORS_KEY] = config._termihub_js_gate.records
     collector = getattr(config, "_manual_session", None)
     if collector is None or not collector.records:
         return
@@ -899,6 +945,8 @@ def pytest_runtest_makereport(item, call):
     """
     outcome = yield
     report = outcome.get_result()
+    if report.when == "call":
+        item.config._termihub_js_gate.finish(item, report)  # may fail it (#5364)
     if not report.failed:
         return
     instance = getattr(item, "instance", None)
