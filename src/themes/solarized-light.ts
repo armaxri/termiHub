@@ -69,26 +69,23 @@ export const solarizedLightTheme: ThemeDefinition = {
     terminalCursor: "#657b83",
     terminalSelection: "rgba(38, 139, 210, 0.25)",
 
-    // ANSI 16 — canonical Solarized mapping, except that every entry reaches
-    // 3:1 on terminalBg (#5191, locked by contrast.test.ts). Canonically
-    // brwhite = base3 = the background, which printed text invisibly; the
-    // failing tones were darkened in OKLCH lightness only (hue and chroma kept).
+    // ANSI 16 — canonical Solarized mapping (same palette as dark variant)
     ansiBlack: "#073642", // base02
     ansiRed: "#dc322f",
-    ansiGreen: "#849800", // darkened to 3:1 (#5191)
-    ansiYellow: "#b48800", // darkened to 3:1 (#5191)
+    ansiGreen: "#859900",
+    ansiYellow: "#b58900",
     ansiBlue: "#268bd2",
     ansiMagenta: "#d33682",
-    ansiCyan: "#279f96", // darkened to 3:1 (#5191)
-    ansiWhite: "#948f7d", // base2, darkened to 3:1 (#5191)
+    ansiCyan: "#2aa198",
+    ansiWhite: "#eee8d5", // base2
     ansiBrightBlack: "#002b36", // base03
     ansiBrightRed: "#cb4b16", // orange
     ansiBrightGreen: "#586e75", // base01
     ansiBrightYellow: "#657b83", // base00
-    ansiBrightBlue: "#829294", // base0, darkened to 3:1 (#5191)
+    ansiBrightBlue: "#839496", // base0
     ansiBrightMagenta: "#6c71c4", // violet
-    ansiBrightCyan: "#849191", // base1, darkened to 3:1 (#5191)
-    ansiBrightWhite: "#958e7d", // base3, darkened to 3:1 (#5191)
+    ansiBrightCyan: "#93a1a1", // base1
+    ansiBrightWhite: "#fdf6e3", // base3
 
     // Scrollbar
     scrollbarThumb: "rgba(147, 161, 161, 0.55)",

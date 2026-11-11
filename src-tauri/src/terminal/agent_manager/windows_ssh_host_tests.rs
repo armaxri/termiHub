@@ -227,7 +227,7 @@ fn live_fixture() -> Option<Fixture> {
 
 /// Trust the fixture's sshd host key (process-wide, set-once): it is a
 /// loopback fixture with a key generated per `up`, never in `known_hosts`.
-fn trust_all_host_keys() {
+pub(super) fn trust_all_host_keys() {
     use termihub_core::backends::ssh::host_key::{
         set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
     };
@@ -565,7 +565,7 @@ async fn wait_for_text(
 }
 
 /// Send keyboard input to a session (`connection.write` is fire-and-forget).
-async fn write_input(
+pub(super) async fn write_input(
     channel: &mut russh::Channel<russh::client::Msg>,
     request_id: &mut u64,
     session_id: &str,
@@ -585,7 +585,7 @@ async fn write_input(
 }
 
 /// Establish the agent over SSH exec `--stdio` (connect, exec, `initialize`).
-async fn establish(
+pub(super) async fn establish(
     config: &RemoteAgentConfig,
     request_id: &mut u64,
 ) -> (
@@ -611,7 +611,7 @@ async fn establish(
 }
 
 /// Create + attach a persistent PowerShell session; returns its id.
-async fn create_powershell_session(
+pub(super) async fn create_powershell_session(
     channel: &mut russh::Channel<russh::client::Msg>,
     request_id: &mut u64,
     title: &str,

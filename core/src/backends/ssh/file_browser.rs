@@ -25,6 +25,7 @@ use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 use super::handler::SshSession;
 use super::jump_host::{connect_target, GatewayHold};
 use super::sftp;
+use super::sftp_mutation::{ensure_copy_allowed, mutation_error, Mutation};
 use super::sftp_ops::{self, ElevatedWriteResult, Writability};
 
 /// Map a failed SFTP `stat` to a [`FileError`]: only the server's definite
@@ -565,7 +566,7 @@ impl FileBrowser for SftpFileBrowser {
             .sftp
             .set_metadata(path, attrs)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("chmod failed: {e}")))?;
+            .map_err(|e| mutation_error(Mutation::Chmod, path, e))?;
 
         Ok(())
     }
@@ -589,7 +590,7 @@ impl FileBrowser for SftpFileBrowser {
             .sftp
             .metadata(path)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))?;
+            .map_err(|e| mutation_error(Mutation::Chown, path, e))?;
 
         let attrs = russh_sftp::protocol::FileAttributes {
             uid: Some(uid.or(current.uid).unwrap_or(0)),
@@ -600,7 +601,7 @@ impl FileBrowser for SftpFileBrowser {
             .sftp
             .set_metadata(path, attrs)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("chown failed: {e}")))?;
+            .map_err(|e| mutation_error(Mutation::Chown, path, e))?;
 
         Ok(())
     }
@@ -612,13 +613,16 @@ impl FileBrowser for SftpFileBrowser {
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
 
-        // russh-sftp's `symlink(path, target)` maps `path` → SFTP `linkpath` (the
-        // new link) and `target` → `targetpath` (what it points at).
+        // OpenSSH's sftp-server reads SSH_FXP_SYMLINK's two paths in reverse
+        // order (its PROTOCOL file documents the swap), and every mainstream
+        // client sends them that way. russh-sftp's `symlink(path, target)`
+        // writes `path` first, so the target goes first here: the server then
+        // creates `link_path` pointing at `target` (#5320).
         state
             .sftp
-            .symlink(link_path, target)
+            .symlink(target, link_path)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("symlink failed: {e}")))?;
+            .map_err(|e| mutation_error(Mutation::Symlink, link_path, e))?;
 
         Ok(())
     }
@@ -633,6 +637,13 @@ impl FileBrowser for SftpFileBrowser {
         // Same-backend server-side copy: stream the bytes over this SFTP session.
         // Cross-backend / remote↔remote copy is the transfer subsystem's job
         // (PROD-0013) and is deliberately not routed here.
+        let src_is_dir = state
+            .sftp
+            .metadata(src)
+            .await
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false);
+        ensure_copy_allowed(&state.sftp, src, dest, src_is_dir).await?;
         sftp_copy_path(&state.sftp, src, dest).await
     }
 
@@ -777,7 +788,9 @@ fn sftp_copy_path<'a>(
                     // Recreate the link verbatim (do not follow it): a link with an
                     // unreadable target is skipped rather than aborting the copy.
                     if let Some(target) = entry.symlink_target {
-                        sftp.symlink(child_dest, target).await.map_err(|e| {
+                        // Target first: OpenSSH's reversed SYMLINK order, as in
+                        // `create_symlink`.
+                        sftp.symlink(target, child_dest).await.map_err(|e| {
                             FileError::OperationFailed(format!("symlink failed: {e}"))
                         })?;
                     }

@@ -34,6 +34,7 @@ pub mod session_pool;
 // In-process SFTP-only SSH server for files-only tests (#5160), exposed like
 // `ki_test_server` behind `ssh-test-support`.
 pub mod sftp;
+mod sftp_mutation;
 #[cfg(any(test, feature = "ssh-test-support"))]
 pub mod sftp_only_test_server;
 pub mod sftp_ops;

@@ -129,7 +129,7 @@ pub(super) fn initial_due<Tz: TimeZone>(
 
 impl ScheduleManager {
     /// Initialize from disk, with recovery on corruption.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage =
             ScheduleStorage::new(app_handle).context("Failed to initialize schedule storage")?;
         let result = storage

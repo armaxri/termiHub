@@ -142,6 +142,11 @@ pub struct NativeSshd {
     pub user: String,
     /// Unencrypted ed25519 client private key authorized for `user`.
     pub key_path: String,
+    /// The scratch `HOME` every SSH session gets (`TERMIHUB_NATIVE_SSHD_HOME`,
+    /// from `native-sshd-fixture.sh up --scratch-home` on macOS/Linux), or
+    /// `None` when the fixture has none. A test that writes files below the
+    /// login user's home uses it, so nothing lands in the real home (#5296).
+    pub scratch_home: Option<String>,
     /// This test's hold on the fixture user, kept as long as any clone of the
     /// fixture lives (see [`NativeSshd::leased`]).
     pub lease: Option<FixtureUserLease>,
@@ -191,6 +196,9 @@ impl NativeSshd {
             port,
             user: std::env::var("TERMIHUB_NATIVE_SSHD_USER").unwrap_or_default(),
             key_path: std::env::var("TERMIHUB_NATIVE_SSHD_KEY").unwrap_or_default(),
+            scratch_home: std::env::var("TERMIHUB_NATIVE_SSHD_HOME")
+                .ok()
+                .filter(|h| !h.trim().is_empty()),
             lease: None,
         })
     }
@@ -263,7 +271,7 @@ pub fn require_native_sshd_fixture() -> Option<NativeSshd> {
         required,
         format_args!(
             "native sshd fixture not reachable (port {port}; start with: \
-             eval \"$(scripts/internal/native-sshd-fixture.sh up)\")"
+             eval \"$(scripts/internal/native-sshd-fixture.sh up --scratch-home)\")"
         ),
         format_args!(
             "fixture unavailable: native sshd not reachable on port {port} but \

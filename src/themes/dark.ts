@@ -8,7 +8,7 @@ import { ThemeDefinition } from "./types";
  * these over `:root` via COLOR_TO_CSS_VAR, so what renders now equals the design
  * system. Terminal-specific tokens with no `variables.css` counterpart (the 16
  * ANSI colors) keep the terminal-standard hues but sit coherently on the modern
- * `#0f1117` base (ansiBlack is a grey lifted to the 3:1 ANSI floor — see below).
+ * `#0f1117` base (ansiBlack tracks the terminal background — see below).
  */
 export const darkTheme: ThemeDefinition = {
   id: "dark",
@@ -87,10 +87,9 @@ export const darkTheme: ThemeDefinition = {
     terminalSelection: "rgba(61, 125, 232, 0.35)",
 
     // ANSI 16 — terminal-standard hues (no variables.css counterpart). Kept as
-    // the established palette so shell output renders correctly. Every entry
-    // reaches 3:1 on terminalBg (#5191, locked by contrast.test.ts): ansiBlack
-    // used to equal the background (#0f1117) and printed black text invisibly.
-    ansiBlack: "#5e6068", // #5191: 3.01:1 floor (was terminalBg, 1.00:1)
+    // the established palette so shell output renders correctly; ansiBlack tracks
+    // the modern terminal background (#0f1117) so "black" cells match the surface.
+    ansiBlack: "#0f1117",
     ansiRed: "#cd3131",
     ansiGreen: "#0dbc79",
     ansiYellow: "#e5e510",

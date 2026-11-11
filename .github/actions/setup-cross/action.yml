@@ -40,8 +40,10 @@ runs:
     # download that 504'd three PR legs on 2026-11-09. Keyed on the pinned
     # version + sha256 from .github/cross-version, so a bump misses the cache.
     # The tarball is re-verified against the pin below even on a cache hit.
+    # Restore everywhere; the save below runs only on develop/main (#5328).
     - name: Restore cached cross-rs tarball
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/termihub-cross/cross.tar.gz
         key: cross-rs-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
@@ -68,3 +70,16 @@ runs:
         fi
         echo "${CROSS_SHA256}  $tarball" | sha256sum -c -
         sudo tar xz -f "$tarball" -C /usr/local/bin
+
+    # Save only on develop/main (#5328), and only after the install above
+    # verified the tarball against the pin. Two jobs of one run can race to
+    # save the same key; losing is harmless.
+    - name: Save the cross-rs tarball
+      if: >-
+        steps.restore.outputs.cache-hit != 'true' &&
+        (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/termihub-cross/cross.tar.gz
+        key: cross-rs-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}

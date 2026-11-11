@@ -3,8 +3,10 @@
 //! Extracted from [`SessionManager`](super::manager::SessionManager) (#2076) to
 //! keep the manager focused on session lifecycle. Every method here is a pure
 //! pass-through: resolve the session's [`FileBrowser`], forward the call, and
-//! map errors to [`TerminalError`]. The behavior and error messages are
-//! exactly what lived inline on the manager.
+//! map errors to [`TerminalError`] with
+//! [`map_file_error`](crate::files::sftp::map_file_error): an SSH session's
+//! SFTP errors read `SFTP error: …` (#5320), every other backend keeps the
+//! remote-error mapping that lived inline on the manager.
 //!
 //! **Lock discipline (#4393).** The `sessions` lock is held only to *look the
 //! session up*: [`FileOps::resolve`] takes an owned [`BrowserHandle`] — the
@@ -28,7 +30,9 @@ use tokio::sync::Mutex;
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 
-use crate::files::sftp::{sftp_op_error, ElevatedWriteResult, Writability};
+use crate::files::sftp::{
+    is_sftp_browser, map_file_error, sftp_op_error, ElevatedWriteResult, Writability,
+};
 use crate::utils::errors::TerminalError;
 
 use termihub_core::session::registry::Sessions;
@@ -101,10 +105,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<Vec<FileEntry>, TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .list_dir(path)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Read a file via the session's file browser.
@@ -115,10 +120,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<Vec<u8>, TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .read_file(path)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Get metadata for a single file via the session's file browser.
@@ -129,10 +135,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<FileEntry, TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .stat(path)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Write a file via the session's file browser.
@@ -144,20 +151,22 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .write_file(path, data)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Delete a file via the session's file browser.
     pub(super) async fn delete(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .delete(path)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Rename a file via the session's file browser.
@@ -169,20 +178,22 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .rename(from, to)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Create a directory via the session's file browser.
     pub(super) async fn mkdir(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .mkdir(path)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Change the permission bits (chmod) of a file via the session's file
@@ -195,10 +206,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .set_permissions(path, mode)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Change the owner/group (chown) of a file via the session's file browser.
@@ -212,10 +224,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .set_owner(path, uid, gid)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Create a symlink at `link_path` pointing at `target` via the session's file
@@ -228,10 +241,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .create_symlink(target, link_path)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Which attribute operations (chmod / chown / symlink) the session's file
@@ -255,10 +269,11 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<(), TerminalError> {
         let handle = self.resolve(session_id).await?;
         let browser = handle.browser()?;
+        let is_sftp = is_sftp_browser(browser);
         browser
             .copy(src, dest)
             .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+            .map_err(|e| map_file_error(is_sftp, e))
     }
 
     /// Resolve an **owned** [`Arc<SftpFileBrowser>`] for a session, so a caller

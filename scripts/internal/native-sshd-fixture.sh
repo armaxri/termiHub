@@ -22,7 +22,7 @@
 #
 # Usage:
 #   scripts/internal/native-sshd-fixture.sh up    [--dir DIR] [--port N] [--github-env]
-#                                                 [--agent-binary PATH]
+#                                                 [--agent-binary PATH] [--scratch-home]
 #   scripts/internal/native-sshd-fixture.sh stop  [--dir DIR]   # listener down, state kept
 #   scripts/internal/native-sshd-fixture.sh start [--dir DIR]   # restart after stop
 #   scripts/internal/native-sshd-fixture.sh env   [--dir DIR] [--github-env]
@@ -39,7 +39,20 @@
 #   TERMIHUB_NATIVE_SSHD_AGENT_BIN   with --agent-binary: a termihub-agent the
 #                                    login user can run (Windows copies it into
 #                                    the state dir; macOS/Linux use it as is)
+#   TERMIHUB_NATIVE_SSHD_HOME        with --scratch-home (macOS/Linux): the
+#                                    HOME every SSH session gets
 # `--github-env` also appends them to "$GITHUB_ENV" for later workflow steps.
+#
+# `--scratch-home` (macOS/Linux; ignored on Windows, whose fixture logs in as
+# its own dedicated user): sshd `SetEnv`s HOME, XDG_CONFIG/DATA/STATE/CACHE_HOME
+# and HISTFILE into a `home` dir in the state dir, plus a private agent
+# registry endpoint and a bounded detached-daemon lifetime. A deployed agent
+# and its session daemons then never write into the login user's real home or
+# share its agent registry (#5208). The login shell reads its dotfiles from,
+# and writes its history to, that scratch home; it gets an empty .zshrc, so a
+# zsh login shell starts at a prompt, not at zsh-newuser-install (#5296). The
+# session's working directory stays the real home (sshd changes into the
+# passwd home), so tests use absolute paths below TERMIHUB_NATIVE_SSHD_HOME.
 #
 # Default --dir: $RUNNER_TEMP/termihub-native-sshd on CI, else
 # ${TMPDIR:-/tmp}/termihub-native-sshd-<user>. Default port: first free of
@@ -53,7 +66,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,51p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,64p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,6 +90,7 @@ STATE_DIR=""
 PORT=""
 GITHUB_ENV_OUT=0
 AGENT_BIN=""
+SCRATCH_HOME=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)
@@ -95,6 +109,10 @@ while [ $# -gt 0 ]; do
       AGENT_BIN="${2:?--agent-binary needs a value}"
       shift 2
       ;;
+    --scratch-home)
+      SCRATCH_HOME=1
+      shift
+      ;;
     *)
       echo "error: unknown argument: $1" >&2
       exit 2
@@ -103,6 +121,8 @@ while [ $# -gt 0 ]; do
 done
 
 # Windows: the Win32-OpenSSH provisioning lives in the PowerShell twin.
+# --scratch-home is not forwarded: that fixture's login user is a dedicated
+# local test user, so its home is already a scratch home.
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
     ps_args=(-Action "$ACTION")
@@ -132,6 +152,8 @@ PID_FILE="$STATE_DIR/sshd.pid"
 LOG_FILE="$STATE_DIR/sshd.log"
 PORT_FILE="$STATE_DIR/port"
 AGENT_BIN_FILE="$STATE_DIR/agent_bin"
+SESSION_HOME="$STATE_DIR/home"
+SESSION_HOME_FILE="$STATE_DIR/session_home"
 
 log() { echo "native-sshd: $*" >&2; }
 die() {
@@ -206,6 +228,21 @@ LogLevel VERBOSE
 MaxStartups 200:30:300
 MaxSessions 100
 EOF
+  if [ "$SCRATCH_HOME" -eq 1 ]; then
+    # Each token double-quoted: sshd splits SetEnv shell-style, and a state dir
+    # may hold spaces. The detached timeout bounds how long a session daemon a
+    # test leaves behind outlives it.
+    local h="$SESSION_HOME"
+    {
+      printf 'SetEnv "HOME=%s" "XDG_CONFIG_HOME=%s" "XDG_DATA_HOME=%s"' \
+        "$h" "$h/.config" "$h/.local/share"
+      printf ' "XDG_STATE_HOME=%s" "XDG_CACHE_HOME=%s" "HISTFILE=%s"' \
+        "$h/.local/state" "$h/.cache" "$h/.history"
+      printf ' "TERMIHUB_REGISTRY_ENDPOINT=%s" TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15' \
+        "$STATE_DIR/registry.sock"
+      printf ' TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120\n'
+    } >>"$CONFIG"
+  fi
   # OpenSSH 9.8+ penalises a source address after failed auths
   # (PerSourcePenalties), and the rejection tests fail auth on purpose from
   # 127.0.0.1, which would then refuse the next test's connection. Older sshd
@@ -274,6 +311,9 @@ EOF
   if [ -s "$AGENT_BIN_FILE" ]; then
     lines="$lines"$'\n'"TERMIHUB_NATIVE_SSHD_AGENT_BIN=$(cat "$AGENT_BIN_FILE")"
   fi
+  if [ -s "$SESSION_HOME_FILE" ]; then
+    lines="$lines"$'\n'"TERMIHUB_NATIVE_SSHD_HOME=$(cat "$SESSION_HOME_FILE")"
+  fi
   local line
   while IFS= read -r line; do
     printf "export %s='%s'\n" "${line%%=*}" "${line#*=}"
@@ -316,6 +356,14 @@ cmd_up() {
   # authorizes) plus the fresh client key.
   cat "$REPO_ROOT/tests/fixtures/ssh-keys/authorized_keys" "$CLIENT_KEY.pub" >"$AUTH_KEYS"
   chmod 600 "$AUTH_KEYS"
+  if [ "$SCRATCH_HOME" -eq 1 ]; then
+    mkdir -p "$SESSION_HOME"
+    chmod 700 "$SESSION_HOME"
+    # A zsh login shell with no dotfiles in HOME starts the interactive
+    # zsh-newuser-install menu instead of a prompt; an empty .zshrc skips it.
+    echo "# native-sshd-fixture scratch home (#5296)" >"$SESSION_HOME/.zshrc"
+    echo "$SESSION_HOME" >"$SESSION_HOME_FILE"
+  fi
 
   local base candidates p
   if [ -n "$PORT" ]; then

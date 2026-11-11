@@ -593,6 +593,27 @@ config that did was removed). Keep one SHA per action across the repo; `check-ac
 Workflow Lint job and `./scripts/check.sh`) fails when the same action is pinned to two different
 SHAs or to a tag/branch instead of a SHA.
 
+### GitHub Actions caches
+
+The repo's Actions caches share GitHub's 10 GB budget, and LRU eviction drops the oldest entries
+when it is full. So every ref restores, but only `develop` and `main` save (#3328, #5328): a
+feature-branch, PR or tag entry is dead weight after merge and evicts develop's own. Gate every
+cache save with `github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'`, written
+exactly like that and only ever ANDed with other conditions. A gate on
+`github.event_name != 'pull_request'` is not enough: a `workflow_dispatch` proof run on a branch
+has that branch as `github.ref`.
+
+- `Swatinem/rust-cache`: `save-if:` set to the gate, or to `false`.
+- `actions/cache`: split it into `actions/cache/restore` and an `actions/cache/save` step whose
+  `if:` carries the gate (or guard the combined action with the gate and add a restore step for
+  the other refs, as `.github/actions/setup-pnpm` does).
+- pnpm store: `uses: ./.github/actions/setup-pnpm` with `cache: "true"`, never
+  `actions/setup-node`'s `cache:` input, which saves on every ref.
+- uv: `./.github/actions/setup-uv` already sets `save-cache` to the gate.
+
+`check-cache-save-gates.mjs` (run by the Workflow Lint job and `./scripts/check.sh`) fails on a
+cache save without the gate.
+
 ### apt download retries
 
 apt does not retry a failed download, so every apt download in CI is set to retry (#5152). A
@@ -1123,7 +1144,7 @@ journalctl -u termihub-agent -f
 
 **Agent modes:**
 
-- **`--listen [addr]`** — TCP listener mode (default: `127.0.0.1:7685`). Used for systemd service. Sessions persist across client reconnects.
+- **`--listen [addr]`** — TCP listener mode (default: `127.0.0.1:7685`). Used for systemd service. Sessions persist across client reconnects; monitoring subscriptions persist for a grace period after the last client disconnects (`TERMIHUB_AGENT_MONITORING_ORPHAN_GRACE_SECS`, default 300).
 - **`--stdio`** — Stdio mode (NDJSON over stdin/stdout). Used when launched over SSH exec channels.
 
 The systemd service uses `--listen` mode by default. To change the listen address:

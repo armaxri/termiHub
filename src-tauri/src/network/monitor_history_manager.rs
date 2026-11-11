@@ -29,7 +29,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 use tracing::warn;
 
 use super::http_monitor::HttpCheckResult;
@@ -74,7 +74,7 @@ pub struct HttpMonitorHistoryManager {
 impl HttpMonitorHistoryManager {
     /// Initialize from disk, with recovery on corruption. Expired checks are
     /// dropped in memory; the file catches up on the next write.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
         let storage = HttpMonitorHistoryStorage::new(app_handle)
             .context("Failed to initialize HTTP monitor history storage")?;
         let result = storage

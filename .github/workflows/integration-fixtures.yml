@@ -575,7 +575,8 @@ jobs:
     if: github.event_name != 'pull_request'
     name: SSH/SFTP journeys against native sshd (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # 75, not 45: the agent deploy journey (#5208) builds the desktop lib tests.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -601,6 +602,32 @@ jobs:
         # over to its PowerShell twin).
         shell: bash
         run: scripts/internal/run-native-sshd-suites.sh
+
+      - name: Make apt retry downloads (Linux)
+        if: ${{ runner.os == 'Linux' && !cancelled() }}
+        uses: ./.github/actions/apt-retries
+
+      - name: Install desktop-crate system dependencies (Linux)
+        # The deploy journey below builds the `termihub` (Tauri) lib tests,
+        # which link webkit2gtk/gtk on Linux.
+        if: ${{ runner.os == 'Linux' && !cancelled() }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Agent deploy, probe, update and reattach journey
+        # #5208: install_agent_bytes installs a locally built agent, the probe
+        # reports it, a second build updates it while a session daemon runs,
+        # and the same session is re-attached -- on all three OSes. Its own
+        # step (and fixture), so a failure in the suites above never hides
+        # its result. TERMIHUB_REQUIRE_NATIVE_SSHD_DEPLOY=1 (set by the
+        # recipe) fails a missing fixture instead of skipping.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: scripts/internal/run-native-sshd-deploy-journey.sh
 
       - name: Hidden fish setup on a real fish 3.x login shell
         # #5115: native_05b..05d with the fixture user's login shell switched to

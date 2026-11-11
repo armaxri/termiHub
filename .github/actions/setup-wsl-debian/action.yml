@@ -1,0 +1,112 @@
+name: "Install WSL and a Debian distribution"
+description: >-
+  Install the WSL platform and Debian 12 (registered as `Debian-12`, WSL 2) on a
+  hosted Windows runner for the wsl-live lane. The Debian .wsl file is fetched
+  by scripts/internal/fetch-wsl-distro.sh (resumable, retried, SHA-256 pinned)
+  and placed in the tool cache, so Vampire/setup-wsl finds it and never runs
+  its own download. That download has no resume and was cut by
+  salsa.debian.org on every develop run (#5317). The install is tried twice.
+  A failure in this action is a "WSL environment failure" annotation: the
+  runner could not provide WSL, so no termiHub test ran. Needs a checkout of
+  this repo.
+
+runs:
+  using: "composite"
+  steps:
+    # The verified .wsl file is cached under its own key. Restore everywhere and
+    # save only on develop/main (the #3328 reader/writer split). A miss is
+    # expected (the repo's caches exceed the 10 GB budget, and LRU evicts this
+    # entry between daily runs), so the fetch below must cope on its own.
+    - name: Restore the Debian WSL file
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/wsl-distro
+        key: wsl-distro-debian-1.20.0-51a0c7af5349
+
+    - name: Download the Debian WSL file
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        # MUST be the file Vampire/setup-wsl v7.0.0 pins for `Debian-12`
+        # (Distribution.kt: Debian12, version 1.20.0). Bump it together with
+        # the action pin, the tool-cache version below and the cache key.
+        DEBIAN_URL: https://salsa.debian.org/debian/WSL/-/jobs/7130915/artifacts/raw/Debian_WSL_AMD64_v1.20.0.0.wsl
+        DEBIAN_SHA256: 51a0c7af534929305238bd356a217b371562e6a0fcdfab65c7e49fb8252e2f23
+      run: |
+        set -euo pipefail
+        dir="$(cygpath -u "$RUNNER_TEMP")/wsl-distro"
+        "$GITHUB_ACTION_PATH/../../../scripts/internal/fetch-wsl-distro.sh" \
+          "$DEBIAN_URL" "$DEBIAN_SHA256" "$dir/Debian_WSL_AMD64_v1.20.0.0.wsl"
+
+    - name: Save the Debian WSL file
+      if: >-
+        steps.restore.outputs.cache-hit != 'true' &&
+        (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+      # Two jobs of one run can race to save the same key; losing is harmless.
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/wsl-distro
+        key: wsl-distro-debian-1.20.0-51a0c7af5349
+
+    - name: Seed the tool cache for setup-wsl
+      # @actions/tool-cache layout: <tool cache>/<tool>/<version>/<arch>/ plus an
+      # <arch>.complete marker. With it present, setup-wsl's `find("Debian",
+      # "1.20.0")` hits and the action skips both its cache and its download.
+      shell: pwsh
+      env:
+        DEBIAN_SHA256: 51a0c7af534929305238bd356a217b371562e6a0fcdfab65c7e49fb8252e2f23
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $file = 'Debian_WSL_AMD64_v1.20.0.0.wsl'
+        $src = Join-Path $env:RUNNER_TEMP "wsl-distro\$file"
+        # Re-check the pin: a restored cache entry gets the same check as a download.
+        $hash = (Get-FileHash -Algorithm SHA256 $src).Hash.ToLowerInvariant()
+        if ($hash -ne $env:DEBIAN_SHA256) {
+          Write-Output "::error title=WSL environment failure::cached Debian WSL file SHA-256 $hash != $env:DEBIAN_SHA256 (#5317)"
+          exit 1
+        }
+        $dst = Join-Path $env:RUNNER_TOOL_CACHE 'Debian\1.20.0\x64'
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        Copy-Item -Force $src (Join-Path $dst $file)
+        New-Item -ItemType File -Force -Path "$dst.complete" | Out-Null
+        Get-ChildItem $dst
+
+    - name: Install WSL and Debian (attempt 1)
+      id: install1
+      continue-on-error: true
+      uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+      with:
+        distribution: Debian-12
+        wsl-version: 2
+        # The tool cache is seeded above; the action's own Actions cache entry
+        # would only duplicate it.
+        use-cache: "false"
+
+    - name: Clean up the failed install
+      if: steps.install1.outcome == 'failure'
+      shell: pwsh
+      run: |
+        Write-Output "::warning title=WSL install retry::the first WSL install attempt failed; retrying once (#5317)"
+        wsl.exe --unregister Debian-12 2>&1 | Out-Host
+        $global:LASTEXITCODE = 0
+        Start-Sleep -Seconds 20
+
+    - name: Install WSL and Debian (attempt 2)
+      id: install2
+      if: steps.install1.outcome == 'failure'
+      continue-on-error: true
+      uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+      with:
+        distribution: Debian-12
+        wsl-version: 2
+        use-cache: "false"
+
+    - name: Report a WSL environment failure
+      if: steps.install1.outcome == 'failure' && steps.install2.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::error title=WSL environment failure::the runner could not install WSL and" \
+          "Debian-12 after 2 attempts. No termiHub test ran; this is not a test failure (#5317)."
+        exit 1

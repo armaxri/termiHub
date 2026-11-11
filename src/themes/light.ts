@@ -73,9 +73,7 @@ export const lightTheme: ThemeDefinition = {
     terminalCursor: "#526eff",
     terminalSelection: "rgba(3, 102, 214, 0.2)",
 
-    // ANSI 16 — every entry reaches 3:1 on terminalBg (#5191, locked by
-    // contrast.test.ts). The failing ones were darkened in OKLCH lightness
-    // only, keeping hue and chroma, to the smallest value that passes.
+    // ANSI 16
     ansiBlack: "#383a42",
     ansiRed: "#e45649",
     ansiGreen: "#50a14f",
@@ -83,15 +81,15 @@ export const lightTheme: ThemeDefinition = {
     ansiBlue: "#4078f2",
     ansiMagenta: "#a626a4",
     ansiCyan: "#0184bc",
-    ansiWhite: "#949494", // was #fafafa (1.04:1)
+    ansiWhite: "#fafafa",
     ansiBrightBlack: "#4f525e",
     ansiBrightRed: "#e06c75",
-    ansiBrightGreen: "#77a058", // was #98c379 (2.02:1)
-    ansiBrightYellow: "#b38f4b", // was #e5c07b (1.73:1)
-    ansiBrightBlue: "#4c9ad9", // was #61afef (2.36:1)
-    ansiBrightMagenta: "#c476db", // was #c678dd (2.94:1)
-    ansiBrightCyan: "#40a2ae", // was #56b6c2 (2.37:1)
-    ansiBrightWhite: "#949494", // was #ffffff (1.00:1)
+    ansiBrightGreen: "#98c379",
+    ansiBrightYellow: "#e5c07b",
+    ansiBrightBlue: "#61afef",
+    ansiBrightMagenta: "#c678dd",
+    ansiBrightCyan: "#56b6c2",
+    ansiBrightWhite: "#ffffff",
 
     // Scrollbar
     scrollbarThumb: "rgba(100, 100, 100, 0.45)",

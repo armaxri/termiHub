@@ -8,6 +8,14 @@
 # fixture hard-fails instead of skipping), prints the sshd log on failure, and
 # always tears the fixture down again.
 #
+# On macOS/Linux the fixture runs as the current user, so it comes up with
+# --scratch-home (#5296): every SSH session gets HOME, the XDG_* dirs and
+# HISTFILE in the fixture's state dir. The login shell then reads no real
+# dotfiles and writes no real shell history, and the SFTP journey works below
+# that scratch home (TERMIHUB_NATIVE_SSHD_HOME), not in the real one. The run
+# fails if the fixture exports no scratch home there. Windows ignores the flag:
+# its fixture logs in as a dedicated local test user.
+#
 # The nightly `native-sshd` job in integration-fixtures.yml runs exactly this
 # on macos-latest, windows-latest and ubuntu-latest. The recipe lives here,
 # in the checked-out tree, so a scheduled run (which uses main's copy of the
@@ -23,7 +31,7 @@ set -euo pipefail
 
 case "${1:-}" in
   -h | --help)
-    sed -n '3,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
 esac
@@ -50,7 +58,18 @@ teardown() {
 # Armed before `up`, so a half-started fixture (sshd up, self-test failed) is
 # torn down too.
 trap teardown EXIT
-exports="$("$FIXTURE" up)"
+exports="$("$FIXTURE" up --scratch-home)"
 eval "$exports"
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) ;;
+  *)
+    # Never fall back to the real home (#5296).
+    if [ -z "${TERMIHUB_NATIVE_SSHD_HOME:-}" ] || [ ! -d "$TERMIHUB_NATIVE_SSHD_HOME" ]; then
+      echo "error: the fixture exported no scratch home (TERMIHUB_NATIVE_SSHD_HOME)" >&2
+      exit 1
+    fi
+    echo "native sshd sessions use the scratch home $TERMIHUB_NATIVE_SSHD_HOME" >&2
+    ;;
+esac
 
 cargo test -p termihub-core --features ssh --test ssh_native "$@"

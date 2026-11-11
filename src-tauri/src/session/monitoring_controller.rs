@@ -174,6 +174,13 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
             .resolve(session_id, Locality::LocalOrAgent, &run_location)
             .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
+        // A start replaces whatever this session was monitoring before — on
+        // another run-location or the same one. Tear that down first rather
+        // than relying on the frontend to stop in between (#5305): otherwise a
+        // local→agent switch leaves the session provider's loop running, and
+        // an agent→local switch leaves the agent's.
+        self.teardown_previous(session_id).await;
+
         let subscription = match &resolved {
             ResolvedLocation::Local => {
                 // Clone the provider handle out from under the `sessions` lock,
@@ -188,9 +195,12 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
 
                 // Apply the caller's chosen refresh interval to the now-running
                 // loop (#1233). Takes effect on the next tick; omitted → provider
-                // default.
+                // default. Applied to the provider just subscribed, so a session
+                // removed meanwhile cannot fail the start with a live loop.
                 if let Some(ms) = interval_ms {
-                    self.set_session_monitoring_interval(session_id, ms).await?;
+                    provider
+                        .set_interval(Duration::from_millis(ms.max(1)))
+                        .await;
                 }
                 subscription
             }
@@ -276,6 +286,36 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
         Ok(())
     }
 
+    /// Tear down the monitor a new start replaces (#5305).
+    ///
+    /// A session is monitoring when it has a push task registered. Its
+    /// provider is the agent override, if one is recorded, otherwise the
+    /// session's own provider; either is unsubscribed, and the push task
+    /// aborted, before the new subscription is made. Best-effort: a failure is
+    /// logged, not returned — the start goes ahead, and an agent that did not
+    /// confirm the stop is retried in the background (see
+    /// [`agent_monitor_stops`](super::agent_monitor_stops)).
+    async fn teardown_previous(&self, session_id: &str) {
+        let previous_task = self.monitoring_tasks.lock().await.remove(session_id);
+        let override_proxy = self.monitoring_overrides.lock().await.remove(session_id);
+        let provider = match (override_proxy, &previous_task) {
+            (Some(proxy), _) => Some(proxy),
+            (None, Some(_)) => self.optional_session_provider(session_id).await,
+            // Nothing started (or it was stopped): nothing to tear down.
+            (None, None) => None,
+        };
+        if let Some(task) = previous_task {
+            task.abort();
+        }
+        let Some(provider) = provider else {
+            return;
+        };
+        info!(session_id, "Replacing a running session monitor");
+        if let Err(e) = provider.unsubscribe().await {
+            warn!(session_id, error = %e, "Previous session monitor did not confirm its stop");
+        }
+    }
+
     /// Spawn the monitoring push task and register its [`AbortHandle`]
     /// atomically (CONC-006).
     ///
@@ -303,6 +343,16 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
     }
 
     /// Stop session-based monitoring: abort the push task and unsubscribe.
+    ///
+    /// The teardown always completes, whatever fails (#5301): the push task is
+    /// aborted first and unconditionally, and the provider is always
+    /// unsubscribed — which tears down its local collect loop, or, for an
+    /// agent-mediated monitor, its output route and status driver. Only the
+    /// agent's own collect loop depends on the agent answering; when it does
+    /// not, the proxy keeps retrying the stop in the background (see
+    /// [`agent_monitor_stops`](super::agent_monitor_stops)). The unsubscribe
+    /// error is still returned, so the caller can report it — but nothing is
+    /// left running untracked once the monitor leaves the region.
     pub(super) async fn stop_session_monitoring(
         &self,
         session_id: &str,
@@ -313,22 +363,25 @@ impl<'a, M: SessionMap> MonitoringController<'a, M> {
 
         // An agent-hosted monitor (#2593) is driven by a standalone override
         // proxy, not the session's connection — unsubscribe and drop it here.
-        if let Some(proxy) = self.monitoring_overrides.lock().await.remove(session_id) {
-            if let Err(e) = proxy.unsubscribe().await {
-                warn!(session_id, error = %e, "Agent monitor unsubscribe error");
-            }
+        let override_proxy = self.monitoring_overrides.lock().await.remove(session_id);
+        let provider = match override_proxy {
+            Some(proxy) => Some(proxy),
+            // Fetch the provider handle, then unsubscribe with the `sessions`
+            // lock released — an agent-hosted monitor's unsubscribe is a
+            // network RPC (CONC-007). A missing session / provider is already
+            // gone.
+            None => self.optional_session_provider(session_id).await,
+        };
+        let Some(provider) = provider else {
             return Ok(());
-        }
-
-        // Fetch the provider handle, then unsubscribe with the `sessions` lock
-        // released — an agent-hosted monitor's unsubscribe is a network RPC
-        // (CONC-007). Best-effort: a missing session / provider is already gone.
-        if let Some(provider) = self.optional_session_provider(session_id).await {
-            if let Err(e) = provider.unsubscribe().await {
-                warn!(session_id, error = %e, "Session monitoring unsubscribe error");
-            }
-        }
-        Ok(())
+        };
+        provider.unsubscribe().await.map_err(|e| {
+            warn!(session_id, error = %e, "Session monitoring unsubscribe error");
+            TerminalError::RemoteError(format!(
+                "monitoring stopped here, but the remote side did not confirm the stop \
+                 ({e}); retrying it in the background"
+            ))
+        })
     }
 
     /// Pause or resume a session's monitoring loop (#1233).
@@ -648,3 +701,15 @@ mod tests {
             .expect("stop of an unknown monitor is a no-op");
     }
 }
+
+#[cfg(test)]
+#[path = "monitoring_controller_close_tests.rs"]
+mod close_tests;
+
+#[cfg(test)]
+#[path = "monitoring_controller_open_tests.rs"]
+mod open_tests;
+
+#[cfg(test)]
+#[path = "monitoring_controller_pause_tests.rs"]
+mod pause_tests;
