@@ -228,6 +228,11 @@ wl-clipboard-rs = { version = "0.8", default-features = false, features = [
 # Temp directories back the drive-redirection filesystem tests (#1757), which
 # exercise the RDPDR backend against a real folder without a live RDP server.
 tempfile = "3"
+# The scripted RDP connection broker (#5271) terminates TLS on the server side
+# to drive a followed Server Redirection through the real session code. Already
+# locked in this graph (ironrdp-tls is its client side), so no new crate; `ring`
+# is the provider the sidecar's own TLS client uses.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 
 # Vendored forks of three IronRDP crates, re-based onto the current releases for
 # #5117 and patched in the same way as `vendor/vnc-rs` is patched into the main

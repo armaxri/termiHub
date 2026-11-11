@@ -121,8 +121,13 @@ export function useConnectionFolderRename({
       folders.find((f) => f.id === focusIntent.oldId);
     if (!target) return;
     const active = document.activeElement;
-    const onTarget = active?.getAttribute("data-testid") === `folder-toggle-${target.id}`;
-    if (!active || active === document.body) {
+    const activeTestId = active?.getAttribute("data-testid");
+    const onTarget = activeTestId === `folder-toggle-${target.id}`;
+    // While the store briefly shows both rows (the region already has the new
+    // id, the optimistic overlay still the old one), focus is on the old row:
+    // move it to the re-keyed one rather than dropping the watch (#5232).
+    const onOldRow = activeTestId === `folder-toggle-${focusIntent.oldId}`;
+    if (!active || active === document.body || (onOldRow && !onTarget)) {
       const index = getNodeIndex(target.id);
       if (index >= 0) focusRow(index);
     } else if (!onTarget) {

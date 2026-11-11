@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { toast as sonnerToast } from "sonner";
 
 /**
@@ -10,6 +11,20 @@ export interface ToastAction {
   label: string;
   /** Invoked when the action button is pressed. */
   onClick: () => void;
+  /**
+   * `data-testid` for the button's label, so a system test can press it (the
+   * bridge finds elements by test id; a click on the label reaches the button).
+   */
+  testId?: string;
+}
+
+/** The sonner action for `action`, its label tagged with `action.testId` if set. */
+function sonnerAction(action: ToastAction | undefined) {
+  if (!action?.testId) return action;
+  return {
+    label: createElement("span", { "data-testid": action.testId }, action.label),
+    onClick: action.onClick,
+  };
 }
 
 /** Options accepted by the toast helpers. A thin, intentional subset of sonner. */
@@ -137,7 +152,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration,
-      action: opts?.action,
+      action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
   },
@@ -148,7 +163,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
-      action: opts?.action,
+      action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
   },
@@ -159,7 +174,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration,
-      action: opts?.action,
+      action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
   },
@@ -170,7 +185,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
-      action: opts?.action,
+      action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
   },

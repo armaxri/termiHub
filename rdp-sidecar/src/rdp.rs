@@ -3390,3 +3390,7 @@ mod connect_timeout_tests;
 #[cfg(test)]
 #[path = "redirect_hop_tests.rs"]
 mod redirect_hop_tests;
+
+#[cfg(test)]
+#[path = "redirect_broker_tests.rs"]
+mod redirect_broker_tests;

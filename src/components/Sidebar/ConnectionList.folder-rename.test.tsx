@@ -145,6 +145,35 @@ describe("ConnectionList — folder rename (#5233)", () => {
     expect(q("connection-item-Jobs/db")).not.toBeNull();
   });
 
+  it("focus follows the rename through the store's optimistic overlay (#5232)", async () => {
+    // The real store first shows the new name under the old id (the overlay),
+    // then briefly both rows (the region has the new id, the overlay the old),
+    // then only the re-keyed row once the overlay drops.
+    const renamed = { ...work, name: "Jobs" };
+    const rekeyed = { ...renamed, id: "Jobs" };
+    updateFolder.mockImplementation(() =>
+      seedConnectionsRegion({ folders: [renamed, home], connections: CONNECTIONS })
+    );
+    await render();
+    startWithF2();
+    typeInto("inline-folder-name-input", "Jobs");
+    press(input()!, "Enter");
+    await flushAsync();
+    expect(document.activeElement).toBe(folderRow("Work"));
+
+    await act(async () =>
+      seedConnectionsRegion({ folders: [rekeyed, renamed, home], connections: CONNECTIONS })
+    );
+    await flushAsync();
+    await act(async () =>
+      seedConnectionsRegion({ folders: [rekeyed, home], connections: CONNECTIONS })
+    );
+    await flushAsync();
+
+    expect(folderRow("Work")).toBeNull();
+    expect(document.activeElement).toBe(folderRow("Jobs"));
+  });
+
   it("Enter without a change saves nothing and returns focus", async () => {
     await render();
     startWithF2();
