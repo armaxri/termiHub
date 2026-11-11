@@ -193,11 +193,7 @@ impl AgentRpcClient for FakeAgent {
         self.held_by_peer.store(false, Ordering::SeqCst);
         Ok(())
     }
-    fn close_session(
-        &self,
-        _agent_id: &str,
-        remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
+    fn close_session(&self, _agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError> {
         self.closed
             .lock()
             .unwrap()

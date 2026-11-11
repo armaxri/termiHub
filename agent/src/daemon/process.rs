@@ -24,8 +24,8 @@ use crate::daemon::monitoring_rpc::{
     self, MonitorCommand, MonitoringEvent, MonitoringOp, MonitoringRequest,
 };
 use crate::daemon::process_rpc::{self, ProcessRequest, ProcessResponse};
-use crate::daemon::serial_reopen::{wants_reopen, ReopenStatus, ReopenStatusRx, SerialReopen};
 use crate::daemon::protocol::{self, *};
+use crate::daemon::serial_reopen::{wants_reopen, ReopenStatus, ReopenStatusRx, SerialReopen};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
 use crate::daemon::worker_sink::{self, SinkEvent, WorkerSink};
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};

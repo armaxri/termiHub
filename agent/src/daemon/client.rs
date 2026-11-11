@@ -26,9 +26,9 @@ use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 use crate::protocol::methods::{
     ConnectionErrorNotification, ConnectionEvictedNotification, ConnectionExitNotification,
-    ConnectionFilesOnlyNotification, ConnectionOutputNotification,
-    ConnectionReconnectNotification, CONNECTION_ERROR, CONNECTION_EVICTED, CONNECTION_EXIT,
-    CONNECTION_FILES_ONLY, CONNECTION_OUTPUT, CONNECTION_RECONNECT,
+    ConnectionFilesOnlyNotification, ConnectionOutputNotification, ConnectionReconnectNotification,
+    CONNECTION_ERROR, CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_FILES_ONLY,
+    CONNECTION_OUTPUT, CONNECTION_RECONNECT,
 };
 use crate::session::output_budget::OutputBudget;
 use crate::transport::{charged, to_params};

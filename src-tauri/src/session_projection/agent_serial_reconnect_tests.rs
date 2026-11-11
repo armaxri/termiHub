@@ -187,7 +187,10 @@ fn stop_closes_the_agent_session_so_the_agent_stops_reopening() {
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_eq!(*rig.agent.closed.lock().unwrap(), vec!["remote-0".to_string()]);
+    assert_eq!(
+        *rig.agent.closed.lock().unwrap(),
+        vec!["remote-0".to_string()]
+    );
     assert_eq!(rig.store.status(TAB), Some(SessionStatus::Disconnected));
 }
 

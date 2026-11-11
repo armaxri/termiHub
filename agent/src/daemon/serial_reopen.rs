@@ -240,7 +240,10 @@ impl ConnectionType for SerialReopen {
             factory: Arc::clone(&self.factory),
             probe: Arc::clone(&self.probe),
             policy: self.policy,
-            jitter: self.jitter.take().unwrap_or_else(|| Box::new(system_jitter)),
+            jitter: self
+                .jitter
+                .take()
+                .unwrap_or_else(|| Box::new(system_jitter)),
             inner: Arc::clone(&self.inner),
             output_tx,
             status_tx: Arc::clone(&self.status_tx),
@@ -396,7 +399,10 @@ impl Supervisor {
         &mut self,
         configured: &str,
     ) -> Option<(Box<dyn ConnectionType>, OutputReceiver)> {
-        info!(port = configured, "Serial port dropped; reopening it in place");
+        info!(
+            port = configured,
+            "Serial port dropped; reopening it in place"
+        );
         let policy = self.policy;
         let mut state = reconnect_reducer(
             &INITIAL_RECONNECT_STATE,
@@ -451,7 +457,10 @@ impl Supervisor {
 
             state = reconnect_reducer(&state, ReconnectEvent::Failure, &policy, &mut *self.jitter);
             if state.phase == ReconnectPhase::Gaveup {
-                warn!(port = configured, "Serial port did not come back; giving up");
+                warn!(
+                    port = configured,
+                    "Serial port did not come back; giving up"
+                );
                 self.publish(SessionReconnectStatus::GaveUp {
                     reason: Some(reason),
                 });

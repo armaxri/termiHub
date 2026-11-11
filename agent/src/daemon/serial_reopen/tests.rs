@@ -104,7 +104,11 @@ impl ConnectionType for FakeSerial {
     }
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
         let index = self.index.expect("written only while open");
-        self.opens.lock().unwrap().writes.push((index, data.to_vec()));
+        self.opens
+            .lock()
+            .unwrap()
+            .writes
+            .push((index, data.to_vec()));
         Ok(())
     }
     fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
@@ -149,8 +153,7 @@ impl Harness {
             ..RECONNECT_POLICY
         };
         let probe_dyn: Arc<dyn SerialPortProbe> = probe.clone();
-        let mut reopen =
-            SerialReopen::with_policy(factory, probe_dyn, policy, Box::new(|| 0.0));
+        let mut reopen = SerialReopen::with_policy(factory, probe_dyn, policy, Box::new(|| 0.0));
         let status = reopen.status_watch();
         reopen
             .connect(json!({ "port": PORT, "baudRate": 115200 }))
@@ -237,8 +240,7 @@ async fn drop_absent_different_device_then_the_original_is_reopened() {
     let absent = h
         .wait_for(|s| matches!(s, SessionReconnectStatus::Waiting { attempt: 1, .. }))
         .await;
-    assert!(waiting_reason(&absent.status)
-        .is_some_and(|r| r.contains("is not present")));
+    assert!(waiting_reason(&absent.status).is_some_and(|r| r.contains("is not present")));
 
     // Another adapter appears on the same name: it is never opened.
     h.probe.set(PORT, Some(identity("OTHER")));

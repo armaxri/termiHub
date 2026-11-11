@@ -28,15 +28,14 @@ pub(super) fn handle_session_reconnect_notification<R: Runtime>(
     agent_id: &str,
     params: &Value,
 ) {
-    let notification = match serde_json::from_value::<ConnectionReconnectNotification>(
-        params.clone(),
-    ) {
-        Ok(n) => n,
-        Err(e) => {
-            warn!(agent_id, "malformed connection.reconnect dropped: {e}");
-            return;
-        }
-    };
+    let notification =
+        match serde_json::from_value::<ConnectionReconnectNotification>(params.clone()) {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(agent_id, "malformed connection.reconnect dropped: {e}");
+                return;
+            }
+        };
     info!(
         agent_id,
         remote_session_id = %notification.session_id,

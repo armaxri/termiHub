@@ -5006,8 +5006,7 @@ mod tests {
             "delay_ms": 2000,
             "reason": "Serial port /dev/ttyUSB0 is not present."
         });
-        let n: ConnectionReconnectNotification =
-            serde_json::from_value(reconnect.clone()).unwrap();
+        let n: ConnectionReconnectNotification = serde_json::from_value(reconnect.clone()).unwrap();
         assert_eq!(n.seq, 3);
         assert_eq!(
             n.status,

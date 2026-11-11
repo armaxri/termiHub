@@ -132,6 +132,8 @@ use reattach::reattach_after_reconnect;
 use reconnect::AGENT_RECONNECT_POLICY;
 use reconnect::{reconnect_agent, ReconnectTuning};
 #[cfg(test)]
+pub(crate) use reconnect_notice::fold_reconnect_hosted_sessions;
+#[cfg(test)]
 pub(crate) use recovery::resolve_agent_hosted_sessions;
 use recovery::{
     evicted_remote_ids, fold_agent_hosted_user_ended, hosted_sessions_for_agent,
@@ -145,8 +147,6 @@ pub(crate) use recovery::{
 use state_events::parse_agent_connection_state;
 use state_events::{emit_agent_disconnected, emit_agent_state, emit_agent_state_with_error};
 use stdout_reader::read_handshake_line;
-#[cfg(test)]
-pub(crate) use reconnect_notice::fold_reconnect_hosted_sessions;
 pub(crate) use update_reconnect::await_update_reconnect_takeover;
 use update_reconnect::UpdateReconnectRegistry;
 
