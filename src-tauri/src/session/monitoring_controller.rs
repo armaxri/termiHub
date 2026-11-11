@@ -648,3 +648,7 @@ mod tests {
             .expect("stop of an unknown monitor is a no-op");
     }
 }
+
+#[cfg(test)]
+#[path = "monitoring_controller_close_tests.rs"]
+mod close_tests;
