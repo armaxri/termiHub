@@ -25,6 +25,11 @@
 // comes from the artifact's own harness-coverage.json, not the run's head_sha.
 // It lands in <out-dir>/harness/ (harness.lcov + stale-files.txt).
 //
+// FRESHNESS (#5346): it also writes <out-dir>/overlay-status.json — per lane
+// the measured sha and time, the commits HEAD is ahead of it, the stale-file
+// counts, and the lane's latest run — which overlay-freshness.mjs turns into the
+// job summary and the "Integration overlay freshness" gate.
+//
 // ADVISORY: every "nothing usable" outcome (no run yet, artifact expired, the
 // commit cannot be fetched, gh/git unavailable) prints a note and exits 0 with
 // no lcov written, so the unified report simply falls back to unit coverage.
@@ -36,6 +41,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isMainModule } from "./is-main-module.mjs";
+import { readSkipList } from "./lcov-merge.mjs";
+import { STATUS_FILE, lcovFiles, staleShare } from "./overlay-freshness.mjs";
 
 export const WORKFLOW = "integration-fixtures.yml";
 export const ARTIFACT = "integration-coverage";
@@ -63,6 +70,13 @@ export function candidateRuns(runs) {
         USABLE_CONCLUSIONS.has(r.conclusion)
     )
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+/** The newest run of any outcome (a dark lane's latest attempt), or null. */
+export function latestRun(runs) {
+  const sorted = [...runs].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const r = sorted[0];
+  return r ? { id: r.id, url: r.html_url ?? null, conclusion: r.conclusion ?? null } : null;
 }
 
 /** The run's coverage artifact, if it was uploaded and has not expired. */
@@ -105,8 +119,10 @@ function defaultExec(cmd, args) {
 export function fetchIntegrationCoverage(
   { repo, branch, outDir },
   exec = defaultExec,
-  log = console.log
+  log = console.log,
+  info = {}
 ) {
+  log = noting(log, info);
   let runs;
   try {
     const json = exec("gh", [
@@ -121,7 +137,9 @@ export function fetchIntegrationCoverage(
       "-f",
       "per_page=30",
     ]);
-    runs = candidateRuns(JSON.parse(json).workflow_runs ?? []);
+    const all = JSON.parse(json).workflow_runs ?? [];
+    info.latestRun = latestRun(all);
+    runs = candidateRuns(all);
   } catch (e) {
     log(`note: could not list ${WORKFLOW} runs (${firstLine(e)}); unit coverage only.`);
     return null;
@@ -157,7 +175,7 @@ export function fetchIntegrationCoverage(
       `integration coverage: run ${run.id} (${run.event}, ${run.conclusion}) at ` +
         `${run.head_sha.slice(0, 12)}; ${stale.count} file(s) changed since.`
     );
-    return { lcov, staleList: stale.path, run };
+    return { lcov, staleList: stale.path, run, sha: run.head_sha };
   }
 
   log(`note: no ${WORKFLOW} nightly run on '${branch}' with a live '${ARTIFACT}' artifact yet.`);
@@ -193,8 +211,10 @@ function writeStaleList(sha, outDir, exec, log) {
 export function fetchHarnessCoverage(
   { repo, branch, outDir },
   exec = defaultExec,
-  log = console.log
+  log = console.log,
+  info = {}
 ) {
+  log = noting(log, info);
   const name = harnessArtifactName(branch);
   let runs;
   try {
@@ -209,7 +229,9 @@ export function fetchHarnessCoverage(
       "-f",
       "per_page=30",
     ]);
-    runs = candidateRuns(JSON.parse(json).workflow_runs ?? []);
+    const all = JSON.parse(json).workflow_runs ?? [];
+    info.latestRun = latestRun(all);
+    runs = candidateRuns(all);
   } catch (e) {
     log(`note: could not list ${HARNESS_WORKFLOW} runs (${firstLine(e)}); no harness coverage.`);
     return null;
@@ -262,6 +284,53 @@ export function readMeasuredSha(metaPath) {
   }
 }
 
+/** Wrap `log` so the last advisory note is kept in `info.note`. */
+function noting(log, info) {
+  return (msg) => {
+    if (msg.startsWith("note: ")) info.note = msg.slice("note: ".length);
+    log(msg);
+  };
+}
+
+/**
+ * One overlay-status.json lane entry from a fetch result (null = nothing
+ * usable). Counts how many of the overlay's own files are stale.
+ */
+export function laneStatus({ lane, workflow, repo, root }, result, info) {
+  const entry = {
+    lane,
+    workflow,
+    workflowUrl: `https://github.com/${repo}/actions/workflows/${workflow}`,
+    latestRun: info.latestRun ?? null,
+    present: Boolean(result),
+  };
+  if (!result) return { ...entry, note: info.note ?? null };
+  const files = lcovFiles(readFileSync(result.lcov, "utf8"), root);
+  const stale = readSkipList(readFileSync(result.staleList, "utf8"));
+  const share = staleShare(files, stale);
+  return {
+    ...entry,
+    sha: result.sha,
+    measuredAt: result.run.run_started_at ?? result.run.created_at ?? null,
+    run: { id: result.run.id, url: result.run.html_url ?? null, event: result.run.event },
+    changedFiles: stale.size,
+    overlayFiles: share.total,
+    staleOverlayFiles: share.stale,
+  };
+}
+
+/** Commits HEAD is ahead of `sha` (the GitHub compare API), or null. */
+export function commitsBehind(repo, sha, head, exec = defaultExec) {
+  if (!sha || !head) return null;
+  try {
+    const out = exec("gh", ["api", `repos/${repo}/compare/${sha}...${head}`, "--jq", ".ahead_by"]);
+    const n = Number.parseInt(out.trim(), 10);
+    return Number.isNaN(n) ? null : n;
+  } catch {
+    return null;
+  }
+}
+
 function firstLine(e) {
   return String(e?.stderr || e?.message || e)
     .split("\n")[0]
@@ -279,9 +348,44 @@ function main(argv) {
     );
     return 2;
   }
-  fetchIntegrationCoverage(opts);
-  fetchHarnessCoverage({ ...opts, outDir: path.join(opts.outDir, HARNESS_SUBDIR) });
+  const root = process.cwd();
+  const intInfo = {};
+  const intRes = fetchIntegrationCoverage(opts, defaultExec, console.log, intInfo);
+  const harnessInfo = {};
+  const harnessRes = fetchHarnessCoverage(
+    { ...opts, outDir: path.join(opts.outDir, HARNESS_SUBDIR) },
+    defaultExec,
+    console.log,
+    harnessInfo
+  );
+  writeOverlayStatus(opts, root, [
+    [{ lane: "integration fixtures", workflow: WORKFLOW }, intRes, intInfo],
+    [{ lane: "bridge harness", workflow: HARNESS_WORKFLOW }, harnessRes, harnessInfo],
+  ]);
   return 0;
+}
+
+/** Write <outDir>/overlay-status.json for overlay-freshness.mjs. */
+function writeOverlayStatus({ repo, branch, outDir }, root, lanes, exec = defaultExec) {
+  let head = null;
+  try {
+    head = exec("git", ["rev-parse", "HEAD"]).trim();
+  } catch {
+    // Unknown HEAD: commits-behind is left blank.
+  }
+  const status = {
+    repo,
+    branch,
+    head,
+    lanes: lanes.map(([meta, res, info]) => {
+      const entry = laneStatus({ ...meta, repo, root }, res, info);
+      return entry.present
+        ? { ...entry, behindBy: commitsBehind(repo, entry.sha, head, exec) }
+        : entry;
+    }),
+  };
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(path.join(outDir, STATUS_FILE), JSON.stringify(status, null, 2) + "\n");
 }
 
 if (isMainModule(import.meta.url)) {

@@ -93,7 +93,10 @@ export function evaluateOverlay(lane, now) {
 /** Evaluate every lane; `gated` says whether problems fail the step. */
 export function evaluateStatus(status, now) {
   const gated = GATED_BRANCHES.has(status.branch);
-  const lanes = (status.lanes ?? []).map((lane) => ({ lane, problems: evaluateOverlay(lane, now) }));
+  const lanes = (status.lanes ?? []).map((lane) => ({
+    lane,
+    problems: evaluateOverlay(lane, now),
+  }));
   return { gated, lanes, failed: gated && lanes.some((l) => l.problems.length > 0) };
 }
 
@@ -133,8 +136,8 @@ export function formatSummary(status, evaluation, now) {
         ? `${lane.staleOverlayFiles} / ${lane.overlayFiles} (${pct(lane.staleOverlayFiles / lane.overlayFiles)})`
         : "-";
     out.push(
-      `| ${lane.lane} | ${lane.sha ? `\`${short(lane.sha)}\`` : "-"} | ` +
-        `${age === null ? "-" : age.toFixed(1)} | ${lane.behindBy ?? "-"} | ` +
+      `| ${lane.lane} | ${lane.present && lane.sha ? `\`${short(lane.sha)}\`` : "-"} | ` +
+        `${age === null ? "-" : age.toFixed(1)} | ${lane.present ? (lane.behindBy ?? "-") : "-"} | ` +
         `${lane.present ? (lane.changedFiles ?? "-") : "-"} | ${staleCell} | ` +
         `${problems.length === 0 ? "ok" : `**dark**: ${problems.join("; ")}`} | ` +
         `${latestRunLink(lane)} |`
@@ -178,7 +181,8 @@ function main(argv) {
     // The fetch step crashed before writing anything: both lanes are unknown.
     const msg = `no ${opts.status}: the overlay fetch step failed before reporting.`;
     console.log(`::error title=Integration overlay::${msg}`);
-    if (opts.summary) appendFileSync(opts.summary, `### Integration overlay freshness\n\n${msg}\n\n`);
+    if (opts.summary)
+      appendFileSync(opts.summary, `### Integration overlay freshness\n\n${msg}\n\n`);
     return 1;
   }
   const status = JSON.parse(readFileSync(opts.status, "utf8"));
@@ -189,7 +193,9 @@ function main(argv) {
   const level = evaluation.gated ? "error" : "warning";
   for (const { lane, problems } of evaluation.lanes) {
     if (problems.length === 0) continue;
-    console.log(`::${level} title=Integration overlay (${lane.lane})::${darkMessage(lane, problems)}`);
+    console.log(
+      `::${level} title=Integration overlay (${lane.lane})::${darkMessage(lane, problems)}`
+    );
   }
   return evaluation.failed ? 1 : 0;
 }
