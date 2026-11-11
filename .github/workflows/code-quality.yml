@@ -1748,9 +1748,10 @@ jobs:
 
   # Windows live-agent-TCP tests, serial + isolated (#2495, #3615). BLOCKING.
   #
-  # The `live_agent_tcp_*` tests (agent/tests/local_agent_integration.rs and
-  # tcp_listener_readiness.rs; 10 compile on Windows, the other 6 of the 16 are
-  # unix-only) each cold-start a real `termihub-agent --listen`
+  # The `live_agent_tcp_*` tests (agent/tests/local_agent_integration.rs,
+  # tcp_listener_readiness.rs and deferred_update_hook_integration.rs; 25 run
+  # on Windows, see SERIAL_MIN_TESTS_DEFAULT in the script) each cold-start a
+  # real `termihub-agent --listen`
   # and drive it over TCP. In the shared parallel Windows leg — many agents
   # cold-starting at once, alongside the whole workspace suite — they
   # oversubscribed the runner and timed out on a random test (10060), so they
@@ -1764,7 +1765,7 @@ jobs:
   # agent/, core/, plugin-api/, plugin-runner/, vendor/, workspace manifests/toolchain, the test
   # driver script) and on every push to develop/main. A skipped job reports
   # success, so requiring this check does not block unrelated PRs. The script's
-  # `serial` phase fails if fewer than the expected count ran (10 on Windows)
+  # `serial` phase fails if fewer than the expected count ran (25 on Windows)
   # or any was ignored, so the filter can never go green by selecting nothing.
   agent-live-windows:
     name: Agent Live Tests (Windows, serial)
@@ -1774,7 +1775,7 @@ jobs:
     if: >-
       ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
       needs.changes.outputs.agent != 'false' }}
-    # The 10 tests take ~20s serially; a cold build is the long pole. The
+    # The 25 tests take ~1min serially; a cold build is the long pole. The
     # script's own deadline (CI_SERIAL_TIMEOUT_SECS) kills a wedged run first
     # and names the stuck test; this ceiling is only the backstop.
     timeout-minutes: 30

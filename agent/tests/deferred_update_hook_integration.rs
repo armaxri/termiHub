@@ -55,16 +55,24 @@
 //! path; `deferred_hook_does_not_swap_the_agent_binary` pins the outcome by
 //! inode.
 //!
-//! Unix-only, matching `self_update_integration.rs`: the apply path this hook
-//! deliberately fails is Unix-only, so the guarantee is only meaningful here.
-//! The hook's notify / busy-deferral cases are platform-neutral, but each one
-//! cold-starts a `--listen` agent over TCP — the class the Windows leg runs
-//! serially (#2495, #3615); porting them there is #5218.
-
-#![cfg(unix)]
+//! ## Platforms
+//!
+//! The notify, busy-deferral and unarmed cases are platform-neutral agent logic
+//! and run everywhere. Each cold-starts a `--listen` agent over TCP, so they
+//! carry the `live_agent_tcp_` prefix: on Windows `scripts/internal/ci-rust-tests.sh`
+//! routes that prefix to the serial `Agent Live Tests (Windows, serial)` job
+//! instead of the parallel bulk phase, which oversubscribed the runner (#2495,
+//! #3615, #5218).
+//!
+//! The apply guarantee splits by platform. The real binary swap is Unix-only,
+//! so `deferred_hook_does_not_swap_the_agent_binary` pins it by inode there.
+//! On Windows the last-disconnect apply hits the non-Unix `apply_update_binary`
+//! stub, and `live_agent_tcp_windows_last_disconnect_apply_fails_closed` pins
+//! that it fails closed and keeps the pending record.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -144,7 +152,12 @@ fn shared_agent_binary() -> &'static Path {
             .map_or(0, |d| d.as_nanos());
         let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
         std::fs::create_dir_all(dir).expect("create target tmp dir");
-        let name = format!("{SHARED_COPY_PREFIX}{}-{mtime}", meta.len());
+        // Windows only executes a path carrying the `.exe` suffix.
+        let name = format!(
+            "{SHARED_COPY_PREFIX}{}-{mtime}{}",
+            meta.len(),
+            std::env::consts::EXE_SUFFIX
+        );
         let path = dir.join(&name);
 
         // Best effort: sweep copies left by earlier builds. A sibling run still
@@ -165,6 +178,9 @@ fn shared_agent_binary() -> &'static Path {
         if !path.exists() {
             let staging = dir.join(format!(".{name}.{}", std::process::id()));
             std::fs::copy(&source, &staging).expect("copy agent binary");
+            // `fs::copy` keeps the mode on unix; set it anyway so the copy is
+            // executable whatever the artifact's mode. Windows has no exec bit.
+            #[cfg(unix)]
             std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
                 .expect("chmod agent copy");
             std::fs::rename(&staging, &path).expect("move agent copy into place");
@@ -184,6 +200,7 @@ fn shared_agent_binary() -> &'static Path {
     })
 }
 
+#[cfg(unix)]
 fn inode(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.ino())
 }
@@ -238,6 +255,9 @@ impl LiveAgent {
         cmd.arg("--listen")
             .arg("127.0.0.1:0")
             .env("XDG_CONFIG_HOME", config_home.path())
+            // Windows resolves the home dir from USERPROFILE, not HOME. Point it
+            // at the same temp dir so nothing reaches the developer's profile.
+            .env("USERPROFILE", config_home.path())
             // Keep off the developer's live registry; bound leaked daemons (#3636).
             .envs(common::isolated_registry_env(config_home.path()))
             // Pin the log level the port is parsed from, so a developer with
@@ -507,7 +527,7 @@ impl Client {
 /// attaches — the notification the desktop's banner listens for, which a live
 /// agent otherwise never sends without the 24h timer.
 #[test]
-fn armed_hook_notifies_the_client_on_attach() {
+fn live_agent_tcp_armed_hook_notifies_the_client_on_attach() {
     let agent = LiveAgent::spawn(Some("1"));
     let mut client = Client::connect(&agent);
 
@@ -537,7 +557,7 @@ fn armed_hook_notifies_the_client_on_attach() {
 /// An explicit gate value is advertised verbatim, so a test can pin the version
 /// the banner displays.
 #[test]
-fn armed_hook_advertises_an_explicit_version() {
+fn live_agent_tcp_armed_hook_advertises_an_explicit_version() {
     let agent = LiveAgent::spawn(Some("1.2.3"));
     let mut client = Client::connect(&agent);
 
@@ -551,7 +571,7 @@ fn armed_hook_advertises_an_explicit_version() {
 /// first — a test that reconnects (or a desktop that drops and comes back) must
 /// still see the banner.
 #[test]
-fn armed_hook_notifies_each_client_that_attaches() {
+fn live_agent_tcp_armed_hook_notifies_each_client_that_attaches() {
     let agent = LiveAgent::spawn(Some("1"));
 
     {
@@ -572,7 +592,7 @@ fn armed_hook_notifies_each_client_that_attaches() {
 /// takes the deferred branch and reports the active-session count — the banner's
 /// busy path, reachable live for the first time.
 #[test]
-fn armed_hook_makes_the_deferred_busy_path_reachable() {
+fn live_agent_tcp_armed_hook_makes_the_deferred_busy_path_reachable() {
     let agent = LiveAgent::spawn(Some("1"));
     let mut client = Client::connect(&agent);
     client
@@ -599,6 +619,10 @@ fn armed_hook_makes_the_deferred_busy_path_reachable() {
 /// staged path does not exist, so the apply fired by the last session closing
 /// fails and the agent keeps running the binary it started with (and keeps the
 /// record, per #1401).
+///
+/// Unix-only: the swap it guards against exists only there. Not
+/// `live_agent_tcp_`-prefixed, since the Windows serial routing never sees it.
+#[cfg(unix)]
 #[test]
 fn deferred_hook_does_not_swap_the_agent_binary() {
     let agent = LiveAgent::spawn(Some("1"));
@@ -634,10 +658,70 @@ fn deferred_hook_does_not_swap_the_agent_binary() {
     );
 }
 
+/// The Windows half of the apply guarantee: there is no binary swap at all, so
+/// the last-disconnect apply must hit the non-Unix `apply_update_binary` stub,
+/// fail closed, and keep the pending record (#1401) — the agent keeps running
+/// the binary it started with and still answers.
+#[cfg(windows)]
+#[test]
+fn live_agent_tcp_windows_last_disconnect_apply_fails_closed() {
+    let agent = LiveAgent::spawn(Some("1"));
+    let meta_before = std::fs::metadata(&agent.bin_path).expect("binary present at start");
+
+    let mut client = Client::connect(&agent);
+    client
+        .wait_for_notification("agent.update_available")
+        .expect("armed agent must announce on attach");
+
+    // Closing the last session is what fires the deferred-apply hook.
+    let session_id = client.create_shell_session();
+    client.close_session(&session_id);
+
+    // The hook logs its failure; wait for it, so the assertions below observe
+    // the post-apply state rather than racing the hook.
+    let deadline = Instant::now() + TIMEOUT;
+    let marker = "Deferred agent update failed to apply on last disconnect";
+    while !agent.stderr().contains(marker) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let log = agent.stderr();
+    let line = log
+        .lines()
+        .find(|l| l.contains(marker))
+        .unwrap_or_else(|| panic!("the last-disconnect apply must fire and fail. stderr:\n{log}"));
+    assert!(
+        line.contains("only supported on Unix"),
+        "the failure must come from the non-Unix apply stub: {line}"
+    );
+
+    let resp = client.rpc("connection.list", json!({}));
+    assert!(
+        resp.get("result").is_some(),
+        "the agent must keep running after a failed apply: {resp}"
+    );
+    let meta_after = std::fs::metadata(&agent.bin_path).expect("binary still present");
+    assert_eq!(
+        meta_after.len(),
+        meta_before.len(),
+        "binary must be untouched"
+    );
+    assert_eq!(
+        meta_after.modified().ok(),
+        meta_before.modified().ok(),
+        "binary must be untouched"
+    );
+    // #1401: a failed apply keeps the record for a later retry.
+    assert_eq!(
+        agent.state()["update"]["pending_update"]["version"],
+        HOOK_DEFAULT_VERSION,
+        "a failed apply must keep the pending update"
+    );
+}
+
 /// **Production path.** Unarmed, the agent holds no pending update, announces
 /// nothing, and rejects an apply — every observable of the hook is absent.
 #[test]
-fn unarmed_agent_has_no_pending_update_and_never_notifies() {
+fn live_agent_tcp_unarmed_agent_has_no_pending_update_and_never_notifies() {
     let agent = LiveAgent::spawn(None);
     let mut client = Client::connect(&agent);
 
@@ -668,7 +752,7 @@ fn unarmed_agent_has_no_pending_update_and_never_notifies() {
 /// A falsy gate is the same as no gate — so a harness can pass the variable
 /// through unconditionally and switch the hook with its value.
 #[test]
-fn falsy_gate_leaves_the_agent_unarmed() {
+fn live_agent_tcp_falsy_gate_leaves_the_agent_unarmed() {
     let agent = LiveAgent::spawn(Some("0"));
     let mut client = Client::connect(&agent);
 

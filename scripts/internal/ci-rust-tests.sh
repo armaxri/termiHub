@@ -84,17 +84,19 @@ HEAVY_TEST_THREADS="${CI_HEAVY_TEST_THREADS:-2}"
 SERIAL_FILTERS=(
   "live_agent_tcp_"
 )
-# How many tests the serial set holds today: 17 on unix (16 in
-# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 18 on Windows
-# (one of the unix ones, the exactly-once replay count, is `#[cfg(unix)]`; the
-# other daemon-recovery tests run over named pipes there too, #3684; two
-# `#[cfg(windows)]` ConPTY shell-session tests, #3685, run only there). Raise
-# the count when adding one; a rename that drops a test out of the prefix then
-# fails the serial phase instead of going unseen.
+# How many tests the serial set holds today: 23 on unix (16 in
+# local_agent_integration.rs + 1 in tcp_listener_readiness.rs + 6 in
+# deferred_update_hook_integration.rs, #5218), 25 on Windows (one of the unix
+# local_agent ones, the exactly-once replay count, is `#[cfg(unix)]`; the other
+# daemon-recovery tests run over named pipes there too, #3684; two
+# `#[cfg(windows)]` ConPTY shell-session tests, #3685, and the deferred-hook
+# fail-closed apply test, #5218, run only there). Raise the count when adding
+# one; a rename that drops a test out of the prefix then fails the serial phase
+# instead of going unseen.
 if [ "${OS:-}" = "Windows_NT" ]; then
-  SERIAL_MIN_TESTS_DEFAULT=18
+  SERIAL_MIN_TESTS_DEFAULT=25
 else
-  SERIAL_MIN_TESTS_DEFAULT=17
+  SERIAL_MIN_TESTS_DEFAULT=23
 fi
 SERIAL_MIN_TESTS="${CI_SERIAL_MIN_TESTS:-$SERIAL_MIN_TESTS_DEFAULT}"
 # Hard ceiling for the whole serial phase (incremental build + the tests). The
