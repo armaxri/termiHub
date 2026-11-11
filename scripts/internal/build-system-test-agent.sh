@@ -41,8 +41,14 @@
 #   The harness passes it on CI only: before #4092 the integration lane had no
 #   `cross`, so every deployed-agent suite skipped there and never ran.
 #
-# Usage: scripts/internal/build-system-test-agent.sh [--target <triple>] [--install-cross]
+# Host mode (#5424): `--host` builds the same test-hooks agent for the host's
+# own Rust triple with plain `cargo build` (no container, no cross), into the
+# same target dir. The macOS integration lane installs it for the native sshd
+# fixture's user, as the deployed agent of the remote-agent suites.
+#
+# Usage: scripts/internal/build-system-test-agent.sh [--target <triple> | --host] [--install-cross]
 #   --target <triple>   musl target to build (default: the host arch's musl target)
+#   --host              build for the host's own triple instead (macOS/Linux)
 #   --install-cross     install the pinned cross-rs release if `cross` is missing
 #
 # Prints the built binary's path as its last line. Exit 0 = built and verified.
@@ -61,6 +67,7 @@ usage() {
 
 TARGET=""
 INSTALL_CROSS=false
+HOST_BUILD=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --target)
@@ -75,6 +82,10 @@ while [ "$#" -gt 0 ]; do
         INSTALL_CROSS=true
         shift
         ;;
+    --host)
+        HOST_BUILD=true
+        shift
+        ;;
     --help | -h)
         usage
         exit 0
@@ -86,7 +97,23 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ -z "$TARGET" ]; then
+if [ "$HOST_BUILD" = true ]; then
+    if [ -n "$TARGET" ]; then
+        echo "ERROR: --host and --target are mutually exclusive" >&2
+        exit 2
+    fi
+    TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+    [ -n "$TARGET" ] || {
+        echo "ERROR: could not determine the Rust host triple (rustc -vV)" >&2
+        exit 1
+    }
+    case "$TARGET" in
+    *-windows-*)
+        echo "ERROR: --host does not build the Windows agent ($TARGET)" >&2
+        exit 2
+        ;;
+    esac
+elif [ -z "$TARGET" ]; then
     case "$(uname -m)" in
     x86_64 | amd64) TARGET="x86_64-unknown-linux-musl" ;;
     aarch64 | arm64) TARGET="aarch64-unknown-linux-musl" ;;
@@ -97,13 +124,15 @@ if [ -z "$TARGET" ]; then
         ;;
     esac
 fi
-case "$TARGET" in
-*-linux-musl*) ;;
-*)
-    echo "ERROR: $TARGET is not a Linux musl target" >&2
-    exit 2
-    ;;
-esac
+if [ "$HOST_BUILD" != true ]; then
+    case "$TARGET" in
+    *-linux-musl*) ;;
+    *)
+        echo "ERROR: $TARGET is not a Linux musl target" >&2
+        exit 2
+        ;;
+    esac
+fi
 
 cd "$REPO_ROOT"
 # Keep in sync with SYSTEM_TEST_AGENT_TARGET_DIR in tests/system/termihub_harness/fixtures.py.
@@ -195,7 +224,11 @@ native_container_build() {
         '
 }
 
-if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" != "x86_64" ] &&
+if [ "$HOST_BUILD" = true ]; then
+    echo "Building $TARGET (the host) with cargo into $TARGET_DIR"
+    CARGO_TARGET_DIR="$TARGET_DIR" \
+        cargo build --release --target "$TARGET" -p termihub-agent --features test-hooks
+elif [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" != "x86_64" ] &&
     [ "$TARGET" = "$(host_musl_target)" ] && ! has_local_cross_image; then
     if ! command -v "$(container_cmd)" >/dev/null 2>&1; then
         echo "ERROR: $(container_cmd) not found; the native $TARGET build runs in a container" >&2

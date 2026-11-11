@@ -86,6 +86,7 @@ from termihub_harness import (
     require_test_bridge_build,
     find_rdp_helper,
     stage_remote_agent_binary,
+    install_native_agent,
     wait_for_banner,
     wait_for_rdp,
 )
@@ -873,7 +874,8 @@ def traceroute_fixtures():
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def remote_agent_fixtures():
-    """Deployed-agent SSH container (compose profile ``agent``, port 2211).
+    """Deployed-agent SSH container (compose profile ``agent``, port 2211), or
+    on the macOS native target the native sshd with a host agent installed.
 
     Unlike ``ssh_fixtures``, this bakes a freshly-built ``termihub-agent`` binary
     into the image, so a live connect finds the agent already installed (#995).
@@ -883,6 +885,14 @@ def remote_agent_fixtures():
     same contract as the other container fixtures, so hosts without the cross
     toolchain (or without Docker) stay green.
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5424): a host-OS test-hooks agent installed for
+        # the native sshd's user stands in for the container's baked-in one.
+        try:
+            install_native_agent(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"deployed-agent native install unavailable: {exc}")
+        return NATIVE_SSH_TARGET
     try:
         stage_remote_agent_binary()
         fixture = ComposeFixture()

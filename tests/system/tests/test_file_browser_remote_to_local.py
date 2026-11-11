@@ -208,6 +208,7 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestFileBrowserRemoteToLocal(
     _RemoteToLocalPasteJourneys,
     ConnectionsUi,
@@ -225,6 +226,7 @@ class TestFileBrowserRemoteToLocal(
 
 
 @pytest.mark.usefixtures("remote_agent_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestAgentFileBrowserRemoteToLocal(
     _RemoteToLocalPasteJourneys,
     AgentUi,

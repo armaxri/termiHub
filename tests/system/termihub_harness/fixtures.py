@@ -266,6 +266,10 @@ def wait_for_rdp(host: str, port: int, *, timeout: float) -> None:
 #: running the setup wizard (see :func:`stage_remote_agent_binary` and #995).
 REMOTE_AGENT_SERVICE = "remote-agent"
 REMOTE_AGENT_PORT = dev_local.service_port("TERMIHUB_TEST_REMOTE_AGENT_PORT", 2211)
+#: On the macOS native target the plain deployed-agent suites log in to the
+#: native sshd, where :func:`install_native_agent` put a host-OS agent (#5424).
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    REMOTE_AGENT_PORT = NATIVE_SSH_TARGET.port
 #: Service + host port for the *armed* deployed-agent container (compose profile
 #: ``agent``). Built from the same context as ``remote-agent`` but with
 #: ``PENDING_UPDATE_VERSION`` set, so the agent it launches holds a
@@ -1066,6 +1070,59 @@ def system_test_agent_binary(target: str) -> Path:
     return REPO_ROOT / SYSTEM_TEST_AGENT_TARGET_DIR / target / "release" / "termihub-agent"
 
 
+def build_host_test_agent(*, build_timeout: float = 1500.0) -> Path:
+    """Build (a no-op when current) the test-hooks agent for this host (#5424).
+
+    ``build-system-test-agent.sh --host``: the same ``--features test-hooks``
+    recipe as the container agent, for the host's own triple, in
+    :data:`SYSTEM_TEST_AGENT_TARGET_DIR`. Returns the binary. Raises
+    :class:`ContainerRuntimeUnavailable` (a skip) off CI and
+    :class:`ComposeFixtureFailed` on CI when the build fails.
+    """
+    script = REPO_ROOT / "scripts" / "internal" / "build-system-test-agent.sh"
+    try:
+        result = subprocess.run(
+            ["bash", str(script), "--host"],
+            check=True,
+            timeout=build_timeout,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        output = "\n".join(
+            part for part in (getattr(exc, "stdout", None), getattr(exc, "stderr", None)) if part
+        )
+        detail = f"`build-system-test-agent.sh --host` failed: {exc}\n{_tail(output)}"
+        if _strict_fixtures():
+            raise ComposeFixtureFailed(detail) from exc
+        raise ContainerRuntimeUnavailable(detail) from exc
+    lines = result.stdout.strip().splitlines()
+    built = REPO_ROOT / lines[-1] if lines else None
+    if built is None or not built.is_file() or not embeds_test_signing_key(built):
+        detail = f"`build-system-test-agent.sh --host` left no test-hooks agent ({built})"
+        if _strict_fixtures():
+            raise ComposeFixtureFailed(detail)
+        raise ContainerRuntimeUnavailable(detail)
+    return built
+
+
+def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
+    """Build the host test-hooks agent and install it for the native sshd's user.
+
+    The plain deployed-agent suites then find it where the app runs it,
+    ``$HOME/.local/bin/termihub-agent``, as they do in the ``remote-agent``
+    container (#5424). Returns the installed path.
+    """
+    binary = build_host_test_agent()
+    control = native_ssh.NativeSshServerControl(target)
+    if not control.available:
+        raise ContainerRuntimeUnavailable(
+            "the native sshd fixture exported no client key to install the agent with"
+        )
+    return control.install_agent(binary)
+
+
 def stage_remote_agent_binary(*, build_timeout: float = 1500.0) -> Path:
     """Build (if needed) and stage the agent binary into the remote-agent context.
 
@@ -1188,9 +1245,14 @@ def ssh_server_control(service: str = SSH_PASSWORD_SERVICE):
     The native sshd's :class:`~termihub_harness.native_ssh.NativeSshServerControl`
     when the native target is selected and ``service`` is one of the SSH
     services it stands in for (#5421); else the Docker :class:`SshServerControl`
-    for ``service``. Both offer the same calls plus ``home()``.
+    for ``service``. Both offer the same calls plus ``home()`` and
+    ``agent_crash_dir()``. On macOS the deployed-agent service maps to the
+    native sshd too, where the plain agent suites run (#5424).
     """
-    if NATIVE_SSH_TARGET is not None and service in (SSH_PASSWORD_SERVICE, SSH_KEYS_SERVICE):
+    if NATIVE_SSH_TARGET is not None and (
+        service in (SSH_PASSWORD_SERVICE, SSH_KEYS_SERVICE)
+        or (service == REMOTE_AGENT_SERVICE and native_ssh.serves_agent())
+    ):
         return native_ssh.NativeSshServerControl(NATIVE_SSH_TARGET)
     return SshServerControl(service)
 
@@ -1227,6 +1289,10 @@ class SshServerControl:
         its SSH session and the SFTP browser start. The native twin reads it
         from its target (#5421)."""
         return CONTAINER_SSH_HOME
+
+    def agent_crash_dir(self) -> str:
+        """The deployed agent's crash-report dir in the agent container."""
+        return f"{CONTAINER_SSH_HOME}/.config/termihub-agent/logs/crash-reports"
 
     def session_pids(self) -> set[str]:
         """PIDs of the sshd session processes currently serving the test user."""

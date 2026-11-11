@@ -8,6 +8,8 @@ bastion's gateway count, and the server-control twin's session lookup and
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from termihub_harness import native_ssh
@@ -285,3 +287,122 @@ def test_ssh_server_control_picks_the_native_twin(monkeypatch):
     control = fixtures.ssh_server_control()
     assert isinstance(control, fixtures.SshServerControl)
     assert control.home() == "/home/testuser"
+
+
+# ── Deployed agent on the native sshd (#5424) ─────────────────────────────────
+def test_agent_suites_are_served_on_macos_only():
+    assert native_ssh.serves_agent("darwin")
+    assert not native_ssh.serves_agent("win32")
+    assert native_ssh.served_fixtures("darwin") >= native_ssh.AGENT_FIXTURES
+    assert not native_ssh.served_fixtures("win32") & native_ssh.AGENT_FIXTURES
+
+
+def test_unmarked_agent_suite_is_not_ported_on_macos_only():
+    names = ["remote_agent_fixtures"]
+    containers = {"remote_agent_fixtures", "remote_agent_pending_fixtures", "vnc_fixtures"}
+    darwin = skip_reason(names, None, target=TARGET, platform="darwin", container_fixtures=containers)
+    assert darwin == NOT_PORTED_REASON
+    # Windows keeps the container fixture's own skip reason.
+    assert (
+        skip_reason(names, None, target=TARGET, platform="win32", container_fixtures=containers)
+        is None
+    )
+    marked = skip_reason(
+        names, ("darwin",), target=TARGET, platform="darwin", container_fixtures=containers
+    )
+    assert marked is None
+
+
+def test_agent_variants_keep_their_container_reason():
+    containers = {"remote_agent_fixtures", "remote_agent_pending_fixtures"}
+    names = ["remote_agent_fixtures", "remote_agent_pending_fixtures"]
+    assert (
+        skip_reason(names, None, target=TARGET, platform="darwin", container_fixtures=containers)
+        is None
+    )
+
+
+class _FakeSsh:
+    """Replays ssh results per script substring and records what ran."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    def __call__(self, cmd, **kw):
+        import shlex as _shlex
+
+        script = _shlex.split(cmd[-1])[2]
+        self.calls.append((script, kw.get("input")))
+        for needle, out in self.replies:
+            if needle in script:
+                value = out(script) if callable(out) else out
+
+                class _R:
+                    returncode = 0
+                    stdout = value
+                    stderr = b""
+
+                return _R()
+        raise AssertionError(f"unexpected script {script!r}")
+
+
+def test_install_agent_streams_and_renames_then_verifies(tmp_path, monkeypatch):
+    import hashlib
+
+    binary = tmp_path / "termihub-agent"
+    binary.write_bytes(b"AGENT-BINARY")
+    digest = hashlib.sha256(b"AGENT-BINARY").hexdigest()
+    state = {"installed": False}
+
+    def exists(_):
+        return b"yes" if state["installed"] else b"no"
+
+    def install(_):
+        state["installed"] = True
+        return b""
+
+    fake = _FakeSsh(
+        [
+            ('"$HOME"', b"/Users/u"),
+            ("[ -e", exists),
+            ("mv -f", install),
+            ("sha256", f"{digest}  -\n".encode()),
+        ]
+    )
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake)
+    control = native_ssh.NativeSshServerControl(KEYED)
+    assert control.install_agent(binary) == "/Users/u/.local/bin/termihub-agent"
+    streamed = [inp for script, inp in fake.calls if "mv -f" in script]
+    assert streamed == [b"AGENT-BINARY"]
+    # Already installed with the same digest: no second upload.
+    fake.calls.clear()
+    control.install_agent(binary)
+    assert not [s for s, _ in fake.calls if "mv -f" in s]
+
+
+def test_install_agent_fails_on_a_digest_mismatch(tmp_path, monkeypatch):
+    binary = tmp_path / "termihub-agent"
+    binary.write_bytes(b"AGENT-BINARY")
+    fake = _FakeSsh(
+        [('"$HOME"', b"/Users/u"), ("[ -e", b"no"), ("mv -f", b""), ("sha256", b"00 -\n")]
+    )
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake)
+    with pytest.raises(native_ssh.NativeSshExecError, match="expected"):
+        native_ssh.NativeSshServerControl(KEYED).install_agent(binary)
+
+
+def test_agent_service_control_is_native_on_macos(monkeypatch):
+    from termihub_harness import fixtures
+
+    monkeypatch.setattr(fixtures, "container_runtime", lambda: None)
+    monkeypatch.setattr(fixtures, "NATIVE_SSH_TARGET", KEYED)
+    monkeypatch.setattr(native_ssh, "AGENT_PLATFORMS", (sys.platform,))
+    assert isinstance(
+        fixtures.ssh_server_control(fixtures.REMOTE_AGENT_SERVICE),
+        native_ssh.NativeSshServerControl,
+    )
+    monkeypatch.setattr(native_ssh, "AGENT_PLATFORMS", ())
+    control = fixtures.ssh_server_control(fixtures.REMOTE_AGENT_SERVICE)
+    assert isinstance(control, fixtures.SshServerControl)
+    assert control.agent_crash_dir() == "/home/testuser/.config/termihub-agent/logs/crash-reports"

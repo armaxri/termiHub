@@ -69,6 +69,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("remote_agent_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestAgentUpdateBannerLive(
     AgentUi,
     PasswordPromptUi,

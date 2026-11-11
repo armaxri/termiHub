@@ -22,6 +22,7 @@ Off those lanes (``TARGET_ENV`` unset or ``compose``) nothing changes.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
@@ -42,6 +43,28 @@ DEFAULT_PLATFORMS: tuple[str, ...] = ("darwin", "win32")
 
 #: The conftest fixtures that the native target replaces.
 SSH_FIXTURES = frozenset({"ssh_fixtures", "ssh_password_fixtures", "ssh_bastion_fixtures"})
+
+#: The deployed-agent fixture the native target also serves (#5424): it
+#: installs a host-OS ``termihub-agent`` for the fixture user instead of
+#: baking a Linux agent into a container. The armed, keyboard-interactive and
+#: real-swap variants stay container-only.
+AGENT_FIXTURES = frozenset({"remote_agent_fixtures"})
+
+#: Where the native target serves :data:`AGENT_FIXTURES`: the agent is built
+#: for the host and installed over a POSIX ``sh`` exec, so macOS only (the
+#: Windows fixture's login shell is ``cmd.exe``).
+AGENT_PLATFORMS: tuple[str, ...] = ("darwin",)
+
+
+def serves_agent(platform: str = sys.platform) -> bool:
+    """Whether the native target stands in for :data:`AGENT_FIXTURES` here."""
+    return platform in AGENT_PLATFORMS
+
+
+def served_fixtures(platform: str = sys.platform) -> frozenset[str]:
+    """The fixtures the native target replaces on ``platform``."""
+    return SSH_FIXTURES | AGENT_FIXTURES if serves_agent(platform) else SSH_FIXTURES
+
 
 #: Skip reason of a suite that still needs a Docker SSH fixture on this lane.
 NOT_PORTED_REASON = "SSH suite not ported to the native sshd fixture (#5176)"
@@ -119,15 +142,17 @@ def skip_reason(
     """Why a test cannot run against ``target`` on ``platform``, or None.
 
     ``marker_platforms`` is None for a test without the ``native_sshd`` marker.
-    Tests that use none of :data:`SSH_FIXTURES` are never affected, and neither
+    Tests that use none of :func:`served_fixtures` (:data:`SSH_FIXTURES`, plus
+    :data:`AGENT_FIXTURES` on macOS) are never affected, and neither
     are tests that also need another container fixture (``container_fixtures``,
     e.g. a VNC server reached over SSH): that fixture skips them with its own,
     more precise reason at setup, so the SSH side is not what keeps them off.
     """
     names = set(fixturenames)
-    if not names & SSH_FIXTURES:
+    served = served_fixtures(platform)
+    if not names & served:
         return None
-    if names & (set(container_fixtures) - SSH_FIXTURES):
+    if names & (set(container_fixtures) - served):
         return None
     if marker_platforms is None or platform not in marker_platforms:
         return NOT_PORTED_REASON
@@ -326,6 +351,56 @@ class NativeSshServerControl:
         if self._home is None:
             self._home = self._run("pwd -P").strip()
         return self._home
+
+    def env_home(self) -> str:
+        """``$HOME`` of the login user's sessions.
+
+        The passwd home on the ``--password-login`` fixture; the scratch home a
+        ``--scratch-home`` fixture's sshd ``SetEnv``s. The app runs the agent
+        as ``$HOME/.local/bin/termihub-agent``, so this is where it goes.
+        """
+        return self._run('printf "%s" "$HOME"')
+
+    def agent_crash_dir(self) -> str:
+        """The deployed agent's crash-report dir (``<config>/logs/crash-reports``).
+
+        Mirrors the agent's ``config_dir``: ``$XDG_CONFIG_HOME`` when set,
+        else ``~/Library/Application Support`` on macOS and ``~/.config``
+        elsewhere.
+        """
+        return self._run(
+            'if [ -n "${XDG_CONFIG_HOME:-}" ]; then c="$XDG_CONFIG_HOME"; '
+            'elif [ "$(uname -s)" = Darwin ]; then c="$HOME/Library/Application Support"; '
+            'else c="$HOME/.config"; fi; '
+            'printf "%s" "$c/termihub-agent/logs/crash-reports"'
+        )
+
+    def install_agent(self, binary: Path) -> str:
+        """Install ``binary`` as the login user's ``$HOME/.local/bin/termihub-agent``.
+
+        Skipped when the installed one already has the same SHA-256. Otherwise
+        the binary is streamed to a temp name beside it and renamed over it, so
+        a parallel worker's install or an agent already running from the old
+        file never sees a half-written binary. Returns the installed path.
+        """
+        data = Path(binary).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        dest = f"{self.env_home()}/.local/bin/termihub-agent"
+        if self.path_exists(dest) and self.sha256(dest) == digest:
+            return dest
+        self._run(
+            'mkdir -p "$(dirname "$1")" && t="$1.tmp.$$" && cat > "$t" '
+            '&& chmod 755 "$t" && mv -f "$t" "$1"',
+            dest,
+            stdin=data,
+            timeout=300.0,
+        )
+        installed = self.sha256(dest)
+        if installed != digest:
+            raise NativeSshExecError(
+                f"installed agent {dest} has SHA-256 {installed}, expected {digest}"
+            )
+        return dest
 
     # -- sessions ------------------------------------------------------------
     def _master_pid(self) -> str:
