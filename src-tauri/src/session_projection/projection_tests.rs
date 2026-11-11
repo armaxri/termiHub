@@ -18,15 +18,14 @@ use tauri::Manager;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
-    Projector, SnapshotFrame,
+    apply_ops, compute_ops, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
 };
 use crate::session::manager::{DropFold, EventEmitter};
 use crate::session_projection::projection::{
     fold_session_transition, publish_sessions, SESSION_LIFECYCLE_REGION,
 };
 use crate::session_projection::store::{SessionLifecycleStore, TerminalExit, TerminalExitReason};
-use crate::test_support::RecordingSink;
+use crate::test_support::{ClientCache, RecordingSink};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -155,27 +154,6 @@ fn required_exit(intent: &Intent) -> Result<TerminalExit, (String, String)> {
         reason,
         code: intent.payload.get("code").and_then(Value::as_i64),
     })
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-    }
 }
 
 fn intent(kind: &str, payload: Value) -> Intent {
