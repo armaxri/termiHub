@@ -10,7 +10,8 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { FileBrowserTab } from "./FileBrowserTab";
-import { createTerminal, closeTerminal } from "@/services/api";
+import { cancelConnecting, createTerminal, closeTerminal } from "@/services/api";
+import { CONNECTING_TIMEOUT_MS } from "@/utils/connectTimeout";
 import { getAllLeaves } from "@/utils/panelTree";
 import { layoutState } from "@/test/layoutState";
 import { checkA11y } from "@/test/axe";
@@ -18,6 +19,7 @@ import { checkA11y } from "@/test/axe";
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("ftp-session-1")),
   closeTerminal: vi.fn(() => Promise.resolve()),
+  cancelConnecting: vi.fn(() => Promise.resolve(true)),
 }));
 
 // Preserve the real module (incl. fireAndForget) and stub only the DEBUG logger,
@@ -30,6 +32,7 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 
 const mockedCreateTerminal = vi.mocked(createTerminal);
 const mockedCloseTerminal = vi.mocked(closeTerminal);
+const mockedCancelConnecting = vi.mocked(cancelConnecting);
 
 function tabSessionId(tabId: string): string | null {
   return (
@@ -161,7 +164,7 @@ describe("FileBrowserTab", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Could not open connection");
+    expect(container.textContent).toContain("Connection failed");
     expect(container.textContent).toContain("Invalid FTP settings: invalid type: null");
     expect(container.textContent).not.toContain("[object Object]");
     expect(container.querySelector('[data-testid="file-browser-tab-retry"]')).not.toBeNull();
@@ -209,10 +212,12 @@ describe("FileBrowserTab", () => {
 
       const region = liveRegion();
       expect(region?.getAttribute("role")).toBe("alert");
-      expect(region?.textContent).toBe("Could not open connection. connection refused");
-      const body = container.querySelector("[data-testid='file-browser-tab-error']");
+      expect(region?.textContent).toBe("Connection failed. My FTP Server: connection refused");
+      const body = container.querySelector(
+        "[data-testid='file-browser-tab-error'] .ui-content-overlay"
+      );
       const describedBy = body?.getAttribute("aria-describedby") ?? "";
-      const errorEl = container.querySelector(".file-browser-tab__error");
+      const errorEl = container.querySelector(".ui-connect-progress__error");
       expect(errorEl?.id).toBeTruthy();
       expect(describedBy.split(" ")).toContain(errorEl?.id);
     });
@@ -229,6 +234,139 @@ describe("FileBrowserTab", () => {
       });
       expect(container.querySelector("[data-testid='file-browser-tab-error']")).not.toBeNull();
       expect(await checkA11y()).toHaveNoViolations();
+    });
+  });
+
+  describe("connect parity with terminal tabs (#5377)", () => {
+    function q(testId: string): HTMLElement | null {
+      return container.querySelector(`[data-testid='${testId}']`);
+    }
+    function phaseOf(): string | null | undefined {
+      return q("file-browser-tab-error")?.getAttribute("data-phase");
+    }
+    async function mount(connectionId?: string): Promise<string> {
+      const tabId = addFileBrowserTab(connectionId);
+      await act(async () => {
+        root.render(React.createElement(FileBrowserTab, { tabId, isVisible: true }));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      return tabId;
+    }
+
+    it("passes a per-attempt connect id so the connect can be aborted", async () => {
+      mockedCreateTerminal.mockReturnValueOnce(new Promise<string>(() => {}));
+      const tabId = await mount();
+      expect(mockedCreateTerminal.mock.calls[0][1]).toMatch(new RegExp(`^${tabId}:fb:`));
+    });
+
+    it("Abort while connecting cancels the backend connect and rests on Connection aborted", async () => {
+      let resolve: (id: string) => void = () => {};
+      mockedCreateTerminal.mockReturnValueOnce(new Promise<string>((r) => (resolve = r)));
+      const tabId = await mount("Work/ftp");
+      expect(q("file-browser-tab-abort")?.textContent).toBe("Abort");
+
+      act(() => q("file-browser-tab-abort")?.click());
+      const connectId = mockedCreateTerminal.mock.calls[0][1];
+      expect(mockedCancelConnecting).toHaveBeenCalledWith(connectId);
+      expect(phaseOf()).toBe("aborted");
+      expect(q("file-browser-tab-error")?.textContent).toContain("Connection aborted");
+      expect(q("file-browser-tab-retry")).not.toBeNull();
+      expect(q("file-browser-tab-close")).not.toBeNull();
+      // An aborted connect is not a broken connection: no Edit connection.
+      expect(q("file-browser-tab-edit")).toBeNull();
+
+      // A session that still arrives is torn down, never adopted.
+      await act(async () => {
+        resolve("late-session");
+        await Promise.resolve();
+      });
+      expect(mockedCloseTerminal).toHaveBeenCalledWith("late-session");
+      expect(tabSessionId(tabId)).toBeNull();
+    });
+
+    it("gives up at the terminal connect deadline and offers Retry", async () => {
+      mockedCreateTerminal.mockReturnValueOnce(new Promise<string>(() => {}));
+      await mount();
+      expect(q("file-browser-tab-connecting")?.textContent).toContain("times out in 90s");
+
+      act(() => {
+        vi.advanceTimersByTime(CONNECTING_TIMEOUT_MS - 1);
+      });
+      expect(q("file-browser-tab-connecting")).not.toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(phaseOf()).toBe("timeout");
+      expect(q("file-browser-tab-error")?.textContent).toContain("Timed out");
+      expect(q("file-browser-tab-error")?.textContent).toContain("Gave up after 1m 30s");
+      expect(mockedCancelConnecting).toHaveBeenCalledOnce();
+    });
+
+    it("Retry starts a fresh connect", async () => {
+      mockedCreateTerminal.mockRejectedValueOnce(new Error("boom"));
+      const tabId = await mount();
+      await act(async () => {
+        q("file-browser-tab-retry")?.click();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockedCreateTerminal).toHaveBeenCalledTimes(2);
+      expect(tabSessionId(tabId)).toBe("ftp-session-1");
+    });
+
+    it("Close tab closes the tab", async () => {
+      mockedCreateTerminal.mockRejectedValueOnce(new Error("boom"));
+      const tabId = await mount();
+      act(() => q("file-browser-tab-close")?.click());
+      expect(useAppStore.getState().tabContent[tabId]).toBeUndefined();
+    });
+
+    it("a refused connect names itself, hides the OS error behind Details and offers Edit", async () => {
+      mockedCreateTerminal.mockRejectedValueOnce({ code: "refused", message: "os error 61" });
+      const open = vi.spyOn(useAppStore.getState(), "openConnectionEditorTab");
+      await mount("Work/ftp");
+      expect(phaseOf()).toBe("failed");
+      expect(q("file-browser-tab-error")?.textContent).toContain("Connection refused");
+      expect(q("terminal-connection-error-details")?.textContent).toContain("os error 61");
+      expect(container.querySelector(".ui-connect-progress__error")).toBeNull();
+      act(() => q("file-browser-tab-edit")?.click());
+      expect(open).toHaveBeenCalledWith(
+        "Work/ftp",
+        undefined,
+        expect.objectContaining({ field: "port" })
+      );
+    });
+
+    it("a rejected password offers re-entry that retries with the new password", async () => {
+      vi.useRealTimers();
+      mockedCreateTerminal.mockRejectedValueOnce({ code: "auth_failed", message: "530 Login" });
+      await mount();
+      expect(q("file-browser-tab-error")?.textContent).toContain(
+        "The server rejected the credentials"
+      );
+      act(() => q("terminal-credential-reentry-open-btn")?.click());
+      const input = q("terminal-credential-reentry-secret") as HTMLInputElement;
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, "s3cret");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        q("terminal-credential-reentry-submit")?.click();
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(mockedCreateTerminal).toHaveBeenCalledTimes(2);
+      expect(mockedCreateTerminal.mock.calls[1][0]).toEqual({
+        type: "ftp",
+        config: { host: "ftp.example.com", password: "s3cret" },
+      });
     });
   });
 });

@@ -1,11 +1,26 @@
-import { useId, useRef } from "react";
-import { AlertCircle, Power, Ban, Monitor } from "lucide-react";
+import { useId, useRef, type ReactNode } from "react";
+import { AlertCircle, Power, Ban, Monitor, X } from "lucide-react";
 import { Button, ContentOverlay } from "@/components/ui";
 import { ConnectProgress, type ConnectStage } from "@/components/ui/ConnectProgress";
 import { connectTypeLabel } from "@/utils/connectStages";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
 import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
+import { ABORTED_CONNECT_MESSAGE } from "@/store/reconnectHelpers";
+import {
+  backendFamilyFromSessionType,
+  connectionErrorHint,
+  isNetworkErrorKind,
+  type ConnectionErrorKind,
+} from "@/utils/connectionErrorHints";
+import { getPlatform } from "@/utils/platform";
+import {
+  ConnectErrorDetails,
+  ConnectFailureActions,
+  ConnectFailureHint,
+  restingConnectHeading,
+  restingConnectPhase,
+} from "@/components/Terminal/ConnectFailure";
 
 interface RemoteDesktopOverlayProps {
   state: GraphicalSessionState;
@@ -20,6 +35,19 @@ interface RemoteDesktopOverlayProps {
   onCancelConnect: () => void;
   /** Manually (re)connect from a failed / dropped state. */
   onReconnect: () => void;
+  /** Close the tab (#5377). */
+  onCloseTab: () => void;
+  /**
+   * Open the saved connection's editor from a failed connect (#5377);
+   * omitted for a tab not opened from a saved connection.
+   */
+  onEditConnection?: () => void;
+  /** Typed category of a failed connect (#5377). */
+  errorKind?: ConnectionErrorKind;
+  /** The user aborted the connect or reconnect (#5377). */
+  aborted?: boolean;
+  /** Inline credential re-entry, shown on an auth failure (#5377). */
+  credentialReentry?: ReactNode;
   /**
    * Whether this tab is the active (visible) one. Moves focus to **Reconnect**
    * when a resting failure / closed state appears (#4514); background tabs
@@ -28,13 +56,9 @@ interface RemoteDesktopOverlayProps {
   isActive?: boolean;
 }
 
-/** The resting-state heading for each non-busy state. */
+/** The resting-state heading for a dropped or closed session. */
 function restingHeading(state: GraphicalSessionState): string {
   switch (state) {
-    case "authFailed":
-      return "Authentication failed";
-    case "connectFailed":
-      return "Could not connect";
     case "serverClosed":
       return "Session ended by the server";
     case "disconnected":
@@ -59,8 +83,10 @@ function graphicalStages(state: GraphicalSessionState): ConnectStage[] {
  * sessions (#1680): connecting (with Cancel, #4298), reconnecting (with attempt counter + Cancel)
  * while the backend auto-reconnect loop is retrying (#3364) — worded like a
  * terminal tab's reconnect (#3730: "Connection lost — reconnecting…",
- * "Attempt n of N") — and the
- * dropped / auth / connect / close resting states (with a Reconnect action).
+ * "Attempt n of N") — a failed or aborted connect, which rests on the
+ * terminal's failure screen (#5377: humanised reason, Retry, Edit connection,
+ * Close tab, and credential re-entry for a rejected password) — and the
+ * dropped / close resting states (Reconnect and Close tab).
  * `disconnected` means no retry is running — Auto-Reconnect is off, its budget
  * is spent, or the drop was non-retryable — so it gets the manual prompt.
  * `serverClosed` means the server ended the session on purpose (a remote logoff
@@ -76,10 +102,14 @@ export function RemoteDesktopOverlay({
   onCancel,
   onCancelConnect,
   onReconnect,
+  onCloseTab,
+  onEditConnection,
+  errorKind = "other",
+  aborted = false,
+  credentialReentry,
   isActive = false,
 }: RemoteDesktopOverlayProps) {
   const messageId = useId();
-  const hintId = useId();
   // The ring's elapsed readout counts from when this overlay first showed.
   const startedAt = useRef(Date.now()).current;
   if (state === "active" || state === "resizing") return null;
@@ -138,11 +168,53 @@ export function RemoteDesktopOverlay({
     );
   }
 
-  // Resting states: dropped (no retry running), auth failed, connect failed,
+  // A failed or user-aborted connect rests on the terminal's failure screen
+  // (#5377): humanised reason, Retry, Edit connection and Close tab.
+  if (state === "connectFailed" || state === "authFailed" || (state === "closed" && aborted)) {
+    const kind: ConnectionErrorKind = state === "authFailed" ? "auth" : errorKind;
+    const phase = restingConnectPhase(state === "closed", kind);
+    const heading = restingConnectHeading(phase, kind);
+    const error = phase === "aborted" ? ABORTED_CONNECT_MESSAGE : (message ?? "");
+    const networkFailure = phase === "failed" && isNetworkErrorKind(kind) && error !== "";
+    const hint =
+      phase === "aborted"
+        ? null
+        : connectionErrorHint(backendFamilyFromSessionType(protocol), kind, getPlatform());
+    return (
+      <div className="rd-overlay" data-testid="remote-desktop-overlay-error">
+        <ConnectProgress
+          {...common}
+          phase={phase}
+          heading={heading}
+          error={networkFailure || !error ? undefined : error}
+          announcement={[`${heading}.`, `${host}:`, error].join(" ").trim()}
+          autoFocusPrimaryAction={isActive}
+          timeText=""
+          actions={
+            <ConnectFailureActions
+              onRetry={onReconnect}
+              onEdit={phase === "aborted" ? undefined : onEditConnection}
+              onClose={onCloseTab}
+              testIds={{
+                retry: "remote-desktop-retry",
+                edit: "remote-desktop-edit",
+                close: "remote-desktop-close-tab",
+              }}
+            />
+          }
+        >
+          <ConnectFailureHint hint={hint} />
+          {networkFailure && <ConnectErrorDetails error={error} />}
+          {kind === "auth" && credentialReentry}
+        </ConnectProgress>
+      </div>
+    );
+  }
+
+  // Resting states of a session that was up: dropped (no retry running),
   // server closed, closed.
   const closed = state === "serverClosed" || state === "closed";
   const heading = restingHeading(state);
-  const authHint = state === "authFailed" ? "Check the credentials and try again." : null;
   return (
     <div className="rd-overlay" data-testid="remote-desktop-overlay-error">
       <ContentOverlay
@@ -157,30 +229,34 @@ export function RemoteDesktopOverlay({
         // Failures the user must act on interrupt; an intentional close
         // (server logoff, closed) is a polite state change (#4514).
         announce={closed ? "polite" : "assertive"}
-        announcement={[`${heading}.`, message, authHint].filter(Boolean).join(" ")}
-        describedBy={
-          [message ? messageId : "", authHint ? hintId : ""].filter(Boolean).join(" ") || undefined
-        }
+        announcement={[`${heading}.`, message].filter(Boolean).join(" ")}
+        describedBy={message ? messageId : undefined}
         autoFocusPrimaryAction={isActive}
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onReconnect}
-            data-testid="remote-desktop-reconnect"
-          >
-            Reconnect
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onReconnect}
+              data-testid="remote-desktop-reconnect"
+            >
+              Reconnect
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<X size={14} />}
+              onClick={onCloseTab}
+              data-testid="remote-desktop-close-tab"
+            >
+              Close tab
+            </Button>
+          </>
         }
       >
         {message && (
           <div id={messageId} className="rd-overlay__sub rd-overlay__error">
             {message}
-          </div>
-        )}
-        {authHint && (
-          <div id={hintId} className="rd-overlay__sub">
-            {authHint}
           </div>
         )}
       </ContentOverlay>
