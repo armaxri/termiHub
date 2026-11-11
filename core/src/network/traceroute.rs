@@ -58,9 +58,18 @@ fn icmp_reply_matches_probe(buf: &[u8], is_ipv6: bool, expected_dst_port: u16) -
 /// header + 4-byte unused), then the embedded original IPv4 header + UDP header.
 /// Returns `None` if `buf` is not a Time Exceeded / Destination Unreachable
 /// error or does not quote enough of a UDP datagram to read the port.
+///
+/// The ICMP message is located by the outer header's IHL alone, never by its
+/// `ip_len`: BSD-derived raw sockets (Darwin among them) can hand that field
+/// over in host byte order with the header length subtracted, which on an
+/// extended (RFC 4884) reply reads as a tiny length and hid the hop (#5288).
 fn quoted_udp_dst_port_v4(buf: &[u8]) -> Option<u16> {
     let outer = Ipv4Packet::new(buf)?;
-    let icmp = IcmpPacket::new(outer.payload())?;
+    let header_len = usize::from(outer.get_header_length()) * 4;
+    if header_len < 20 {
+        return None;
+    }
+    let icmp = IcmpPacket::new(buf.get(header_len..)?)?;
     if !matches!(
         icmp.get_icmp_type(),
         IcmpTypes::TimeExceeded | IcmpTypes::DestinationUnreachable
@@ -605,6 +614,13 @@ mod tests {
         let mut reply = hex(&format!("03 00 7a 1c  00 00 00 00  {QUOTED_V6_PROBE}"));
         reply.truncate(8 + 40);
         assert_eq!(quoted_udp_dst_port_v6(&reply), None);
+    }
+
+    #[test]
+    fn v4_outer_header_with_a_bogus_ihl_is_rejected() {
+        let mut reply = v4_time_exceeded_from_gateway();
+        reply[0] = 0x44; // IHL 4: shorter than any real IPv4 header.
+        assert_eq!(quoted_udp_dst_port_v4(&reply), None);
     }
 
     // ── Existing tests ────────────────────────────────────────────────────────
