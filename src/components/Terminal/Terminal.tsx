@@ -1925,6 +1925,16 @@ export function Terminal({
       }
     });
     resizeObserver.observe(el);
+    // Also follow the scroll viewport (#5121). Toggling horizontal scrolling
+    // changes its insets (and the .xterm bottom reserve) but not the container's
+    // size, so `el` alone never reports it. The toggle effect fits right after
+    // flipping the class; a WebView whose computed style still lags that flip
+    // (seen on the macOS CI runner) then fits to the previous mode's layout:
+    // entering horizontal mode kept the last row under the bar, leaving it kept
+    // the horizontal mode's grid. The viewport's box change lands after layout,
+    // so this observer re-fits against the mode actually on screen. In normal
+    // mode the viewport fills `el`, so a container resize still fires once.
+    resizeObserver.observe(scrollViewport);
 
     // A device-pixel-ratio change (monitor move, display scale, the WebView
     // settling on its scale at start-up) leaves the container's CSS size alone,

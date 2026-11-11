@@ -773,6 +773,14 @@ does not meet, so `dragTo` handles both:
   drop reorders nothing. `dragTo` therefore **yields a frame** after the wake
   move and **between each step**, so dnd-kit activates, measures, and resolves
   the target before `pointerup`.
+- **Committed drop target** — @dnd-kit drops on the `over` it last _committed_,
+  which lags the move that reached the target by two React renders. A target that
+  sets `data-drop-over` (`"true"` while dnd-kit has the drag over it, else
+  `"false"`, as the `PanelDropZone` edge/center overlays do) makes `dragTo` hold
+  the release, for a bounded number of frames, until it reads `"true"`. Without
+  that, a slow runner released while `over` still named the zone the previous
+  step crossed, so an edge drop landed on the source panel's own center and did
+  nothing (#5268). Give a new drop zone this attribute when a test drags onto it.
 
 ```ts
 const [first, , last] = (await driver.getState("rootPanel")).tabs.map((t) => t.id);

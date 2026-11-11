@@ -13,7 +13,12 @@ interface PanelDropZoneProps {
 
 const EDGES: DropEdge[] = ["left", "right", "top", "bottom"];
 
-/** Drop zone overlay for a leaf panel — shown only during active drag. */
+/**
+ * Drop zone overlay for a leaf panel — shown only during active drag.
+ *
+ * Each zone mirrors dnd-kit's committed `isOver` into `data-drop-over`, so the
+ * test bridge's `dragTo` can release only once the drop will land here (#5268).
+ */
 export function PanelDropZone({ panelId, hideEdges }: PanelDropZoneProps) {
   const [activeZone, setActiveZone] = useState<ActiveZone>(null);
 
@@ -55,6 +60,7 @@ function EdgeZone({
     <div
       ref={setNodeRef}
       data-testid={`panel-drop-edge-${panelId}-${edge}`}
+      data-drop-over={isOver ? "true" : "false"}
       className={`panel-drop-zone__edge panel-drop-zone__edge--${edge}`}
     />
   );
@@ -84,6 +90,7 @@ function CenterZone({
     <div
       ref={setNodeRef}
       data-testid={`panel-drop-center-${panelId}`}
+      data-drop-over={isOver ? "true" : "false"}
       className="panel-drop-zone__center"
     />
   );

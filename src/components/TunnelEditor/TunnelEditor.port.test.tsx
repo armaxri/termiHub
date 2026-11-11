@@ -105,9 +105,9 @@ describe("TunnelEditor — blank port policy (#1444)", () => {
     expect(localPortInput().value).toBe("");
   });
 
-  it("disables Save while a port is blank", async () => {
+  it("marks Save aria-disabled while a port is blank", async () => {
     await render();
     setValue(localPortInput(), "");
-    expect(saveButton().disabled).toBe(true);
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
   });
 });

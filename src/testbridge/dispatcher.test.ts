@@ -744,6 +744,69 @@ describe("dispatchCommand", () => {
       expect(res).toEqual({ ok: true, action: "dragTo" });
     });
 
+    it("holds the release until a data-drop-over target reports the drag over it (#5268)", async () => {
+      // @dnd-kit drops on the `over` it last committed, which lags the last move
+      // by two React renders. Releasing right after the last move ended an edge
+      // drop on the zone the previous step crossed (the panel's own center), a
+      // silent no-op. Model a target that only commits "over" several frames
+      // after the final move: the release must wait for it.
+      const { deps, container } = setup(
+        `<div data-testid="tab"></div><div data-testid="zone" data-drop-over="false"></div>`
+      );
+      const zone = container.querySelector<HTMLElement>('[data-testid="zone"]')!;
+      const seq: string[] = [];
+      let moves = 0;
+      let commit: ReturnType<typeof setTimeout> | undefined;
+      // dnd-kit commits "over" well after the last move (wake + 6 steps) — later
+      // than the frame dragTo yields after it (≤100ms).
+      const onMove = () => {
+        moves += 1;
+        if (moves === 7) {
+          commit = setTimeout(() => {
+            zone.setAttribute("data-drop-over", "true");
+            seq.push("over");
+          }, 250);
+        }
+      };
+      const onUp = () => seq.push(`up:${zone.getAttribute("data-drop-over")}`);
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      try {
+        const res = await dispatchCommand(
+          { action: "dragTo", fromTestId: "tab", toTestId: "zone" },
+          deps
+        );
+        expect(res).toEqual({ ok: true, action: "dragTo" });
+      } finally {
+        clearTimeout(commit);
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+      }
+      expect(seq.indexOf("over")).toBeGreaterThan(-1);
+      expect(seq[seq.length - 1]).toBe("up:true");
+    });
+
+    it("releases anyway when a data-drop-over target never reports over (#5268)", async () => {
+      // A bounded wait: a target that never commits must not hang the verb past
+      // the bridge's command timeout — release, so no drag is left dangling.
+      const { deps } = setup(
+        `<div data-testid="tab"></div><div data-testid="zone" data-drop-over="false"></div>`
+      );
+      let ups = 0;
+      const onUp = () => (ups += 1);
+      document.addEventListener("pointerup", onUp);
+      try {
+        const res = await dispatchCommand(
+          { action: "dragTo", fromTestId: "tab", toTestId: "zone" },
+          deps
+        );
+        expect(res).toEqual({ ok: true, action: "dragTo" });
+      } finally {
+        document.removeEventListener("pointerup", onUp);
+      }
+      expect(ups).toBe(1);
+    }, 15000);
+
     it("releases and fails when a deferred target never mounts (#2583)", async () => {
       // Even when the target is absent both before and after the wake move, the
       // gesture must not leave a drag dangling — it releases, then reports.

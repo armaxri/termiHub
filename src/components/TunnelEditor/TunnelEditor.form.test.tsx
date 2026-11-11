@@ -168,8 +168,12 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
     await render();
     setValue(q("tunnel-editor-name") as HTMLInputElement, "Bad host");
     // Name is valid, so Save is enabled until the host is cleared.
-    expect((q("tunnel-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((q("tunnel-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
     setValue(byId(`tunnel-local-host-${TAB_ID}`), "");
-    expect((q("tunnel-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((q("tunnel-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 });
