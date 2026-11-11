@@ -19,12 +19,9 @@ use crate::connections_projection::projection::{
     fold_connections_from_manager, publish_connections, CONNECTIONS_REGION,
 };
 use crate::connections_projection::store::ConnectionsStore;
-use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
-    SnapshotFrame,
-};
+use crate::projection::{Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector};
 use crate::terminal::backend::ConnectionConfig;
-use crate::test_support::RecordingSink;
+use crate::test_support::{ClientCache, RecordingSink};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -67,27 +64,6 @@ fn seeded_store() -> Arc<ConnectionsStore> {
         vec![connection("Work/A", "A", Some("Work"))],
     );
     store
-}
-
-/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    fn apply(&mut self, diff: &DiffFrame) {
-        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
