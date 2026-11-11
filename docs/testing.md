@@ -1271,6 +1271,20 @@ which `agent_crash_dir()` resolves (`~/Library/Application Support` on macOS
 unless `XDG_CONFIG_HOME` is set). On Windows the agent suites keep the
 container skip.
 
+**Agent-host variants (#5444, macOS).** The armed (Apply Now), real-swap and
+keyboard-interactive agent suites log in to extra sshds of the fixture,
+started by the harness with `native-sshd-fixture.sh variant-up` on fixed ports
+above the main one (`+10` pending, `+11` swap, `+12` kbdint). Each variant has
+its own `HOME`, XDG dirs and agent registry, and gets its test-hook env through
+sshd `SetEnv`, so the pending-update announcement never reaches the plain agent
+suites. The real-swap host is reset per test attempt: its home is wiped, the
+variant restarts with a fresh registry and the hook armed with the staged
+binary's path and digest, the agent is reinstalled, and the update is staged in
+the agent's `<config>/updates`, signed with the TEST-ONLY key
+(`termihub_harness/ed25519.py`; the runner's `openssl` is LibreSSL). The
+keyboard-interactive variant authenticates through PAM, so it needs the root
+sshd of a `--password-login` fixture and only runs on CI.
+
 Which suites run where:
 
 | Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | macOS | Windows                                                                                                                                   |
@@ -1283,13 +1297,12 @@ macOS and Windows. Each skip reason has a capped fragment in
 `tests/system/skip-allowlist.d/` (`5176-*.json`), so one more suite skipping for
 that reason fails the lane:
 
-| Suite(s)                                                                                                                                      | Why                                                                                                                                                                  |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                             | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
-| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites             | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
-| `test_session_sftp_no_orphan_on_quit.py`                                                                                                      | inspects the server's SFTP connections through the container (`/proc`)                                                                                               |
-| `test_agent_update_apply_now_live.py`, `test_agent_update_real_swap_live.py`, the keyboard-interactive agent in `test_ssh_kbd_interactive.py` | need an agent armed through sshd's per-user environment, a signed staged update, or a keyboard-interactive-only sshd (#5424 follow-up)                               |
-| `test_network_tools_agent_live.py`, `test_remote_agent.py` (missing agent)                                                                    | on the native target the agent host is this computer, and its user has an agent installed                                                                            |
+| Suite(s)                                                                                                                          | Why                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                 | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
+| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
+| `test_session_sftp_no_orphan_on_quit.py`                                                                                          | inspects the server's SFTP connections through the container (`/proc`)                                                                                               |
+| `test_network_tools_agent_live.py`, `test_remote_agent.py` (missing agent)                                                        | on the native target the agent host is this computer, and its user has an agent installed                                                                            |
 
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 
