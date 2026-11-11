@@ -775,7 +775,10 @@ async fn serve_refuses_a_local_copy_onto_or_into_itself() {
         match outcome {
             FileOutcome::Failed {
                 error: WireFileError::OperationFailed { message },
-            } => assert!(message.ends_with(&format!("refused: {reason}")), "{message}"),
+            } => assert!(
+                message.ends_with(&format!("refused: {reason}")),
+                "{message}"
+            ),
             other => panic!("expected the refusal, got {other:?}"),
         }
         assert_eq!(std::fs::read(&file).unwrap(), b"precious");
