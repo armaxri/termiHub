@@ -28,6 +28,7 @@ import {
   folderPasteEnd,
   folderPasteLinkTransfer,
   localListDir,
+  sessionCheckPaste,
   sessionCopy,
   sessionCopyRemote,
   sessionDeleteFile,
@@ -179,9 +180,8 @@ export async function pasteFileLeg(
  * rename, or a same-session server-side copy on SFTP) rather than file by file.
  */
 function isSingleOperationFolderPaste(t: PasteTransport): boolean {
-  if (t.continueExisting || t.sourceMode !== "session") return false;
-  const sameSession = (t.srcSession ?? t.destSession) === t.destSession;
-  return sameSession && (t.operation === "cut" || t.destSftp);
+  if (t.continueExisting) return false;
+  return isSameSession(t) && (t.operation === "cut" || t.destSftp);
 }
 
 /**
@@ -207,10 +207,73 @@ function alreadyCopied(child: FileEntry, existing: FileEntry[]): boolean {
   return existing.some((e) => e.name === child.name && !e.isDirectory && e.size === child.size);
 }
 
+/** One entry of a source folder, with its own entries when it is a folder. */
+interface SourceNode {
+  entry: FileEntry;
+  children: SourceNode[];
+}
+
+/** Whether both ends of a paste are the same session. */
+function isSameSession(t: PasteTransport): boolean {
+  return t.sourceMode === "session" && (t.srcSession ?? t.destSession) === t.destSession;
+}
+
+/**
+ * List the whole source folder before anything is created (#5330). A folder
+ * pasted into its own subtree through a path the backend cannot resolve (a
+ * symlink alias on FTP or an agent) would otherwise list its own new copy and
+ * copy it again, without end.
+ */
+async function snapshotSource(t: PasteTransport, dir: string): Promise<SourceNode[]> {
+  const entries =
+    t.sourceMode === "local"
+      ? await localListDir(dir)
+      : await sessionListFiles(t.srcSession ?? t.destSession, dir);
+  const nodes: SourceNode[] = [];
+  for (const entry of entries) {
+    nodes.push({ entry, children: entry.isDirectory ? await snapshotSource(t, entry.path) : [] });
+  }
+  return nodes;
+}
+
+/**
+ * Recreate the folder `srcDir` (listed in `nodes`) at `destPath`, copying each
+ * file and recursing into subfolders. Resolves to whether any leg drove the
+ * dedicated (event-emitting) channel.
+ */
+async function copySnapshot(
+  t: PasteTransport,
+  srcDir: string,
+  nodes: SourceNode[],
+  destPath: string
+): Promise<boolean> {
+  const existing = await prepareDestFolder(t, destPath);
+  let tracked = false;
+  for (const { entry: child, children } of nodes) {
+    const childDest = `${destPath}/${child.name}`;
+    if (child.isDirectory) {
+      tracked = (await copySnapshot(t, child.path, children, childDest)) || tracked;
+    } else if (!(t.continueExisting && alreadyCopied(child, existing))) {
+      tracked = (await pasteFileLeg(t, child.path, childDest, false)) || tracked;
+    }
+  }
+  // Cross-session / byte-based cut: remove the copied source subtree once the
+  // whole tree has landed (a local source is never mutated by a paste).
+  if (t.operation === "cut" && t.sourceMode === "session") {
+    await sessionDeleteFile(t.srcSession ?? t.destSession, srcDir);
+  }
+  return tracked;
+}
+
 /**
  * Recursively copy a DIRECTORY from `srcDir` → `destPath` so a pasted folder
  * lands with ALL of its contents (audit PROD-004). Resolves to whether any leg
  * drove the dedicated (event-emitting) channel.
+ *
+ * A same-session paste copied file by file first asks the backend whether the
+ * destination is the source or inside it (#5330), with both paths resolved
+ * there, and refuses before anything is created. The source is then listed
+ * whole before the first folder is made, so it is copied as it was.
  */
 export async function pasteFolderTree(
   t: PasteTransport,
@@ -230,26 +293,9 @@ export async function pasteFolderTree(
   }
   // Cross-session, byte-based, or local→session: recreate the directory on the
   // destination, then copy each child — recursing into subdirectories.
-  const existing = await prepareDestFolder(t, destPath);
-  const children =
-    t.sourceMode === "local"
-      ? await localListDir(srcDir)
-      : await sessionListFiles(t.srcSession ?? t.destSession, srcDir);
-  let tracked = false;
-  for (const child of children) {
-    const childDest = `${destPath}/${child.name}`;
-    if (child.isDirectory) {
-      tracked = (await pasteFolderTree(t, child.path, childDest)) || tracked;
-    } else if (!(t.continueExisting && alreadyCopied(child, existing))) {
-      tracked = (await pasteFileLeg(t, child.path, childDest, false)) || tracked;
-    }
-  }
-  // Cross-session / byte-based cut: remove the copied source subtree once the
-  // whole tree has landed (a local source is never mutated by a paste).
-  if (t.operation === "cut" && t.sourceMode === "session") {
-    await sessionDeleteFile(t.srcSession ?? t.destSession, srcDir);
-  }
-  return tracked;
+  if (isSameSession(t)) await sessionCheckPaste(t.destSession, srcDir, destPath);
+  const nodes = await snapshotSource(t, srcDir);
+  return copySnapshot(t, srcDir, nodes, destPath);
 }
 
 /** Describe a session endpoint from the tab that owns it (for the manifest). */

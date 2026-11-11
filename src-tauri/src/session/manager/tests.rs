@@ -4364,6 +4364,9 @@ mod initial_command;
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
 
+/// Same-session pastes onto or into themselves are refused (#5330).
+mod paste_guard;
+
 /// Application log secrecy: SSH password, store passphrase, sudo password and
 /// terminal content (#1570, #4007).
 mod log_secrecy;

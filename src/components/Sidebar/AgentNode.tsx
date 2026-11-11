@@ -111,6 +111,7 @@ import {
 } from "@/utils/treeRowKeys";
 import { agentFolderDeleteMessage, remoteAgentDeleteMessage } from "./agentDeleteMessages";
 import { InlineFolderInput, type InlineFolderCancelReason } from "./InlineFolderInput";
+import { useOpenAfterMenuClose } from "./useOpenAfterMenuClose";
 import { folderRenameError } from "@/utils/folderRename";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
@@ -617,10 +618,9 @@ function AgentFolderNode({
   const deleteFocusRef = useRef<FocusTarget | null>(null);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
-  // Set by the menu's New Subfolder item. The input opens only once the menu
-  // has closed: opened earlier, the menu's focus handling takes focus back,
-  // which blurs (and so cancels) the input that just appeared (#5322).
-  const subfolderAfterMenuRef = useRef(false);
+  // The New Subfolder input opens only once the menu has closed: opened
+  // earlier, the menu's focus return blurs (and so cancels) it (#5322).
+  const subfolderMenu = useOpenAfterMenuClose(() => setCreatingSubfolder(true));
 
   // Under an active filter, matched folders are force-expanded regardless of
   // their stored state (auto-expand matches).
@@ -744,21 +744,14 @@ function AgentFolderNode({
               aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
             />
           </ContextMenuTrigger>
-          <ContextMenuContent
-            onCloseAutoFocus={(e) => {
-              if (!subfolderAfterMenuRef.current) return;
-              subfolderAfterMenuRef.current = false;
-              e.preventDefault();
-              setCreatingSubfolder(true);
-            }}
-          >
+          <ContextMenuContent onCloseAutoFocus={subfolderMenu.onCloseAutoFocus}>
             <MenuItem onSelect={() => onNewConnection(folder.id)}>
               <Plus size={14} />
               New Connection
             </MenuItem>
             <MenuItem
               onSelect={() => {
-                subfolderAfterMenuRef.current = true;
+                subfolderMenu.request();
                 // The input renders inside the children, so open the folder.
                 if (!expanded) onToggleFolder(folder.id);
               }}
@@ -996,6 +989,9 @@ export function AgentNode({
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  // The menu's New Folder input opens only once the menu has closed, or the
+  // menu's focus return blurs (and so cancels) it (#5337).
+  const newFolderMenu = useOpenAfterMenuClose(() => setCreatingFolder(true));
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
   const isConnecting = agent.connectionState === "connecting";
@@ -1791,7 +1787,7 @@ export function AgentNode({
           </div>
         </ContextMenuTrigger>
 
-        <ContextMenuContent>
+        <ContextMenuContent onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}>
           {isConnecting ? (
             // A connecting agent is no longer a dead-end: offer Cancel, which
             // aborts the in-flight handshake (G1, #1235).
@@ -1863,7 +1859,11 @@ export function AgentNode({
                 New Connection
               </MenuItem>
               <MenuItem
-                onSelect={() => setCreatingFolder(true)}
+                onSelect={() => {
+                  newFolderMenu.request();
+                  // The input renders inside the agent's children, so open it.
+                  if (!agent.isExpanded) toggleRemoteAgent(agent.id);
+                }}
                 data-testid="context-agent-new-folder"
               >
                 <FolderPlus size={14} />

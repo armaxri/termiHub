@@ -40,6 +40,7 @@ Requires: Python 3.8+ (standard library only).
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import subprocess
 import sys
@@ -52,6 +53,8 @@ REPO_ROOT = Path(
 )
 SRC_DIR = REPO_ROOT / "src"
 CATALOG_PATH = REPO_ROOT / "tests" / "system" / "testid-catalog.md"
+TEMPLATES_CONFIG = REPO_ROOT / "tests" / "system" / "testid-templates.json"
+TEMPLATES_SCRIPT = REPO_ROOT / "scripts" / "testid_templates.py"
 
 # Files whose ``data-testid`` references are assertions/fixtures/plumbing, not
 # app UI. ``testbridge`` builds ``[data-testid="…"]`` selectors at runtime rather
@@ -420,8 +423,38 @@ def _section(title: str, description: "list[str]", headers: "list[str]") -> "lis
     ]
 
 
-def render(buckets: "dict[str, dict]") -> str:
-    """Render the buckets into the deterministic catalog markdown."""
+def _values(cls: dict, glob: str) -> str:
+    """The catalog's "values" cell: how the drift guard treats a glob (#5341)."""
+    kind = cls["kind"].get(glob, "unclassified")
+    if kind == "registry":
+        members = cls["members"].get(glob)
+        if members is None:
+            return "registry (unresolved — plain glob)"
+        return f"registry: {', '.join(members)}"
+    if kind == "dynamic":
+        return f"dynamic: {cls['reason'][glob]}"
+    if kind == "stem":
+        return "caller stem"
+    return "unclassified"
+
+
+def classify_templates(buckets: "dict[str, dict]") -> dict:
+    """Classify the dynamic globs per ``tests/system/testid-templates.json``."""
+    spec = importlib.util.spec_from_file_location("testid_templates", TEMPLATES_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    config = module.load_config(TEMPLATES_CONFIG)
+    return module.classify(sorted(buckets["dynamic"]), config, REPO_ROOT)
+
+
+def render(buckets: "dict[str, dict]", templates: "dict | None" = None) -> str:
+    """Render the buckets into the deterministic catalog markdown.
+
+    ``templates`` (from :func:`classify_templates`) adds a *values* column to
+    the dynamic section: the registry members a glob expands to, or why it is
+    left as a plain glob.
+    """
     literal = buckets["literal"]
     dynamic = buckets["dynamic"]
     indirect = buckets["indirect"]
@@ -446,17 +479,26 @@ def render(buckets: "dict[str, dict]") -> str:
     for key in sorted(literal):
         lines.append(f"| `{key}` | {_files(literal[key])} |")
 
+    headers = ["pattern", "example template", "source"]
+    if templates is not None:
+        headers.insert(2, "values")
     lines += _section(
         "Dynamic test IDs",
         [
             "Built from a template; `*` marks an interpolated segment. Match on the",
             "static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).",
+            "*values*: `registry` globs accept only the listed members (the drift",
+            "guard checks it); `dynamic` and `caller stem` accept any suffix. Edit",
+            "`tests/system/testid-templates.json` to classify a glob (#5341).",
         ],
-        ["pattern", "example template", "source"],
+        headers,
     )
     for key in sorted(dynamic):
         example = sorted(dynamic[key]["raw"])[0]
-        lines.append(f"| {_code(key)} | {_code(example)} | {_files(dynamic[key])} |")
+        cells = [_code(key), _code(example), _files(dynamic[key])]
+        if templates is not None:
+            cells.insert(2, _values(templates, key))
+        lines.append("| " + " | ".join(cells) + " |")
 
     lines += _section(
         "Indirect test IDs",
@@ -489,7 +531,8 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    content = render(collect())
+    buckets = collect()
+    content = render(buckets, classify_templates(buckets))
 
     if args.stdout:
         sys.stdout.write(content)
