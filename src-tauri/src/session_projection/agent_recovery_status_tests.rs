@@ -38,7 +38,7 @@ impl Rig {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
-        let agent = Arc::new(FakeAgent::new());
+        let agent = Arc::new(FakeAgent::session_host());
         handle.manage(SessionManager::new(
             ConnectionTypeRegistry::new(),
             agent as Arc<dyn AgentRpcClient>,

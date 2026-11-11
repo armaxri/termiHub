@@ -15,6 +15,8 @@
 
 use super::*;
 
+use serde_json::Value;
+
 use crate::session::manager::{DropFold, EventEmitter};
 use crate::terminal::agent_manager::AgentConnectionManager;
 use crate::terminal::backend::AgentEndReason;
@@ -48,7 +50,7 @@ impl Rig {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
-        let agent = Arc::new(FakeAgent::new());
+        let agent = Arc::new(FakeAgent::session_host());
         handle.manage(SessionManager::new(
             ConnectionTypeRegistry::new(),
             agent as Arc<dyn AgentRpcClient>,
