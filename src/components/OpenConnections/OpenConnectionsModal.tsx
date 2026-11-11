@@ -819,6 +819,19 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     }
   };
 
+  // Stop monitoring one host (#5277). The backend drops the entry from the
+  // region either way, so a failed close is reported rather than silently
+  // leaving the user to guess whether the provider subscription leaked.
+  const handleKillMonitor = async (key: string) => {
+    try {
+      await disconnectMonitoring(key, { throwOnFailure: true });
+      toast.success("Monitoring stopped");
+    } catch (err) {
+      frontendError("open_connections", `Failed to stop monitoring ${key}: ${errorMessage(err)}`);
+      toast.error(`Failed to stop monitoring: ${errorMessage(err)}`);
+    }
+  };
+
   // Retry re-establishes a monitor that dropped to stale/offline: tear down the
   // stale subscription and re-subscribe the session's MonitoringProvider push
   // stream (#1232/#1233), flipping its status back to connecting → live.
@@ -1215,7 +1228,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 title={m.host ?? m.key}
                 detail={monitorRowDetail(m)}
                 badge={monitorRowBadge(m)}
-                onKill={() => disconnectMonitoring(m.key)}
+                onKill={() => handleKillMonitor(m.key)}
+                killTestId={`monitor-kill-${m.key}`}
+                killAriaLabel={`Kill monitoring of ${m.host ?? m.key}`}
                 actions={
                   <MonitorRowActions
                     entry={m}
@@ -1600,10 +1615,13 @@ interface ConnectionRowProps {
   "data-testid"?: string;
   /** data-testid forwarded to the kill button. */
   killTestId?: string;
+  /** Accessible name for the kill button, when the visible label alone is ambiguous. */
+  killAriaLabel?: string;
   /**
-   * Custom trailing actions, rendered in place of the default kill button. Used
-   * by rows that expose more than one teardown intent (e.g. an agent's
-   * Disconnect vs Shutdown). When set, `onKill` is ignored.
+   * Custom trailing actions, rendered before the kill button. Used by rows that
+   * expose more than one teardown intent (e.g. an agent's Disconnect vs
+   * Shutdown, which omit `onKill`) or extra controls alongside Kill (a
+   * monitoring row's Pause / interval / Retry, #5277).
    */
   actions?: React.ReactNode;
   /** Indent the row + show a link badge — a chained companion nested under its parent (#2597). */
@@ -1622,6 +1640,7 @@ function ConnectionRow({
   killLabel = "Kill",
   "data-testid": testId,
   killTestId,
+  killAriaLabel,
   actions,
   indent = false,
 }: ConnectionRowProps) {
@@ -1649,18 +1668,19 @@ function ConnectionRow({
         </Tooltip>
       )}
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
-      {actions ??
-        (onKill && (
-          <Button
-            variant="danger"
-            size="sm"
-            className="oc-row__kill"
-            onClick={() => onKill()}
-            data-testid={killTestId}
-          >
-            {killLabel}
-          </Button>
-        ))}
+      {actions}
+      {onKill && (
+        <Button
+          variant="danger"
+          size="sm"
+          className="oc-row__kill"
+          onClick={() => onKill()}
+          aria-label={killAriaLabel}
+          data-testid={killTestId}
+        >
+          {killLabel}
+        </Button>
+      )}
     </div>
   );
 }
