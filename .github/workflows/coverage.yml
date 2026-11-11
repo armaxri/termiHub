@@ -10,8 +10,9 @@ name: Coverage (unified, ratchet)
 # total) against the committed linux baseline in
 # scripts/coverage-baseline.json (scripts/internal/coverage-ratchet.mjs) and
 # exits non-zero when any component drops more than the baseline's tolerance
-# (0.25 pp). The nightly integration overlay is reported but not gated — its
-# availability varies run to run. When coverage improves, raise the baseline
+# (0.25 pp). The nightly integration overlays are not part of the ratchet; their
+# freshness is gated separately by the "Integration overlay freshness" step
+# (#5346), which runs after the ratchet. When coverage improves, raise the baseline
 # with `./scripts/coverage.sh --update-baseline` (raise-only) and commit it;
 # lowering a value is a deliberate, reviewed edit of the JSON.
 #
@@ -45,6 +46,15 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      overlay-branch:
+        description: >-
+          Branch whose nightly integration overlays to merge (default: the
+          dispatched ref). Pass `develop` to grade a feature branch against
+          develop's overlays and their freshness gate.
+        required: false
+        default: ''
+        type: string
 
 # A blocking gate on a low-volume trigger set (main pushes, the nightly dispatch,
 # manual dispatch): every run completes, so none cancels in progress. The event
@@ -138,10 +148,11 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          OVERLAY_BRANCH: ${{ inputs.overlay-branch || github.ref_name }}
         run: >-
           node scripts/internal/fetch-integration-coverage.mjs
           --repo "${{ github.repository }}"
-          --branch "${{ github.ref_name }}"
+          --branch "$OVERLAY_BRANCH"
           --out-dir coverage-integration
 
       - name: Run unified coverage
@@ -185,6 +196,20 @@ jobs:
               echo "_Unit tests only: no nightly integration coverage was merged._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # The overlays' own gate (#5346, COV-022), after the ratchet so its verdict
+      # never depends on them. It prints each overlay's source sha, age, commits
+      # behind HEAD and stale-file share into the summary, and FAILS when an
+      # overlay is missing, older than 3 days or more than 10 % stale on develop
+      # (overlay-freshness.mjs holds the thresholds): its nightly lane went dark.
+      # The error names the lane and links its latest run. Other branches warn.
+      # Keep the step name in sync with `gateSteps` in scheduled-lanes.mjs.
+      - name: Integration overlay freshness
+        if: always()
+        run: >-
+          node scripts/internal/overlay-freshness.mjs
+          --status coverage-integration/overlay-status.json
+          --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifact
         if: always()
