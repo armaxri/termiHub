@@ -23,6 +23,8 @@ Off those lanes (``TARGET_ENV`` unset or ``compose``) nothing changes.
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -71,6 +73,10 @@ class NativeSshTarget:
     state_dir: str
     #: The jump-host bastion's port, when the fixture runs one.
     jump_port: Optional[int] = None
+    #: The fixture's unencrypted client key (``TERMIHUB_NATIVE_SSHD_KEY``): it
+    #: is in the login user's ``authorized_keys``, so
+    #: :class:`NativeSshServerControl` logs in with it to inspect the server.
+    key: Optional[str] = None
 
 
 def target_from_env(env: Mapping[str, str] = os.environ) -> Optional[NativeSshTarget]:
@@ -98,6 +104,7 @@ def target_from_env(env: Mapping[str, str] = os.environ) -> Optional[NativeSshTa
         password=env["TERMIHUB_NATIVE_SSHD_PASSWORD"],
         state_dir=env["TERMIHUB_NATIVE_SSHD_DIR"],
         jump_port=int(jump) if jump else None,
+        key=env.get("TERMIHUB_NATIVE_SSHD_KEY") or None,
     )
 
 
@@ -208,3 +215,258 @@ class NativeBastionControl:
             ["pgrep", "-P", pid], capture_output=True, text=True, timeout=30
         ).stdout
         return per_connection_children(output)
+
+
+# ── Server-side control of the native sshd (#5421) ────────────────────────────
+#: Title of an sshd per-connection process that serves an authenticated user:
+#: ``sshd-session: user@ttys003`` (OpenSSH 9.8+) or ``sshd: user@pts/0``
+#: (older); ``notty`` when no channel of that connection has a terminal.
+_SESSION_TITLE = re.compile(r"^sshd(?:-session)?: (?P<user>[^\s@]+)@(?P<tty>\S+)")
+
+
+def terminal_session_pids(
+    ps_output: str, *, master_pid: str, username: str, uid: int
+) -> set[str]:
+    """The PIDs serving ``username``'s terminal connections to one sshd master.
+
+    ``ps_output`` is ``ps -A -o pid=,ppid=,uid=,args=``. The master forks one
+    handler per connection (``sshd-session: user [priv]``), and that handler
+    forks the process that runs as the user (``sshd-session: user@ttys003``).
+    A connection counts when its user process has a terminal: an app's SSH
+    tab does, while the ``notty`` exec sessions this module opens to inspect
+    the server do not, so one test's helper session never lands in another
+    test's before/after diff. Both processes of a counted connection are
+    returned when they run as ``uid``; a root-owned handler (the
+    ``--password-login`` fixture's sshd runs as root) is left out, as the
+    login user cannot signal it. Killing the user process drops the
+    connection anyway: its handler exits with it.
+    """
+    rows: list[tuple[str, str, int, str]] = []
+    for line in ps_output.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 4 or not (parts[0].isdigit() and parts[1].isdigit()):
+            continue
+        try:
+            row_uid = int(parts[2])
+        except ValueError:
+            continue
+        rows.append((parts[0], parts[1], row_uid, parts[3].strip()))
+    handlers = {pid: row_uid for pid, ppid, row_uid, _ in rows if ppid == master_pid}
+    found: set[str] = set()
+    for pid, ppid, row_uid, args in rows:
+        if ppid not in handlers or row_uid != uid:
+            continue
+        match = _SESSION_TITLE.match(args)
+        if match is None or match["user"] != username or match["tty"] == "notty":
+            continue
+        found.add(pid)
+        if handlers[ppid] == uid:
+            found.add(ppid)
+    return found
+
+
+class NativeSshExecError(RuntimeError):
+    """A command run on the native sshd over ``ssh`` failed.
+
+    Not a ``ContainerRuntimeUnavailable``: the native target was asked for, so
+    a broken server-side check fails the test instead of skipping it.
+    """
+
+
+class NativeSshServerControl:
+    """:class:`~termihub_harness.fixtures.SshServerControl` for the native sshd.
+
+    The Docker twin execs into the container as root. Here every server-side
+    step is a key-auth ``ssh`` exec as the fixture's login user, with the
+    fixture's client key: the login user owns its home, so it can write, read
+    and remove the files a test seeds or checks there, and it can signal its
+    own per-connection sshd process. Session processes are found locally with
+    ``ps`` as the descendants of the fixture's master sshd (its PID file), so
+    only this fixture's connections are ever touched.
+
+    The commands are POSIX ``sh`` with BSD/GNU-neutral tools, so the twin
+    serves the macOS fixture; on Windows (``cmd.exe`` login shell, no ``ps``)
+    it reports itself unavailable.
+    """
+
+    def __init__(self, target: NativeSshTarget, *, platform: str = sys.platform) -> None:
+        self._target = target
+        self._platform = platform
+        self._home: Optional[str] = None
+
+    @property
+    def available(self) -> bool:
+        """Whether the fixture exported a client key and the host is POSIX."""
+        return self._target.key is not None and self._platform != "win32"
+
+    @property
+    def username(self) -> str:
+        return self._target.username
+
+    def home(self) -> str:
+        """The login user's home: where its SSH session and SFTP browser start.
+
+        sshd changes into the passwd home before it runs the command, so
+        ``pwd -P`` there is the directory the app's SFTP browser lists first
+        (symlinks resolved, as SFTP ``realpath`` does).
+        """
+        if self._home is None:
+            self._home = self._run("pwd -P").strip()
+        return self._home
+
+    # -- sessions ------------------------------------------------------------
+    def _master_pid(self) -> str:
+        pid_file = Path(self._target.state_dir) / "sshd.pid"
+        try:
+            pid = pid_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise NativeSshExecError(f"cannot read the native sshd's PID file: {exc}") from exc
+        if not pid.isdigit():
+            raise NativeSshExecError(f"{pid_file} holds no PID: {pid!r}")
+        return pid
+
+    def session_pids(self) -> set[str]:
+        """PIDs serving the login user's terminal connections to the fixture."""
+        import pwd  # POSIX only; this module is imported on Windows too.
+
+        output = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid=,uid=,args="],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout
+        return terminal_session_pids(
+            output,
+            master_pid=self._master_pid(),
+            username=self._target.username,
+            uid=pwd.getpwnam(self._target.username).pw_uid,
+        )
+
+    def kill_sessions(self, pids: Iterable[str]) -> None:
+        """``SIGKILL`` the given session PIDs as the login user: a server-side drop."""
+        targets = [pid for pid in pids if pid]
+        if not targets:
+            return
+        if not all(pid.isdigit() for pid in targets):
+            raise ValueError(f"not PIDs: {targets!r}")
+        self._run('kill -9 "$@"', *targets)
+
+    # -- files ---------------------------------------------------------------
+    def read_file(self, path: str) -> str:
+        """The contents of ``path``, newlines kept exactly."""
+        return self._run('cat -- "$1"', path, text=False).decode("utf-8")
+
+    def path_exists(self, path: str) -> bool:
+        out = self._run('if [ -e "$1" ]; then echo yes; else echo no; fi', path)
+        return out.strip() == "yes"
+
+    def file_size(self, path: str) -> int | None:
+        """The size of ``path`` in bytes, ``None`` if absent (``wc -c``, not GNU ``stat``)."""
+        out = self._run('if [ -f "$1" ]; then wc -c < "$1"; else echo none; fi', path).strip()
+        return None if out == "none" else int(out)
+
+    def inode(self, path: str) -> int | None:
+        """The inode number of ``path``, ``None`` if absent (``ls -di``, not GNU ``stat``)."""
+        out = self._run('if [ -e "$1" ]; then ls -di -- "$1"; else echo none; fi', path).strip()
+        return None if out == "none" else int(out.split()[0])
+
+    def write_file(self, path: str, content: str, *, user: str) -> None:
+        """Write ``content`` to ``path`` as the login user (the only user it can be)."""
+        self._check_user(user)
+        self._run(
+            'mkdir -p "$(dirname "$1")" && cat > "$1"', path, stdin=content.encode("utf-8")
+        )
+
+    def sha256(self, path: str) -> str:
+        """The SHA-256 hex digest of ``path`` (``sha256sum``, else ``shasum -a 256``)."""
+        out = self._run(
+            'if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1"; '
+            'else shasum -a 256 < "$1"; fi',
+            path,
+        )
+        return out.split()[0]
+
+    def write_random_file(self, path: str, size: int, *, user: str) -> None:
+        """Write ``size`` random bytes to ``path`` as the login user."""
+        self._check_user(user)
+        self._run('head -c "$2" /dev/urandom > "$1"', path, str(int(size)))
+
+    def remove_path(self, path: str) -> None:
+        """Remove ``path`` (file or directory tree), if present."""
+        self._run('rm -rf -- "$1"', path)
+
+    # -- plumbing --------------------------------------------------------------
+    def _check_user(self, user: str) -> None:
+        if user != self._target.username:
+            raise ValueError(
+                f"the native sshd fixture can only write as its login user "
+                f"{self._target.username!r}, not {user!r}"
+            )
+
+    def ssh_argv(self, script: str, *args: str) -> list[str]:
+        """The ``ssh`` command that runs ``sh -c script`` with ``args`` as ``$1``...
+
+        ``-F /dev/null`` and ``IdentitiesOnly`` keep the caller's own ssh
+        config, agent and keys out of it; the host key is not recorded anywhere.
+        """
+        if self._target.key is None:
+            raise NativeSshExecError(
+                "the native sshd fixture exported no client key (TERMIHUB_NATIVE_SSHD_KEY)"
+            )
+        remote = shlex.join(["sh", "-c", script, "sh", *args])
+        return [
+            "ssh",
+            "-F",
+            "/dev/null",
+            "-T",
+            "-p",
+            str(self._target.port),
+            "-i",
+            self._target.key,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            "ConnectTimeout=10",
+            f"{self._target.username}@127.0.0.1",
+            remote,
+        ]
+
+    def _run(
+        self,
+        script: str,
+        *args: str,
+        text: bool = True,
+        stdin: Optional[bytes] = None,
+        timeout: float = 60.0,
+    ):
+        """Run ``script`` on the fixture as the login user; return its stdout."""
+        try:
+            result = subprocess.run(
+                self.ssh_argv(script, *args),
+                capture_output=True,
+                input=stdin if stdin is not None else b"",
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise NativeSshExecError(
+                f"ssh to the native sshd timed out after {timeout}s: {script}"
+            ) from exc
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", "replace").strip()
+            raise NativeSshExecError(
+                f"ssh to the native sshd failed (exit {result.returncode}) running "
+                f"{script!r}: {err}"
+            )
+        return result.stdout.decode("utf-8") if text else result.stdout

@@ -1,8 +1,9 @@
 """Unit tests for the native sshd as the system-test SSH target (#5176).
 
 Pins :mod:`termihub_harness.native_ssh` without starting any sshd: the env
-contract that selects it, which tests it skips on which platform, and the
-bastion's gateway count from ``netstat`` output.
+contract that selects it, which tests it skips on which platform, the
+bastion's gateway count, and the server-control twin's session lookup and
+``ssh`` plumbing (#5421).
 """
 
 from __future__ import annotations
@@ -144,3 +145,131 @@ def test_bastion_control_needs_a_jump_port():
     with pytest.raises(NativeSshTargetError):
         NativeBastionControl(NativeSshTarget(port=1, username="u", password="p", state_dir="/s"))
     assert NativeBastionControl(TARGET).port == 22401
+
+
+# ── NativeSshServerControl (#5421) ────────────────────────────────────────────
+#: ``ps -A -o pid=,ppid=,uid=,args=`` around a root ``--password-login`` master
+#: (100): a terminal connection (200 -> 201), a helper exec session (300 -> 301,
+#: ``notty``), another user's connection, and an unrelated sshd elsewhere.
+PS_ROOT_MASTER = """\
+  100     1     0 sshd: /usr/sbin/sshd -f /s/sshd_config -E /s/sshd.log [listener]
+  200   100     0 sshd-session: termihubssh [priv]
+  201   200   601 sshd-session: termihubssh@ttys003
+  202   201   601 -zsh
+  300   100     0 sshd-session: termihubssh [priv]
+  301   300   601 sshd-session: termihubssh@notty
+  400   100     0 sshd-session: other [priv]
+  401   400   602 sshd-session: other@ttys004
+  500     1     0 sshd: /usr/sbin/sshd -D [listener]
+  501   500     0 sshd-session: termihubssh [priv]
+  502   501   601 sshd-session: termihubssh@ttys005
+garbage line
+"""
+
+#: The unprivileged fixture: the handler runs as the login user too, and an
+#: older OpenSSH titles its processes ``sshd:``.
+PS_UNPRIVILEGED = """\
+  100     1   501 sshd: /usr/sbin/sshd -f /s/sshd_config [listener] 0 of 200-300 startups
+  200   100   501 sshd: arne [priv]
+  201   200   501 sshd: arne@pts/0
+"""
+
+
+def test_terminal_sessions_are_the_login_users_tty_connections_to_the_master():
+    pids = native_ssh.terminal_session_pids(
+        PS_ROOT_MASTER, master_pid="100", username="termihubssh", uid=601
+    )
+    # Not the root handler (cannot be signalled), not the notty helper exec,
+    # not another user, not a connection to a different sshd.
+    assert pids == {"201"}
+
+
+def test_unprivileged_sessions_include_the_handler():
+    pids = native_ssh.terminal_session_pids(
+        PS_UNPRIVILEGED, master_pid="100", username="arne", uid=501
+    )
+    assert pids == {"200", "201"}
+
+
+def test_no_master_children_means_no_sessions():
+    assert native_ssh.terminal_session_pids("", master_pid="100", username="u", uid=1) == set()
+
+
+KEYED = NativeSshTarget(port=22400, username="u", password="p", state_dir="/s", key="/s/client")
+
+
+def test_server_control_needs_a_key_and_a_posix_host():
+    assert native_ssh.NativeSshServerControl(KEYED, platform="darwin").available
+    assert not native_ssh.NativeSshServerControl(KEYED, platform="win32").available
+    assert not native_ssh.NativeSshServerControl(TARGET, platform="darwin").available
+
+
+def test_target_reads_the_client_key():
+    target = target_from_env({**ENV, "TERMIHUB_NATIVE_SSHD_KEY": "/tmp/state/client_ed25519_key"})
+    assert target.key == "/tmp/state/client_ed25519_key"
+
+
+def test_ssh_argv_runs_sh_with_quoted_args_and_ignores_the_callers_config():
+    argv = native_ssh.NativeSshServerControl(KEYED).ssh_argv('cat -- "$1"', "/a b/it's")
+    assert argv[:3] == ["ssh", "-F", "/dev/null"]
+    assert argv[argv.index("-i") + 1] == "/s/client"
+    assert argv[argv.index("-p") + 1] == "22400"
+    assert "IdentitiesOnly=yes" in argv and "BatchMode=yes" in argv
+    assert argv[-2] == "u@127.0.0.1"
+    import shlex
+
+    assert shlex.split(argv[-1]) == ["sh", "-c", 'cat -- "$1"', "sh", "/a b/it's"]
+
+
+def test_server_control_writes_only_as_the_login_user():
+    control = native_ssh.NativeSshServerControl(KEYED)
+    with pytest.raises(ValueError, match="only write as its login user"):
+        control.write_file("/x", "x", user="testuser")
+    with pytest.raises(ValueError, match="only write as its login user"):
+        control.write_random_file("/x", 1, user="testuser")
+
+
+def test_server_control_runs_over_ssh_and_reports_failures(monkeypatch):
+    control = native_ssh.NativeSshServerControl(KEYED)
+    calls = []
+
+    class _Result:
+        def __init__(self, returncode, stdout=b"", stderr=b""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+    replies = iter([_Result(0, b"/Users/u\n"), _Result(0, b"   4096\n"), _Result(1, b"", b"boom")])
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw.get("input")))
+        return next(replies)
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    assert control.home() == "/Users/u"
+    assert control.home() == "/Users/u", "cached: one ssh round trip"
+    assert control.file_size("/Users/u/f") == 4096
+    with pytest.raises(native_ssh.NativeSshExecError, match="boom"):
+        control.remove_path("/Users/u/f")
+    assert len(calls) == 3
+
+
+def test_kill_sessions_refuses_non_pids():
+    with pytest.raises(ValueError):
+        native_ssh.NativeSshServerControl(KEYED).kill_sessions(["123; rm -rf /"])
+
+
+def test_ssh_server_control_picks_the_native_twin(monkeypatch):
+    from termihub_harness import fixtures
+
+    # The Docker control probes `docker info` when built; no runtime is needed here.
+    monkeypatch.setattr(fixtures, "container_runtime", lambda: None)
+    monkeypatch.setattr(fixtures, "NATIVE_SSH_TARGET", KEYED)
+    assert isinstance(fixtures.ssh_server_control(), native_ssh.NativeSshServerControl)
+    assert isinstance(
+        fixtures.ssh_server_control(fixtures.SSH_KEYS_SERVICE), native_ssh.NativeSshServerControl
+    )
+    # A fixture-specific container (sudo host, SFTP-only host, agent) stays Docker.
+    assert isinstance(fixtures.ssh_server_control("ssh-sudo"), fixtures.SshServerControl)
+    monkeypatch.setattr(fixtures, "NATIVE_SSH_TARGET", None)
+    control = fixtures.ssh_server_control()
+    assert isinstance(control, fixtures.SshServerControl)
+    assert control.home() == "/home/testuser"

@@ -1178,6 +1178,23 @@ _SSHD_PID_SCAN = (
 )
 
 
+#: The SSH containers' test user home (``useradd -m testuser``).
+CONTAINER_SSH_HOME = "/home/testuser"
+
+
+def ssh_server_control(service: str = SSH_PASSWORD_SERVICE):
+    """Server-side control of the SSH host the suites log in to.
+
+    The native sshd's :class:`~termihub_harness.native_ssh.NativeSshServerControl`
+    when the native target is selected and ``service`` is one of the SSH
+    services it stands in for (#5421); else the Docker :class:`SshServerControl`
+    for ``service``. Both offer the same calls plus ``home()``.
+    """
+    if NATIVE_SSH_TARGET is not None and service in (SSH_PASSWORD_SERVICE, SSH_KEYS_SERVICE):
+        return native_ssh.NativeSshServerControl(NATIVE_SSH_TARGET)
+    return SshServerControl(service)
+
+
 class SshServerControl:
     """Server-side control of a shared SSH container for the disconnect test.
 
@@ -1204,6 +1221,12 @@ class SshServerControl:
     def available(self) -> bool:
         """Whether a container runtime is reachable to exec into the container."""
         return self._runtime is not None
+
+    def home(self) -> str:
+        """The test user's home in the container (``useradd -m testuser``): where
+        its SSH session and the SFTP browser start. The native twin reads it
+        from its target (#5421)."""
+        return CONTAINER_SSH_HOME
 
     def session_pids(self) -> set[str]:
         """PIDs of the sshd session processes currently serving the test user."""
