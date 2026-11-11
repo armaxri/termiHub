@@ -19,12 +19,23 @@
 //! together with the grants the host made outside the plugin's own folders
 //! ([`delete_profile_revoking`]), so the runner's ACL is left as it was.
 //!
+//! Profiles and ACLs are per user, so every termiHub process of the session
+//! shares them: profile create/delete and each ACL read-modify-write run under
+//! session-wide named mutexes (`PROFILE_LOCK`, `ACL_LOCK`, #5359), not
+//! per-process ones. A profile is deleted only on uninstall, never when a
+//! runner stops, so one instance never pulls a profile out from under another
+//! instance's running plugin in normal use. An uninstall in one instance
+//! while another still runs the plugin does delete it (the plugin's files go
+//! with it anyway); a running runner keeps its token, and the other
+//! instance's next [`AppContainer::ensure`] simply recreates the profile.
+//! There is deliberately no cross-process use count: one that a crashed
+//! instance leaves behind would block the uninstall forever.
+//!
 //! [`app_container_name`]: crate::sandbox::app_container_name
 
 use std::ffi::c_void;
 use std::io;
 use std::path::Path;
-use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS, HLOCAL};
 use windows_sys::Win32::Security::Authorization::{
@@ -49,6 +60,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 
 use termihub_win_security::sid_to_string;
 
+use crate::named_mutex::NamedMutex;
 use crate::sandbox::app_container_name;
 use crate::win::{os_error, to_wide};
 
@@ -62,17 +74,22 @@ const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 /// `SECURITY_DESCRIPTOR_REVISION` (`winnt.h`).
 const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 
-/// Serialises this process's read-modify-write of ACLs, so two plugins
-/// granting the shared runner folder at once cannot lose each other's entry.
-static ACL_LOCK: Mutex<()> = Mutex::new(());
+/// Serialises every read-modify-write of an ACL in this logon session, so
+/// two plugins granting the shared runner folder at once, in one termiHub or
+/// in two, cannot lose each other's entry. Taken after [`PROFILE_LOCK`] when
+/// both are held.
+static ACL_LOCK: NamedMutex = NamedMutex::new("termiHub.AppContainer.ACL");
 
-/// Serialises this process's profile creation and deletion. Two concurrent
-/// `CreateAppContainerProfile` calls for one name race inside the API: one
-/// fails (`ERROR_BAD_ENVIRONMENT`) and rolls its half-made profile back while
-/// the other already uses it, and a runner spawned meanwhile fails with
-/// `ERROR_FILE_NOT_FOUND`. A plugin can be (re)started from several threads at
-/// once, so every profile operation takes this lock.
-static PROFILE_LOCK: Mutex<()> = Mutex::new(());
+/// Serialises every profile creation and deletion in this logon session.
+/// Two concurrent `CreateAppContainerProfile` calls for one name race inside
+/// the API: one fails (`ERROR_BAD_ENVIRONMENT`, or `E_UNEXPECTED`
+/// `0x8000ffff`) and rolls its half-made profile back while the other already
+/// uses it, and a runner spawned meanwhile fails with `ERROR_FILE_NOT_FOUND`.
+/// A plugin can be (re)started from several threads at once, and the profiles
+/// are per user, so a second termiHub instance (or a second test process)
+/// races the same way: the lock is a session-wide named mutex
+/// ([`crate::named_mutex`], #5359), not a `static Mutex`.
+static PROFILE_LOCK: NamedMutex = NamedMutex::new("termiHub.AppContainer.Profile");
 
 /// One plugin's AppContainer: its profile name and SID.
 #[derive(Clone, PartialEq, Eq)]
@@ -100,7 +117,7 @@ impl AppContainer {
         let display = to_wide(format!("termiHub plugin {plugin_id}").as_ref())?;
         let description = to_wide("Sandbox of one termiHub native plugin".as_ref())?;
         let mut sid: PSID = std::ptr::null_mut();
-        let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = PROFILE_LOCK.lock()?;
         // SAFETY: NUL-terminated strings; no capabilities; `sid` receives a
         // SID freed with `FreeSid` below.
         let hr = unsafe {
@@ -113,8 +130,9 @@ impl AppContainer {
                 &mut sid,
             )
         };
-        // Another process (a second termiHub instance) may have created it
-        // concurrently: a failed create whose profile now exists is reused.
+        // The lock serialises this logon session only: a process of another
+        // session of the same user may have created it concurrently, so a
+        // failed create whose profile now exists is reused.
         let created_elsewhere = || hr < 0 && profile_exists_unlocked(plugin_id).unwrap_or(false);
         if hr == hresult_from_win32(ERROR_ALREADY_EXISTS) || created_elsewhere() {
             // SAFETY: NUL-terminated name; `sid` receives a SID freed below.
@@ -167,7 +185,7 @@ impl AppContainer {
 
     fn grant(&self, path: &Path, access: u32, inheritance: ACE_FLAGS) -> io::Result<()> {
         let wide = to_wide(path.as_os_str())?;
-        let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ACL_LOCK.lock()?;
         // An object-only grant is a plain rewrite of the DACL as stored; a
         // tree grant goes through `SetNamedSecurityInfoW`, which recomputes
         // the inherited part anyway, so it starts from the same API's view.
@@ -232,7 +250,7 @@ pub fn delete_profile_revoking(
     objects: &[&Path],
 ) -> io::Result<Vec<RevokeFailure>> {
     let wide = to_wide(app_container_name(plugin_id).as_ref())?;
-    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PROFILE_LOCK.lock()?;
     let mut failures = Vec::new();
     if !objects.is_empty() {
         let mut sid: PSID = std::ptr::null_mut();
@@ -267,7 +285,7 @@ pub fn delete_profile_revoking(
 /// grants there are not inheritable).
 fn revoke(sid: PSID, path: &Path) -> io::Result<()> {
     let wide = to_wide(path.as_os_str())?;
-    let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = ACL_LOCK.lock()?;
     let current = Dacl::stored(&wide)?;
     match current.without(sid)? {
         Some(mut updated) => {
@@ -283,7 +301,7 @@ const PROFILE_MAPPINGS_KEY: &str = r"Software\Classes\Local Settings\Software\Mi
 /// Whether plugin `plugin_id`'s AppContainer profile exists (its mapping is
 /// registered for the current user).
 pub fn profile_exists(plugin_id: &str) -> io::Result<bool> {
-    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PROFILE_LOCK.lock()?;
     profile_exists_unlocked(plugin_id)
 }
 

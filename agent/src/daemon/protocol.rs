@@ -225,6 +225,13 @@ pub const CAP_OUTPUT_FLOW: u8 = 0x20;
 /// from before it is never limited (it would never return credit).
 pub const CAP_OUTPUT_CREDIT: u8 = 0x40;
 
+/// [`MSG_CAPABILITIES`] flag: the daemon also serves the `realpath` file
+/// request in [`MSG_FILE_REQUEST`] (#5333), resolving a path through its
+/// session backend. A daemon from before it (it survives agent upgrades) does
+/// not set it, so the worker never sends it a request it would drop and
+/// falls back to the lexical paste check instead.
+pub const CAP_FILE_REALPATH: u8 = 0x80;
+
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
 

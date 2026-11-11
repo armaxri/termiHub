@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.36.0        | Yes (the desktop requests 0.24.0; `connection.files.realpath` lets a same-session paste see through a symlink alias)                  |
 | 0.24.0          | 0.35.0        | Yes (the desktop requests 0.24.0; a refused, unreachable or unresolvable host gets its own connect hint)                              |
 | 0.24.0          | 0.34.0        | Yes (the desktop requests 0.24.0; `serialPortRescan` lets the Port field of an agent-hosted serial connection follow plug / unplug)   |
 | 0.24.0          | 0.33.0        | Yes (the desktop requests 0.24.0; `definitionIconStyle` shows the icon colour / emoji controls for agent connections)                 |
@@ -417,6 +418,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.36.0 (additive, minor)** — adds [`connection.files.realpath`](#connectionfilesrealpath) (#5333): the real spelling of a path on the agent host or inside an agent-hosted session, a missing final name resolved through its parent folder. The desktop resolves both paths of a same-session paste through it before anything is written, so a paste through a symlink alias can no longer empty its source or delete its own copy. An older agent answers `-32601` and a backend that cannot resolve answers `-32013`; either way the desktop keeps its lexical check (`.`, `..`, repeated slashes).
 
 **0.35.0 (additive, minor)** — adds the `refused`, `unreachable` and `dns` values of the optional `error.data.connect_failure` of a failed [`connection.create`](#connectioncreate) (#5183): the TCP connect of an agent-hosted session was refused (nothing listens on the port), found no route to the host, or its host name did not resolve. The message of a typed failure is now its own description, without a `Connection failed: Spawn failed:` prefix. A desktop that does not know the values ignores them and shows a generic remote error.
 
@@ -2975,6 +2978,65 @@ With `create_new: true` (0.30.0+, #4433) an `offset: 0` write is an **exclusive 
 - `-32012` File operation failed (including an `offset` that is not the file's size)
 - `-32013` File browsing (or ranged access) not supported for this session, or no atomic exclusive create for `create_new`
 - `-32030` File already exists (`create_new` over an existing path; nothing was written)
+
+---
+
+### `connection.files.realpath`
+
+Resolve a path to its real spelling (0.36.0+, #5333): symlinks followed, `.` and `..` applied, as the agent host or the agent-hosted session's backend sees it. A path whose final name does not exist yet (a paste destination) resolves through its parent folder, with the name appended. The desktop calls it for both paths of a same-session paste, file or folder, and refuses the paste when they are the same entry or the destination lies inside the source folder.
+
+How each backend resolves:
+
+| Backend                    | Resolution                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
+| Agent host / local session | `canonicalize` (on Windows with `/` separators and without the `\\?\` prefix)                 |
+| SSH session                | The SFTP server's `realpath`                                                                  |
+| Docker session             | `readlink -f` / `pwd -P` inside the container                                                 |
+| FTP session                | A folder through `CWD` + `PWD` (the working directory is restored); a file through its folder |
+| WSL session                | Not supported (`-32013`)                                                                      |
+
+An agent-hosted session's daemon serves it only when it advertised it in its own handshake; a session started by an older agent answers `-32013`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.realpath",
+  "params": {
+    "connection_id": "sess-ssh-1",
+    "path": "/home/user/link/report.txt"
+  },
+  "id": 25
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "path": "/srv/data/report.txt"
+  },
+  "id": 25
+}
+```
+
+| Param           | Type      | Description                                                              |
+| --------------- | --------- | ------------------------------------------------------------------------ |
+| `connection_id` | `string?` | Connection or session to scope the operation to. Omit for the agent host |
+| `path`          | `string`  | Path to resolve; its final name need not exist                           |
+
+| Result Field | Type     | Description              |
+| ------------ | -------- | ------------------------ |
+| `path`       | `string` | The path's real spelling |
+
+**Errors:**
+
+- `-32010` Neither the path nor its parent folder resolves
+- `-32013` The backend cannot resolve paths (the desktop then compares the paths lexically)
+- An older agent answers `-32601`, which the desktop treats like `-32013`
 
 ---
 

@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
+use super::backoff_clock::BackoffClock;
+
 /// Liveness of one agent connection's I/O task, backed by a single
 /// [`CancellationToken`].
 ///
@@ -55,21 +57,25 @@ impl AgentAlive {
         &self.stop
     }
 
-    /// Sleep `delay`, returning early the moment the connection is stopped.
+    /// Sleep `delay` on `clock`, returning early the moment the connection is
+    /// stopped. Production passes the tokio timer
+    /// ([`TOKIO_BACKOFF_CLOCK`](super::backoff_clock::TOKIO_BACKOFF_CLOCK));
+    /// tests pass a virtual clock (#5339).
     ///
     /// Returns `true` if the full delay elapsed, `false` if stopped (including
     /// already stopped on entry).
-    pub(super) async fn sleep(&self, delay: Duration) -> bool {
+    pub(super) async fn sleep(&self, clock: &dyn BackoffClock, delay: Duration) -> bool {
         tokio::select! {
             biased;
             _ = self.stop.cancelled() => false,
-            _ = tokio::time::sleep(delay) => true,
+            _ = clock.sleep(delay) => true,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::backoff_clock::TOKIO_BACKOFF_CLOCK;
     use super::*;
     use tokio::time::Instant;
 
@@ -89,7 +95,11 @@ mod tests {
     async fn sleep_runs_the_full_delay_while_alive() {
         let alive = AgentAlive::new();
         let start = Instant::now();
-        assert!(alive.sleep(Duration::from_secs(30)).await);
+        assert!(
+            alive
+                .sleep(&TOKIO_BACKOFF_CLOCK, Duration::from_secs(30))
+                .await
+        );
         assert!(start.elapsed() >= Duration::from_secs(30));
     }
 
@@ -104,7 +114,11 @@ mod tests {
             stopper.stop();
         });
         let start = Instant::now();
-        assert!(!alive.sleep(Duration::from_secs(30)).await);
+        assert!(
+            !alive
+                .sleep(&TOKIO_BACKOFF_CLOCK, Duration::from_secs(30))
+                .await
+        );
         assert_eq!(start.elapsed(), Duration::from_millis(1_234));
     }
 }

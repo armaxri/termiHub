@@ -936,7 +936,8 @@ async fn wait_files_only(watch: Option<tokio::sync::watch::Receiver<bool>>) {
 
 /// The [`MSG_CAPABILITIES`] flags for a backend with / without a process
 /// manager (#3210), a monitoring provider (#3871), a file browser (#3242) and
-/// ranged file access on that browser (#3587).
+/// ranged file access on that browser (#3587). Every file browser also answers
+/// `realpath` (#5333), with `NotSupported` when its backend cannot resolve.
 fn capability_flags(processes: bool, monitoring: bool, files: bool, file_ranges: bool) -> u8 {
     let mut flags = 0;
     if processes {
@@ -946,7 +947,7 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool, file_ranges:
         flags |= CAP_MONITORING;
     }
     if files {
-        flags |= CAP_FILES;
+        flags |= CAP_FILES | CAP_FILE_REALPATH;
         if file_ranges {
             flags |= CAP_FILE_RANGES;
         }

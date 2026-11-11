@@ -53,6 +53,18 @@ pub trait RangedTransferTarget: RangedFileAccess {
 
     /// Remove `path` — the partial upload of a cancelled transfer.
     async fn remove_file(&self, path: &str) -> Result<(), FileError>;
+
+    /// The real spelling of `path` on this end (#5333): symlinks, `.` and
+    /// `..` resolved, a missing final name through its parent folder. The
+    /// same-session copy guard compares through it, so a copy onto the
+    /// source through a symlink alias never opens the source for writing.
+    ///
+    /// The default answers [`FileError::NotSupported`]: the guard then
+    /// compares lexically.
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        let _ = path;
+        Err(FileError::NotSupported)
+    }
 }
 
 /// Core-internal error type for the ranged executor. It never escapes (the

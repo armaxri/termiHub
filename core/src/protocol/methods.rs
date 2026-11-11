@@ -83,6 +83,9 @@ pub const CONNECTION_FILES_COPY: &str = "connection.files.copy";
 pub const CONNECTION_FILES_READ_RANGE: &str = "connection.files.read_range";
 /// Write a slice of a file at an offset (protocol 0.26.0, #3587).
 pub const CONNECTION_FILES_WRITE_RANGE: &str = "connection.files.write_range";
+/// Resolve a path to its real spelling on the agent host (protocol 0.36.0,
+/// #5333).
+pub const CONNECTION_FILES_REALPATH: &str = "connection.files.realpath";
 
 // Connection-scoped system monitoring.
 pub const CONNECTION_MONITORING_SUBSCRIBE: &str = "connection.monitoring.subscribe";
@@ -1377,6 +1380,22 @@ pub struct FilesCopyParams {
     pub src: String,
     /// Destination path (same backend as `src`).
     pub dest: String,
+}
+
+/// Params for [`CONNECTION_FILES_REALPATH`] (#5333).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesRealpathParams {
+    pub connection_id: Option<String>,
+    /// Path to resolve. Its final name need not exist.
+    pub path: String,
+}
+
+/// Result of [`CONNECTION_FILES_REALPATH`] (#5333).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilesRealpathResult {
+    /// The real spelling: symlinks, `.` and `..` resolved; a missing final
+    /// name appended to its parent folder's real spelling.
+    pub path: String,
 }
 
 /// Type alias for backward compatibility — stat results use the same shape
@@ -3771,6 +3790,19 @@ mod tests {
     }
 
     #[test]
+    fn files_realpath_wire_shape() {
+        let v = serde_json::to_value(FilesRealpathParams {
+            connection_id: Some("sess-1".into()),
+            path: "/srv/link/f".into(),
+        })
+        .unwrap();
+        assert_eq!(v, json!({"connection_id": "sess-1", "path": "/srv/link/f"}));
+        let back: FilesRealpathResult =
+            serde_json::from_value(json!({"path": "/srv/data/f"})).unwrap();
+        assert_eq!(back.path, "/srv/data/f");
+    }
+
+    #[test]
     fn files_read_result_serializes() {
         let result = FilesReadResult {
             data: "aGVsbG8=".to_string(),
@@ -4206,6 +4238,7 @@ mod tests {
         assert_eq!(CONNECTION_FILES_COPY, "connection.files.copy");
         assert_eq!(CONNECTION_FILES_READ_RANGE, "connection.files.read_range");
         assert_eq!(CONNECTION_FILES_WRITE_RANGE, "connection.files.write_range");
+        assert_eq!(CONNECTION_FILES_REALPATH, "connection.files.realpath");
         assert_eq!(
             CONNECTION_MONITORING_SUBSCRIBE,
             "connection.monitoring.subscribe"

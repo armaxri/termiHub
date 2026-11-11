@@ -2,8 +2,11 @@
 //!
 //! Speaks just enough of RFC 959 / RFC 3659 for the transfer executor to run a
 //! real `suppaftp` client against it on loopback: login, `TYPE`, `FEAT`,
-//! `SIZE`, `MDTM`, `REST`, `EPSV`/`PASV`, `RETR`, `STOR`, `APPE`, `PWD`, `MLSD`
-//! and `QUIT`. The login directory `PWD` reports is [`MOCK_HOME`]. Which of
+//! `SIZE`, `MDTM`, `REST`, `EPSV`/`PASV`, `RETR`, `STOR`, `APPE`, `CWD`, `PWD`,
+//! `MLSD` and `QUIT`. The login directory `PWD` reports is [`MOCK_HOME`]. Once
+//! a test registers folders ([`MockFtpServer::put_dir`]), `CWD` enters only
+//! those (a symlinked folder lands on its real path, as a server's `PWD`
+//! reports it) and `PWD` reports the working directory (#5333). Which of
 //! `FEAT`, `REST` and `MDTM` the server supports is configurable, so a test can
 //! stand up the server shapes the resume logic has to cope with — a modern
 //! server advertising `REST STREAM` and `MDTM`, one without `REST`, one without
@@ -35,6 +38,11 @@ pub(crate) struct MockFtpOptions {
     pub rest: bool,
     /// Answer `MDTM` (and advertise it).
     pub mdtm: bool,
+    /// Answer `CWD`. `false` answers `500`, like a server without it.
+    pub cwd: bool,
+    /// Refuse the `CWD` back to [`MOCK_HOME`] once the connection left it,
+    /// so a test can see the client drop a connection stuck elsewhere.
+    pub refuse_return: bool,
 }
 
 impl Default for MockFtpOptions {
@@ -43,6 +51,8 @@ impl Default for MockFtpOptions {
             feat: true,
             rest: true,
             mdtm: true,
+            cwd: true,
+            refuse_return: false,
         }
     }
 }
@@ -68,6 +78,10 @@ struct State {
     files: HashMap<String, MockFile>,
     transfers: Vec<MockTransfer>,
     rest_commands: usize,
+    /// Folders `CWD` enters, each with the real path `PWD` then reports.
+    dirs: HashMap<String, String>,
+    /// Control connections accepted so far.
+    connections: usize,
 }
 
 /// A running mock server. Dropping it leaves the accept loop running until the
@@ -117,6 +131,17 @@ impl MockFtpServer {
         );
     }
 
+    /// Register the folder `path`, which `CWD` enters and where `PWD` then
+    /// reports `real` (a symlinked folder's target, or `path` itself).
+    pub(crate) fn put_dir(&self, path: &str, real: &str) {
+        self.lock().dirs.insert(path.to_string(), real.to_string());
+    }
+
+    /// How many control connections the server accepted.
+    pub(crate) fn connections(&self) -> usize {
+        self.lock().connections
+    }
+
     /// The bytes stored at `path`, if any.
     pub(crate) fn get(&self, path: &str) -> Option<Vec<u8>> {
         self.lock().files.get(path).map(|f| f.data.clone())
@@ -151,6 +176,8 @@ async fn serve(
     let mut lines = BufReader::new(read).lines();
     let mut data_listener: Option<TcpListener> = None;
     let mut rest: u64 = 0;
+    let mut cwd = MOCK_HOME.to_string();
+    state.lock().expect("mock state").connections += 1;
     reply(&mut w, "220 mock FTP ready").await?;
     while let Some(line) = lines.next_line().await? {
         let (cmd, arg) = match line.split_once(' ') {
@@ -162,7 +189,32 @@ async fn serve(
             "PASS" => reply(&mut w, "230 logged in").await?,
             "TYPE" => reply(&mut w, "200 type set").await?,
             "NOOP" => reply(&mut w, "200 ok").await?,
-            "CWD" => reply(&mut w, "250 ok").await?,
+            "CWD" if !options.cwd => reply(&mut w, "500 unknown command").await?,
+            "CWD" => {
+                let target = if arg.starts_with('/') {
+                    arg.clone()
+                } else {
+                    format!("{cwd}/{arg}")
+                };
+                let target = crate::files::paste_guard::normalize_lexically(&target);
+                let entered = {
+                    let st = state.lock().expect("mock state");
+                    if target == MOCK_HOME && options.refuse_return && cwd != MOCK_HOME {
+                        None
+                    } else if st.dirs.is_empty() || target == MOCK_HOME || target == "/" {
+                        Some(target)
+                    } else {
+                        st.dirs.get(&target).cloned()
+                    }
+                };
+                match entered {
+                    Some(dir) => {
+                        cwd = dir;
+                        reply(&mut w, "250 ok").await?
+                    }
+                    None => reply(&mut w, "550 no such directory").await?,
+                }
+            }
             "FEAT" if options.feat => {
                 let mut out = String::from("211-Features:\r\n SIZE\r\n");
                 if options.mdtm {
@@ -305,11 +357,7 @@ async fn serve(
                 reply(&mut w, "226 transfer complete").await?;
             }
             "PWD" | "XPWD" => {
-                reply(
-                    &mut w,
-                    &format!("257 \"{MOCK_HOME}\" is the current directory"),
-                )
-                .await?
+                reply(&mut w, &format!("257 \"{cwd}\" is the current directory")).await?
             }
             "MLSD" => {
                 // Direct children of the requested directory (the working
