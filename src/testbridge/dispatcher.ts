@@ -273,6 +273,50 @@ function centersCoincide(from: Element, to: Element): boolean {
  */
 const DRAG_OVERLAP_SETTLE_FRAMES = 30;
 
+/**
+ * The attribute a drop target sets to `"true"` while @dnd-kit reports the drag
+ * over it (`useDroppable().isOver`), and to `"false"` otherwise. The
+ * `PanelDropZone` edge/center overlays carry it (#5268).
+ */
+const DROP_OVER_ATTR = "data-drop-over";
+
+/**
+ * How many frames `dragTo` waits, after its last move, for a target that
+ * declares {@link DROP_OVER_ATTR} to report the drag over it before releasing.
+ *
+ * @dnd-kit does not read the drop target from the release point. It reads the
+ * `over` it last *committed*, and committing a new `over` takes two React
+ * renders after the move that reached the target (the move's render computes
+ * the collision, a passive effect stores it as state, a second render publishes
+ * it to the sensor). On a loaded runner that can outlast the one frame `dragTo`
+ * yields per move, so a release right after the last move ended the drag on the
+ * zone the *previous* step crossed. For an edge drop that is the source panel's
+ * own center, a silent no-op (#5268).
+ */
+const DROP_OVER_SETTLE_FRAMES = 30;
+
+/**
+ * Wait until the drop target reports the drag over it, for targets that declare
+ * {@link DROP_OVER_ATTR}. Re-resolves the target each frame in case it remounts.
+ * Returns `null` for a target without the attribute (nothing to wait for), else
+ * whether it reported over and how many frames that took.
+ */
+async function settleDropOver(
+  root: ParentNode,
+  testId: string,
+  fallback: Element
+): Promise<{ over: boolean; frames: number } | null> {
+  let el = findByTestId(root, testId) ?? fallback;
+  if (!el.hasAttribute(DROP_OVER_ATTR)) return null;
+  let frames = 0;
+  while (el.getAttribute(DROP_OVER_ATTR) !== "true" && frames < DROP_OVER_SETTLE_FRAMES) {
+    await nextFrame();
+    frames++;
+    el = findByTestId(root, testId) ?? el;
+  }
+  return { over: el.getAttribute(DROP_OVER_ATTR) === "true", frames };
+}
+
 /** Durable log target for the bridge's own drag diagnostics (#4110). */
 const DRAG_LOG_TARGET = "test_bridge";
 
@@ -805,7 +849,18 @@ export async function dispatchCommand(
       };
       // Release over the target. When asked to `observe`, first let the last
       // move's render land, then snapshot the mid-drag UI the release removes.
-      const release = async (x: number, y: number): Promise<BridgeResponse> => {
+      const release = async (target: Element, x: number, y: number): Promise<BridgeResponse> => {
+        const settled = await settleDropOver(deps.root, command.toTestId, target);
+        if (settled && (!settled.over || settled.frames > 0)) {
+          frontendDurableInfo(
+            DRAG_LOG_TARGET,
+            settled.over
+              ? `dragTo ${command.toTestId}: drop target reported over after ` +
+                  `${settled.frames} frame(s)`
+              : `dragTo ${command.toTestId}: drop target never reported over after ` +
+                  `${settled.frames} frame(s); releasing anyway`
+          );
+        }
         let observed: DragObservations | undefined;
         if (command.observe) {
           await nextFrame();
@@ -887,12 +942,17 @@ export async function dispatchCommand(
           return fail("dragTo", `no element with data-testid="${command.toTestId}"`);
         }
         const end = centerOf(to);
+        frontendDurableInfo(
+          DRAG_LOG_TARGET,
+          `dragTo ${command.fromTestId} [${describeRect(from)}] -> ${command.toTestId} ` +
+            `[${describeRect(to)}] (mounted after the drag started)`
+        );
         const dx = end.x - start.x;
         const dy = end.y - start.y;
         for (let i = 1; i <= STEPS; i++) {
           await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
         }
-        return release(end.x, end.y);
+        return release(to, end.x, end.y);
       }
 
       // Target already present: wake toward it, step to it, then release once the
@@ -915,7 +975,7 @@ export async function dispatchCommand(
       for (let i = 1; i <= STEPS; i++) {
         await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
       }
-      return release(end.x, end.y);
+      return release(target, end.x, end.y);
     }
 
     case "type": {
