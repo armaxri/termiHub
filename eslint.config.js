@@ -19,6 +19,35 @@ const SILENT_FALLBACK_CATCH = {
 };
 
 /**
+ * Ellipsis copy policy (#5379, UX-028): user-facing text uses the single
+ * ellipsis character "…", never three dots "...". The selectors cover the
+ * places copy lives: JSX text, string/template literals inside a user-facing
+ * JSX attribute (title, label, placeholder, aria-label, tooltip content, …),
+ * the same keys in an object literal (menu items, native dialog titles), and
+ * toast calls. Spread syntax is a node, not a string, so it never matches;
+ * comments are not AST nodes; test files are exempt via the config below.
+ */
+const THREE_DOTS = "/\\.\\.\\./";
+const ELLIPSIS_MESSAGE =
+  'Use the ellipsis character "…" instead of three dots "..." in user-facing text (#5379).';
+const DOTS_STRING = `:matches(Literal[value=${THREE_DOTS}], TemplateElement[value.raw=${THREE_DOTS}])`;
+const ELLIPSIS_COPY = [
+  { selector: `JSXText[value=${THREE_DOTS}]`, message: ELLIPSIS_MESSAGE },
+  {
+    selector: `JSXAttribute[name.name=/(^(title|label|placeholder|content|alt|description)|[Ll]abel|[Tt]itle|[Pp]laceholder)$/] ${DOTS_STRING}`,
+    message: ELLIPSIS_MESSAGE,
+  },
+  {
+    selector: `Property[key.name=/^(title|label|placeholder|description)$/] > ${DOTS_STRING}, Property[key.name=/^(title|label|placeholder|description)$/] > TemplateLiteral > TemplateElement[value.raw=${THREE_DOTS}]`,
+    message: ELLIPSIS_MESSAGE,
+  },
+  {
+    selector: `CallExpression:matches([callee.name='toast'], [callee.object.name='toast']) ${DOTS_STRING}`,
+    message: ELLIPSIS_MESSAGE,
+  },
+];
+
+/**
  * The shared `no-restricted-syntax` policies for production frontend code
  * (#4104, #4333, #4374). Kept in one list so a per-file override can reuse it.
  */
@@ -67,6 +96,7 @@ const RESTRICTED_SYNTAX = [
     message:
       "Build shortcut hints with withActionAccelerator / getActionAccelerator from @/services/keybindings (#4374).",
   },
+  ...ELLIPSIS_COPY,
 ];
 
 export default tseslint.config(
