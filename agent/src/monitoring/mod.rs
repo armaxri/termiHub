@@ -9,6 +9,7 @@
 //! mirror the agent's own status instead of inferring it from missing samples.
 
 pub mod collector;
+pub mod orphan_reaper;
 pub mod session;
 
 use std::collections::HashMap;
@@ -95,6 +96,9 @@ pub struct MonitoringManager {
     subscriptions: Mutex<HashMap<String, Subscription>>,
     notification_tx: NotificationSender,
     connection_store: Arc<ConnectionStore>,
+    /// Connected clients and the armed orphan reap (#5306); see
+    /// [`orphan_reaper`].
+    presence: std::sync::Mutex<orphan_reaper::ClientPresence>,
 }
 
 /// An active monitoring subscription.
@@ -128,6 +132,7 @@ impl MonitoringManager {
             subscriptions: Mutex::new(HashMap::new()),
             notification_tx,
             connection_store,
+            presence: std::sync::Mutex::default(),
         }
     }
 

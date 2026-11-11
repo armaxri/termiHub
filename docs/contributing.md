@@ -1123,7 +1123,7 @@ journalctl -u termihub-agent -f
 
 **Agent modes:**
 
-- **`--listen [addr]`** — TCP listener mode (default: `127.0.0.1:7685`). Used for systemd service. Sessions persist across client reconnects.
+- **`--listen [addr]`** — TCP listener mode (default: `127.0.0.1:7685`). Used for systemd service. Sessions persist across client reconnects; monitoring subscriptions persist for a grace period after the last client disconnects (`TERMIHUB_AGENT_MONITORING_ORPHAN_GRACE_SECS`, default 300).
 - **`--stdio`** — Stdio mode (NDJSON over stdin/stdout). Used when launched over SSH exec channels.
 
 The systemd service uses `--listen` mode by default. To change the listen address:
