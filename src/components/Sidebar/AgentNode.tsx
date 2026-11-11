@@ -101,6 +101,7 @@ import { AgentRunningSessionsDialog } from "./AgentRunningSessionsDialog";
 import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessionBoundDefinition";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import { ConfirmStopSessionDialog } from "./ConfirmStopSessionDialog";
 import {
   agentTreeScope,
   captureNeighborFocus,
@@ -1535,12 +1536,17 @@ export function AgentNode({
     [agent.id, startAndAttachAgentPersistentSession]
   );
 
-  const handleStopPersistent = useCallback(
-    (_agentId: string, def: AgentDefinitionInfo) => {
-      stopPersistentSession(`${agent.id}:${def.id}`);
-    },
-    [agent.id, stopPersistentSession]
-  );
+  // A persistent shell lives on the agent so that it survives, so Stop asks
+  // first (#5375). Holds the definition awaiting confirmation, or null.
+  const [pendingStop, setPendingStop] = useState<AgentDefinitionInfo | null>(null);
+  const handleStopPersistent = useCallback((_agentId: string, def: AgentDefinitionInfo) => {
+    setPendingStop(def);
+  }, []);
+  const confirmStopPersistent = useCallback(() => {
+    const def = pendingStop;
+    setPendingStop(null);
+    if (def) void stopPersistentSession(`${agent.id}:${def.id}`);
+  }, [agent.id, pendingStop, stopPersistentSession]);
 
   // Activate a row: folders toggle, sessions attach, definitions open — shared
   // by Enter (via the roving-nav handler) and Space (tree-specific handler).
@@ -1933,6 +1939,11 @@ export function AgentNode({
           }}
         />
       )}
+      <ConfirmStopSessionDialog
+        name={pendingStop?.name ?? null}
+        onConfirm={confirmStopPersistent}
+        onCancel={() => setPendingStop(null)}
+      />
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
       {updateDialog && desktopVersion && (
         <UpdateAgentDialog

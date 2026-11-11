@@ -92,6 +92,7 @@ import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { windowDisplayName } from "@/utils/windowPicker";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { XServerSetupDialog } from "./XServerSetupDialog";
+import { ConfirmStopSessionDialog } from "@/components/Sidebar/ConfirmStopSessionDialog";
 import { errorMessage } from "@/utils/errorMessage";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 import "./OpenConnectionsModal.css";
@@ -211,6 +212,30 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // confirm, since stopping only the companion breaks localhost while leaving the
   // agent port up. Null when idle.
   const [companionStop, setCompanionStop] = useState<{ id: string; name: string } | null>(null);
+
+  // A persistent (background) session the user asked to stop — held for a
+  // confirm, since such a session exists so that it survives (#5375). Null when idle.
+  const [pendingStop, setPendingStop] = useState<{ name: string; stop: () => void } | null>(null);
+  const persistentSessions = useAppStore((s) => s.persistentSessions);
+  const persistentSessionIds = useMemo(
+    () => new Set(Object.values(persistentSessions).map((e) => e.sessionId)),
+    [persistentSessions]
+  );
+  /**
+   * Whether the session `sessionId` (or the agent definition `persistentKey`,
+   * `<agentId>:<definitionId>`) is a running persistent session.
+   */
+  const isPersistentSession = (sessionId: string, persistentKey?: string): boolean => {
+    if (persistentSessionIds.has(sessionId)) return true;
+    const entry = persistentKey ? persistentSessions[persistentKey] : undefined;
+    return entry?.state === "running" || entry?.state === "attached";
+  };
+  /** Kill handler for a row: confirms first when the row is a persistent session. */
+  const guardPersistentStop =
+    (name: string, persistent: boolean, stop: () => Promise<void>) => (): void => {
+      if (persistent) setPendingStop({ name, stop: () => void stop() });
+      else void stop();
+    };
 
   // Split backend-local sessions: spawned containers get their own section, the
   // rest stay under "Local Sessions" (#1446). A session is spawned when the
@@ -950,7 +975,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 badge={s.alive ? "alive" : "dead"}
                 owningWindow={resolveOwningWindow(s.id)}
                 onFocusWindow={handleFocusWindow}
-                onKill={() => handleKillLocal(s.id)}
+                onKill={guardPersistentStop(s.title, isPersistentSession(s.id), () =>
+                  handleKillLocal(s.id)
+                )}
               />
             ))}
           </Section>
@@ -1066,7 +1093,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   badge={s.alive ? "alive" : "dead"}
                   owningWindow={resolveOwningWindow(s.id)}
                   onFocusWindow={handleFocusWindow}
-                  onKill={() => handleKillProxy(a.id, s.id)}
+                  onKill={guardPersistentStop(s.title, isPersistentSession(s.id), () =>
+                    handleKillProxy(a.id, s.id)
+                  )}
                 />
               ))}
             </Section>
@@ -1112,7 +1141,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   icon={<Terminal size={14} />}
                   title={s.title}
                   badge={s.status === "attached" || s.status === "running" ? "alive" : "dead"}
-                  onKill={() => handleKillAgentSession(a.id, s.sessionId)}
+                  onKill={guardPersistentStop(
+                    s.title,
+                    isPersistentSession(
+                      s.sessionId,
+                      s.definitionId ? `${a.id}:${s.definitionId}` : undefined
+                    ),
+                    () => handleKillAgentSession(a.id, s.sessionId)
+                  )}
                 />
               ))}
             </Section>
@@ -1370,6 +1406,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         }}
         onCancel={() => setCompanionStop(null)}
         data-testid="open-connections-companion-stop-confirm"
+      />
+      <ConfirmStopSessionDialog
+        name={pendingStop?.name ?? null}
+        onConfirm={() => {
+          pendingStop?.stop();
+          setPendingStop(null);
+        }}
+        onCancel={() => setPendingStop(null)}
       />
     </Modal>
   );
