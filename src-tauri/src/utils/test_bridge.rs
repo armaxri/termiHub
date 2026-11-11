@@ -103,6 +103,71 @@ fn shell_env_keep_from(
         .collect()
 }
 
+/// Env var naming a loopback HTTP server the update and plugin-index clients
+/// fetch from instead of the internet under the test bridge (#5388). The
+/// system-test harness points it at a `local_http.py` fixture, so a test that
+/// grades those features stays hermetic. `assert-no-test-bridge.sh` also fails
+/// a binary that carries this name: a release build must not read it.
+pub const TEST_HTTP_BASE_ENV: &str = "TERMIHUB_TEST_HTTP_BASE";
+
+/// The loopback base [`rebase_url`] maps internet URLs onto, set at most once.
+static TEST_HTTP_BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Read [`TEST_HTTP_BASE_ENV`] once at boot. Called only in test-bridge mode; a
+/// production build never compiles it. A value that is not a loopback
+/// `http(s)://` URL is ignored with a warning, so the seam can never send a
+/// request anywhere but this machine.
+pub fn install_http_base_override() {
+    let Ok(raw) = std::env::var(TEST_HTTP_BASE_ENV) else {
+        return;
+    };
+    match http_base_from(&raw) {
+        Some(base) => {
+            if TEST_HTTP_BASE.set(base.clone()).is_ok() {
+                tracing::info!(
+                    "Test HTTP base: update and plugin-index fetches go to {base} (#5388)"
+                );
+            }
+        }
+        None => tracing::warn!("{TEST_HTTP_BASE_ENV}={raw:?} ignored: not a loopback http(s) URL"),
+    }
+}
+
+/// Pure core of [`install_http_base_override`]: the trimmed base without a
+/// trailing `/`, or `None` unless it is an `http(s)` URL on a loopback host.
+fn http_base_from(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let parsed = reqwest::Url::parse(trimmed).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str()?;
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    loopback.then(|| trimmed.to_string())
+}
+
+/// `url` rebased onto the test HTTP base, or `None` when no base is set.
+///
+/// `https://api.github.com/repos/x?y` becomes `<base>/api.github.com/repos/x?y`:
+/// the original host is the first path segment, so one fixture server can
+/// serve every origin the app knows.
+pub fn rebase_url(url: &str) -> Option<String> {
+    rebase_onto(url, TEST_HTTP_BASE.get()?)
+}
+
+/// Pure core of [`rebase_url`] with the base passed in.
+fn rebase_onto(url: &str, base: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str()?;
+    let query = parsed.query().map(|q| format!("?{q}")).unwrap_or_default();
+    Some(format!("{base}/{host}{}{query}", parsed.path()))
+}
+
 /// Whether an env-var value reads as truthy (`1`/`true`, any case).
 fn flag_is_truthy(raw: &str) -> bool {
     matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true")
@@ -266,6 +331,46 @@ fn always_on_top_opt_out_from(raw: Option<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_base_accepts_only_loopback_http_urls() {
+        assert_eq!(
+            http_base_from(" http://127.0.0.1:8123/ "),
+            Some("http://127.0.0.1:8123".to_string())
+        );
+        assert_eq!(
+            http_base_from("http://localhost:9/base"),
+            Some("http://localhost:9/base".to_string())
+        );
+        assert_eq!(
+            http_base_from("http://[::1]:80"),
+            Some("http://[::1]:80".to_string())
+        );
+        assert_eq!(http_base_from(""), None);
+        assert_eq!(http_base_from("127.0.0.1:8123"), None);
+        assert_eq!(http_base_from("ftp://127.0.0.1/"), None);
+        assert_eq!(http_base_from("http://10.0.0.1:80"), None);
+        assert_eq!(http_base_from("https://api.github.com"), None);
+        assert_eq!(http_base_from("http://localhost.example.com"), None);
+    }
+
+    #[test]
+    fn rebase_keeps_the_host_as_the_first_path_segment() {
+        let base = "http://127.0.0.1:8123";
+        assert_eq!(
+            rebase_onto(
+                "https://api.github.com/repos/armaxri/termiHub/releases/latest",
+                base
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:8123/api.github.com/repos/armaxri/termiHub/releases/latest")
+        );
+        assert_eq!(
+            rebase_onto("https://raw.githubusercontent.com/a/b/index.json?x=1", base).as_deref(),
+            Some("http://127.0.0.1:8123/raw.githubusercontent.com/a/b/index.json?x=1")
+        );
+        assert_eq!(rebase_onto("not a url", base), None);
+    }
 
     #[test]
     fn known_hosts_override_reads_a_non_empty_path() {

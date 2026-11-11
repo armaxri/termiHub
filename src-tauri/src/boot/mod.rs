@@ -67,6 +67,9 @@ pub(crate) fn init_platform_and_capture(
         utils::test_bridge::install_known_hosts_override();
         // Let local shells keep the harness's PSModulePath (#5055).
         utils::test_bridge::install_shell_env_keep();
+        // Update and plugin-index fetches go to the harness's loopback
+        // fixture server instead of the internet, when it names one (#5388).
+        utils::test_bridge::install_http_base_override();
 
         if utils::test_bridge::always_on_top_opt_out() {
             info!(
