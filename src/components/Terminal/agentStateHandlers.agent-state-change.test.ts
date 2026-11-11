@@ -518,7 +518,7 @@ describe("handleAgentStateChange (real handler, #4309)", () => {
       harness.transport.setSession(tab.id, connected());
       vi.mocked(disconnectAgent).mockRejectedValueOnce(new Error("nope"));
 
-      await useAppStore.getState().disconnectRemoteAgent(AGENT);
+      await expect(useAppStore.getState().disconnectRemoteAgent(AGENT)).rejects.toThrow("nope");
       await agentEvent("disconnected");
 
       expect(intents("session.reconnect", tab.id)).toHaveLength(1);

@@ -38,7 +38,11 @@ vi.mock("@dnd-kit/utilities", () => ({
   CSS: { Transform: { toString: () => "" } },
 }));
 
+const disconnectAgentMock = vi.fn((..._args: unknown[]) => Promise.resolve());
+const toastError = vi.fn();
+
 vi.mock("@/services/api", () => ({
+  disconnectAgent: (...args: unknown[]) => disconnectAgentMock(...args),
   removeCredential: vi.fn(() => Promise.resolve()),
   storeCredential: vi.fn(() => Promise.resolve()),
   listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
@@ -49,6 +53,14 @@ vi.mock("@/services/api", () => ({
   updateAgentFolder: vi.fn(),
   deleteAgentFolder: vi.fn(() => Promise.resolve()),
 }));
+
+vi.mock("@/components/ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui")>();
+  return {
+    ...actual,
+    toast: { ...actual.toast, error: (...args: unknown[]) => toastError(...args) },
+  };
+});
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 vi.mock("@/utils/resolveConnectionCredential", () => ({
@@ -184,5 +196,32 @@ describe("AgentNode — force reconnect wiring", () => {
     });
 
     expect(callOrder).toEqual(["disconnect", "connect"]);
+  });
+
+  it("a failed disconnect toasts once and still reconnects (#5278)", async () => {
+    // The real store action, with the backend disconnect rejecting.
+    disconnectAgentMock.mockRejectedValueOnce(new Error("stale transport"));
+    const mockConnect = vi.fn().mockResolvedValue(undefined);
+
+    seedAgentsRegion({
+      agentDefinitions: { [AGENT_ID]: [] },
+      agentFolders: { [AGENT_ID]: [] },
+      agentSessions: { [AGENT_ID]: [] },
+      remoteAgents: [makeAgent()],
+    });
+    useAppStore.setState({ connectRemoteAgent: mockConnect });
+
+    act(() => {
+      root.render(React.createElement(AgentNode, { agent: makeAgent() }));
+    });
+
+    await act(async () => {
+      await capturedDialogProps.onForceReconnect!();
+    });
+
+    expect(disconnectAgentMock).toHaveBeenCalledWith(AGENT_ID, { endHostedSessions: false });
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith("Failed to disconnect agent: stale transport");
+    expect(mockConnect).toHaveBeenCalled();
   });
 });

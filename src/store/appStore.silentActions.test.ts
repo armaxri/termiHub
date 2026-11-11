@@ -294,11 +294,13 @@ describe("#1472 — agent mutating actions surface errors", () => {
     expect(useFileBookmarksStore.getState().bookmarks.map((b) => b.id)).toEqual(["c", "d"]);
   });
 
-  it("disconnectRemoteAgent toasts on a rejected disconnect", async () => {
+  // Not silent: the action rejects so its caller reports the failure once —
+  // one error for a single stop, one summary for a bulk action (#5278).
+  it("disconnectRemoteAgent rejects on a rejected disconnect and leaves the toast to its caller", async () => {
     vi.mocked(disconnectAgent).mockRejectedValueOnce(new Error("hung"));
-    await useAppStore.getState().disconnectRemoteAgent(AGENT_ID);
+    await expect(useAppStore.getState().disconnectRemoteAgent(AGENT_ID)).rejects.toThrow("hung");
     await flush();
-    expect(toastError).toHaveBeenCalledWith(expect.stringContaining("hung"));
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("refreshAgentSessions toasts on a rejected list", async () => {
