@@ -221,7 +221,10 @@ use termihub_core::monitoring::{
 /// agent host, so a symlink alias cannot empty the source or delete its own
 /// copy. An older agent answers "method not found", and the desktop keeps its
 /// lexical check.
-const AGENT_PROTOCOL_VERSION: &str = "0.36.0";
+/// Bumped to 0.37.0 for the additive `connection.reconnect` notification
+/// (#5396): an agent-hosted serial session reopens its port in place after the
+/// USB adapter drops and reports each step. An older desktop ignores it.
+const AGENT_PROTOCOL_VERSION: &str = "0.37.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -4035,10 +4038,11 @@ mod tests {
     /// capability (#5021), and 0.34.0 `serial.list_ports` with its
     /// `serialPortRescan` capability (#5069), and 0.35.0 the `refused` /
     /// `unreachable` / `dns` connect-failure kinds (#5183), and 0.36.0
-    /// `connection.files.realpath` (#5333).
+    /// `connection.files.realpath` (#5333), and 0.37.0 the
+    /// `connection.reconnect` notification (#5396).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.36.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.37.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

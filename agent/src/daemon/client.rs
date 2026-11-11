@@ -26,8 +26,9 @@ use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 use crate::protocol::methods::{
     ConnectionErrorNotification, ConnectionEvictedNotification, ConnectionExitNotification,
-    ConnectionFilesOnlyNotification, ConnectionOutputNotification, CONNECTION_ERROR,
-    CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_FILES_ONLY, CONNECTION_OUTPUT,
+    ConnectionFilesOnlyNotification, ConnectionOutputNotification,
+    ConnectionReconnectNotification, CONNECTION_ERROR, CONNECTION_EVICTED, CONNECTION_EXIT,
+    CONNECTION_FILES_ONLY, CONNECTION_OUTPUT, CONNECTION_RECONNECT,
 };
 use crate::session::output_budget::OutputBudget;
 use crate::transport::{charged, to_params};
@@ -167,6 +168,23 @@ pub(crate) fn files_only_notification(session_id: &str) -> JsonRpcNotification {
             session_id: session_id.to_owned(),
         }),
     )
+}
+
+/// Build the `connection.reconnect` notification (#5396) from a daemon's
+/// [`MSG_RECONNECT`] payload (`{"seq", ...status}`). `None` for a malformed one.
+pub(crate) fn reconnect_notification(
+    session_id: &str,
+    payload: &[u8],
+) -> Option<JsonRpcNotification> {
+    let mut value: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    value
+        .as_object_mut()?
+        .insert("session_id".to_owned(), session_id.into());
+    let notification: ConnectionReconnectNotification = serde_json::from_value(value).ok()?;
+    Some(JsonRpcNotification::new(
+        CONNECTION_RECONNECT,
+        to_params(&notification),
+    ))
 }
 
 /// What the reader needs to act on an eviction (SM-003): the shared writer slot
@@ -1525,6 +1543,17 @@ async fn read_frames(
                     // shows the "no shell" panel instead of an empty terminal.
                     info!("Session {session_id} is files-only (shell refused, SFTP works)");
                     let _ = notification_tx.send(files_only_notification(session_id));
+                }
+                MSG_RECONNECT => {
+                    // #5396: the session's backend is reopening in place (a
+                    // serial port whose adapter dropped). Relay each step so
+                    // the desktop's tab shows the attempts and the give-up.
+                    match reconnect_notification(session_id, &frame.payload) {
+                        Some(notification) => {
+                            let _ = notification_tx.send(notification);
+                        }
+                        None => warn!("Malformed reconnect step for session {session_id}"),
+                    }
                 }
                 MSG_PROCESS_RESPONSE => {
                     if let Some(features) = features {

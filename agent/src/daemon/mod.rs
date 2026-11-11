@@ -5,6 +5,7 @@ pub mod monitoring_rpc;
 pub mod process;
 pub mod process_rpc;
 pub mod protocol;
+pub(crate) mod serial_reopen;
 pub mod spawn;
 pub mod transport;
 pub mod worker_sink;

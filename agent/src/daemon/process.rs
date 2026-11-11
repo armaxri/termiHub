@@ -10,6 +10,7 @@
 //! process. When the agent disconnects and reconnects, the daemon
 //! replays the ring buffer to bring the agent up to date.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -23,11 +24,13 @@ use crate::daemon::monitoring_rpc::{
     self, MonitorCommand, MonitoringEvent, MonitoringOp, MonitoringRequest,
 };
 use crate::daemon::process_rpc::{self, ProcessRequest, ProcessResponse};
+use crate::daemon::serial_reopen::{wants_reopen, ReopenStatus, ReopenStatusRx, SerialReopen};
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
 use crate::daemon::worker_sink::{self, SinkEvent, WorkerSink};
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{ConnectionType, OutputReceiver};
+use termihub_core::session::serial_reconnect::SystemSerialPortProbe;
 
 /// Process requests the daemon runs at once (#3210). The desktop refreshes one
 /// table every few seconds, so this is a safety bound, never a working limit.
@@ -254,9 +257,23 @@ async fn run_daemon_session(config: DaemonConfig) -> anyhow::Result<()> {
     // ready to accept connections, so we must finish slow operations
     // (e.g. Docker image pull / container creation) first.
     let registry = crate::registry::build_registry();
-    let mut connection = registry.create(&config.type_id).map_err(|e| {
-        anyhow::anyhow!("Failed to create connection type '{}': {e}", config.type_id)
-    })?;
+    let (mut connection, reopen) = if wants_reopen(&config.type_id, &config.settings) {
+        // A serial session with Auto-Reconnect on reopens its port in place
+        // after the adapter drops (#5396).
+        let wrapper = SerialReopen::new(
+            Arc::new(|| {
+                Box::new(termihub_core::backends::serial::Serial::new()) as Box<dyn ConnectionType>
+            }),
+            Arc::new(SystemSerialPortProbe),
+        );
+        let status = wrapper.status_watch();
+        (Box::new(wrapper) as Box<dyn ConnectionType>, Some(status))
+    } else {
+        let connection = registry.create(&config.type_id).map_err(|e| {
+            anyhow::anyhow!("Failed to create connection type '{}': {e}", config.type_id)
+        })?;
+        (connection, None)
+    };
 
     // Relay SSH keyboard-interactive (OTP / 2FA) prompts to the spawning worker
     // — and through it to the desktop — when the worker exported a relay
@@ -305,13 +322,14 @@ async fn run_daemon_session(config: DaemonConfig) -> anyhow::Result<()> {
     }
 
     // Run the main event loop
-    let result = daemon_loop(
+    let result = daemon_loop_with_reopen(
         &config.session_id,
         connection,
         output_rx,
         &mut listener,
         config.buffer_size,
         detached_timeout,
+        reopen,
     )
     .await;
 
@@ -381,6 +399,28 @@ impl WorkerAcceptor for DaemonListener {
     }
 }
 
+/// [`daemon_loop_with_reopen`] for a backend that does not reopen itself.
+#[cfg(test)]
+async fn daemon_loop(
+    session_id: &str,
+    connection: Box<dyn ConnectionType>,
+    output_rx: OutputReceiver,
+    listener: &mut impl WorkerAcceptor,
+    buffer_size: usize,
+    detached_timeout: Option<Duration>,
+) -> anyhow::Result<()> {
+    daemon_loop_with_reopen(
+        session_id,
+        connection,
+        output_rx,
+        listener,
+        buffer_size,
+        detached_timeout,
+        None,
+    )
+    .await
+}
+
 /// Main daemon event loop.
 ///
 /// Multiplexes between connection output, new agent connections, and
@@ -388,14 +428,21 @@ impl WorkerAcceptor for DaemonListener {
 ///
 /// `detached_timeout` is the optional [`DETACHED_TIMEOUT_ENV`] bound: when set,
 /// the loop ends the session once no worker has been attached for that long.
-async fn daemon_loop(
+///
+/// `reopen` carries the reconnect steps of a backend that reopens itself in
+/// place after a drop (#5396): the loop forwards each to the attached worker
+/// as [`MSG_RECONNECT`] and replays a running one to a worker that attaches
+/// mid-reopen.
+async fn daemon_loop_with_reopen(
     session_id: &str,
     mut connection: Box<dyn ConnectionType>,
     mut output_rx: OutputReceiver,
     listener: &mut impl WorkerAcceptor,
     buffer_size: usize,
     detached_timeout: Option<Duration>,
+    reopen: Option<ReopenStatusRx>,
 ) -> anyhow::Result<()> {
+    let mut reopen = reopen;
     let mut ring_buffer = RingBuffer::new(buffer_size);
     // The attached worker's outbound queue (#3890): the loop only enqueues, a
     // writer task writes under a progress deadline, so a worker that stops
@@ -577,9 +624,25 @@ async fn daemon_loop(
                     None => {
                         // Connection output channel closed — connection ended
                         info!("Connection output channel closed");
+                        // A reopen that gave up says so before the session ends
+                        // (#5396), even when its last step raced this close.
+                        if let Some(status) = latest_reopen(reopen.as_ref()) {
+                            if status.is_gave_up() {
+                                send_reopen_status(agent_writer.as_ref(), &status);
+                            }
+                        }
                         send_exited_async(&mut agent_writer, 0).await;
                         return Ok(());
                     }
+                }
+            }
+
+            // The backend is reopening in place (#5396): tell the worker.
+            changed = next_reopen_status(&mut reopen) => {
+                match changed {
+                    Some(status) => send_reopen_status(agent_writer.as_ref(), &status),
+                    // The backend is gone; stop watching.
+                    None => reopen = None,
                 }
             }
 
@@ -913,6 +976,11 @@ async fn daemon_loop(
             sink.send(MSG_FILES_ONLY, &[]);
         }
 
+        // A worker attaching mid-reopen learns where the loop stands (#5396).
+        if let Some(status) = latest_reopen(reopen.as_ref()).filter(ReopenStatus::is_running) {
+            send_reopen_status(Some(&sink), &status);
+        }
+
         agent_writer = Some(sink);
 
         // Spawn reader task for agent commands
@@ -920,6 +988,36 @@ async fn daemon_loop(
         reader_task = Some(tokio::spawn(async move {
             agent_reader_loop(read_half, tx, gen).await;
         }));
+    }
+}
+
+/// The latest reconnect step of a reopening backend (#5396), if any.
+fn latest_reopen(reopen: Option<&ReopenStatusRx>) -> Option<ReopenStatus> {
+    reopen.and_then(|rx| rx.borrow().clone())
+}
+
+/// The next reconnect step of a reopening backend (#5396). `None` once the
+/// backend dropped its sender; pending forever without a reopening backend.
+async fn next_reopen_status(reopen: &mut Option<ReopenStatusRx>) -> Option<ReopenStatus> {
+    let Some(rx) = reopen.as_mut() else {
+        return std::future::pending().await;
+    };
+    loop {
+        rx.changed().await.ok()?;
+        if let Some(status) = rx.borrow_and_update().clone() {
+            return Some(status);
+        }
+    }
+}
+
+/// Send a reconnect step to the attached worker as [`MSG_RECONNECT`] (#5396).
+fn send_reopen_status(agent_writer: Option<&WorkerSink>, status: &ReopenStatus) {
+    let Some(sink) = agent_writer else {
+        return;
+    };
+    match serde_json::to_vec(status) {
+        Ok(payload) => sink.send(MSG_RECONNECT, &payload),
+        Err(e) => warn!("Failed to encode a reconnect step: {e}"),
     }
 }
 
@@ -1796,6 +1894,9 @@ pub(crate) mod tests {
 
     /// A files-only session reaches the desktop, end to end (#4081).
     mod files_only_e2e;
+
+    /// A reopening backend's reconnect steps reach the desktop, end to end (#5396).
+    mod reconnect_e2e;
 
     /// Output flow control for daemon-backed sessions, end to end (#4416).
     mod output_flow_e2e;
