@@ -1510,3 +1510,7 @@ mod tests {
         assert_send::<LocalFileBrowser>();
     }
 }
+
+#[cfg(test)]
+#[path = "local_copy_self_tests.rs"]
+mod copy_self_tests;
