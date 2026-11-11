@@ -95,6 +95,7 @@ SCRIPTS=(
   "scripts/internal/dev-release-publish.sh"
   "scripts/internal/fetch-conpty.sh"
   "scripts/internal/fetch-github-release-asset.sh"
+  "scripts/internal/fetch-wsl-distro.sh"
   "scripts/internal/harness-coverage.sh"
   "scripts/internal/macos-dmg-layout.sh"
   "scripts/internal/native-sshd-fixture.sh"
