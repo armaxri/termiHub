@@ -10,7 +10,7 @@ use termihub_core::protocol::methods::{
 };
 
 use super::*;
-use crate::network::test_support::FakeAgent;
+use crate::test_support::FakeAgent;
 
 fn unsubscribes(agent: &FakeAgent) -> usize {
     agent
