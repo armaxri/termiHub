@@ -107,14 +107,20 @@ def skip_reason(
     *,
     target: NativeSshTarget,
     platform: str = sys.platform,
+    container_fixtures: Iterable[str] = (),
 ) -> Optional[str]:
     """Why a test cannot run against ``target`` on ``platform``, or None.
 
     ``marker_platforms`` is None for a test without the ``native_sshd`` marker.
-    Tests that use none of :data:`SSH_FIXTURES` are never affected.
+    Tests that use none of :data:`SSH_FIXTURES` are never affected, and neither
+    are tests that also need another container fixture (``container_fixtures``,
+    e.g. a VNC server reached over SSH): that fixture skips them with its own,
+    more precise reason at setup, so the SSH side is not what keeps them off.
     """
     names = set(fixturenames)
     if not names & SSH_FIXTURES:
+        return None
+    if names & (set(container_fixtures) - SSH_FIXTURES):
         return None
     if marker_platforms is None or platform not in marker_platforms:
         return NOT_PORTED_REASON
@@ -129,13 +135,20 @@ def apply_markers(items, target: Optional[NativeSshTarget], platform: str = sys.
         return
     import pytest
 
+    from .tool_preflight import FIXTURE_TOOLS
+
+    containers = {name for name, tools in FIXTURE_TOOLS.items() if "docker" in tools}
     for item in items:
         marker = item.get_closest_marker(MARKER)
         platforms = None
         if marker is not None:
             platforms = tuple(marker.kwargs.get("platforms", DEFAULT_PLATFORMS))
         reason = skip_reason(
-            getattr(item, "fixturenames", ()), platforms, target=target, platform=platform
+            getattr(item, "fixturenames", ()),
+            platforms,
+            target=target,
+            platform=platform,
+            container_fixtures=containers,
         )
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
