@@ -1,0 +1,88 @@
+{
+  "$comment": [
+    "How the testid drift guard (scripts/check-testid-drift.py) treats templated ids (#5341).",
+    "registry: the interpolated value comes from a literal union / const array in src/**;",
+    "the guard expands the members, so a harness id whose suffix is not one fails.",
+    "dynamic: the value is genuinely runtime data (file names, indexes, generated ids);",
+    "any suffix passes. Globs starting with '*' are caller-supplied stems and are",
+    "classified automatically. Any other glob a harness id relies on is reported",
+    "as unclassified (plain glob match). Regenerate the catalog to see the result."
+  ],
+  "registry": [
+    {
+      "globs": ["settings-nav-*"],
+      "source": "src/components/Settings/settingsRegistry.ts",
+      "extract": { "kind": "object-field", "const": "CATEGORIES", "field": "id" }
+    },
+    {
+      "globs": ["activity-bar-*"],
+      "source": "src/components/ActivityBar/ActivityBar.tsx",
+      "extract": {
+        "kind": "object-field",
+        "const": ["REQUIRED_ITEMS", "OPTIONAL_ITEMS"],
+        "field": "label"
+      },
+      "transform": "kebab-lower"
+    },
+    {
+      "globs": ["network-quick-action-*"],
+      "source": "src/types/terminal.ts",
+      "extract": { "kind": "union", "type": "NetworkTool" }
+    },
+    {
+      "globs": ["network-history-*"],
+      "source": "src/types/generated/NetworkHistoryTool.ts",
+      "extract": { "kind": "union", "type": "NetworkHistoryTool" }
+    },
+    {
+      "globs": [
+        "transfer-pane-*",
+        "transfer-pane-*-up",
+        "transfer-pane-*-path",
+        "transfer-pane-*-refresh",
+        "transfer-pane-*-error",
+        "transfer-pane-*-placeholder",
+        "transfer-pane-*-list"
+      ],
+      "source": "src/services/paneTransfer.ts",
+      "extract": { "kind": "union", "type": "PaneSide" }
+    },
+    {
+      "globs": ["plugin-install-trust-*"],
+      "source": "src/types/generated/PluginTrustInfo.ts",
+      "extract": { "kind": "property-union", "type": "PluginTrustInfo", "property": "level" }
+    },
+    {
+      "globs": ["indent-spaces-*", "indent-tabs-*"],
+      "source": "src/components/StatusBar/StatusBar.tsx",
+      "extract": { "kind": "array", "const": "INDENT_SIZES" }
+    },
+    {
+      "globs": ["color-picker-swatch-*"],
+      "source": "src/components/Terminal/ColorPickerDialog.tsx",
+      "extract": { "kind": "array", "const": "PRESET_COLORS" },
+      "transform": "strip-hash"
+    }
+  ],
+  "dynamic": {
+    "file-row-*": "file or directory name",
+    "tab-*": "generated tab id",
+    "transfer-pane-*-row-*": "file name in a transfer pane",
+    "context-file-*": "per-file context menu item, stem forwarded via testIdPrefix",
+    "x-server-setup-*": "dialog parts, stem forwarded via testIdPrefix",
+    "general-settings-*": "nested settings fields, stem forwarded via testIdPrefix",
+    "backup-export-section-*": "section ids reported by the backend at runtime",
+    "lang-*": "editor languages registered at runtime",
+    "plugin-widget-*": "widget ids contributed by installed plugins",
+    "field-*": "connection-type schema field keys (backend-supplied)",
+    "dns-result-*": "result row index",
+    "traceroute-hop-*": "hop index",
+    "port-scanner-result-*": "result row index",
+    "http-monitor-entry-*": "entry index",
+    "jump-host-source-saved-*": "jump-host row index",
+    "macro-editor-step-*": "step index",
+    "macro-editor-step-data-*": "step index",
+    "workflow-editor-step-*": "step index",
+    "workflow-editor-step-command-*": "step field id"
+  }
+}
