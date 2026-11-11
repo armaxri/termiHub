@@ -253,15 +253,8 @@ fn run_trace(
             }
         }
 
-        let host_str = router_ip.map(|ip| ip.to_string());
-        let reached_dest = router_ip.map(|ip| ip == dest_ip).unwrap_or(false);
-
-        on_hop(TracerouteHop {
-            hop: ttl,
-            host: host_str.clone(),
-            ip: host_str,
-            rtt_ms: rtts,
-        });
+        let (hop, reached_dest) = hop_record(ttl, router_ip, rtts, dest_ip);
+        on_hop(hop);
 
         if reached_dest {
             break;
@@ -269,6 +262,28 @@ fn run_trace(
     }
 
     Ok(())
+}
+
+/// Build the hop reported for `ttl` from what its probes collected, and whether
+/// the trace has reached `dest_ip` (so it stops).
+///
+/// `router_ip` is the first responder that answered one of the hop's probes;
+/// `None` (every probe timed out) is the `* * *` hop, reported with no address.
+/// The host is the bare address: no reverse lookup happens here.
+fn hop_record(
+    ttl: u8,
+    router_ip: Option<IpAddr>,
+    rtt_ms: [Option<f64>; 3],
+    dest_ip: IpAddr,
+) -> (TracerouteHop, bool) {
+    let addr = router_ip.map(|ip| ip.to_string());
+    let hop = TracerouteHop {
+        hop: ttl,
+        host: addr.clone(),
+        ip: addr,
+        rtt_ms,
+    };
+    (hop, router_ip == Some(dest_ip))
 }
 
 async fn resolve(host: &str) -> Result<IpAddr, NetworkError> {
@@ -621,6 +636,52 @@ mod tests {
         let mut reply = v4_time_exceeded_from_gateway();
         reply[0] = 0x44; // IHL 4: shorter than any real IPv4 header.
         assert_eq!(quoted_udp_dst_port_v4(&reply), None);
+    }
+
+    // ── Hop records ───────────────────────────────────────────────────────────
+
+    const DEST_V4: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8));
+
+    #[test]
+    fn all_probes_timed_out_is_an_anonymous_hop() {
+        // `* * *`: no responder, no RTTs, and the trace goes on.
+        let (hop, reached) = hop_record(4, None, [None; 3], DEST_V4);
+        assert_eq!(hop.hop, 4);
+        assert_eq!(hop.host, None);
+        assert_eq!(hop.ip, None);
+        assert_eq!(hop.rtt_ms, [None; 3]);
+        assert!(!reached);
+    }
+
+    #[test]
+    fn partially_answered_hop_keeps_the_gaps() {
+        // One probe of three lost: the hop still names its router.
+        let router = IpAddr::from([10, 0, 0, 1]);
+        let rtts = [Some(1.25), None, Some(1.5)];
+        let (hop, reached) = hop_record(2, Some(router), rtts, DEST_V4);
+        assert_eq!(hop.ip.as_deref(), Some("10.0.0.1"));
+        assert_eq!(hop.host, hop.ip);
+        assert_eq!(hop.rtt_ms, rtts);
+        assert!(!reached, "an intermediate router does not end the trace");
+    }
+
+    #[test]
+    fn the_destination_answering_ends_the_trace() {
+        let (hop, reached) = hop_record(9, Some(DEST_V4), [Some(12.0); 3], DEST_V4);
+        assert_eq!(hop.ip.as_deref(), Some("8.8.8.8"));
+        assert!(reached);
+    }
+
+    #[test]
+    fn ipv6_hops_use_the_compressed_address_form() {
+        let dest: IpAddr = "2001:4860:4860::8888".parse().unwrap();
+        let router: IpAddr = "2001:db8::1".parse().unwrap();
+        let (hop, reached) = hop_record(1, Some(router), [Some(0.5), None, None], dest);
+        assert_eq!(hop.ip.as_deref(), Some("2001:db8::1"));
+        assert!(!reached);
+        let (last, reached) = hop_record(7, Some(dest), [None, Some(20.0), None], dest);
+        assert_eq!(last.ip.as_deref(), Some("2001:4860:4860::8888"));
+        assert!(reached);
     }
 
     // ── Existing tests ────────────────────────────────────────────────────────
