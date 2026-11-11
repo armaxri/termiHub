@@ -3727,6 +3727,10 @@ mod capability_refresh_tests;
 // like the transport sever it drives.
 #[cfg(all(test, unix))]
 mod reconnect_give_up_tests;
+// The reconnect backoff, park and give-up timing in virtual time (#5339);
+// unix-only, as a refused loopback connect is slow on Windows.
+#[cfg(all(test, unix))]
+mod reconnect_virtual_time_tests;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //
