@@ -172,6 +172,12 @@ pub enum SidecarMessage {
         subject: Option<String>,
         /// Certificate issuer, when available.
         issuer: Option<String>,
+        /// The server the certificate belongs to when the sidecar followed a
+        /// Server Redirection to it (#5137); the host keys its trust store on
+        /// this name instead of the connection's host. Absent for the
+        /// connection's own host.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
     },
     /// A fatal error; the sidecar exits after sending it.
     Error(String),
@@ -560,8 +566,17 @@ mod tests {
             fingerprint: "sha256:AB:CD:EF".to_string(),
             subject: Some("CN=host.example".to_string()),
             issuer: None,
+            host: None,
         };
         assert_eq!(round_trip_sidecar(prompt.clone()).await, prompt);
+        // A followed redirection names the server the certificate is for (#5137).
+        let redirected = SidecarMessage::CertPrompt {
+            fingerprint: "sha256:AB:CD:EF".to_string(),
+            subject: None,
+            issuer: None,
+            host: Some("rdsh2.example.com".to_string()),
+        };
+        assert_eq!(round_trip_sidecar(redirected.clone()).await, redirected);
 
         for decision in [
             HostMessage::CertDecision {

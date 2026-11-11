@@ -635,6 +635,7 @@ async fn run_reader<R>(
                         fingerprint,
                         subject,
                         issuer,
+                        host,
                     }) => {
                         // Forward the untrusted-cert prompt up to the manager,
                         // which owns the trust store + user dialog (#1767). If the
@@ -644,6 +645,7 @@ async fn run_reader<R>(
                                 fingerprint,
                                 subject,
                                 issuer,
+                                host,
                             })
                             .await
                             .is_err()
@@ -1809,6 +1811,7 @@ mod tests {
                 fingerprint: "sha256:AB:CD".to_string(),
                 subject: Some("CN=host".to_string()),
                 issuer: None,
+                host: None,
             },
         )
         .await

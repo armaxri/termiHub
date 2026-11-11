@@ -1592,7 +1592,11 @@ pub(crate) async fn cert_pump<S: GraphicalEventSink>(
             fingerprint,
             subject,
             issuer,
+            host: redirected_to,
         } = prompt;
+        // A followed RDP server redirection (#5137) presents the new server's
+        // certificate under that server's own name, never the broker's.
+        let host = redirected_to.unwrap_or_else(|| host.clone());
 
         match trust_store.lookup(&host, &fingerprint) {
             TrustLookup::Trusted => {
@@ -2330,7 +2334,7 @@ mod tests {
         host: &str,
         fingerprint: &str,
     ) -> RecordingSink {
-        run_cert_pump_with_pending(trust_store, host, fingerprint)
+        run_cert_pump_with_pending(trust_store, host, fingerprint, None)
             .await
             .0
     }
@@ -2340,6 +2344,7 @@ mod tests {
         trust_store: Arc<RdpTrustStore>,
         host: &str,
         fingerprint: &str,
+        redirected_to: Option<&str>,
     ) -> (RecordingSink, PendingCert) {
         use termihub_core::connection::ConnectionType;
         let sink = RecordingSink::default();
@@ -2365,6 +2370,7 @@ mod tests {
             fingerprint: fingerprint.to_string(),
             subject: None,
             issuer: None,
+            host: redirected_to.map(str::to_string),
         })
         .await
         .unwrap();
@@ -2378,7 +2384,7 @@ mod tests {
         // The prompt event can fire before the tab listens (#4004): the same
         // prompt stays fetchable until the user decides.
         let store = Arc::new(RdpTrustStore::in_memory());
-        let (sink, pending) = run_cert_pump_with_pending(store, "h:3389", "sha256:AA").await;
+        let (sink, pending) = run_cert_pump_with_pending(store, "h:3389", "sha256:AA", None).await;
         let emitted = sink.cert_prompts.lock().unwrap()[0].clone();
         let kept = pending.lock().await.clone().expect("the prompt is kept");
         assert_eq!(kept.session_id, emitted.session_id);
@@ -2391,7 +2397,7 @@ mod tests {
     async fn cert_pump_keeps_nothing_for_a_remembered_fingerprint() {
         let store = Arc::new(RdpTrustStore::in_memory());
         store.remember("h:3389", "sha256:AA");
-        let (_, pending) = run_cert_pump_with_pending(store, "h:3389", "sha256:AA").await;
+        let (_, pending) = run_cert_pump_with_pending(store, "h:3389", "sha256:AA", None).await;
         assert!(
             pending.lock().await.is_none(),
             "auto-accepted: nothing to ask"
@@ -2415,6 +2421,34 @@ mod tests {
         assert_eq!(prompts.len(), 1);
         assert!(!prompts[0].changed, "first contact is not a MITM warning");
         assert_eq!(prompts[0].fingerprint, "sha256:AA");
+    }
+
+    /// A followed RDP server redirection (#5137) presents the target's
+    /// certificate under the target's name: trusting the broker never trusts
+    /// the target, and the dialog and "remember" key on the target.
+    #[tokio::test]
+    async fn cert_pump_keys_a_redirect_target_on_its_own_name() {
+        let store = Arc::new(RdpTrustStore::in_memory());
+        store.remember("broker", "sha256:AA");
+        let (sink, pending) =
+            run_cert_pump_with_pending(store.clone(), "broker", "sha256:AA", Some("rdsh2")).await;
+        {
+            let prompts = sink.cert_prompts.lock().unwrap();
+            assert_eq!(prompts.len(), 1, "the broker's trust does not carry over");
+            assert_eq!(prompts[0].host, "rdsh2");
+            assert!(!prompts[0].changed, "a first contact with the target");
+        }
+        assert_eq!(
+            pending.lock().await.as_ref().map(|p| p.host.clone()),
+            Some("rdsh2".to_string())
+        );
+
+        // Once the target is remembered, it is auto-accepted on its own name.
+        store.remember("rdsh2", "sha256:BB");
+        let sink = run_cert_pump_with_pending(store, "broker", "sha256:BB", Some("rdsh2"))
+            .await
+            .0;
+        assert!(sink.cert_prompts.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

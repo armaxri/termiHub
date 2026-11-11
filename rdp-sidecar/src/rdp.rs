@@ -27,13 +27,16 @@ use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp_dvc::DrdynvcClient;
 use ironrdp_graphics::image_processing::PixelFormat;
-use ironrdp_pdu::gcc::{ConnectionType, KeyboardType};
+use ironrdp_pdu::gcc::{
+    ClientClusterData, ConnectionType, KeyboardType, RedirectionFlags, RedirectionVersion,
+};
 use ironrdp_pdu::input::fast_path::FastPathInputEvent;
 use ironrdp_pdu::rdp::capability_sets::{
     client_codecs_capabilities, MajorPlatformType, RailSupportLevel,
 };
 use ironrdp_pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp_pdu::rdp::multitransport::MultitransportResponsePdu;
+use ironrdp_pdu::rdp::server_redirection::ServerRedirectionPdu;
 use ironrdp_rdpdr::Rdpdr;
 use ironrdp_rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use ironrdp_session::image::DecodedImage;
@@ -48,7 +51,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::backends::rdp_sidecar::config::{RdpConfig, SecurityMode};
 use termihub_core::backends::rdp_sidecar::protocol::{
-    read_message, write_message, HostMessage, MessageReader, SidecarFailureKind, SidecarMessage,
+    write_message, HostMessage, MessageReader, SidecarFailureKind, SidecarMessage,
 };
 use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
@@ -60,6 +63,7 @@ use crate::clipboard::{ClipboardEvent, LocalClipboard, SidecarClipboardBackend};
 use crate::drive::DriveRedirectBackend;
 use crate::failure;
 use crate::input;
+use crate::redirect;
 use crate::resize_gate::{LayoutRequest, ResizeGate};
 
 /// The RDPDR device id used for the single redirected drive (#1757). Any
@@ -174,31 +178,151 @@ pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig>
     })
 }
 
-/// Run the IronRDP connect sequence to an active session: TCP → X.224 → TLS →
-/// CredSSP/NLA → capability exchange. Returns the negotiated result, the framed
-/// transport for the driver to take over, the connector [`Config`](ConnectorConfig) (needed
-/// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
-/// #1755), and the receiver on which the registered CLIPRDR backend surfaces
-/// clipboard events for the driver (#1756).
-async fn connect_session<R, W>(
+/// One connect's target (#5137): the configured server, or a server a
+/// followed Server Redirection named.
+#[derive(Debug, Clone)]
+pub(crate) struct Hop {
+    /// The address this connect dials.
+    address: String,
+    /// The port; a redirection names none, so every hop keeps the configured one.
+    port: u16,
+    /// The server's identity: its addresses (for the loop guard) and the name
+    /// TLS SNI and CredSSP use.
+    endpoint: redirect::Endpoint,
+    /// The name the host keys this server's certificate trust on; `None` for
+    /// the connection's own host.
+    trust_host: Option<String>,
+    /// The redirection being followed: routing token, session, credentials.
+    redirect: Option<redirect::Redirect>,
+    /// The certificate fingerprint the redirect preflight already accepted.
+    trusted_fingerprint: Option<String>,
+    /// Whether the sidecar can follow a redirection from here: not through an
+    /// SSH tunnel, proxy or agent forward, which reach the original server
+    /// only (`tls_server_name` is set for exactly those).
+    can_follow: bool,
+}
+
+impl Hop {
+    /// The first connect, to the configured server.
+    pub(crate) fn origin(cfg: &RdpConfig) -> Self {
+        Self {
+            address: cfg.host.clone(),
+            port: cfg.effective_port(),
+            endpoint: redirect::Endpoint {
+                addresses: vec![cfg.host.clone()],
+                server_name: cfg.server_name().to_string(),
+            },
+            trust_host: None,
+            redirect: None,
+            trusted_fingerprint: None,
+            can_follow: cfg.tls_server_name.is_none(),
+        }
+    }
+
+    /// The connect that follows `redirect` to the admitted address.
+    fn redirected(&self, redirect: redirect::Redirect, admitted: redirect::Admitted) -> Self {
+        let trust_host = if redirect.back_to_issuer {
+            self.trust_host.clone()
+        } else {
+            Some(redirect.endpoint.server_name.clone())
+        };
+        Self {
+            address: admitted.address,
+            port: self.port,
+            endpoint: redirect.endpoint.clone(),
+            trust_host,
+            redirect: Some(redirect),
+            trusted_fingerprint: admitted.trusted_fingerprint,
+            can_follow: self.can_follow,
+        }
+    }
+
+    fn target(&self) -> String {
+        format!("{}:{}", self.address, self.port)
+    }
+}
+
+/// How one connect ended.
+// Built once per connect and moved straight out; boxing the active result
+// would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Connected {
+    /// The session is active: the negotiated result, the framed transport for
+    /// the driver, the connector [`Config`](ConnectorConfig) (needed verbatim
+    /// to drive the Deactivation-Reactivation Sequence on dynamic resize,
+    /// #1755) and the receiver of the CLIPRDR backend's events (#1756).
+    Active(
+        ConnectionResult,
+        RdpFramed,
+        ConnectorConfig,
+        std::sync::mpsc::Receiver<ClipboardEvent>,
+    ),
+    /// The server redirected the connection (#5137).
+    Redirected(Box<ServerRedirectionPdu>),
+}
+
+/// The connector [`Config`](ConnectorConfig) for `hop`: the configured one,
+/// with a followed redirection's username and domain in place of the saved
+/// ones when it names them (#5137). The saved password authenticates; a
+/// redirection's password cookie rides the Client Info PDU, so it asks for
+/// autologon.
+pub(crate) fn hop_connector_config(cfg: &RdpConfig, hop: &Hop) -> Result<ConnectorConfig> {
+    let mut config = build_connector_config(cfg)?;
+    if let Some(redirect) = &hop.redirect {
+        if let Some(username) = &redirect.username {
+            config.credentials = Credentials::UsernamePassword {
+                username: username.clone(),
+                password: cfg.password.clone(),
+            };
+        }
+        if let Some(domain) = &redirect.domain {
+            config.domain = Some(domain.clone());
+        }
+        if redirect.password_cookie.is_some() {
+            config.autologon = true;
+        }
+    }
+    Ok(config)
+}
+
+/// The Client Cluster Data `hop` advertises (MS-RDPBCGR 2.2.1.3.5): redirection
+/// support whenever the sidecar can follow one, plus the session a followed
+/// redirection reconnects to. `None` through a forward, which cannot follow.
+pub(crate) fn hop_cluster_data(hop: &Hop) -> Option<ClientClusterData> {
+    if !hop.can_follow {
+        return None;
+    }
+    let (flags, redirected_session_id) = match &hop.redirect {
+        Some(redirect) => (
+            RedirectionFlags::REDIRECTION_SUPPORTED
+                | RedirectionFlags::REDIRECTED_SESSION_FIELD_VALID,
+            redirect.session_id,
+        ),
+        None => (RedirectionFlags::REDIRECTION_SUPPORTED, 0),
+    };
+    Some(ClientClusterData {
+        flags,
+        redirection_version: RedirectionVersion::V5,
+        redirected_session_id,
+    })
+}
+
+/// Run the IronRDP connect sequence to `hop` up to an active session (or a
+/// redirection): TCP → X.224 → TLS → trust gate → CredSSP/NLA → capability
+/// exchange.
+pub(crate) async fn connect_session<R, W>(
     cfg: &RdpConfig,
-    ipc_in: &mut R,
+    hop: &Hop,
+    host_in: &mut MessageReader<R>,
     ipc_out: &mut W,
-) -> Result<(
-    ConnectionResult,
-    RdpFramed,
-    ConnectorConfig,
-    std::sync::mpsc::Receiver<ClipboardEvent>,
-)>
+) -> Result<Connected>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let host = cfg.host.clone();
-    let port = cfg.effective_port();
     // The name TLS SNI and the CredSSP service principal use: the real server
-    // even when `host` is the loopback end of an SSH tunnel (#4865).
-    let server_name = cfg.server_name().to_string();
+    // even when the address is the loopback end of an SSH tunnel (#4865).
+    let server_name = hop.endpoint.server_name.clone();
     // Bound the TCP connect and the X.224 / TLS negotiation by the connect
     // timeout (#4320, #4401): a firewalled host otherwise waits out the OS TCP
     // timeout, and a peer that accepts TCP but never speaks RDP hangs the
@@ -206,20 +330,20 @@ where
     // (a human is reading the fingerprint; it has its own bound), and the
     // CredSSP exchange after it gets a fresh deadline.
     let timeout = cfg.connect_timeout();
-    let target = format!("{host}:{port}");
+    let target = hop.target();
     let deadline = tokio::time::Instant::now() + timeout;
 
     let tcp = within(
         deadline,
         timeout,
         &target,
-        TcpStream::connect((host.as_str(), port)),
+        TcpStream::connect((hop.address.as_str(), hop.port)),
     )
     .await?
     .with_context(|| format!("RDP TCP connect to {target} failed"))?;
     let client_addr = tcp.local_addr().context("RDP local address failed")?;
 
-    let connector_config = build_connector_config(cfg)?;
+    let connector_config = hop_connector_config(cfg, hop)?;
     if let Some(layout) = &connector_config.monitor_layout {
         // The connector sends it only to a server that supports extended
         // client data blocks (#5141).
@@ -282,6 +406,23 @@ where
         );
     }
 
+    // A followed redirection (#5137): the broker's routing token goes in the
+    // X.224 request, the session in the cluster data and the password cookie
+    // in the Client Info PDU. This hop's certificate is gated below before
+    // the Client Info or CredSSP goes out; a new server was gated by the
+    // preflight before this connect started ([`redirect::admit`]).
+    if let Some(cluster) = hop_cluster_data(hop) {
+        connector = connector.with_cluster_data(cluster);
+    }
+    if let Some(redirect) = &hop.redirect {
+        if let Some(token) = &redirect.routing_token {
+            connector = connector.with_load_balance_info(token.clone());
+        }
+        if let Some(cookie) = &redirect.password_cookie {
+            connector = connector.with_redirection_password_cookie(cookie.clone());
+        }
+    }
+
     // 1) X.224 negotiation up to the security-upgrade point.
     let mut framed = TokioFramed::new(tcp);
     let should_upgrade = within(
@@ -305,30 +446,18 @@ where
     )
     .await?
     .context("RDP TLS upgrade failed")?;
+    let identity = server_identity(&server_cert)?;
     let server_public_key = ironrdp_tls::extract_tls_server_public_key(&server_cert)
         .ok_or_else(|| anyhow!("could not extract RDP server public key"))?
         .to_vec();
 
-    // Trust gate (#1758/#1767): fingerprint the server public key and either
-    // accept (only when the user set `ignoreCertErrors`) or ask the host for an
-    // interactive accept/reject decision — never a silent blind accept and never
-    // a bare hard-fail. The host owns the persisted per-host trust store, so it
-    // auto-answers a known-good fingerprint and only bothers the user for an
-    // unknown or changed (possible-MITM) one.
-    let fingerprint = crate::cert::public_key_fingerprint(&server_public_key);
-    match crate::cert::evaluate(cfg.ignore_cert_errors) {
-        crate::cert::CertVerdict::Accept => {
-            warn!(
-                %fingerprint,
-                "accepting RDP server certificate without verification (ignoreCertErrors is enabled)"
-            );
-        }
-        crate::cert::CertVerdict::Prompt => {
-            // Best-effort human-readable context for the prompt (#1783); the
-            // fingerprint above is the identity the trust decision keys on.
-            let (subject, issuer) = crate::cert::subject_and_issuer(&server_cert);
-            prompt_cert_decision(ipc_in, ipc_out, &fingerprint, subject, issuer).await?;
-        }
+    if redirect::already_trusted(hop.trusted_fingerprint.as_deref(), &identity.fingerprint) {
+        debug!(
+            fingerprint = %identity.fingerprint,
+            "the redirect target presented the certificate its preflight accepted"
+        );
+    } else {
+        trust_gate(cfg, hop.trust_host.as_deref(), &identity, host_in, ipc_out).await?;
     }
 
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
@@ -336,7 +465,7 @@ where
 
     // 3) CredSSP/NLA + channel join + capability exchange.
     let mut network_client = ReqwestNetworkClient::new();
-    let result = within(
+    let finalized = within(
         tokio::time::Instant::now() + timeout,
         timeout,
         &target,
@@ -352,7 +481,69 @@ where
     .await?
     .context("RDP CredSSP / capability exchange failed")?;
 
-    Ok((result, framed, connector_config, clipboard_rx))
+    Ok(match finalized {
+        crate::nla::Finalized::Connected(result) => {
+            Connected::Active(result, framed, connector_config, clipboard_rx)
+        }
+        crate::nla::Finalized::Redirected(pdu) => Connected::Redirected(pdu),
+    })
+}
+
+/// The certificate identity of a TLS server certificate: the public-key
+/// fingerprint the trust decision keys on, plus best-effort subject and
+/// issuer context for the prompt (#1783).
+fn server_identity(cert: &x509_cert::Certificate) -> Result<redirect::ServerIdentity> {
+    let public_key = ironrdp_tls::extract_tls_server_public_key(cert)
+        .ok_or_else(|| anyhow!("could not extract RDP server public key"))?;
+    let (subject, issuer) = crate::cert::subject_and_issuer(cert);
+    Ok(redirect::ServerIdentity {
+        fingerprint: crate::cert::public_key_fingerprint(public_key),
+        subject,
+        issuer,
+    })
+}
+
+/// The trust gate (#1758/#1767): accept (only when the user set
+/// `ignoreCertErrors`) or ask the host for an interactive accept/reject
+/// decision — never a silent blind accept and never a bare hard-fail. The host
+/// owns the persisted per-host trust store, so it auto-answers a known-good
+/// fingerprint and only bothers the user for an unknown or changed
+/// (possible-MITM) one. `trust_host` names a redirect target (#5137), so the
+/// host keys trust on that server instead of the configured one.
+async fn trust_gate<R, W>(
+    cfg: &RdpConfig,
+    trust_host: Option<&str>,
+    identity: &redirect::ServerIdentity,
+    host_in: &mut MessageReader<R>,
+    ipc_out: &mut W,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let fingerprint = &identity.fingerprint;
+    match crate::cert::evaluate(cfg.ignore_cert_errors) {
+        crate::cert::CertVerdict::Accept => {
+            warn!(
+                %fingerprint,
+                "accepting RDP server certificate without verification (ignoreCertErrors is enabled)"
+            );
+            Ok(())
+        }
+        crate::cert::CertVerdict::Prompt => {
+            prompt_cert_decision(
+                host_in,
+                ipc_out,
+                CertPromptRequest {
+                    fingerprint,
+                    subject: identity.subject.clone(),
+                    issuer: identity.issuer.clone(),
+                    host: trust_host.map(str::to_string),
+                },
+            )
+            .await
+        }
+    }
 }
 
 /// A clipboard event failure ends the session (the CLIPRDR state can no longer
@@ -397,22 +588,36 @@ async fn within<F: std::future::Future>(
 /// not speak the cert-prompt protocol), the connection aborts rather than hangs.
 const CERT_DECISION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
+/// What a certificate prompt shows the host.
+struct CertPromptRequest<'a> {
+    fingerprint: &'a str,
+    subject: Option<String>,
+    issuer: Option<String>,
+    /// The redirect target the certificate belongs to (#5137); `None` for the
+    /// connection's own host.
+    host: Option<String>,
+}
+
 /// Surface an untrusted server certificate to the host and block on its verdict
 /// (#1767). Sends [`SidecarMessage::CertPrompt`] and waits for a
 /// [`HostMessage::CertDecision`]; `Ok(())` means proceed, `Err` aborts the
 /// connect (user rejected, timed out, or the peer closed the pipe).
 async fn prompt_cert_decision<R, W>(
-    ipc_in: &mut R,
+    host_in: &mut MessageReader<R>,
     ipc_out: &mut W,
-    fingerprint: &str,
-    subject: Option<String>,
-    issuer: Option<String>,
+    request: CertPromptRequest<'_>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    warn!(%fingerprint, "RDP server certificate is untrusted; asking the host for a decision");
+    let CertPromptRequest {
+        fingerprint,
+        subject,
+        issuer,
+        host,
+    } = request;
+    warn!(%fingerprint, ?host, "RDP server certificate is untrusted; asking the host for a decision");
     write_message(
         ipc_out,
         &SidecarMessage::CertPrompt {
@@ -421,6 +626,7 @@ where
             // fingerprint above is the identity the trust decision keys on.
             subject,
             issuer,
+            host,
         },
     )
     .await
@@ -432,7 +638,7 @@ where
     // decision, a disconnect, or the timeout ends the wait.
     let deadline = tokio::time::Instant::now() + CERT_DECISION_TIMEOUT;
     loop {
-        let msg = tokio::time::timeout_at(deadline, read_message::<_, HostMessage>(ipc_in))
+        let msg = tokio::time::timeout_at(deadline, host_in.next::<HostMessage>())
             .await
             .map_err(|_| anyhow!("timed out waiting for the certificate trust decision"))?
             .context("failed to read the certificate trust decision")?;
@@ -511,8 +717,8 @@ enum Flow {
     /// resize): the driver must run the Deactivation-Reactivation Sequence.
     Reactivate,
     /// The server sent a Server Redirection PDU mid-session (#5117): it wants
-    /// the client on another server, which the sidecar does not follow.
-    Redirected(failure::ServerRedirected),
+    /// the client on another server, which the caller follows (#5137).
+    Redirected(Box<ServerRedirectionPdu>),
 }
 
 /// Handle the outputs of one `process` / `process_fastpath_input` call: write
@@ -601,13 +807,12 @@ where
             ActiveStageOutput::ServerRedirection(redirection) => {
                 // A connection broker moving the session to another server. The
                 // PDU's `Debug` withholds its password cookie; log the target only.
-                let redirected = failure::ServerRedirected::from_pdu(&redirection);
                 warn!(
                     session_id = redirection.session_id,
-                    target = ?redirected.target,
+                    target = %redirect::target_name(&redirection),
                     "rdp server redirected the session"
                 );
-                return Flow::Redirected(redirected);
+                return Flow::Redirected(redirection);
             }
             ActiveStageOutput::MultitransportRequest(request) => {
                 // The sidecar advertises no multitransport (UDP) support
@@ -756,7 +961,9 @@ async fn send_input_events<T: FramedWrite>(
 
 /// Connect and run a full RDP session, streaming decoded frames/cursor out over
 /// `ipc_out` and applying host input read from `ipc_in`. Emits lifecycle
-/// [`SidecarMessage::State`]s at the transitions the host cares about.
+/// [`SidecarMessage::State`]s at the transitions the host cares about. A
+/// Server Redirection — during the connect, a reactivation or mid-session —
+/// is followed, guarded ([`redirect`], #5137).
 pub async fn run_session<R, W>(cfg: RdpConfig, ipc_in: &mut R, ipc_out: &mut W) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -769,104 +976,278 @@ where
     .await
     .context("failed to write state")?;
 
-    let (result, framed, connector_config, clipboard_rx) =
-        match connect_session(&cfg, ipc_in, ipc_out).await {
-            Ok(v) => v,
-            Err(e) => {
+    // One reader for the whole session, across connects and redirect hops, so
+    // no buffered host bytes are dropped between them (#4042).
+    let mut host_in = MessageReader::new(ipc_in);
+    let mut hop = Hop::origin(&cfg);
+    let mut guard = redirect::HopGuard::new(&hop.endpoint);
+
+    loop {
+        let (result, framed, connector_config, clipboard_rx) =
+            match connect_session(&cfg, &hop, &mut host_in, ipc_out).await {
+                Ok(Connected::Active(result, framed, config, clipboard_rx)) => {
+                    (result, framed, config, clipboard_rx)
+                }
+                Ok(Connected::Redirected(pdu)) => {
+                    hop = match follow(&cfg, &hop, &mut guard, &pdu, &mut host_in, ipc_out).await {
+                        Ok(next) => next,
+                        Err(e) => return Err(report_fatal(ipc_out, e).await),
+                    };
+                    continue;
+                }
                 // Typed auth-vs-connect classification (#3390); `main` then
                 // reports the matching `SidecarMessage::Failure`.
-                let state = failure::failure_state(failure::classify(&e));
-                let _ = write_message(ipc_out, &SidecarMessage::State(state)).await;
-                return Err(e);
-            }
+                Err(e) => return Err(report_fatal(ipc_out, e).await),
+            };
+
+        // The server negotiates the desktop size; refuse an absurd one before
+        // `drive` allocates a `width * height * 4` decode image from it
+        // (MOCK-011).
+        if let Err(e) = check_desktop_size(result.desktop_size.width, result.desktop_size.height) {
+            let _ = write_message(
+                ipc_out,
+                &SidecarMessage::State(GraphicalState::ConnectFailed),
+            )
+            .await;
+            return Err(e);
+        }
+
+        write_message(ipc_out, &SidecarMessage::State(GraphicalState::Active))
+            .await
+            .context("failed to write state")?;
+
+        // Watch the shared folder so files added/removed/renamed after connect are
+        // re-advertised over CLIPRDR without a reconnect (#1788). Only meaningful when
+        // we actually serve local files: file transfer opted in and not view-only.
+        // Failure to start the watcher is non-fatal — the session keeps its
+        // connect-time offer.
+        //
+        // The host-clipboard watcher (#1794) is the sibling trigger: it re-advertises
+        // when the user copies **files onto the host OS clipboard** mid-session. It is
+        // an independent source — either watcher can re-advertise without the other
+        // having changed — and, since #1808, has its own gate (the host-clipboard
+        // opt-in, not the shared folder): the shared-folder watcher needs a configured
+        // folder, the host-clipboard watcher needs the paste-local-files opt-in. A
+        // view-only session polls neither. Both are non-fatal to start.
+        let (readvertise, host_clip_watch) = if cfg.view_only {
+            (None, None)
+        } else {
+            // The shared-folder watcher (#1788) re-advertises when the sandboxed shared
+            // folder's contents change; it needs a configured shared folder.
+            let readvertise = cfg
+                .clipboard_download_dir()
+                .and_then(crate::folder_watch::watch_shared_folder);
+            // The host-clipboard watcher (#1794) re-advertises when the user copies
+            // files onto the host OS clipboard mid-session. It is gated on the
+            // host-clipboard opt-in (#1808), NOT the shared folder — an independent
+            // source that serves files from their real host paths, so either watcher
+            // can run without the other.
+            let host_clip_watch = cfg
+                .host_clipboard_files_enabled()
+                .then(crate::host_clipboard_watch::watch_host_clipboard);
+            (readvertise, host_clip_watch)
         };
 
-    // The server negotiates the desktop size; refuse an absurd one before `drive`
-    // allocates a `width * height * 4` decode image from it (MOCK-011).
-    if let Err(e) = check_desktop_size(result.desktop_size.width, result.desktop_size.height) {
-        let _ = write_message(
+        let end = drive(
+            result,
+            framed,
+            connector_config,
+            clipboard_rx,
+            cfg.view_only,
+            readvertise,
+            host_clip_watch,
+            &mut host_in,
             ipc_out,
-            &SidecarMessage::State(GraphicalState::ConnectFailed),
         )
         .await;
-        return Err(e);
-    }
 
-    write_message(ipc_out, &SidecarMessage::State(GraphicalState::Active))
-        .await
-        .context("failed to write state")?;
-
-    // Watch the shared folder so files added/removed/renamed after connect are
-    // re-advertised over CLIPRDR without a reconnect (#1788). Only meaningful when
-    // we actually serve local files: file transfer opted in and not view-only.
-    // Failure to start the watcher is non-fatal — the session keeps its
-    // connect-time offer.
-    //
-    // The host-clipboard watcher (#1794) is the sibling trigger: it re-advertises
-    // when the user copies **files onto the host OS clipboard** mid-session. It is
-    // an independent source — either watcher can re-advertise without the other
-    // having changed — and, since #1808, has its own gate (the host-clipboard
-    // opt-in, not the shared folder): the shared-folder watcher needs a configured
-    // folder, the host-clipboard watcher needs the paste-local-files opt-in. A
-    // view-only session polls neither. Both are non-fatal to start.
-    let (readvertise, host_clip_watch) = if cfg.view_only {
-        (None, None)
-    } else {
-        // The shared-folder watcher (#1788) re-advertises when the sandboxed shared
-        // folder's contents change; it needs a configured shared folder.
-        let readvertise = cfg
-            .clipboard_download_dir()
-            .and_then(crate::folder_watch::watch_shared_folder);
-        // The host-clipboard watcher (#1794) re-advertises when the user copies
-        // files onto the host OS clipboard mid-session. It is gated on the
-        // host-clipboard opt-in (#1808), NOT the shared folder — an independent
-        // source that serves files from their real host paths, so either watcher
-        // can run without the other.
-        let host_clip_watch = cfg
-            .host_clipboard_files_enabled()
-            .then(crate::host_clipboard_watch::watch_host_clipboard);
-        (readvertise, host_clip_watch)
-    };
-
-    let end = drive(
-        result,
-        framed,
-        connector_config,
-        clipboard_rx,
-        cfg.view_only,
-        readvertise,
-        host_clip_watch,
-        ipc_in,
-        ipc_out,
-    )
-    .await;
-
-    // A server that ends the session with a credential / privilege `ERRINFO`
-    // rejected the logon (#3390): report it as an auth failure, not a clean
-    // close, so the desktop does not auto-reconnect into the same rejection.
-    if let failure::SessionEnd::Server(reason) = &end {
-        if failure::is_auth_disconnect(reason) {
-            let _ =
-                write_message(ipc_out, &SidecarMessage::State(GraphicalState::AuthFailed)).await;
-            return Err(failure::ServerLogonRejected(reason.description()).into());
+        // The server moved the session to another server (#5137).
+        if let failure::SessionEnd::Redirected(pdu) = &end {
+            hop = match follow(&cfg, &hop, &mut guard, pdu, &mut host_in, ipc_out).await {
+                Ok(next) => next,
+                Err(e) => return Err(report_fatal(ipc_out, e).await),
+            };
+            continue;
         }
+
+        // A server that ends the session with a credential / privilege `ERRINFO`
+        // rejected the logon (#3390): report it as an auth failure, not a clean
+        // close, so the desktop does not auto-reconnect into the same rejection.
+        if let failure::SessionEnd::Server(reason) = &end {
+            if failure::is_auth_disconnect(reason) {
+                let _ = write_message(ipc_out, &SidecarMessage::State(GraphicalState::AuthFailed))
+                    .await;
+                return Err(failure::ServerLogonRejected(reason.description()).into());
+            }
+        }
+
+        // A server end with a deliberate session-end `ERRINFO` (a remote logoff,
+        // an admin disconnect, #4321) and a process / reactivation error with its
+        // reason (#4509) are typed, so the desktop shows them instead of
+        // auto-reconnecting. A transport drop or a bare server disconnect (a
+        // restarting server) reports nothing, so the desktop retries it.
+        if let Some((kind, message)) = failure::end_failure(&end) {
+            info!(?kind, %message, "rdp session ended");
+            let _ = write_message(
+                ipc_out,
+                &SidecarMessage::State(failure::failure_state(kind)),
+            )
+            .await;
+            let _ = write_message(ipc_out, &SidecarMessage::Failure { kind, message }).await;
+        }
+        return Ok(());
+    }
+}
+
+/// Report a fatal connect error's lifecycle state (auth vs connect vs
+/// protocol, #3390) and hand the error back for `main` to send as the typed
+/// [`SidecarMessage::Failure`].
+async fn report_fatal<W>(ipc_out: &mut W, error: anyhow::Error) -> anyhow::Error
+where
+    W: AsyncWrite + Unpin,
+{
+    let state = failure::failure_state(failure::classify(&error));
+    let _ = write_message(ipc_out, &SidecarMessage::State(state)).await;
+    error
+}
+
+/// Follow a Server Redirection received on `hop` (#5137): refuse it through a
+/// forward, beyond the hop limit or into a loop; otherwise admit the target
+/// through the trust gate and return the hop that reconnects to it.
+async fn follow<R, W>(
+    cfg: &RdpConfig,
+    hop: &Hop,
+    guard: &mut redirect::HopGuard,
+    pdu: &ServerRedirectionPdu,
+    host_in: &mut MessageReader<R>,
+    ipc_out: &mut W,
+) -> Result<Hop>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    const NOT_FOLLOWED: &str = "RDP server redirection not followed";
+    if !hop.can_follow {
+        return Err(
+            anyhow::Error::new(redirect::RedirectRefused::ThroughForward {
+                target: redirect::target_name(pdu),
+            })
+            .context(NOT_FOLLOWED),
+        );
+    }
+    let next = redirect::plan(pdu, &hop.endpoint).context(NOT_FOLLOWED)?;
+    guard.admit(&next).context(NOT_FOLLOWED)?;
+    info!(
+        hop = guard.hops(),
+        target = %next.endpoint.server_name,
+        back_to_issuer = next.back_to_issuer,
+        "following the rdp server redirection"
+    );
+    let mut preflight = LivePreflight {
+        cfg,
+        port: hop.port,
+        host_in,
+        ipc_out,
+    };
+    let admitted = redirect::admit(&mut preflight, &next)
+        .await
+        .with_context(|| format!("RDP redirect to {} failed", next.endpoint.server_name))?;
+    Ok(hop.redirected(next, admitted))
+}
+
+/// The real [`redirect::Preflight`]: probes a redirect target over the
+/// network and runs the host's trust gate on its certificate.
+struct LivePreflight<'a, R, W> {
+    cfg: &'a RdpConfig,
+    port: u16,
+    host_in: &'a mut MessageReader<R>,
+    ipc_out: &'a mut W,
+}
+
+impl<R, W> redirect::Preflight for LivePreflight<'_, R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    async fn probe(
+        &mut self,
+        address: &str,
+        server_name: &str,
+    ) -> Result<redirect::ServerIdentity> {
+        probe_identity(self.cfg, address, self.port, server_name).await
     }
 
-    // A server end with a deliberate session-end `ERRINFO` (a remote logoff,
-    // an admin disconnect, #4321) and a process / reactivation error with its
-    // reason (#4509) are typed, so the desktop shows them instead of
-    // auto-reconnecting. A transport drop or a bare server disconnect (a
-    // restarting server) reports nothing, so the desktop retries it.
-    if let Some((kind, message)) = failure::end_failure(&end) {
-        info!(?kind, %message, "rdp session ended");
-        let _ = write_message(
-            ipc_out,
-            &SidecarMessage::State(failure::failure_state(kind)),
+    async fn trust(
+        &mut self,
+        server_name: &str,
+        identity: &redirect::ServerIdentity,
+    ) -> Result<()> {
+        trust_gate(
+            self.cfg,
+            Some(server_name),
+            identity,
+            self.host_in,
+            self.ipc_out,
         )
-        .await;
-        let _ = write_message(ipc_out, &SidecarMessage::Failure { kind, message }).await;
+        .await
     }
-    Ok(())
+}
+
+/// The connector [`Config`](ConnectorConfig) of a redirect preflight: the
+/// configured security settings with **no** credentials, so the X.224 request
+/// carries no `mstshash` username cookie and nothing else names the user.
+pub(crate) fn preflight_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
+    let mut config = build_connector_config(cfg)?;
+    config.credentials = Credentials::UsernamePassword {
+        username: String::new(),
+        password: String::new(),
+    };
+    config.domain = None;
+    config.autologon = false;
+    Ok(config)
+}
+
+/// Dial a redirect target and read its certificate (#5137): TCP, an X.224
+/// request with no client data, TLS, then hang up. Nothing that identifies
+/// the user — no username cookie, no routing token, no credentials — goes out.
+async fn probe_identity(
+    cfg: &RdpConfig,
+    address: &str,
+    port: u16,
+    server_name: &str,
+) -> Result<redirect::ServerIdentity> {
+    let timeout = cfg.connect_timeout();
+    let target = format!("{address}:{port}");
+    let deadline = tokio::time::Instant::now() + timeout;
+    let tcp = within(
+        deadline,
+        timeout,
+        &target,
+        TcpStream::connect((address, port)),
+    )
+    .await?
+    .with_context(|| format!("RDP TCP connect to {target} failed"))?;
+    let client_addr = tcp.local_addr().context("RDP local address failed")?;
+    let mut connector = ClientConnector::new(preflight_connector_config(cfg)?, client_addr);
+    let mut framed = TokioFramed::new(tcp);
+    within(
+        deadline,
+        timeout,
+        &target,
+        ironrdp_tokio::connect_begin(&mut framed, &mut connector),
+    )
+    .await?
+    .context("RDP X.224 negotiation failed")?;
+    let (stream, _) = framed.into_inner();
+    let (_tls, cert) = within(
+        deadline,
+        timeout,
+        &target,
+        ironrdp_tls::upgrade(stream, server_name),
+    )
+    .await?
+    .context("RDP TLS upgrade failed")?;
+    server_identity(&cert)
 }
 
 /// The driver loop: owns the transport, decoded image and active stage;
@@ -891,7 +1272,7 @@ async fn drive<R, W>(
     view_only: bool,
     mut readvertise: Option<crate::folder_watch::FolderWatch>,
     mut host_clip_watch: Option<crate::host_clipboard_watch::HostClipboardWatch>,
-    ipc_in: &mut R,
+    host_in: &mut MessageReader<R>,
     ipc_out: &mut W,
 ) -> failure::SessionEnd
 where
@@ -948,7 +1329,8 @@ where
     // The host read is one `select!` branch among several, so it must be
     // cancel-safe: a plain `read_message` dropped mid-frame (a server PDU won the
     // race) loses the bytes it consumed and desyncs every later frame (#4042).
-    let mut host_in = MessageReader::new(ipc_in);
+    // The caller owns the reader across connects and redirect hops, so no
+    // buffered host bytes are lost between them.
     let mut end = failure::SessionEnd::Dropped;
     let mut prev_buttons: u8 = 0;
     let mut cursor: (u32, u32) = (0, 0);
@@ -1171,8 +1553,8 @@ where
                         end = failure::SessionEnd::Server(reason);
                         break;
                     }
-                    Flow::Redirected(redirected) => {
-                        end = failure::redirected_end(&redirected);
+                    Flow::Redirected(redirection) => {
+                        end = failure::SessionEnd::Redirected(redirection);
                         break;
                     }
                     Flow::Reactivate => {
@@ -1222,11 +1604,18 @@ where
                                     break;
                                 }
                             }
-                            Err(e) => {
-                                warn!(error = format!("{e:#}"), "rdp deactivation-reactivation failed");
-                                end = failure::reactivation_end(&e);
-                                break;
-                            }
+                            Err(e) => match e.downcast::<redirect::RedirectRequested>() {
+                                // A redirection instead of a reactivation (#5137).
+                                Ok(requested) => {
+                                    end = failure::SessionEnd::Redirected(requested.0);
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!(error = format!("{e:#}"), "rdp deactivation-reactivation failed");
+                                    end = failure::reactivation_end(&e);
+                                    break;
+                                }
+                            },
                         }
                     }
                 }
@@ -1516,9 +1905,7 @@ where
                 ));
             }
             ConnectionActivationState::Redirected { redirection } => {
-                return Err(anyhow::Error::new(failure::ServerRedirected::from_pdu(
-                    &redirection,
-                )));
+                return Err(anyhow::Error::new(redirect::RedirectRequested(redirection)));
             }
             ConnectionActivationState::Consumed
             | ConnectionActivationState::CapabilitiesExchange
@@ -1844,6 +2231,7 @@ fn disconnect_ultimatum_reason(
 mod tests {
     use super::*;
     use ironrdp_pdu::rdp::headers::{ShareControlHeader, ShareControlPdu, ShareDataPdu};
+    use termihub_core::backends::rdp_sidecar::protocol::read_message;
 
     // ── Drive announce PreferredDosName (#4125) ─────────────────────────
 
@@ -2272,11 +2660,14 @@ mod tests {
 
         let sidecar = tokio::spawn(async move {
             prompt_cert_decision(
-                &mut sidecar_in,
+                &mut MessageReader::new(&mut sidecar_in),
                 &mut sidecar_out,
-                "sha256:AA:BB",
-                Some("CN=host.example".to_string()),
-                Some("CN=Acme CA".to_string()),
+                CertPromptRequest {
+                    fingerprint: "sha256:AA:BB",
+                    subject: Some("CN=host.example".to_string()),
+                    issuer: Some("CN=Acme CA".to_string()),
+                    host: Some("rdsh2.example.com".to_string()),
+                },
             )
             .await
         });
@@ -2288,8 +2679,9 @@ mod tests {
             .unwrap();
         assert!(matches!(
             prompt,
-            SidecarMessage::CertPrompt { fingerprint, subject, issuer }
+            SidecarMessage::CertPrompt { fingerprint, subject, issuer, host }
                 if fingerprint == "sha256:AA:BB"
+                    && host.as_deref() == Some("rdsh2.example.com")
                     && subject.as_deref() == Some("CN=host.example")
                     && issuer.as_deref() == Some("CN=Acme CA")
         ));
@@ -2316,7 +2708,17 @@ mod tests {
         let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
 
         let sidecar = tokio::spawn(async move {
-            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:CC", None, None).await
+            prompt_cert_decision(
+                &mut MessageReader::new(&mut sidecar_in),
+                &mut sidecar_out,
+                CertPromptRequest {
+                    fingerprint: "sha256:CC",
+                    subject: None,
+                    issuer: None,
+                    host: None,
+                },
+            )
+            .await
         });
 
         let _ = read_message::<_, SidecarMessage>(&mut host_in)
@@ -2344,7 +2746,17 @@ mod tests {
         let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
 
         let sidecar = tokio::spawn(async move {
-            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:DD", None, None).await
+            prompt_cert_decision(
+                &mut MessageReader::new(&mut sidecar_in),
+                &mut sidecar_out,
+                CertPromptRequest {
+                    fingerprint: "sha256:DD",
+                    subject: None,
+                    issuer: None,
+                    host: None,
+                },
+            )
+            .await
         });
 
         let _ = read_message::<_, SidecarMessage>(&mut host_in)
@@ -2576,7 +2988,7 @@ mod tests {
     }
 
     /// The ironrdp-session 0.12/0.13 outputs (#5117) are each handled on purpose:
-    /// a mid-session Server Redirection ends the session with a typed failure, a
+    /// a mid-session Server Redirection ends the session for the caller to follow, a
     /// multitransport request is declined on the wire, and the informational
     /// ones (including the auto-reconnect cookie, a credential) are consumed
     /// without ending the session.
@@ -2688,7 +3100,9 @@ mod tests {
         let Flow::Redirected(redirected) = flow else {
             panic!("a Server Redirection must end the session");
         };
-        assert_eq!(redirected.target.as_deref(), Some("rdsh2.example.com"));
+        // Handed on whole, for the caller to follow (#5137).
+        assert_eq!(redirected.target_fqdn.as_deref(), Some("rdsh2.example.com"));
+        assert_eq!(redirected.session_id, 9);
     }
 
     /// Script the server half of a Deactivation-Reactivation Sequence: a Demand
@@ -2972,3 +3386,7 @@ mod tests {
 #[cfg(test)]
 #[path = "connect_timeout_tests.rs"]
 mod connect_timeout_tests;
+
+#[cfg(test)]
+#[path = "redirect_hop_tests.rs"]
+mod redirect_hop_tests;

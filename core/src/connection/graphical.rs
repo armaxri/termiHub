@@ -252,6 +252,14 @@ pub struct CertPrompt {
     pub subject: Option<String>,
     /// Certificate issuer, when the backend could extract it.
     pub issuer: Option<String>,
+    /// The host this certificate belongs to, when it is not the connection's
+    /// configured host: the RDP sidecar followed a server redirection to
+    /// another server (#5137). The host keys its trust store on this name
+    /// instead, so the new server is trusted (or not) on its own identity and
+    /// is never silently accepted under the broker's. `None` means the
+    /// connection's own host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// A single decoded, dirty rectangle of the remote framebuffer.
