@@ -954,17 +954,22 @@ harness checks every test for JavaScript errors in the app under test (#5364):
 
 `TERMIHUB_JS_ERROR_GATE` picks what happens next:
 
-| Value                | Effect                                                  |
-| -------------------- | ------------------------------------------------------- |
-| `annotate` (default) | Report every unique error with its tests (see below)    |
-| `fail`               | Report, and fail a passing test with an uncovered error |
-| `off`                | No collection                                           |
+| Value            | Effect                                                  |
+| ---------------- | ------------------------------------------------------- |
+| `fail` (default) | Report, and fail a passing test with an uncovered error |
+| `annotate`       | Report every unique error with its tests (see below)    |
+| `off`            | No collection                                           |
 
 The report goes to the terminal summary, the GitHub step summary and
 `artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
 
-The default is `annotate` while the current offenders are moved into the
-allowlist with tracking issues. A later change switches the nightly to `fail`.
+The gate started in `annotate` mode and moved to `fail` (#5464) once the errors
+the annotate runs reported were fixed: the clipboard rejection (#5383), the
+closed-session rejections (#5384), and the uncaught `reading 'dimensions'`
+TypeError from scrolling an xterm that was disposed before the next frame.
+A new uncaught error now fails the test that caused it, and the failure names
+the error with its first stack frames. Set `TERMIHUB_JS_ERROR_GATE=annotate` to
+only report while you investigate.
 
 An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
 issue that tracks the error:

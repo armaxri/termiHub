@@ -1,8 +1,9 @@
 # JS error allowlist (#5364)
 
 Known JavaScript errors in the app under test that the system-test JS error gate
-(`termihub_harness/js_errors.py`, `TERMIHUB_JS_ERROR_GATE`) tolerates. Each
-`*.json` file is one entry, tied to the issue that tracks fixing the error:
+(`termihub_harness/js_errors.py`, `TERMIHUB_JS_ERROR_GATE`, `fail` by default)
+tolerates. Each `*.json` file is one entry, tied to the issue that tracks fixing
+the error:
 
 ```json
 {
