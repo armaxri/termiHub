@@ -2,5 +2,8 @@
   "reason": "^no working Docker/Podman runtime$",
   "nodeid": "test_external_spawn\\.py",
   "lanes": ["bulk-macos"],
-  "why": "macOS runners ship no Docker"
+  "why": "macOS runners ship no Docker (cap counted from the 2026-11-11 develop nightly, dispatch 43006910579, #5176)",
+  "max_skips": {
+    "bulk-macos": 2
+  }
 }

@@ -1,0 +1,9 @@
+{
+  "reason": "^SSH suite not ported to the native sshd fixture \\(#5176\\)$",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "SSH suites not (yet) marked native_sshd for this OS: they control the server (SshServerControl), need GNU tools or a POSIX remote shell (Windows' is cmd.exe), or deploy an agent. Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) against the native_sshd markers (#5176).",
+  "max_skips": {
+    "bulk-macos": 27,
+    "bulk-windows": 59
+  }
+}
