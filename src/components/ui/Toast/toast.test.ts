@@ -83,6 +83,17 @@ describe("toast API", () => {
     );
   });
 
+  it("tags an action's label with its testId so a system test can press it", () => {
+    const onClick = vi.fn();
+    toast.success("Deleted", { action: { label: "Undo", onClick, testId: "x-undo" } });
+    const opts = success.mock.calls[0][1] as {
+      action: { label: { props: Record<string, unknown> }; onClick: () => void };
+    };
+    expect(opts.action.label.props).toMatchObject({ "data-testid": "x-undo", children: "Undo" });
+    opts.action.onClick();
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it("promise resolves the loading toast in place into success", async () => {
     const p = Promise.resolve("done");
     await toast.promise(p, { loading: "Load", success: "OK", error: "Err" });
