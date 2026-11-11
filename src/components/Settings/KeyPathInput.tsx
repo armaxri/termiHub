@@ -167,7 +167,7 @@ export function KeyPathInput({
             aria-label="Browse"
             data-testid={`${prefix}key-path-browse`}
           >
-            ...
+            …
           </button>
         </Tooltip>
         {listVisible && (

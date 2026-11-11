@@ -1,5 +1,5 @@
 /**
- * "Update Agent..." on a connected, outdated agent (#4038): the context-menu
+ * "Update Agent…" on a connected, outdated agent (#4038): the context-menu
  * action lists the other hosts via `agent.list_connections` (the backend drops
  * this desktop's own `client_id`) and opens the Update dialog with them, so the
  * user sees who else is attached before the update runs (#1349).
@@ -145,7 +145,7 @@ async function flush(): Promise<void> {
 
 setupAgentsRegion();
 
-describe("AgentNode — Update Agent... (#4038)", () => {
+describe("AgentNode — Update Agent… (#4038)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -184,7 +184,7 @@ describe("AgentNode — Update Agent... (#4038)", () => {
     await flush();
   }
 
-  it("does not offer Update Agent... for an up-to-date agent", async () => {
+  it("does not offer Update Agent… for an up-to-date agent", async () => {
     render("0.5.0");
     await openMenu();
     expect(document.querySelector('[data-testid="context-agent-running-sessions"]')).not.toBeNull();

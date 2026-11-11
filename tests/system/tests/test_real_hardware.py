@@ -48,7 +48,8 @@ What stays here:
 
 - **Physical serial adapter** (MT-SER-09, physical variant): a USB-serial
   adapter with TX and RX bridged. The harness asserts the echo; the operator
-  only unplugs the adapter, and the harness asserts the disconnect.
+  unplugs and replugs the adapter, and the harness asserts the auto-reconnect
+  loop, the reopened port and that Cancel stops a retry (#5390).
 - **Agent on a real remote host** (release residue of #470/#473/#474/#477): the
   GUI deploys the agent to a real Windows notebook or Raspberry Pi, opens a
   shell session (ConPTY on Windows), and a persistent session survives a
@@ -148,9 +149,10 @@ class TestRealHardware(
         return self.active_tab()["id"]
 
     # ── Physical serial adapter (MT-SER-09, physical variant) ─────────────────
-    def test_physical_serial_loopback_echo_and_unplug(self):
+    def test_physical_serial_loopback_echo_unplug_and_auto_reconnect(self):
         """A real USB-serial adapter with TX↔RX bridged echoes what the app sends;
-        unplugging it disconnects the tab without hanging the app."""
+        unplugging it puts the tab into the auto-reconnect loop (on by default for
+        serial, #5390), replugging reopens the port, and Cancel stops a retry."""
         device = os.environ.get(SERIAL_DEVICE_ENV, "").strip()
         if not device:
             pytest.skip(
@@ -170,17 +172,48 @@ class TestRealHardware(
         assert marker in self.wait_for_output(marker, tab_id=tab["id"])
 
         self.manual_step(
-            f"Unplug the adapter at {device} now.",
-            "Within a few seconds the tab shows the disconnect notice and the app "
-            "stays responsive (the harness checks both next).",
+            f"Unplug the adapter at {device} now. Keep it unplugged.",
+            "Within a few seconds the tab shows the reconnect strip with a countdown "
+            "and the app stays responsive (the harness checks both next).",
         )
         self.wait(
-            lambda: self.terminal_session_exited(tab["id"]),
+            lambda: self.terminal_session_status(tab["id"]) == "reconnecting",
             timeout=30.0,
-            what="the serial tab to be marked disconnected",
+            what="the serial tab to enter the auto-reconnect loop",
         )
-        assert self.driver.exists("terminal-disconnect-overlay")
+        assert self.driver.exists("terminal-auto-reconnect-countdown")
         assert isinstance(self.driver.get_state(), dict)
+
+        self.manual_step(
+            f"Plug the same adapter back in (it should come back as {device}).",
+            "Within about 30 seconds the strip disappears and the tab is live again "
+            "(the harness checks the loopback echo next).",
+        )
+        self.wait(
+            lambda: self.terminal_session_status(tab["id"]) == "connected",
+            timeout=60.0,
+            what="the serial port to be reopened",
+        )
+        marker = unique_name("SERIAL_BACK")
+        self.run_command(marker)
+        assert marker in self.wait_for_output(marker, tab_id=tab["id"])
+
+        self.manual_step(
+            f"Unplug the adapter at {device} again and keep it unplugged.",
+            "The reconnect strip appears again; the harness then presses Cancel.",
+        )
+        self.wait(
+            lambda: self.terminal_session_status(tab["id"]) == "reconnecting",
+            timeout=30.0,
+            what="the serial tab to enter the auto-reconnect loop again",
+        )
+        self.driver.click("terminal-auto-reconnect-cancel-btn")
+        self.wait(
+            lambda: self.terminal_session_exited(tab["id"]),
+            timeout=15.0,
+            what="Cancel to stop the serial retry",
+        )
+        assert not self.driver.exists("terminal-auto-reconnect-countdown")
 
     # ── Agent on a real host (#470/#473/#474/#477 residue) ───────────────────
     def test_real_host_agent_deploy_shell_and_persistent_reattach(self):

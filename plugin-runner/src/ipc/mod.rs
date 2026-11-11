@@ -199,7 +199,9 @@ frame_kinds! {
     BridgeRelease = 0x32, Runner;
     /// Host → runner: [`StreamChunk`] — bytes read from a proxied socket.
     StreamData = 0x33, Host;
-    /// Host → runner: [`ConnRef`] — a proxied socket reached end of stream.
+    /// Host → runner: [`ConnRef`] — a proxied socket reached end of stream,
+    /// or (Windows) the host ended a socket it duplicated into the runner,
+    /// which then closes its copy (#5360).
     StreamClosed = 0x34, Host;
     /// Runner → host: [`StreamAck`] — the plugin consumed `StreamData` bytes.
     StreamAck = 0x35, Runner;

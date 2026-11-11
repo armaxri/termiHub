@@ -1,6 +1,7 @@
 import { expect, vi } from "vitest";
 import { toHaveNoViolations } from "jest-axe";
 import { installConsoleGuard } from "./consoleGuard";
+import { installLazyImportGuard } from "./lazyImportGuard";
 
 // Register the jest-axe accessibility matcher globally so any test can assert
 // `expect(await checkA11y()).toHaveNoViolations()` (audit finding TFE-012). The
@@ -22,6 +23,20 @@ expect.extend(toHaveNoViolations);
 // Fail on environment-misconfiguration warnings and on any test file whose
 // console output exceeds a per-file budget, so the log cannot silently regrow.
 installConsoleGuard();
+
+// Fail any test that ends while a React.lazy import is still loading: such a
+// stray import corrupts the coverage report of the lazily imported module
+// (#5358, #5370). The mock wraps `lazy` so the guard can see each import; the
+// rest of React is the real module.
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("react") & { default: typeof import("react") }
+  >();
+  const { createTrackedLazy } = await import("./lazyImportGuard");
+  const lazy = createTrackedLazy(actual.lazy);
+  return { ...actual, lazy, default: { ...actual.default, lazy } };
+});
+installLazyImportGuard();
 
 declare module "vitest" {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must mirror Vitest's own `Assertion<T = any>` signature for declaration merging.

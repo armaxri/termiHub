@@ -9,6 +9,13 @@
 //!   `ReadFile` / `WriteFile` as the channel pipe ([`super::pipe`]). The
 //!   runner never calls a socket function on it; socket options and shutdown
 //!   stay with the host, which keeps its own handle on the connection.
+//! * **Ended by the runner, on the host's word.** The host's `shutdown` does
+//!   not complete a receive already pending on the runner's duplicate (it
+//!   ends only when the peer closes, or the stack times the half-closed
+//!   connection out, about 120 s later; #5360), and no process can cancel
+//!   another's I/O. So the host also tells the runner (`StreamClosed`), which
+//!   ends the stream with its [`SocketCloser`]: a blocked read returns at
+//!   once, later reads see end of stream and writes fail.
 //! * **Least access.** The duplicate carries only [`SOCKET_ACCESS`] (read and
 //!   write data, read attributes, synchronize), not the host's full access.
 //! * **Host side** ([`duplicate_into`], [`close_in`]) runs in termiHub, which
@@ -21,18 +28,20 @@
 
 use std::io::{self, Read, Write};
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
+use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{
-    DuplicateHandle, ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF, FALSE, HANDLE, INVALID_HANDLE_VALUE,
+    DuplicateHandle, ERROR_BROKEN_PIPE, ERROR_HANDLE_EOF, ERROR_OPERATION_ABORTED, FALSE, HANDLE,
+    INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     GetFileType, ReadFile, WriteFile, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_TYPE_PIPE,
     FILE_WRITE_DATA, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::Pipes::GetNamedPipeInfo;
-use windows_sys::Win32::System::Threading::GetCurrentProcess;
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetEvent, WaitForSingleObject};
 
-use super::pipe::overlapped;
+use super::pipe::{new_event, overlapped_until};
 use crate::win::is_os_error;
 
 /// The access a duplicated bridge socket carries into the runner: enough for
@@ -140,42 +149,95 @@ pub unsafe fn adopt(value: u64) -> io::Result<OwnedHandle> {
 ///
 /// Reads and writes block until they complete. Each runs on its calling
 /// thread's own completion event, so a read blocked on one thread never holds
-/// up a write on another. End of stream (the peer, or the host's shutdown)
-/// reads as `0`.
+/// up a write on another. End of stream (the peer, the host's shutdown with
+/// the peer's close, or this stream's [`SocketCloser`]) reads as `0`.
 #[derive(Debug)]
 pub struct SocketStream {
     handle: OwnedHandle,
+    /// Manual-reset event: signalled once the stream is closed.
+    closed: Arc<OwnedHandle>,
+}
+
+/// Ends a [`SocketStream`] from any thread: a read or write in progress is
+/// cancelled at once, a read returns end of stream, and every later read
+/// does too while every later write fails. Idempotent; the socket handle
+/// itself stays open until the stream is dropped.
+#[derive(Debug, Clone)]
+pub struct SocketCloser {
+    closed: Arc<OwnedHandle>,
+}
+
+impl SocketCloser {
+    /// End the stream (see [`SocketCloser`]).
+    pub fn close(&self) {
+        // SAFETY: a valid event handle, kept alive by the `Arc`.
+        unsafe { SetEvent(self.closed.as_raw_handle()) };
+    }
 }
 
 impl SocketStream {
     /// Wrap a socket handle opened for overlapped I/O (Winsock creates them
     /// so by default; [`adopt`] yields one).
+    ///
+    /// # Errors
+    /// The OS error of creating the stream's close event.
+    pub fn new(handle: OwnedHandle) -> io::Result<Self> {
+        Ok(Self {
+            handle,
+            closed: Arc::new(new_event()?),
+        })
+    }
+
+    /// A handle that ends this stream from another thread.
     #[must_use]
-    pub fn new(handle: OwnedHandle) -> Self {
-        Self { handle }
+    pub fn closer(&self) -> SocketCloser {
+        SocketCloser {
+            closed: Arc::clone(&self.closed),
+        }
     }
 
     fn raw(&self) -> HANDLE {
         self.handle.as_raw_handle()
     }
+
+    fn close_event(&self) -> HANDLE {
+        self.closed.as_raw_handle()
+    }
+
+    fn is_closed(&self) -> bool {
+        // SAFETY: a valid event handle; a zero timeout only polls it.
+        unsafe { WaitForSingleObject(self.close_event(), 0) == WAIT_OBJECT_0 }
+    }
+}
+
+fn closed_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "the bridge connection was closed",
+    )
 }
 
 impl Read for &SocketStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
+        if buf.is_empty() || self.is_closed() {
             return Ok(0);
         }
         let handle = self.raw();
         let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
         let data = buf.as_mut_ptr();
         // SAFETY: `data` is valid for `len` bytes for the whole operation:
-        // `overlapped` does not return before it completed.
-        let result = overlapped(handle, None, |ov| unsafe {
+        // `overlapped_until` does not return before it completed (or its
+        // cancellation did).
+        let result = overlapped_until(handle, None, Some(self.close_event()), |ov| unsafe {
             ReadFile(handle, data, len, std::ptr::null_mut(), ov)
         });
         match result {
             Ok(read) => Ok(read as usize),
-            Err(e) if is_os_error(&e, ERROR_HANDLE_EOF) || is_os_error(&e, ERROR_BROKEN_PIPE) => {
+            Err(e)
+                if is_os_error(&e, ERROR_HANDLE_EOF)
+                    || is_os_error(&e, ERROR_BROKEN_PIPE)
+                    || is_os_error(&e, ERROR_OPERATION_ABORTED) =>
+            {
                 Ok(0)
             }
             Err(e) => Err(e),
@@ -185,6 +247,9 @@ impl Read for &SocketStream {
 
 impl Write for &SocketStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.is_closed() {
+            return Err(closed_error());
+        }
         if buf.is_empty() {
             return Ok(0);
         }
@@ -192,10 +257,14 @@ impl Write for &SocketStream {
         let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
         let data = buf.as_ptr();
         // SAFETY: as for `read`: `data` outlives the operation.
-        let written = overlapped(handle, None, |ov| unsafe {
+        let result = overlapped_until(handle, None, Some(self.close_event()), |ov| unsafe {
             WriteFile(handle, data, len, std::ptr::null_mut(), ov)
-        })?;
-        Ok(written as usize)
+        });
+        match result {
+            Ok(written) => Ok(written as usize),
+            Err(e) if is_os_error(&e, ERROR_OPERATION_ABORTED) => Err(closed_error()),
+            Err(e) => Err(e),
+        }
     }
 
     /// A socket buffers nothing on this side.
@@ -254,7 +323,7 @@ mod tests {
         let process = this_process();
         let value = duplicate_into(process.as_handle(), socket_handle(ours)).unwrap();
         // SAFETY: freshly duplicated into this process for this test.
-        SocketStream::new(unsafe { adopt(value) }.unwrap())
+        SocketStream::new(unsafe { adopt(value) }.unwrap()).unwrap()
     }
 
     #[test]
@@ -300,19 +369,66 @@ mod tests {
         assert!(matches!(stream.read(&mut buf), Ok(0) | Err(_)));
     }
 
-    /// The host's shutdown of its own handle ends a read blocked on the
-    /// runner's duplicate (how a released or closed session ends it).
+    /// Longest a closed stream may take to end a blocked read. The close
+    /// lands in milliseconds; the bound only keeps a regression from waiting
+    /// out the stack's ~120 s half-close timeout (#5360).
+    const CLOSE_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// How a released or closed session ends a read blocked on the runner's
+    /// duplicate: the host shuts its own handle down (which alone does not
+    /// complete the pending receive while the peer keeps the connection
+    /// open, #5360) and tells the runner, which closes the stream.
     #[test]
-    fn the_hosts_shutdown_ends_a_blocked_read() {
+    fn the_hosts_shutdown_and_close_end_a_blocked_read_at_once() {
         let (ours, _peer) = tcp_pair();
         let stream = duplicated(&ours);
-        let reader = std::thread::spawn(move || {
+        let closer = stream.closer();
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
             let mut buf = [0u8; 8];
-            (&stream).read(&mut buf)
+            let _ = done.send((&stream).read(&mut buf).map_err(|e| e.kind()));
         });
         std::thread::sleep(std::time::Duration::from_millis(50));
         ours.shutdown(Shutdown::Both).unwrap();
-        assert!(matches!(reader.join().unwrap(), Ok(0) | Err(_)));
+        let started = std::time::Instant::now();
+        closer.close();
+        let read = result
+            .recv_timeout(CLOSE_BOUND)
+            .expect("closing the stream must end the blocked read at once");
+        assert_eq!(read, Ok(0));
+        assert!(started.elapsed() < CLOSE_BOUND);
+    }
+
+    /// Closing alone (the peer still connected, nothing shut down) also ends
+    /// a blocked read, and the stream stays closed: reads see end of stream,
+    /// writes fail, and nothing reaches the peer.
+    #[test]
+    fn a_closed_stream_reads_end_of_stream_and_refuses_writes() {
+        let (ours, mut peer) = tcp_pair();
+        let stream = std::sync::Arc::new(duplicated(&ours));
+        let (done, result) = std::sync::mpsc::channel();
+        {
+            let stream = std::sync::Arc::clone(&stream);
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 8];
+                let _ = done.send((&*stream).read(&mut buf).map_err(|e| e.kind()));
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let closer = stream.closer();
+        closer.close();
+        closer.close();
+        assert_eq!(result.recv_timeout(CLOSE_BOUND).unwrap(), Ok(0));
+        peer.write_all(b"late").unwrap();
+        let mut buf = [0u8; 4];
+        assert_eq!((&*stream).read(&mut buf).unwrap(), 0);
+        assert_eq!(
+            (&*stream).write(b"x").unwrap_err().kind(),
+            io::ErrorKind::ConnectionAborted
+        );
+        peer.set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        assert!(peer.read(&mut buf).is_err(), "no byte reached the peer");
     }
 
     /// A duplicate that never reached its target is closed there: once the

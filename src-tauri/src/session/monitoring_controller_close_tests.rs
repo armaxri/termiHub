@@ -14,8 +14,8 @@ use std::time::Duration;
 use termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE;
 
 use super::*;
-use crate::network::test_support::FakeAgent;
 use crate::session::agent_monitor_stops;
+use crate::test_support::FakeAgent;
 
 type Sessions = Mutex<HashMap<String, SessionEntry>>;
 type Tasks = Mutex<HashMap<String, AbortHandle>>;

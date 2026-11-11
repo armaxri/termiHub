@@ -7,6 +7,7 @@ import {
   isAgentTransportClosed,
   isAgentReportedError,
   backendErrorMessage,
+  isSessionEndedError,
 } from "./backendErrorCode";
 
 describe("backendErrorCode", () => {
@@ -148,5 +149,28 @@ describe("backendErrorCode", () => {
     it("never classifies by message text", () => {
       expect(isAgentReportedError("Remote agent error: update refused")).toBe(false);
     });
+  });
+});
+
+describe("isSessionEndedError (#5384)", () => {
+  it("is true for session_not_found from a session already dropped", () => {
+    expect(
+      isSessionEndedError({ code: "session_not_found", message: "Session not found: abc" })
+    ).toBe(true);
+  });
+
+  it("is true for write_failed on a disconnected session", () => {
+    expect(
+      isSessionEndedError({
+        code: "write_failed",
+        message: "Failed to write to terminal: session disconnected",
+      })
+    ).toBe(true);
+  });
+
+  it("is false for other codes and for uncoded errors", () => {
+    expect(isSessionEndedError({ code: "resize_failed", message: "nope" })).toBe(false);
+    expect(isSessionEndedError(new Error("Session not found: abc"))).toBe(false);
+    expect(isSessionEndedError("boom")).toBe(false);
   });
 });

@@ -26,7 +26,6 @@ import { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
   cancelConnecting,
-  sendInput,
   setSessionLineEnding,
   sessionLoggingStart,
   resizeTerminal,
@@ -36,6 +35,7 @@ import {
   replaySessionScrollback,
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
+import { sendInputDetached } from "@/services/detachedSessionInput";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import {
   useAppStore,
@@ -796,7 +796,7 @@ export function Terminal({
 
               if (isCanceled()) {
                 useAppStore.getState().setConnectStarting(tabId, null);
-                closeTerminal(resolved);
+                fireAndForget(closeTerminal(resolved), `close canceled session ${resolved}`);
                 return;
               }
               if (useAppStore.getState().windowSessionsEnding) {
@@ -1136,7 +1136,7 @@ export function Terminal({
             clearTimeout(initialCommandTimer);
             initialCommandTimer = null;
           }
-          sendInput(sessionId, initialCommandText + "\n");
+          void sendInputDetached(sessionId, initialCommandText + "\n", "initial command");
         };
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
@@ -1212,7 +1212,7 @@ export function Terminal({
               const targetSessionId = getSessionId(targetTabId);
               // Fire-and-forget, dispatched in parallel; line-ending
               // translation happens in the backend send_input choke point.
-              if (targetSessionId) sendInput(targetSessionId, data);
+              if (targetSessionId) void sendInputDetached(targetSessionId, data, "broadcast input");
             }
             // Tap the input stream for macro recording (#1674) once, for the
             // source's keystrokes only. No-op unless a recording is active.
@@ -1220,7 +1220,9 @@ export function Terminal({
           } else if (sessionIdRef.current) {
             // Line-ending translation (Enter / paste) happens in the backend
             // send_input choke point using the session's configured ending.
-            sendInput(sessionIdRef.current, data);
+            // xterm also emits focus reports and query replies here, which can
+            // race a closing session (#5384): never leave them unhandled.
+            void sendInputDetached(sessionIdRef.current, data, "typed input");
             // Tap the input stream for macro recording (#1674). This is the
             // single point where user-typed bytes flow to the PTY, so it
             // captures input only (never terminal output). No-op unless a
@@ -1393,7 +1395,7 @@ export function Terminal({
                   useAppStore.getState().clearMovingSession(sid);
                   return;
                 }
-                closeTerminal(sid);
+                fireAndForget(closeTerminal(sid), `close session ${sid} on teardown`);
               }
             });
           }

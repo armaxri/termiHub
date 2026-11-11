@@ -22,6 +22,7 @@ import {
   writeText as writeClipboard,
 } from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
+import { sendInputDetached } from "@/services/detachedSessionInput";
 import { reserveSessionInputSlot, type SessionInputSlot } from "@/services/sessionInputGate";
 import {
   registerTerminalInputInjector,
@@ -631,7 +632,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
           const xterm = xtermRegistryRef.current.get(targetTabId);
           const payload =
             xterm && xterm.modes.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
-          const send = () => sendInput(targetSessionId, payload);
+          // A target that ended meanwhile drops its share of the paste (#5384).
+          const send = () => sendInputDetached(targetSessionId, payload, "paste");
           // Fill the reserved slot; a target that appeared since just queues.
           const slot = slots.get(targetSessionId);
           return slot ? slot.fill(send) : send();

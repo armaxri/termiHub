@@ -25,7 +25,7 @@ export function SettingsSearch({ query, onQueryChange }: SettingsSearchProps) {
         value={query}
         onValueChange={onQueryChange}
         onKeyDown={handleKeyDown}
-        placeholder="Search settings..."
+        placeholder="Search settings…"
         aria-label="Search settings"
         clearLabel="Clear search"
       />
