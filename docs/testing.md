@@ -576,6 +576,10 @@ runners have no Podman machine. On a Mac, run `podman machine start`, then
 `cargo test -p termihub-core --features docker --lib -- --ignored --exact --nocapture backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine`.
 Expected: `test result: ok. 1 passed`, and the output names the machine's
 `…-api.sock` socket. Run it before a release that touches `core/src/backends/docker/`.
+The release-gate manual run walks it as
+[`test_guided_rust_live_smokes.py`](../tests/system/tests/test_guided_rust_live_smokes.py)
+(#5415): the harness runs that command and grades the output; the operator only
+starts the machine if none is running.
 
 ## 4. Rendered Visual Checks (#4712)
 
@@ -3353,6 +3357,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-51/52 (X11 install on the real desktop per OS; MT-SSH-50 is automated, #4965), MT-NET-21 (latency charts)
+- [ ] `test_guided_rust_live_smokes.py` (macOS) — MT-RUST-01 (Podman machine routing: the harness runs the ignored core smoke and grades it; start a Podman machine when asked)
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
@@ -3397,6 +3402,7 @@ Guided-manual suites:
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..09/11..13                                                             | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                            |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                      |
 | [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-51/52, MT-NET-21                                         | watch the WSL tab open, the X window, the chart                                                                                                     |
+| [`test_guided_rust_live_smokes.py`](../tests/system/tests/test_guided_rust_live_smokes.py) | MT-RUST-01                                                                      | start a Podman machine if none is running (harness runs and grades the ignored Rust smoke)                                                          |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                       |
 
 ### Output-stream flash and flood grades (#4931)
