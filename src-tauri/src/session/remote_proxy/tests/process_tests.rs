@@ -8,8 +8,8 @@ use super::*;
 
 /// Mock agent whose `connection.types` reply marks `type_id` monitorable and
 /// whose `initialize` capabilities carry `session_processes`.
-fn mock_agent(type_id: &str, session_processes: bool) -> Arc<MockAgentRpcClient> {
-    let mut mock = MockAgentRpcClient::with_capabilities(json!({
+fn mock_agent(type_id: &str, session_processes: bool) -> Arc<FakeAgent> {
+    let mut mock = proxy_agent(json!({
         "types": [{
             "typeId": type_id,
             "displayName": type_id,
@@ -23,11 +23,11 @@ fn mock_agent(type_id: &str, session_processes: bool) -> Arc<MockAgentRpcClient>
             }
         }]
     }));
-    mock.session_processes = Some(session_processes);
+    mock.capabilities_mut().session_processes = session_processes;
     Arc::new(mock)
 }
 
-async fn connected_proxy(mock: &Arc<MockAgentRpcClient>, session_type: &str) -> RemoteProxy {
+async fn connected_proxy(mock: &Arc<FakeAgent>, session_type: &str) -> RemoteProxy {
     let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
     proxy
         .connect(json!({ "type": session_type, "config": {"host": "server"} }))
@@ -36,8 +36,8 @@ async fn connected_proxy(mock: &Arc<MockAgentRpcClient>, session_type: &str) -> 
     proxy
 }
 
-fn process_requests(mock: &MockAgentRpcClient) -> Vec<(String, serde_json::Value)> {
-    mock.sent_requests
+fn process_requests(mock: &FakeAgent) -> Vec<(String, serde_json::Value)> {
+    mock.requests
         .lock()
         .unwrap()
         .iter()

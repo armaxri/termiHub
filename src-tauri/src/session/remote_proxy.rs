@@ -1946,433 +1946,82 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::connection::config::AgentSettings;
-    use crate::terminal::agent_manager::{
-        AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
-        AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
-    };
-    use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
+    use crate::test_support::agent_rpc::{Gate, Responder, Step};
+    use crate::test_support::FakeAgent;
     use crate::utils::errors::TerminalError;
-    use termihub_core::monitoring::MonitoringSender;
 
-    // ── MockAgentRpcClient ────────────────────────────────────────────
+    // ── The proxy suites' agent: the shared FakeAgent ─────────────────
 
-    /// A scripted answer to one agent request, or `None` to fall through to
-    /// the canned reply.
-    type Responder = dyn Fn(&str, &serde_json::Value) -> Option<Result<serde_json::Value, TerminalError>>
-        + Send
-        + Sync;
-
-    /// Minimal in-memory mock of `AgentRpcClient` for unit tests.
-    ///
-    /// `create_session` records calls and returns a canned session.
-    /// All other mutating methods succeed silently. `is_connected` returns
-    /// `true` once at least one `create_session` call has been recorded.
-    struct MockAgentRpcClient {
-        created_sessions: Mutex<Vec<(String, String, serde_json::Value)>>,
-        /// Records the definition_id passed to each create_session call, in order.
-        created_definition_ids: Mutex<Vec<Option<String>>>,
-        send_request_result: Option<serde_json::Value>,
-        /// Records (method, params) for every send_request call.
-        sent_requests: Mutex<Vec<(String, serde_json::Value)>>,
-        /// Records remote_session_id for every register_monitoring_output call.
-        registered_monitoring_hosts: Mutex<Vec<String>>,
-        /// When set, `get_capabilities` reports an agent with this
-        /// `session_processes` flag (#3210); `None` reports no capabilities
-        /// unless `session_monitoring` is set.
-        session_processes: Option<bool>,
-        /// When set, `get_capabilities` reports an agent with this
-        /// `session_monitoring` flag (#3871).
-        session_monitoring: Option<bool>,
-        /// When set, `get_capabilities` reports an agent with this
-        /// `session_files` flag (#3242).
-        session_files: Option<bool>,
-        /// When set, `get_capabilities` reports an agent with this
-        /// `unattended_connect` flag (#3877).
-        unattended_connect: Option<bool>,
-        /// When set, `get_capabilities` reports an agent with this
-        /// `file_ranges` flag (#3587).
-        file_ranges: Option<bool>,
-        /// `get_capabilities` reports this `host_file_attribute_ops` (#4601).
-        host_file_attribute_ops: Option<termihub_core::files::FileAttributeOps>,
-        /// When set, answers `send_request` for the methods it handles
-        /// (returning `Some`) before the canned reply (#3587).
-        responder: Option<Box<Responder>>,
-        /// The `unattended` flag of every owned create, in order (#3877).
-        created_unattended: Mutex<Vec<bool>>,
-        /// The agent manager's files-only routing (#4081), driven by the real
-        /// routes so a test can deliver `connection.filesOnly` notifications.
-        files_only_routes: Mutex<crate::terminal::agent_manager::files_only::FilesOnlyRoutes>,
+    /// The agent double for the proxy suites (#5372): the shared [`FakeAgent`]
+    /// answering every request with `reply` (e.g. a `connection.types` list;
+    /// `Value::Null` for none) unless a test's `responder` handles it, every
+    /// create with the session `mock-session-1`, and the rest of the session
+    /// plumbing with `Ok`. It reports no capabilities until a test sets some
+    /// through [`FakeAgent::capabilities_mut`].
+    fn proxy_agent(reply: serde_json::Value) -> FakeAgent {
+        FakeAgent {
+            disconnected: true,
+            ..FakeAgent::default()
+        }
+        .always("send_request", Step::Reply(reply))
+        .always("create_session_owned", Step::NewSession)
+        .always(
+            "create_session",
+            Step::Reply(json!({
+                "session_id": "mock-session-1",
+                "title": "Mock Session",
+                "type": "local",
+                "status": "running",
+                "attached": false,
+            })),
+        )
+        .always("attach_session", Step::Ok)
+        .always("close_session", Step::Ok)
+        .always("list_sessions", Step::Reply(json!([])))
+        .always("register_session_output", Step::Ok)
+        .always("unregister_session_output", Step::Ok)
+        .always("send_session_input", Step::Ok)
+        .always("resize_session", Step::Ok)
+        .always("disconnect_agent", Step::Ok)
     }
 
-    impl MockAgentRpcClient {
-        fn new() -> Self {
-            Self {
-                created_sessions: Mutex::new(Vec::new()),
-                created_definition_ids: Mutex::new(Vec::new()),
-                send_request_result: None,
-                sent_requests: Mutex::new(Vec::new()),
-                registered_monitoring_hosts: Mutex::new(Vec::new()),
-                session_processes: None,
-                session_monitoring: None,
-                session_files: None,
-                unattended_connect: None,
-                file_ranges: None,
-                host_file_attribute_ops: None,
-                responder: None,
-                created_unattended: Mutex::new(Vec::new()),
-                files_only_routes: Mutex::default(),
-            }
-        }
-
-        fn with_capabilities(capabilities_result: serde_json::Value) -> Self {
-            Self {
-                created_sessions: Mutex::new(Vec::new()),
-                created_definition_ids: Mutex::new(Vec::new()),
-                send_request_result: Some(capabilities_result),
-                sent_requests: Mutex::new(Vec::new()),
-                registered_monitoring_hosts: Mutex::new(Vec::new()),
-                session_processes: None,
-                session_monitoring: None,
-                session_files: None,
-                unattended_connect: None,
-                file_ranges: None,
-                host_file_attribute_ops: None,
-                responder: None,
-                created_unattended: Mutex::new(Vec::new()),
-                files_only_routes: Mutex::default(),
-            }
-        }
+    /// `(agent_id, session_type)` of every `create_session`, in order.
+    fn created_sessions(mock: &FakeAgent) -> Vec<(String, String)> {
+        mock.calls_to("create_session")
+            .into_iter()
+            .map(|args| (args[0].clone(), args[1].clone()))
+            .collect()
     }
 
-    impl AgentRpcClient for MockAgentRpcClient {
-        fn connect_agent(
-            &self,
-            _agent_id: &str,
-            _config: &RemoteAgentConfig,
-            _agent_settings: Option<&AgentSettings>,
-        ) -> Result<AgentConnectResult, TerminalError> {
-            Ok(AgentConnectResult {
-                capabilities: AgentCapabilities {
-                    connection_types: vec![],
-                    max_sessions: 10,
-                    available_shells: vec![],
-                    available_serial_ports: vec![],
-                    docker_available: false,
-                    available_docker_images: vec![],
-                    monitoring_supported: false,
-                    tool_streaming: false,
-                    embedded_server_activity: false,
-                    session_processes: false,
-                    session_monitoring: false,
-                    session_files: false,
-                    unattended_connect: false,
-                    file_ranges: false,
-                    output_flow: false,
-                    host_file_attribute_ops: None,
-                    file_create_new: false,
-                    definition_icon_style: false,
-                    serial_port_rescan: false,
-                    agent_version: "mock".to_string(),
-                },
-                agent_version: "mock".to_string(),
-                protocol_version: "0.2.0".to_string(),
-            })
-        }
+    /// The `definition_id` of every `create_session`, in order.
+    fn created_definition_ids(mock: &FakeAgent) -> Vec<Option<String>> {
+        mock.calls_to("create_session")
+            .into_iter()
+            .map(|args| Some(args[3].clone()).filter(|id| id != "-"))
+            .collect()
+    }
 
-        fn cancel_connect(&self, _agent_id: &str) -> bool {
-            false
-        }
-        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
+    /// The `unattended` flag of every owned create, in order (#3877).
+    fn created_unattended(mock: &FakeAgent) -> Vec<bool> {
+        mock.calls_to("create_session_owned")
+            .into_iter()
+            .map(|args| args[4] == "true")
+            .collect()
+    }
 
-        fn is_connected(&self, _agent_id: &str) -> bool {
-            !self.created_sessions.lock().unwrap().is_empty()
-        }
-
-        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            if self.session_processes.is_none()
-                && self.session_monitoring.is_none()
-                && self.session_files.is_none()
-                && self.unattended_connect.is_none()
-                && self.file_ranges.is_none()
-            {
-                return None;
-            }
-            let mut caps: AgentCapabilities = serde_json::from_value(json!({
-                "connectionTypes": [],
-                "maxSessions": 10,
-            }))
-            .expect("minimal capabilities parse");
-            caps.session_processes = self.session_processes.unwrap_or(false);
-            caps.session_monitoring = self.session_monitoring.unwrap_or(false);
-            caps.session_files = self.session_files.unwrap_or(false);
-            caps.unattended_connect = self.unattended_connect.unwrap_or(false);
-            caps.file_ranges = self.file_ranges.unwrap_or(false);
-            caps.host_file_attribute_ops = self.host_file_attribute_ops;
-            Some(caps)
-        }
-
-        fn shutdown_agent(
-            &self,
-            _agent_id: &str,
-            _reason: Option<&str>,
-        ) -> Result<u32, TerminalError> {
-            Ok(0)
-        }
-
-        fn send_request(
-            &self,
-            _agent_id: &str,
-            method: &str,
-            params: serde_json::Value,
-        ) -> Result<serde_json::Value, TerminalError> {
-            self.sent_requests
-                .lock()
-                .unwrap()
-                .push((method.to_string(), params.clone()));
-            if let Some(reply) = self.responder.as_ref().and_then(|r| r(method, &params)) {
-                return reply;
-            }
-            Ok(self
-                .send_request_result
-                .clone()
-                .unwrap_or(serde_json::Value::Null))
-        }
-
-        fn create_session_owned(
-            &self,
-            agent_id: &str,
-            session_type: &str,
-            config: serde_json::Value,
-            title: Option<&str>,
-            definition_id: Option<&str>,
-            _owner: Option<&str>,
-            _correlation_id: Option<&str>,
-            unattended: bool,
-        ) -> Result<AgentSessionInfo, TerminalError> {
-            self.created_unattended.lock().unwrap().push(unattended);
-            self.create_session(agent_id, session_type, config, title, definition_id)
-        }
-
-        fn create_session(
-            &self,
-            agent_id: &str,
-            session_type: &str,
-            config: serde_json::Value,
-            _title: Option<&str>,
-            definition_id: Option<&str>,
-        ) -> Result<AgentSessionInfo, TerminalError> {
-            self.created_sessions.lock().unwrap().push((
-                agent_id.to_string(),
-                session_type.to_string(),
-                config,
-            ));
-            self.created_definition_ids
-                .lock()
-                .unwrap()
-                .push(definition_id.map(String::from));
-            Ok(AgentSessionInfo {
-                session_id: "mock-session-1".to_string(),
-                title: "Mock Session".to_string(),
-                session_type: session_type.to_string(),
-                status: "running".to_string(),
-                attached: false,
-                definition_id: definition_id.map(String::from),
-            })
-        }
-
-        fn attach_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn close_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-            Ok(vec![])
-        }
-
-        fn list_connections_and_folders(
-            &self,
-            _agent_id: &str,
-        ) -> Result<AgentConnectionsData, TerminalError> {
-            Ok(AgentConnectionsData {
-                connections: vec![],
-                folders: vec![],
-            })
-        }
-
-        fn save_definition(
-            &self,
-            _agent_id: &str,
-            _definition: termihub_core::protocol::methods::ConnectionCreateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            Ok(AgentDefinitionInfo {
-                id: "mock-def".to_string(),
-                name: "Mock".to_string(),
-                session_type: "local".to_string(),
-                config: serde_json::Value::Null,
-                persistent: false,
-                folder_id: None,
-                terminal_options: None,
-                icon: None,
-                icon_color: None,
-                icon_emoji: None,
-                source_file: None,
-            })
-        }
-
-        fn update_definition(
-            &self,
-            _agent_id: &str,
-            _params: termihub_core::protocol::methods::ConnectionUpdateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            Ok(AgentDefinitionInfo {
-                id: "mock-def".to_string(),
-                name: "Updated".to_string(),
-                session_type: "local".to_string(),
-                config: serde_json::Value::Null,
-                persistent: false,
-                folder_id: None,
-                terminal_options: None,
-                icon: None,
-                icon_color: None,
-                icon_emoji: None,
-                source_file: None,
-            })
-        }
-
-        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn create_folder(
-            &self,
-            _agent_id: &str,
-            _name: &str,
-            _parent_id: Option<&str>,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            Ok(AgentFolderInfo {
-                id: "mock-folder".to_string(),
-                name: "Mock Folder".to_string(),
-                parent_id: None,
-                is_expanded: false,
-            })
-        }
-
-        fn update_folder(
-            &self,
-            _agent_id: &str,
-            _params: termihub_core::protocol::methods::FolderUpdateParams,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            Ok(AgentFolderInfo {
-                id: "mock-folder".to_string(),
-                name: "Updated Folder".to_string(),
-                parent_id: None,
-                is_expanded: false,
-            })
-        }
-
-        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn register_session_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _output_tx: OutputSender,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn unregister_session_output(
-            &self,
-            _agent_id: &str,
-            remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            self.files_only_routes
-                .lock()
-                .unwrap()
-                .remove(remote_session_id);
-            Ok(())
-        }
-
-        fn register_files_only(
-            &self,
-            _agent_id: &str,
-            remote_session_id: &str,
-            files_only_tx: tokio::sync::watch::Sender<bool>,
-        ) -> Result<(), TerminalError> {
-            self.files_only_routes
-                .lock()
-                .unwrap()
-                .register(remote_session_id.to_string(), files_only_tx);
-            Ok(())
-        }
-
-        fn register_monitoring_output(
-            &self,
-            _agent_id: &str,
-            remote_session_id: &str,
-            _monitoring_tx: MonitoringSender,
-        ) -> Result<(), TerminalError> {
-            self.registered_monitoring_hosts
-                .lock()
-                .unwrap()
-                .push(remote_session_id.to_string());
-            Ok(())
-        }
-
-        fn unregister_monitoring_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn send_session_input(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _data: &[u8],
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn resize_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _cols: u16,
-            _rows: u16,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-
-        fn apply_agent_settings(
-            &self,
-            _agent_id: &str,
-            _settings: &AgentSettings,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
+    /// The host of every `register_monitoring_output`, in order.
+    fn registered_monitoring_hosts(mock: &FakeAgent) -> Vec<String> {
+        mock.calls_to("register_monitoring_output")
+            .into_iter()
+            .map(|args| args[1].clone())
+            .collect()
     }
 
     fn make_proxy() -> RemoteProxy {
-        RemoteProxy::new("agent-1".to_string(), Arc::new(MockAgentRpcClient::new()))
+        RemoteProxy::new(
+            "agent-1".to_string(),
+            Arc::new(proxy_agent(serde_json::Value::Null)),
+        )
     }
 
     // ── Compile-time trait checks ─────────────────────────────────────
@@ -2399,7 +2048,7 @@ mod tests {
         let _: Option<&dyn MonitoringProvider> = proxy.monitoring();
     }
 
-    // ── Behaviour tests using MockAgentRpcClient ──────────────────────
+    // ── Behaviour tests using the proxy agent ───────────────────────────
 
     #[test]
     fn new_proxy_is_not_connected() {
@@ -2409,7 +2058,7 @@ mod tests {
 
     #[tokio::test]
     async fn connect_calls_create_and_attach_session() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         let settings = json!({ "type": "local", "config": {} });
@@ -2418,7 +2067,7 @@ mod tests {
             .await
             .expect("connect should succeed");
 
-        let sessions = mock.created_sessions.lock().unwrap();
+        let sessions = created_sessions(&mock);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].0, "agent-1");
         assert_eq!(sessions[0].1, "local");
@@ -2426,7 +2075,7 @@ mod tests {
 
     /// Deliver a `connection.filesOnly` notification for `remote_sid` through
     /// the mock's real files-only routing (#4081).
-    fn notify_files_only(mock: &MockAgentRpcClient, remote_sid: &str) {
+    fn notify_files_only(mock: &FakeAgent, remote_sid: &str) {
         use crate::terminal::agent_manager::files_only::route_files_only_notification;
         assert!(route_files_only_notification(
             &mut mock.files_only_routes.lock().unwrap(),
@@ -2441,7 +2090,7 @@ mod tests {
     /// onto an agent tab like a direct SSH one.
     #[tokio::test]
     async fn files_only_notification_drives_the_files_only_watch() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
         proxy
             .connect(json!({ "type": "ssh", "config": {} }))
@@ -2468,7 +2117,7 @@ mod tests {
     /// be lost.
     #[tokio::test]
     async fn files_only_verdict_before_the_route_is_not_lost() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         notify_files_only(&mock, "mock-session-1");
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
         proxy
@@ -2482,7 +2131,7 @@ mod tests {
     /// the agent repeats on attach.
     #[test]
     fn reattached_proxy_follows_the_files_only_verdict() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let (proxy, _outcome) =
             RemoteProxy::reconnect_existing("agent-1".into(), "remote-7".into(), mock.clone())
                 .expect("re-attach succeeds");
@@ -2496,7 +2145,7 @@ mod tests {
     /// session is not kept around.
     #[tokio::test]
     async fn disconnect_drops_the_files_only_route() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
         proxy
             .connect(json!({ "type": "ssh", "config": {} }))
@@ -2516,7 +2165,7 @@ mod tests {
     /// agent storing definition_id) stays wired up.
     #[tokio::test]
     async fn connect_forwards_definition_id_from_wrapped_settings() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         let settings = json!({
@@ -2532,13 +2181,13 @@ mod tests {
             .await
             .expect("connect should succeed");
 
-        let ids = mock.created_definition_ids.lock().unwrap();
+        let ids = created_definition_ids(&mock);
         assert_eq!(ids.as_slice(), &[Some("def-42".to_string())]);
     }
 
     #[tokio::test]
     async fn connect_forwards_no_definition_id_when_absent() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         let settings = json!({ "type": "local", "config": { "shell": "/bin/zsh" } });
@@ -2547,7 +2196,7 @@ mod tests {
             .await
             .expect("connect should succeed");
 
-        let ids = mock.created_definition_ids.lock().unwrap();
+        let ids = created_definition_ids(&mock);
         assert_eq!(ids.as_slice(), &[None]);
     }
 
@@ -2619,8 +2268,8 @@ mod tests {
     }
 
     /// Build a mock client that responds to `connection.types` with monitoring=true for "local".
-    fn make_mock_with_local_monitoring() -> Arc<MockAgentRpcClient> {
-        Arc::new(MockAgentRpcClient::with_capabilities(json!({
+    fn make_mock_with_local_monitoring() -> Arc<FakeAgent> {
+        Arc::new(proxy_agent(json!({
             "types": [
                 {
                     "typeId": "local",
@@ -2664,7 +2313,7 @@ mod tests {
 
         // The host registered and sent to the agent must be "self".
         {
-            let registered = mock.registered_monitoring_hosts.lock().unwrap();
+            let registered = registered_monitoring_hosts(&mock);
             assert_eq!(
                 registered.as_slice(),
                 ["self"],
@@ -2673,7 +2322,7 @@ mod tests {
         }
 
         {
-            let sent = mock.sent_requests.lock().unwrap();
+            let sent = mock.requests();
             let subscribe_req = sent
                 .iter()
                 .find(|(m, _)| m == "connection.monitoring.subscribe")
@@ -2696,17 +2345,17 @@ mod tests {
     /// Before the fix `set_paused` sent no RPC at all, so the agent kept polling.
     #[tokio::test]
     async fn pausing_agent_monitor_stops_remote_poller_and_resume_restarts_it() {
-        let mock = Arc::new(MockAgentRpcClient::new());
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
         let proxy = RemoteMonitoringProxy::for_agent_self("agent-1".to_string(), mock.clone());
         // Only an open monitor has an agent poller to pause (#5318).
         let _subscription = proxy.subscribe().await.expect("subscribe");
-        mock.sent_requests.lock().unwrap().clear();
+        mock.requests.lock().unwrap().clear();
 
         // Pause: the agent's poller must be told to stop so it stops wasting
         // remote CPU/bandwidth while paused.
         proxy.set_paused(true).await;
         {
-            let sent = mock.sent_requests.lock().unwrap();
+            let sent = mock.requests();
             assert!(
                 sent.iter().any(|(m, p)| m == "connection.monitoring.unsubscribe"
                     && p["host"].as_str() == Some("self")),
@@ -2715,10 +2364,10 @@ mod tests {
         }
 
         // Resume: the agent must be re-subscribed so its poller restarts.
-        mock.sent_requests.lock().unwrap().clear();
+        mock.requests.lock().unwrap().clear();
         proxy.set_paused(false).await;
         {
-            let sent = mock.sent_requests.lock().unwrap();
+            let sent = mock.requests();
             assert!(
                 sent.iter().any(|(m, p)| m == "connection.monitoring.subscribe"
                     && p["host"].as_str() == Some("self")),
@@ -2729,7 +2378,7 @@ mod tests {
 
     #[tokio::test]
     async fn monitoring_proxy_uses_session_id_for_ssh_session() {
-        let mut mock = MockAgentRpcClient::with_capabilities(json!({
+        let mut mock = proxy_agent(json!({
             "types": [
                 {
                     "typeId": "ssh",
@@ -2746,7 +2395,7 @@ mod tests {
             ]
         }));
         // A 0.21.0+ agent monitors its sessions (#3871).
-        mock.session_monitoring = Some(true);
+        mock.capabilities_mut().session_monitoring = true;
         let mock = Arc::new(mock);
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
@@ -2766,7 +2415,7 @@ mod tests {
 
         // For non-local sessions, host should be the remote session ID.
         {
-            let registered = mock.registered_monitoring_hosts.lock().unwrap();
+            let registered = registered_monitoring_hosts(&mock);
             assert_eq!(registered.len(), 1);
             assert_ne!(
                 registered[0], "self",
@@ -2807,7 +2456,7 @@ mod tests {
             .await
             .expect("subscribe should succeed");
 
-        let registered = mock.registered_monitoring_hosts.lock().unwrap();
+        let registered = registered_monitoring_hosts(&mock);
         assert_eq!(
             registered.as_slice(),
             ["self"],
@@ -2817,206 +2466,42 @@ mod tests {
 
     // ── Regression: blocking_recv must not deadlock on a tokio worker ─
 
-    /// Mock that faithfully reproduces the real `AgentConnectionManager`
-    /// response delivery: `create_session` blocks on a `oneshot::Receiver`
-    /// whose value is sent by a separate `tokio::spawn`ed task.
+    /// The agent for the deadlock regression: it faithfully reproduces the real
+    /// `AgentConnectionManager` response delivery. Its request, create, attach
+    /// and close calls answer through [`Step::CrossTask`]: they block on a
+    /// `oneshot::Receiver` whose value is sent by a separate `tokio::spawn`ed
+    /// task, as the real `agent_io_task` delivers responses across tasks.
     ///
-    /// The real `agent_io_task` runs as a tokio task and delivers responses
-    /// across task boundaries the same way. If a caller invokes
-    /// `create_session` directly from an async tokio task (instead of inside
-    /// `spawn_blocking`), the `Receiver::blocking_recv()` parks the current
-    /// runtime worker; in that scenario the cross-task `tx.send` wake can
-    /// fail to re-schedule the parked worker and the await hangs forever —
-    /// the exact symptom that prompted this regression test.
-    struct BlockingRecvMockAgentRpcClient;
-
-    impl AgentRpcClient for BlockingRecvMockAgentRpcClient {
-        fn connect_agent(
-            &self,
-            _agent_id: &str,
-            _config: &RemoteAgentConfig,
-            _agent_settings: Option<&AgentSettings>,
-        ) -> Result<AgentConnectResult, TerminalError> {
-            unimplemented!()
+    /// If a caller invokes `create_session` directly from an async tokio task
+    /// (instead of inside `spawn_blocking`), the `Receiver::blocking_recv()`
+    /// parks the current runtime worker; in that scenario the cross-task
+    /// `tx.send` wake can fail to re-schedule the parked worker and the await
+    /// hangs forever — the exact symptom that prompted this regression test.
+    fn blocking_recv_agent() -> FakeAgent {
+        let cross = |step| Step::CrossTask(Box::new(step));
+        FakeAgent {
+            disconnected: true,
+            ..FakeAgent::default()
         }
-        fn cancel_connect(&self, _agent_id: &str) -> bool {
-            false
-        }
-        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn is_connected(&self, _agent_id: &str) -> bool {
-            true
-        }
-        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            None
-        }
-        fn shutdown_agent(
-            &self,
-            _agent_id: &str,
-            _reason: Option<&str>,
-        ) -> Result<u32, TerminalError> {
-            Ok(0)
-        }
-
-        fn send_request(
-            &self,
-            _agent_id: &str,
-            _method: &str,
-            _params: serde_json::Value,
-        ) -> Result<serde_json::Value, TerminalError> {
-            cross_task_blocking_recv(serde_json::Value::Null)
-        }
-
-        fn create_session(
-            &self,
-            _agent_id: &str,
-            session_type: &str,
-            _config: serde_json::Value,
-            _title: Option<&str>,
-            _definition_id: Option<&str>,
-        ) -> Result<AgentSessionInfo, TerminalError> {
-            cross_task_blocking_recv(AgentSessionInfo {
-                session_id: "mock-session-1".to_string(),
-                title: "Mock Session".to_string(),
-                session_type: session_type.to_string(),
-                status: "running".to_string(),
-                attached: false,
-                definition_id: None,
-            })
-        }
-
-        fn attach_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            cross_task_blocking_recv(())
-        }
-
-        fn close_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            cross_task_blocking_recv(())
-        }
-
-        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-            Ok(vec![])
-        }
-        fn list_connections_and_folders(
-            &self,
-            _agent_id: &str,
-        ) -> Result<AgentConnectionsData, TerminalError> {
-            Ok(AgentConnectionsData {
-                connections: vec![],
-                folders: vec![],
-            })
-        }
-        fn save_definition(
-            &self,
-            _agent_id: &str,
-            _definition: termihub_core::protocol::methods::ConnectionCreateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn update_definition(
-            &self,
-            _agent_id: &str,
-            _params: termihub_core::protocol::methods::ConnectionUpdateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn create_folder(
-            &self,
-            _agent_id: &str,
-            _name: &str,
-            _parent_id: Option<&str>,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn update_folder(
-            &self,
-            _agent_id: &str,
-            _params: termihub_core::protocol::methods::FolderUpdateParams,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn register_session_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _output_tx: OutputSender,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn unregister_session_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn register_monitoring_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _monitoring_tx: MonitoringSender,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn unregister_monitoring_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn send_session_input(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _data: &[u8],
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn resize_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _cols: u16,
-            _rows: u16,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn apply_agent_settings(
-            &self,
-            _agent_id: &str,
-            _settings: &AgentSettings,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-    }
-
-    /// Helper used by `BlockingRecvMockAgentRpcClient` to reproduce the
-    /// `agent_manager::send_request` blocking pattern: spawn a tokio task
-    /// that fulfils a oneshot after a short delay, then call `blocking_recv`
-    /// on the calling thread. Mirrors what the real agent_io_task does.
-    fn cross_task_blocking_recv<T: Send + 'static>(value: T) -> Result<T, TerminalError> {
-        let (tx, rx) = tokio::sync::oneshot::channel::<T>();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            let _ = tx.send(value);
-        });
-        rx.blocking_recv()
-            .map_err(|_| TerminalError::RemoteError("oneshot dropped".to_string()))
+        .always("send_request", cross(Step::Ok))
+        .always(
+            "create_session",
+            cross(Step::Reply(json!({
+                "session_id": "mock-session-1",
+                "title": "Mock Session",
+                "type": "local",
+                "status": "running",
+                "attached": false,
+            }))),
+        )
+        .always("attach_session", cross(Step::Ok))
+        .always("close_session", cross(Step::Ok))
+        .always("list_sessions", Step::Reply(json!([])))
+        .always("register_session_output", Step::Ok)
+        .always("unregister_session_output", Step::Ok)
+        .always("send_session_input", Step::Ok)
+        .always("resize_session", Step::Ok)
+        .always("disconnect_agent", Step::Ok)
     }
 
     /// Regression for the local-agent shell hang: `RemoteProxy::connect`
@@ -3030,7 +2515,7 @@ mod tests {
     /// runtime so that the deadlock is forced if the fix regresses.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn connect_does_not_deadlock_on_blocking_recv() {
-        let mock = Arc::new(BlockingRecvMockAgentRpcClient);
+        let mock = Arc::new(blocking_recv_agent());
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock);
 
         let result = tokio::time::timeout(
@@ -3050,239 +2535,32 @@ mod tests {
 
     // ── Regression #1122: cancel must abort the remote-proxy handshake ─
 
-    /// Mock whose `attach_session` blocks until the test releases it, so a
-    /// cancellation can fire *during* the handshake. `create_session` returns a
-    /// session immediately (recording the assigned remote session ID), and every
-    /// `close_session` call is recorded so the test can assert the partially
-    /// established session was torn down (no orphan).
-    struct HangingAttachMockAgentRpcClient {
-        /// Held by the mock so a (never-reached-on-cancel) attach can block on it.
-        attach_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-        /// Remote session IDs passed to `close_session`, in order.
-        closed_sessions: std::sync::Mutex<Vec<String>>,
-        /// When set, `create_session_owned` blocks on it (#3437).
-        create_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-        /// The prompt owner each `create_session_owned` ran for.
-        create_owners: std::sync::Mutex<Vec<Option<String>>>,
-        /// The `correlation_id` each `create_session_owned` sent (#3085).
-        create_correlation_ids: std::sync::Mutex<Vec<Option<String>>>,
+    /// An agent whose first `attach_session` blocks until `attach` opens, so a
+    /// cancellation can fire *during* the handshake. `create_session` returns
+    /// `mock-session-1` immediately, and every call is recorded so the test
+    /// can assert the partially established session was torn down (no orphan).
+    fn hanging_attach_agent(attach: &Gate) -> FakeAgent {
+        proxy_agent(serde_json::Value::Null).on(
+            "attach_session",
+            Step::Hang(attach.clone(), Box::new(Step::Ok)),
+        )
     }
 
-    impl HangingAttachMockAgentRpcClient {
-        fn new(attach_gate: std::sync::mpsc::Receiver<()>) -> Self {
-            Self {
-                attach_gate: std::sync::Mutex::new(Some(attach_gate)),
-                closed_sessions: std::sync::Mutex::new(Vec::new()),
-                create_gate: std::sync::Mutex::new(None),
-                create_owners: std::sync::Mutex::new(Vec::new()),
-                create_correlation_ids: std::sync::Mutex::new(Vec::new()),
-            }
-        }
+    /// The remote session ids passed to `close_session`, in order.
+    fn closed_sessions(mock: &FakeAgent) -> Vec<String> {
+        mock.calls_to("close_session")
+            .into_iter()
+            .map(|args| args[1].clone())
+            .collect()
     }
 
-    impl AgentRpcClient for HangingAttachMockAgentRpcClient {
-        fn connect_agent(
-            &self,
-            _agent_id: &str,
-            _config: &RemoteAgentConfig,
-            _agent_settings: Option<&AgentSettings>,
-        ) -> Result<AgentConnectResult, TerminalError> {
-            unimplemented!()
-        }
-        fn cancel_connect(&self, _agent_id: &str) -> bool {
-            false
-        }
-        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn is_connected(&self, _agent_id: &str) -> bool {
-            true
-        }
-        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            None
-        }
-        fn shutdown_agent(
-            &self,
-            _agent_id: &str,
-            _reason: Option<&str>,
-        ) -> Result<u32, TerminalError> {
-            Ok(0)
-        }
-        fn send_request(
-            &self,
-            _agent_id: &str,
-            _method: &str,
-            _params: serde_json::Value,
-        ) -> Result<serde_json::Value, TerminalError> {
-            Ok(serde_json::Value::Null)
-        }
-        fn create_session(
-            &self,
-            _agent_id: &str,
-            session_type: &str,
-            _config: serde_json::Value,
-            _title: Option<&str>,
-            _definition_id: Option<&str>,
-        ) -> Result<AgentSessionInfo, TerminalError> {
-            Ok(AgentSessionInfo {
-                session_id: "mock-session-1".to_string(),
-                title: "Mock Session".to_string(),
-                session_type: session_type.to_string(),
-                status: "running".to_string(),
-                attached: false,
-                definition_id: None,
-            })
-        }
-        fn create_session_owned(
-            &self,
-            agent_id: &str,
-            session_type: &str,
-            config: serde_json::Value,
-            title: Option<&str>,
-            definition_id: Option<&str>,
-            owner: Option<&str>,
-            correlation_id: Option<&str>,
-            _unattended: bool,
-        ) -> Result<AgentSessionInfo, TerminalError> {
-            self.create_owners
-                .lock()
-                .unwrap()
-                .push(owner.map(str::to_string));
-            self.create_correlation_ids
-                .lock()
-                .unwrap()
-                .push(correlation_id.map(str::to_string));
-            let gate = self.create_gate.lock().unwrap().take();
-            if let Some(gate) = gate {
-                let _ = gate.recv();
-            }
-            self.create_session(agent_id, session_type, config, title, definition_id)
-        }
-        fn attach_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            // Block until the test releases the gate. On cancellation the caller
-            // aborts the wrapping future, so this blocking call never returns a
-            // successful attach and the gate is simply dropped.
-            if let Some(gate) = self.attach_gate.lock().unwrap().take() {
-                let _ = gate.recv();
-            }
-            Ok(())
-        }
-        fn close_session(
-            &self,
-            _agent_id: &str,
-            remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            self.closed_sessions
-                .lock()
-                .unwrap()
-                .push(remote_session_id.to_string());
-            Ok(())
-        }
-        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-            Ok(vec![])
-        }
-        fn list_connections_and_folders(
-            &self,
-            _agent_id: &str,
-        ) -> Result<AgentConnectionsData, TerminalError> {
-            Ok(AgentConnectionsData {
-                connections: vec![],
-                folders: vec![],
-            })
-        }
-        fn save_definition(
-            &self,
-            _agent_id: &str,
-            _definition: termihub_core::protocol::methods::ConnectionCreateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn update_definition(
-            &self,
-            _agent_id: &str,
-            _params: termihub_core::protocol::methods::ConnectionUpdateParams,
-        ) -> Result<AgentDefinitionInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn create_folder(
-            &self,
-            _agent_id: &str,
-            _name: &str,
-            _parent_id: Option<&str>,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn update_folder(
-            &self,
-            _agent_id: &str,
-            _params: termihub_core::protocol::methods::FolderUpdateParams,
-        ) -> Result<AgentFolderInfo, TerminalError> {
-            unimplemented!()
-        }
-        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn register_session_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _output_tx: OutputSender,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn unregister_session_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn register_monitoring_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _monitoring_tx: MonitoringSender,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn unregister_monitoring_output(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn send_session_input(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _data: &[u8],
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn resize_session(
-            &self,
-            _agent_id: &str,
-            _remote_session_id: &str,
-            _cols: u16,
-            _rows: u16,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
-        fn apply_agent_settings(
-            &self,
-            _agent_id: &str,
-            _settings: &AgentSettings,
-        ) -> Result<(), TerminalError> {
-            Ok(())
-        }
+    /// `(owner, correlation_id)` of every `create_session_owned`, in order.
+    fn owned_creates(mock: &FakeAgent) -> Vec<(Option<String>, Option<String>)> {
+        let given = |arg: &String| Some(arg.clone()).filter(|a| a != "-");
+        mock.calls_to("create_session_owned")
+            .iter()
+            .map(|args| (given(&args[2]), given(&args[3])))
+            .collect()
     }
 
     /// Regression for #1122: cancelling the token mid-handshake aborts the
@@ -3293,9 +2571,11 @@ mod tests {
     async fn connect_cancellable_aborts_handshake_and_cleans_up() {
         use tokio_util::sync::CancellationToken;
 
-        // The gate is never released, so `attach_session` hangs until cancel.
-        let (_gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
-        let mock = Arc::new(HangingAttachMockAgentRpcClient::new(gate_rx));
+        // The gate is never released, so `attach_session` hangs until cancel
+        // (the guard opens it when the test ends, freeing the blocked thread).
+        let attach = Gate::new();
+        let _release = attach.open_on_drop();
+        let mock = Arc::new(hanging_attach_agent(&attach));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         let token = CancellationToken::new();
@@ -3329,7 +2609,7 @@ mod tests {
 
         // The session created on the agent must be torn down (no orphan). The
         // proxy created "mock-session-1" and must close it on cancel.
-        let closed = mock.closed_sessions.lock().unwrap();
+        let closed = closed_sessions(&mock);
         assert!(
             closed.iter().any(|s| s == "mock-session-1"),
             "the partially established remote session must be closed on cancel, got: {closed:?}"
@@ -3346,10 +2626,14 @@ mod tests {
         use crate::session::ssh_keyboard_interactive::with_prompt_owner;
         use tokio_util::sync::CancellationToken;
 
-        let (_attach_tx, attach_rx) = std::sync::mpsc::channel::<()>();
-        let (create_tx, create_rx) = std::sync::mpsc::channel::<()>();
-        let mock = Arc::new(HangingAttachMockAgentRpcClient::new(attach_rx));
-        *mock.create_gate.lock().unwrap() = Some(create_rx);
+        let attach = Gate::new();
+        let create = Gate::new();
+        let _release = (attach.open_on_drop(), create.open_on_drop());
+        // The owned create blocks until `create` opens (#3437).
+        let mock = Arc::new(hanging_attach_agent(&attach).on(
+            "create_session_owned",
+            Step::Hang(create.clone(), Box::new(Step::NewSession)),
+        ));
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         let token = CancellationToken::new();
@@ -3369,32 +2653,29 @@ mod tests {
         .await
         .expect("connect_cancellable must not hang after cancellation");
         assert!(result.is_err(), "a cancelled remote connect must fail");
+        // The owner is the connect's tab; no `correlationId` in the settings:
+        // the create sends none (#3085).
         assert_eq!(
-            *mock.create_owners.lock().unwrap(),
-            vec![Some("tab-a:0".to_string())]
+            owned_creates(&mock),
+            vec![(Some("tab-a:0".to_string()), None)]
         );
-        // No `correlationId` in the settings: the create sends none (#3085).
-        assert_eq!(*mock.create_correlation_ids.lock().unwrap(), vec![None]);
         assert!(
-            mock.closed_sessions.lock().unwrap().is_empty(),
+            closed_sessions(&mock).is_empty(),
             "the create has not completed yet"
         );
 
         // The agent's create now completes (e.g. the OTP was answered just as
         // the tab closed): the abandoned session must be closed, not orphaned.
-        create_tx.send(()).unwrap();
+        create.open();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while mock.closed_sessions.lock().unwrap().is_empty() {
+        while closed_sessions(&mock).is_empty() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "late-created session was never closed"
             );
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        assert_eq!(
-            *mock.closed_sessions.lock().unwrap(),
-            vec!["mock-session-1".to_string()]
-        );
+        assert_eq!(closed_sessions(&mock), vec!["mock-session-1".to_string()]);
         assert!(!proxy.is_connected());
     }
 
