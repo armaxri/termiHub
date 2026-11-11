@@ -95,7 +95,11 @@ mod tests {
     async fn sleep_runs_the_full_delay_while_alive() {
         let alive = AgentAlive::new();
         let start = Instant::now();
-        assert!(alive.sleep(&TOKIO_BACKOFF_CLOCK, Duration::from_secs(30)).await);
+        assert!(
+            alive
+                .sleep(&TOKIO_BACKOFF_CLOCK, Duration::from_secs(30))
+                .await
+        );
         assert!(start.elapsed() >= Duration::from_secs(30));
     }
 
@@ -110,7 +114,11 @@ mod tests {
             stopper.stop();
         });
         let start = Instant::now();
-        assert!(!alive.sleep(&TOKIO_BACKOFF_CLOCK, Duration::from_secs(30)).await);
+        assert!(
+            !alive
+                .sleep(&TOKIO_BACKOFF_CLOCK, Duration::from_secs(30))
+                .await
+        );
         assert_eq!(start.elapsed(), Duration::from_millis(1_234));
     }
 }

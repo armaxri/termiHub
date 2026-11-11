@@ -1492,7 +1492,10 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
     // must go down (genuine transport loss), but the daemon keeps the counter
     // running with nobody attached.
     let workers = sshd.stdio_workers();
-    assert!(!workers.is_empty(), "no --stdio agent worker found before the drop");
+    assert!(
+        !workers.is_empty(),
+        "no --stdio agent worker found before the drop"
+    );
     sshd.stop_sparing_daemon();
     let channel_closed = {
         let close_deadline = Instant::now() + Duration::from_secs(10);
@@ -1726,7 +1729,10 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
     // teardown must reap it by exact PID (#2580).
     sshd.record_session_daemons();
     let workers = sshd.stdio_workers();
-    assert!(!workers.is_empty(), "no --stdio agent worker found before the sever");
+    assert!(
+        !workers.is_empty(),
+        "no --stdio agent worker found before the sever"
+    );
     test_sever_desktop_transport(channel, Some(session));
     // The daemon keeps ticking with nobody attached: wait until the sever
     // reached the peer (its `--stdio` agent exited) instead of a fixed sleep
@@ -2597,10 +2603,7 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
                     .any(|st| st != "reconnecting")
             };
             let mut at = Duration::ZERO;
-            for (i, secs) in PRODUCTION_SCHEDULE_SECS[..PARKED_ROUNDS]
-                .iter()
-                .enumerate()
-            {
+            for (i, secs) in PRODUCTION_SCHEDULE_SECS[..PARKED_ROUNDS].iter().enumerate() {
                 let delay = Duration::from_secs(*secs);
                 clock.step_round(i + 1, at, delay, || {
                     !left_reconnecting(&agent_states.states()) && manager.is_connected(&agent_id)
@@ -3016,7 +3019,11 @@ fn sshd_session_env_carries_the_absolute_profile_path() {
     // #5339: the session's HOME and HISTFILE are the harness's scratch home,
     // never the developer's real one.
     let home = harness.dir.join("home");
-    assert_eq!(lines.next().map(Path::new), Some(home.as_path()), "{stdout}");
+    assert_eq!(
+        lines.next().map(Path::new),
+        Some(home.as_path()),
+        "{stdout}"
+    );
     assert_eq!(
         lines.next().map(Path::new),
         Some(home.join(".history").as_path()),

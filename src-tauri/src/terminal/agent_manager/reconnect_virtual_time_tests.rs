@@ -157,7 +157,11 @@ fn the_graded_schedule_is_the_production_policy_without_jitter() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_dead_endpoint_parks_on_the_production_schedule_then_gives_up_on_time() {
     let clock = VirtualBackoffClock::leaked();
-    let task = spawn_reconnect(dead_endpoint().await, AgentAlive::new(), virtual_tuning(clock));
+    let task = spawn_reconnect(
+        dead_endpoint().await,
+        AgentAlive::new(),
+        virtual_tuning(clock),
+    );
 
     let mut at = Duration::ZERO;
     for (i, secs) in PRODUCTION_SCHEDULE_SECS.into_iter().enumerate() {
@@ -168,7 +172,11 @@ async fn a_dead_endpoint_parks_on_the_production_schedule_then_gives_up_on_time(
 
     assert_eq!(outcome(task).await, Err(GIVE_UP_ERROR.to_string()));
     assert_eq!(at, Duration::from_secs(181));
-    assert_eq!(clock.now(), at, "the give-up must land at the end of the last window");
+    assert_eq!(
+        clock.now(),
+        at,
+        "the give-up must land at the end of the last window"
+    );
     assert_eq!(
         clock.requests().len(),
         PRODUCTION_SCHEDULE_SECS.len(),
@@ -202,7 +210,10 @@ async fn a_user_stop_mid_park_settles_at_once_without_another_attempt() {
     clock.advance(Duration::from_secs(4));
     alive.stop();
 
-    assert_eq!(outcome(task).await, Err("Reconnect stopped by user".to_string()));
+    assert_eq!(
+        outcome(task).await,
+        Err("Reconnect stopped by user".to_string())
+    );
     assert_eq!(clock.now(), Duration::from_secs(11));
     assert_eq!(clock.requests().len(), 4, "no attempt after the stop");
     assert_eq!(clock.pending(), 0, "the stop dropped the parked wait");
@@ -219,7 +230,13 @@ async fn a_returning_endpoint_reconnects_at_the_next_backoff_instant() {
 
     // Attempts 1 (at 1 s) and 2 (at 3 s) hit the dead endpoint.
     step_round(clock, &task, 1, Duration::ZERO, Duration::from_secs(1));
-    step_round(clock, &task, 2, Duration::from_secs(1), Duration::from_secs(2));
+    step_round(
+        clock,
+        &task,
+        2,
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+    );
 
     // Parked in the 3rd window (4 s from 3 s): the endpoint comes back.
     assert_eq!(
@@ -232,11 +249,23 @@ async fn a_returning_endpoint_reconnects_at_the_next_backoff_instant() {
     let fake = FakeAgentSshd::serve_on(config.port, InitBehavior::Answer).await;
     clock.advance(Duration::from_secs(4) - MS);
     assert!(!task.is_finished(), "reconnected before the window ran out");
-    assert_eq!(fake.inits(), 0, "attempt #3 dialed before its backoff ran out");
+    assert_eq!(
+        fake.inits(),
+        0,
+        "attempt #3 dialed before its backoff ran out"
+    );
 
     clock.advance(MS);
     assert_eq!(outcome(task).await, Ok(()));
-    assert_eq!(fake.inits(), 1, "exactly one attempt reached the returned endpoint");
+    assert_eq!(
+        fake.inits(),
+        1,
+        "exactly one attempt reached the returned endpoint"
+    );
     assert_eq!(clock.now(), Duration::from_secs(7));
-    assert_eq!(clock.requests().len(), 3, "no backoff wait after the success");
+    assert_eq!(
+        clock.requests().len(),
+        3,
+        "no backoff wait after the success"
+    );
 }

@@ -92,7 +92,11 @@ impl VirtualBackoffClock {
 
     /// Block until at least `n` waits have been requested, or `within` (real
     /// time) runs out. Returns every request so far, or `None` on timeout.
-    pub(super) fn wait_for_requests(&self, n: usize, within: Duration) -> Option<Vec<SleepRequest>> {
+    pub(super) fn wait_for_requests(
+        &self,
+        n: usize,
+        within: Duration,
+    ) -> Option<Vec<SleepRequest>> {
         let deadline = Instant::now() + within;
         let mut state = self.state();
         loop {
@@ -242,6 +246,9 @@ mod tests {
         let clock = VirtualBackoffClock::default();
         assert_eq!(clock.wait_for_requests(1, 10 * MS), None);
         let _wait = clock.sleep(MS);
-        assert_eq!(clock.wait_for_requests(1, 10 * MS).map(|r| r.len()), Some(1));
+        assert_eq!(
+            clock.wait_for_requests(1, 10 * MS).map(|r| r.len()),
+            Some(1)
+        );
     }
 }
