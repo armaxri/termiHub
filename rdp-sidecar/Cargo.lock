@@ -4048,6 +4048,7 @@ dependencies = [
  "tempfile",
  "termihub-core",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "wl-clipboard-rs",
