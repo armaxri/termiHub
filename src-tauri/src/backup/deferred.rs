@@ -53,6 +53,10 @@ pub const SEALED_IMPORT_FILE: &str = "credentials-deferred.json";
 /// The sealed import of a restore whose swap succeeded, in the config dir,
 /// waiting for the credential store.
 pub const DEFERRED_IMPORT_FILE: &str = ".backup-restore-credentials.json";
+/// The seal-key id of the [`DEFERRED_IMPORT_FILE`], recorded when it is
+/// promoted, so its key can be deleted even when the sealed file is later
+/// found too damaged to name it (#5213). Holds a key id only, no secret.
+pub const DEFERRED_KEY_ID_FILE: &str = ".backup-restore-credentials.key-id";
 /// Ids of seal keys still to delete from the OS credential store.
 pub const SEAL_KEY_CLEANUP_FILE: &str = ".backup-restore-seal-keys.json";
 

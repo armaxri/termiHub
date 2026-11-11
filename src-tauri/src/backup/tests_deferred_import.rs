@@ -14,7 +14,8 @@ use zeroize::Zeroizing;
 
 use super::commit::MANIFEST_FILE;
 use super::deferred::{
-    apply_deferred_import, DEFERRED_IMPORT_FILE, SEALED_IMPORT_FILE, SEAL_KEY_CLEANUP_FILE,
+    apply_deferred_import, DEFERRED_IMPORT_FILE, DEFERRED_KEY_ID_FILE, SEALED_IMPORT_FILE,
+    SEAL_KEY_CLEANUP_FILE,
 };
 use super::pending::apply_pending_restore;
 use super::restore::{self, PENDING_DIR};
@@ -300,6 +301,7 @@ fn successful_swap_applies_the_import_exactly_once() {
 
     // All sealed material is gone, and a later start imports nothing again.
     assert!(!dst.path().join(DEFERRED_IMPORT_FILE).exists());
+    assert!(!dst.path().join(DEFERRED_KEY_ID_FILE).exists());
     assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists());
     assert_eq!(store.seal_key_count(), 0);
     assert!(apply_deferred_import(dst.path(), &store).is_none());
@@ -628,6 +630,8 @@ fn truncated_seal_imports_nothing() {
     assert!(warning.message.contains(LOST), "{}", warning.message);
     assert_pre_restore(&store);
     assert!(!path.exists());
+    assert_eq!(store.seal_key_count(), 0, "the key is deleted (#5213)");
+    assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists());
     assert_no_plaintext_secret(dst.path());
 
     // Cut-off ciphertext: the AEAD tag check fails.
@@ -646,5 +650,26 @@ fn truncated_seal_imports_nothing() {
     assert!(!dst.path().join(DEFERRED_IMPORT_FILE).exists());
     assert_eq!(store.seal_key_count(), 0, "the key is deleted");
     assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists());
+    assert_no_plaintext_secret(dst.path());
+}
+
+/// A deferred import so broken that no key id can be recovered from it still
+/// has its seal key deleted: the key id is recorded when the import is
+/// promoted, not read back from the damaged file (#5213).
+#[test]
+fn unrecoverable_garbage_seal_deletes_its_key() {
+    let dst = tempfile::tempdir().unwrap();
+    let store = promoted(dst.path());
+    let path = dst.path().join(DEFERRED_IMPORT_FILE);
+    std::fs::write(&path, b"\x00\xffnot json at all {\"keyId\": ").unwrap();
+
+    let warning = apply_deferred_import(dst.path(), &store).expect("the loss is reported");
+
+    assert!(warning.message.contains(LOST), "{}", warning.message);
+    assert_pre_restore(&store);
+    assert!(!path.exists());
+    assert_eq!(store.seal_key_count(), 0, "the key is deleted");
+    assert!(!dst.path().join(SEAL_KEY_CLEANUP_FILE).exists());
+    assert!(!dst.path().join(DEFERRED_KEY_ID_FILE).exists());
     assert_no_plaintext_secret(dst.path());
 }
