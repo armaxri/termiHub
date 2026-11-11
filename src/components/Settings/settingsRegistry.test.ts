@@ -10,8 +10,31 @@ import { EXPERIMENTAL_SETTING_LABEL, EXPERIMENTAL_SETTING_PATH } from "@/utils/e
 describe("settingsRegistry", () => {
   describe("filterSettings", () => {
     it("returns all settings for empty query", () => {
-      expect(filterSettings("")).toEqual(SETTINGS_REGISTRY);
-      expect(filterSettings("  ")).toEqual(SETTINGS_REGISTRY);
+      expect(filterSettings("", { experimental: true })).toEqual(SETTINGS_REGISTRY);
+      expect(filterSettings("  ", { experimental: true })).toEqual(SETTINGS_REGISTRY);
+    });
+
+    it("omits experimental-only entries unless experimental features are on (#5365)", () => {
+      const experimentalIds = SETTINGS_REGISTRY.filter((s) => s.experimental).map((s) => s.id);
+      expect(experimentalIds).toContain("rdpTrustedCertificates");
+      // Default (gate off): neither an empty query nor any synonym reaches them.
+      expect(filterSettings("").some((s) => s.experimental)).toBe(false);
+      for (const query of ["rdp", "remote desktop", "certificate", "fingerprint", "mitm"]) {
+        expect(filterSettings(query).some((s) => s.id === "rdpTrustedCertificates")).toBe(false);
+        expect(
+          filterSettings(query, { experimental: false }).some(
+            (s) => s.id === "rdpTrustedCertificates"
+          )
+        ).toBe(false);
+        expect(
+          filterSettings(query, { experimental: true }).some(
+            (s) => s.id === "rdpTrustedCertificates"
+          )
+        ).toBe(true);
+      }
+      // "rdp" matches nothing else, so its category is not highlighted while gated.
+      expect(getMatchingCategories("rdp").has("security")).toBe(false);
+      expect(getMatchingCategories("rdp", { experimental: true }).has("security")).toBe(true);
     });
 
     it("matches by label", () => {

@@ -78,7 +78,8 @@ setupSettingsRegion();
 describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
   beforeEach(() => {
     clearOverrides();
-    seedSettings({ keybindingOverrides: undefined });
+    // The Remote Desktop group is listed only while VNC/RDP are ungated (#5365).
+    seedSettings({ keybindingOverrides: undefined, experimentalFeaturesEnabled: true });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -188,5 +189,60 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     });
     expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
     expect(releaseOverride()).toBeUndefined();
+  });
+});
+
+describe("KeyboardSettings — experimental gate (#5365)", () => {
+  beforeEach(() => {
+    clearOverrides();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    clearOverrides();
+  });
+
+  function groupTitles(): string[] {
+    return Array.from(container.querySelectorAll(".keyboard-settings__group-title"), (el) =>
+      (el.textContent ?? "").trim()
+    );
+  }
+
+  function releaseButton(): HTMLButtonElement | null {
+    return container.querySelector<HTMLButtonElement>(
+      `[data-testid="keybinding-binding-${RELEASE_CHORD_ACTION}"]`
+    );
+  }
+
+  it("hides the Remote Desktop group while experimental features are off", async () => {
+    seedSettings({ keybindingOverrides: undefined, experimentalFeaturesEnabled: false });
+    await renderComponent();
+    expect(groupTitles()).not.toContain("Remote Desktop");
+    expect(groupTitles()).toContain("General");
+    expect(releaseButton()).toBeNull();
+  });
+
+  it("lists the Remote Desktop group while experimental features are on", async () => {
+    seedSettings({ keybindingOverrides: undefined, experimentalFeaturesEnabled: true });
+    await renderComponent();
+    expect(groupTitles()).toContain("Remote Desktop");
+    expect(releaseButton()).not.toBeNull();
+  });
+
+  it("keeps a hidden override stored and shows it once the gate turns on", async () => {
+    const overrides = [{ action: RELEASE_CHORD_ACTION, key: "Ctrl+Alt" }];
+    setOverrides(overrides);
+    seedSettings({ keybindingOverrides: overrides, experimentalFeaturesEnabled: false });
+    await renderComponent();
+    expect(releaseButton()).toBeNull();
+    expect(releaseOverride()).toBe("Ctrl+Alt");
+
+    await act(async () => seedSettings({ experimentalFeaturesEnabled: true }));
+    expect(releaseButton()?.textContent).toBe("Ctrl+Alt");
+    expect(releaseOverride()).toBe("Ctrl+Alt");
   });
 });
