@@ -137,6 +137,17 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
                 continue
         return "\n".join(parts)
 
+    def _file_manager_log_lines(self) -> list[str]:
+        """The app's file-manager log lines: what it was asked to open, and any failure."""
+        return [
+            line.strip()[-300:]
+            for line in self._app_log_text().splitlines()
+            if "opening in the file manager" in line
+            or "could not open the folder" in line
+            or "could not start Explorer" in line
+            or _HANDOFF_FAILED.search(line)
+        ]
+
     def _assert_file_manager_opened(
         self, folder: Path, *, after: int, before: Sequence[ExplorerTitle] = ()
     ) -> None:
@@ -174,7 +185,9 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
                 assert titled or any(same_path(f, str(folder)) for f in folders), (
                     f"the file manager does not show {folder}; its windows list {folders}, "
                     f"its window/tab titles are {[(t.kind, t.title) for t in titles]} "
-                    f"(before the click: {[(t.kind, t.title) for t in before]})"
+                    f"(before the click: {[(t.kind, t.title) for t in before]}); "
+                    f"the file browser shows {self.file_browser_path()!r}; "
+                    f"the app logged {self._file_manager_log_lines()}"
                 )
         finally:
             close_file_manager_folder(str(folder), opened=titled, before=before)
@@ -222,6 +235,9 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
         self.clear_entry_filter()
 
     # ── MT-FB-21 / MT-FB-32 ──────────────────────────────────────────────────
+    # No reruns (#5290): the first click on a cold Explorer is exactly the case that
+    # used to open the home folder; a retry against a warm Explorer would hide it.
+    @pytest.mark.flaky(reruns=0)
     def test_open_in_file_manager_opens_folders_never_an_app(self):
         """MT-FB-21, MT-FB-32: "Open in File Manager" shows folders, never runs an app.
 
