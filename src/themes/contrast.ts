@@ -155,3 +155,142 @@ export function deriveTextSecondaryOnSelection(colors: {
     1
   );
 }
+
+/** Minimum contrast every ANSI colour keeps against the terminal background (#5191). */
+export const ANSI_MIN_CONTRAST = 3;
+
+/** The sixteen ANSI palette tokens, normal then bright. */
+export const ANSI_COLOR_KEYS = [
+  "ansiBlack",
+  "ansiRed",
+  "ansiGreen",
+  "ansiYellow",
+  "ansiBlue",
+  "ansiMagenta",
+  "ansiCyan",
+  "ansiWhite",
+  "ansiBrightBlack",
+  "ansiBrightRed",
+  "ansiBrightGreen",
+  "ansiBrightYellow",
+  "ansiBrightBlue",
+  "ansiBrightMagenta",
+  "ansiBrightCyan",
+  "ansiBrightWhite",
+] as const;
+
+/** One of the sixteen ANSI palette token keys. */
+export type AnsiColorKey = (typeof ANSI_COLOR_KEYS)[number];
+
+/** sRGB channel (0-1) to linear light. */
+function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/** Linear light to an sRGB channel (0-1). */
+function linearToSrgb(c: number): number {
+  return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+}
+
+/** 0-255 sRGB to OKLab `[L, a, b]`. */
+function rgbToOklab(rgb: [number, number, number]): [number, number, number] {
+  const [r, g, b] = rgb.map((c) => srgbToLinear(c / 255));
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+/** OKLCH to linear sRGB (channels may fall outside 0-1 when out of gamut). */
+function oklchToLinearRgb(L: number, C: number, h: number): [number, number, number] {
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+}
+
+const inGamut = (rgb: number[]) => rgb.every((c) => c >= -1e-4 && c <= 1 + 1e-4);
+
+/**
+ * OKLCH to a `#rrggbb` string. A colour outside the sRGB gamut keeps its
+ * lightness and hue and gives up only as much chroma as it must.
+ */
+function oklchToHex(L: number, C: number, h: number): string {
+  let chroma = C;
+  if (!inGamut(oklchToLinearRgb(L, chroma, h))) {
+    let lo = 0;
+    let hi = C;
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if (inGamut(oklchToLinearRgb(L, mid, h))) lo = mid;
+      else hi = mid;
+    }
+    chroma = lo;
+  }
+  const rgb = oklchToLinearRgb(L, chroma, h).map(
+    (c) => linearToSrgb(Math.min(1, Math.max(0, c))) * 255
+  ) as [number, number, number];
+  return toHex(rgb);
+}
+
+/**
+ * Nudge `color` until it reaches `minRatio` contrast against `background`,
+ * changing only its perceptual lightness (OKLCH L) so hue and chroma — the
+ * colour's identity — are kept (#5191, #5192). L moves in 0.1% steps away from
+ * the background (lighter on a dark background, darker on a light one), so the
+ * result is the smallest change that passes.
+ *
+ * Returns the input unchanged when it already passes, when either value is not
+ * a hex colour, or when no lightness reaches the ratio.
+ */
+export function adjustLightnessForContrast(
+  color: string,
+  background: string,
+  minRatio = ANSI_MIN_CONTRAST
+): string {
+  const rgb = parseHex(color);
+  const ratio = contrastRatio(color, background);
+  if (!rgb || Number.isNaN(ratio) || ratio >= minRatio) return color;
+  const [L, a, b] = rgbToOklab(rgb);
+  const C = Math.hypot(a, b);
+  const h = Math.atan2(b, a);
+  const dir =
+    contrastRatio(TEXT_ON_ACCENT_LIGHT, background) >=
+    contrastRatio(TEXT_ON_ACCENT_DARK, background)
+      ? 1
+      : -1;
+  for (let step = 1; step <= 1000; step++) {
+    const next = L + (dir * step) / 1000;
+    if (next < 0 || next > 1) break;
+    const candidate = oklchToHex(next, C, h);
+    if (contrastRatio(candidate, background) >= minRatio) return candidate;
+  }
+  return color;
+}
+
+/**
+ * Apply the ANSI contrast floor (#5191): every ANSI colour is nudged with
+ * {@link adjustLightnessForContrast} until it reaches {@link ANSI_MIN_CONTRAST}
+ * against `terminalBg`. Built-in palettes already pass, so this is a no-op for
+ * them; it guarantees the same for custom, imported and plugin themes, where an
+ * `ansiWhite` equal to a white background would otherwise print invisibly.
+ */
+export function applyAnsiContrastFloor(
+  colors: Record<AnsiColorKey | "terminalBg", string>
+): Record<AnsiColorKey, string> {
+  const out = {} as Record<AnsiColorKey, string>;
+  for (const key of ANSI_COLOR_KEYS) {
+    out[key] = adjustLightnessForContrast(colors[key], colors.terminalBg, ANSI_MIN_CONTRAST);
+  }
+  return out;
+}
