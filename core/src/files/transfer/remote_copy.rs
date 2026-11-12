@@ -132,7 +132,7 @@ impl RemoteCopyEndpoint {
 impl RemoteCopyEndpoint {
     /// The filesystem this end reaches, when it can tell (#5355): the SFTP
     /// browser's server, the container, a ranged end's own
-    /// [`filesystem_id`](RangedTransferTarget::filesystem_id).
+    /// `RangedTransferTarget::filesystem_id`.
     pub fn filesystem_id(&self) -> Option<FilesystemId> {
         match self {
             #[cfg(feature = "ssh")]
@@ -151,7 +151,7 @@ impl RemoteCopyEndpoint {
     }
     /// A weaker sign that this end may reach another's filesystem (#5430):
     /// the SFTP browser's server under any login, a ranged end's own
-    /// [`filesystem_hint`](RangedTransferTarget::filesystem_hint). A
+    /// `RangedTransferTarget::filesystem_hint`. A
     /// container has none: its id is already exact.
     pub fn filesystem_hint(&self) -> Option<FilesystemHint> {
         match self {
