@@ -229,7 +229,7 @@ graph TB
         SM_A --> DAEMONS["Session Daemons<br/>(Shell · Docker · SSH)"]
         SM_A --> SERIAL_B[Serial Backend]
         SM_A --> FILES[File Browsing]
-        SM_A --> MON[System Monitoring]
+        SM_A --> MON[System monitoring]
     end
 
     UI <--> IPC
@@ -1616,7 +1616,7 @@ Supported field types: `text`, `password`, `number`, `boolean`, `select` (dropdo
 termiHub provides optional credential storage with three modes (`StorageMode` in
 `src-tauri/src/credential/types.rs`):
 
-- **Master Password** — Encrypts all credentials into a single `credentials.enc` file using Argon2id key derivation and AES-256-GCM authenticated encryption. Supports auto-lock after a configurable inactivity timeout, and optional biometric unlock (see below).
+- **Master password** — Encrypts all credentials into a single `credentials.enc` file using Argon2id key derivation and AES-256-GCM authenticated encryption. Supports auto-lock after a configurable inactivity timeout, and optional biometric unlock (see below).
 - **OS keychain** — Stores each credential as an entry in the native OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) through the `keyring` crate (`src-tauri/src/credential/os_keychain.rs`). There is no in-app lock: the OS protects the entries with the login session. Because termiHub can read its own entries without an OS prompt, exporting them requires a fresh [OS user verification](#os-user-verification-and-biometric-unlock). See [ADR-6](#adr-6-credential-storage-evolved) for the trade-offs.
   - **Key index** (#3434, #3844). The native stores cannot be enumerated through `keyring`, so
     termiHub keeps `keychain-index.json` in the config directory: the **names** of the keys it has
@@ -1646,10 +1646,10 @@ A new installation starts in **None** mode without a storage choice. The first a
 a secret — ticking "Save password" in the connect-time prompt or in credential re-entry, turning
 on the editor's "Save credentials" toggle, or "Save password to credential store" when saving a
 recent session as a connection — opens a one-time chooser, "Where should termiHub keep
-passwords?", with **OS Keychain** pre-selected, **Master Password** and **Don't save
+passwords?", with **OS Keychain** pre-selected, **Master password** and **Don't save
 passwords** (`src/components/CredentialStorage/CredentialStorageChooser.tsx`).
 
-- Choosing a store switches to it (`switch_credential_store`); Master Password first asks for the
+- Choosing a store switches to it (`switch_credential_store`); Master password first asks for the
   new master password with the same setup fields as Settings → Security. Only then does the
   waiting save write the secret, through its normal path — nothing is written before the choice
   is confirmed.
@@ -1897,12 +1897,12 @@ race of a `unix-process` subject. The mapping is fail closed:
 | `polkit.dismissed` detail (dialog closed)                                | cancelled                                                  |
 | `is_challenge = true` despite `AllowUserInteraction` (no agent running)  | unavailable — "no polkit authentication agent"             |
 | not authorized otherwise                                                 | failed                                                     |
-| action not registered (AppImage / portable build, package not installed) | unavailable — install the .deb/.rpm or use Master Password |
+| action not registered (AppImage / portable build, package not installed) | unavailable — install the .deb/.rpm or use Master password |
 | polkit / system bus unreachable, D-Bus error                             | unavailable / error                                        |
 | prompt open longer than 5 minutes                                        | `CancelCheckAuthorization`, failed                         |
 
 Known limitations: the AppImage and portable builds cannot install a system polkit action, so
-keychain export stays blocked there (switch to Master Password storage to export); a headless or
+keychain export stays blocked there (switch to Master password storage to export); a headless or
 SSH session without a polkit agent is likewise refused; and a local administrator can override the
 action with a polkit rule (e.g. `return polkit.Result.YES`) — that is their machine's policy, the
 same way an administrator can reconfigure PAM. The prompt text comes from the installed policy
@@ -1915,7 +1915,7 @@ It is used for two things:
   the credentials section. Nothing is cached: two exports prompt twice. The export passphrase is
   validated first so a weak passphrase never costs a prompt. Master-password mode is unchanged
   (the master password is re-entered; OS verification cannot stand in for it).
-- **Biometric unlock of the master-password store** (opt-in, Settings → Security → Master Password
+- **Biometric unlock of the master-password store** (opt-in, Settings → Security → Master password
   Options → _Unlock with Touch ID / Windows Hello_; the option is only shown where supported). The
   master password is **not** weakened or replaced — the vault stays sealed with its Argon2id key,
   and the master password remains required to set up, change, or opt in.
@@ -3003,7 +3003,7 @@ platform-specific complexity. It was re-introduced as a third, opt-in mode over 
   (backed up, synced and administered with the rest of their secrets, no extra password to
   remember), and the `keyring` crate removed most of the per-platform code that made the first
   attempt costly. The security argument is unchanged — it is a convenience mode, not a stronger one;
-  Master Password remains the recommended mode where portability or an extra secret matters.
+  Master password remains the recommended mode where portability or an extra secret matters.
 - **Trade-offs:** there is no in-app lock or auto-lock (the OS unlocks the store with the login
   session), and anyone with the unlocked session can read the entries through termiHub. Behaviour
   differs per OS (e.g. Secret Service needs a running keyring daemon), and the store is not
@@ -3016,7 +3016,7 @@ platform-specific complexity. It was re-introduced as a third, opt-in mode over 
 - **Known limitation:** the gate only works where the OS can verify the user. On Linux that
   requires the polkit action installed by the `.deb` / `.rpm` packages and a running polkit agent;
   AppImage and portable builds, and sessions without an agent, fail closed and cannot export from
-  the keychain (switch to Master Password storage to export). The gate protects **export only** —
+  the keychain (switch to Master password storage to export). The gate protects **export only** —
   it does not stop another process running as the same user from reading the OS store directly.
 
 **Trade-off:** Master password mode requires the user to remember a master password. If lost, stored credentials are unrecoverable. OS keychain mode trades an extra secret for the OS login session's protection and the export gate above.
@@ -3067,7 +3067,7 @@ flowchart LR
 **Rationale:**
 
 - New connection types render automatically without any frontend changes
-- Conditional visibility (`visibleWhen`) handles dependent fields (e.g., show "Key Path" only when "Auth Method" is "key")
+- Conditional visibility (`visibleWhen`) handles dependent fields (e.g., show "Key path" only when "Auth method" is "key")
 - Supports environment variable expansion (`${VAR}`) and tilde expansion markers per field
   - **WSL is the deliberate exception:** its `startingDirectory`, `env`, and `initialCommand` fields advertise **no** expansion (`supports_*_expansion: false`) and are passed to the guest literally. `expand_config_value` resolves `~` / `${VAR}` against the **Windows host**, so host-side expansion would corrupt a Linux path (`~` → `C:\Users\…`). The WSL connect path never expands; the guest / `wsl --cd` / login shell resolve these values in the Linux namespace that actually contains them. See `docs/concepts/backlog/wsl-path-expansion-semantics.html` (#2360).
 - The schema is serializable as JSON — enables remote agents to report their available types and schemas to the desktop
