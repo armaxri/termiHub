@@ -576,6 +576,7 @@ removed one must lose its row. To add a lane, add the job to `LANES` in the scri
 | `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_reaches_macos_podman_machine`             | macOS host with a running Podman machine (#1622)          | manual MT-RUST-01                                                                      |
 | `core/src/backends/local_shell.rs`                   | `windows_shell_start_keeps_profile_output_and_follows_cd`     | needs a profile that prints a marker (#5017)              | `integration-fixtures.yml#native-sshd` (Windows leg)                                   |
 | `core/src/backends/local_shell_side_effect_tests.rs` | `audit_injected_setup_side_effects`                           | audit report, asserts nothing (#5009)                     | `integration-fixtures.yml#native-sshd` (macOS/Linux legs)                              |
+| `core/src/session/serial_reconnect_tests.rs`         | `list_serial_ports_with_usb_identity`                         | lists the machine's real serial ports (#5394)             | manual MT-RUST-02                                                                      |
 | `core/tests/plugin_runner_installed.rs`              | `echo_backend_loads_in_its_lpac_from_a_per_machine_install`   | per-machine MSI install + standard user (#4252)           | `plugin-lpac-per-machine.yml#per-machine-lpac` (called by `release-windows-smoke.yml`) |
 | `core/tests/plugin_runner_perf.rs`                   | `out_of_process_echo_stays_within_the_budget`                 | performance gate, optimised build                         | `plugin-sandbox-nightly.yml#plugin-sandbox-perf`                                       |
 | `core/tests/plugin_runner_tls_handshake.rs`          | `a_sandboxed_plugin_verifies_tls_with_only_the_root_snapshot` | public HTTPS host (#4818)                                 | `plugin-sandbox-nightly.yml#plugin-tls-handshake`                                      |
@@ -591,6 +592,13 @@ runners have no Podman machine. On a Mac, run `podman machine start`, then
 `cargo test -p termihub-core --features docker --lib -- --ignored --exact --nocapture backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine`.
 Expected: `test result: ok. 1 passed`, and the output names the machine's
 `…-api.sock` socket. Run it before a release that touches `core/src/backends/docker/`.
+
+**MT-RUST-02 — USB identity of real serial ports (#5394).** CI runners have no USB serial
+adapter. Plug one in, then run
+`cargo test -p termihub-core --features serial --lib -- --ignored --exact --nocapture session::serial_reconnect::tests::list_serial_ports_with_usb_identity`.
+It only enumerates; no port is opened. Expected: `test result: ok. 1 passed`, and the adapter's
+port is printed with its USB identity (not `no USB identity`). Run it before a release that
+touches the serial port identity reader.
 
 ## 4. Rendered Visual Checks (#4712)
 
