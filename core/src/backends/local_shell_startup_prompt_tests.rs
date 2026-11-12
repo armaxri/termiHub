@@ -23,9 +23,32 @@ const PROMPT: &str = "THPROMPT>";
 const QUESTION: &str = "Continue startup? [y/n]";
 
 fn installed(binary: &str) -> bool {
+    if binary.starts_with('/') {
+        return Path::new(binary).exists();
+    }
     ["/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"]
         .iter()
         .any(|dir| Path::new(dir).join(binary).exists())
+}
+
+/// The shell to test as `kind` (`bash` / `zsh`), if it announces its line
+/// editor. These tests cover only that path: an older shell (macOS's
+/// `/bin/bash` 3.2, the `bash` on the macOS CI runner) keeps the
+/// canonical-mode cue by design, so a startup question still gets the input
+/// there (see `local_shell_ready`). `TERMIHUB_TEST_BASH` / `TERMIHUB_TEST_ZSH`
+/// pick another binary, e.g. `/bin/bash` to check the skip.
+fn shell_with_line_editor_mark(kind: &str) -> Option<String> {
+    let var = format!("TERMIHUB_TEST_{}", kind.to_ascii_uppercase());
+    let shell = std::env::var(var).unwrap_or_else(|_| kind.to_string());
+    if !installed(&shell) {
+        eprintln!("{shell} not installed — skipping");
+        return None;
+    }
+    if ready_signal(&shell) != ReadySignal::PasteMark {
+        eprintln!("{shell} announces no bracketed paste (older than 5.1) — skipping");
+        return None;
+    }
+    Some(shell)
 }
 
 /// A one-key question before the first prompt, like `compinit`'s, then a
@@ -178,21 +201,19 @@ async fn assert_question_waits_for_the_user(shell_name: &str) {
 #[tokio::test]
 #[serial(local_pty)]
 async fn zsh_startup_question_is_not_answered_by_the_setup() {
-    if !installed("zsh") {
-        eprintln!("zsh not installed — skipping");
+    let Some(shell) = shell_with_line_editor_mark("zsh") else {
         return;
-    }
-    assert_question_waits_for_the_user("zsh").await;
+    };
+    assert_question_waits_for_the_user(&shell).await;
 }
 
 #[tokio::test]
 #[serial(local_pty)]
 async fn bash_startup_question_is_not_answered_by_the_setup() {
-    if !installed("bash") {
-        eprintln!("bash not installed — skipping");
+    let Some(shell) = shell_with_line_editor_mark("bash") else {
         return;
-    }
-    assert_question_waits_for_the_user("bash").await;
+    };
+    assert_question_waits_for_the_user(&shell).await;
 }
 
 /// A connection's initial command without the integration (#5455): the
@@ -244,19 +265,17 @@ async fn assert_initial_command_waits_for_the_user(shell_name: &str) {
 #[tokio::test]
 #[serial(local_pty)]
 async fn zsh_startup_question_is_not_answered_by_the_initial_command() {
-    if !installed("zsh") {
-        eprintln!("zsh not installed — skipping");
+    let Some(shell) = shell_with_line_editor_mark("zsh") else {
         return;
-    }
-    assert_initial_command_waits_for_the_user("zsh").await;
+    };
+    assert_initial_command_waits_for_the_user(&shell).await;
 }
 
 #[tokio::test]
 #[serial(local_pty)]
 async fn bash_startup_question_is_not_answered_by_the_initial_command() {
-    if !installed("bash") {
-        eprintln!("bash not installed — skipping");
+    let Some(shell) = shell_with_line_editor_mark("bash") else {
         return;
-    }
-    assert_initial_command_waits_for_the_user("bash").await;
+    };
+    assert_initial_command_waits_for_the_user(&shell).await;
 }
