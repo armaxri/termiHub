@@ -85,11 +85,6 @@ impl KeychainNamespace {
         })
     }
 
-    /// Whether this is the installed app's namespace.
-    pub fn is_release(&self) -> bool {
-        self.suffix.is_empty()
-    }
-
     /// The OS keychain name for `base` in this namespace.
     pub fn name(&self, base: &str) -> String {
         format!("{base}{}", self.suffix)
@@ -110,7 +105,7 @@ mod tests {
     #[test]
     fn release_keeps_every_shipped_name_unchanged() {
         let ns = KeychainNamespace::select(false, None);
-        assert!(ns.is_release());
+        assert_eq!(ns, KeychainNamespace::release());
         for base in BASES {
             assert_eq!(ns.name(base), base);
         }
@@ -127,7 +122,7 @@ mod tests {
     fn isolated_build_never_resolves_a_release_name() {
         for instance in [None, Some(""), Some("dev0"), Some("dev9"), Some("!!!")] {
             let ns = KeychainNamespace::select(true, instance);
-            assert!(!ns.is_release(), "{instance:?}");
+            assert_ne!(ns, KeychainNamespace::release(), "{instance:?}");
             for base in BASES {
                 let name = ns.name(base);
                 assert!(!BASES.contains(&name.as_str()), "{instance:?} -> {name}");
@@ -179,8 +174,7 @@ mod tests {
     #[test]
     fn debug_build_is_isolated() {
         if cfg!(debug_assertions) {
-            assert!(IS_ISOLATED_BUILD);
-            assert!(!KeychainNamespace::current().is_release());
+            assert_ne!(*KeychainNamespace::current(), KeychainNamespace::release());
         }
     }
 }
