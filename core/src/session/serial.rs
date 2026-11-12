@@ -1015,7 +1015,11 @@ mod tests {
             let dir = TempDir::new().unwrap();
             make_dev_entries(dir.path(), &["ttyAMA1"]);
             let path = dir.path().join("ttyAMA1").to_string_lossy().into_owned();
-            let ports = list_with(dir.path(), &[path.clone()], DEFAULT_EXTRA_LINUX_PREFIXES);
+            let ports = list_with(
+                dir.path(),
+                std::slice::from_ref(&path),
+                DEFAULT_EXTRA_LINUX_PREFIXES,
+            );
             assert_eq!(ports, vec![path], "ttyAMA1 must not appear twice");
         }
 
