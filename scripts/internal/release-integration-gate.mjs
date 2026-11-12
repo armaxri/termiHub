@@ -32,7 +32,8 @@ import { isMainModule } from "./is-main-module.mjs";
  * - release-candidate.yml runs system-integration (bridge integration lane on
  *   Linux/macOS/Windows, the display-critical grades, the agent Docker suites)
  *   and integration-fixtures (core/tests against live Docker fixtures + polkit),
- *   with no path filter, on the dispatched ref.
+ *   with no path filter, on the dispatched ref, plus the linux-arm64 install
+ *   smoke against the Dev Build pre-release of that commit (#5178).
  * - code-quality.yml's push run is the post-merge full lane: the three-OS test
  *   matrix and "Agent Live Tests (Windows, serial)". Only a `push` run counts —
  *   a pull_request run is path-filtered and never keyed to the merge commit.

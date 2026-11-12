@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import {
   CATCH_UP_HOURS,
   HEARTBEAT_HOURS,
@@ -175,5 +178,35 @@ describe("LANES", () => {
     for (const cadence of Object.keys(HEARTBEAT_HOURS)) {
       expect(CATCH_UP_HOURS[cadence]).toBeLessThan(HEARTBEAT_HOURS[cadence]);
     }
+  });
+});
+
+// The daily linux-arm64 core + agent tests (#5178) ride the daily
+// system-integration lane: it is dispatched every day and the heartbeat watches
+// it, so the job must run on every run of the lane, not only on the weekly
+// arm64 days.
+describe("daily linux-arm64 core + agent tests (#5178)", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const text = readFileSync(path.join(root, ".github/workflows/system-integration.yml"), "utf8");
+  const start = text.indexOf("\n  arm64-core-agent-tests:\n");
+  const rest = text.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+  const job = next === -1 ? rest : rest.slice(0, next + 1);
+
+  it("is a job of the daily system-integration lane", () => {
+    expect(start).toBeGreaterThan(-1);
+    const lane = LANES.find((l) => l.file === "system-integration.yml");
+    expect(lane.cadence).toBe("daily");
+  });
+
+  it("runs core and agent tests natively on the linux-arm64 runner", () => {
+    expect(job).toMatch(/^ {4}runs-on: ubuntu-24\.04-arm\s*$/m);
+    expect(job).toMatch(/cargo test\b.*-p termihub-core -p termihub-agent/);
+  });
+
+  it("is not tied to the weekly arm64 runner list or the harness switch", () => {
+    expect(job).not.toMatch(/outputs\.oses/);
+    expect(job).not.toMatch(/outputs\.harness/);
+    expect(job).toMatch(/^ {4}if: github\.event\.inputs\.arm64 != 'never'\s*$/m);
   });
 });

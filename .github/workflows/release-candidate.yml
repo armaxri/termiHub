@@ -13,6 +13,9 @@ name: "Release Candidate: Full Integration"
 #                                display-critical grades, the agent Docker suites
 #   * integration-fixtures.yml — core/tests against the live Docker fixtures and the
 #                                polkit D-Bus verifier
+#   * release-linux-arm64-smoke.yml — the linux-arm64 install smoke (#4934, #5178)
+#                                against the Dev Build pre-release built from this
+#                                exact commit (see the arm64-smoke-tag job)
 #
 # The Release workflow's first gate (scripts/internal/release-integration-gate.mjs)
 # refuses to publish unless the newest run of THIS workflow on the tag's commit is
@@ -61,6 +64,61 @@ jobs:
     uses: ./.github/workflows/integration-fixtures.yml
     with:
       measure_coverage: true
+
+  # The linux-arm64 install smoke on every candidate (#5178). release.yml runs it
+  # again on the published tag, but that is after the release exists; here it
+  # grades the candidate before the tag ships. The candidate has no release of its
+  # own yet, so the smoke installs the Dev Build pre-release built from this exact
+  # commit: dev-build.yml publishes `dev-latest` from main and
+  # `dev-<branch>-latest` from develop, each with `target_commitish` set to the
+  # built sha. This job picks the one whose target is `github.sha`. When the Dev
+  # Build run for the sha is still in flight it waits for it (bounded by the job
+  # timeout); when no pre-release was built from the sha, the job fails and names
+  # the fix, so the candidate never smokes a different commit's packages.
+  arm64-smoke-tag:
+    name: Resolve the arm64 smoke pre-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Find the Dev Build pre-release for this commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Wait for an in-flight Dev Build of this sha (main or develop push).
+          run_id="$(gh run list --workflow dev-build.yml --commit "$SHA" --event push \
+            --json databaseId,status --jq '[.[] | select(.status != "completed")][0].databaseId // empty')"
+          if [ -n "$run_id" ]; then
+            echo "Dev Build run $run_id for $SHA is in flight; waiting for it"
+            gh run watch "$run_id" --interval 60 >/dev/null || true
+          fi
+          for tag in dev-latest dev-develop-latest; do
+            target="$(gh release view "$tag" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)"
+            echo "$tag -> ${target:-<none>}"
+            if [ "$target" = "$SHA" ]; then
+              echo "tag=$tag" >> "$GITHUB_OUTPUT"
+              echo "linux-arm64 smoke will install $tag (built from $SHA)"
+              exit 0
+            fi
+          done
+          echo "::error::no Dev Build pre-release (dev-latest, dev-develop-latest) is built from" \
+            "$SHA. Let Dev Build finish on the candidate's branch, then re-dispatch this workflow."
+          exit 1
+
+  linux-arm64-smoke:
+    name: Linux arm64 install smoke
+    needs: [arm64-smoke-tag]
+    uses: ./.github/workflows/release-linux-arm64-smoke.yml
+    with:
+      tag: ${{ needs.arm64-smoke-tag.outputs.tag }}
 
   # Advisory (#3658): never blocks. Runs after the fixtures lane whatever its
   # result (a failed suite still measured what ran), and job-level
