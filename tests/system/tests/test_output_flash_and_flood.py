@@ -247,6 +247,7 @@ if _IS_WINDOWS:
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshConnectFlash(
     _OutputTap, TerminalUi, TabsUi, ConnectionsUi, SidebarUi, PasswordPromptUi, SshUi, SystemTest
 ):

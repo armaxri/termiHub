@@ -1871,6 +1871,9 @@ jobs:
         with:
           name: vitest-blob-${{ matrix.shard }}
           path: .vitest-reports/
+          # upload-artifact skips dot-directories unless told otherwise, and
+          # .vitest-reports/ is vitest's default --merge-reports directory.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 

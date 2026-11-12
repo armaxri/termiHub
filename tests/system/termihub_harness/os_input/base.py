@@ -36,6 +36,16 @@ class GlobalInjectionRefused(RuntimeError):
     """Global injection without a GitHub runner / opt-in, or into the wrong window."""
 
 
+class ForeignAppAlive(GlobalInjectionRefused):
+    """Another termiHub process is alive while an OS-input grade wants the desktop.
+
+    Raised by :meth:`OsInput.require_exclusive_desktop` (#5467): every test app
+    is pinned always-on-top at the same spot (#957), so a second termiHub — an
+    app an earlier test or session leaked, or a parallel worker's — sits over
+    the test instance and takes its global input. The message names each PID.
+    """
+
+
 class OsInputUnavailable(RuntimeError):
     """This host cannot inject OS input (missing tool, permission, display)."""
 
@@ -161,10 +171,49 @@ class OsInput:
         ok = front in self._allowed if any_allowed else front == target
         if not ok:
             frontmost = self._describe_frontmost()
+            owner = self._describe_app_pid(front)
             raise GlobalInjectionRefused(
                 f"frontmost window belongs to PID {front}, not the intended PID "
-                f"{target}; refusing to inject" + (f" (frontmost: {frontmost})" if frontmost else "")
+                f"{target}; refusing to inject"
+                + (f" (frontmost: {frontmost})" if frontmost else "")
+                + (f" (foreign termiHub app: {owner})" if owner else "")
             )
+
+    # ── Desktop exclusivity (#5467) ──────────────────────────────────────────
+    def require_exclusive_desktop(self, timeout: Optional[float] = None) -> None:
+        """Refuse to start unless no foreign termiHub process is alive.
+
+        Waits up to ``timeout`` (default
+        :data:`~termihub_harness.app_leaks.FOREIGN_EXIT_WAIT`) for an app the
+        previous test stopped to finish exiting, then raises
+        :class:`ForeignAppAlive` naming every termiHub PID that is neither
+        allowed here nor a live instance of this pytest process. Read-only: a
+        foreign process is only named, never signalled or sent input.
+        """
+        foreign = self._foreign_apps(timeout)
+        if foreign:
+            raise ForeignAppAlive(
+                "the OS-input grades need the desktop to themselves, but another "
+                f"termiHub process is alive (test instance PID {self.pid}, allowed "
+                f"{sorted(self._allowed)}); refusing to inject (#5467):\n"
+                + "\n".join(f"  foreign app: {line}" for line in foreign)
+            )
+
+    def _foreign_apps(self, timeout: Optional[float]) -> list[str]:
+        """Descriptions of the foreign app processes still alive after ``timeout``."""
+        from .. import app_leaks  # noqa: PLC0415 — keeps psutil off the import path
+
+        wait = app_leaks.FOREIGN_EXIT_WAIT if timeout is None else timeout
+        return app_leaks.wait_for_foreign_apps(self._allowed, wait)
+
+    @staticmethod
+    def _describe_app_pid(pid: Optional[int]) -> str:
+        """Who launched ``pid`` when it is a termiHub app (diagnostics; else empty)."""
+        if pid is None:
+            return ""
+        from .. import app_leaks  # noqa: PLC0415
+
+        return app_leaks.describe_app_pid(pid)
 
     # ── Public API ───────────────────────────────────────────────────────────
     def windows(self, pid: Optional[int] = None) -> list[OsWindow]:
