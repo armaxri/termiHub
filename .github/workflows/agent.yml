@@ -5,10 +5,11 @@ name: Agent
 # push to develop/main (path-filtered below) and by hand (workflow_dispatch); a
 # develop failure is fixed forward. Before #5461 the three Linux musl
 # cross-builds and the Windows crash-symbol probe also ran per PR (#3325, #4794).
-# Per-PR coverage that remains: code-quality.yml's "Run Tests (windows-latest)"
-# leg (`cargo test --workspace`, a superset of the Windows leg's agent/core
-# tests) and "Agent Live Tests (Windows, serial)". dev-build.yml also builds the
-# agent binaries for every platform on every push to develop/main.
+# Per-PR coverage that remains: code-quality.yml's Linux "Run Tests" shards
+# (`cargo test --workspace`, a superset of this workflow's agent/core tests).
+# Its Windows leg and "Agent Live Tests (Windows, serial)" run post-merge since
+# #5465, like this workflow. dev-build.yml also builds the agent binaries for
+# every platform on every push to develop/main.
 on:
   # Post-merge only (#5461): a PR gates on Build + Code Quality alone, and this
   # lane runs after the merge on push to develop/main (plus workflow_dispatch).

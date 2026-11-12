@@ -1,14 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "url";
 
-// A sharded CI run (#5465): each Frontend Tests shard runs a slice of the files
-// with `--shard=k/N --reporter=blob` and covers only that slice, so its floors
-// would fail on partial coverage. A shard therefore checks no thresholds; the
-// merge job (`vitest --merge-reports --coverage`) combines the shards' coverage
-// and checks every floor below once, against the whole suite.
-const COVERAGE_SHARD = process.env.TERMIHUB_VITEST_COVERAGE_SHARD === "1";
-
-export default defineConfig({
+const config = defineConfig({
   resolve: {
     alias: [
       { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
@@ -103,7 +96,7 @@ export default defineConfig({
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
       // recursively the subtree is only ~85%, so it is not uniformly covered.)
       // Raise a floor (never lower) as its directory's coverage climbs.
-      thresholds: COVERAGE_SHARD ? {} : {
+      thresholds: {
         lines: 92,
         statements: 90.5,
         functions: 89,
@@ -184,3 +177,14 @@ export default defineConfig({
     },
   },
 });
+
+// A sharded CI run (#5465): each Frontend Tests shard runs a slice of the files
+// with `--shard=k/N --reporter=blob` and covers only that slice, so the floors
+// above would fail on its partial coverage. A shard therefore checks none; the
+// merge job (`vitest --merge-reports --coverage`) combines every shard's
+// coverage and checks all the floors once, against the whole suite.
+if (process.env.TERMIHUB_VITEST_COVERAGE_SHARD === "1" && config.test?.coverage) {
+  config.test.coverage.thresholds = {};
+}
+
+export default config;

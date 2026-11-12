@@ -508,6 +508,15 @@ suite flakes only under load, add its module path to `HEAVY_FILTERS` in the scri
 then run `scripts/internal/ci-rust-tests.sh list` to confirm the partition is still
 exact.
 
+On Linux the bulk phase is also split across runners (#5465): Code Quality runs two
+`Run Tests (ubuntu-latest, k/2)` legs, each with `CI_RUST_TESTS_SHARD=k/2`, which makes the
+script pass nextest `--partition hash:k/2`. Nextest picks a test's shard from a hash of its
+binary and name, so the shards are disjoint and together cover the bulk set. Shard 1 runs
+the once-only work: the doc-tests, the heavy phase and the real-keychain tests. It also runs
+`ci-rust-tests.sh shards`, which lists every partition and fails unless each bulk test is in
+exactly one of them. Run the same check locally with
+`CI_RUST_TESTS_SHARD=1/2 scripts/internal/ci-rust-tests.sh list` (sharding needs nextest).
+
 The phases run under [cargo-nextest](https://nexte.st) with the `ci` profile in
 [`.config/nextest.toml`](../.config/nextest.toml) (#5345). Every test gets a per-test
 timeout: it is reported SLOW after 60s and killed after 180s, which fails the run with the
@@ -523,7 +532,7 @@ is missing. To run the suite the CI way locally, install the version pinned in
 cargo-nextest@<version>`) and run `cargo nextest run --profile ci --workspace --all-features`.
 Without nextest the script falls back to `cargo test`.
 
-The Windows legs (Code Quality's `Run Tests (windows-latest)` and `agent.yml`'s
+The Windows legs (Code Quality's post-merge `Run Tests (windows-latest)` and `agent.yml`'s
 post-merge `build-windows`) also stage the sideloaded ConPTY host (#4121) with
 `scripts/internal/fetch-conpty.sh --dest` and export its directory as
 `TERMIHUB_TEST_CONPTY_DIR`. [`core/tests/sideloaded_conpty.rs`](../core/tests/sideloaded_conpty.rs)
@@ -1349,7 +1358,7 @@ The daemon-recovery tests in
 [`agent/tests/local_agent_integration.rs`](../agent/tests/local_agent_integration.rs)
 (buffer replay after a reattach or reconnect, a fresh agent recovering a dead
 agent's session, shell state and a running loop surviving the swap) run on
-Windows over named pipes as well, in the per-PR `Agent Live Tests (Windows,
+Windows over named pipes as well, in the post-merge `Agent Live Tests (Windows,
 serial)` job. Only the exactly-once replay count stays unix-only, because
 ConPTY repaints its screen.
 
@@ -1761,7 +1770,7 @@ cost, the frontend Vitest job runs a lightweight shell-mount smoke
 top-level region (activity bar, terminal view, status bar, sidebar) renders and
 the `ErrorBoundary` did not trip. This catches a **broad boot/wiring break** — a
 bad import, a removed provider, a hook that throws on mount, a store selector
-that crashes on the initial state — on every frontend PR (on the Ubuntu `pnpm test:coverage` leg) and on all three
+that crashes on the initial state — on every frontend PR (in the Frontend Tests shards, #5465) and on all three
 OSes post-merge (#3325 — see docs/contributing.md → "CI lanes"). It runs in a fraction of a second: a single
 React-DOM `createRoot` mount, no app build, no Docker, all Tauri IPC stubbed in
 [`src/test/setup.ts`](../src/test/setup.ts). It deliberately asserts only the
@@ -1784,7 +1793,7 @@ The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs
 16 live-agent-TCP tests — 15 in `agent/tests/local_agent_integration.rs` and 1 in `agent/tests/tcp_listener_readiness.rs`, all named `live_agent_tcp_*` — each spawn a real `termihub-agent --listen` process and drive it over TCP. They flaked **only on the Windows CI leg** with a random `Os { code: 10060, kind: TimedOut }`: the shared Windows test legs cold-start many agents at once **and** run them alongside the rest of the suite, oversubscribing the runner's few cores until an agent answers past even a generous deadline. Transport fixes (#2492, #2494) and per-process/aggregate concurrency gates (#2501, #2528) reduced but never eliminated it. The root cause is environmental, so the fix is isolation:
 
 - **The shared Windows legs skip them.** Code Quality's `Run Tests (windows-latest)` and `agent.yml`'s post-merge `build-windows` set `CI_RUST_TESTS_SPLIT_SERIAL=1`, which makes [`ci-rust-tests.sh`](../scripts/internal/ci-rust-tests.sh) `bulk`/`heavy` pass `--skip live_agent_tcp_`.
-- **A dedicated, blocking job runs exactly them, serially.** Code Quality's **`Agent Live Tests (Windows, serial)`** job runs `ci-rust-tests.sh serial`, i.e. only the `live_agent_tcp_*` tests with `--test-threads=1` (one agent cold-start at a time, nothing else on the runner) and `TERMIHUB_TEST_TIMING=1`, so a failure names the slow phase (gate wait, cold start or first RPC). It runs on every PR that changes what the agent builds from (the `agent` area in [`ci-changes.mjs`](../scripts/internal/ci-changes.mjs): `agent/`, `core/`, `plugin-api/`, `vendor/`, `.cargo/`, `Cargo.toml`/`Cargo.lock`, the toolchain, and `ci-rust-tests.sh` itself) and on every push to `develop`/`main`. Its non-blocking predecessor was green on 29 of 29 non-cancelled runs before it was made blocking.
+- **A dedicated, blocking job runs exactly them, serially.** Code Quality's **`Agent Live Tests (Windows, serial)`** job runs `ci-rust-tests.sh serial`, i.e. only the `live_agent_tcp_*` tests with `--test-threads=1` (one agent cold-start at a time, nothing else on the runner) and `TERMIHUB_TEST_TIMING=1`, so a failure names the slow phase (gate wait, cold start or first RPC). It runs post-merge only (#5465): on every push to `develop`/`main` and on `workflow_dispatch`, never on a PR. Its non-blocking predecessor was green on 29 of 29 non-cancelled runs before it was made blocking.
 - **It cannot go green by running nothing.** The `serial` phase sums libtest's results and fails if any selected test was ignored or if fewer than `SERIAL_MIN_TESTS` ran — 24 on Linux/macOS, 26 on Windows (see `SERIAL_MIN_TESTS_DEFAULT` in the script for the breakdown). The `live_agent_tcp_` prefix is a naming contract: a new live-agent test must use it (or it runs in the shared parallel leg again), and bump `SERIAL_MIN_TESTS` when you add one.
 - **Linux and macOS are unchanged**: the variable is unset there, so these tests run in the normal `bulk` phase.
 
@@ -1817,7 +1826,8 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
 `llvm-tools-preview` rustup component).
 
 - The **frontend** vitest gate (`pnpm test:coverage`, thresholds in
-  `vitest.config.ts`) counts both `.ts` and `.tsx` — the include glob was
+  `vitest.config.ts`; in CI the Frontend Tests shards plus the merge job that checks the
+  thresholds once, #5465) counts both `.ts` and `.tsx` — the include glob was
   `src/**/*.ts`, which silently excluded every React component from the
   percentage; it is now `src/**/*.{ts,tsx}`.
 - CI runs the unified report in the [`coverage.yml`](../.github/workflows/coverage.yml)
@@ -1866,7 +1876,7 @@ component starts gating once its baseline is recorded.
   the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
   the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
   Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
-  tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
+  tests in the Windows test leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
   heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
   live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
   with the nextest `ci` profile (#5349), so a hung test fails by name within its per-test

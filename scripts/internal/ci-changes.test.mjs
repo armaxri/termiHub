@@ -569,6 +569,31 @@ describe("testMatrix", () => {
   });
 });
 
+// code-quality.yml holds two copies of shard counts the scripts cannot read at
+// run time: the Run Tests fail-open fallback matrix and the Frontend Tests
+// shard list. Drift would silently drop a shard (#5465).
+describe("code-quality.yml shard drift", () => {
+  const text = readFileSync(path.join(REPO_ROOT, ".github/workflows/code-quality.yml"), "utf8");
+
+  it("falls back to exactly the post-merge Run Tests matrix", () => {
+    const m = text.match(
+      /include: \$\{\{ fromJSON\(needs\.changes\.outputs\.test_matrix \|\| '([^']+)'\) \}\}/
+    );
+    expect(m, "Run Tests matrix fallback not found").not.toBeNull();
+    expect(JSON.parse(m[1])).toEqual(testMatrix(allAreas(), false));
+  });
+
+  it("merges exactly as many vitest blobs as there are Frontend Tests shards", () => {
+    const shards = text.match(/^ {8}shard: \[([0-9, ]+)\]$/m);
+    expect(shards, "Frontend Tests shard list not found").not.toBeNull();
+    const list = shards[1].split(",").map((n) => Number(n.trim()));
+    expect(list).toEqual(Array.from({ length: list.length }, (_, i) => i + 1));
+    const expected = text.match(/^ {6}FRONTEND_TEST_SHARDS: '([0-9]+)'$/m);
+    expect(expected, "FRONTEND_TEST_SHARDS not found").not.toBeNull();
+    expect(Number(expected[1])).toBe(list.length);
+  });
+});
+
 describe("formatOutputs", () => {
   it("emits one key=value line per area plus the matrix", () => {
     const out = formatOutputs(classify(["src/main.tsx"]), true);
@@ -582,7 +607,9 @@ describe("formatOutputs", () => {
   it("reports tests=true by default and keeps the matrix", () => {
     const out = formatOutputs(classify(["core/src/lib.rs"]), true);
     expect(out).toContain("tests=true\n");
-    expect(out).toContain(`test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`);
+    expect(out).toContain(
+      `test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`
+    );
   });
 
   it("under [skip-tests] reports tests=false and an empty matrix, areas unchanged", () => {
@@ -752,7 +779,9 @@ describe("[skip-tests] tag (#3915)", () => {
         const headSha = git(dir, "rev-parse", "HEAD^2");
         const { out, summary } = run(dir, ["--event", "pull_request", "--head-sha", headSha]);
         expect(out).toContain("tests=true\n");
-        expect(out).toContain(`test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`);
+        expect(out).toContain(
+          `test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`
+        );
         expect(summary).toBe("");
       } finally {
         rmSync(dir, { recursive: true, force: true });

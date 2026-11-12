@@ -191,36 +191,51 @@ Since 2026-11-11 (#5461) a PR gates on **Build + Code Quality** only (plus the
 small path-filtered checks in the table below): the path-filtered heavy lanes —
 **Agent**, **Integration (Docker fixtures)**, **WSL Live (Windows)** and
 **Windows SSH Host** — run post-merge on `develop`, and `develop` may turn red
-and be fixed forward.
+and be fixed forward. Since 2026-11-12 (#5465) the Windows jobs of Code Quality
+(**Run Tests (windows-latest)**, **Rust Code Quality (Windows)** and **Agent Live
+Tests (Windows, serial)**) run post-merge too, and the Linux Rust tests and the
+vitest suite are split into parallel shards, so no single PR runner carries a
+whole suite.
 
 **Per-PR lane.** A `Detect Changed Areas` job classifies the PR's changed files
 ([`scripts/internal/ci-changes.mjs`](../scripts/internal/ci-changes.mjs)) and
 each job runs only if the PR can affect it:
 
-| Check                                                     | Runs on a PR when…                                                     |
-| --------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                                         |
-| Rust Code Quality (Windows) (clippy)                      | Rust changed                                                           |
-| Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                               |
-| Rendered Visual Checks (headless Chromium, screenshots)   | frontend changed (incl. `tests/visual/`)                               |
-| Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half              |
-| Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                             |
-| Agent Live Tests (Windows, serial)                        | anything the agent builds from changed (`agent` area)                  |
-| Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                               |
-| RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                                 |
-| Shell Script Quality                                      | a shell/cmd script changed                                             |
-| Workflow Lint (actionlint)                                | a `.github/` file changed                                              |
-| Rustdoc (-D warnings) + `cargo fmt`                       | Rust changed, including comment-only Rust changes                      |
-| Plugin IPC Fuzz Crate (stable check)                      | `plugin-runner/`, `plugin-api/`, `win-security/` or Cargo.toml changed |
-| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` or files it reads (drift guard: also frontend)         |
-| Security Audit                                            | a dependency manifest/lockfile changed                                 |
-| Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed              |
-| Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)               |
-| Lint Commit Messages                                      | always                                                                 |
+| Check                                                      | Runs on a PR when…                                                     |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Rust Code Quality (fmt, clippy, feature iso)               | Rust or `rdp-sidecar/` changed                                         |
+| Frontend Code Quality (lint, tsc, prettier, IPC contract)  | frontend, Rust, or docs/Markdown changed                               |
+| Rendered Visual Checks (headless Chromium, screenshots)    | frontend changed (incl. `tests/visual/`)                               |
+| Run Tests (ubuntu-latest, 1/2) and (ubuntu-latest, 2/2)    | Rust changed — each shard runs half of the Rust tests (#5465)          |
+| Frontend Tests (1/3, 2/3, 3/3) + Frontend Tests (coverage) | frontend changed — vitest in 3 shards, merged coverage floors          |
+| Build on ubuntu-latest (release compile)                   | Rust or frontend changed                                               |
+| RDP Sidecar Quality                                        | `rdp-sidecar/` changed                                                 |
+| Shell Script Quality                                       | a shell/cmd script changed                                             |
+| Workflow Lint (actionlint)                                 | a `.github/` file changed                                              |
+| Rustdoc (-D warnings) + `cargo fmt`                        | Rust changed, including comment-only Rust changes                      |
+| Plugin IPC Fuzz Crate (stable check)                       | `plugin-runner/`, `plugin-api/`, `win-security/` or Cargo.toml changed |
+| System-Test Harness / Test-ID Drift Guard                  | `tests/system/` or files it reads (drift guard: also frontend)         |
+| Security Audit                                             | a dependency manifest/lockfile changed                                 |
+| Vendored Forks Consistency                                 | `vendor/**`, a lockfile or `docs/supply-chain.md` changed              |
+| Plugin Packaging (ubuntu + windows, merge)                 | the plugin surface changed (API, host, packer, examples)               |
+| Lint Commit Messages                                       | always                                                                 |
 
-The test and build rows (Run Tests, Agent Live Tests, Build, Plugin Packaging,
+The test and build rows (Run Tests, Frontend Tests, Build, Plugin Packaging,
 System-Test Harness) also skip when the PR head commit carries `[skip-tests]`;
 see below.
+
+**Test shards (#5465).** The Linux Rust tests run as two `Run Tests
+(ubuntu-latest, k/2)` legs. Each compiles the workspace and runs one nextest
+hash partition of the bulk phase (`CI_RUST_TESTS_SHARD=k/2` in
+[`ci-rust-tests.sh`](../scripts/internal/ci-rust-tests.sh)). Shard 1 also runs
+the once-only steps: the doc-tests, the heavy (capped-thread) phase, the
+real-keychain tests and a check that the partitions are disjoint and list every
+bulk test. The vitest suite runs as three `Frontend Tests (k/3)` legs, each a
+`--shard` with blob reports. **Frontend Tests (coverage)** merges them and checks
+the coverage floors once, over the whole suite. The shard counts live in
+[`ci-changes.mjs`](../scripts/internal/ci-changes.mjs) (`LINUX_TEST_SHARDS`) and
+in the Frontend Tests matrix; `ci-changes.test.mjs` fails if the workflow copies
+drift.
 
 A skipped check reports as **skipped**, which is a pass. The classifier is
 **fail-open**: an unrecognised path, any `.github/` change, or a failure of the
@@ -238,8 +253,8 @@ comment-only change surface post-merge.
 
 **The `[skip-tests]` commit tag (#3915).** If the **head commit** of a PR (the
 newest commit on the PR branch) has `[skip-tests]` anywhere in its message, that
-PR run skips the test and build lanes: Run Tests (all OS), Agent Live Tests
-(Windows), Build on ubuntu, the System-Test Harness (machinery) and Plugin
+PR run skips the test and build lanes: Run Tests (the Linux shards), Frontend
+Tests, Build on ubuntu, the System-Test Harness (machinery) and Plugin
 Package + load. Detect Changed Areas, Lint Commit Messages, Rust and Frontend
 Code Quality (fmt, clippy, eslint, tsc, prettier), Rustdoc, actionlint, the shell
 and Markdown lints, the Test-ID Drift Guard and the PR Gate still run. The skipped
@@ -265,12 +280,14 @@ jobs pass the gate. The job summary of `Detect Changed Areas` shows
 [`.github/branch-protection.json`](../.github/branch-protection.json); see
 [Required checks per branch](#required-checks-per-branch).
 
-**So a green PR proves:** formatting, Clippy (Linux and Windows) and lint are
-clean; the PR's Rust tests pass on Linux and Windows; the vitest suite and its
-coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Linux.
+**So a green PR proves:** formatting, Clippy (Linux) and lint are clean; the
+PR's Rust tests pass on Linux; the vitest suite and its coverage floors pass
+(on Linux); the app release-compiles and Vite-bundles on Linux.
 
 **It does NOT prove** (these run only post-merge): Rust tests and vitest on
-**macOS**; vitest on **Windows**; release compiles/installers on macOS, Windows
+**macOS** and **Windows**; Windows clippy (Rust Code Quality (Windows)) and the
+Windows live-agent TCP tests (Agent Live Tests (Windows, serial)), #5465;
+release compiles/installers on macOS, Windows
 and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
 `cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
 dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
@@ -282,7 +299,8 @@ a PR branch before merging, dispatch it by hand
 (`gh workflow run <file> --ref <branch>`).
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
-on **every** platform — Code Quality with the full three-OS test matrix, Security
+on **every** platform — Code Quality with the full three-OS test matrix (plus the
+Windows clippy and serial live-agent jobs), Security
 Audit (also daily), Bundle Size, Rustdoc, the full Agent matrix
 and Dev Build. A push to `develop` also runs Integration (Docker fixtures), WSL
 Live (Windows) and Windows SSH Host when it touches their path filters (the lists
@@ -393,11 +411,11 @@ Branch protection is kept as code (CI-017, #3675). The source of truth is
 required checks, the "up to date" (`strict`) rule, admin enforcement,
 pull-request, force-push and deletion rules for each long-lived branch.
 
-| Branch                  | Status in the file                                                   | Required checks                                                                                                                                                                                                                                                                            |
-| ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `main`                  | enforced (mirrors the live settings)                                 | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest                                                |
-| `main` (pending, #3677) | **pending** — applied when the next release PR into `main` is opened | Same as `develop`: Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate** |
-| `develop`               | **proposed** — the maintainer applies it                             | Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate**                    |
+| Branch                  | Status in the file                                                   | Required checks                                                                                                                                                                                                                             |
+| ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main`                  | enforced (mirrors the live settings)                                 | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest |
+| `main` (pending, #3677) | **pending** — applied when the next release PR into `main` is opened | Same as `develop`: Lint Commit Messages, Rust Code Quality, Frontend Code Quality, RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate**                   |
+| `develop`               | **proposed** — the maintainer applies it                             | Lint Commit Messages, Rust Code Quality, Frontend Code Quality, RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate**                                      |
 
 Other rules: `main` enforces the rules for admins and requires a pull request
 (0 approvals); `develop` lets an admin override (for example to land a fix past
@@ -425,14 +443,17 @@ name to report. Only require a name that reports on **every** PR:
 **PR Gate (#3678).** The last job of
 [`code-quality.yml`](../.github/workflows/code-quality.yml) is an aggregate
 that `needs:` every correctness job of the workflow (including the `Run Tests`
-matrix and `Agent Live Tests (Windows, serial)`) and runs with `if: always()`,
+matrix and the Frontend Tests shards and coverage merge) and runs with `if: always()`,
 so it reports under the one fixed name `PR Gate` on every PR. It fails when any
 needed job **failed** or was **cancelled**; **success** and **skipped** (an area
 the PR does not touch) pass, so a docs-only PR still goes green. The evaluation
 is [`scripts/internal/pr-gate.mjs`](../scripts/internal/pr-gate.mjs); its test
 fails when a job is added to the workflow but not to the gate's `needs:`. A job
 that must not gate (advisory or push-only) goes in `GATE_EXCLUDED` in that
-script, with its reason. `main` adopts `PR Gate` with its pending set (below).
+script, with its reason: Bundle Size and the two post-merge Windows jobs (Rust
+Code Quality (Windows), Agent Live Tests (Windows, serial), #5465). Those still
+fail the post-merge push run, which the release gate reads. `main` adopts
+`PR Gate` with its pending set (below).
 
 `main`'s current set predates the slim PR lane (#3325) and still names checks the
 current `develop` workflows no longer run on a PR (the macOS/Windows Build legs,
@@ -1766,7 +1787,7 @@ exact commit:
 | Required run                                                                                   | Event               | What it covers                                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)              | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites) + `integration-fixtures.yml` (no path filter) |
-| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit)     | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                              |
+| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit)     | `push`              | the full three-OS test matrix, **Rust Code Quality (Windows)** and **Agent Live Tests (Windows, serial)**                                                             |
 | [Dev Build](../.github/workflows/dev-build.yml) (post-merge push run on that commit)           | `push`              | the full app build on all five platforms plus all seven agent binaries, incl. Windows x64 and ARM64 (CI-015, #4302)                                                   |
 | [Security Audit](../.github/workflows/security-audit.yml) (post-merge push run on that commit) | `push`              | cargo audit/deny, the pnpm production and full-tree audits, the pnpm-overrides check and the third-party notices gate (#4282)                                         |
 
