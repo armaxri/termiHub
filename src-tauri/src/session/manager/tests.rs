@@ -226,6 +226,8 @@ struct MockEventEmitter {
     connect_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String, bool)>>>,
     /// Recorded `fold_retry_auth_failed` calls as `(tab_id, error)` (#3089).
     retry_auth_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    /// Recorded `emit_initial_command_held` events (#5509).
+    initial_command_helds: std::sync::Arc<std::sync::Mutex<Vec<InitialCommandHeldEvent>>>,
     fail_output: bool,
 }
 
@@ -264,6 +266,12 @@ impl EventEmitter for MockEventEmitter {
             .lock()
             .unwrap()
             .push((tab_id.to_string(), error.to_string()));
+    }
+    fn emit_initial_command_held(&self, event: &InitialCommandHeldEvent) {
+        self.initial_command_helds
+            .lock()
+            .unwrap()
+            .push(event.clone());
     }
 }
 
@@ -3827,6 +3835,9 @@ mod saved_connections;
 
 /// A connection's initial command never hides terminal output (#4345).
 mod initial_command;
+
+/// An initial command held for a prompt that never comes, and Send now (#5509).
+mod held_initial_command;
 
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
