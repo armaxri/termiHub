@@ -138,6 +138,9 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
+  /* #5459: --text-muted falls below AA on --bg-secondary in Solarized Light
+     (base01, 4.39:1), so this surface uses the stronger muted token. */
+  --text-muted: var(--text-muted-on-selection);
   cursor: default;
 }
 

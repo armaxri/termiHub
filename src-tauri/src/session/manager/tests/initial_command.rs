@@ -10,7 +10,7 @@ use super::*;
 use std::time::{Duration, Instant};
 
 /// Poll `cond` until it holds or `within` passes.
-async fn within(within: Duration, mut cond: impl FnMut() -> bool) -> bool {
+pub(super) async fn within(within: Duration, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + within;
     while Instant::now() < deadline {
         if cond() {
@@ -21,7 +21,7 @@ async fn within(within: Duration, mut cond: impl FnMut() -> bool) -> bool {
     cond()
 }
 
-fn emitted(emitter: &MockEventEmitter) -> Vec<u8> {
+pub(super) fn emitted(emitter: &MockEventEmitter) -> Vec<u8> {
     emitter
         .outputs
         .lock()
@@ -31,10 +31,10 @@ fn emitted(emitter: &MockEventEmitter) -> Vec<u8> {
         .collect()
 }
 
-type Writes = Arc<std::sync::Mutex<Vec<u8>>>;
+pub(super) type Writes = Arc<std::sync::Mutex<Vec<u8>>>;
 
 /// Whether the initial command (with the session's line ending) was typed.
-fn sent(writes: &Writes) -> bool {
+pub(super) fn sent(writes: &Writes) -> bool {
     writes.lock().unwrap().starts_with(b"echo hi\r")
 }
 
@@ -47,6 +47,8 @@ struct PromptConnection {
     keep_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>,
     /// The backend's hook-free prompt check (#5029), if it has one.
     probe: Option<termihub_core::connection::PromptProbe>,
+    /// Whether `probe` is waited for without a cap (#5455).
+    uncapped: bool,
 }
 
 #[async_trait::async_trait]
@@ -102,6 +104,9 @@ impl ConnectionType for PromptConnection {
     fn prompt_probe(&self) -> Option<termihub_core::connection::PromptProbe> {
         self.probe.clone()
     }
+    fn prompt_probe_uncapped(&self) -> bool {
+        self.uncapped
+    }
 }
 
 fn prompt_manager(banner: &'static [u8]) -> (SessionManager, Writes) {
@@ -111,6 +116,15 @@ fn prompt_manager(banner: &'static [u8]) -> (SessionManager, Writes) {
 fn probing_manager(
     banner: &'static [u8],
     probe: Option<termihub_core::connection::PromptProbe>,
+) -> (SessionManager, Writes) {
+    probing_manager_with(banner, probe, false)
+}
+
+/// As [`probing_manager`]; `uncapped` makes the probe a #5455 uncapped one.
+pub(super) fn probing_manager_with(
+    banner: &'static [u8],
+    probe: Option<termihub_core::connection::PromptProbe>,
+    uncapped: bool,
 ) -> (SessionManager, Writes) {
     let writes = Writes::default();
     let factory_writes = writes.clone();
@@ -125,6 +139,7 @@ fn probing_manager(
                 writes: factory_writes.clone(),
                 keep_tx: std::sync::Mutex::new(None),
                 probe: probe.clone(),
+                uncapped,
             })
         }),
     );
@@ -134,7 +149,7 @@ fn probing_manager(
     )
 }
 
-async fn open(manager: &SessionManager, emitter: &MockEventEmitter) -> String {
+pub(super) async fn open(manager: &SessionManager, emitter: &MockEventEmitter) -> String {
     manager
         .create_connection(
             "prompt",

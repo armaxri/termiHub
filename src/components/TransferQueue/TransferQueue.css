@@ -8,6 +8,9 @@
 .transfer-queue {
   flex: 0 0 auto;
   background: var(--bg-secondary);
+  /* #5459: --text-muted falls below AA on --bg-secondary in Solarized Light
+     (base01, 4.39:1), so this surface uses the stronger muted token. */
+  --text-muted: var(--text-muted-on-selection);
   border-top: 1px solid var(--border-primary);
   font-size: var(--font-size-sm);
   color: var(--text-primary);

@@ -22,9 +22,9 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
+use termihub_core::session::prompt_ready::wait_for_prompt;
 #[cfg(test)]
 use termihub_core::session::prompt_ready::MARK_ONLY_TIMEOUT;
-use termihub_core::session::prompt_ready::{wait_for_prompt, wait_for_prompt_uncapped};
 use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
@@ -172,6 +172,10 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// Emit a connect-stage update (#5068). Default no-op for test emitters.
     fn emit_connect_progress(&self, _event: &super::connect_progress::ConnectProgressEvent) {}
 
+    /// Emit that a session's initial command is held, or no longer (#5509).
+    /// Default no-op for test emitters.
+    fn emit_initial_command_held(&self, _event: &InitialCommandHeldEvent) {}
+
     /// Fold a genuine-drop session-lifecycle transition **server-side** (#2439).
     ///
     /// Called from the `terminal-exit` source ([`SessionManager::emit_and_cleanup`])
@@ -266,6 +270,10 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
     fn emit_connect_progress(&self, event: &super::connect_progress::ConnectProgressEvent) {
         let _ = self.emit("connect-progress", event);
+    }
+
+    fn emit_initial_command_held(&self, event: &InitialCommandHeldEvent) {
+        let _ = self.emit("initial-command-held", event);
     }
 
     fn fold_session_drop(&self, tab_id: &str, fold: DropFold) {
@@ -647,6 +655,9 @@ pub struct SessionManager {
     /// the `session_*` commands on a VNC session's side channel. See
     /// [`SideChannelBrowsers`](crate::session::graphical_browse::SideChannelBrowsers).
     pub(crate) side_channels: crate::session::graphical_browse::SideChannelBrowsers,
+    /// Initial commands held because the shell never announced its prompt,
+    /// for the tab's Send now (#5509).
+    pub(super) held_initial_commands: HeldInitialCommands,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -764,6 +775,7 @@ impl SessionManager {
             saved_connections: Arc::new(StdMutex::new(HashMap::new())),
             session_opened_hook: Arc::new(StdMutex::new(None)),
             side_channels: Default::default(),
+            held_initial_commands: HeldInitialCommands::default(),
         }
     }
 
@@ -1442,6 +1454,7 @@ impl SessionManager {
         let session_tab_ids = self.session_tab_ids.clone();
         let sid = session_id.clone();
         let reader_prompt_ready = prompt_ready.clone();
+        let held_emitter = emitter.clone();
         let injection_cancel = reader_cancel.clone();
         // Not app-owned (#3105): session-scoped reader, stopped by the session's `reader_cancel`.
         tokio::spawn(async move {
@@ -1467,20 +1480,27 @@ impl SessionManager {
         if let (Some(cmd), Some(ready)) = (initial_command, prompt_ready) {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
+            let held = self.held_initial_commands.clone();
             // Not app-owned (#3105): one-shot initial-command injection, stopped
             // with the session's reader.
             tokio::spawn(async move {
-                let signal = tokio::select! {
-                    _ = injection_cancel.cancelled() => return,
-                    signal = async {
+                let cue = tokio::select! {
+                    _ = injection_cancel.cancelled() => None,
+                    cue = async {
                         if probe_uncapped {
-                            wait_for_prompt_uncapped(Some(&ready), prompt_probe.as_ref()).await
+                            // Held past the former cap: the tab offers Send now (#5509).
+                            held.wait_or_send_now(&sid, &held_emitter, &ready, prompt_probe.as_ref())
+                                .await
                         } else {
-                            wait_for_prompt(Some(&ready), prompt_probe.as_ref()).await
+                            InitialCommandCue::Prompt(
+                                wait_for_prompt(Some(&ready), prompt_probe.as_ref()).await,
+                            )
                         }
-                    } => signal,
+                    } => Some(cue),
                 };
-                info!(session_id = %sid, ?signal, "Sending the initial command");
+                held.settle(&sid, &held_emitter, cue);
+                let Some(cue) = cue else { return };
+                info!(session_id = %sid, ?cue, "Sending the initial command");
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;
             });
         }
@@ -2686,6 +2706,12 @@ mod files_only;
 
 /// Plugin-process exits for the crash overlay (#4188).
 mod plugin_exit;
+
+/// The initial command held for a prompt that never comes, and its Send now
+/// (#5509).
+mod held_initial_command;
+pub use held_initial_command::InitialCommandHeldEvent;
+use held_initial_command::{HeldInitialCommands, InitialCommandCue};
 
 /// Backend write / resize / teardown outside the session-map lock (#4300).
 pub(super) mod session_io;
