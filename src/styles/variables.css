@@ -10,7 +10,11 @@
   /* Selected-item background (accent-tinted, VS Code-style). Derived from
      --accent-color so it tracks the active theme. Used by the connection tree. */
   --bg-selected: color-mix(in srgb, var(--accent-color) 18%, transparent);
-  --bg-selected-hover: color-mix(in srgb, var(--accent-color) 28%, transparent);
+  /* Hovered selected row: a lighter tint than --bg-selected (#5406). The old
+     28% tint dropped the *-on-selection text to ~4.0:1 in Dark and Light; any
+     tint stronger than 18% stays below AA, so hover lightens the tint instead.
+     Graded by src/themes/contrast.test.ts. */
+  --bg-selected-hover: color-mix(in srgb, var(--accent-color) 10%, transparent);
 
   /* Activity bar */
   --activity-bar-bg: #0b0d12;

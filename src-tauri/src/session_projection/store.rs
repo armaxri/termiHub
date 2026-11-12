@@ -165,6 +165,16 @@ pub struct SessionLifecycle {
     /// otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reconnect_error: Option<String>,
+    /// Why the last attempt of the running backoff loop failed (#5395) — for
+    /// example "A different device (USB 1a86:7523) is on /dev/ttyUSB0. It was
+    /// not opened." Set by [`SessionLifecycleStore::reconnect_failed`] when the
+    /// loop arms its next window, and kept through the next attempt so the
+    /// reconnect strip can say why the session is still waiting. Moves to
+    /// [`error`](Self::error) when the loop gives up. Cleared by a successful
+    /// (re)connect, a cancel and every other lifecycle resolution; `None`
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_error: Option<String>,
     /// The **backend** session id the frontend should currently be attached to
     /// for this tab, when known (#2457). The region is keyed by the frontend
     /// *tab* id (stable across a reconnect); this carries the *backend* session
@@ -214,6 +224,7 @@ impl SessionLifecycle {
             end_reason: None,
             error: None,
             reconnect_error: None,
+            last_attempt_error: None,
             backend_session_id: None,
             exit: None,
             files_only: false,
@@ -369,6 +380,7 @@ impl SessionLifecycleStore {
             entry.end_reason = None;
             entry.error = None;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // A fresh live session clears any stale exit cause (#2615) so the region
             // never carries an exit for a connected tab.
             entry.exit = None;
@@ -399,6 +411,7 @@ impl SessionLifecycleStore {
             entry.end_reason = Some(EndReason::Error);
             entry.error = error;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // The connect never established a session; nothing to re-attach to (#2457).
             entry.backend_session_id = None;
         }
@@ -425,6 +438,7 @@ impl SessionLifecycleStore {
         entry.end_reason = Some(EndReason::Error);
         entry.error = error;
         entry.reconnect_error = None;
+        entry.last_attempt_error = None;
         entry.backend_session_id = None;
         inner.dirty.insert(session_id.to_string());
     }
@@ -463,6 +477,7 @@ impl SessionLifecycleStore {
             entry.end_reason = Some(EndReason::Error);
             entry.error = error;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // The reconnect attempt established no session; drop any re-attach id.
             entry.backend_session_id = None;
         }
@@ -522,6 +537,7 @@ impl SessionLifecycleStore {
             entry.end_reason = Some(EndReason::Unexpected);
             entry.error = error;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // The backend session is gone on a genuine drop; drop the re-attach id
             // (#2457). A backend-driven redrive sets the new id once it reconnects.
             entry.backend_session_id = None;
@@ -566,6 +582,7 @@ impl SessionLifecycleStore {
             entry.reconnect = reconnect;
             entry.end_reason = None;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // The loop is (re)starting from a dead session; drop the stale re-attach
             // id so the frontend never re-attaches to a corpse (#2457). The redrive
             // repopulates it via `set_backend_session_id` once an attempt succeeds.
@@ -636,6 +653,8 @@ impl SessionLifecycleStore {
         entry.reconnect = INITIAL_RECONNECT_STATE;
         entry.end_reason = None;
         entry.reconnect_error = error;
+        // The agent I/O task owns this reconnect; no backoff attempt has failed.
+        entry.last_attempt_error = None;
         // The live agent session survives the transient break in place, so its
         // re-attach id stays valid — deliberately NOT cleared (contrast the
         // drop/reconnect paths, whose session is gone).
@@ -686,8 +705,13 @@ impl SessionLifecycleStore {
                 entry.status = SessionStatus::Failed;
                 entry.end_reason = Some(EndReason::Error);
                 entry.error = error;
+                // The give-up message is now the terminal `error`.
+                entry.last_attempt_error = None;
             } else {
                 entry.status = SessionStatus::Reconnecting;
+                // Keep why this attempt failed while the loop waits for the
+                // next one (#5395), so the strip can say it.
+                entry.last_attempt_error = error;
             }
         }
     }
@@ -706,6 +730,7 @@ impl SessionLifecycleStore {
             entry.reconnect = INITIAL_RECONNECT_STATE;
             entry.end_reason = Some(EndReason::User);
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // Loop cancelled; the session is not coming back — drop the re-attach
             // id (#2457).
             entry.backend_session_id = None;
@@ -820,6 +845,7 @@ impl SessionLifecycleStore {
             entry.end_reason = Some(EndReason::Normal);
             entry.error = None;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
             // The process exited; there is no live backend session to re-attach to —
             // drop the id so the region never advertises a dead session (#2457),
             // matching every sibling `Disconnected` fold.
@@ -931,6 +957,7 @@ impl SessionLifecycleStore {
             entry.end_reason = None;
             entry.error = error;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
         }
     }
 
@@ -952,6 +979,7 @@ impl SessionLifecycleStore {
             entry.end_reason = None;
             entry.error = None;
             entry.reconnect_error = None;
+            entry.last_attempt_error = None;
         }
     }
 
@@ -1101,6 +1129,7 @@ fn apply_disconnect(inner: &mut Inner, session_id: &str) {
         entry.end_reason = Some(EndReason::User);
         entry.error = None;
         entry.reconnect_error = None;
+        entry.last_attempt_error = None;
         // The session is torn down; drop the re-attach id so the region never
         // advertises a dead backend session (#2457).
         entry.backend_session_id = None;
@@ -1137,6 +1166,7 @@ fn apply_connect_failed(inner: &mut Inner, session_id: &str, error: Option<Strin
         entry.end_reason = Some(EndReason::Error);
         entry.error = error;
         entry.reconnect_error = None;
+        entry.last_attempt_error = None;
         // The connect never established a session; nothing to re-attach to (#2457).
         entry.backend_session_id = None;
     }
@@ -1162,6 +1192,7 @@ fn apply_session_lost(inner: &mut Inner, session_id: &str, error: Option<String>
         entry.end_reason = Some(EndReason::Unexpected);
         entry.error = error;
         entry.reconnect_error = None;
+        entry.last_attempt_error = None;
         // The live agent session could not be recovered; there is no backend
         // session to re-attach to (#2512).
         entry.backend_session_id = None;

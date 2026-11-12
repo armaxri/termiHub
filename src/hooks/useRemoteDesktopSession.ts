@@ -34,7 +34,11 @@ import {
 import { useMonitorLayoutRefresh } from "./useMonitorLayoutRefresh";
 import { subscribeGuarded } from "./useTauriListener";
 import { toast } from "@/components/ui";
-import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
+import { backendErrorMessage, isAuthFailure, parseBackendError } from "@/utils/backendErrorCode";
+import {
+  connectionErrorKindFromCode,
+  type ConnectionErrorKind,
+} from "@/utils/connectionErrorHints";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import {
@@ -53,6 +57,14 @@ export interface RemoteDesktopSession {
   reconnectAttempt: number;
   /** Human-readable failure message, when the state carries one. */
   message: string | null;
+  /**
+   * Typed category of the last connect failure (#5377): from the backend's
+   * error code when the connect rejected, `auth` for an `authFailed` state,
+   * else `other`. Drives the humanised heading, hint and credential re-entry.
+   */
+  errorKind: ConnectionErrorKind;
+  /** The user aborted the connect or the auto-reconnect (#5377). */
+  aborted: boolean;
   /** Latest remote → local clipboard text (for the shared panel). */
   remoteClipboard: string | null;
   /** Pending server-certificate trust prompt (#1767), or null when none. */
@@ -155,6 +167,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const [state, setState] = useState<GraphicalSessionState>("connecting");
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<ConnectionErrorKind>("other");
+  const [aborted, setAborted] = useState(false);
   const [remoteClipboard, setRemoteClipboard] = useState<string | null>(null);
   const [certPrompt, setCertPrompt] = useState<RemoteDesktopCertPromptPayload | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -205,6 +219,9 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     setState(payload.state);
     setReconnectAttempt(payload.reconnect_attempt);
     setMessage(payload.message ?? null);
+    // A state event carries no error code: only an auth rejection is typed.
+    setErrorKind(payload.state === "authFailed" ? "auth" : "other");
+    setAborted(false);
   }, []);
 
   // Config is read once per (re)connect; it is stable for the tab's lifetime.
@@ -251,6 +268,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       if (!tab) return;
       setState("connecting");
       setMessage(null);
+      setErrorKind("other");
+      setAborted(false);
       setReconnectAttempt(0);
       earlyStatesRef.current.clear();
       connectPendingRef.current = true;
@@ -310,7 +329,9 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         if (attempt.userCancelled) return;
         // A rejected credential (typed `auth_failed`, #3390) keeps the
         // "Authentication failed" overlay instead of the generic connect error.
-        setState(isAuthFailure(err) ? "authFailed" : "connectFailed");
+        const auth = isAuthFailure(err);
+        setState(auth ? "authFailed" : "connectFailed");
+        setErrorKind(auth ? "auth" : connectionErrorKindFromCode(parseBackendError(err).code));
         setMessage(backendErrorMessage(err));
       }
     };
@@ -601,6 +622,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     // A canceled connect never saves the typed password it was given (#5197).
     graphicalConnectFailed(tabId);
     setState("closed");
+    setAborted(true);
     setReconnectAttempt(0);
     setMessage(null);
     fireAndForget(
@@ -615,6 +637,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     const id = sessionIdRef.current;
     sessionIdRef.current = null;
     setState("closed");
+    setAborted(true);
     setReconnectAttempt(0);
     setMessage(null);
     if (id) {
@@ -637,6 +660,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     state,
     reconnectAttempt,
     message,
+    errorKind,
+    aborted,
     remoteClipboard,
     certPrompt,
     respondCert,

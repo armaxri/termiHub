@@ -4,6 +4,7 @@ import path from "path";
 import {
   aptCalls,
   checkDockerfile,
+  checkMirrorFallback,
   checkShell,
   checkYaml,
   findProblems,
@@ -131,6 +132,27 @@ describe("kindOf / findProblems", () => {
       "s.sh": "apt-get install -y x",
     });
     expect(problems).toHaveLength(2);
+  });
+});
+
+describe("checkMirrorFallback", () => {
+  it("passes when the action runs the mirror fallback script", () => {
+    const action =
+      'runs:\n  steps:\n    - run: sudo bash "$GITHUB_ACTION_PATH/mirror-fallback.sh"\n';
+    expect(checkMirrorFallback(action)).toEqual([]);
+  });
+
+  it("fails when the step is gone or only mentioned in a comment", () => {
+    expect(checkMirrorFallback("runs:\n  steps: []\n")).toHaveLength(1);
+    expect(
+      checkMirrorFallback('# run: sudo bash "$GITHUB_ACTION_PATH/mirror-fallback.sh"\n')
+    ).toHaveLength(1);
+  });
+
+  it("is applied to the apt-retries action by findProblems", () => {
+    const problems = findProblems({ ".github/actions/apt-retries/action.yml": "runs: {}\n" });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/mirror-fallback\.sh/);
   });
 });
 

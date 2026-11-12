@@ -429,9 +429,12 @@ jobs:
             socat \
             libasound2-dev
           # weston (headless backend) gives the Wayland-only X11 hint grade
-          # (test_ssh_x11_wayland.py, #4965) a Wayland session. No recommends:
-          # the grade needs a host WITHOUT Xwayland.
-          sudo apt-get install -y --no-install-recommends weston
+          # (test_ssh_x11_wayland.py, #4965) a Wayland session. sway (headless
+          # wlroots, which implements wlr-data-control; weston does not) and
+          # wl-clipboard let test_linux_clipboard_owner.py (#5170) read the app's
+          # native Wayland clipboard source with wl-paste from a second client.
+          # No recommends: the Wayland-only grade needs a host WITHOUT Xwayland.
+          sudo apt-get install -y --no-install-recommends weston sway wl-clipboard
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
         # ubuntu-24.04 ships an AppArmor policy that blocks unprivileged user

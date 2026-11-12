@@ -34,7 +34,7 @@ impl Rig {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
-        let agent = Arc::new(FakeAgent::new());
+        let agent = Arc::new(FakeAgent::session_host());
         handle.manage(SessionManager::new(
             ConnectionTypeRegistry::new(),
             agent.clone() as Arc<dyn AgentRpcClient>,
@@ -141,7 +141,7 @@ fn the_tab_shows_the_agent_reopen_and_arms_no_desktop_redrive() {
     assert_eq!(rig.store.status(TAB), Some(SessionStatus::Connected));
     assert!(!rig.scheduler.armed(TAB));
     assert_eq!(
-        rig.agent.create_count.load(Ordering::SeqCst),
+        rig.agent.calls_to("create_session").len(),
         1,
         "the same agent session continues; nothing is re-created"
     );
@@ -180,7 +180,7 @@ fn stop_closes_the_agent_session_so_the_agent_stops_reopening() {
     close_agent_reconnecting_session(&rig.handle, to_close);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while rig.agent.closed.lock().unwrap().is_empty() {
+    while rig.agent.calls_to("close_session").is_empty() {
         assert!(
             std::time::Instant::now() < deadline,
             "the agent session must be closed"
@@ -188,8 +188,8 @@ fn stop_closes_the_agent_session_so_the_agent_stops_reopening() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_eq!(
-        *rig.agent.closed.lock().unwrap(),
-        vec!["remote-0".to_string()]
+        rig.agent.calls_to("close_session"),
+        vec![vec!["agent-1".to_string(), "remote-0".to_string()]]
     );
     assert_eq!(rig.store.status(TAB), Some(SessionStatus::Disconnected));
 }
