@@ -62,6 +62,38 @@ def combo_flags(mods: Sequence[str], caps_lock: bool = False) -> int:
     return flags | (CAPS_LOCK_FLAG if caps_lock else 0)
 
 
+def window_info_label(info: dict) -> str:
+    """One ``CGWindowListCopyWindowInfo`` entry as a diagnostics line (#5467)."""
+    bounds = info.get("kCGWindowBounds") or {}
+    x, y = int(bounds.get("X", 0)), int(bounds.get("Y", 0))
+    w, h = int(bounds.get("Width", 0)), int(bounds.get("Height", 0))
+    return (
+        f"window={int(info.get('kCGWindowNumber', 0))} "
+        f"pid={int(info.get('kCGWindowOwnerPID', -1))} "
+        f"owner={str(info.get('kCGWindowOwnerName') or '?')!r} "
+        f"title={str(info.get('kCGWindowName') or '')[:60]!r} "
+        f"layer={int(info.get('kCGWindowLayer', 0))} rect=({x},{y},{x + w},{y + h})"
+    )
+
+
+def window_info_at(infos: Iterable[dict], x: float, y: float) -> Optional[dict]:
+    """The front-most on-screen window containing ``(x, y)``.
+
+    ``CGWindowListCopyWindowInfo`` lists windows front to back, so the first
+    one whose bounds hold the point (and that is not fully transparent) is the
+    one a pointer event there reaches — a covering window of *any* process.
+    """
+    for info in infos:
+        if float(info.get("kCGWindowAlpha", 1.0)) <= 0.0:
+            continue
+        bounds = info.get("kCGWindowBounds") or {}
+        bx, by = float(bounds.get("X", 0)), float(bounds.get("Y", 0))
+        bw, bh = float(bounds.get("Width", 0)), float(bounds.get("Height", 0))
+        if bx <= x < bx + bw and by <= y < by + bh:
+            return info
+    return None
+
+
 class MacOsInput(OsInput):
     """Quartz/AppKit through pyobjc."""
 
@@ -148,6 +180,49 @@ class MacOsInput(OsInput):
             return None
         match = re.search(r'"pid"\s*=\s*(\d+)', out)
         return int(match.group(1)) if match else None
+
+    # ── Diagnostics (read-only) ──────────────────────────────────────────────
+    def _safe_window_list(self) -> Optional[list[dict]]:
+        """The window list, or ``None``: a diagnostic must never mask the failure."""
+        try:
+            return self._window_list()
+        except Exception:  # noqa: BLE001 — diagnostics only
+            return None
+
+    def _describe_point(self, x: int, y: int) -> str:
+        infos = self._safe_window_list()
+        if infos is None:
+            return ""
+        info = window_info_at(infos, x, y)
+        return window_info_label(info) if info is not None else "nothing"
+
+    def _describe_frontmost(self) -> str:
+        pid = self._frontmost_pid()
+        infos = self._safe_window_list()
+        if pid is None or infos is None:
+            return ""
+        own = [i for i in infos if int(i.get("kCGWindowOwnerPID", -1)) == pid]
+        return window_info_label(own[0]) if own else f"pid={pid} (no on-screen window)"
+
+    def _describe_desktop(self) -> str:
+        """Every on-screen window, front to back, and the active app (#5467).
+
+        On macOS the active app (what :meth:`_frontmost_pid` reports) is not
+        what a pointer event hits: an always-on-top window of another process
+        stays over the test window while the test app is active, so the
+        window list is what names a cover.
+        """
+        infos = self._safe_window_list()
+        if infos is None:
+            return ""
+        lines = [f"  {window_info_label(info)}" for info in infos]
+        return "\n".join(
+            [
+                f"active app pid: {self._frontmost_pid()}",
+                "on-screen windows (front to back):",
+                *lines,
+            ]
+        )
 
     def _screen_size(self) -> tuple[int, int]:
         bounds = self._q.CGDisplayBounds(self._q.CGMainDisplayID())

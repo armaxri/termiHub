@@ -1,5 +1,6 @@
 import type { BackendAgentReconnectOutcome, ProjectedSessionStatus } from "@/store/sessionBridge";
 import type { TerminalExitReason } from "@/types/terminal";
+import { nextReconnectDelay, RECONNECT_POLICY } from "@/utils/reconnectBackoff";
 
 /**
  * The establishment path chosen for a terminal (re)connect. This is the *pure*
@@ -154,6 +155,25 @@ export type AgentSpawnAction =
   | { kind: "reconnectAgentThenWait" }
   | { kind: "giveUp" }
   | { kind: "retryAfterDelay"; attempt: number };
+
+/**
+ * The retry budget of an agent tab's first connect (#5397): the shared
+ * `RECONNECT_POLICY` every reconnect loop follows (SM-020), so the overlay reads
+ * "Attempt n of 10" like every other reconnect. `attempt` counts the retries
+ * after the first connect failed, exactly like a reconnect loop counts the
+ * attempts after a drop. (Before #5397: 5 retries, each after a fixed 5.5 s.)
+ */
+export const MAX_AGENT_SPAWN_ATTEMPTS = RECONNECT_POLICY.maxAttempts;
+
+/**
+ * How long to wait before agent first-connect retry `attempt` (1-based): the
+ * shared policy's jittered backoff window (1, 2, 4, 8, 16, then 30 s nominal;
+ * jitter only shortens a window, never below half). `rand` is injectable for
+ * tests.
+ */
+export function agentSpawnRetryDelayMs(attempt: number, rand: () => number = Math.random): number {
+  return nextReconnectDelay(attempt, RECONNECT_POLICY, rand);
+}
 
 /** Explicit input snapshot for {@link resolveAgentSpawnAction}. */
 export interface AgentSpawnActionInput {

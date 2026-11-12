@@ -15,6 +15,9 @@ interface TerminalReconnectStripProps {
   reconnectTriggerError?: string;
 }
 
+/** Prefix of the secondary line that says why the last attempt failed (#5395). */
+export const LAST_ATTEMPT_PREFIX = "Last attempt:";
+
 /** What the strip says the user's typing does while the loop is running. */
 export const INPUT_PAUSED_NOTE = "Typing is paused until the session reconnects.";
 
@@ -36,7 +39,8 @@ function isTypingKey(e: KeyboardEvent): boolean {
  * last lines of the dropped session without cancelling the reconnect.
  *
  * Covers both the agentless auto-reconnect loop (#1962: countdown + attempt n/N
- * + Cancel, in its `waiting` and `connecting` phases) and a plain in-flight
+ * + Cancel, in its `waiting` and `connecting` phases, plus why the last attempt
+ * failed, #5395) and a plain in-flight
  * reconnect (spinner + Stop). Terminal states (exhausted / failed / session
  * lost) keep the full {@link TerminalDisconnectOverlay}.
  *
@@ -99,6 +103,27 @@ export function TerminalReconnectStrip({
     : null;
   const secondsLeft = waiting ? Math.max(0, Math.ceil((nextAttemptAt - now) / 1000)) : 0;
 
+  // Why the last attempt failed (#5395), e.g. a different device on the port.
+  const lastAttemptError = auto?.lastAttemptError;
+  // The reason joins the announcement only when it changed since the strip last
+  // saw it, so an attempt that fails the same way is not read out again. Kept
+  // per (attempt, reason) so the countdown ticks never change what is spoken.
+  const reasonKey = `${attemptLabel ?? ""}\u0000${lastAttemptError ?? ""}`;
+  const [reasonNews, setReasonNews] = useState<{
+    key: string;
+    reason: string | undefined;
+    speak: boolean;
+  }>({ key: "", reason: undefined, speak: false });
+  if (reasonNews.key !== reasonKey) {
+    setReasonNews({
+      key: reasonKey,
+      reason: lastAttemptError,
+      speak: !!lastAttemptError && lastAttemptError !== reasonNews.reason,
+    });
+  }
+  const reasonNote =
+    reasonNews.speak && lastAttemptError ? `${LAST_ATTEMPT_PREFIX} ${lastAttemptError}` : null;
+
   const heading = inLoop ? RECONNECTING_HEADING : "Reconnecting…";
   const status = !auto
     ? "Connection lost. Attempting to reconnect automatically."
@@ -109,7 +134,7 @@ export function TerminalReconnectStrip({
   // Announce the state and each attempt change — never the per-second countdown.
   // A plain reconnect has no ticking text, so its status line is announced too.
   const announcement = inLoop
-    ? [`${heading} ${attemptLabel}.`, typedWhilePaused ? INPUT_PAUSED_NOTE : null]
+    ? [`${heading} ${attemptLabel}.`, reasonNote, typedWhilePaused ? INPUT_PAUSED_NOTE : null]
         .filter(Boolean)
         .join(" ")
     : `${heading} ${status}`;
@@ -145,6 +170,14 @@ export function TerminalReconnectStrip({
             <span className="terminal-reconnect-strip__status">{status}</span>
           )}
         </div>
+        {lastAttemptError && (
+          <div
+            className="terminal-reconnect-strip__line terminal-reconnect-strip__reason"
+            data-testid="terminal-reconnect-last-attempt-reason"
+          >
+            {LAST_ATTEMPT_PREFIX} {lastAttemptError}
+          </div>
+        )}
         {inLoop && (
           <div className="terminal-reconnect-strip__line terminal-reconnect-strip__note">
             <span
