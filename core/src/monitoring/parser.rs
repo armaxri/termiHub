@@ -21,7 +21,6 @@ macro_rules! linux_stats_script {
         "hostname && cat /proc/loadavg && grep \"^cpu\" /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr && cat /proc/net/dev"
     };
 }
-use linux_stats_script;
 
 /// The macOS leg of [`HOST_MONITORING_COMMAND`] (#5471).
 ///
@@ -46,7 +45,6 @@ macro_rules! darwin_stats_script {
         )
     };
 }
-use darwin_stats_script;
 
 /// The compound command executed on Linux hosts to gather all metrics
 /// in a single round-trip.
