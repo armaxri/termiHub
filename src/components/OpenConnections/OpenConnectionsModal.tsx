@@ -1737,6 +1737,10 @@ function formatMonitorInterval(intervalMs: number): string {
 /** Human-readable secondary line for a monitoring row (#1233). */
 function monitorRowDetail(m: MonitoringEntry): string | undefined {
   if (m.paused) return "paused — collection stopped";
+  // A host with no stats source is not offline (#5471): say only why.
+  if (m.status === "offline" && m.statusReason === "unsupported") {
+    return monitorOfflineReasonText(m.statusReason);
+  }
   if (m.status === "offline") return `offline — ${monitorOfflineReasonText(m.statusReason)}`;
   if (m.status === "stale") return "stale — connection dropped";
   return `every ${formatMonitorInterval(m.intervalMs)}`;
