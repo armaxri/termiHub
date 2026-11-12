@@ -459,7 +459,7 @@ fn windows_reader_has_no_identity_for_a_missing_port() {
 /// `cargo test -p termihub-core --features serial -- --ignored --nocapture
 /// list_serial_ports_with_usb_identity`.
 #[test]
-#[ignore = "manual: lists the machine's real serial ports"]
+#[ignore = "lists the machine's real serial ports (#5394); manual: MT-RUST-02"]
 fn list_serial_ports_with_usb_identity() {
     let probe = SystemSerialPortProbe;
     for port in probe.list_ports() {
