@@ -98,7 +98,7 @@ export const CREDENTIAL_STORAGE_CHOOSER_TITLE = "Where should termiHub keep pass
 
 /** Where the choice can be changed later — the same setting the chooser writes. */
 export const CREDENTIAL_STORAGE_CHANGE_LATER_TEXT =
-  "You can change this any time under Settings ▸ Security ▸ Credential Storage.";
+  "You can change this any time under Settings ▸ Security ▸ Credential storage.";
 
 /**
  * The chooser's options, OS Keychain first (pre-selected). Labels match the

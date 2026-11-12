@@ -137,7 +137,7 @@ export interface ConfirmDialogProps {
   /**
    * Optional handler for a passive dismissal (ESC, scrim click, close X). When
    * set, those gestures call this instead of `onCancel`, so a dialog whose
-   * Cancel button is itself a decision (e.g. the session-restore "Start Fresh",
+   * Cancel button is itself a decision (e.g. the session-restore "Start fresh",
    * #5155) can treat a reflex Escape as "decide later" rather than as that
    * decision. Omit it to keep the default ESC/scrim → `onCancel` mapping.
    */

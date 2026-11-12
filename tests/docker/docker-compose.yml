@@ -318,7 +318,7 @@ services:
   # same image built with KBDINT_ONLY, so PAM asks the password as a
   # keyboard-interactive prompt. The live driver for a remote agent whose auth
   # method is "Keyboard-Interactive": its connect must raise the desktop's in-app
-  # SSH Authentication dialog and connect once it is answered.
+  # SSH authentication dialog and connect once it is answered.
   remote-agent-kbdint:
     build:
       context: ./remote-agent
