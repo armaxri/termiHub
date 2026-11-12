@@ -54,6 +54,7 @@ function resetStore() {
     terminalSpawnErrors: {},
     terminalSpawnErrorKinds: {},
     terminalAutoRetryCount: {},
+    terminalAutoRetryNextAt: {},
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
     terminalReattaching: {},
@@ -299,10 +300,44 @@ describe("TerminalConnectionOverlay — auto-retrying state", () => {
         />
       );
     });
-    expect(container.textContent).toContain("Attempt 4");
+    // The shared reconnect policy's label (#5397): retry 3 of 10, attempt running.
+    expect(container.textContent).toContain("Attempt 3 of 10");
+    expect(
+      container.querySelector("[data-testid='terminal-connection-elapsed']")?.textContent
+    ).toMatch(/^Attempt 3 of 10 · \d+s elapsed$/);
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
     expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
+  });
+
+  it("counts down the shared-policy backoff window before the next attempt (#5397)", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    try {
+      useAppStore.setState({
+        terminalAutoRetryCount: { [TAB_ID]: 2 },
+        terminalAutoRetryNextAt: { [TAB_ID]: Date.now() + 4_000 },
+        terminalSpawnErrors: { [TAB_ID]: "session limit reached" },
+      });
+      act(() => {
+        root.render(
+          <TerminalConnectionOverlay
+            tabId={TAB_ID}
+            panelId={PANEL_ID}
+            tabTitle="my-server"
+            isVisible={true}
+          />
+        );
+      });
+      const time = () =>
+        container.querySelector("[data-testid='terminal-connection-elapsed']")?.textContent;
+      expect(time()).toBe("Attempt 2 of 10 · next try in 4s");
+      // Why the wait: the previous attempt's failure.
+      expect(container.textContent).toContain("Last attempt: session limit reached");
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(time()).toBe("Attempt 2 of 10 · next try in 3s");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
