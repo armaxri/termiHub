@@ -10,6 +10,12 @@
 //! action; [`SessionManager::send_held_initial_command`] is that action. The
 //! command is still never typed on its own, and it is typed exactly once —
 //! by whichever comes first, the prompt or the user's confirmation.
+//!
+//! The typed shell-integration setup of such a shell waits for the same mark
+//! ([`GatedSetup`], #5512), and with it the initial command, which waits for
+//! the prompt mark the setup brings rather than for a timeout. The same notice
+//! then covers the setup: **Send now** types the setup, and then the initial
+//! command once the setup's prompt mark is seen.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -19,8 +25,10 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use tracing::info;
 
-use termihub_core::connection::PromptProbe;
-use termihub_core::session::prompt_ready::{wait_for_prompt_uncapped, PromptSignal, PROBE_CAP};
+use termihub_core::connection::{GatedSetup, PromptProbe};
+use termihub_core::session::prompt_ready::{
+    wait_for_prompt_uncapped, PromptSignal, PROBE_CAP, PROBE_POLL,
+};
 
 use super::{EventEmitter, SessionManager};
 
@@ -40,6 +48,10 @@ pub struct InitialCommandHeldEvent {
     /// when it went out (at the prompt or on **Send now**) or the session
     /// closed.
     pub held: bool,
+    /// The shell-integration setup (command marks) is held too (#5512).
+    pub setup: bool,
+    /// An initial command is held; `false` when only the setup is.
+    pub initial_command: bool,
 }
 
 /// What sent the initial command.
@@ -109,9 +121,66 @@ impl HeldInitialCommands {
                 emitter.emit_initial_command_held(&InitialCommandHeldEvent {
                     session_id: session_id.to_string(),
                     held: true,
+                    setup: false,
+                    initial_command: true,
                 });
                 release.notified().await;
             } => InitialCommandCue::SendNow,
+        }
+    }
+
+    /// Wait while `setup` is held for the line editor's mark (#5512), with
+    /// no cap, telling the tab after the notice delay. With an initial
+    /// command (`ready`, the OSC 133 prompt-start mark) the wait ends on the
+    /// prompt the setup brings; without one, once the setup was typed. Ends
+    /// on **Send now** too, whichever comes first; the caller then types the
+    /// setup ([`send_now_with_setup`](Self::send_now_with_setup)).
+    pub(super) async fn wait_for_setup_or_send_now<E: EventEmitter>(
+        &self,
+        session_id: &str,
+        emitter: &E,
+        ready: Option<&Notify>,
+        setup: &Arc<dyn GatedSetup>,
+    ) -> InitialCommandCue {
+        let release = Arc::new(Notify::new());
+        tokio::select! {
+            () = async {
+                match ready {
+                    Some(ready) => ready.notified().await,
+                    None => {
+                        while setup.is_pending() {
+                            tokio::time::sleep(PROBE_POLL).await;
+                        }
+                    }
+                }
+            } => InitialCommandCue::Prompt(PromptSignal::Mark),
+            () = async {
+                tokio::time::sleep(self.notice_after).await;
+                let pending = setup.is_pending();
+                info!(session_id, setup = pending, "Held: no prompt from the shell yet");
+                self.hold(session_id, release.clone());
+                emitter.emit_initial_command_held(&InitialCommandHeldEvent {
+                    session_id: session_id.to_string(),
+                    held: true,
+                    setup: pending,
+                    initial_command: ready.is_some(),
+                });
+                release.notified().await;
+            } => InitialCommandCue::SendNow,
+        }
+    }
+
+    /// **Send now** for a held setup: type it, then (with an initial
+    /// command, `ready`) wait for the prompt mark it brings, so the command
+    /// never lands in the middle of it. The user asked for both, so the
+    /// command follows after [`PROBE_CAP`] even if the mark never comes.
+    pub(super) async fn send_now_with_setup(setup: &Arc<dyn GatedSetup>, ready: Option<&Notify>) {
+        if !setup.is_pending() {
+            return;
+        }
+        setup.send_now();
+        if let Some(ready) = ready {
+            let _ = tokio::time::timeout(PROBE_CAP, ready.notified()).await;
         }
     }
 
@@ -129,6 +198,8 @@ impl HeldInitialCommands {
             emitter.emit_initial_command_held(&InitialCommandHeldEvent {
                 session_id: session_id.to_string(),
                 held: false,
+                setup: false,
+                initial_command: false,
             });
         }
     }
@@ -154,9 +225,10 @@ impl HeldInitialCommands {
 }
 
 impl SessionManager {
-    /// **Send now** for a held initial command (#5509): type it at once.
-    /// Returns whether a command was held; `false` (already sent, never held,
-    /// or the session is gone) sends nothing.
+    /// **Send now** for a held initial command (#5509) or setup (#5512):
+    /// type it at once (the setup first, then the command). Returns whether
+    /// anything was held; `false` (already sent, never held, or the session
+    /// is gone) sends nothing.
     pub fn send_held_initial_command(&self, session_id: &str) -> bool {
         let released = self.held_initial_commands.release(session_id);
         info!(session_id, released, "Send now for a held initial command");

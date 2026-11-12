@@ -1287,6 +1287,9 @@ impl SessionManager {
         // The hook-free prompt check for the initial command (#5029).
         let prompt_probe = connection.prompt_probe();
         let probe_uncapped = connection.prompt_probe_uncapped();
+        // A typed setup waiting for the line editor's mark without a cap
+        // (#5512): the initial command waits for the mark it brings.
+        let gated_setup = connection.gated_setup().filter(|s| s.is_pending());
 
         let info = SessionInfo {
             id: session_id.clone(),
@@ -1476,7 +1479,8 @@ impl SessionManager {
 
         // Send the initial command once the shell waits at its prompt: the
         // OSC 133 prompt-start mark, else the backend's hook-free probe, else
-        // a timeout (#4345, #5029).
+        // a timeout (#4345, #5029). Behind a gated setup only the mark it
+        // brings, or the user's Send now, sends it (#5512).
         if let (Some(cmd), Some(ready)) = (initial_command, prompt_ready) {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
@@ -1487,7 +1491,10 @@ impl SessionManager {
                 let cue = tokio::select! {
                     _ = injection_cancel.cancelled() => None,
                     cue = async {
-                        if probe_uncapped {
+                        if let Some(setup) = &gated_setup {
+                            held.wait_for_setup_or_send_now(&sid, &held_emitter, Some(&ready), setup)
+                                .await
+                        } else if probe_uncapped {
                             // Held past the former cap: the tab offers Send now (#5509).
                             held.wait_or_send_now(&sid, &held_emitter, &ready, prompt_probe.as_ref())
                                 .await
@@ -1500,8 +1507,29 @@ impl SessionManager {
                 };
                 held.settle(&sid, &held_emitter, cue);
                 let Some(cue) = cue else { return };
+                if let (InitialCommandCue::SendNow, Some(setup)) = (cue, &gated_setup) {
+                    tokio::select! {
+                        _ = injection_cancel.cancelled() => return,
+                        () = HeldInitialCommands::send_now_with_setup(setup, Some(&ready)) => {}
+                    }
+                }
                 info!(session_id = %sid, ?cue, "Sending the initial command");
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;
+            });
+        } else if let Some(setup) = gated_setup {
+            // No initial command: the setup alone is held (#5512).
+            let sid = session_id.clone();
+            let held = self.held_initial_commands.clone();
+            // Not app-owned (#3105): stopped with the session's reader.
+            tokio::spawn(async move {
+                let cue = tokio::select! {
+                    _ = injection_cancel.cancelled() => None,
+                    cue = held.wait_for_setup_or_send_now(&sid, &held_emitter, None, &setup) => Some(cue),
+                };
+                held.settle(&sid, &held_emitter, cue);
+                if cue == Some(InitialCommandCue::SendNow) {
+                    HeldInitialCommands::send_now_with_setup(&setup, None).await;
+                }
             });
         }
 
