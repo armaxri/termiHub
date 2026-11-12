@@ -38,12 +38,13 @@ _ALLOWLIST = sg.parse_fragments(
             "nodeid": r"test_terminal_command_marks\.py",
             "lanes": ["bulk-linux"],
             "why": "no zsh on the runner",
-            "max_skips": {"bulk-linux": 2},
+            # Also caps the zsh skips at 3 (#5176).
+            "max_skips": {"bulk-linux": 3},
         },
         "budget.json": {
             "_comment": "ignored",
             "why": "headroom",
-            "max_skips": {"bulk-linux": 1, "bulk-macos": 5},
+            "max_skips": {"bulk-linux": 0, "bulk-macos": 5},
         },
     }
 )
@@ -246,7 +247,6 @@ _WINDOWS_NO_DAEMON_SKIPS = [
     )
     for name, prefix in [
         ("ssh", "SSH container fixtures"),
-        ("ssh_jump", "SSH jump-host container fixtures"),
         ("telnet", "telnet container fixtures"),
         ("vnc", "VNC container fixtures"),
         ("ftp", "FTP container fixture"),
@@ -306,6 +306,75 @@ def test_bulk_macos_admits_the_rdp_container_fixture_without_docker():
     )
     verdict = sg.evaluate("bulk-macos", collected=500, skips=[skip], allowlist=sg.load_allowlist())
     assert verdict.ok, verdict.problems
+
+
+def test_the_windows_daemon_variant_of_the_container_skips_is_admitted_too():
+    """The same suites skip with this reason when the daemon is up but runs
+    Windows containers; both variants share one capped fragment per suite."""
+    skips = [
+        sg.Skip(
+            "tests/test_ssh.py::T::test_x",
+            "SSH container fixtures unavailable: the docker daemon runs windows containers; "
+            "the compose fixtures need a Linux container daemon",
+        ),
+        sg.Skip(
+            "tests/test_remote_agent_live.py::T::test_x",
+            "deployed-agent container fixture unavailable: the docker daemon runs windows "
+            "containers — the deployed-agent suites need Linux containers",
+        ),
+    ]
+    verdict = sg.evaluate("bulk-windows", collected=500, skips=skips, allowlist=sg.load_allowlist())
+    assert verdict.ok, verdict.problems
+
+
+def test_a_capped_fragment_fails_the_lane_when_one_more_suite_skips():
+    """#5176: a fragment with an entry and a budget caps its own reason, so a
+    newly skipping suite fails the lane even while the lane total has room."""
+    allowlist = sg.parse_fragments(
+        {
+            "ssh.json": {
+                "reason": r"^SSH container fixtures unavailable",
+                "lanes": ["bulk-macos"],
+                "why": "no Docker",
+                "max_skips": {"bulk-macos": 2},
+            },
+            "headroom.json": {"why": "headroom", "max_skips": {"bulk-macos": 50}},
+        }
+    )
+    skips = [
+        sg.Skip(f"tests/test_ssh.py::T::test_{i}", "SSH container fixtures unavailable: x")
+        for i in range(3)
+    ]
+    ok = sg.evaluate("bulk-macos", collected=100, skips=skips[:2], allowlist=allowlist)
+    assert ok.ok, ok.problems
+    over = sg.evaluate("bulk-macos", collected=100, skips=skips, allowlist=allowlist)
+    assert over.problems == ["3 skips match ssh.json, more than its max_skips of 2 for lane 'bulk-macos'"]
+
+
+def test_a_cap_applies_only_to_the_lanes_it_budgets():
+    allowlist = sg.parse_fragments(
+        {
+            "ssh.json": {
+                "reason": r"^SSH",
+                "lanes": ["bulk-macos", "bulk-windows"],
+                "why": "no Docker",
+                "max_skips": {"bulk-macos": 0},
+            },
+            "headroom.json": {"why": "headroom", "max_skips": {"bulk-windows": 5}},
+        }
+    )
+    skip = sg.Skip("tests/test_ssh.py::T::test_x", "SSH container fixtures unavailable: x")
+    assert sg.evaluate("bulk-windows", collected=10, skips=[skip], allowlist=allowlist).ok
+
+
+def test_no_container_runtime_fragment_is_left_uncapped():
+    """#5176: every macOS/Windows container-runtime reason budgets its own count."""
+    allowlist = sg.load_allowlist()
+    for lane in ("bulk-macos", "bulk-windows"):
+        capped = {entry.reason for _, entry, _ in allowlist.caps.get(lane, ())}
+        for entry in allowlist.for_lane(lane):
+            if re.search(r"container runtime|docker daemon|Docker/Podman", entry.reason):
+                assert entry.reason in capped, (lane, entry.reason)
 
 
 def test_bulk_windows_still_fails_an_unexpected_skip():
@@ -453,8 +522,10 @@ def test_the_committed_budgets_match_the_pre_fragment_max_skips():
     assert baseline["max_skips"] == {
         "bulk-linux": 60,
         "bulk-linux-arm64": 21,
-        "bulk-macos": 215,
-        "bulk-windows": 226,
+        # #5176 moved the container-fixture skips into capped per-suite fragments,
+        # #5175 the 13 xrdp-suite skips into 5175-no-linux-containers-rdp.json.
+        "bulk-macos": 57,
+        "bulk-windows": 55,
         "display-linux": 0,
         "display-linux-arm64": 0,
         "display-macos": 0,
@@ -519,7 +590,7 @@ def test_the_budget_problem_names_the_contributing_fragments():
         for i in range(4)
     ]
     verdict = _evaluate("bulk-linux", skips)
-    assert any("budget.json: 1" in p and "no-zsh.json: 2" in p for p in verdict.problems), (
+    assert any("budget.json: 0" in p and "no-zsh.json: 3" in p for p in verdict.problems), (
         verdict.problems
     )
 

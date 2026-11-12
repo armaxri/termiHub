@@ -1,0 +1,9 @@
+{
+  "reason": "^RDP container fixtures? unavailable: (no container runtime available|the docker daemon runs windows containers)",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "the xrdp suite (test_rdp.py) needs the rdp-server Linux container (xrdp + the FreeRDP NLA shadow). The hosted macOS runners ship no container runtime; on Windows the daemon runs only Windows containers or never comes up (#4842). Since #5175 builds the sidecar there, these 13 skips moved here from the baseline (where they counted as 'RDP sidecar not built'); the sidecar itself is graded on every OS by test_rdp_sidecar.py. The cap fails the lane when one more RDP suite skips for this reason.",
+  "max_skips": {
+    "bulk-macos": 13,
+    "bulk-windows": 13
+  }
+}

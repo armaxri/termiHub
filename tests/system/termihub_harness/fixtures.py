@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 from typing import Iterable, Mapping, Optional, Sequence, Union
 
-from . import dev_local
+from . import dev_local, native_ssh
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "tests" / "docker" / "docker-compose.yml"
@@ -106,6 +106,22 @@ SSH_KEY_PATH = REPO_ROOT / "tests" / "fixtures" / "ssh-keys" / "ed25519"
 #: Passphrase-protected private key (same container) and its passphrase.
 SSH_KEY_PASSPHRASE_PATH = REPO_ROOT / "tests" / "fixtures" / "ssh-keys" / "ed25519_passphrase"
 SSH_KEY_PASSPHRASE = "testpass123"
+
+#: The native sshd fixture, when the macOS/Windows lanes select it as the SSH
+#: target (``TERMIHUB_SYSTEM_SSH_TARGET=native``, #5176). The suites import the
+#: coordinates above as module constants, so they are re-pointed here, once, at
+#: import: both auth ports are the native sshd, its dedicated user and password
+#: log in, and the fixture keys are in its ``authorized_keys``. The jump-host
+#: bastion is the fixture's second sshd, and the target is the first one.
+NATIVE_SSH_TARGET = native_ssh.target_from_env()
+if NATIVE_SSH_TARGET is not None:
+    SSH_PASSWORD_PORT = SSH_KEYS_PORT = NATIVE_SSH_TARGET.port
+    SSH_USERNAME = NATIVE_SSH_TARGET.username
+    SSH_PASSWORD = NATIVE_SSH_TARGET.password
+    if NATIVE_SSH_TARGET.jump_port is not None:
+        SSH_BASTION_PORT = NATIVE_SSH_TARGET.jump_port
+        SSH_JUMP_TARGET_HOST = SSH_HOST
+        SSH_JUMP_TARGET_PORT = NATIVE_SSH_TARGET.port
 
 # ── Telnet fixture coordinates (mirror tests/docker/docker-compose.yml) ───────
 #: Host the published container ports are reachable on (shared with SSH).
@@ -1543,3 +1559,11 @@ class BastionControl(ContainerControl):
                 f"`exec` into {self.container} failed: {exc}"
             ) from exc
         return int(result.stdout.strip() or "0")
+
+
+def bastion_control():
+    """The jump-host bastion's controller: the native bastion sshd when the
+    native target is selected (#5176), else the Docker bastion container."""
+    if NATIVE_SSH_TARGET is not None:
+        return native_ssh.NativeBastionControl(NATIVE_SSH_TARGET)
+    return BastionControl()
