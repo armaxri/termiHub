@@ -4,8 +4,9 @@
  *
  * Checks (the id in brackets is what the baseline is keyed by):
  *
- * - [sentence-case] Button text, dialog titles, labels and menu items use
- *   sentence case.
+ * - [sentence-case] Button text, dialog titles, labels, menu items, accessible
+ *   names (`aria-label`), tooltips (`title`, `<Tooltip content>`) and `title:`
+ *   keys of error, toast and dialog descriptors use sentence case (#5493).
  *   A capitalized word after the first word of a sentence is flagged unless it
  *   is a known proper noun. Acronyms (SSH) and mixed-case names (termiHub,
  *   PowerShell, macOS) never match.
@@ -48,6 +49,7 @@ export const PROPER_NOUNS = new Set([
   "Alt",
   "Android",
   "Apple",
+  "Backspace",
   "Bash",
   "Bitwarden",
   "Chrome",
@@ -94,7 +96,7 @@ export const PROPER_NOUNS = new Set([
 ]);
 
 /** Multi-word names whose later words are capitalized ("VS Code"). */
-export const PROPER_PHRASES = ["VS Code"];
+export const PROPER_PHRASES = ["VS Code", "Basic Auth"];
 
 /** British spellings and their US form. */
 const BRITISH_SPELLINGS = [
@@ -245,7 +247,8 @@ function attribute(element, name) {
 }
 
 const isButtonElement = (name) => name === "Button" || name === "button";
-const isDialogElement = (name) => /(Modal|Dialog)$/.test(name);
+/** Tooltip wrappers whose `content` is the tooltip text (#5493). */
+const isTooltipElement = (name) => /^(Tooltip|\w+\.Tooltip)$/.test(name);
 const isDialogTitleElement = (name) => /^(Dialog|AlertDialog)\.Title$/.test(name);
 /**
  * Menu rows whose text is a label (#5491): our ui/Menu wrappers (`MenuItem`,
@@ -258,15 +261,21 @@ const isMenuItemElement = (name) =>
 
 /** Attributes whose text is button copy (a confirm or cancel label). */
 const BUTTON_LABEL_ATTR = /^(confirm|cancel|submit|primary|secondary|action|discard)Label$/;
-/** Attributes whose text is a label: sentence case + spelling. */
-const LABEL_ATTR = /^([a-z]+Label|label)$/;
+/**
+ * Attributes whose text is a label: sentence case + spelling. Accessible names
+ * (`aria-label`), tooltips (`title`, `tooltip`) and headings are labels too
+ * (#5493): screen readers announce them and they show on hover.
+ */
+const LABEL_ATTR = /^([a-z]+Label|label|aria-label|title|tooltip|heading)$/;
 /** Attributes whose text is shown to the user: spelling only. */
-const COPY_ATTR =
-  /^(title|placeholder|aria-label|description|content|message|hint|alt|tooltip|heading|subtitle|emptyMessage)$/;
-/** Object keys whose value is a label: sentence case + spelling. */
-const LABEL_KEY = /^(label|confirmLabel|cancelLabel)$/;
+const COPY_ATTR = /^(placeholder|description|content|message|hint|alt|subtitle|emptyMessage)$/;
+/**
+ * Object keys whose value is a label: sentence case + spelling. A `title:`
+ * key is a dialog, toast or error title (#5493).
+ */
+const LABEL_KEY = /^(label|confirmLabel|cancelLabel|title|tooltip)$/;
 /** Object keys whose value is copy: spelling only. */
-const COPY_KEY = /^(title|description|message|hint|placeholder|tooltip|detail)$/;
+const COPY_KEY = /^(description|message|hint|placeholder|detail)$/;
 
 /** Direct `<Button>` children of an element, flattening fragments and `&&`/ternaries. */
 function buttonChildren(children) {
@@ -497,7 +506,7 @@ export const copyStyleRule = {
         for (const text of texts) {
           if (BUTTON_LABEL_ATTR.test(name)) checkButtonText(node, text);
           else if (LABEL_ATTR.test(name)) checkLabel(node, text);
-          else if (name === "title" && isDialogElement(elName)) checkLabel(node, text);
+          else if (name === "content" && isTooltipElement(elName)) checkLabel(node, text);
           else if (COPY_ATTR.test(name)) checkSpelling(node, text);
         }
       },

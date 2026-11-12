@@ -56,31 +56,31 @@ const CATEGORY_PRESENTATION: Record<
   { title: string; message: string }
 > = {
   unreachable: {
-    title: "Could Not Reach Host",
+    title: "Could not reach host",
     message:
       "The host could not be reached. Check that the hostname, port, and network connection are correct.",
   },
   "auth-failure": {
-    title: "Authentication Failed",
+    title: "Authentication failed",
     message:
       "SSH authentication was rejected. Check your username, password, or SSH key configuration.",
   },
   "second-factor-failure": {
-    title: "Verification Failed",
+    title: "Verification failed",
     message: `${SECOND_FACTOR_FAILED_MESSAGE} Your saved password was kept.`,
   },
   "agent-missing": {
-    title: "Agent Not Installed",
+    title: "Agent not installed",
     message:
       "SSH connected successfully, but the termihub-agent binary could not be started on the remote host.",
   },
   "agent-outdated": {
-    title: "Agent Version Incompatible",
+    title: "Agent version incompatible",
     message:
       "The remote agent binary is not compatible with this version of termiHub. Please re-deploy the agent to update it.",
   },
   "already-connected": {
-    title: "Already Connected",
+    title: "Already connected",
     message:
       "This agent is already connected. You can force a reconnect to drop the existing connection and establish a new one.",
   },
@@ -116,7 +116,7 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
 
   return {
     category: "unknown",
-    title: "Connection Failed",
+    title: "Connection failed",
     message: raw,
     rawError: raw,
   };

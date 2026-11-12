@@ -35,7 +35,7 @@ export function sessionHistoryTitle(connectionType: string, config: ConnectionCo
       return str(inner, "distribution") ?? "WSL";
     case "local": {
       const shell = str(inner, "shell") ?? str(inner, "shellType");
-      if (!shell) return "Local Shell";
+      if (!shell) return "Local shell";
       if (shell.startsWith("wsl:")) return shell.slice(4);
       return getBasename(shell);
     }

@@ -161,3 +161,63 @@ describe("copy/copy-style on menu items (#5491)", () => {
     ],
   });
 });
+
+describe("copy/copy-style on accessible names, tooltips and titles (#5493)", () => {
+  RuleTester.describe = describe;
+  RuleTester.it = it;
+  const tester = new RuleTester({
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  });
+  const options = [{ baselinePath: null }];
+  const sentenceCase = (text) => ({ message: formatMessage("sentence-case", text) });
+
+  tester.run("copy-style", copyStyleRule, {
+    valid: [
+      { code: '<button aria-label="Split terminal right" />', options },
+      { code: '<Tooltip content="Match whole word"><b /></Tooltip>', options },
+      { code: '<span title="Open SSH session in termiHub" />', options },
+      { code: '<span title="Back to commands (Backspace)" />', options },
+      { code: '<input aria-label="Require authentication (HTTP Basic Auth)" />', options },
+      // A control the text refers to is quoted, like a user's name.
+      { code: '<p title="Enter a URL and click “Start”." />', options },
+      { code: 'const e = { title: "Authentication failed", message: "Bad Key" };', options },
+      // `content` is only tooltip text on a Tooltip.
+      { code: '<meta content="Not Copy At All" />', options },
+    ],
+    invalid: [
+      {
+        code: '<button aria-label="Split Terminal Right" />',
+        options,
+        errors: [sentenceCase("Split Terminal Right")],
+      },
+      {
+        code: '<button aria-label={on ? "Stop Broadcast" : "Broadcast input"} />',
+        options,
+        errors: [sentenceCase("Stop Broadcast")],
+      },
+      {
+        code: '<Tooltip content="Match Case"><b /></Tooltip>',
+        options,
+        errors: [sentenceCase("Match Case")],
+      },
+      {
+        code: '<span title="Go Up" />',
+        options,
+        errors: [sentenceCase("Go Up")],
+      },
+      {
+        code: '<Modal title="Unsaved Changes" />',
+        options,
+        errors: [sentenceCase("Unsaved Changes")],
+      },
+      {
+        code: 'const e = { title: "Could Not Reach Host", message: "x" };',
+        options,
+        errors: [sentenceCase("Could Not Reach Host")],
+      },
+    ],
+  });
+});
