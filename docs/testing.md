@@ -2830,8 +2830,8 @@ before #4092 a missing `cross` silently skipped every one of these suites there.
 Without the native sshd fixture the macOS and Windows legs skip them up front
 with "no container runtime" / "daemon runs windows containers": the hosted
 macOS runner has no Docker and the Windows runner's daemon runs Windows
-containers. With it, the plain suites run against a host agent instead (#5424,
-#5511), and the variants on macOS (#5444). Locally, any host with Docker or
+containers. With it, the plain suites run against a host agent instead
+(#5424, #5511), and the variants on macOS (#5444). Locally, any host with Docker or
 Podman and `cross` (`scripts/setup-agent-cross.sh`) runs them.
 
 The applier's tab close in the real-swap test is the `connection.close` that lets
