@@ -11,6 +11,8 @@ from termihub_harness import (
     egress,
     hang_guard,
     js_errors,
+    native_ssh,
+    rerun_budget,
     skip_guard,
     timing,
     tool_preflight,
@@ -29,6 +31,7 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    NATIVE_SSH_TARGET,
     RDP_HELPER_ENV,
     RDP_HOST,
     RDP_NLA_PORT,
@@ -148,6 +151,7 @@ def pytest_configure(config):
         config._termihub_js_gate = js_errors.Gate.from_env()
     except (js_errors.GateConfigError, ValueError) as exc:
         raise pytest.UsageError(f"JS error gate (#5364): {exc}") from exc
+    config._termihub_reruns = rerun_budget.Gate(skip_guard.lane_from_env())
     try:
         config._termihub_egress_gate = egress.Gate.from_env()
     except (egress.GateConfigError, ValueError) as exc:
@@ -179,6 +183,7 @@ def pytest_collection_modifyitems(config, items):
         )
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
+    native_ssh.apply_markers(items, NATIVE_SSH_TARGET)
 
 
 # ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
@@ -323,8 +328,8 @@ def _report_leaks(terminalreporter):
 # ── JS error gate (#5364) ────────────────────────────────────────────────────
 # Unhandled rejections and console errors in the app under test used to pass
 # unseen. Each test's new errors (bridge getJsErrors, app.log fallback) are
-# matched against js-error-allowlist.d/; TERMIHUB_JS_ERROR_GATE=fail fails the
-# test on a new one, annotate (default) only reports. See js_errors.py.
+# matched against js-error-allowlist.d/; TERMIHUB_JS_ERROR_GATE=fail (default)
+# fails the test on a new one, annotate only reports. See js_errors.py.
 _JS_ERRORS_KEY = "termihub_js_errors"
 
 
@@ -343,7 +348,7 @@ def _write_step_summary(title, lines):
 # ── Egress probe (#5388) ─────────────────────────────────────────────────────
 # The app under test must not reach the internet. Each test's new non-fixture
 # destinations (psutil, app PID) are matched against egress-allowlist.d/;
-# TERMIHUB_EGRESS_GATE=fail fails the test on a new one, annotate (default)
+# TERMIHUB_EGRESS_GATE=fail (default) fails the test on a new one, annotate
 # only reports. See egress.py.
 _EGRESS_KEY = "termihub_egress"
 
@@ -422,6 +427,7 @@ def pytest_runtest_logreport(report):
     config = _SESSION_CONFIG.get("config")
     if config is not None and not hasattr(config, "workerinput"):
         _skip_recorder(config).add_test_report(report)
+        config._termihub_reruns.recorder.add_report(report)
 
 
 def pytest_collectreport(report):
@@ -476,6 +482,29 @@ def _report_skips(terminalreporter, config):
             pass
 
 
+# ── Rerun report + rerun budget (#5167) ──────────────────────────────────────
+# A test that passed only on a --reruns retry is green; the controller lists
+# every retried test (artifact reruns/<lane>.json + step-summary table) and a
+# lane fails when its absorbed reruns exceed rerun-budget.d/. See rerun_budget.py.
+def _enforce_rerun_budget(session):
+    config = session.config
+    if hasattr(config, "workerinput"):
+        return
+    if (getattr(config, "_termihub_preflight", None) or {}).get("stop"):
+        return  # the preflight already failed the lane, before any test ran
+    verdict = config._termihub_reruns.finish()
+    if verdict is not None and not verdict.ok and session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def _report_reruns(terminalreporter, config):
+    gate = config._termihub_reruns
+    if gate.lane is None and not gate.recorder.tests:
+        return
+    terminalreporter.section("termihub pytest reruns (#5167)")
+    gate.report(ARTIFACT_ROOT, terminalreporter.write_line)
+
+
 # ── Per-operation timing summary (#3660) ─────────────────────────────────────
 _TIMING_KEY = "termihub_timing"
 
@@ -505,6 +534,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     _report_skips(terminalreporter, config)
     _report_leaks(terminalreporter)
     _report_js_errors(terminalreporter, config)
+    _report_reruns(terminalreporter, config)
     _report_egress(terminalreporter, config)
     if not timing.enabled():
         return
@@ -522,6 +552,7 @@ def pytest_sessionfinish(session, exitstatus):
     hang_guard.close()
     _LEAKS.extend(app_leaks.reap_leaks("the session"))
     _enforce_skip_guard(session)
+    _enforce_rerun_budget(session)
     config = session.config
     if hasattr(config, "workeroutput"):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()
@@ -622,7 +653,10 @@ def _ensure_ssh_services(services_and_ports):
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def ssh_fixtures():
-    """Password- and key-auth SSH containers (ports 2201 / 2203)."""
+    """Password- and key-auth SSH containers (ports 2201 / 2203), or the
+    native sshd on the macOS/Windows lanes (#5176, ``native_ssh``)."""
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     return _ensure_ssh_services(
         [(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
     )
@@ -637,6 +671,8 @@ def ssh_password_fixtures():
     with a key should ask for this instead, so they neither wait for that image
     to build nor skip when only *it* fails to.
     """
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     return _ensure_ssh_services([(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT)])
 
 
@@ -670,6 +706,8 @@ def ssh_bastion_fixtures():
     probed on the bastion's port alone; a connect through the bastion proves the
     target is up (MT-SSH-44, #3688).
     """
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     fixture = ComposeFixture()
     try:
         fixture.ensure(

@@ -539,6 +539,67 @@ always stale and would recompile that crate, and every crate above it, on each c
 invocation (#3909). To see why cargo rebuilds a crate, run the same command again with
 `CARGO_LOG=cargo::core::compiler::fingerprint=info`.
 
+#### Ignored tests: every `#[ignore]` is bound (#5177)
+
+An `#[ignore]` is a claim that someone runs the test somewhere. The reason string
+must say who, with at least one binding that
+[`scripts/internal/check-ignored-tests.mjs`](../scripts/internal/check-ignored-tests.mjs)
+verifies (in _Rust Code Quality_, _Workflow Lint_ and `scripts/check.sh`):
+
+| Binding                      | Meaning                                                                                                                                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lane: <workflow>.yml#<job>` | A CI job that runs it. The lane must be in the script's `LANES` registry, the job must exist, its run steps (or the script it calls) must pass `--ignored`, `--include-ignored` or `--run-ignored`, and must name the test or its `--test <binary>`. |
+| `manual: MT-<AREA>-<n>`      | A manual test defined in this document.                                                                                                                                                                                                              |
+| `quarantine: #<n>`           | The open issue tracking a quarantined test (for example a `cfg_attr(windows, ignore = …)` flake).                                                                                                                                                    |
+| `helper: <test fn>`          | Not a test: a child-process helper that the named test in the same file runs with `--ignored`.                                                                                                                                                       |
+
+Example: `#[ignore = "needs a public HTTPS host (#4818); lane: plugin-sandbox-nightly.yml#plugin-tls-handshake"]`.
+
+The check also keeps the inventory below in sync: a new ignored test needs a row, and a
+removed one must lose its row. To add a lane, add the job to `LANES` in the script.
+
+<!-- ignored-tests:begin -->
+
+| File                                                 | Test                                                          | Why it is ignored                                         | Binding                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `agent/tests/docker_deferred_update_integration.rs`  | `deferred_update_applies_on_last_docker_disconnect`           | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_basic`                                   | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_recovery`                                | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_resize`                                          | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_kill`                                            | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_monitoring_distroless_uses_docker_stats` | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_monitoring_proc_container_uses_proc`     | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_browses_inside_the_container`            | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/self_update_integration.rs`             | `active_docker_session_is_never_interrupted`                  | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/parent_death_guard.rs`                  | `parent_death_guard_helper`                                   | child-process helper                                      | helper of `killed_harness_parent_takes_its_agent_worker_down`                          |
+| `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_honours_docker_context`                   | live Docker daemon + Podman API socket (#1600)            | `integration-fixtures.yml#core-integration` (Podman step)                              |
+| `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_reaches_macos_podman_machine`             | macOS host with a running Podman machine (#1622)          | manual MT-RUST-01                                                                      |
+| `core/src/backends/local_shell.rs`                   | `windows_shell_start_keeps_profile_output_and_follows_cd`     | needs a profile that prints a marker (#5017)              | `integration-fixtures.yml#native-sshd` (Windows leg)                                   |
+| `core/src/backends/local_shell_side_effect_tests.rs` | `audit_injected_setup_side_effects`                           | audit report, asserts nothing (#5009)                     | `integration-fixtures.yml#native-sshd` (macOS/Linux legs)                              |
+| `core/src/session/serial_reconnect_tests.rs`         | `list_serial_ports_with_usb_identity`                         | lists the machine's real serial ports (#5394)             | manual MT-RUST-02                                                                      |
+| `core/tests/plugin_runner_installed.rs`              | `echo_backend_loads_in_its_lpac_from_a_per_machine_install`   | per-machine MSI install + standard user (#4252)           | `plugin-lpac-per-machine.yml#per-machine-lpac` (called by `release-windows-smoke.yml`) |
+| `core/tests/plugin_runner_perf.rs`                   | `out_of_process_echo_stays_within_the_budget`                 | performance gate, optimised build                         | `plugin-sandbox-nightly.yml#plugin-sandbox-perf`                                       |
+| `core/tests/plugin_runner_tls_handshake.rs`          | `a_sandboxed_plugin_verifies_tls_with_only_the_root_snapshot` | public HTTPS host (#4818)                                 | `plugin-sandbox-nightly.yml#plugin-tls-handshake`                                      |
+| `src-tauri/src/credential/hw_key/macos.rs`           | `unsigned_binary_probe_reports_missing_entitlement`           | real macOS keychain (#5163)                               | `code-quality.yml#tests` via `real-keychain-tests.sh` (macOS leg, per PR)              |
+| `src-tauri/src/credential/os_auth/macos.rs`          | `capability_preflight_does_not_prompt`                        | real macOS LocalAuthentication (#5163)                    | `code-quality.yml#tests` via `real-keychain-tests.sh` (macOS leg, per PR)              |
+| `src-tauri/src/session/agent_port_forward_tests.rs`  | `live_vnc_through_a_real_agent_binary`                        | real agent binary + VNC server, `TERMIHUB_LIVE_*` (#5169) | `integration-fixtures.yml#core-integration`                                            |
+| `src-tauri/src/utils/data_dir_lock_tests.rs`         | `lock_holder_child_process`                                   | child-process helper                                      | helper of `lock_is_released_when_the_holder_crashes`                                   |
+
+<!-- ignored-tests:end -->
+
+**MT-RUST-01 — Podman machine routing on macOS (#1622).** CI cannot run it: the macOS
+runners have no Podman machine. On a Mac, run `podman machine start`, then
+`cargo test -p termihub-core --features docker --lib -- --ignored --exact --nocapture backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine`.
+Expected: `test result: ok. 1 passed`, and the output names the machine's
+`…-api.sock` socket. Run it before a release that touches `core/src/backends/docker/`.
+
+**MT-RUST-02 — USB identity of real serial ports (#5394).** CI runners have no USB serial
+adapter. Plug one in, then run
+`cargo test -p termihub-core --features serial --lib -- --ignored --exact --nocapture session::serial_reconnect::tests::list_serial_ports_with_usb_identity`.
+It only enumerates; no port is opened. Expected: `test result: ok. 1 passed`, and the adapter's
+port is printed with its USB identity (not `no USB identity`). Run it before a release that
+touches the serial port identity reader.
+
 ## 4. Rendered Visual Checks (#4712)
 
 **What it does**: renders the real frontend in headless Chromium at several
@@ -873,6 +934,12 @@ a budget, or both:
 - Guided-manual tests gated off by conftest (`@pytest.mark.manual` plus a
   "guided-manual test" reason) need their entry but do not count against the
   budget (#4921).
+- A fragment with both an entry and a `max_skips` also **caps** its entry: more
+  counted skips matching it on a lane than its `max_skips` fails that lane, even
+  when the lane total has headroom (#5176). The macOS/Windows container-fixture
+  reasons (`5176-*.json`) are capped this way, so a suite that newly skips for
+  "no Linux containers" is caught. To admit one more such skip on purpose,
+  raise that fragment's cap in the same PR and say why.
 
 To admit a new skip, **add a new file** named `<issue>-<slug>.json`. If the
 reason is new, the fragment carries the entry and its `max_skips`. If the skip
@@ -882,6 +949,49 @@ conflict), and keep the `why` specific so two PRs never add byte-identical
 files. `baseline.json` holds the per-lane budgets migrated from the old file;
 lower a number there only when a lane measurably needs fewer skips. On a
 budget overrun the guard lists each contributing fragment and its count.
+
+### Rerun report and rerun budget (#5167)
+
+The bulk and OS-input lanes run `--reruns 2` (#2698), so a test that fails and
+then passes on a retry is green. The rerun count is the lane's flake metric, so
+the harness publishes it and puts a limit on it:
+
+- **Report.** Every run lists the tests that needed a rerun. For each test it
+  gives the node id, the attempts, the final outcome and the first failure's
+  message. The list goes to the terminal summary, to
+  `artifacts/reruns/<lane>.json` (uploaded with the lane's artifacts) and to a
+  "Pytest reruns" table in the GitHub step summary. A lane publishes all three
+  even when nothing reran. A local run without a lane prints the list only when
+  a test reran. The full first-attempt traceback stays in that test's
+  `attempt-1-failure.txt`.
+- **Budget.** A lane that names itself in `TERMIHUB_SKIP_GUARD_LANE` fails when
+  its **absorbed** reruns exceed its budget. A rerun is absorbed when the test
+  then passed. A test that still failed after every retry reds the lane anyway,
+  so its retries appear in the list but do not count. The failure message names
+  every test that passed only on a retry.
+
+Budgets are fragments in
+[`tests/system/rerun-budget.d/`](../tests/system/rerun-budget.d/), in the same
+style as the skip allowlist:
+
+```json
+{
+  "why": "known flake in the jump-host reconnect, tracked in #1234",
+  "max_reruns": { "bulk-linux": 1 }
+}
+```
+
+A lane's budget is the sum of `max_reruns` over every fragment that names it. A
+lane that no fragment names allows no absorbed rerun. The `--reruns 0` display
+lanes therefore need no fragment. Keys that start with `_` are comments. The
+seed fragments are `<lane>.json`, and each one records in `_seed` the nightly
+counts it came from. To raise a budget, **add** a fragment named
+`<issue>-<slug>.json`; do not edit a seed number. Fixing the race is always the
+better change.
+
+Tests that rerun on two consecutive nights get a tracking issue. The coordinator
+files it from the JSON artifact or the step summary. Nothing in the harness files
+issues. The machinery tests are in `tests/system/tests/test_rerun_budget.py`.
 
 ### JS error gate
 
@@ -901,17 +1011,22 @@ harness checks every test for JavaScript errors in the app under test (#5364):
 
 `TERMIHUB_JS_ERROR_GATE` picks what happens next:
 
-| Value                | Effect                                                  |
-| -------------------- | ------------------------------------------------------- |
-| `annotate` (default) | Report every unique error with its tests (see below)    |
-| `fail`               | Report, and fail a passing test with an uncovered error |
-| `off`                | No collection                                           |
+| Value            | Effect                                                  |
+| ---------------- | ------------------------------------------------------- |
+| `fail` (default) | Report, and fail a passing test with an uncovered error |
+| `annotate`       | Report every unique error with its tests (see below)    |
+| `off`            | No collection                                           |
 
 The report goes to the terminal summary, the GitHub step summary and
 `artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
 
-The default is `annotate` while the current offenders are moved into the
-allowlist with tracking issues. A later change switches the nightly to `fail`.
+The gate started in `annotate` mode and moved to `fail` (#5464) once the errors
+the annotate runs reported were fixed: the clipboard rejection (#5383), the
+closed-session rejections (#5384), and the uncaught `reading 'dimensions'`
+TypeError from scrolling an xterm that was disposed before the next frame.
+A new uncaught error now fails the test that caused it, and the failure names
+the error with its first stack frames. Set `TERMIHUB_JS_ERROR_GATE=annotate` to
+only report while you investigate.
 
 An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
 issue that tracks the error:
@@ -958,9 +1073,15 @@ off:
    effort, so a connection that opens and closes between two samples is
    missed.
 
-`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
-(the default), `fail` and `off`. The report goes to the terminal summary, the
-GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+`TERMIHUB_EGRESS_GATE` takes the same modes as the JS error gate: `fail`,
+`annotate` and `off`. Unlike that gate, it defaults to `fail`: a passing test
+whose app connects to a destination that is neither a fixture nor allowlisted
+fails, and the failure names the destination. The probe started in `annotate`
+mode. It moved to `fail` once two full System Integration (nightly) runs on
+Linux, macOS and Windows reported no destination other than the allowlisted
+plugin discovery suite. Set `TERMIHUB_EGRESS_GATE=annotate` to only report
+while you investigate a new destination. The report goes to the terminal
+summary, the GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
 a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
 entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
 a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
@@ -1074,8 +1195,8 @@ restarted and the file is byte-exact. Without `docker exec` access those tests
 print `SKIPPED:` (or fail under `TERMIHUB_REQUIRE_DOCKER=1`).
 
 The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
-lane (nightly, on `tests/docker`/`core/tests`/backend and core session-plumbing
-changes, and via the release candidate run on every release commit — see
+lane (nightly, post-merge on `develop` pushes touching `tests/docker`/`core/tests`/backend
+and core session-plumbing paths — never on a PR since #5461 — and via the release candidate run on every release commit — see
 [Release integration gate](contributing.md#release-integration-gate)) brings the
 fixtures up and runs these suites with `TERMIHUB_REQUIRE_DOCKER=1` (#2970), so a
 missing fixture reds the lane. It brings up every profile a gated test needs
@@ -1137,7 +1258,7 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
   runs [`scripts/internal/run-native-sshd-suites.sh`](../scripts/internal/run-native-sshd-suites.sh)
   (fixture up with `--scratch-home` → suite → sshd log on failure → teardown) on `ubuntu-latest`,
   `macos-latest` and `windows-latest`. It also runs on manual dispatch and in the
-  release gate, but not on the path-filtered PR runs. Its ubuntu leg then grades
+  release gate, but not on the path-filtered `develop` push runs. Its ubuntu leg then grades
   the hidden fish setup on a real **fish 3.x** login shell too:
   [`run-native-sshd-fish3-suite.sh`](../scripts/internal/run-native-sshd-fish3-suite.sh)
   installs Debian bookworm's fish 3.6 (checksum-pinned), makes it the fixture
@@ -1199,6 +1320,64 @@ The portable parts of those (key auth for every key type, exec/stdin, SFTP
 round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
 all three OSes.
 
+### System-test SSH suites on the native sshd (#5176)
+
+The app-driven SSH/SFTP suites in `tests/system/` run on macOS and Windows
+too, against the same fixture. The macOS/Windows integration lane in
+[`system-integration.yml`](../.github/workflows/system-integration.yml) brings it
+up with `--password-login` (and `--jump-host` on macOS) and sets
+`TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
+[`termihub_harness/native_ssh.py`](../tests/system/termihub_harness/native_ssh.py)
+takes over:
+
+- `SSH_PASSWORD_PORT`, `SSH_KEYS_PORT`, `SSH_USERNAME` and `SSH_PASSWORD` point
+  at the native sshd and its dedicated user. The repo's fixture keys are in its
+  `authorized_keys`. The jump-host bastion is the fixture's second sshd, and the
+  target is the first one.
+- `ssh_fixtures`, `ssh_password_fixtures` and `ssh_bastion_fixtures` return the
+  native target instead of starting containers.
+- Only suites marked `@pytest.mark.native_sshd` (optionally
+  `platforms=("darwin",)`) run. Every other test that asks for one of those
+  fixtures is skipped with `SSH suite not ported to the native sshd fixture
+(#5176)`, which has its own skip budget.
+- `test_ssh_tunnels.py` uses the native fixture on Windows as well (it already
+  did on macOS).
+
+**Password login.** An unprivileged sshd cannot check a password. On macOS,
+`--password-login` therefore creates a dedicated local user `termihubssh` with a
+random password and runs sshd as root with PAM (passwordless `sudo`, which the
+hosted runner has). That user's home is a fresh, throwaway home, and `down`
+deletes the user again. The flag refuses to run off CI unless
+`TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1` is set, so a developer machine never
+gets the account by accident. On Windows the fixture's own test user gets
+password auth. The password is exported as `TERMIHUB_NATIVE_SSHD_PASSWORD` and
+masked in the job log.
+
+**Jump host (macOS).** `--jump-host` starts a second sshd on the next free port
+with the same user and keys. `jump-stop` / `jump-start` drop and restore only
+that bastion. The jump-host reconnect suite counts gateway sessions as the
+bastion master's per-connection children.
+
+Which suites run where:
+
+| Suite(s)                                                                                                                                                                                                | macOS | Windows                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------- |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py` | yes   | yes                                                                                                  |
+| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output), SSH connect flash, SFTP VS Code handoff, jump host                                             | yes   | no: they type POSIX shell commands, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+
+**What stays on the Linux lane in `tests/system/`.** These suites still skip on
+macOS and Windows. Each skip reason has a capped fragment in
+`tests/system/skip-allowlist.d/` (`5176-*.json`), so one more suite skipping for
+that reason fails the lane:
+
+| Suite(s)                                                                                                                              | Why                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                     | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
+| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites     | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
+| `test_ssh.py` (server disconnect), `test_transfer_*`, `test_file_browser_drag_sftp_live.py`, `test_session_sftp_no_orphan_on_quit.py` | control or inspect the server through the container (`SshServerControl`, `/proc`), or use GNU `stat`                                                                 |
+| `test_remote_agent*.py`, `test_agent_*_live.py`, `test_file_browser_remote_to_local.py`                                               | deploy a Linux agent baked into the `remote-agent` containers                                                                                                        |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)                                               | the app's host-stats command reads Linux `/proc`, so a macOS or Windows host shows no stats                                                                          |
+
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 
 [`native_sshd_deploy_journey_tests.rs`](../src-tauri/src/terminal/agent_manager/native_sshd_deploy_journey_tests.rs)
@@ -1232,8 +1411,14 @@ Run it locally the same way:
 scripts/internal/run-native-sshd-deploy-journey.sh
 ```
 
-The line coverage of `agent_deploy.rs` is not measured in this lane (the job
-runs plain `cargo test`). The nightly coverage overlay reports it.
+This lane is not instrumented for coverage (the job runs plain `cargo test`).
+The line coverage of `agent_deploy.rs` comes from the per-PR unit tests
+instead. The in-process host tests (#5162) drive the install half.
+[`agent_deploy_prologue_tests.rs`](../src-tauri/src/terminal/agent_deploy_prologue_tests.rs)
+drives what runs before it in `deploy_agent`, `stage_agent_binary`,
+`update_agent` and `probe_remote_agent`. The fake host listens on a loopback
+port, so the production `connect_and_authenticate` dials it. A local file
+stands in for the `AppHandle`-bound binary resolution.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
@@ -1301,8 +1486,8 @@ serial)` job. Only the exactly-once replay count stays unix-only, because
 ConPTY repaints its screen.
 
 The [`windows-ssh-host.yml`](../.github/workflows/windows-ssh-host.yml) lane
-runs the recipe once per shell: nightly, on manual dispatch, and on PRs that
-touch the deploy/connect paths. Like the other nightly lanes, its schedule only starts
+runs the recipe once per shell: nightly, on manual dispatch, and post-merge on
+`develop` pushes that touch the deploy/connect paths (never on a PR, #5461). Like the other nightly lanes, its schedule only starts
 once the workflow is on `main`. Off Windows, or without
 `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL`, the tests print `SKIPPED:` and pass.
 
@@ -1341,8 +1526,8 @@ tests/docker/polkit/run.sh --clean  # also removes the image and volumes (CI)
 
 It runs in the `polkit-dbus` job of the
 [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) lane
-(nightly, and on PRs touching `tests/docker/**`, the polkit module or the policy
-file) — not in the per-PR lane, since it needs a system bus. The real desktop
+(nightly, and post-merge on `develop` pushes touching `tests/docker/**`, the polkit
+module or the policy file) — not in the per-PR lane, since it needs a system bus. The real desktop
 agents' dialogs (GNOME Shell, KDE) remain a manual check — MT-CRED-14 on the
 [release-gating checklist](#release-gating-manual-checklist).
 
@@ -1520,6 +1705,19 @@ that app and never tore off. The step has its own skip-guard lanes,
 `os-input-macos` and `os-input-windows`, and runs even when the bulk step
 failed. Linux needs no split: its bulk lane already runs one worker.
 
+Two guards keep the grades exclusive (#5467). An OS-input suite fails, never
+skips, in a session with more than one xdist worker. The develop nightly of
+2026-11-11 ran the suites that way: a scheduled run reads the default branch's
+copy of the workflow, and that copy did not have the split yet. Before every
+calibration, the harness also waits up to 10 s for any other termiHub process
+to exit. That covers an app leaked by an earlier session or a crashed worker,
+a parallel worker's app and an installed termiHub. If one is still alive, the
+grade fails with `ForeignAppAlive`, which names each PID, who launched it and
+whether that pytest process still runs. The guard only reads the process
+table: it never signals a foreign process or sends it input. The
+frontmost-window refusal (`GlobalInjectionRefused`) is unchanged, and it now
+also names a foreign termiHub that holds the foreground.
+
 A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
@@ -1541,8 +1739,11 @@ line, and its prompt showed the other app's `echo PERF05-40` (a PSReadLine
 history prediction). Since #5031 the OS-input suites run in
 their own `-n 1` step, and the grade passes there on Windows.
 
-On a missed calibration move, the Windows backend names the window under the
-pointer and lists every window on the desktop. That is how a DevTools window,
+On a missed calibration move, the Windows and macOS backends name the window
+under the pointer and list every window on the desktop. On macOS the active app
+is not what a pointer event hits: another process's always-on-top window can
+sit over the test window while the test app is active, so the macOS listing
+comes from `CGWindowList`, front to back (#5467). That is how a DevTools window,
 opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-16 (OS emoji picker) and the IME candidate window
@@ -1677,9 +1878,9 @@ Debian 12 on `windows-latest` with
 `scripts/internal/fetch-wsl-distro.sh` (resumable, retried, SHA-256 pinned,
 cached) and tries the install twice. If the runner cannot provide WSL, the run
 shows a `WSL environment failure` annotation instead of a test failure (#5317).
-The lane runs the tests under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
-PRs that touch the WSL backend, the shell-integration commands or the local
-transfer executor. It is not part of the per-PR lane: installing WSL plus a
+The lane runs the tests under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and
+post-merge on `develop` pushes that touch the WSL backend, the shell-integration commands or
+the local transfer executor. It never runs on a PR (#5461): installing WSL plus a
 Windows build of the core crate costs several minutes.
 
 Its second job, `wsl-spawn-grades` (#4962), drives the desktop app through the
@@ -1812,11 +2013,14 @@ component starts gating once its baseline is recorded.
   because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux` and, in
   the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
   the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
-  Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
-  tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
-  heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
-  live-agent-TCP tests keep their thread caps. The heartbeat names the failing job, so a
-  Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
+  Linux number never sees. Both jobs run `./scripts/coverage.sh --split`: the workspace Rust
+  tests in the per-PR legs' partition (`scripts/internal/ci-rust-tests.sh` bulk, heavy and
+  serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
+  live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
+  with the nextest `ci` profile (#5349, on Linux since #5428), so a hung test fails by name
+  within its per-test timeout and the `#[serial(key)]` test groups hold there too. The
+  heartbeat names the failing job, so a Windows-only drop reads
+  `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
   The release check grades the machine it runs on. A platform with no baseline fails with
   the command that records one.
 - **What `plugin-runner` counts:** its own unit tests (including the session server's
@@ -3204,7 +3408,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Sudo-elevated remote save over SFTP (#1328)** — Automated. src-tauri/src/files/sftp.rs::elevated_save_success_rewrites_root_file_over_real_ssh (ssh-sudo Docker fixture; owner/mode preserved, no /tmp/termihub-\* leftover); src-tauri/src/files/sftp.rs::elevated_save_wrong_password_leaves_file_untouched (IncorrectPassword, file unchanged, temp cleaned); src-tauri/src/session/manager/tests/log_secrecy.rs::sudo_password_of_an_elevated_save_stays_out_of_the_app_log (wrong + right sudo password never reach the trace file sink); src-tauri/src/session/manager/tests/log_secrecy.rs::sudo_password_stays_out_of_the_app_log_against_an_in_process_server (the same per PR against an in-process SSH/SFTP/sudo server; sudo got both passwords on stdin only); …
 - **Application log file (#1570)** — Automated + Tracked. src-tauri/src/utils/file_log.rs tests: writes_land_in_the_live_file, reopening_appends_rather_than_truncating, rotates_once_the_size_cap_is_exceeded, generations_shift_and_the_oldest_is_dropped, total_disk_usage_stays_bounded_under_sustained_writes, log_dir_matches_platform_convention, the_default_file_directive_clamps_russh, raising_file_detail_does_not_unclamp_russh, file_filter_keeps_info_and_drops_debug; .github/workflows/release-macos-smoke.yml + release-windows-smoke.yml (installed build writes termihub.log at the platform path and logs startup IPC); src-tauri/src/session/manager/tests/log_secrecy.rs (SSH password login, terminal echo and credential-store unlock never reach the file sink at trace, #4011); scripts/internal/release-smoke-app-lifecycle.sh / .ps1 in release-linux-smoke.yml (AppImage + .deb), release-macos-smoke.yml and release-windows-smoke.yml (banner with version + pid, no ANSI, 'termiHub exited cleanly' after a real close, none after kill -9, append across relaunch; on macOS the close clicks the app's Quit menu item through System Events, which the hosted image pre-grants to osascript, with a direct Quit AppleEvent as the fallback, #4076. That menu Quit is proven on the hosted macOS image every night: system-integration.yml's macOS leg runs the script with --quit-probe against the debug bundle (launch, Quit menu item by pid, clean-exit line); self-tested on a stub app, including both macOS Quit paths via a fake osascript, by check-script-headless.sh. Not yet run against a real release build: that needs the next Release or a maintainer dispatch of the smoke workflows)
 - **Local crash reports and Export Diagnostics (#3571, OBS-010)** — Automated. core/src/diagnostics/crash_report_tests.rs, core/src/diagnostics/redact_tests.rs; src-tauri/src/utils/diagnostics_bundle_tests.rs::plan_lists_readme_system_info_logs_and_crash_reports_only, plan_never_includes_session_transcripts, written_bundle_matches_the_plan_and_is_redacted; tests/system/tests/test_crash_report_notice.py (seeded report → notice → View Report, no second notice after a restart, Don't show again survives a restart); …; tests/system/tests/test_native_dialogs.py::test_export_diagnostics_writes_the_previewed_redacted_zip (integration lane, Save dialog stubbed, #4122: contents checked against the preview and for redaction)
-- **Release crash reports name termiHub functions (#4316, OBS2-001)** — Automated. scripts/internal/check-release-crash-symbols.sh builds tests/release-crash-probe with the real `[profile.release]`, forces a panic through `CrashDetails::capture` + `write_report`, and fails unless the report's backtrace has a resolved `termihub_core::` frame (agent.yml job "Release crash-report symbols", every PR touching the root Cargo.toml, core or the probe; fails with `strip = true`). core/src/diagnostics/crash_report_tests.rs::capture_reads_payload_location_and_backtrace_inside_a_hook, a_report_without_a_commit_says_unknown. Windows reports carry addresses only; they are symbolized with the shipped .pdb (#4504).
+- **Release crash reports name termiHub functions (#4316, OBS2-001)** — Automated. scripts/internal/check-release-crash-symbols.sh builds tests/release-crash-probe with the real `[profile.release]`, forces a panic through `CrashDetails::capture` + `write_report`, and fails unless the report's backtrace has a resolved `termihub_core::` frame (agent.yml job "Release crash-report symbols", every develop/main push touching the root Cargo.toml, core or the probe; fails with `strip = true`). core/src/diagnostics/crash_report_tests.rs::capture_reads_payload_location_and_backtrace_inside_a_hook, a_report_without_a_commit_says_unknown. Windows reports carry addresses only; they are symbolized with the shipped .pdb (#4504).
 - **Split debug symbols and offline crash symbolization (#4504)** — Automated. scripts/internal/check-release-crash-symbols.sh (same agent.yml job) rebuilds the probe the way release.yml does, runs the stripped binary away from its symbols, matches the report's `image:` build id and resolves the capture frame to crash_report.rs with addr2line/atos; on Windows (agent.yml job "Release crash-report symbols (Windows)", #4794) it runs the probe with its .pdb moved away, matches the `image:` PDB GUID/age and resolves the capture frame's RVA with llvm-symbolizer against the staged .pdb; core/src/diagnostics/module_image_tests.rs (Mach-O/ELF/PE header parsing, live image base and build id), crash_report_tests.rs::a_report_records_the_module_image_for_offline_symbolization; scripts/internal/debug-symbols.test.mjs (build-id extraction, stage/check); release.yml verifies every symbol file against the shipped binaries in build-app and check-release-assets (proved by a `release.yml` dry run), workflow-token-hygiene.test.mjs pins the publish path.
 - **Agent crashed since last connect notice (#3593, OBS-010)** — Automated. src-tauri/src/utils/agent_crash_notice_tests.rs, src-tauri/src/utils/agent_crash_reports_tests.rs; agent/src/handler/dispatch/tests/crash_reports_tests.rs; tests/system/tests/test_agent_crash_notice_live.py (deployed-agent container: baseline on first connect, a later crash announced on reconnect and viewed redacted, opt-out skips the check); …
 - **Connected agents' log files in Export Diagnostics (#4519)** — Automated. core/src/diagnostics/remote_log_tests.rs (family listing, caps, name validation, symlinks, redaction, tail cut on a line boundary); agent/src/handler/dispatch/tests/agent_logs_tests.rs (init gate, listing, redacted and capped reads, refused names); src-tauri/src/utils/agent_logs_tests.rs (unsupported agents, untrusted names, per-file and total caps, re-redaction in the written bundle); src/components/Diagnostics/DiagnosticsExportDialog.test.tsx 'remote agent log files (#4519)'.

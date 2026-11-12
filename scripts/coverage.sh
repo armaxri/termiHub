@@ -47,8 +47,11 @@
 #               (scripts/internal/ci-rust-tests.sh bulk, heavy, serial) instead
 #               of one `cargo llvm-cov` pass: the contention-sensitive suites
 #               with capped threads and the live-agent-TCP tests one at a time.
-#               The Windows coverage leg uses it (#5160), for the same runner
-#               starvation that made the Windows test leg split (#2495, #3615).
+#               The phases run under `cargo llvm-cov nextest` (#5349), so a
+#               hung test fails by name within its per-test timeout. Both CI
+#               coverage jobs use it: Windows (#5160), for the same runner
+#               starvation that made the Windows test leg split (#2495, #3615),
+#               and Linux (#5428), for the nextest timeouts and test groups.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"

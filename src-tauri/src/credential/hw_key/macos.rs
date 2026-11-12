@@ -286,7 +286,7 @@ mod tests {
     /// Ignored by default because it talks to the real keychain; run with
     /// `--ignored` on a Mac.
     #[test]
-    #[ignore = "talks to the real macOS keychain"]
+    #[ignore = "talks to the real macOS keychain; lane: code-quality.yml#tests"]
     fn unsigned_binary_probe_reports_missing_entitlement() {
         assert!(matches!(
             MacKeychainKey.probe(),

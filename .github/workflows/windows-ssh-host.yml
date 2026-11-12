@@ -35,8 +35,10 @@ name: Windows SSH Host
 # and tears everything down. The recipe lives in the script, so the graded
 # tree's recipe runs whatever copy of this file fired.
 #
-# Not on every PR (a Windows build of the desktop crate costs several minutes):
-# nightly + manual + PRs that touch the deploy/connect paths under test.
+# Never on a PR (#5461, maintainer decision 2026-11-11: a PR gates on Build +
+# Code Quality only; a Windows build of the desktop crate costs several
+# minutes): nightly + manual + post-merge pushes to develop that touch the
+# deploy/connect paths under test. A develop failure is fixed forward.
 
 on:
   schedule:
@@ -51,7 +53,9 @@ on:
     # scripts/internal/scheduled-lanes.mjs.
     - cron: "17 4 * * 3"
   workflow_dispatch:
-  pull_request:
+  # Post-merge (#5461; a pull_request trigger with the same paths before).
+  push:
+    branches: [develop]
     # Every source the suite exercises (#4618): the desktop deploy/connect
     # code, the core SSH backend (the shell-integration terminal of #4143 runs
     # remote_shell.rs / connector.rs / mod.rs and session/shell.rs's setup
@@ -81,8 +85,11 @@ on:
       - "scripts/internal/native-sshd-fixture.*"
       - ".github/workflows/windows-ssh-host.yml"
 
+# Cancel superseded runs (#4119): a newer push to develop cancels the in-flight
+# push run for the older commit. The event name is part of the group, so a push
+# can never cancel the nightly dispatch (scheduled-dispatch.yml) on develop.
 concurrency:
-  group: windows-ssh-host-${{ github.ref }}
+  group: windows-ssh-host-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010): checkout + build + test only.

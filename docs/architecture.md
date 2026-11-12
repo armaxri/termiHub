@@ -949,6 +949,7 @@ windows.
 | SSH tunnels                | `src-tauri/src/tunnel/tunnel_manager.rs`              | shared                                  |
 | Graphical (VNC/RDP)        | `src-tauri/src/session/graphical_supervisor.rs`       | shared                                  |
 | Monitoring (desktop/agent) | `core/src/monitoring/status.rs` (`BackoffSchedule`)   | shared                                  |
+| Agent tab first connect    | `src/components/Terminal/Terminal.tsx` (create loop)  | shared                                  |
 | FTP file operation         | `core/src/backends/ftp/reconnect.rs`                  | **override**: 3 retries, 100 ms → 1.6 s |
 
 **The one override.** The FTP file browser does not run a session reconnect loop; it
@@ -978,10 +979,17 @@ attempt. Living in the backend redrive, this survived the client reconnect engin
 removal (#2205). Before each **serial** attempt the redrive asks
 `core::session::serial_reconnect::resolve_reconnect_port` whether the configured device
 is back: it matches the configured port name and, where the platform reports one (Linux
-sysfs), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
+sysfs, the macOS IOKit registry, the Windows device tree, #5394), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
 an unidentifiable device or a different device on the name is a failed attempt with a
 reason, so the shared policy backs off and gives up; nothing is opened. A device with a
 serial number is followed to a new name only when exactly one port carries its identity.
+
+**Why the last attempt failed (#5395).** While the tab loop waits, the
+`session-lifecycle` entry carries the last failed attempt's reason as
+`lastAttemptError` (for example "A different device (USB 1a86:7523) is on
+/dev/ttyUSB0. It was not opened."). The reconnect strip shows it under the countdown
+and announces it only when it changes. On give-up it moves to `error`; success, Cancel
+and every other resolution clear it.
 
 ```mermaid
 flowchart TD
@@ -994,6 +1002,38 @@ flowchart TD
     W -->|Cancel| X[Disconnected]
 ```
 
+An **agent-hosted serial** tab (#5396) cannot use that redrive: the port is on the agent
+host. The agent's session daemon wraps the serial backend in `SerialReopen`
+(`agent/src/daemon/serial_reopen.rs`) when the connection's Auto-Reconnect is on. When
+the port drops, the session stays the same session: the wrapper runs the shared policy
+itself, asks the same resolver with the agent host's port probe before every attempt,
+and reports each step (`waiting`, `connecting`, `reconnected`, `gaveUp`) to the worker
+(`MSG_RECONNECT`) and on to the desktop as a `connection.reconnect` notification. The
+desktop folds the steps onto the tab's region entry, so the reconnect strip shows them;
+the timer arms no desktop redrive for such a tab, and Stop closes the agent session. A
+give-up ends the session, as a drop did before. An older agent never sends the steps.
+
+```mermaid
+sequenceDiagram
+    participant P as Serial port (agent host)
+    participant D as Session daemon (SerialReopen)
+    participant W as Agent worker
+    participant T as Desktop store / strip
+    P-->>D: output ends (adapter unplugged)
+    D->>W: MSG_RECONNECT waiting(n, delay, reason)
+    W->>T: connection.reconnect → Reconnecting, attempt n
+    D->>D: resolve_reconnect_port (agent probe)
+    alt original device back
+        D->>P: reopen with saved settings
+        D->>W: MSG_RECONNECT reconnected
+        W->>T: Connected, output continues
+    else limit reached
+        D->>W: MSG_RECONNECT gaveUp(reason), then exit
+        W->>T: Failed with reason
+    end
+    T->>D: Stop → connection.close (cancels the loop)
+```
+
 **Agent tabs: no compounding.** An agent-hosted tab has two loops that could look
 nested. A transient break of the agent's SSH transport is owned by the agent's
 **in-task** loop (10 attempts); while it runs, the hosted tabs show "reconnecting"
@@ -1003,6 +1043,15 @@ runs for a tab whose session dropped while the transport was up or gone; each of
 attempts makes at most one cold transport connect, and is a no-op when the in-task loop
 is already reconnecting. So no single drop runs more than one policy's worth of
 network re-dials.
+
+**Agent tabs: the first connect (#5397).** Before an agent tab has a session there
+is nothing for the backend redrive to re-attach, so the tab's own create loop in
+`Terminal.tsx` retries a failed session start while the agent is up. It follows the
+shared policy (10 retries, the same jittered windows) and the connecting overlay shows
+"Attempt n of 10 · next try in Ns" with the last failure. Before #5397 it made 5
+retries after a fixed 5.5 s each. This loop is the client's create path, not the
+reconnect engine that #2205 removed: a dropped agent tab is still re-established by the
+backend.
 
 The give-up window bounds the _waiting_. The attempts themselves are bounded by each
 transport's own timeout (for example the agent's 45 s SSH connect timeout, or the
@@ -1266,12 +1315,12 @@ never build scripts or proc macros; the agent's `cargo test` builds stay dynamic
 About 28 GitHub Actions workflows live in `.github/workflows/`. They form three lanes; the
 authoritative, per-job description is [Contributing → CI lanes](contributing.md#ci-lanes-what-a-green-pr-proves-and-what-it-does-not).
 
-| Lane                    | Trigger                                                                 | Main workflows                                                                                                                                                        |
-| ----------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-PR (lean)**       | PR to `develop` or `main`                                               | `code-quality.yml`, `build.yml`, `agent.yml`, `security-audit.yml`, plugin and vendored-fork checks — jobs gated on the changed areas                                 |
-| **Post-merge (full)**   | Push to `develop` or `main`                                             | `code-quality.yml`, `agent.yml`, `dev-build.yml` and the other push-triggered checks run the full matrix; `coverage.yml` runs on `main`                               |
-| **Nightly / scheduled** | Schedule (crons in `scripts/internal/scheduled-lanes.mjs`) and dispatch | `scheduled-dispatch.yml` fans out `system-integration.yml`, `integration-fixtures.yml`, `windows-ssh-host.yml`, `wsl-live.yml`, `plugin-sandbox-nightly.yml` and more |
-| **Release**             | Tag `v*.*.*` (`release.yml`) and manual RC dispatch                     | `release.yml`, `release-candidate.yml` and the per-platform `release-*-smoke.yml` workflows                                                                           |
+| Lane                    | Trigger                                                                 | Main workflows                                                                                                                                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Per-PR (lean)**       | PR to `develop` or `main`                                               | `code-quality.yml` and `build.yml` (plus the small path-filtered `security-audit.yml`, plugin and vendored-fork checks) — jobs gated on the changed areas (#5461)                                                                                      |
+| **Post-merge (full)**   | Push to `develop` or `main`                                             | `code-quality.yml`, `agent.yml`, `dev-build.yml` and the other push-triggered checks run the full matrix; path-filtered `develop` pushes also run `integration-fixtures.yml`, `wsl-live.yml` and `windows-ssh-host.yml`; `coverage.yml` runs on `main` |
+| **Nightly / scheduled** | Schedule (crons in `scripts/internal/scheduled-lanes.mjs`) and dispatch | `scheduled-dispatch.yml` fans out `system-integration.yml`, `integration-fixtures.yml`, `windows-ssh-host.yml`, `wsl-live.yml`, `plugin-sandbox-nightly.yml` and more                                                                                  |
+| **Release**             | Tag `v*.*.*` (`release.yml`) and manual RC dispatch                     | `release.yml`, `release-candidate.yml` and the per-platform `release-*-smoke.yml` workflows                                                                                                                                                            |
 
 See [Releasing](contributing.md#release-process) for the full release process.
 
@@ -1590,6 +1639,29 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
 - **None** — Passwords are prompted at connection time and never persisted (the default for new installations).
 
 Credential storage is managed through the Security section in Settings.
+
+#### First-use storage chooser
+
+A new installation starts in **None** mode without a storage choice. The first attempt to save
+a secret — ticking "Save password" in the connect-time prompt or in credential re-entry, turning
+on the editor's "Save credentials" toggle, or "Save password to credential store" when saving a
+recent session as a connection — opens a one-time chooser, "Where should termiHub keep
+passwords?", with **OS Keychain** pre-selected, **Master Password** and **Don't save
+passwords** (`src/components/CredentialStorage/CredentialStorageChooser.tsx`).
+
+- Choosing a store switches to it (`switch_credential_store`); Master Password first asks for the
+  new master password with the same setup fields as Settings → Security. Only then does the
+  waiting save write the secret, through its normal path — nothing is written before the choice
+  is confirmed.
+- "Don't save passwords" keeps None mode and records the choice
+  (`mark_credential_storage_chosen`).
+- Cancel records nothing and saves nothing; the next save asks again.
+
+The choice is persisted as the backend-owned `credentialStorageChosen` setting and reported as
+`storageChosen` on the credential-store status. Any store switch records it, and an install with
+a persisted storage mode or an active store counts as chosen (`storage_choice_made`), so existing
+users are never asked. The frontend's whole-document settings save never changes the storage
+mode or the choice. Both stay changeable under Settings → Security → Credential Storage.
 
 #### Credential vault export / import
 

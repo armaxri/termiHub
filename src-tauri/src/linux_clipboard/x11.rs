@@ -53,6 +53,38 @@ struct Atoms {
     mate: Atom,
 }
 
+impl Atoms {
+    /// The `TARGETS` answer: every target this owner converts to.
+    fn advertised(&self) -> [Atom; 4] {
+        [self.targets, self.uri_list, self.gnome, self.mate]
+    }
+}
+
+/// How the owner answers a conversion request for one target atom.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Answer {
+    /// `TARGETS`: list the advertised targets (no fetch).
+    Targets,
+    /// A file target: fetch the promised files and render this payload.
+    Render(Target),
+    /// A target we never advertised: refuse the conversion (no fetch).
+    Refuse,
+}
+
+/// Map a requested target atom to the owner's answer. Pure over the interned
+/// atoms, so the negotiation is unit-testable without an X server.
+fn classify_target(atoms: &Atoms, target: Atom) -> Answer {
+    if target == atoms.targets {
+        Answer::Targets
+    } else if target == atoms.uri_list {
+        Answer::Render(Target::UriList)
+    } else if target == atoms.gnome || target == atoms.mate {
+        Answer::Render(Target::GnomeCopiedFiles)
+    } else {
+        Answer::Refuse
+    }
+}
+
 /// The long-lived X11 selection owner: connection, hidden owner window, atoms, and
 /// the current fetch context. Shared (via `Arc`) between the caller thread (which
 /// acquires ownership and swaps the context) and the owner thread (which serves
@@ -239,27 +271,21 @@ fn serve_request(
         req.property
     };
 
-    if req.target == atoms.targets {
-        // Advertise what we can convert to.
-        let targets = [atoms.targets, atoms.uri_list, atoms.gnome, atoms.mate];
-        conn.change_property32(
-            PropMode::REPLACE,
-            req.requestor,
-            property,
-            AtomEnum::ATOM,
-            &targets,
-        )?;
-        return send_notify(conn, req, property);
-    }
-
-    // Map the requested target atom to a served payload format, refusing anything
-    // we never advertised (e.g. a text/plain probe).
-    let target = if req.target == atoms.uri_list {
-        Target::UriList
-    } else if req.target == atoms.gnome || req.target == atoms.mate {
-        Target::GnomeCopiedFiles
-    } else {
-        return refuse(conn, req);
+    let target = match classify_target(atoms, req.target) {
+        Answer::Targets => {
+            // Advertise what we can convert to.
+            conn.change_property32(
+                PropMode::REPLACE,
+                req.requestor,
+                property,
+                AtomEnum::ATOM,
+                &atoms.advertised(),
+            )?;
+            return send_notify(conn, req, property);
+        }
+        Answer::Render(target) => target,
+        // Refuse anything we never advertised (e.g. a text/plain probe).
+        Answer::Refuse => return refuse(conn, req),
     };
 
     // Snapshot the context out of the lock, then fetch without holding it.
@@ -432,6 +458,55 @@ mod tests {
 
     fn calls_of(calls: &Arc<Mutex<Vec<u32>>>) -> Vec<u32> {
         calls.lock().unwrap().clone()
+    }
+
+    /// Distinct fake atom values, as an X server would intern them.
+    fn fake_atoms() -> Atoms {
+        Atoms {
+            clipboard: 100,
+            targets: 101,
+            uri_list: 102,
+            gnome: 103,
+            mate: 104,
+        }
+    }
+
+    #[test]
+    fn classify_target_answers_targets_and_the_file_targets() {
+        let atoms = fake_atoms();
+        assert_eq!(classify_target(&atoms, 101), Answer::Targets);
+        assert_eq!(
+            classify_target(&atoms, 102),
+            Answer::Render(Target::UriList)
+        );
+        assert_eq!(
+            classify_target(&atoms, 103),
+            Answer::Render(Target::GnomeCopiedFiles)
+        );
+        assert_eq!(
+            classify_target(&atoms, 104),
+            Answer::Render(Target::GnomeCopiedFiles)
+        );
+    }
+
+    #[test]
+    fn classify_target_refuses_unadvertised_targets() {
+        let atoms = fake_atoms();
+        // The selection atom itself, `None`, and any other interned atom (e.g. a
+        // `UTF8_STRING` / `text/plain` probe) are refused, never served empty.
+        for target in [100, NONE, 31, 999] {
+            assert_eq!(classify_target(&atoms, target), Answer::Refuse, "{target}");
+        }
+    }
+
+    #[test]
+    fn advertised_targets_are_exactly_the_served_ones() {
+        let atoms = fake_atoms();
+        let advertised = atoms.advertised();
+        assert_eq!(advertised, [101, 102, 103, 104]);
+        for atom in advertised {
+            assert_ne!(classify_target(&atoms, atom), Answer::Refuse);
+        }
     }
 
     #[test]

@@ -29,11 +29,17 @@ from termihub_harness import egress as eg
 
 @pytest.mark.parametrize(
     "value, mode",
-    [("", "annotate"), ("fail", "fail"), (" FAIL ", "fail"), ("off", "off")],
+    [("", "fail"), ("fail", "fail"), (" FAIL ", "fail"), ("annotate", "annotate"), ("off", "off")],
 )
-def test_gate_mode_reads_the_env_and_defaults_to_annotate(value, mode):
+def test_gate_mode_reads_the_env_and_defaults_to_fail(value, mode):
     assert eg.gate_mode({eg.GATE_ENV: value}) == mode
-    assert eg.gate_mode({}) == "annotate"
+    assert eg.gate_mode({}) == "fail"
+
+
+def test_gate_from_an_empty_env_fails_on_egress():
+    """No TERMIHUB_EGRESS_GATE (a plain nightly or local run) means fail mode."""
+    assert eg.DEFAULT_MODE == "fail"
+    assert eg.Gate.from_env({}).mode == "fail"
 
 
 def test_gate_mode_rejects_an_unknown_value():
@@ -283,52 +289,49 @@ def test_summary_lists_each_destination_once_with_its_tests(tmp_path):
 
 # ── end to end through conftest.py ───────────────────────────────────────────
 
+_PROBED_SUITE = textwrap.dedent("""
+    import os
+    import socket
+    import time
+    from types import SimpleNamespace
 
-@pytest.mark.parametrize(
-    "mode, expected_rc, summary",
-    [("fail", 1, True), ("annotate", 0, True), ("off", 0, False)],
-)
-def test_the_conftest_hook_probes_a_test_whose_app_connects_out(
-    tmp_path, mode, expected_rc, summary
-):
-    """A real pytest session with this conftest: a test whose (fake) app is the
-    session's own process connects a socket to a documentation address. It fails
-    only in ``fail`` mode, and is reported unless the probe is off."""
+    class TestSuite:
+        app = SimpleNamespace(
+            pid=os.getpid(), log_path=os.devnull, read_log=lambda: ""
+        )
+        driver = None
+        sock = None
+
+        def test_clean(self):
+            pass
+
+        def test_connects_out(self):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.connect(("192.0.2.77", 9))
+            TestSuite.sock = sock  # held open until the session ends
+            time.sleep(0.5)
+    """)
+
+
+def _run_probed_session(tmp_path, env_overrides, file_name="test_probed.py", rootdir=None):
+    """Run :data:`_PROBED_SUITE` through the real conftest; ``(rc, output)``.
+
+    A ``None`` value in ``env_overrides`` leaves that variable unset. ``rootdir``
+    (default: the harness) decides the node ids; ``tmp_path`` puts the file name
+    in them."""
     harness_root = Path(eg.__file__).resolve().parents[1]
-    test_file = tmp_path / "test_probed.py"
-    test_file.write_text(
-        textwrap.dedent("""
-            import os
-            import socket
-            import time
-            from types import SimpleNamespace
-
-            class TestSuite:
-                app = SimpleNamespace(
-                    pid=os.getpid(), log_path=os.devnull, read_log=lambda: ""
-                )
-                driver = None
-                sock = None
-
-                def test_clean(self):
-                    pass
-
-                def test_connects_out(self):
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    sock.connect(("192.0.2.77", 9))
-                    TestSuite.sock = sock  # held open until the session ends
-                    time.sleep(0.5)
-            """),
-        encoding="utf-8",
-    )
-    env = {**os.environ, eg.GATE_ENV: mode}
+    test_file = tmp_path / file_name
+    test_file.write_text(_PROBED_SUITE, encoding="utf-8")
+    env = dict(os.environ)
     for name in (
         "TERMIHUB_SKIP_GUARD_LANE",
         "GITHUB_STEP_SUMMARY",
         "PYTEST_XDIST_WORKER",
+        eg.GATE_ENV,
         eg.ALLOW_ENV,
     ):
         env.pop(name, None)
+    env.update({k: v for k, v in env_overrides.items() if v is not None})
     result = subprocess.run(
         [
             sys.executable,
@@ -339,7 +342,7 @@ def test_the_conftest_hook_probes_a_test_whose_app_connects_out(
             "-p",
             "conftest",
             "--rootdir",
-            str(harness_root),
+            str(rootdir or harness_root),
             "-c",
             str(harness_root / "pyproject.toml"),
             str(test_file),
@@ -350,8 +353,44 @@ def test_the_conftest_hook_probes_a_test_whose_app_connects_out(
         text=True,
         timeout=120,
     )
-    out = result.stdout + result.stderr
-    assert result.returncode == expected_rc, out
+    return result.returncode, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "mode, expected_rc, summary",
+    [("fail", 1, True), (None, 1, True), ("annotate", 0, True), ("off", 0, False)],
+)
+def test_the_conftest_hook_probes_a_test_whose_app_connects_out(
+    tmp_path, mode, expected_rc, summary
+):
+    """A real pytest session with this conftest: a test whose (fake) app is the
+    session's own process connects a socket to a documentation address. It fails
+    in ``fail`` mode, which is also the mode when the variable is unset, and is
+    reported unless the probe is off."""
+    rc, out = _run_probed_session(tmp_path, {eg.GATE_ENV: mode})
+    assert rc == expected_rc, out
     assert ("192.0.2.77:9" in out) is summary, out
-    if mode == "fail":
+    if expected_rc:
         assert "1 failed, 1 passed" in out, out
+        assert "[NEW] 192.0.2.77:9" in out and "Egress probe" in out, out
+
+
+def test_fail_mode_passes_a_destination_the_env_allowlist_covers(tmp_path):
+    """``TERMIHUB_EGRESS_ALLOW`` makes a destination a fixture: no failure, no report."""
+    rc, out = _run_probed_session(tmp_path, {eg.GATE_ENV: None, eg.ALLOW_ENV: "192.0.2.77:9"})
+    assert rc == 0, out
+    assert "2 passed" in out and "192.0.2.77:9" not in out, out
+
+
+def test_fail_mode_passes_a_test_the_committed_allowlist_covers(tmp_path):
+    """The committed ``4961`` fragment scopes by node id: a suite file of that name
+    may connect out under the default (fail) mode and is reported as allowlisted."""
+    rc, out = _run_probed_session(
+        tmp_path,
+        {eg.GATE_ENV: None},
+        file_name="test_plugin_discovery_https.py",
+        rootdir=tmp_path,
+    )
+    assert rc == 0, out
+    assert "2 passed" in out, out
+    assert "[allowlisted #4961] 192.0.2.77:9" in out and "[NEW]" not in out, out
