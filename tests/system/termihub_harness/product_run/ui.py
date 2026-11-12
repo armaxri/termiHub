@@ -94,6 +94,11 @@ def make_profile_home(home: Path) -> Path:
     return home
 
 
+def failed_steps_of(instance: object) -> list[str]:
+    """The steps a product-run test instance recorded as failed (for conftest)."""
+    return list(getattr(instance, "_failed_steps", None) or [])
+
+
 class ProductRunUi(HarnessMixin):
     """Live step recording, screenshots and human steps for a product-run suite."""
 
@@ -125,10 +130,10 @@ class ProductRunUi(HarnessMixin):
 
     @pytest.fixture(autouse=True)
     def _product_run_test(self) -> Iterator[None]:
+        # conftest's pytest_pyfunc_call fails the test (in its call phase) when
+        # any step in it failed; see failed_steps_of.
         self._failed_steps = []
         yield
-        if self._failed_steps:
-            pytest.fail("product-run steps failed: " + ", ".join(self._failed_steps))
 
     # ── steps ─────────────────────────────────────────────────────────────────
     @contextlib.contextmanager
@@ -151,16 +156,18 @@ class ProductRunUi(HarnessMixin):
         started = time.monotonic()
         try:
             yield
-        except (AssertionError, BridgeError) as exc:
-            message = str(exc).strip()
+        except pytest.skip.Exception as exc:
+            rec.end(step_id, "not-tested", reason=str(exc) or "skipped")
+            return
+        except Exception as exc:  # noqa: BLE001 - any error fails the step, not the run
+            message = str(exc).strip() or type(exc).__name__
+            if not isinstance(exc, (AssertionError, BridgeError)):
+                message = f"{type(exc).__name__}: {message}"
             rec.evidence(step_id, f"FAILED: {message}")
             if screenshot:
                 self.shot(step_id, label="failure")
             rec.end(step_id, "fail", reason=message.splitlines()[0][:300] if message else None)
             self._failed_steps.append(step_id)
-            return
-        except pytest.skip.Exception as exc:
-            rec.end(step_id, "not-tested", reason=str(exc) or "skipped")
             return
         if screenshot:
             self.shot(step_id)

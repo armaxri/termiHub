@@ -236,6 +236,23 @@ def _finish_product_run(session):
         print(f"\n[product-run] results: {recorder.run_dir / 'results.json'}")
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    """A product-run test fails (in its call phase) when one of its steps failed.
+
+    Steps record their failure and let the suite carry on (ProductRunUi.step),
+    so the test body itself returns normally.
+    """
+    result = yield
+    if pyfuncitem.get_closest_marker(PRODUCT_RUN_MARKER) is not None:
+        from termihub_harness.product_run.ui import failed_steps_of
+
+        failed = failed_steps_of(pyfuncitem.instance)
+        if failed:
+            pytest.fail("product-run steps failed: " + ", ".join(failed), pytrace=False)
+    return result
+
+
 # ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
 # One missing runner tool (openbox, xdotool, socat, docker, …) used to error in
 # every test that needed it, each retried by the rerun policy. After collection

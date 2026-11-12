@@ -452,9 +452,16 @@ class TestProductRunChecklist(
             expect="Settings ▸ Keyboard with normal-case group headings",
         ):
             self.open_settings_category("keyboard")
+            self.wait(
+                lambda: self.driver.exists("keyboard-settings-group-title-general"),
+                what="the keyboard shortcut groups",
+            )
             for group in KEYBOARD_GROUPS:
                 testid = f"keyboard-settings-group-title-{group}"
-                self.wait(lambda t=testid: self.driver.exists(t), what=testid)
+                if not self.driver.exists(testid):
+                    # A group with no bindings on this platform/feature set is not shown.
+                    self.evidence(f"{group}: not shown here")
+                    continue
                 text = self.driver.get_text(testid).strip()
                 transform = self.driver.get_computed_style("text-transform", testid)
                 self.evidence(f"{group}: {text!r} text-transform={transform}")
@@ -507,7 +514,7 @@ class TestProductRunChecklist(
                 what="the row to be selected",
             )
             sidebar = self.opaque_background("sidebar", self.root_color("--bg-primary"))
-            rest = composite(self.style_color("background-color", item), sidebar)
+            rest = composite(self._settled_background(item), sidebar)
             hover_token = self.driver.get_computed_style("--bg-selected-hover")
             hover = composite(mix_with_transparent(hover_token, self._resolve), sidebar)
             texts = {
@@ -520,6 +527,16 @@ class TestProductRunChecklist(
                     self.evidence(f"{state} {role}: {fg.hex()} on {bg.hex()} = {ratio:.2f}:1")
                     assert ratio >= AA_TEXT, f"{state} {role} text {ratio:.2f}:1 < AA"
             self.evidence("hover background computed from --bg-selected-hover (no real pointer)")
+
+    def _settled_background(self, testid: str) -> Rgba:
+        """The element's background once its colour transition has finished."""
+        seen: list[str] = []
+
+        def stable() -> Optional[str]:
+            seen.append(self.driver.get_computed_style("background-color", testid))
+            return seen[-1] if len(seen) >= 3 and seen[-1] == seen[-2] == seen[-3] else None
+
+        return parse_color(self.wait(stable, what="the row tint to settle", interval=0.2))
 
     def _resolve(self, value: str) -> Rgba:
         match = re.match(r"var\((--[\w-]+)\)", value.strip())
