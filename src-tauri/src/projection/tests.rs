@@ -20,46 +20,10 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::*;
+use crate::test_support::client_cache::{ClientCache, Gap};
 use crate::test_support::RecordingSink;
 
 // ── Test doubles ────────────────────────────────────────────────────────────
-
-/// A simulated client-side cache: holds `{ version, view }`, applies ordered
-/// diffs, detects gaps, and re-baselines from a snapshot. Mirrors the
-/// TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
-}
-
-impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
-        Self {
-            version: s.version,
-            view: s.view.clone(),
-        }
-    }
-
-    /// Apply a diff iff it fits (`base_version == version`); otherwise report a
-    /// gap without mutating the cache.
-    fn apply(&mut self, diff: &DiffFrame) -> Result<(), Gap> {
-        if diff.base_version != self.version {
-            return Err(Gap);
-        }
-        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
-        self.version = diff.version;
-        Ok(())
-    }
-
-    fn rebaseline(&mut self, s: &SnapshotFrame) {
-        self.version = s.version;
-        self.view = s.view.clone();
-    }
-}
-
-/// A detected version gap: the incoming diff did not fit the cache.
-#[derive(Debug, PartialEq, Eq)]
-struct Gap;
 
 /// Synthetic authoritative tunnel store — the substrate's worked domain.
 struct TunnelStore {
@@ -193,8 +157,8 @@ fn full_loop_subscribe_dispatch_fanout_and_forced_gap_resync() {
     assert_eq!(diff_a[0].version, 1);
 
     // Both caches apply it and converge on the authoritative view.
-    cache_a.apply(&diff_a[0]).unwrap();
-    cache_b.apply(&diff_b[0]).unwrap();
+    cache_a.try_apply(&diff_a[0]).unwrap();
+    cache_b.try_apply(&diff_b[0]).unwrap();
     assert_eq!(cache_a.view, cache_b.view);
     assert_eq!(cache_a.view, store.snapshot());
     assert_eq!(
@@ -214,15 +178,19 @@ fn full_loop_subscribe_dispatch_fanout_and_forced_gap_resync() {
     assert_eq!(projector.subscriber_count("tunnels"), 1);
     let diff_a = sink_a.diffs();
     assert_eq!(diff_a.len(), 3);
-    cache_a.apply(&diff_a[1]).unwrap();
-    cache_a.apply(&diff_a[2]).unwrap();
+    cache_a.try_apply(&diff_a[1]).unwrap();
+    cache_a.try_apply(&diff_a[2]).unwrap();
     assert_eq!(cache_a.version, 3);
 
     // 5 · B reconnects. It is still at version 1; the only frame it now sees is
     //     the latest diff (base 2), which does NOT fit — a forced gap.
     let latest = diff_a.last().unwrap();
     assert_eq!(cache_b.version, 1);
-    assert_eq!(cache_b.apply(latest), Err(Gap), "gap detected, not applied");
+    assert_eq!(
+        cache_b.try_apply(latest),
+        Err(Gap),
+        "gap detected, not applied"
+    );
 
     // B resyncs from its known version; backend is ahead, so it re-baselines
     // from a fresh snapshot and reconverges — never having applied a stale diff.
@@ -622,7 +590,9 @@ fn concurrent_publishers_to_one_region_deliver_in_version_order() {
         view: json!({ "n": 0 }),
     };
     for d in &diffs {
-        cache.apply(d).expect("ordered diff applies without a gap");
+        cache
+            .try_apply(d)
+            .expect("ordered diff applies without a gap");
     }
     assert_eq!(cache.version, total as u64);
 }

@@ -17,11 +17,7 @@ use crate::files::transfer::relaunch_agent::{resolve_agent_target, AgentSessionI
 use crate::files::transfer::relaunch_credentials::RelaunchBlocked;
 
 /// A connected agent session on `agent_id`, opened from `definition`.
-async fn session_on(
-    agent_id: &str,
-    definition: Option<&str>,
-    mock: Arc<MockAgentRpcClient>,
-) -> RemoteProxy {
+async fn session_on(agent_id: &str, definition: Option<&str>, mock: Arc<FakeAgent>) -> RemoteProxy {
     let mut config = json!({ "image": "alpine" });
     if let Some(definition) = definition {
         config["definitionId"] = json!(definition);
@@ -82,7 +78,7 @@ fn serve_with_probe(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Box<Responde
 }
 
 /// A ranged-capable agent double that answers the probe.
-fn probing_agent(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Arc<MockAgentRpcClient> {
+fn probing_agent(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Arc<FakeAgent> {
     let mut mock = mock_agent(true, true);
     mock.responder = Some(serve_with_probe(files));
     Arc::new(mock)
@@ -147,7 +143,7 @@ async fn a_reconnected_session_resumes_the_transfer_from_its_offset() {
         "/srv/down.bin",
         remote.len() as u64,
     );
-    mock.sent_requests.lock().unwrap().clear();
+    mock.requests.lock().unwrap().clear();
     run_ranged_transfer(
         target,
         TransferDirection::Download,
@@ -163,7 +159,7 @@ async fn a_reconnected_session_resumes_the_transfer_from_its_offset() {
     assert_eq!(handle.state().tag(), TransferStateTag::Completed);
     assert_eq!(std::fs::read(&local).unwrap(), remote);
     let data_reads: Vec<u64> = mock
-        .sent_requests
+        .requests
         .lock()
         .unwrap()
         .iter()

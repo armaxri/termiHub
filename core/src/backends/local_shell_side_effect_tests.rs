@@ -157,7 +157,7 @@ pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> Shel
 
 #[tokio::test]
 #[serial(local_pty)]
-#[ignore = "audit: prints the side-effect table; run with --ignored --nocapture"]
+#[ignore = "audit: prints the side-effect table; lane: integration-fixtures.yml#native-sshd"]
 async fn audit_injected_setup_side_effects() {
     let mut rows = Vec::new();
     for shell in ["bash", "zsh"] {
