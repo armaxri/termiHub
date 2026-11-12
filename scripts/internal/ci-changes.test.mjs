@@ -594,6 +594,75 @@ describe("code-quality.yml shard drift", () => {
   });
 });
 
+// rust-cache-warm.yml saves the Linux key the Run Tests shards restore
+// (#5469). rust-cache keys on `v0-rust-<key>[-<job id>]-<OS>-<arch>-<env>-<lock>`,
+// where <env> hashes the rustc versions and every CARGO/CC/CFLAGS/CXX/CMAKE/RUST
+// env var present at the cache step. Pin every input of that key on both sides.
+describe("rust-cache-warm.yml saves the key Run Tests restores", () => {
+  const read = (file) => readFileSync(path.join(REPO_ROOT, ".github/workflows", file), "utf8");
+  const quality = read("code-quality.yml");
+  const warm = read("rust-cache-warm.yml");
+  const KEY_ENV = /^\s*(CARGO|CC|CFLAGS|CXX|CMAKE|RUST)\w*:/m;
+
+  /** The `steps:` of the job `id`, cut at the next top-level job. */
+  const jobText = (text, id) => {
+    const start = text.indexOf(`\n  ${id}:\n`);
+    expect(start, `job ${id}`).toBeGreaterThan(-1);
+    const rest = text.slice(start + 1);
+    const next = rest.slice(1).search(/\n {2}[a-z][a-z0-9_-]*:\n/);
+    return next === -1 ? rest : rest.slice(0, next + 1);
+  };
+  /** The step names before the rust-cache step, and that step's `with:` lines. */
+  const cacheStep = (job) => {
+    const at = job.indexOf("uses: Swatinem/rust-cache@");
+    expect(at, "rust-cache step").toBeGreaterThan(-1);
+    const names = [...job.slice(0, at).matchAll(/^ {6}- name: (.+)$/gm)].map((m) => m[1]);
+    const uses = job.slice(at).split("\n")[0];
+    const withBlock = job.slice(at).split(/\n {6}- /)[0];
+    return { names: names.slice(0, -1), uses, withBlock };
+  };
+
+  const tests = cacheStep(jobText(quality, "tests"));
+  const warmJob = jobText(warm, "warm-linux");
+  const warmCache = cacheStep(warmJob);
+
+  it("uses the same rust-cache pin and an explicit, job-id-free key", () => {
+    expect(warmCache.uses).toBe(tests.uses);
+    for (const side of [tests, warmCache]) {
+      expect(side.withBlock).toMatch(/^ {10}key: tests$/m);
+      expect(side.withBlock).toMatch(/^ {10}add-job-id-key: 'false'$/m);
+      expect(side.withBlock).not.toMatch(/prefix-key|shared-key|env-vars|workspaces:/);
+    }
+  });
+
+  it("sets up nothing before the cache step that could change the env hash", () => {
+    expect(warmCache.names).toEqual(["Checkout code", "Setup Rust"]);
+    // The Run Tests steps before its cache step: the Node steps run only on the
+    // Windows/macOS legs, so the Linux shard sees checkout + Setup Rust too.
+    expect(tests.names).toEqual(["Checkout code", "Setup Rust", "Setup pnpm", "Setup Node.js"]);
+    expect(jobText(quality, "tests")).toMatch(
+      /- name: Setup Rust\n {8}if: [^\n]*\n {8}uses: \.\/\.github\/actions\/setup-rust\n/
+    );
+    expect(warmJob).toMatch(/- name: Setup Rust\n {8}uses: \.\/\.github\/actions\/setup-rust\n/);
+  });
+
+  it("sets no key-relevant env var at workflow or job level", () => {
+    for (const text of [quality, warm]) {
+      for (const block of text.matchAll(/^( {0}| {4})env:\n((?:\1 {2}.*\n)+)/gm)) {
+        expect(block[2]).not.toMatch(KEY_ENV);
+      }
+    }
+  });
+
+  it("builds the targets ci-rust-tests.sh compiles", () => {
+    const script = readFileSync(path.join(REPO_ROOT, "scripts/internal/ci-rust-tests.sh"), "utf8");
+    expect(script).toContain("targets=(--all-features --lib --bins --tests)");
+    expect(warmJob).toContain(
+      "cargo test --workspace --all-features --lib --bins --tests --no-run"
+    );
+  });
+});
+
 describe("formatOutputs", () => {
   it("emits one key=value line per area plus the matrix", () => {
     const out = formatOutputs(classify(["src/main.tsx"]), true);

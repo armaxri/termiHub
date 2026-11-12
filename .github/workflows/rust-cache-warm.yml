@@ -1,0 +1,92 @@
+name: Rust Cache Warm
+
+# Keeps develop's Linux Rust test cache saved (#5469). Code Quality cancels a
+# superseded develop push run (#4119), and under steady merging almost every
+# run is superseded: on 2026-11-11, 23 of 25 develop push runs were cancelled.
+# rust-cache saves only in its post step at the end of a job, so the Linux
+# `Run Tests` shards never saved, no develop cache existed, and every PR
+# compiled the workspace cold (5-7 min per shard).
+#
+# This workflow does the compile only, in its own concurrency group that never
+# cancels. A newer push replaces a still-PENDING run but never kills a running
+# one, so each run that starts finishes and saves. Code Quality's test jobs keep
+# their cancel-superseded behaviour.
+#
+# It saves exactly the key the Run Tests shards restore. rust-cache builds the
+# key as `<prefix-key>-<key>-<OS>-<arch>-<env hash>-<lock hash>`
+# (Swatinem/rust-cache src/config.ts at the pinned sha):
+#   - prefix-key: the default `v0-rust` on both sides.
+#   - key: `tests` with `add-job-id-key: false` on both sides, so the job ids
+#     do not enter the key.
+#   - OS/arch: both run on ubuntu-latest.
+#   - env hash: the installed rustc versions plus every env var starting with
+#     CARGO/CC/CFLAGS/CXX/CMAKE/RUST. Both jobs run only checkout and
+#     ./.github/actions/setup-rust before the cache step, and neither workflow
+#     sets such a variable at workflow or job level.
+#   - lock hash: the workspace manifests, Cargo.lock and .cargo/config.toml of
+#     the same commit.
+# scripts/internal/ci-changes.test.mjs fails if the two sides drift.
+#
+# If the exact key already exists (the lockfile and toolchain are unchanged),
+# the lookup finds it without downloading and the job ends in under a minute.
+
+on:
+  push:
+    branches: [ develop ]
+  workflow_dispatch:
+
+concurrency:
+  group: rust-cache-warm-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  warm-linux:
+    name: Warm the Linux Rust test cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      # lookup-only: on an exact hit nothing is downloaded and the post step
+      # skips the save ("Cache up-to-date"); on a miss the build below runs
+      # cold and the post step saves the key.
+      - name: Cache Rust dependencies
+        id: cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: tests
+          add-job-id-key: 'false'
+          lookup-only: 'true'
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Make apt retry downloads
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/apt-retries
+
+      # The build libraries the workspace links against (the Run Tests job's
+      # apt list without the test-only tools).
+      - name: Install system dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # The same targets and features as ci-rust-tests.sh, so the cached deps
+      # are the ones the shards compile against.
+      - name: Build the workspace test binaries
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --workspace --all-features --lib --bins --tests --no-run

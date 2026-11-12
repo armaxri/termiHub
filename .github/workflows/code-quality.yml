@@ -1643,6 +1643,11 @@ jobs:
           # for develop and every PR leg compiled the workspace cold. The shards
           # share one key (no matrix in it); the first to finish saves it.
           cache-on-failure: true
+          # The key is spelled out (v0-rust-tests-<os>-<arch>-<env>-<lock>), not
+          # taken from the job id, because rust-cache-warm.yml saves the same
+          # Linux key from its own job (#5469); ci-changes.test.mjs pins both.
+          key: tests
+          add-job-id-key: 'false'
 
       # cargo-nextest runs the Rust tests with a per-test timeout (#5345). The
       # action checks the release archive's SHA-256 against its manifest;
