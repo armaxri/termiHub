@@ -2259,19 +2259,28 @@ export async function sessionCreateSymlink(
 }
 
 /**
- * Refuse a same-session paste of a file onto itself, or of a folder into its
- * own subtree, before anything is written (#5330). The backend resolves both
- * paths (SFTP `realpath`, the container's `readlink -f`, or a `.`/`..`
- * normalisation for FTP and agent sessions), so a symlink alias or a
- * respelled path is caught where a textual check is not. Rejects with
+ * Refuse a paste of a file onto itself, or of a folder into its own subtree,
+ * before anything is written (#5330). The backend resolves both paths (SFTP
+ * `realpath`, the container's `readlink -f`, the agent's or FTP server's
+ * real path, else a `.`/`..` normalisation), so a symlink alias or a
+ * respelled path is caught where a textual check is not. `sessionId` is the
+ * destination; a paste from another session passes it as `srcSessionId`
+ * (#5355), and is refused only when both sessions reach one filesystem (one
+ * agent host, one server as one user, one container). Rejects with
  * `copy <src> to <dest> refused: …`; resolves when the paste may go ahead.
  */
 export async function sessionCheckPaste(
   sessionId: string,
   src: string,
-  dest: string
+  dest: string,
+  srcSessionId?: string
 ): Promise<void> {
-  await invoke("session_check_paste", { sessionId, src, dest });
+  await invoke("session_check_paste", {
+    sessionId,
+    src,
+    dest,
+    srcSessionId: srcSessionId ?? null,
+  });
 }
 
 /**

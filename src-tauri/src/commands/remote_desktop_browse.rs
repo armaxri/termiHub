@@ -83,7 +83,7 @@ pub(crate) async fn open_side_channel(
     side_channels: &SideChannelBrowsers,
     session_id: &str,
     channel: RemoteDesktopFileChannel,
-    ssh: Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
+    ssh: Option<crate::session::graphical_file_channel::SideChannelSsh>,
     agents: Arc<dyn AgentRequests>,
     dir: Option<String>,
     saved_connection_id: Option<&str>,

@@ -1417,8 +1417,14 @@ Run it locally the same way:
 scripts/internal/run-native-sshd-deploy-journey.sh
 ```
 
-The line coverage of `agent_deploy.rs` is not measured in this lane (the job
-runs plain `cargo test`). The nightly coverage overlay reports it.
+This lane is not instrumented for coverage (the job runs plain `cargo test`).
+The line coverage of `agent_deploy.rs` comes from the per-PR unit tests
+instead. The in-process host tests (#5162) drive the install half.
+[`agent_deploy_prologue_tests.rs`](../src-tauri/src/terminal/agent_deploy_prologue_tests.rs)
+drives what runs before it in `deploy_agent`, `stage_agent_binary`,
+`update_agent` and `probe_remote_agent`. The fake host listens on a loopback
+port, so the production `connect_and_authenticate` dials it. A local file
+stands in for the `AppHandle`-bound binary resolution.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
@@ -3520,7 +3526,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-51/52 (X11 install on the real desktop per OS; MT-SSH-50 is automated, #4965), MT-NET-21 (latency charts)
 - [ ] `test_guided_rust_live_smokes.py` — MT-RUST-01 (macOS: Podman machine routing; start a Podman machine when asked) and MT-RUST-02 (every OS: USB identity of a plugged-in serial adapter; only lists ports, never opens one). The harness runs each ignored core test and grades its output
-- [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
+- [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), the same adapter on an agent host (the agent reopens it in place, #5396; a second, different adapter is needed), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_AGENT_SERIAL_DEVICE` (the adapter's path on the `TERMIHUB_REAL_AGENT_HOST` host), `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
 

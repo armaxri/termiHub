@@ -47,6 +47,7 @@ use crate::session::frame_guard::{CursorGuard, FrameGuard, FrameVerdict};
 use crate::session::graphical_file_channel::{
     resolve_file_channel_routed, AgentFileRoute, AgentFiles, BackendSideChannel,
     FileChannelContext, LinkedResolver, LinkedSshCache, LinkedSshSource, RemoteDesktopFileChannel,
+    SideChannelSsh,
 };
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_supervisor::{
@@ -878,13 +879,7 @@ impl GraphicalSessionManager {
         &self,
         session_id: &str,
         agents: Option<Arc<dyn AgentFiles>>,
-    ) -> Result<
-        (
-            RemoteDesktopFileChannel,
-            Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
-        ),
-        TerminalError,
-    > {
+    ) -> Result<(RemoteDesktopFileChannel, Option<SideChannelSsh>), TerminalError> {
         let (ctx, connection, linked_cache) = {
             let sessions = self.sessions.lock().await;
             let session = sessions
@@ -901,7 +896,12 @@ impl GraphicalSessionManager {
             conn.graphical()
                 .map(|g| BackendSideChannel {
                     channel: g.file_side_channel(),
-                    session: g.file_side_channel_ssh_session(),
+                    session: g
+                        .file_side_channel_ssh_session()
+                        .map(|session| SideChannelSsh {
+                            session,
+                            identity: g.file_side_channel_identity(),
+                        }),
                 })
                 .unwrap_or_default()
         };

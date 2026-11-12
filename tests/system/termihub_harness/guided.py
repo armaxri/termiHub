@@ -33,6 +33,9 @@ REAL_AGENT_HOST_ENV = "TERMIHUB_REAL_AGENT_HOST"
 WINDOWS_AGENT_HOST_ENV = "TERMIHUB_WINDOWS_AGENT_HOST"
 #: A physical serial device path (``/dev/ttyUSB0``, ``/dev/cu.usbserial-…``, ``COM3``).
 SERIAL_DEVICE_ENV = "TERMIHUB_SERIAL_DEVICE"
+#: A physical serial device path on the agent host of ``TERMIHUB_REAL_AGENT_HOST``
+#: (``/dev/ttyUSB0`` on a Raspberry Pi, ``COM3`` on a Windows notebook).
+AGENT_SERIAL_DEVICE_ENV = "TERMIHUB_AGENT_SERIAL_DEVICE"
 #: A real Windows RDP host (``user@host[:port]``; a domain user is ``DOMAIN\\user``).
 RDP_HOST_ENV = "TERMIHUB_RDP_HOST"
 
