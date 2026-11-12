@@ -150,7 +150,7 @@ export function FileBrowserActions({
 
   // Inline candidates, most important first: pinned ones, then by priority.
   const candidates = actions
-    .filter((a) => a.inline !== undefined && !a.menuNode)
+    .filter((a) => a.inline !== undefined && a.menuNode === undefined)
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || a.inline! - b.inline!);
   const fit = fitInlineActions({
     available: width,
@@ -164,7 +164,7 @@ export function FileBrowserActions({
   const inlineIds = new Set(candidates.slice(0, fit).map((a) => a.id));
   const inline = actions.filter((a) => inlineIds.has(a.id));
   const collapsed = actions.filter((a) => a.inline !== undefined && !inlineIds.has(a.id));
-  const menuOnly = actions.filter((a) => a.inline === undefined || a.menuNode);
+  const menuOnly = actions.filter((a) => a.inline === undefined || a.menuNode !== undefined);
 
   // The menu: collapsed inline actions first, then each section in turn.
   const sections: FileBrowserAction[][] = [
@@ -231,7 +231,7 @@ export function FileBrowserActions({
 
 /** One action as an overflow-menu entry. */
 function ActionMenuEntry({ action }: { action: FileBrowserAction }) {
-  if (action.menuNode) return <>{action.menuNode}</>;
+  if (action.menuNode !== undefined) return <>{action.menuNode}</>;
   if (action.checked !== undefined) {
     return (
       <MenuCheckboxItem
