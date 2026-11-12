@@ -270,6 +270,14 @@ fn forwarded_listener(
     registry.get(&port).filter(|tx| !tx.is_closed()).cloned()
 }
 
+/// Refuse a server-opened channel termiHub never asked for (#5498).
+async fn reject_unsolicited(reply: russh::client::ChannelOpenHandle, kind: &str) {
+    debug!(kind, "rejecting unsolicited server-opened channel");
+    reply
+        .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+        .await;
+}
+
 impl russh::client::Handler for TermiHubHandler {
     type Error = russh::Error;
 
@@ -392,7 +400,10 @@ impl russh::client::Handler for TermiHubHandler {
                 connected_port,
             });
         } else {
-            debug!(connected_port, "rejecting forwarded-tcpip channel: no listener");
+            debug!(
+                connected_port,
+                "rejecting forwarded-tcpip channel: no listener"
+            );
             reply
                 .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
                 .await;
@@ -430,6 +441,71 @@ impl russh::client::Handler for TermiHubHandler {
                 .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
                 .await;
         }
+        Ok(())
+    }
+    // ── Unsolicited server-opened channels (#5498) ─────────────────────────
+    //
+    // Since russh 0.65 a server-opened channel is confirmed only when the
+    // handler accepts it, and russh's *default* for these kinds accepts. termiHub
+    // never asks the server for any of them — X11 rides on `forwarded-tcpip`
+    // (see `x11.rs`), and no streamlocal forward is ever requested — so a server
+    // opening one is unsolicited and is refused rather than confirmed.
+
+    async fn server_channel_open_session(
+        &mut self,
+        _channel: russh::Channel<russh::client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        reject_unsolicited(reply, "session").await;
+        Ok(())
+    }
+
+    async fn server_channel_open_direct_tcpip(
+        &mut self,
+        _channel: russh::Channel<russh::client::Msg>,
+        _host_to_connect: &str,
+        _port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        reject_unsolicited(reply, "direct-tcpip").await;
+        Ok(())
+    }
+
+    async fn server_channel_open_x11(
+        &mut self,
+        _channel: russh::Channel<russh::client::Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        reject_unsolicited(reply, "x11").await;
+        Ok(())
+    }
+
+    async fn server_channel_open_forwarded_streamlocal(
+        &mut self,
+        _channel: russh::Channel<russh::client::Msg>,
+        _socket_path: &str,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        reject_unsolicited(reply, "forwarded-streamlocal").await;
+        Ok(())
+    }
+
+    async fn server_channel_open_direct_streamlocal(
+        &mut self,
+        _channel: russh::Channel<russh::client::Msg>,
+        _socket_path: &str,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        reject_unsolicited(reply, "direct-streamlocal").await;
         Ok(())
     }
 }
@@ -523,3 +599,7 @@ mod tests {
         assert!(err.is_err(), "an Error disconnect must propagate the error");
     }
 }
+
+#[cfg(test)]
+#[path = "handler_channel_open_tests.rs"]
+mod channel_open_tests;
