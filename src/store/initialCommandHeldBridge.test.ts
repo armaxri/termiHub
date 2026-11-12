@@ -7,22 +7,33 @@ import {
 } from "./initialCommandHeldBridge";
 
 const state = () => useInitialCommandHeldStore.getState().bySession;
+const event = (sessionId: string, held: boolean, setup = false) => ({
+  sessionId,
+  held,
+  setup,
+  initialCommand: true,
+});
+const notice = (state: "held" | "dismissed", setup = false) => ({
+  state,
+  setup,
+  initialCommand: true,
+});
 
-describe("initialCommandHeldBridge (#5509)", () => {
+describe("initialCommandHeldBridge (#5509, #5512)", () => {
   beforeEach(() => useInitialCommandHeldStore.setState({ bySession: {} }));
 
   it("records a held command and forgets it once it is no longer held", () => {
-    recordInitialCommandHeld({ sessionId: "s1", held: true });
-    expect(state()).toEqual({ s1: "held" });
-    recordInitialCommandHeld({ sessionId: "s1", held: false });
+    recordInitialCommandHeld(event("s1", true));
+    expect(state()).toEqual({ s1: notice("held") });
+    recordInitialCommandHeld(event("s1", false));
     expect(state()).toEqual({});
   });
 
   it("a dismissed notice stays hidden until the backend clears it", () => {
-    recordInitialCommandHeld({ sessionId: "s1", held: true });
+    recordInitialCommandHeld(event("s1", true, true));
     dismissInitialCommandHeld("s1");
-    expect(state()).toEqual({ s1: "dismissed" });
-    recordInitialCommandHeld({ sessionId: "s1", held: false });
+    expect(state()).toEqual({ s1: notice("dismissed", true) });
+    recordInitialCommandHeld(event("s1", false));
     expect(state()).toEqual({});
   });
 

@@ -13,4 +13,12 @@ sessionId: string,
  * when it went out (at the prompt or on **Send now**) or the session
  * closed.
  */
-held: boolean, };
+held: boolean, 
+/**
+ * The shell-integration setup (command marks) is held too (#5512).
+ */
+setup: boolean, 
+/**
+ * An initial command is held; `false` when only the setup is.
+ */
+initialCommand: boolean, };
