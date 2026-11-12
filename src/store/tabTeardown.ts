@@ -37,6 +37,7 @@ export const PER_TAB_STATE_KEYS = [
   "terminalReattaching",
   "terminalReconnectPrompt",
   "terminalAutoRetryCount",
+  "terminalAutoRetryNextAt",
   "terminalWaitingForAgent",
   "terminalForceFreshReconnect",
 ] as const satisfies readonly (keyof AppState)[];

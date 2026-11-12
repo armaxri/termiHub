@@ -137,8 +137,10 @@ class _RdpSuite(
             RDP_DESKTOP_COLOR, scale_mode, fb_size=fb_size, timeout=PAINT_TIMEOUT, what=what
         )
 
-    def wait_for_error(self, heading: str, what: str) -> str:
-        """Wait for the resting error overlay; assert its heading; return its text."""
+    def wait_for_error(self, heading: str, what: str, *, action: str = "") -> str:
+        """Wait for the resting error overlay; assert its heading and primary
+        action (Reconnect for a dropped session, Retry for a failed connect);
+        return its text."""
         self.wait(
             lambda: self.remote_desktop_phase() == "error",
             timeout=PAINT_TIMEOUT,
@@ -146,7 +148,8 @@ class _RdpSuite(
         )
         text = self.driver.get_text(self.OVERLAY_ERROR)
         assert heading in text, text
-        assert self.driver.exists(self.RECONNECT)
+        assert self.driver.exists(action or self.RECONNECT)
+        assert self.driver.exists(self.CLOSE_TAB)
         return text
 
     @staticmethod
@@ -437,27 +440,28 @@ class TestRdpReconnect(_RdpSuite):
 
 @pytest.mark.usefixtures("rdp_fixtures")
 class TestRdpConnectErrors(_RdpSuite):
-    """RDP-UI-06: failed connects rest on an error overlay with a Reconnect
-    button — "Could not connect" for an unreachable host, "Authentication
-    failed" for a wrong password rejected by an NLA server (#3612)."""
+    """RDP-UI-06: failed connects rest on the terminal's failure screen with
+    Retry and Close tab (#5377) — "Connection failed" for an unreachable host,
+    and for a wrong password rejected by an NLA server (#3612) the credentials
+    hint plus inline credential re-entry instead of a Reconnect loop."""
 
-    def test_unreachable_host_shows_could_not_connect(self):
+    def test_unreachable_host_shows_connection_failed(self):
         self.open_rdp_tab(
             "rdp-unreachable",
             port=_unused_local_port(),
             auto_reconnect=False,
             wait_active=False,
         )
-        self.wait_for_error("Could not connect", "the connect-failed overlay")
+        self.wait_for_error("Connection failed", "the connect-failed overlay", action=self.RETRY)
         # The RDP connect returns once the sidecar is launched; the TCP failure
         # arrives afterwards as the session's terminal state, so the tab keeps
-        # the (failed, resting) session's id until Reconnect or close tears it
+        # the (failed, resting) session's id until Retry or close tears it
         # down (#4828). What must hold is that it never went live: no active
         # toolbar, and no frame ever surfaced a remote resolution.
         assert not self.driver.exists(self.TOOLBAR)
         assert self.remote_resolution() is None
 
-    def test_wrong_password_on_nla_server_shows_authentication_failed(self):
+    def test_wrong_password_on_nla_server_offers_credential_reentry(self):
         self.open_rdp_tab(
             "rdp-wrong-password",
             port=RDP_NLA_PORT,
@@ -466,5 +470,8 @@ class TestRdpConnectErrors(_RdpSuite):
             auto_reconnect=False,
             wait_active=False,
         )
-        text = self.wait_for_error("Authentication failed", "the authentication-failed overlay")
-        assert "Check the credentials" in text, text
+        text = self.wait_for_error(
+            "Connection failed", "the authentication-failed overlay", action=self.RETRY
+        )
+        assert "rejected the credentials" in text, text
+        assert self.driver.exists("terminal-credential-reentry-open-btn")
