@@ -445,14 +445,16 @@ class TestRdpConnectErrors(_RdpSuite):
     and for a wrong password rejected by an NLA server (#3612) the credentials
     hint plus inline credential re-entry instead of a Reconnect loop."""
 
-    def test_unreachable_host_shows_connection_failed(self):
+    def test_unreachable_host_shows_connection_refused(self):
         self.open_rdp_tab(
             "rdp-unreachable",
             port=_unused_local_port(),
             auto_reconnect=False,
             wait_active=False,
         )
-        self.wait_for_error("Connection failed", "the connect-failed overlay", action=self.RETRY)
+        # The sidecar's typed TCP failure reaches the tab as the `refused` code
+        # (#5380): the same heading a terminal tab shows for a closed port.
+        self.wait_for_error("Connection refused", "the connect-refused overlay", action=self.RETRY)
         # The RDP connect returns once the sidecar is launched; the TCP failure
         # arrives afterwards as the session's terminal state, so the tab keeps
         # the (failed, resting) session's id until Retry or close tears it

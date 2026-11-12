@@ -684,6 +684,9 @@ jobs:
           if [ "$RUNNER_OS" = Linux ] && ! command -v zsh >/dev/null; then
             sudo apt-get install -y zsh
           fi
+          # #5452: the completion directories zsh's compaudit finds insecure on
+          # this runner (diagnostic only; the test skips the global rc files).
+          zsh -fc 'autoload -Uz compaudit; compaudit' || true
           cargo test -p termihub-core --all-features --lib \
             audit_injected_setup_side_effects -- --ignored --nocapture
 

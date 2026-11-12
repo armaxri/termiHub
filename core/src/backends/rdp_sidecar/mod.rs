@@ -458,8 +458,9 @@ impl SidecarShared {
 /// rejection is [`SessionError::AuthFailed`] — the same typed discriminant every
 /// other backend reports — a timeout the typed [`ConnectFailureKind::Timeout`],
 /// a deliberate server end [`SessionError::ServerClosed`] (#4321), a server
-/// protocol failure [`SessionError::ProtocolError`] (#4509), and anything else a
-/// connect failure.
+/// protocol failure [`SessionError::ProtocolError`] (#4509), a refused /
+/// unreachable / unresolvable host the matching typed [`ConnectFailureKind`]
+/// (#5380), and anything else a connect failure.
 fn failure_to_session_error(kind: SidecarFailureKind, message: &str) -> SessionError {
     match kind {
         SidecarFailureKind::Auth => SessionError::AuthFailed,
@@ -472,6 +473,14 @@ fn failure_to_session_error(kind: SidecarFailureKind, message: &str) -> SessionE
         },
         SidecarFailureKind::ServerClosed => SessionError::ServerClosed(message.to_string()),
         SidecarFailureKind::Protocol => SessionError::ProtocolError(message.to_string()),
+        // The typed TCP connect categories every other backend reports (#5380).
+        SidecarFailureKind::Refused => {
+            SessionError::classified(ConnectFailureKind::Refused, message)
+        }
+        SidecarFailureKind::Unreachable => {
+            SessionError::classified(ConnectFailureKind::Unreachable, message)
+        }
+        SidecarFailureKind::Dns => SessionError::classified(ConnectFailureKind::Dns, message),
     }
 }
 
@@ -1914,6 +1923,33 @@ mod tests {
                 assert_eq!(msg, "RDP TCP connect failed")
             }
             other => panic!("expected ConnectionFailed, got {other:?}"),
+        }
+    }
+
+    /// A refused / unreachable / unresolvable host (#5380) keeps its typed
+    /// connect category, so the RDP tab shows the same heading a terminal does.
+    #[tokio::test]
+    async fn typed_tcp_failures_map_to_classified_kinds() {
+        for (kind, expected) in [
+            (SidecarFailureKind::Refused, ConnectFailureKind::Refused),
+            (
+                SidecarFailureKind::Unreachable,
+                ConnectFailureKind::Unreachable,
+            ),
+            (SidecarFailureKind::Dns, ConnectFailureKind::Dns),
+            (SidecarFailureKind::Timeout, ConnectFailureKind::Timeout),
+        ] {
+            let (fatal, _) = fatal_after(vec![SidecarMessage::Failure {
+                kind,
+                message: "RDP TCP connect to h:3389 failed: refused".to_string(),
+            }])
+            .await;
+            let fatal = fatal.expect("a typed failure is recorded");
+            assert_eq!(fatal.connect_failure_kind(), Some(expected), "{kind:?}");
+            assert_eq!(
+                fatal.user_message(),
+                "RDP TCP connect to h:3389 failed: refused"
+            );
         }
     }
 

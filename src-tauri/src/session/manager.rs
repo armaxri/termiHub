@@ -22,9 +22,9 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
-use termihub_core::session::prompt_ready::wait_for_prompt;
 #[cfg(test)]
 use termihub_core::session::prompt_ready::MARK_ONLY_TIMEOUT;
+use termihub_core::session::prompt_ready::{wait_for_prompt, wait_for_prompt_uncapped};
 use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
@@ -1274,6 +1274,7 @@ impl SessionManager {
         let files_only_watch = connection.files_only_watch();
         // The hook-free prompt check for the initial command (#5029).
         let prompt_probe = connection.prompt_probe();
+        let probe_uncapped = connection.prompt_probe_uncapped();
 
         let info = SessionInfo {
             id: session_id.clone(),
@@ -1471,7 +1472,13 @@ impl SessionManager {
             tokio::spawn(async move {
                 let signal = tokio::select! {
                     _ = injection_cancel.cancelled() => return,
-                    signal = wait_for_prompt(Some(&ready), prompt_probe.as_ref()) => signal,
+                    signal = async {
+                        if probe_uncapped {
+                            wait_for_prompt_uncapped(Some(&ready), prompt_probe.as_ref()).await
+                        } else {
+                            wait_for_prompt(Some(&ready), prompt_probe.as_ref()).await
+                        }
+                    } => signal,
                 };
                 info!(session_id = %sid, ?signal, "Sending the initial command");
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;

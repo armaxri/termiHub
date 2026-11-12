@@ -68,8 +68,16 @@ fn entry(path: &str) -> Option<Option<&'static str>> {
     TREE.iter().find(|(p, _)| *p == path).map(|(_, c)| *c)
 }
 
+/// The fixed modification time of every entry (2025-11-11T12:00:00Z), so a
+/// client can compare one entry seen through two sessions (#5430).
+pub const MTIME: u32 = 1_762_862_400;
+
 fn attrs(contents: Option<&str>) -> FileAttributes {
-    let mut attrs = FileAttributes::default();
+    let mut attrs = FileAttributes {
+        mtime: Some(MTIME),
+        atime: Some(MTIME),
+        ..FileAttributes::default()
+    };
     match contents {
         Some(text) => {
             attrs.permissions = Some(0o100_644);
@@ -311,6 +319,24 @@ impl Drop for TcpServer {
     fn drop(&mut self) {
         self.accept_task.abort();
     }
+}
+
+/// Serve one connection over an in-memory stream, for a client in this
+/// process: the client's end of the stream plus what the server observed.
+/// Must be called inside a Tokio runtime, which then drives the server.
+pub fn serve() -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) {
+    let observed = Arc::new(Mutex::new(Observed::default()));
+    let handler = FilesOnlyServer {
+        observed: observed.clone(),
+        channels: HashMap::new(),
+    };
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        if let Ok(running) = russh::server::run_stream(server_config(), server_io, handler).await {
+            let _ = running.await;
+        }
+    });
+    (client_io, observed)
 }
 
 /// Start the server on `127.0.0.1:0`. Must be called inside a Tokio runtime,

@@ -405,6 +405,40 @@ describe("useRemoteDesktopSession", () => {
     expect(h.get().errorKind).toBe("other");
   });
 
+  it.each([
+    ["refused", "refused"],
+    ["unreachable", "unreachable"],
+    ["dns", "dns"],
+    ["timeout", "timeout"],
+    ["auth_failed", "auth"],
+  ] as const)("types a connectFailed state event from its %s code (#5380)", async (code, kind) => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({
+      state: "connectFailed",
+      reconnect_attempt: 0,
+      message: "RDP TCP connect to h:3389 failed: os detail",
+      code,
+    });
+    expect(h.get().state).toBe("connectFailed");
+    expect(h.get().errorKind).toBe(kind);
+    expect(h.get().message).toBe("RDP TCP connect to h:3389 failed: os detail");
+  });
+
+  it("keeps an unknown or missing state-event code generic (#5380)", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({ state: "connectFailed", reconnect_attempt: 0, code: "io" });
+    expect(h.get().errorKind).toBe("other");
+    dispatchState({ state: "connectFailed", reconnect_attempt: 0, code: "refused" });
+    expect(h.get().errorKind).toBe("refused");
+    // A later state without a code resets the kind.
+    dispatchState({ state: "connectFailed", reconnect_attempt: 0 });
+    expect(h.get().errorKind).toBe("other");
+  });
+
   it("reports connectFailed for a non-auth first-connect error", async () => {
     mockedConnect.mockRejectedValueOnce("Connection failed: refused");
     const tabId = addTab();

@@ -64,10 +64,9 @@ async fn a_listener_that_never_speaks_rdp_times_out() {
     assert!(message.contains(&format!("127.0.0.1:{port}")), "{message}");
 }
 
-/// A closed port fails fast as an ordinary (unreachable) connect failure, not
-/// a timeout.
+/// A closed port fails fast as a typed refused connect (#5380), not a timeout.
 #[tokio::test]
-async fn a_closed_port_is_an_unreachable_connect_failure() {
+async fn a_closed_port_is_a_refused_connect_failure() {
     let port = {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap().port()
@@ -80,9 +79,29 @@ async fn a_closed_port_is_an_unreachable_connect_failure() {
     .await
     .expect("a refused connect must fail promptly");
 
-    assert_eq!(failure::classify(&error), SidecarFailureKind::Connect);
+    assert_eq!(failure::classify(&error), SidecarFailureKind::Refused);
     let message = format!("{error:#}");
     assert!(message.contains("TCP connect"), "{message}");
+    assert!(message.contains(&format!("127.0.0.1:{port}")), "{message}");
+}
+
+/// A host name that cannot resolve is a typed DNS failure (#5380). `.invalid`
+/// is reserved (RFC 2606) and never resolves.
+#[tokio::test]
+async fn an_unresolvable_host_is_a_dns_failure() {
+    let mut cfg = config_for(3389, 10);
+    cfg.host = "termihub-no-such-host.invalid".to_string();
+
+    let error = tokio::time::timeout(Duration::from_secs(15), connect_error(&cfg))
+        .await
+        .expect("a failed lookup must fail promptly");
+
+    assert_eq!(failure::classify(&error), SidecarFailureKind::Dns);
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("termihub-no-such-host.invalid"),
+        "{message}"
+    );
 }
 
 /// A clipboard failure that ends the session is reported to the host as a

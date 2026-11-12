@@ -143,6 +143,10 @@ export async function pasteFileLeg(
       await sessionRenameFile(t.destSession, srcPath, destPath);
       return false;
     }
+    // A top-level paste from another session that shares this one's files
+    // (one agent host, one server): a file pasted onto itself is refused
+    // before anything is written, so a cut never deletes its only copy (#5355).
+    if (deleteSourceOnCut && src !== t.destSession) await checkSessionPaste(t, srcPath, destPath);
     // Cross-session or copy. When BOTH endpoints can stream (SFTP or Docker),
     // copy directly source→destination through the desktop as ONE tracked
     // transfer — no local temp file, no whole-file round trip (PROD-0013,
@@ -211,6 +215,22 @@ function alreadyCopied(child: FileEntry, existing: FileEntry[]): boolean {
 interface SourceNode {
   entry: FileEntry;
   children: SourceNode[];
+}
+
+/**
+ * Ask the backend whether a session→session paste is the source onto itself
+ * or a folder into its own subtree (#5330). A paste from another session is
+ * checked too (#5355): two sessions on one agent host, one server or one
+ * container share their files, and the backend refuses only those.
+ */
+async function checkSessionPaste(t: PasteTransport, src: string, dest: string): Promise<void> {
+  if (t.sourceMode !== "session") return;
+  const srcSession = t.srcSession ?? t.destSession;
+  if (srcSession === t.destSession) {
+    await sessionCheckPaste(t.destSession, src, dest);
+  } else {
+    await sessionCheckPaste(t.destSession, src, dest, srcSession);
+  }
 }
 
 /** Whether both ends of a paste are the same session. */
@@ -293,7 +313,7 @@ export async function pasteFolderTree(
   }
   // Cross-session, byte-based, or local→session: recreate the directory on the
   // destination, then copy each child — recursing into subdirectories.
-  if (isSameSession(t)) await sessionCheckPaste(t.destSession, srcDir, destPath);
+  await checkSessionPaste(t, srcDir, destPath);
   const nodes = await snapshotSource(t, srcDir);
   return copySnapshot(t, srcDir, nodes, destPath);
 }

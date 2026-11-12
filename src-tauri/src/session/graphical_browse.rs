@@ -408,6 +408,14 @@ impl FileBrowser for AgentHostFiles {
             self.host_file_attribute_ops(),
         )
     }
+
+    /// The agent host's own filesystem (#5355): the one an agent-hosted
+    /// local session on the same agent browses.
+    fn filesystem_id(&self) -> Option<termihub_core::files::shared_fs::FilesystemId> {
+        Some(termihub_core::files::shared_fs::FilesystemId::agent_host(
+            self.agent_id(),
+        ))
+    }
 }
 
 #[cfg(test)]

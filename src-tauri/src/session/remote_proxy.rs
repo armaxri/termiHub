@@ -50,6 +50,7 @@ use tracing::{debug, warn};
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::paste_guard::PathCanonicalizer;
+use termihub_core::files::shared_fs::{FilesystemHint, FilesystemId};
 use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 use termihub_core::monitoring::{
     agent_recovery_budget, CollectLoopState, KillSignal, MonitorStatus, MonitorStatusReason,
@@ -727,6 +728,20 @@ impl RemoteProxy {
                         agent_outdated,
                         file_ranges,
                         definition_id: definition_id.clone(),
+                        filesystem: hosted_filesystem(&self.agent_id, &session_type, &config),
+                        filesystem_hint: hosted_filesystem_hint(
+                            &self.agent_id,
+                            &session_type,
+                            &config,
+                            definition_id.as_deref(),
+                        )
+                        .or_else(|| {
+                            // A local session browses the agent host itself
+                            // (#5439): the server the agent was dialled to.
+                            (session_type == "local")
+                                .then(|| self.agent_manager.agent_host_hint(self.agent_id()))
+                                .flatten()
+                        }),
                         attribute_ops: hosted_attribute_ops(
                             &session_type,
                             agent_outdated,
@@ -821,10 +836,77 @@ pub struct RemoteFileBrowserProxy {
     /// from, if any — with `agent_id`, the identity a queued transfer records
     /// so a relaunch after a restart can find the reopened session (#4114).
     definition_id: Option<String>,
+    /// The filesystem the hosted session browses, when the desktop can tell
+    /// (#5355; [`hosted_filesystem`]): what lets a paste between two
+    /// sessions on one agent host run the same-file guard.
+    filesystem: Option<FilesystemId>,
+    /// A weaker sign of what the hosted session browses (#5430;
+    /// [`hosted_filesystem_hint`]), confirmed by the entry itself before a
+    /// cross-session paste is refused.
+    filesystem_hint: Option<FilesystemHint>,
     /// Which of chmod / chown / symlink the hosted backend performs (#4353),
     /// resolved from the hosted session type and the agent's reported host
     /// support (#4601) by [`hosted_attribute_ops`].
     attribute_ops: FileAttributeOps,
+}
+
+/// The filesystem an agent-hosted session of `session_type` with `config`
+/// browses, when the desktop can tell (#5355): a local session browses the
+/// agent host itself; an SSH session the server, user and route its inline
+/// config names, as dialled from that agent. Anything else (Docker, FTP,
+/// WSL, an SSH session opened from a saved definition without an inline
+/// host) has no id, so it is never taken for another session's filesystem.
+pub(crate) fn hosted_filesystem(
+    agent_id: &str,
+    session_type: &str,
+    config: &Value,
+) -> Option<FilesystemId> {
+    let backend = match session_type {
+        "local" => FilesystemId::Local,
+        "ssh" => {
+            let ssh = serde_json::from_value::<termihub_core::config::SshConfig>(config.clone());
+            FilesystemId::ssh(&ssh.ok()?)?
+        }
+        _ => return None,
+    };
+    Some(FilesystemId::Agent {
+        agent_id: agent_id.to_string(),
+        backend: Box::new(backend),
+    })
+}
+
+/// A weaker sign of what an agent-hosted session browses (#5430): an SSH
+/// session's server under any login (its inline config), or, opened from a
+/// saved definition without an inline host, that definition on this agent.
+/// Two sessions with equal hints are refused a paste only when the source
+/// shows the same entry through both. Every other session type has none:
+/// two Docker sessions of one definition can be two containers.
+pub(crate) fn hosted_filesystem_hint(
+    agent_id: &str,
+    session_type: &str,
+    config: &Value,
+    definition_id: Option<&str>,
+) -> Option<FilesystemHint> {
+    if session_type != "ssh" {
+        return None;
+    }
+    let inline = serde_json::from_value::<termihub_core::config::SshConfig>(config.clone())
+        .ok()
+        .and_then(|ssh| FilesystemHint::ssh(&ssh));
+    let backend = match (inline, definition_id) {
+        (Some(server), _) => server,
+        (None, Some(definition_id)) if !definition_id.is_empty() => {
+            return Some(FilesystemHint::AgentDefinition {
+                agent_id: agent_id.to_string(),
+                definition_id: definition_id.to_string(),
+            })
+        }
+        _ => return None,
+    };
+    Some(FilesystemHint::Agent {
+        agent_id: agent_id.to_string(),
+        backend: Box::new(backend),
+    })
 }
 
 /// The attribute operations (chmod / chown / symlink) an agent-hosted session
@@ -1163,6 +1245,16 @@ impl FileBrowser for RemoteFileBrowserProxy {
     /// too old to browse the session is not asked at all.
     fn path_canonicalizer(&self) -> Option<&dyn PathCanonicalizer> {
         (!self.agent_outdated).then_some(self as &dyn PathCanonicalizer)
+    }
+
+    /// The agent host, or the server an SSH session reaches (#5355).
+    fn filesystem_id(&self) -> Option<FilesystemId> {
+        self.filesystem.clone()
+    }
+
+    /// The server under any login, or the saved definition (#5430).
+    fn filesystem_hint(&self) -> Option<FilesystemHint> {
+        self.filesystem_hint.clone()
     }
 }
 
@@ -3716,6 +3808,12 @@ mod tests {
 
     /// Same-session pastes resolved on the agent host (#5333).
     mod realpath_tests;
+
+    /// Pastes between two sessions that reach one filesystem (#5355).
+    mod cross_session_tests;
+
+    /// Pastes between two sessions that only may share a filesystem (#5430).
+    mod hinted_session_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

@@ -20,9 +20,12 @@
 #   serial ONLY the live-agent-TCP tests (SERIAL_FILTERS), one at a time
 #          (--test-threads=1), then verify at least SERIAL_MIN_TESTS ran and
 #          none was ignored (#2495, #3615); killed at CI_SERIAL_TIMEOUT_SECS.
+#   shards verify the bulk set's CI_RUST_TESTS_SHARD hash partitions (below)
+#          are disjoint and together cover the bulk set exactly. Builds and
+#          lists, never runs; CI runs it on Linux shard 1 (#5465).
 #   list   print what each phase selects and verify the partition is exact
-#          (bulk + heavy [+ serial] == the full test set, no overlap). Builds,
-#          never runs.
+#          (bulk + heavy [+ serial] == the full test set, no overlap), plus the
+#          `shards` check when sharded. Builds, never runs.
 #
 # CI_RUST_TESTS_SPLIT_SERIAL=1 makes bulk and heavy SKIP the serial set, so it
 # can run in its own job instead. Only set it on a leg whose workflow also runs
@@ -46,6 +49,14 @@
 # a local run without it falls back to `cargo test`. Doc-tests stay on
 # `cargo test --doc` (nextest does not run them).
 #
+# CI_RUST_TESTS_SHARD=<k>/<N> (default 1/1) runs only shard k of N of the BULK
+# phase, so N runners split it (#5465): nextest `--partition hash:<k>/<N>`
+# assigns each test by a hash of its binary and name, so the shards are
+# disjoint and cover the bulk set whatever else is in it. The once-only work
+# stays on shard 1: the doc-tests here, and (in the workflow) the heavy phase,
+# the keychain tests and the `shards` check. heavy and serial are never
+# partitioned. Sharding needs nextest; a libtest run refuses N > 1.
+#
 # CI_RUST_TESTS_COVERAGE=1 runs bulk, heavy and serial under cargo-llvm-cov
 # (`cargo llvm-cov nextest --no-report` in place of `cargo nextest run`, #5349),
 # so a coverage lane keeps the same partition, thread caps, per-test timeouts
@@ -59,8 +70,9 @@
 # single-pass `coverage.sh` run (no --split) does not count them either.
 #
 # Usage:
-#   scripts/internal/ci-rust-tests.sh <bulk|heavy|serial|list> [cargo selection args]
+#   scripts/internal/ci-rust-tests.sh <bulk|heavy|serial|shards|list> [cargo selection args]
 #   scripts/internal/ci-rust-tests.sh bulk --workspace
+#   CI_RUST_TESTS_SHARD=2/2 scripts/internal/ci-rust-tests.sh bulk --workspace
 #   scripts/internal/ci-rust-tests.sh heavy -p termihub-agent -p termihub-core
 #   scripts/internal/ci-rust-tests.sh serial -p termihub-agent
 #
@@ -70,7 +82,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,68p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,80p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Contention-sensitive tests, as libtest substring filters. Add a module here
@@ -123,6 +135,16 @@ SERIAL_TIMEOUT_SECS="${CI_SERIAL_TIMEOUT_SECS:-1200}"
 SPLIT_SERIAL="${CI_RUST_TESTS_SPLIT_SERIAL:-0}"
 COVERAGE="${CI_RUST_TESTS_COVERAGE:-0}"
 
+# Bulk shard "<k>/<N>" (see the header): 1 <= k <= N.
+SHARD="${CI_RUST_TESTS_SHARD:-1/1}"
+if ! [[ "$SHARD" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] ||
+  [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
+  echo "ci-rust-tests.sh: CI_RUST_TESTS_SHARD must be <k>/<N> with 1 <= k <= N, got '${SHARD}'" >&2
+  exit 2
+fi
+SHARD_INDEX="${BASH_REMATCH[1]}"
+SHARD_COUNT="${BASH_REMATCH[2]}"
+
 NEXTEST_PROFILE="${CI_NEXTEST_PROFILE:-ci}"
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 
@@ -132,7 +154,7 @@ case "$phase" in
     usage
     exit 0
     ;;
-  bulk | heavy | serial | list)
+  bulk | heavy | serial | shards | list)
     shift
     ;;
   *)
@@ -174,6 +196,12 @@ else
   fi
 fi
 
+if [ "$SHARD_COUNT" -gt 1 ] && [ "$runner" != "nextest" ]; then
+  echo "ci-rust-tests.sh: CI_RUST_TESTS_SHARD=${SHARD} needs cargo-nextest (--partition);" >&2
+  echo "  plain cargo test cannot shard. Install nextest or unset CI_RUST_TESTS_SHARD." >&2
+  exit 2
+fi
+
 selection=("$@")
 if [ "${#selection[@]}" -eq 0 ]; then
   selection=(--workspace)
@@ -202,15 +230,24 @@ plain_log() {
   tr -d '\r' <"$1" | sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g'
 }
 
+# Nextest options for the bulk shard: none unsharded, else the hash partition.
+partition_args=()
+if [ "$SHARD_COUNT" -gt 1 ]; then
+  partition_args=(--partition "hash:${SHARD_INDEX}/${SHARD_COUNT}")
+fi
+
 # Set `run` to the phase's test command. $1: thread cap ("" = the runner's
 # default); $2: 1 = do not capture test output (serial phase); the rest: libtest
 # filter args, which nextest accepts after `--` too. Only the thread and capture
-# flags differ: nextest takes them before `--`, libtest after.
+# flags differ: nextest takes them before `--`, libtest after. `run_before`
+# holds extra nextest options (the bulk phase's partition); it is reset after.
+run_before=()
 set_run() {
   local threads="$1" nocapture="$2"
   shift 2
   local before=() after=()
   if [ "$runner" = "nextest" ]; then
+    before+=(${run_before[@]+"${run_before[@]}"})
     # --no-capture already runs one test at a time (and rejects a thread cap).
     if [ "$nocapture" = "1" ]; then
       before+=(--no-capture)
@@ -314,10 +351,51 @@ list_libtest() {
 
 # The same for nextest: sorted "<binary-id> <test>" lines, ignored tests
 # included (libtest lists them too), with nextest's own filter matching.
+# `list_before` holds extra nextest options (a partition, for check_shards).
+list_before=()
 list_nextest() {
   CARGO_TERM_COLOR=never LC_ALL=C cargo nextest list "${selection[@]}" "${targets[@]}" \
-    --run-ignored all --message-format oneline -- "$@" |
+    ${list_before[@]+"${list_before[@]}"} --run-ignored all --message-format oneline -- "$@" |
     LC_ALL=C sort
+}
+
+# Verify the bulk set's SHARD_COUNT hash partitions are disjoint and cover it
+# exactly (#5465), with the filters the bulk phase passes. Nextest assigns a
+# partition by a hash of the binary id and test name only, so listing with
+# ignored tests included assigns every test to the shard its run uses. $1: a
+# scratch directory. A partition option the listing ignored would list every
+# test in every shard; that shows as overlap, so the check cannot pass on it.
+check_shards() {
+  local dir="$1" k count
+  if [ "$runner" != "nextest" ]; then
+    echo "shards: skipped (no cargo-nextest; plain cargo test cannot shard)"
+    return
+  fi
+  list_before=()
+  list_nextest "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} >"$dir/bulk-all"
+  : >"$dir/shards-concat"
+  for ((k = 1; k <= SHARD_COUNT; k++)); do
+    list_before=(--partition "hash:${k}/${SHARD_COUNT}")
+    list_nextest "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} >"$dir/shard-$k"
+    list_before=()
+    count="$(wc -l <"$dir/shard-$k" | tr -d ' ')"
+    echo "shard ${k}/${SHARD_COUNT}: ${count} test(s)"
+    if [ "$count" -eq 0 ]; then
+      echo "shards: shard ${k}/${SHARD_COUNT} selects no test" >&2
+      exit 1
+    fi
+    cat "$dir/shard-$k" >>"$dir/shards-concat"
+  done
+  local dup
+  dup="$(LC_ALL=C sort "$dir/shards-concat" | uniq -d | wc -l | tr -d ' ')"
+  LC_ALL=C sort -u "$dir/shards-concat" >"$dir/shards-union"
+  echo "bulk=$(wc -l <"$dir/bulk-all" | tr -d ' ') in ${SHARD_COUNT} shard(s), overlap=${dup}"
+  if [ "$dup" -ne 0 ] || ! cmp -s "$dir/bulk-all" "$dir/shards-union"; then
+    echo "shards NOT exact: a bulk test runs in no shard or in more than one" >&2
+    diff "$dir/bulk-all" "$dir/shards-union" >&2 || true
+    exit 1
+  fi
+  echo "shards exact: every bulk test runs in exactly one of ${SHARD_COUNT} shard(s)"
 }
 
 # The ignored tests the given filters select (sorted "<binary-id> <test>").
@@ -380,16 +458,20 @@ check_serial_groups() {
 
 case "$phase" in
   bulk)
-    echo "runner cores: $(cores); runner: ${runner}; bulk phase: default parallelism, skipping ${#HEAVY_FILTERS[@]} heavy filter(s)"
+    echo "runner cores: $(cores); runner: ${runner}; bulk phase: default parallelism, skipping ${#HEAVY_FILTERS[@]} heavy filter(s), shard ${SHARD}"
     if [ "$SPLIT_SERIAL" = "1" ]; then
       echo "  also skipping the serial set (runs in its own job): ${SERIAL_FILTERS[*]}"
     fi
     check_build_script_watches
     # A failed run still reaches the doc-tests (no fail-fast), then fails.
     status=0
+    run_before=(${partition_args[@]+"${partition_args[@]}"})
     run_tests "" 0 "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} || status=$?
+    run_before=()
     if [ "$COVERAGE" = "1" ]; then
       echo "  doc-tests skipped (coverage run; see the header)"
+    elif [ "$SHARD_INDEX" -ne 1 ]; then
+      echo "  doc-tests skipped (they run once, on shard 1/${SHARD_COUNT})"
     else
       cargo test "${selection[@]}" --all-features --doc || status=$?
     fi
@@ -499,6 +581,12 @@ case "$phase" in
       exit 1
     fi
     ;;
+  shards)
+    echo "runner: ${runner}; shards check: ${SHARD_COUNT} hash partition(s) of the bulk set"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    check_shards "$tmp"
+    ;;
   list)
     export LC_ALL=C
     check_serial_groups
@@ -541,5 +629,8 @@ case "$phase" in
       exit 1
     fi
     echo "partition exact: every test runs in exactly one phase"
+    if [ "$SHARD_COUNT" -gt 1 ]; then
+      check_shards "$tmp"
+    fi
     ;;
 esac
