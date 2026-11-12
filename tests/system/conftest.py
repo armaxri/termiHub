@@ -763,7 +763,7 @@ def ssh_mfa_fixtures():
     """Two-factor SSH container (port 2216) plus the key-auth ``ssh-keys`` (2203).
 
     ``ssh-mfa`` asks a keyboard-interactive one-time code after a password or key
-    (#3384), driving the in-app SSH Authentication dialog (#3371). ``ssh-keys`` is
+    (#3384), driving the in-app SSH authentication dialog (#3371). ``ssh-keys`` is
     the jump-host *target* the ProxyJump test reaches through it — by its compose
     service name on the shared ``test-net``.
     """

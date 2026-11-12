@@ -357,7 +357,7 @@ describe("SecuritySettings", () => {
     expect(mockedToast.success).toHaveBeenCalled();
   });
 
-  it("triggers the unlock flow when Change Master Password is clicked while locked", async () => {
+  it("triggers the unlock flow when Change master password is clicked while locked", async () => {
     // GAP G4: change_master_password requires an unlocked store. When locked, the
     // change-password button must route through the unlock flow instead of opening a
     // dialog that dead-ends on a raw "Store is locked" error.
@@ -677,7 +677,7 @@ describe("SecuritySettings", () => {
       expect(panel.getAttribute("role")).toBe("alert");
       expect(panel.textContent).toContain("Switch failed, nothing changed");
       expect(panel.textContent).toContain("none of your 2 credentials could be moved");
-      expect(panel.textContent).toContain("Master Password is still active");
+      expect(panel.textContent).toContain("Master password is still active");
       expect(panel.textContent).not.toContain("Switched to");
       expect(query("migration-warnings")?.querySelectorAll("li")).toHaveLength(2);
       expect(mockedToast.error).toHaveBeenCalledTimes(1);
@@ -733,8 +733,8 @@ describe("SecuritySettings", () => {
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("partial");
       expect(panel.textContent).toContain("2 of 3 credentials removed");
-      expect(panel.textContent).toContain("1 credential could not be removed from Master Password");
-      expect(panel.textContent).toContain("Still stored in Master Password:");
+      expect(panel.textContent).toContain("1 credential could not be removed from Master password");
+      expect(panel.textContent).toContain("Still stored in Master password:");
       const remaining = query("migration-remaining");
       expect(remaining?.querySelectorAll("li")).toHaveLength(1);
       expect(remaining?.textContent).toContain("conn-9:password");

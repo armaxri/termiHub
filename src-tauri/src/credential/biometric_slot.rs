@@ -10,10 +10,12 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use zeroize::Zeroizing;
 
+use super::keychain_namespace::KeychainNamespace;
 use super::keyring_thread::off_runtime;
 
-/// OS credential-store service name for the wrapping key. Distinct from the
-/// `termiHub` service used by OS-keychain credential storage.
+/// Base OS credential-store service name for the wrapping key. Distinct from the
+/// `termiHub` service used by OS-keychain credential storage; namespaced per
+/// build like it (see [`KeychainNamespace`], #5478).
 const KEYRING_SERVICE: &str = "termiHub-biometric-unlock";
 /// OS credential-store account name for the wrapping key.
 const KEYRING_ACCOUNT: &str = "master-password-store";
@@ -55,7 +57,10 @@ pub struct KeyringSlot {
 
 impl Default for KeyringSlot {
     fn default() -> Self {
-        Self::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        Self::new(
+            &KeychainNamespace::current().name(KEYRING_SERVICE),
+            KEYRING_ACCOUNT,
+        )
     }
 }
 
@@ -156,5 +161,26 @@ impl SecretSlot for MemorySlot {
     fn delete(&self) -> Result<()> {
         *self.value.lock().unwrap() = None;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The default slot's service is namespaced per build, so a debug build
+    /// never addresses the installed app's wrapping key (#5478). Constructing
+    /// a slot does not touch the keychain.
+    #[test]
+    fn default_slot_uses_the_build_keychain_namespace() {
+        let slot = KeyringSlot::default();
+        assert_eq!(
+            slot.service,
+            KeychainNamespace::current().name(KEYRING_SERVICE)
+        );
+        assert_eq!(slot.account, KEYRING_ACCOUNT);
+        if cfg!(debug_assertions) {
+            assert_ne!(slot.service, KEYRING_SERVICE);
+        }
     }
 }

@@ -140,7 +140,7 @@ class PasswordPromptUi(HarnessMixin):
         self.driver.click("password-prompt-cancel")
 
     # ── SSH keyboard-interactive (OTP / 2FA) dialog (#3371, #4005) ──────────────
-    #: The global "SSH Authentication" dialog's controls
+    #: The global "SSH authentication" dialog's controls
     #: (``SshKeyboardInteractivePrompt``). One ``kbd-interactive-input-<i>`` per
     #: server prompt, labelled (``aria-label``) by the prompt text.
     KBD_INTERACTIVE_TARGET = "kbd-interactive-target"

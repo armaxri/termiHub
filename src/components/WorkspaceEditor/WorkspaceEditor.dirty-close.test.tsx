@@ -89,7 +89,7 @@ describe("WorkspaceEditor — unsaved changes (UX2-004)", () => {
     expect(byTestId("unsaved-changes-message")!.textContent).toContain("“Ops 2”");
   });
 
-  it("Just Close on the prompt closes the tab without saving", async () => {
+  it("Discard changes on the prompt closes the tab without saving", async () => {
     await render("ws-1");
     typeInto("workspace-name-input", "Ops 2");
     click("workspace-cancel-btn");

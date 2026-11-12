@@ -18,13 +18,13 @@ function isTabChecked(tab: RestoreTabInfo, override: boolean | undefined): boole
 }
 
 /**
- * Startup "Restore Previous Session?" dialog shown when the restore mode is
+ * Startup "Restore previous session?" dialog shown when the restore mode is
  * `ask` and a previous session is stored (see `resolveRestoreMode`).
  *
  * Self-contained: it reads the pending {@link RestorePrompt} from the store and
  * resolves it through `confirmRestorePrompt` / `dismissRestorePrompt`. The
  * "Remember my choice" opt-out persists the mode (`always` on Restore, `never`
- * on the explicit Start Fresh button) so the dialog is not shown again.
+ * on the explicit Start fresh button) so the dialog is not shown again.
  *
  * Per-tab selection (#1931): each tab has a checkbox so the user restores only a
  * subset; the chosen indices are passed to `confirmRestorePrompt`. Tabs whose
@@ -32,9 +32,9 @@ function isTabChecked(tab: RestoreTabInfo, override: boolean | undefined): boole
  * warning icon and start unchecked.
  *
  * Composes the shared {@link ConfirmDialog}: "Restore" is the primary confirm,
- * "Start Fresh" is the cancel, and the opt-out rides the `dontAskAgain` slot.
+ * "Start fresh" is the cancel, and the opt-out rides the `dontAskAgain` slot.
  *
- * Escape / backdrop click are a *defer*, not "Start Fresh" (#5155): they route
+ * Escape / backdrop click are a *defer*, not "Start fresh" (#5155): they route
  * to `deferRestorePrompt`, which keeps the stored session, ignores "Remember my
  * choice", and asks again on the next launch.
  */
@@ -53,16 +53,16 @@ export function SessionRestoreDialog(): React.ReactElement | null {
 
   const selectedIndices = tabs.map((_, i) => i).filter((i) => isTabChecked(tabs[i], overrides[i]));
   const selectedCount = selectedIndices.length;
-  const confirmLabel = selectedCount === tabCount ? "Restore" : `Restore ${selectedCount} Selected`;
+  const confirmLabel = selectedCount === tabCount ? "Restore" : `Restore ${selectedCount} selected`;
 
   return (
     <ConfirmDialog
       open
-      title="Restore Previous Session?"
+      title="Restore previous session?"
       description="Choose which tabs to reopen from your previous session."
       message={`You had ${tabCount} ${tabWord} open when termiHub last closed:`}
       confirmLabel={confirmLabel}
-      cancelLabel="Start Fresh"
+      cancelLabel="Start fresh"
       confirmVariant="primary"
       confirmErrorToast={false}
       confirmDisabled={selectedCount === 0}

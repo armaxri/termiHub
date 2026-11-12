@@ -52,6 +52,14 @@ if exist "src-tauri\binaries\conpty\conpty.dll" if exist "src-tauri\binaries\con
     set "CONPTY_CONFIG=--config src-tauri/tauri.conpty.conf.json"
 )
 
+REM Per-checkout OS keychain namespace (#5478): a dev build stores its secrets
+REM under "termiHub-dev-<dev_name>", never the installed app's names.
+if exist dev.local.json (
+    for /f "tokens=2 delims=:, " %%a in ('findstr /c:"\"dev_name\"" dev.local.json') do (
+        set "TERMIHUB_DEV_NAME=%%~a"
+    )
+)
+
 echo Starting termiHub in dev mode (port %DEV_PORT%)...
 set TERMIHUB_DEV_PORT=%DEV_PORT%
 call pnpm tauri dev --config "{\"build\":{\"devUrl\":\"http://localhost:%DEV_PORT%\"}}" %CONPTY_CONFIG%

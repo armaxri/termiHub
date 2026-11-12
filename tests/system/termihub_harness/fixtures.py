@@ -296,7 +296,7 @@ REMOTE_AGENT_PENDING_PORT = dev_local.service_port(
 #: keyboard-interactive-only sshd (compose profile ``agent``, #4005): the same
 #: image built with ``KBDINT_ONLY``, so PAM asks the password as a
 #: keyboard-interactive prompt and a remote agent with the "Keyboard-Interactive"
-#: auth method must answer it in the in-app SSH Authentication dialog (#3377).
+#: auth method must answer it in the in-app SSH authentication dialog (#3377).
 REMOTE_AGENT_KBDINT_SERVICE = "remote-agent-kbdint"
 REMOTE_AGENT_KBDINT_PORT = dev_local.service_port(
     "TERMIHUB_TEST_REMOTE_AGENT_KBDINT_PORT", 2217
