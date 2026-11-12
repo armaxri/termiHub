@@ -770,3 +770,7 @@ mod tests {
         assert_eq!(store.get(&c).unwrap(), Some("value-c".to_string()));
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "os_keychain_denied_tests.rs"]
+mod denied_tests;
