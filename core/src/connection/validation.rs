@@ -829,7 +829,7 @@ mod tests {
                 fields: vec![
                     SettingsField {
                         key: "hostPath".to_string(),
-                        label: "Host Path".to_string(),
+                        label: "Host path".to_string(),
                         description: None,
                         help_text: None,
                         field_type: FieldType::Text,
@@ -842,7 +842,7 @@ mod tests {
                     },
                     SettingsField {
                         key: "containerPath".to_string(),
-                        label: "Container Path".to_string(),
+                        label: "Container path".to_string(),
                         description: None,
                         help_text: None,
                         field_type: FieldType::Text,

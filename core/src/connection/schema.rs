@@ -339,14 +339,14 @@ mod tests {
                     fields: vec![
                         SettingsField {
                             key: "authMethod".to_string(),
-                            label: "Auth Method".to_string(),
+                            label: "Auth method".to_string(),
                             description: None,
                             help_text: None,
                             field_type: FieldType::Select {
                                 options: vec![
                                     SelectOption {
                                         value: "key".to_string(),
-                                        label: "SSH Key".to_string(),
+                                        label: "SSH key".to_string(),
                                     },
                                     SelectOption {
                                         value: "password".to_string(),
@@ -363,7 +363,7 @@ mod tests {
                         },
                         SettingsField {
                             key: "keyPath".to_string(),
-                            label: "Key Path".to_string(),
+                            label: "Key path".to_string(),
                             description: None,
                             help_text: None,
                             field_type: FieldType::FilePath {
@@ -642,7 +642,7 @@ mod tests {
     fn settings_field_camel_case_keys() {
         let field = SettingsField {
             key: "keyPath".to_string(),
-            label: "Key Path".to_string(),
+            label: "Key path".to_string(),
             description: Some("Path to key".to_string()),
             help_text: None,
             field_type: FieldType::Text,
@@ -695,7 +695,7 @@ mod tests {
                         fields: vec![
                             SettingsField {
                                 key: "hostPath".to_string(),
-                                label: "Host Path".to_string(),
+                                label: "Host path".to_string(),
                                 description: None,
                                 help_text: None,
                                 field_type: FieldType::FilePath {
@@ -710,7 +710,7 @@ mod tests {
                             },
                             SettingsField {
                                 key: "containerPath".to_string(),
-                                label: "Container Path".to_string(),
+                                label: "Container path".to_string(),
                                 description: None,
                                 help_text: None,
                                 field_type: FieldType::Text,
@@ -723,7 +723,7 @@ mod tests {
                             },
                             SettingsField {
                                 key: "readOnly".to_string(),
-                                label: "Read Only".to_string(),
+                                label: "Read only".to_string(),
                                 description: None,
                                 help_text: None,
                                 field_type: FieldType::Boolean,

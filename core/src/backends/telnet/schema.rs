@@ -80,7 +80,7 @@ fn connection_group() -> SettingsGroup {
                 placeholder: Some("10".to_string()),
                 ..field(
                     "connectTimeoutSecs",
-                    "Connect Timeout (s)",
+                    "Connect timeout (s)",
                     FieldType::Number {
                         min: Some(1.0),
                         max: Some(300.0),
@@ -96,7 +96,7 @@ fn connection_group() -> SettingsGroup {
                 )),
                 default: Some(serde_json::json!(DEFAULT_TERMINAL_TYPE)),
                 placeholder: Some(DEFAULT_TERMINAL_TYPE.to_string()),
-                ..field("terminalType", "Terminal Type", FieldType::Text)
+                ..field("terminalType", "Terminal type", FieldType::Text)
             },
             input_mode_field(),
             auto_reconnect_field(),
@@ -104,7 +104,7 @@ fn connection_group() -> SettingsGroup {
     }
 }
 
-/// The telnet "Auto-Reconnect" switch (#5390): **off by default** — retrying a
+/// The telnet "Auto-reconnect" switch (#5390): **off by default** — retrying a
 /// closed telnet session is opt-in per connection.
 fn auto_reconnect_field() -> SettingsField {
     SettingsField {
@@ -123,7 +123,7 @@ fn auto_reconnect_field() -> SettingsField {
         )),
         ..field(
             crate::connection::AUTO_RECONNECT_KEY,
-            "Auto-Reconnect",
+            "Auto-reconnect",
             FieldType::Boolean,
         )
     }
@@ -145,7 +145,7 @@ fn input_mode_field() -> SettingsField {
         default: Some(serde_json::json!(InputMode::CHARACTER)),
         ..field(
             "inputMode",
-            "Input Mode",
+            "Input mode",
             FieldType::Select {
                 options: vec![
                     SelectOption {
@@ -236,7 +236,7 @@ fn login_group() -> SettingsGroup {
                 default: Some(serde_json::json!(DEFAULT_LOGIN_PROMPT)),
                 placeholder: Some(DEFAULT_LOGIN_PROMPT.to_string()),
                 visible_when: when_auto_login(),
-                ..field("loginPrompt", "Login Prompt", FieldType::Text)
+                ..field("loginPrompt", "Login prompt", FieldType::Text)
             },
             SettingsField {
                 description: Some("Text that ends the password prompt".to_string()),
@@ -248,7 +248,7 @@ fn login_group() -> SettingsGroup {
                 default: Some(serde_json::json!(DEFAULT_PASSWORD_PROMPT)),
                 placeholder: Some(DEFAULT_PASSWORD_PROMPT.to_string()),
                 visible_when: when_auto_login(),
-                ..field("passwordPrompt", "Password Prompt", FieldType::Text)
+                ..field("passwordPrompt", "Password prompt", FieldType::Text)
             },
             SettingsField {
                 description: Some("Seconds to wait for each prompt".to_string()),
@@ -261,7 +261,7 @@ fn login_group() -> SettingsGroup {
                 visible_when: when_auto_login(),
                 ..field(
                     "autoLoginTimeoutSecs",
-                    "Prompt Timeout (s)",
+                    "Prompt timeout (s)",
                     FieldType::Number {
                         min: Some(1.0),
                         max: Some(300.0),

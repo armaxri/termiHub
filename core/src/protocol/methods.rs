@@ -2896,7 +2896,7 @@ mod tests {
             capabilities: Capabilities {
                 connection_types: vec![ConnectionTypeInfo {
                     type_id: "local".to_string(),
-                    display_name: "Local Shell".to_string(),
+                    display_name: "Local shell".to_string(),
                     icon: "terminal".to_string(),
                     schema: SettingsSchema { groups: vec![] },
                     capabilities: CoreCapabilities {

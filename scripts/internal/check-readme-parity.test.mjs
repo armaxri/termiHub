@@ -39,12 +39,12 @@ SettingsField {
         options: vec![
             SelectOption {
                 value: "key".to_string(),
-                label: "SSH Key".to_string(),
+                label: "SSH key".to_string(),
             },
             SelectOption {
                 value: keyboard_interactive::AUTH_METHOD_KEYBOARD_INTERACTIVE
                     .to_string(),
-                label: "Keyboard-Interactive".to_string(),
+                label: "Keyboard-interactive".to_string(),
             },
         ],
     },
@@ -53,10 +53,10 @@ SettingsField {
 const AUTH_README = [
   "### Authentication Methods",
   "",
-  "- **SSH Key** (default) — a key file.",
-  "- **Keyboard-Interactive** — prompts.",
+  "- **SSH key** (default) — a key file.",
+  "- **Keyboard-interactive** — prompts.",
   "",
-  "**SSH Agent Forwarding** — not a method.",
+  "**SSH agent forwarding** — not a method.",
   "",
   "### Next",
   "- **Ignored** — another section.",
@@ -142,26 +142,26 @@ describe("SSH authentication methods", () => {
   it("parses options, including a const value, and the default", () => {
     expect(parseAuthMethods(SSH_SRC)).toEqual({
       options: [
-        { value: "key", label: "SSH Key" },
+        { value: "key", label: "SSH key" },
         {
           value: "keyboard_interactive::AUTH_METHOD_KEYBOARD_INTERACTIVE",
-          label: "Keyboard-Interactive",
+          label: "Keyboard-interactive",
         },
       ],
-      defaultLabel: "SSH Key",
+      defaultLabel: "SSH key",
     });
   });
   it("passes when the README matches", () => {
     expect(checkAuthMethods(AUTH_README, SSH_SRC)).toEqual([]);
   });
   it("flags a missing method and a wrong default", () => {
-    const readme = AUTH_README.replace("- **Keyboard-Interactive** — prompts.\n", "").replace(
+    const readme = AUTH_README.replace("- **Keyboard-interactive** — prompts.\n", "").replace(
       " (default)",
       ""
     );
     expect(checkAuthMethods(readme, SSH_SRC)).toEqual([
-      `README.md: Authentication Methods misses "Keyboard-Interactive" (in core/src/backends/ssh/mod.rs)`,
-      `README.md: Authentication Methods marks nothing as (default), but core/src/backends/ssh/mod.rs defaults to "SSH Key"`,
+      `README.md: Authentication Methods misses "Keyboard-interactive" (in core/src/backends/ssh/mod.rs)`,
+      `README.md: Authentication Methods marks nothing as (default), but core/src/backends/ssh/mod.rs defaults to "SSH key"`,
     ]);
   });
 });

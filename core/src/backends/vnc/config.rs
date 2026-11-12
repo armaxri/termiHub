@@ -375,7 +375,7 @@ fn color_depth_field() -> SettingsField {
         ),
         ..field(
             "colorDepth",
-            "Color Depth",
+            "Color depth",
             FieldType::Select {
                 options: vec![
                     opt("32", "32-bit (true color)"),
@@ -420,7 +420,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
     groups.push(SettingsGroup {
         collapsed: false,
         key: "vnc".to_string(),
-        label: "VNC Options".to_string(),
+        label: "VNC options".to_string(),
         fields: vec![
             SettingsField {
                 description: Some(
@@ -431,7 +431,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                     max: Some(255.0),
                 },
                 placeholder: Some("0".to_string()),
-                ..field("display", "Display Number", FieldType::Text)
+                ..field("display", "Display number", FieldType::Text)
             },
             SettingsField {
                 default: Some(serde_json::json!("zrle")),
@@ -462,7 +462,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                 description: Some(
                     "Render the remote cursor shape pushed by the server.".to_string(),
                 ),
-                ..field("showRemoteCursor", "Show Remote Cursor", FieldType::Boolean)
+                ..field("showRemoteCursor", "Show remote cursor", FieldType::Boolean)
             },
             SettingsField {
                 default: Some(serde_json::json!("system")),
@@ -475,7 +475,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                 ),
                 ..field(
                     "tlsVerify",
-                    "TLS Certificate Verification",
+                    "TLS certificate verification",
                     FieldType::Select {
                         options: vec![
                             SelectOption {
@@ -504,7 +504,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                 visible_when: when_tls_ca(),
                 ..field(
                     "tlsCaPath",
-                    "TLS CA Bundle",
+                    "TLS CA bundle",
                     FieldType::FilePath {
                         kind: FilePathKind::File,
                     },
@@ -568,7 +568,7 @@ fn when_vnc_host_is_linked_host(same: bool) -> Condition {
     }
 }
 
-/// The "File Transfer" group (#3770, #4191): the opt-in plus the default
+/// The "File transfer" group (#3770, #4191): the opt-in plus the default
 /// folder, after SSH Tunnel. Off by default. The notice says where files land;
 /// the live route (SSH vs agent host, and whether that is the desktop host) is
 /// resolved per session by `remote_desktop_file_channel`. A direct connection
@@ -577,7 +577,7 @@ fn file_transfer_group() -> SettingsGroup {
     SettingsGroup {
         collapsed: false,
         key: "fileTransfer".to_string(),
-        label: "File Transfer".to_string(),
+        label: "File transfer".to_string(),
         fields: vec![
             SettingsField {
                 default: Some(serde_json::json!(false)),
@@ -1156,7 +1156,7 @@ mod tests {
             .find(|f| f.key == crate::connection::CONNECT_TIMEOUT_KEY)
             .expect("VNC schema must expose connectTimeoutSecs");
         assert_eq!(field.key, "connectTimeoutSecs");
-        assert_eq!(field.label, "Connect Timeout (s)");
+        assert_eq!(field.label, "Connect timeout (s)");
         assert!(!field.required);
         assert_eq!(field.default, Some(serde_json::json!(30)));
         match field.field_type {
@@ -1201,7 +1201,7 @@ mod tests {
         let tunnel = keys.iter().position(|k| *k == "sshTunnel").unwrap();
         assert_eq!(keys.get(tunnel + 1), Some(&"fileTransfer"));
         let group = &schema.groups[tunnel + 1];
-        assert_eq!(group.label, "File Transfer");
+        assert_eq!(group.label, "File transfer");
         let toggle = group
             .fields
             .iter()

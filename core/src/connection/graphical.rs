@@ -81,7 +81,7 @@ fn connect_timeout_field() -> SettingsField {
         )),
         ..field(
             super::connect_timeout::CONNECT_TIMEOUT_KEY,
-            "Connect Timeout (s)",
+            "Connect timeout (s)",
             FieldType::Number {
                 min: Some(1.0),
                 max: Some(GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS as f64),
@@ -160,12 +160,12 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                 description: Some("How the remote framebuffer fills the tab".to_string()),
                 ..field(
                     "scaleMode",
-                    "Scale Mode",
+                    "Scale mode",
                     FieldType::Select {
                         options: vec![
-                            opt("fit", "Fit to Tab"),
+                            opt("fit", "Fit to tab"),
                             opt("pixel", "1:1 Pixel"),
-                            opt("match", "Match Window"),
+                            opt("match", "Match window"),
                         ],
                     },
                 )
@@ -181,12 +181,12 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                     description: Some(
                         "Observe only — suppress all keyboard/mouse input".to_string(),
                     ),
-                    ..field("viewOnly", "View Only", FieldType::Boolean)
+                    ..field("viewOnly", "View only", FieldType::Boolean)
                 },
                 SettingsField {
                     default: Some(serde_json::json!(true)),
                     description: Some("Sync text clipboard both ways".to_string()),
-                    ..field(CLIPBOARD_SYNC_KEY, "Clipboard Sync", FieldType::Boolean)
+                    ..field(CLIPBOARD_SYNC_KEY, "Clipboard sync", FieldType::Boolean)
                 },
                 SettingsField {
                     default: Some(serde_json::json!(
@@ -198,7 +198,7 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                     ),
                     ..field(
                         super::auto_reconnect::AUTO_RECONNECT_KEY,
-                        "Auto-Reconnect",
+                        "Auto-reconnect",
                         FieldType::Boolean,
                     )
                 },
@@ -224,7 +224,7 @@ pub type CertPromptReceiver = tokio::sync::mpsc::Receiver<CertPrompt>;
 /// first copy); every remote copy marks it changed, even when the text repeats.
 pub type ClipboardTextReceiver = tokio::sync::watch::Receiver<String>;
 
-/// Settings key of the shared "Clipboard Sync" toggle ("Sync text clipboard
+/// Settings key of the shared "Clipboard sync" toggle ("Sync text clipboard
 /// both ways").
 pub const CLIPBOARD_SYNC_KEY: &str = "clipboardSync";
 
@@ -1397,7 +1397,7 @@ mod tests {
             .find(|f| f.key == super::super::CONNECT_TIMEOUT_KEY)
             .expect("connection group must expose connectTimeoutSecs");
         assert_eq!(field.key, "connectTimeoutSecs");
-        assert_eq!(field.label, "Connect Timeout (s)");
+        assert_eq!(field.label, "Connect timeout (s)");
         assert!(!field.required);
         assert_eq!(field.default, Some(serde_json::json!(30)));
         assert!(

@@ -216,7 +216,7 @@ fn agent_fixture() -> Value {
         json!({
             "connectionTypes": [{
                 "typeId": "local",
-                "displayName": "Local Shell",
+                "displayName": "Local shell",
                 "icon": "terminal",
                 "schema": { "groups": [] },
                 "capabilities": {

@@ -202,7 +202,7 @@ pub trait ConnectionType: Send + Sync {
     /// Machine-readable identifier (e.g., `"ssh"`, `"serial"`, `"local"`).
     fn type_id(&self) -> &str;
 
-    /// Human-readable display name (e.g., `"SSH"`, `"Serial Port"`).
+    /// Human-readable display name (e.g., `"SSH"`, `"Serial port"`).
     fn display_name(&self) -> &str;
 
     /// Settings schema for dynamic UI form generation.

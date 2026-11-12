@@ -388,7 +388,7 @@ impl ConnectionType for Ssh {
                                 options: vec![
                                     SelectOption {
                                         value: "key".to_string(),
-                                        label: "SSH Key".to_string(),
+                                        label: "SSH key".to_string(),
                                     },
                                     SelectOption {
                                         value: "password".to_string(),
@@ -396,14 +396,14 @@ impl ConnectionType for Ssh {
                                     },
                                     SelectOption {
                                         value: "agent".to_string(),
-                                        label: "SSH Agent".to_string(),
+                                        label: "SSH agent".to_string(),
                                     },
                                     // OTP / 2FA / PAM challenges answered in an
                                     // in-app prompt (#3371).
                                     SelectOption {
                                         value: keyboard_interactive::AUTH_METHOD_KEYBOARD_INTERACTIVE
                                             .to_string(),
-                                        label: "Keyboard-Interactive (OTP / 2FA)".to_string(),
+                                        label: "Keyboard-interactive (OTP / 2FA)".to_string(),
                                     },
                                 ],
                             },
@@ -433,7 +433,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "keyPath".to_string(),
-                            label: "Key Path".to_string(),
+                            label: "Key path".to_string(),
                             description: Some("Path to SSH private key file".to_string()),
                             help_text: None,
                             field_type: FieldType::FilePath {
@@ -500,7 +500,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "enableX11Forwarding".to_string(),
-                            label: "X11 Forwarding".to_string(),
+                            label: "X11 forwarding".to_string(),
                             description: Some(
                                 "Forward X11 display from remote to local".to_string(),
                             ),
@@ -515,7 +515,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "connectTimeoutSecs".to_string(),
-                            label: "Connect Timeout (s)".to_string(),
+                            label: "Connect timeout (s)".to_string(),
                             description: Some(
                                 "Seconds to wait for the connection and SSH handshake before giving up"
                                     .to_string(),
@@ -540,7 +540,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "keepaliveIntervalSecs".to_string(),
-                            label: "Keepalive Interval (s)".to_string(),
+                            label: "Keepalive interval (s)".to_string(),
                             description: Some(
                                 "Seconds between SSH keepalive probes on an idle connection"
                                     .to_string(),
@@ -566,7 +566,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "keepaliveMaxCount".to_string(),
-                            label: "Max Missed Keepalives".to_string(),
+                            label: "Max missed keepalives".to_string(),
                             description: Some(
                                 "Consecutive unanswered keepalives before the session is dropped"
                                     .to_string(),
@@ -592,7 +592,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "env".to_string(),
-                            label: "Environment Variables".to_string(),
+                            label: "Environment variables".to_string(),
                             description: Some(
                                 "Additional environment variables for the remote shell".to_string(),
                             ),
@@ -614,15 +614,15 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "initialCommand".to_string(),
-                            label: "Initial Command".to_string(),
+                            label: "Initial command".to_string(),
                             description: Some("Command to run after the shell starts".to_string()),
                             help_text: Some(concat!(
                                 "Runs once in the remote shell after the first connect, for example ",
                                 "`tmux attach` or `cd /srv`. termiHub waits for the shell's prompt ",
-                                "(after Shell Integration has been set up, when enabled) before ",
+                                "(after shell integration has been set up, when enabled) before ",
                                 "sending it.\n\n",
                                 "It does not run again after an automatic reconnect; use the ",
-                                "On-reconnect Command for that. Leave empty to run nothing.",
+                                "On-reconnect command for that. Leave empty to run nothing.",
                             ).to_string()),
                             field_type: FieldType::Text,
                             required: false,
@@ -636,7 +636,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "shellIntegration".to_string(),
-                            label: "Command Marks (Shell Hook)".to_string(),
+                            label: "Command marks (shell hook)".to_string(),
                             description: Some(
                                 "Type a small hook into the remote shell for command marks (OSC 133)"
                                     .to_string(),
@@ -687,7 +687,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: crate::connection::AUTO_RECONNECT_KEY.to_string(),
-                            label: "Auto-Reconnect".to_string(),
+                            label: "Auto-reconnect".to_string(),
                             description: Some(
                                 "Auto-reconnect a dropped link with backoff into the same tab"
                                     .to_string(),
@@ -717,7 +717,7 @@ impl ConnectionType for Ssh {
                         },
                         SettingsField {
                             key: "onReconnectCommand".to_string(),
-                            label: "On-reconnect Command".to_string(),
+                            label: "On-reconnect command".to_string(),
                             description: Some(
                                 "Command to run once after an automatic reconnect"
                                     .to_string(),
@@ -728,7 +728,7 @@ impl ConnectionType for Ssh {
                                 "you recover some server-side context — for example `tmux attach`, ",
                                 "`screen -r`, or `cd \"$LAST_DIR\"`.\n\n",
                                 "The command runs only after an *automatic* reconnect (never on the ",
-                                "first manual connect) and only while Auto-Reconnect is enabled. ",
+                                "first manual connect) and only while Auto-reconnect is enabled. ",
                                 "Leave empty to run nothing.",
                             ).to_string()),
                             field_type: FieldType::Text,
@@ -1535,7 +1535,7 @@ mod tests {
             .flat_map(|g| g.fields.iter())
             .find(|f| f.key == crate::connection::AUTO_RECONNECT_KEY)
             .expect("autoReconnect field present");
-        assert_eq!(field.label, "Auto-Reconnect");
+        assert_eq!(field.label, "Auto-reconnect");
         assert_eq!(field.default, Some(serde_json::json!(true)));
         assert!(matches!(field.field_type, FieldType::Boolean));
         assert!(!schema
@@ -1557,7 +1557,7 @@ mod tests {
             .flat_map(|g| g.fields.iter())
             .find(|f| f.key == "initialCommand")
             .expect("initialCommand field present");
-        assert_eq!(field.label, "Initial Command");
+        assert_eq!(field.label, "Initial command");
         assert_eq!(
             field.description.as_deref(),
             Some("Command to run after the shell starts")

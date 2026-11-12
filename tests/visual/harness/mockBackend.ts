@@ -397,9 +397,9 @@ const SSH_FIELDS = [
     fieldType: {
       type: "select",
       options: [
-        { value: "key", label: "SSH Key" },
+        { value: "key", label: "SSH key" },
         { value: "password", label: "Password" },
-        { value: "agent", label: "SSH Agent" },
+        { value: "agent", label: "SSH agent" },
       ],
     },
     required: true,
@@ -414,7 +414,7 @@ const SSH_FIELDS = [
   },
   {
     key: "keyPath",
-    label: "Key Path",
+    label: "Key path",
     fieldType: { type: "filePath", kind: "file" },
     required: false,
     visibleWhen: { field: "authMethod", equals: "key" },

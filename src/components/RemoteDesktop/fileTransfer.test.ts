@@ -94,8 +94,8 @@ describe("file transfer copy", () => {
 
   it("says why there is no transfer and how to enable it", () => {
     expect(unavailableCopy("noRoute").hint).toContain("link a saved SSH connection");
-    expect(unavailableCopy("noRoute").hint).toContain("Enable the SSH Tunnel");
-    expect(unavailableCopy("disabled").hint).toContain("Turn on File Transfer");
+    expect(unavailableCopy("noRoute").hint).toContain("Enable the SSH tunnel");
+    expect(unavailableCopy("disabled").hint).toContain("Turn on File transfer");
     expect(unavailableCopy("viewOnly").hint).toContain("View-only");
   });
 

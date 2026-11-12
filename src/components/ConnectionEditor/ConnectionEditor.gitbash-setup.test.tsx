@@ -44,7 +44,7 @@ const mockedIsWindows = vi.mocked(isWindows);
 /** Local schema whose `shell` select offers no Unix shell (Windows-only host). */
 const LOCAL_NO_UNIX: ConnectionTypeInfo = {
   typeId: "local",
-  displayName: "Local Shell",
+  displayName: "Local shell",
   icon: "local",
   schema: {
     groups: [

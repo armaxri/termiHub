@@ -485,7 +485,7 @@ pub fn monitor_fields() -> Vec<SettingsField> {
         },
         SettingsField {
             key: MONITOR_COUNT_KEY.to_string(),
-            label: "Monitor Count".to_string(),
+            label: "Monitor count".to_string(),
             description: Some(format!(
                 "Number of side-by-side monitors, 2–{MAX_MONITORS}, each the size of this \
                  computer's primary display."

@@ -196,7 +196,7 @@ describe("RemoteDesktopTab — drop to upload (#4192)", () => {
     expect(hoisted.upload).not.toHaveBeenCalled();
     expect(hoisted.info).toHaveBeenCalledWith(
       "File transfer isn't available here",
-      expect.objectContaining({ description: expect.stringContaining("SSH Tunnel") })
+      expect.objectContaining({ description: expect.stringContaining("SSH tunnel") })
     );
   });
 
@@ -248,7 +248,7 @@ describe("RemoteDesktopTab — drop to upload (#4192)", () => {
     await flushAsync();
     expect(hoisted.upload).not.toHaveBeenCalled();
     expect(hoisted.info).not.toHaveBeenCalled();
-    expect(container.textContent).not.toContain("Turn on File Transfer");
+    expect(container.textContent).not.toContain("Turn on File transfer");
   });
 
   it("opens the Files popover on the resolved route", async () => {

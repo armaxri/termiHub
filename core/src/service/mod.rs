@@ -194,7 +194,7 @@ pub trait Service: Send {
     /// Machine-readable identifier (e.g. `"http_server"`).
     fn service_id(&self) -> &str;
 
-    /// Human-readable display name (e.g. `"HTTP Server"`).
+    /// Human-readable display name (e.g. `"HTTP server"`).
     fn display_name(&self) -> &str;
 
     /// Settings schema for dynamic UI form generation.

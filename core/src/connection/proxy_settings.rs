@@ -222,7 +222,7 @@ pub fn proxy_fields(
             visible_when: gate.clone(),
             ..field(
                 keys.proxy_type,
-                "Proxy Type",
+                "Proxy type",
                 "Proxy the SSH connection is made through",
                 FieldType::Select {
                     options: vec![
@@ -240,7 +240,7 @@ pub fn proxy_fields(
             visible_when: chosen(),
             ..field(
                 keys.host,
-                "Proxy Host",
+                "Proxy host",
                 "Hostname or IP address of the proxy",
                 FieldType::Text,
             )
@@ -253,7 +253,7 @@ pub fn proxy_fields(
             ),
             ..field(
                 keys.port,
-                "Proxy Port",
+                "Proxy port",
                 "Port of the proxy",
                 FieldType::Port,
             )
@@ -263,7 +263,7 @@ pub fn proxy_fields(
             visible_when: chosen(),
             ..field(
                 keys.username,
-                "Proxy User",
+                "Proxy user",
                 "User name for the proxy, if it requires one",
                 FieldType::Text,
             )
@@ -279,7 +279,7 @@ pub fn proxy_fields(
             visible_when: Some(when_proxy_takes_password(keys, gate.as_ref())),
             ..field(
                 keys.password,
-                "Proxy Password",
+                "Proxy password",
                 "Password for the proxy user",
                 FieldType::Password,
             )
@@ -329,7 +329,7 @@ pub fn direct_proxy_group(server_kind: &str) -> SettingsGroup {
     let help = format!(
         "Connect to the {server_kind} server through a SOCKS or HTTP proxy, like \
          OpenSSH's `ProxyCommand nc -X`. Used only without an SSH tunnel; with the \
-         tunnel on, set the SSH Tunnel's own proxy instead. HTTP proxies must allow \
+         tunnel on, set the SSH tunnel's own proxy instead. HTTP proxies must allow \
          `CONNECT` to the {server_kind} port. SOCKS4 has no password support."
     );
     let mut fields = proxy_fields(&DIRECT_PROXY_KEYS, Some(tunnel_off), &help);
