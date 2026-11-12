@@ -21,9 +21,11 @@ export const solarizedLightTheme: ThemeDefinition = {
     activityBarInactive: "#677d85", // base01, lifted to 3:1 (#5192)
     activityBarIndicator: "#268bd2",
 
-    // Sidebar
-    sidebarBg: "#eee8d5",
-    sidebarHeaderBg: "#eee8d5",
+    // Sidebar — #5457: base3, like the editor, so the text levels keep their
+    // contrast (on base2 they all had to collapse to near-black base02/base03).
+    // The panel border (borderPrimary) separates the sidebar from the editor.
+    sidebarBg: "#fdf6e3", // base3
+    sidebarHeaderBg: "#fdf6e3", // base3
 
     // Tab bar
     tabBg: "#eee8d5",
@@ -32,17 +34,21 @@ export const solarizedLightTheme: ThemeDefinition = {
 
     // Text — #5190: remapped within the canonical Solarized palette so every
     // text role reaches WCAG AA. base00/base1/#acb0a7 measured 3.64 / 2.18 /
-    // 1.80:1 on the sidebar. base01 still only reaches 4.39:1 on the base2
-    // sidebar, so the first canonical tone that passes there is base02.
+    // 1.80:1 on the old base2 sidebar. base01 only reaches 4.39:1 on base2,
+    // which the status bar and tab bar (bgSecondary / tabBg) still paint, so
+    // the first canonical tone that passes everywhere is base02.
     // Locked by contrast.test.ts, which also checks palette membership.
-    textPrimary: "#002b36", // base03: 12.25:1 on sidebar, 9.64:1 on bgActive
+    textPrimary: "#002b36", // base03: 13.92:1 on sidebar, 9.64:1 on bgActive
     textSecondary: "#073642", // base02: 10.61:1 on bgSecondary / tabBg
     textSecondaryOnSelection: "#073642", // base02: 8.35:1 on bgActive
-    textMuted: "#073642", // base02: 12.05:1 on bgPrimary, 10.61:1 on sidebar
+    textMuted: "#073642", // base02: 12.05:1 on bgPrimary and sidebar
     textMutedOnSelection: "#073642", // base02
     textDisabled: "#c5bfae",
-    textAccent: "#268bd2",
-    textLink: "#268bd2",
+    // #5399: canonical blue measured 3.00:1 on base2 (bgSecondary). Darkened
+    // along its hue (mixed towards black in 1% steps) just until it reaches AA
+    // on every text surface; locked by contrast.test.ts.
+    textAccent: "#1e6ca4",
+    textLink: "#1e6ca4",
 
     // Borders
     borderPrimary: "#cac4b3",
@@ -53,19 +59,20 @@ export const solarizedLightTheme: ThemeDefinition = {
     // (#268bd2 measured 3.68:1). Now 4.56:1, hover 5.51:1.
     accentColor: "#227bba",
     accentHover: "#176ea5",
-    focusBorder: "#268bd2",
+    focusBorder: "#2381c3", // #5399: blue nudged to 3:1 on bgTertiary (was 2.68:1)
     textOnAccent: "#ffffff",
 
-    // Status
-    colorSuccess: "#859900",
-    colorWarning: "#b58900",
-    colorError: "#dc322f",
-    colorInfo: "#268bd2",
+    // Status — #5399: canonical green / yellow / red / blue darkened along their
+    // hue just until they reach AA (4.5:1) on every text surface.
+    colorSuccess: "#606e00", // green
+    colorWarning: "#846400", // yellow
+    colorError: "#c42d2a", // red
+    colorInfo: "#1e6ca4", // blue
 
-    // State dots
-    stateConnected: "#859900",
-    stateConnecting: "#b58900",
-    stateDisconnected: "#dc322f",
+    // State dots — #5399: nudged the same way to the 3:1 UI minimum.
+    stateConnected: "#7a8d00", // green
+    stateConnecting: "#a87f00", // yellow
+    stateDisconnected: "#dc322f", // red, canonical (already 3.77:1)
 
     // Terminal
     terminalBg: "#fdf6e3",

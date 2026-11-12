@@ -17,6 +17,7 @@ import pytest
 from termihub_harness import os_input
 from termihub_harness.os_input import (
     ByNameTargetRefused,
+    ForeignAppAlive,
     GlobalInjectionRefused,
     OsInput,
     OsInputUnavailable,
@@ -29,7 +30,13 @@ from termihub_harness.os_input import (
 from termihub_harness.os_input.helper import helper_command
 from termihub_harness.os_input.keymap import mac_keycode, us_key_for_char, win_vk
 from termihub_harness.os_input.linux import LinuxOsInput, XWindowManager, combo_keysyms, keysym
-from termihub_harness.os_input.macos import MacOsInput, combo_flags, fourcc
+from termihub_harness.os_input.macos import (
+    MacOsInput,
+    combo_flags,
+    fourcc,
+    window_info_at,
+    window_info_label,
+)
 
 CI = {"GITHUB_ACTIONS": "true"}
 
@@ -82,6 +89,16 @@ class FakeInput(OsInput):
         self.front = pid if front is None else front
         self.screen = (1280, 1024)
         self.calls: list[tuple] = []
+        #: Descriptions the exclusive-desktop guard reports (#5467); none by default.
+        self.foreign: list[str] = []
+
+    def _foreign_apps(self, timeout):
+        self.calls.append(("foreign-check",))
+        return list(self.foreign)
+
+    @staticmethod
+    def _describe_app_pid(pid):
+        return ""
 
     def _windows(self, pid: int) -> list[OsWindow]:
         return [OsWindow(1, pid, 100, 50, 800, 600)]
@@ -614,3 +631,142 @@ def test_a_held_backend_follows_a_relaunch_to_the_new_pid():
     fake.front = 200
     fake.key("cmd+q")
     assert fake.calls[-1] == ("key", 200, ("cmd",), "q")
+
+
+# ── Exclusive desktop (#5467) ────────────────────────────────────────────────
+def test_calibration_checks_for_foreign_apps_before_moving_the_pointer():
+    fake = FakeInput(100, env=CI)
+    ScreenMapper.calibrate(fake, ProbeDriver())
+    assert fake.calls[0] == ("foreign-check",)
+
+
+def test_calibration_refuses_while_a_foreign_app_is_alive_and_names_its_pid():
+    fake = FakeInput(100, env=CI)
+    fake.foreign = ["pid=6696 exe=termihub.exe owner=4242 (gone: leaked ...)"]
+    with pytest.raises(ForeignAppAlive) as raised:
+        ScreenMapper.calibrate(fake, ProbeDriver())
+    message = str(raised.value)
+    assert "pid=6696" in message and "test instance PID 100" in message
+    assert not any(c[0] in ("move", "activate") for c in fake.calls)  # nothing injected
+
+
+def test_a_foreign_app_refusal_is_a_global_injection_refusal():
+    # Callers that already treat a refusal as fatal keep doing so.
+    assert issubclass(ForeignAppAlive, GlobalInjectionRefused)
+
+
+def test_the_frontmost_check_still_refuses_another_pid():
+    # The GlobalInjectionRefused safety check is unchanged by the guard.
+    fake = FakeInput(100, front=6696, env=CI)
+    with pytest.raises(GlobalInjectionRefused, match="PID 6696"):
+        fake.pointer_move(1, 1)
+    assert not any(c[0] == "move" for c in fake.calls)
+
+
+def test_a_refusal_names_a_foreign_termihub_that_is_frontmost():
+    class Naming(FakeInput):
+        @staticmethod
+        def _describe_app_pid(pid):
+            return f"pid={pid} owner=1 (alive: another pytest process)"
+
+    fake = Naming(100, front=79093, env=CI)
+    with pytest.raises(GlobalInjectionRefused, match=r"foreign termiHub app: pid=79093"):
+        fake.pointer_move(1, 1)
+
+
+def test_the_real_guard_waits_on_the_allowed_pids(monkeypatch):
+    from termihub_harness import app_leaks  # noqa: PLC0415
+
+    seen = []
+
+    def fake_wait(allowed, timeout):
+        seen.append((set(allowed), timeout))
+        return []
+
+    monkeypatch.setattr(app_leaks, "wait_for_foreign_apps", fake_wait)
+    backend = OsInput(100, env=CI)
+    backend.allow_pid(300)
+    backend.require_exclusive_desktop(timeout=1.5)
+    assert seen == [({100, 300}, 1.5)]
+
+
+def test_a_multi_worker_session_is_not_exclusive():
+    assert os_input.shared_session_reason({}) is None
+    assert os_input.shared_session_reason({"PYTEST_XDIST_WORKER_COUNT": "1"}) is None
+    reason = os_input.shared_session_reason({"PYTEST_XDIST_WORKER_COUNT": "2"})
+    assert reason is not None and "2 xdist workers" in reason and "-n 1" in reason
+
+
+def test_the_suite_fails_rather_than_skips_in_a_shared_session(monkeypatch):
+    from termihub_harness.ui.os_input_ui import OsInputUi  # noqa: PLC0415
+
+    monkeypatch.setattr(os_input, "unavailable_reason", lambda: None)
+    monkeypatch.setenv("PYTEST_XDIST_WORKER_COUNT", "2")
+
+    class Suite(OsInputUi):
+        app = type("App", (), {"pid": 100})()
+
+    with pytest.raises(pytest.fail.Exception, match="xdist workers"):
+        Suite().os_input()
+
+
+MAC_WINDOWS = [
+    {  # a crash-reporter style dialog in front of the test window
+        "kCGWindowNumber": 9,
+        "kCGWindowOwnerPID": 555,
+        "kCGWindowOwnerName": "UserNotificationCenter",
+        "kCGWindowLayer": 8,
+        "kCGWindowBounds": {"X": 400, "Y": 300, "Width": 300, "Height": 150},
+    },
+    {  # an invisible overlay is never what the pointer hits
+        "kCGWindowNumber": 8,
+        "kCGWindowOwnerPID": 777,
+        "kCGWindowOwnerName": "Ghost",
+        "kCGWindowAlpha": 0.0,
+        "kCGWindowBounds": {"X": 0, "Y": 0, "Width": 1024, "Height": 768},
+    },
+    {
+        "kCGWindowNumber": 601,
+        "kCGWindowOwnerPID": 81712,
+        "kCGWindowOwnerName": "termiHub",
+        "kCGWindowName": "termiHub",
+        "kCGWindowLayer": 3,
+        "kCGWindowBounds": {"X": 0, "Y": 31, "Width": 1024, "Height": 674},
+    },
+]
+
+
+def test_macos_point_lookup_names_the_window_covering_the_test_window():
+    assert window_info_at(MAC_WINDOWS, 512, 368)["kCGWindowOwnerPID"] == 555
+    assert window_info_at(MAC_WINDOWS, 100, 100)["kCGWindowOwnerPID"] == 81712
+    assert window_info_at(MAC_WINDOWS, 100, 10) is None
+
+
+def test_macos_window_label_carries_pid_owner_layer_and_rect():
+    label = window_info_label(MAC_WINDOWS[2])
+    assert "pid=81712" in label and "owner='termiHub'" in label
+    assert "layer=3" in label and "rect=(0,31,1024,705)" in label
+
+
+
+def test_macos_calibration_miss_names_the_covering_window_and_desktop(monkeypatch):
+    # The active app is the test instance, yet a window of another process lies
+    # over the calibration point: the diagnostics must say so (#5467).
+    osi, _ = mac_input(monkeypatch, front=81712, env=CI)
+    monkeypatch.setattr(osi, "_window_list", lambda: MAC_WINDOWS)
+    assert "owner='UserNotificationCenter'" in osi.describe_point(512, 368)
+    desktop = osi.describe_desktop()
+    assert desktop.startswith("active app pid: 81712")
+    assert desktop.index("pid=555") < desktop.index("pid=81712")  # front to back
+
+
+def test_macos_diagnostics_never_mask_the_failure(monkeypatch):
+    osi, _ = mac_input(monkeypatch, front=100, env=CI)
+
+    def broken():
+        raise RuntimeError("window server unavailable")
+
+    monkeypatch.setattr(osi, "_window_list", broken)
+    assert osi.describe_point(1, 1) == ""
+    assert osi.describe_desktop() == ""
+    assert osi._describe_frontmost() == ""
