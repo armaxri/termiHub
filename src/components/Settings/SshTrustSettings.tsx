@@ -74,7 +74,7 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-ssh-trust">
-        <h3 className="settings-panel__section-title">Remembered SSH Host Keys</h3>
+        <h3 className="settings-panel__section-title">Remembered SSH host keys</h3>
         <p className="settings-panel__description">
           Hosts whose SSH host key you chose to trust ("Accept for host") are remembered here.
           Revoke a single fingerprint or forget a host to be prompted again on the next connect.

@@ -90,7 +90,7 @@ export function SharedCredentialsSettings() {
 
   return (
     <div className="settings-panel__section" data-testid="shared-credentials">
-      <h3 className="settings-panel__section-title">Shared Credentials</h3>
+      <h3 className="settings-panel__section-title">Shared credentials</h3>
       <p className="settings-panel__description">
         A password or key passphrase that several connections use. Change it here once and every
         connection that uses it picks up the new secret. Choose one in a connection&apos;s

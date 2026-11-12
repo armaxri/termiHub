@@ -1,5 +1,5 @@
 /**
- * A11Y-006: the terminal Screen Reader Mode setting is surfaced under a dedicated,
+ * A11Y-006: the terminal Screen reader mode setting is surfaced under a dedicated,
  * discoverable Accessibility category (rather than buried in Terminal settings).
  * These tests pin that the toggle renders, reflects the value, drives onChange,
  * and that the registry files it under the accessibility category.

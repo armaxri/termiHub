@@ -18,7 +18,7 @@ export function enableErrorMessage(err: unknown, methodLabel: string): string {
   if (!isBiometricUnlockError(err)) return errorMessage(err);
   switch (err.kind) {
     case "cancelled":
-      return `${methodLabel} was cancelled — unlock with ${methodLabel} was not turned on.`;
+      return `${methodLabel} was canceled — unlock with ${methodLabel} was not turned on.`;
     case "wrongMasterPassword":
       return "The master password is incorrect.";
     default:
@@ -145,6 +145,9 @@ export function BiometricUnlockSettings() {
             </p>
           )}
           <div className="settings-panel__inline-dialog-actions">
+            <Button variant="secondary" size="sm" onClick={() => setEnabling(false)}>
+              Cancel
+            </Button>
             <Button
               type="submit"
               variant="primary"
@@ -156,9 +159,6 @@ export function BiometricUnlockSettings() {
               data-testid="biometric-unlock-enable-btn"
             >
               Turn on
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => setEnabling(false)}>
-              Cancel
             </Button>
           </div>
         </form>

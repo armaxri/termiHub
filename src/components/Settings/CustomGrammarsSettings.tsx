@@ -25,7 +25,7 @@ function toLanguageId(raw: string): string {
 /** Extract name and a suggested ID from a parsed TextMate grammar object. */
 function extractGrammarMeta(obj: Record<string, unknown>): { name: string; suggestedId: string } {
   const rawName = typeof obj.name === "string" ? obj.name : "";
-  const name = rawName || "Custom Language";
+  const name = rawName || "Custom language";
   return { name, suggestedId: toLanguageId(rawName || "custom-language") };
 }
 
@@ -65,8 +65,8 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
     try {
       filePath = await open({
         multiple: false,
-        title: "Import TextMate Grammar",
-        filters: [{ name: "TextMate Grammar", extensions: ["json"] }],
+        title: "Import TextMate grammar",
+        filters: [{ name: "TextMate grammar", extensions: ["json"] }],
       });
     } catch {
       return; // dialog cancelled
@@ -166,11 +166,11 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
     <div className="settings-panel__category" data-testid="custom-grammars-settings">
       {show("customLanguageGrammars") && (
         <>
-          <h3 className="settings-panel__category-title">Custom Language Grammars</h3>
+          <h3 className="settings-panel__category-title">Custom language grammars</h3>
 
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Imported Grammars</h3>
+              <h3 className="settings-panel__section-title">Imported grammars</h3>
               {!draft && (
                 <div className="settings-panel__section-actions">
                   <Button
@@ -180,7 +180,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     onClick={() => void handleImport()}
                     data-testid="custom-grammar-import-btn"
                   >
-                    Import Grammar File
+                    Import grammar file
                   </Button>
                 </div>
               )}
@@ -230,6 +230,14 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     data-testid="custom-grammar-name-input"
                   />
                   <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleDraftCancel}
+                    data-testid="custom-grammar-cancel-btn"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
                     variant="primary"
                     size="sm"
                     onClick={() => void handleDraftConfirm()}
@@ -237,14 +245,6 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     data-testid="custom-grammar-confirm-btn"
                   >
                     Save
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleDraftCancel}
-                    data-testid="custom-grammar-cancel-btn"
-                  >
-                    Cancel
                   </Button>
                 </div>
                 {draft.error && (

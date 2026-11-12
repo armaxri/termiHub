@@ -22,9 +22,9 @@ const LINE_ENDING_SELECT_OPTIONS: SelectOption[] = LINE_ENDING_OPTIONS.map((opt)
 }));
 
 const RIGHT_CLICK_OPTIONS: SelectOption[] = [
-  { value: RIGHT_CLICK_PLATFORM_DEFAULT, label: "Platform Default" },
-  { value: "contextMenu", label: "Context Menu" },
-  { value: "quickAction", label: "Quick Copy/Paste" },
+  { value: RIGHT_CLICK_PLATFORM_DEFAULT, label: "Platform default" },
+  { value: "contextMenu", label: "Context menu" },
+  { value: "quickAction", label: "Quick copy/paste" },
 ];
 
 interface TerminalSettingsProps {
@@ -42,7 +42,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         <h3 className="settings-panel__category-title">Terminal</h3>
         {show("defaultHorizontalScrolling") && (
           <SettingsField
-            label="Default Horizontal Scrolling"
+            label="Default horizontal scrolling"
             hint="Enable horizontal scrolling for new terminals by default."
           >
             <Toggle
@@ -55,7 +55,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("scrollbackBuffer") && (
           <SettingsField
-            label="Scrollback Buffer"
+            label="Scrollback buffer"
             hint="Number of lines kept in the terminal scrollback (100–1 000 000). Larger values consume more memory — roughly 1–2 MB per 10 000 lines of typical output."
           >
             <NumberInput
@@ -69,7 +69,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
           </SettingsField>
         )}
         {show("cursorStyle") && (
-          <SettingsField label="Cursor Style" hint="Terminal cursor shape.">
+          <SettingsField label="Cursor style" hint="Terminal cursor shape.">
             <Select
               data-testid="settings-cursor-style"
               value={settings.cursorStyle ?? "block"}
@@ -84,7 +84,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
           </SettingsField>
         )}
         {show("cursorBlink") && (
-          <SettingsField label="Cursor Blink" hint="Whether the terminal cursor blinks.">
+          <SettingsField label="Cursor blink" hint="Whether the terminal cursor blinks.">
             <Toggle
               checked={settings.cursorBlink ?? true}
               onCheckedChange={(checked) => onChange({ ...settings, cursorBlink: checked })}
@@ -93,7 +93,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("defaultLineEnding") && (
           <SettingsField
-            label="Line Ending (Enter & Paste)"
+            label="Line ending (Enter & paste)"
             hint="Sequence sent when pressing Enter and used to normalize line endings in pasted text. Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can be overridden per connection."
           >
             <Select
@@ -111,8 +111,8 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("rightClickBehavior") && (
           <SettingsField
-            label="Right-Click Behavior"
-            hint="Context Menu shows the full right-click menu. Quick Copy/Paste copies selected text or pastes if nothing is selected. Default: Context Menu on macOS/Linux, Quick Copy/Paste on Windows."
+            label="Right-click behavior"
+            hint="Context menu shows the full right-click menu. Quick copy/paste copies selected text or pastes if nothing is selected. Default: Context menu on macOS/Linux, Quick copy/paste on Windows."
           >
             <Select
               data-testid="settings-right-click-behavior"
@@ -132,7 +132,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("terminalCommandDecorations") && (
           <SettingsField
-            label="Command Status Marks"
+            label="Command status marks"
             hint="Show a thin green (success) or red (failure) mark next to each finished command's prompt. Requires shell integration (OSC 133 command marks); has no effect in shells that do not emit them."
           >
             <Toggle
@@ -146,7 +146,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("terminalInlineImages") && (
           <SettingsField
-            label="Inline Images"
+            label="Inline images"
             hint="Render images sent by the shell (SIXEL and the iTerm2 inline image protocol, e.g. img2sixel, imgcat). Oversized images are dropped and each terminal's image memory is capped; images are not kept across reconnects."
           >
             <Toggle
@@ -172,7 +172,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("askOpenSavedFileInTab") && (
           <SettingsField
-            label="Open Saved File in Tab"
+            label="Open saved file in tab"
             hint="After saving terminal content to a file, ask whether to open it in an editor tab. When off, files are saved without prompting and are not opened."
           >
             <Toggle

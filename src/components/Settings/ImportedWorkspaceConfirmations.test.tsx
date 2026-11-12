@@ -105,7 +105,7 @@ describe("ImportedWorkspaceConfirmations (#4445)", () => {
     });
   }
 
-  it("shows an empty state without a Revoke All action when nothing is confirmed", async () => {
+  it("shows an empty state without a Revoke all action when nothing is confirmed", async () => {
     await render();
     expect(byTestId("imported-confirmations-count")?.textContent).toContain(
       "No imported commands or connections"
@@ -164,7 +164,7 @@ describe("ImportedWorkspaceConfirmations (#4445)", () => {
     await render();
 
     await act(async () => byTestId("imported-confirmations-revoke-all")!.click());
-    expect(dialogButton("confirm")?.textContent).toContain("Revoke All");
+    expect(dialogButton("confirm")?.textContent).toContain("Revoke all");
     await act(async () => dialogButton("confirm")!.click());
 
     await until(() => expect(currentSettingsView().workspaceImportAllowlist).toEqual([]));

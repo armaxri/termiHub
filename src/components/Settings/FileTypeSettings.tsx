@@ -93,7 +93,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
     [userMappings, settings, updateSettings]
   );
 
-  // Reset All removes every custom mapping, so it asks first (#5375).
+  // Reset all removes every custom mapping, so it asks first (#5375).
   const [confirmingReset, setConfirmingReset] = useState(false);
   const handleResetAll = useCallback(() => {
     setConfirmingReset(false);
@@ -120,7 +120,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
           {/* User overrides section */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Custom File Type Mappings</h3>
+              <h3 className="settings-panel__section-title">Custom file type mappings</h3>
               {userEntries.length > 0 && (
                 <div className="settings-panel__section-actions">
                   <Button
@@ -131,7 +131,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                     title="Remove all custom mappings"
                     data-testid="file-type-reset-all"
                   >
-                    Reset All
+                    Reset all
                   </Button>
                 </div>
               )}
@@ -237,7 +237,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
           {/* Built-in reference table */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Built-in Defaults</h3>
+              <h3 className="settings-panel__section-title">Built-in defaults</h3>
             </div>
             <p className="settings-panel__description">
               These mappings are applied automatically. Click{" "}

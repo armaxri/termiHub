@@ -9,7 +9,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
- * Settings → Plugins → Trusted Publishers (#2036). Lists every publisher key the
+ * Settings → Plugins → Trusted publishers (#2036). Lists every publisher key the
  * trust store holds — bundled first-party keys (immutable) and user-pinned keys
  * (revocable) — with its label, fingerprint and source. Revoking a pinned key
  * drops packages from it back to "signed (unknown)" on the next install/update;
@@ -55,7 +55,7 @@ export function TrustedPublishersSettings() {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-trusted-publishers">
-        <h3 className="settings-panel__section-title">Trusted Publishers</h3>
+        <h3 className="settings-panel__section-title">Trusted publishers</h3>
         <p className="settings-panel__description">
           Publisher keys termiHub trusts to sign plugins. Plugins signed by a trusted key install as
           "Verified" with no untrusted-source warning. Bundled first-party keys cannot be revoked;

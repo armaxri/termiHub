@@ -184,7 +184,7 @@ export function ShellIntegrationSettings() {
   return (
     <div className="settings-panel__section" data-testid="settings-shell-integration">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">Shell Integration</h3>
+        <h3 className="settings-panel__section-title">Shell integration</h3>
       </div>
 
       {/* Registration status + actions */}
@@ -213,7 +213,7 @@ export function ShellIntegrationSettings() {
             onClick={handleReinstall}
             data-testid="shell-integration-reinstall"
           >
-            Reinstall / Update
+            Reinstall / update
           </Button>
           <Button
             variant="secondary"
@@ -228,7 +228,7 @@ export function ShellIntegrationSettings() {
 
       {/* Quick-access entries */}
       <div className="settings-panel__section-header">
-        <h4 className="settings-panel__subsection-title">Quick-Access Entries</h4>
+        <h4 className="settings-panel__subsection-title">Quick-access entries</h4>
         <Button
           variant="secondary"
           size="sm"
@@ -306,7 +306,7 @@ export function ShellIntegrationSettings() {
       {/* Linux per-file-manager toggles */}
       {platform === "linux" && (
         <div className="shell-integration__linux" data-testid="shell-integration-linux">
-          <h4 className="settings-panel__subsection-title">Linux — File Manager Integrations</h4>
+          <h4 className="settings-panel__subsection-title">Linux — file manager integrations</h4>
           {LINUX_MANAGERS.map(({ key, id, label }) => {
             const detected = detectedById.get(id);
             return (

@@ -163,7 +163,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
               disabled={isChecking}
               data-testid="update-check-now"
             >
-              {isChecking ? "Checking…" : "Check Now"}
+              {isChecking ? "Checking…" : "Check now"}
             </Button>
             {updateCheckState === "available" && updateInfo?.available && (
               <Button
@@ -172,7 +172,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                 onClick={handleOpenDownloads}
                 data-testid="update-open-downloads"
               >
-                {isDevelop ? "Open Download Page" : "Open Downloads Page"}
+                {isDevelop ? "Open download page" : "Open downloads page"}
               </Button>
             )}
           </div>

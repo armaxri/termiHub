@@ -50,13 +50,13 @@ describe("SettingsField", () => {
 
   it("derives the control's aria-label from the label", () => {
     render(
-      <SettingsField label="Cursor Blink">
+      <SettingsField label="Cursor blink">
         <input type="text" data-testid="my-control" />
       </SettingsField>
     );
 
     const control = container.querySelector('[data-testid="my-control"]');
-    expect(control?.getAttribute("aria-label")).toBe("Cursor Blink");
+    expect(control?.getAttribute("aria-label")).toBe("Cursor blink");
   });
 
   it("preserves an explicit aria-label already set on the control", () => {
@@ -189,20 +189,20 @@ describe("SettingsField", () => {
 
   it("renders an action Button as an inline row", () => {
     render(
-      <SettingsField label="Clear Session History" hint="Remove all recorded sessions.">
-        <Button size="sm">Clear All History</Button>
+      <SettingsField label="Clear session history" hint="Remove all recorded sessions.">
+        <Button size="sm">Clear all history</Button>
       </SettingsField>
     );
     const field = container.querySelector(".settings-form__field");
     expect(field?.classList.contains("settings-form__field--inline")).toBe(true);
     expect(field?.querySelector(".settings-form__field-control button")?.textContent).toBe(
-      "Clear All History"
+      "Clear all history"
     );
   });
 
   it("stacks inputs: label, then control, then hint", () => {
     render(
-      <SettingsField label="Default User" hint="Pre-filled username.">
+      <SettingsField label="Default user" hint="Pre-filled username.">
         <input type="text" data-testid="my-control" />
       </SettingsField>
     );

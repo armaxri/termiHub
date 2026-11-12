@@ -50,8 +50,6 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   margin: 0 0 var(--spacing-sm) 0;
   padding-bottom: var(--spacing-xs);
   border-bottom: 1px solid var(--border-primary);

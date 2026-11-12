@@ -56,7 +56,7 @@ describe("XServerSettings", () => {
 
   it("renders the X Server section title and both toggles", () => {
     renderWith(defaultSettings);
-    expect(container.textContent).toContain("X Server");
+    expect(container.textContent).toContain("X server");
     expect(query("settings-provide-x-server")).not.toBeNull();
     expect(query("settings-stop-x-server-idle")).not.toBeNull();
   });

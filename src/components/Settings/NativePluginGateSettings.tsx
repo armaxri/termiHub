@@ -214,14 +214,14 @@ export function NativePluginGateSettings() {
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-native-plugin-gate">
         <h3 className="settings-panel__section-title">
-          <ShieldCheck size={16} aria-hidden="true" /> Native Plugins
+          <ShieldCheck size={16} aria-hidden="true" /> Native plugins
         </h3>
         <p className="settings-panel__description" data-testid="native-plugin-disclosure">
           {trust?.disclosure ?? "Native plugins run in a separate, sandboxed process."}
         </p>
 
         <SettingsField
-          label="Enable Native Plugins"
+          label="Enable native plugins"
           hint="Off by default. Even when enabled, each native plugin must be trusted individually below before it loads. Theme and JavaScript plugins are unaffected by this setting."
           hintVariant="warning"
         >
@@ -245,7 +245,7 @@ export function NativePluginGateSettings() {
           data-testid="native-plugins-disable-dialog"
         />
 
-        <div className="settings-panel__subsection-title">Trusted Native Plugins</div>
+        <div className="settings-panel__subsection-title">Trusted native plugins</div>
         <p className="settings-panel__description">
           Each native plugin loads only after you trust it, bound to its exact library. If a
           plugin&apos;s library changes, you must trust it again. Revoking trust unloads it

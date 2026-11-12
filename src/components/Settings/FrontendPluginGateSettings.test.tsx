@@ -65,7 +65,7 @@ describe("FrontendPluginGateSettings", () => {
     render();
     expect(query("settings-frontend-plugin-gate")).not.toBeNull();
     expect(query("settings-frontend-plugins-enabled")).not.toBeNull();
-    expect(container.textContent).toContain("Frontend Plugins (Experimental)");
+    expect(container.textContent).toContain("Frontend plugins (experimental)");
     expect(container.textContent).toContain("untrusted JavaScript");
   });
 

@@ -49,7 +49,7 @@ describe("KeyboardSettings", () => {
 
   it("renders the keyboard shortcuts heading", async () => {
     await renderComponent();
-    expect(container.querySelector("h3")?.textContent).toBe("Keyboard Shortcuts");
+    expect(container.querySelector("h3")?.textContent).toBe("Keyboard shortcuts");
   });
 
   it("renders the search input", async () => {
@@ -88,7 +88,7 @@ describe("KeyboardSettings", () => {
     await renderComponent();
     const exportBtn = container.querySelector('[data-testid="keyboard-settings-export-pdf"]');
     expect(exportBtn).not.toBeNull();
-    expect(exportBtn?.textContent).toContain("Save HTML Cheat Sheet");
+    expect(exportBtn?.textContent).toContain("Save HTML cheat sheet");
   });
 
   it("calls exportCheatSheet when export PDF button is clicked", async () => {
@@ -192,7 +192,7 @@ describe("KeyboardSettings", () => {
     expect(titles).toContain("General");
     expect(titles).toContain("Clipboard");
     expect(titles).toContain("Terminal");
-    expect(titles).toContain("Navigation / Split");
+    expect(titles).toContain("Navigation / split");
   });
 
   it("enters recording mode when binding cell is clicked", async () => {
@@ -443,7 +443,7 @@ describe("KeyboardSettings", () => {
 
       expect(bindingButton("toggle-sidebar").textContent).toBe(before);
       expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
-      expect(announcement()).toBe("Recording cancelled. Toggle Sidebar shortcut unchanged.");
+      expect(announcement()).toBe("Recording canceled. Toggle Sidebar shortcut unchanged.");
       expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
     });
 
@@ -539,7 +539,7 @@ describe("KeyboardSettings", () => {
         expect(bindingButton("toggle-sidebar").textContent).not.toContain(
           "Press a key combination"
         );
-        expect(announcement()).toBe("Recording cancelled. Toggle Sidebar shortcut unchanged.");
+        expect(announcement()).toBe("Recording canceled. Toggle Sidebar shortcut unchanged.");
       }
       expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
     });

@@ -352,8 +352,6 @@
 .settings-panel__category-title {
   font-size: var(--font-size-sm);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--text-secondary);
   margin: 0 0 var(--spacing-md);
   padding-bottom: var(--spacing-xs);

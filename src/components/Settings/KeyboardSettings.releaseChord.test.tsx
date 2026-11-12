@@ -93,7 +93,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
 
   it("lists the release chord with its default in a Remote Desktop group", async () => {
     await renderComponent();
-    expect(container.textContent).toContain("Remote Desktop");
+    expect(container.textContent).toContain("Remote desktop");
     expect(container.textContent).toContain("Release Remote Desktop Keyboard");
     expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
   });
@@ -165,7 +165,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     await renderComponent();
     startRecording();
     key("keydown", "Escape");
-    expect(announcement()).toContain("Recording cancelled");
+    expect(announcement()).toContain("Recording canceled");
 
     startRecording();
     const tab = key("keydown", "Tab");
@@ -221,7 +221,7 @@ describe("KeyboardSettings — experimental gate (#5365)", () => {
   it("hides the Remote Desktop group while experimental features are off", async () => {
     seedSettings({ keybindingOverrides: undefined, experimentalFeaturesEnabled: false });
     await renderComponent();
-    expect(groupTitles()).not.toContain("Remote Desktop");
+    expect(groupTitles()).not.toContain("Remote desktop");
     expect(groupTitles()).toContain("General");
     expect(releaseButton()).toBeNull();
   });
@@ -229,7 +229,7 @@ describe("KeyboardSettings — experimental gate (#5365)", () => {
   it("lists the Remote Desktop group while experimental features are on", async () => {
     seedSettings({ keybindingOverrides: undefined, experimentalFeaturesEnabled: true });
     await renderComponent();
-    expect(groupTitles()).toContain("Remote Desktop");
+    expect(groupTitles()).toContain("Remote desktop");
     expect(releaseButton()).not.toBeNull();
   });
 

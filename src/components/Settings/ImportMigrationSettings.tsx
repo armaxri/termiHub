@@ -19,7 +19,7 @@ import "./ImportMigrationSettings.css";
 type Discovery = { status: "checking" } | { status: "found"; path: string } | { status: "none" };
 
 /**
- * Settings → Import & Migration (#4850, #5195): the single home for one-time
+ * Settings → Import & migration (#4850, #5195): the single home for one-time
  * imports and exports. Imports are not daily actions (maintainer decision
  * 2026-10-16), so they live here rather than in the Connections sidebar or the
  * gear menu — the sidebar keeps only one "Import connections…" deep link here.
@@ -31,7 +31,7 @@ type Discovery = { status: "checking" } | { status: "found"; path: string } | { 
  *   `ExportDialog`, opened through the store);
  * - MobaXterm migration (the app-level `MobaxtermImportHost`, through the store),
  *   with a hint naming any MobaXterm configuration found on this computer;
- * - a link to Backup & Restore for whole-app backups.
+ * - a link to Backup & restore for whole-app backups.
  */
 export function ImportMigrationSettings() {
   // RDP/VNC are named only while those types are ungated (#5365).
@@ -145,7 +145,7 @@ export function ImportMigrationSettings() {
       </section>
 
       <section className="import-migration__group" data-testid="import-migration-json">
-        <h3 className="settings-panel__section-title">Import / Export Connections</h3>
+        <h3 className="settings-panel__section-title">Import / export connections</h3>
         <p className="settings-panel__description">
           Move saved connections and folders between termiHub installs as a JSON file, optionally
           with encrypted credentials.
@@ -158,7 +158,7 @@ export function ImportMigrationSettings() {
             onClick={() => void handleImportJson()}
             data-testid="import-migration-json-import-btn"
           >
-            Import Connections…
+            Import connections…
           </Button>
           <Button
             variant="secondary"
@@ -167,7 +167,7 @@ export function ImportMigrationSettings() {
             onClick={() => setExportDialogOpen(true)}
             data-testid="import-migration-json-export-btn"
           >
-            Export Connections…
+            Export connections…
           </Button>
         </div>
       </section>
@@ -207,7 +207,7 @@ export function ImportMigrationSettings() {
         <h3 className="settings-panel__section-title">Back up or move everything</h3>
         <p className="settings-panel__description">
           To move all app data — settings, connections, credentials, plugins and host keys — to a
-          new machine, use Backup &amp; Restore.
+          new machine, use Backup &amp; restore.
         </p>
         <div className="credential-vault__actions">
           <Button
@@ -217,7 +217,7 @@ export function ImportMigrationSettings() {
             onClick={() => openSettingsTab({ category: "backup" })}
             data-testid="import-migration-backup-link"
           >
-            Open Backup &amp; Restore
+            Open backup &amp; restore
           </Button>
         </div>
       </section>

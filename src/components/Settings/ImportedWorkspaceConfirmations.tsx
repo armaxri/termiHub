@@ -176,7 +176,7 @@ export function ImportedWorkspaceConfirmations() {
   return (
     <div className="settings-panel__section" data-testid="imported-confirmations">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">Imported Workspace Confirmations</h3>
+        <h3 className="settings-panel__section-title">Imported workspace confirmations</h3>
         {hasEntries && (
           <div className="settings-panel__section-actions">
             <Button
@@ -186,7 +186,7 @@ export function ImportedWorkspaceConfirmations() {
               onClick={() => setPending({ scope: "all" })}
               data-testid="imported-confirmations-revoke-all"
             >
-              Revoke All
+              Revoke all
             </Button>
           </div>
         )}
@@ -259,7 +259,7 @@ export function ImportedWorkspaceConfirmations() {
                 "launches. Every workspace holding the same item is affected."
               : undefined
         }
-        confirmLabel={pending?.scope === "all" ? "Revoke All" : "Revoke"}
+        confirmLabel={pending?.scope === "all" ? "Revoke all" : "Revoke"}
         onConfirm={revoke}
         onCancel={() => setPending(null)}
         testIdBase="imported-confirmations-dialog"

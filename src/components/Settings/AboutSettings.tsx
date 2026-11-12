@@ -82,7 +82,7 @@ export function AboutSettings() {
             onClick={handleGitHub}
             data-testid="about-github-link"
           >
-            GitHub Repository
+            GitHub repository
           </Button>
           <Button
             variant="secondary"
@@ -91,7 +91,7 @@ export function AboutSettings() {
             onClick={handleLicense}
             data-testid="about-license-link"
           >
-            View License
+            View license
           </Button>
           <Button
             variant="secondary"
@@ -100,7 +100,7 @@ export function AboutSettings() {
             onClick={handleThirdPartyLicenses}
             data-testid="about-third-party-licenses-link"
           >
-            Third-Party Licenses
+            Third-party licenses
           </Button>
         </div>
       </div>
