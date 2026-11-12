@@ -337,12 +337,16 @@ class TestFileBrowserLocal(
         detected VS Code; the file-manager action is always there locally
         (MT-FB-23, #2656)."""
         self._fresh_temp_browser()
+        # Both are entries of the header's "…" menu (#5520).
+        opened = self.reveal_file_browser_action(self.OPEN_IN_EXPLORER)
         assert self.driver.exists(self.OPEN_IN_EXPLORER), (
             "file-manager toolbar action should always be present in local mode"
         )
         assert self.driver.exists(self.OPEN_FOLDER_VSCODE) == bool(
             self.driver.get_state("vscodeAvailable")
         ), "VS Code toolbar action presence does not match vscodeAvailable"
+        if opened:
+            self.dismiss_menu()
         self.switch_to_connections_sidebar()
 
     # ── Multi-delete partial failure (#1348 / #1394) ────────────────────────

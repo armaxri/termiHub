@@ -185,7 +185,9 @@ class TestFtpFileBrowserLive(
 
         self._browse_local_dest()
         self.wait(
-            lambda: self.driver.get_attribute(self.PASTE, "disabled") is None,
+            # Paste is an inline button only once the clipboard holds entries (#5520).
+            lambda: self.driver.exists(self.PASTE)
+            and self.driver.get_attribute(self.PASTE, "disabled") is None,
             what="Paste to be enabled by the FTP clipboard",
         )
         self.driver.click(self.PASTE)
