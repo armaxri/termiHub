@@ -63,7 +63,7 @@ class _GuidedRemoteDesktop(
         """Create an RDP connection to the operator's Windows host; operator connects.
 
         ``options`` names the editor settings this item needs; the operator sets
-        them in the open editor before Save & Connect.
+        them in the open editor before Save and connect.
         """
         spec = host_from_env(RDP_HOST_ENV, default_port=3389)
         if spec is None:

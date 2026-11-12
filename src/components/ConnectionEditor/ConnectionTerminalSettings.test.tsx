@@ -98,7 +98,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
   it("renders the scrollback buffer input", () => {
     renderWith(emptyOptions);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const label = labels.find((el) => el.textContent === "Scrollback Buffer");
+    const label = labels.find((el) => el.textContent === "Scrollback buffer");
     expect(label).toBeDefined();
 
     const field = label?.closest(".settings-form__field");
@@ -110,7 +110,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
     renderWith(emptyOptions);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const input = field?.querySelector("input[type='number']") as HTMLInputElement;
     expect(input.value).toBe("");
@@ -120,7 +120,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
     renderWith({ ...emptyOptions, scrollbackBuffer: 25000 });
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const input = field?.querySelector("input[type='number']") as HTMLInputElement;
     expect(input.value).toBe("25000");
@@ -130,7 +130,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
     renderWith(emptyOptions);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const input = field?.querySelector("input[type='number']") as HTMLInputElement;
     expect(input.placeholder).toContain("10000");
@@ -141,7 +141,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
     renderWith(emptyOptions);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const input = field?.querySelector("input[type='number']") as HTMLInputElement;
     expect(input.placeholder).toContain("50000");
@@ -151,7 +151,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
     renderWith(emptyOptions);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
+      .find((el) => el.textContent === "Scrollback buffer")
       ?.closest(".settings-form__field");
     const hint = field?.querySelector(".settings-form__hint");
     expect(hint?.textContent?.toLowerCase()).toContain("memory");
@@ -159,13 +159,13 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
 
   it("editing the scrollback buffer emits the parsed number (#1453)", () => {
     const onChange = renderWith(emptyOptions);
-    setValue(fieldInput("Scrollback Buffer"), "30000");
+    setValue(fieldInput("Scrollback buffer"), "30000");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: 30000 }));
   });
 
   it("clearing the scrollback buffer emits undefined (#1453)", () => {
     const onChange = renderWith({ ...emptyOptions, scrollbackBuffer: 25000 });
-    setValue(fieldInput("Scrollback Buffer"), "");
+    setValue(fieldInput("Scrollback buffer"), "");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: undefined }));
   });
 });
@@ -186,29 +186,29 @@ describe("ConnectionTerminalSettings — font size", () => {
 
   it("renders the font size through the shared NumberInput primitive (#1453)", () => {
     renderWith(emptyOptions);
-    expect(fieldInput("Font Size").classList.contains("ui-input")).toBe(true);
-    expect(fieldInput("Font Size").type).toBe("number");
+    expect(fieldInput("Font size").classList.contains("ui-input")).toBe(true);
+    expect(fieldInput("Font size").type).toBe("number");
   });
 
   it("shows a blank field when no per-connection override is set", () => {
     renderWith(emptyOptions);
-    expect(fieldInput("Font Size").value).toBe("");
+    expect(fieldInput("Font size").value).toBe("");
   });
 
   it("reflects the per-connection font size", () => {
     renderWith({ ...emptyOptions, fontSize: 18 });
-    expect(fieldInput("Font Size").value).toBe("18");
+    expect(fieldInput("Font size").value).toBe("18");
   });
 
   it("editing the font size emits the parsed number (#1453)", () => {
     const onChange = renderWith(emptyOptions);
-    setValue(fieldInput("Font Size"), "20");
+    setValue(fieldInput("Font size"), "20");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 20 }));
   });
 
   it("clearing the font size emits undefined (#1453)", () => {
     const onChange = renderWith({ ...emptyOptions, fontSize: 16 });
-    setValue(fieldInput("Font Size"), "");
+    setValue(fieldInput("Font size"), "");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: undefined }));
   });
 });
@@ -260,7 +260,7 @@ describe("ConnectionTerminalSettings — syntax highlighting override", () => {
     seedSettings({ syntaxHighlighting: { enabled: true, builtinRules: {}, customRules: [] } });
     renderWith(emptyOptions);
     const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
-      (l) => l.textContent === "Syntax Highlighting"
+      (l) => l.textContent === "Syntax highlighting"
     );
     const field = label?.closest(".settings-form__field");
     expect(field?.textContent?.toLowerCase()).toContain("on");

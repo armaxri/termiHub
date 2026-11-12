@@ -400,7 +400,7 @@ else
                         sleep 3
                         pass "Local shell created and connected"
                     else
-                        fail "Save & Connect button not found"
+                        fail "Save and connect button not found"
                     fi
                 else
                     fail "Connection name input not found"

@@ -4,7 +4,7 @@
  * A remote-desktop connection runs on this computer, and its saved password
  * lives only in this computer's credential store — never in
  * `connections.json` and never on an agent host. At connect time the password
- * is taken from the settings (a form's Save & Connect), else from the
+ * is taken from the settings (a form's Save and connect), else from the
  * credential store, else prompted for. The prompt's Save box writes it to the
  * same store entry, but only once the connect has succeeded (#5197): the
  * result carries the write as `saveOnceConnected`, and the caller hands it to

@@ -1,6 +1,6 @@
 """High-level SSH connect flow (issue #831).
 
-``SshUi`` is the one-call "create + Save & Connect + answer prompt + wait for the
+``SshUi`` is the one-call "create + Save and connect + answer prompt + wait for the
 terminal" sequence nearly every SSH suite repeats. It composes
 :class:`~termihub_harness.ui.ConnectionsUi` (editor),
 :class:`~termihub_harness.ui.PasswordPromptUi` (the modal) and
@@ -30,7 +30,7 @@ class SshUi(HarnessMixin):
     def connect_ssh_password(
         self, name: str, *, port: int = SSH_PASSWORD_PORT, username: str = SSH_USERNAME
     ) -> None:
-        """Create + Save & Connect a password SSH connection, answer the prompt,
+        """Create + Save and connect a password SSH connection, answer the prompt,
         and wait for its terminal — the sequence nearly every SSH suite repeats.
 
         Accepts the host-key trust prompt (#1959) that the first connect to a

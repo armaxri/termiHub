@@ -8,18 +8,20 @@ use tracing::{debug, info, warn};
 use zeroize::Zeroize;
 
 use super::keychain_index::KeychainKeyIndex;
+use super::keychain_namespace::KeychainNamespace;
 use super::keyring_thread::off_runtime;
 use super::types::{CredentialKey, CredentialStoreStatus, CredentialType};
 use super::CredentialStore;
 
-/// Service name under which all termiHub credentials are stored in the native
-/// OS credential store. Combined with the per-credential account name it forms
-/// a unique keychain entry.
+/// Base service name under which all termiHub credentials are stored in the
+/// native OS credential store. Combined with the per-credential account name it
+/// forms a unique keychain entry. Used as-is by release builds; dev and
+/// test-instance builds suffix it (see [`KeychainNamespace`], #5478).
 const SERVICE_NAME: &str = "termiHub";
 
 /// Service name of the keys that seal a backup restore's deferred credential
 /// import (#4414). Distinct from [`SERVICE_NAME`], so a seal key is never
-/// mistaken for a credential.
+/// mistaken for a credential. Namespaced like [`SERVICE_NAME`].
 const RESTORE_SEAL_SERVICE: &str = "termiHub-backup-restore";
 
 /// Credential store backed by the native OS credential store via the
@@ -55,7 +57,8 @@ const RESTORE_SEAL_SERVICE: &str = "termiHub-backup-restore";
 pub struct OsKeychainStore {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
     index: KeychainKeyIndex,
-    /// Keychain service of the credentials ([`SERVICE_NAME`] outside tests).
+    /// Keychain service of the credentials: [`SERVICE_NAME`] in this build's
+    /// [`KeychainNamespace`] (a throwaway name in the real-keychain tests).
     service: String,
     /// Keychain service of the backup-restore seal keys
     /// ([`RESTORE_SEAL_SERVICE`]), or `None` to import a restore right away.
@@ -80,7 +83,7 @@ impl OsKeychainStore {
     pub fn new() -> Self {
         Self::with_index_and_seal(
             KeychainKeyIndex::in_memory(),
-            Some(RESTORE_SEAL_SERVICE.to_string()),
+            Some(KeychainNamespace::current().name(RESTORE_SEAL_SERVICE)),
         )
     }
 
@@ -90,7 +93,7 @@ impl OsKeychainStore {
     pub fn with_index_file(index_path: PathBuf) -> Self {
         Self::with_index_and_seal(
             KeychainKeyIndex::load(index_path),
-            Some(RESTORE_SEAL_SERVICE.to_string()),
+            Some(KeychainNamespace::current().name(RESTORE_SEAL_SERVICE)),
         )
     }
 
@@ -108,7 +111,7 @@ impl OsKeychainStore {
         Self {
             entries: Mutex::new(HashMap::new()),
             index,
-            service: SERVICE_NAME.to_string(),
+            service: KeychainNamespace::current().name(SERVICE_NAME),
             seal_service,
             #[cfg(test)]
             issued_seal_ids: Mutex::new(Vec::new()),
@@ -684,7 +687,10 @@ mod tests {
         let _guard = with_mock();
         let dir = tempfile::tempdir().unwrap();
         for store in [OsKeychainStore::new(), indexed_store(dir.path())] {
-            assert_eq!(store.seal_service.as_deref(), Some(RESTORE_SEAL_SERVICE));
+            assert_eq!(
+                store.seal_service,
+                Some(KeychainNamespace::current().name(RESTORE_SEAL_SERVICE))
+            );
             let slot = store
                 .restore_seal_slot("6f1c9d2e-0000-4000-8000-000000005163")
                 .expect("a shipped store defers the import");
@@ -696,6 +702,21 @@ mod tests {
             );
             slot.delete().unwrap();
             assert_eq!(slot.read().unwrap(), None);
+        }
+    }
+
+    /// The shipped constructors address this build's keychain namespace, so a
+    /// debug (test) build never resolves the installed app's names (#5478).
+    #[test]
+    fn shipped_constructors_use_the_build_keychain_namespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let ns = KeychainNamespace::current();
+        for store in [OsKeychainStore::new(), indexed_store(dir.path())] {
+            assert_eq!(store.service, ns.name(SERVICE_NAME));
+            if cfg!(debug_assertions) {
+                assert_ne!(store.service, SERVICE_NAME);
+                assert_ne!(store.seal_service.as_deref(), Some(RESTORE_SEAL_SERVICE));
+            }
         }
     }
 

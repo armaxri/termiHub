@@ -2,7 +2,7 @@
 
 The core suite (``core/tests/ssh_mfa.rs``) proves the client's
 keyboard-interactive *protocol* against a real OpenSSH; this module proves the
-**app** end of it: the global "SSH Authentication" dialog
+**app** end of it: the global "SSH authentication" dialog
 (``SshKeyboardInteractivePrompt``) that every SSH connect path raises when a
 server asks a keyboard-interactive question, and that answering it connects.
 
@@ -100,7 +100,7 @@ class TestSshKeyboardInteractive(
         assert marker in self.wait_for_output(marker)
 
     def test_dialog_answer_connects_terminal(self, mfa_container):
-        """KI-01: Save & Connect with a key raises the OTP dialog; the right code
+        """KI-01: Save and connect with a key raises the OTP dialog; the right code
         lands a working shell and the server logs a keyboard-interactive accept."""
         before = _accepted_ki_count(mfa_container)
         self.create_ssh_connection(
@@ -144,7 +144,7 @@ class TestSshKeyboardInteractive(
             lambda: _accepted_ki_count(mfa_container) > before,
             what="sshd to log the Test probe's keyboard-interactive accept",
         )
-        # The probe finishes (its Cancel Test affordance goes away) and nothing
+        # The probe finishes (its Cancel test affordance goes away) and nothing
         # was saved.
         self.wait(
             lambda: not self.driver.exists("connection-editor-test-cancel"),

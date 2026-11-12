@@ -122,7 +122,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
           disabled={editor !== null}
           data-testid="connection-additional-rule-add"
         >
-          Add Rule
+          Add rule
         </Button>
       }
       hint={
@@ -241,7 +241,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Terminal</h3>
 
-      <SettingsField label="Font Family" hint="Leave empty to use the global setting.">
+      <SettingsField label="Font family" hint="Leave empty to use the global setting.">
         <Input
           type="text"
           value={options.fontFamily ?? ""}
@@ -250,7 +250,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
         />
       </SettingsField>
 
-      <SettingsField label="Font Size" hint="Leave empty to use the global setting.">
+      <SettingsField label="Font size" hint="Leave empty to use the global setting.">
         <NumberInput
           min={8}
           max={72}
@@ -261,7 +261,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
       </SettingsField>
 
       <SettingsField
-        label="Scrollback Buffer"
+        label="Scrollback buffer"
         hint={
           <>
             Number of lines kept in scrollback (100–1 000 000). Leave empty for global default.
@@ -280,7 +280,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
         />
       </SettingsField>
 
-      <SettingsField label="Cursor Style">
+      <SettingsField label="Cursor style">
         <Select
           value={options.cursorStyle ?? GLOBAL_DEFAULT}
           onChange={(v) =>
@@ -295,12 +295,12 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
             { value: "underline", label: "Underline" },
             { value: "bar", label: "Bar" },
           ]}
-          aria-label="Cursor Style"
+          aria-label="Cursor style"
         />
       </SettingsField>
 
       <SettingsField
-        label="Line Ending (Enter & Paste)"
+        label="Line ending (Enter and paste)"
         hint="Sequence sent on Enter and used to normalize pasted text for this connection."
       >
         <Select
@@ -318,12 +318,12 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
             },
             ...LINE_ENDING_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
           ]}
-          aria-label="Line Ending (Enter & Paste)"
+          aria-label="Line ending (Enter and paste)"
         />
       </SettingsField>
 
       <SettingsField
-        label="Log Session Output"
+        label="Log session output"
         hint={
           <>
             Write this connection&rsquo;s session output to a file on connect (
@@ -343,24 +343,24 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
               logTimestamps: v ? options.logTimestamps : undefined,
             })
           }
-          aria-label="Log Session Output"
+          aria-label="Log session output"
           data-testid="connection-log-to-file"
         />
       </SettingsField>
 
       {options.logToFile ? (
-        <SettingsField label="Timestamp Each Line" hint="Prefix each logged line with a timestamp.">
+        <SettingsField label="Timestamp each line" hint="Prefix each logged line with a timestamp.">
           <Toggle
             checked={options.logTimestamps ?? false}
             onCheckedChange={(v) => onChange({ ...options, logTimestamps: v || undefined })}
-            aria-label="Timestamp Each Line"
+            aria-label="Timestamp each line"
             data-testid="connection-log-timestamps"
           />
         </SettingsField>
       ) : null}
 
       <SettingsField
-        label="Cursor Blink"
+        label="Cursor blink"
         hint={
           <>
             Whether the terminal cursor blinks.
@@ -379,12 +379,12 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
         <Toggle
           checked={options.cursorBlink ?? globalCursorBlink}
           onCheckedChange={(v) => onChange({ ...options, cursorBlink: v })}
-          aria-label="Cursor Blink"
+          aria-label="Cursor blink"
         />
       </SettingsField>
 
       <SettingsField
-        label="Horizontal Scrolling"
+        label="Horizontal scrolling"
         hint={
           <>
             Enable horizontal scrolling for this connection.
@@ -403,12 +403,12 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
         <Toggle
           checked={options.horizontalScrolling ?? globalHorizontalScrolling}
           onCheckedChange={(v) => onChange({ ...options, horizontalScrolling: v })}
-          aria-label="Horizontal Scrolling"
+          aria-label="Horizontal scrolling"
         />
       </SettingsField>
 
       <SettingsField
-        label="Syntax Highlighting"
+        label="Syntax highlighting"
         hint={
           <>
             Override terminal output syntax highlighting for this connection. &ldquo;Use global
@@ -430,7 +430,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
             { value: "always-on", label: "Always on" },
             { value: "always-off", label: "Always off" },
           ]}
-          aria-label="Syntax Highlighting"
+          aria-label="Syntax highlighting"
           data-testid="connection-syntax-highlighting"
         />
       </SettingsField>

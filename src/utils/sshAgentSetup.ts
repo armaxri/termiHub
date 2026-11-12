@@ -13,7 +13,7 @@ type Platform = ReturnType<typeof getPlatform>;
  * Windows PowerShell `Set-Service ssh-agent` line on macOS/Linux is
  * non-actionable, so callers must branch on {@link getPlatform}.
  *
- * `ConnectionEditor`'s "Setup SSH Agent" button launches these same remedies in
+ * `ConnectionEditor`'s "Set up SSH agent" button launches these same remedies in
  * a shell tab; this helper is the copyable-hint form shown on the connection
  * overlay. Keeping the wording here means the two surfaces can't silently drift.
  */

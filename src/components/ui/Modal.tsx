@@ -323,7 +323,7 @@ export function UnsavedChangesDialog({
     <Modal
       open={open}
       onOpenChange={(isOpen) => !isOpen && onCancel()}
-      title="Unsaved Changes"
+      title="Unsaved changes"
       description={message}
       data-testid="unsaved-changes-dialog"
       footer={
@@ -332,7 +332,7 @@ export function UnsavedChangesDialog({
             Cancel
           </Button>
           <Button variant="danger" onClick={onJustClose} data-testid="unsaved-changes-just-close">
-            {onSaveAndClose ? "Just Close" : "Discard changes"}
+            Discard changes
           </Button>
           {onSaveAndClose ? (
             <Button
@@ -340,7 +340,7 @@ export function UnsavedChangesDialog({
               onClick={onSaveAndClose}
               data-testid="unsaved-changes-save-and-close"
             >
-              Save &amp; Close
+              Save and close
             </Button>
           ) : null}
         </>

@@ -54,17 +54,19 @@ describe("UnsavedChangesDialog", () => {
     expect(q("unsaved-changes-save-and-close")).toBeTruthy();
   });
 
-  it("Save & Close fires onSaveAndClose", () => {
+  it("Save and close fires onSaveAndClose", () => {
     const onSaveAndClose = vi.fn();
     render(<UnsavedChangesDialog {...baseProps} onSaveAndClose={onSaveAndClose} />);
+    expect(q("unsaved-changes-save-and-close")!.textContent).toBe("Save and close");
     act(() => q("unsaved-changes-save-and-close")!.click());
     expect(onSaveAndClose).toHaveBeenCalledTimes(1);
   });
 
-  it("Just Close (danger) fires onJustClose", () => {
+  it("Discard changes (danger) fires onJustClose", () => {
     const onJustClose = vi.fn();
     render(<UnsavedChangesDialog {...baseProps} onJustClose={onJustClose} />);
     const btn = q("unsaved-changes-just-close") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Discard changes");
     expect(btn.classList.contains("ui-btn--danger")).toBe(true);
     act(() => btn.click());
     expect(onJustClose).toHaveBeenCalledTimes(1);

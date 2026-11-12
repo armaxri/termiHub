@@ -90,7 +90,7 @@ interface ConnectionSettingsFormProps {
    * Reports overall client-side validity plus a per-field error map (keyed by
    * field key) whenever validation state changes. Only currently-visible fields
    * are considered, so a required field hidden by `visibleWhen` never blocks.
-   * The parent uses this to disable Save/Save & Connect on invalid input.
+   * The parent uses this to disable Save/Save and connect on invalid input.
    */
   onValidityChange?: (valid: boolean, errors: Record<string, string>) => void;
   /**

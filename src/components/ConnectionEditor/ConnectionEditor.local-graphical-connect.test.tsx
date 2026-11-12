@@ -1,8 +1,8 @@
 /**
- * Save & Connect of a direct (non-agent) connection opens the tab its type
+ * Save and connect of a direct (non-agent) connection opens the tab its type
  * needs (#4017).
  *
- * The editor's local Save & Connect called `addTab` with no `contentType`, so
+ * The editor's local Save and connect called `addTab` with no `contentType`, so
  * a VNC/RDP connection opened as a *terminal* tab: the backend session started
  * and immediately stopped, and the tab showed "Session disconnected" instead of
  * the remote-desktop canvas. The nightly `test_vnc` suite failed on exactly
@@ -137,7 +137,7 @@ async function saveAndConnect(): Promise<typeof addTab> {
   return addTab;
 }
 
-describe("ConnectionEditor — local Save & Connect opens the type's tab (#4017)", () => {
+describe("ConnectionEditor — local Save and connect opens the type's tab (#4017)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

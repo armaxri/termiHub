@@ -470,7 +470,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   /** Whether the SSH "Agent Forwarding" toggle applies (same gate as jump hosts). */
   const showAgentForwarding = selectedType === "ssh" && !isAnyAgentMode;
 
-  /** Whether the SSH "Setup SSH Agent" helper applies (SSH + agent auth). */
+  /** Whether the SSH "Set up SSH agent" helper applies (SSH + agent auth). */
   const showSshAgentSetup =
     selectedType === "ssh" && !isAnyAgentMode && connSettings.authMethod === "agent";
 
@@ -828,7 +828,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     nameError === BLANK_NAME_ISSUE && !nameTouched && !saveAttempted ? null : nameError;
 
   // Client-side validity of the schema-driven connection form (reported upward
-  // by ConnectionSettingsForm). Gates Save/Save & Connect while a visible
+  // by ConnectionSettingsForm). Gates Save/Save and connect while a visible
   // required field is empty or a value is out of range, instead of deferring to
   // a connect-time backend error.
   const [schemaValid, setSchemaValid] = useState(true);
@@ -945,7 +945,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
    * Direct the user to the first blocking validation error: flag the owning
    * category (all blocking validation — name, schema fields, jump hosts — lives
    * in the Connection tab), then scroll it into view and focus it. Called when
-   * Save/Save & Connect is attempted while the form is invalid.
+   * Save/Save and connect is attempted while the form is invalid.
    */
   const focusFirstInvalidField = useCallback(() => {
     setSaveAttempted(true);
@@ -1196,7 +1196,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (isWindows()) {
       // Windows' ssh-agent is a service that is disabled by default; enable and
       // start it (elevated), then add the user's keys.
-      addTab("Setup SSH Agent", "local", {
+      addTab("Set up SSH agent", "local", {
         type: "local",
         config: {
           shell: "powershell" as ShellType,
@@ -1208,7 +1208,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
     // macOS / Linux: start an agent for this shell (if none is running) and add
     // the default keys. `ssh-add` alone errors when no agent is reachable.
-    addTab("Setup SSH Agent", "local", {
+    addTab("Set up SSH agent", "local", {
       type: "local",
       config: {
         shell: (shells[0] as ShellType) ?? "bash",
@@ -1283,7 +1283,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       try {
         if (!(await saveAgentDefinition())) return;
       } catch (err) {
-        // Save & Connect suppresses the Button's default error toast so it can
+        // Save and connect suppresses the Button's default error toast so it can
         // choose the right severity; surface the save failure explicitly here.
         toast.error("Failed to save agent connection", {
           description: errorMessage(err),
@@ -1470,7 +1470,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
     setTestOutcome(null);
     // Build the connect config from the live form WITHOUT persisting it — the
-    // same routing Save & Connect uses (agent-definition → remote-session; a
+    // same routing Save and connect uses (agent-definition → remote-session; a
     // direct connection → its type + config), minus any save.
     let config: ConnectionConfig =
       isAgentDefinitionMode && existingAgent
@@ -1481,12 +1481,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         : { type: selectedType, config: connSettings };
 
     // Resolve a stored credential / key passphrase the form does not carry,
-    // exactly as Save & Connect does — but in a non-persisting mode (#3284):
+    // exactly as Save and connect does — but in a non-persisting mode (#3284):
     // nothing is saved, a prompt-entered secret is never stored (the prompt
     // shows no Save box, #3316), and the secret goes only into this in-memory
     // probe config — never into form state, so it is neither dirty-tracked nor
     // persisted on a later Save. Agent-definition sessions resolve credentials
-    // agent-side, as Save & Connect does. An unsaved (create-flow) connection
+    // agent-side, as Save and connect does. An unsaved (create-flow) connection
     // has no persisted id to key the vault, so no stored credential can exist
     // (names are unique per folder) and the user is prompted directly.
     if (!isAgentDefinitionMode) {
@@ -1835,7 +1835,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             name="sourceFile"
             control={topLevelControl}
             render={({ field }) => (
-              <SettingsField label="Storage File">
+              <SettingsField label="Storage file">
                 <Select
                   value={field.value ?? DEFAULT_STORAGE_FILE}
                   onChange={(v) => field.onChange(v === DEFAULT_STORAGE_FILE ? null : v)}
@@ -1962,7 +1962,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
       {showAgentForwarding && (
         <div className="settings-panel__category" data-testid="ssh-agent-forwarding-section">
-          <h3 className="settings-panel__category-title">SSH Agent Forwarding</h3>
+          <h3 className="settings-panel__category-title">SSH agent forwarding</h3>
           <SettingsField
             label="Forward SSH agent"
             hint={
@@ -1984,7 +1984,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
       {showSshAgentSetup && (
         <div className="settings-panel__category" data-testid="ssh-agent-setup-section">
-          <h3 className="settings-panel__category-title">SSH Agent</h3>
+          <h3 className="settings-panel__category-title">SSH agent</h3>
           <Button
             variant="secondary"
             size="sm"
@@ -1993,7 +1993,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             onClick={handleSetupSshAgent}
             data-testid="ssh-setup-agent"
           >
-            Setup SSH Agent
+            Set up SSH agent
           </Button>
           <p className="settings-form__hint">
             Opens a terminal that starts your SSH agent and adds your keys (<code>ssh-add</code>),
@@ -2144,18 +2144,20 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 onClick={handleCancelTest}
                 data-testid="connection-editor-test-cancel"
               >
-                Cancel Test
+                Cancel test
               </Button>
             )}
+            {/* One primary per footer (copy style guide): Save is primary, so Enter's
+                default action and the highlighted button agree. */}
             <Button
-              variant="primary"
+              variant="secondary"
               onClick={handleSaveAndConnect}
               errorToast={false}
               aria-disabled={!canSave}
               data-invalid={!canSave || undefined}
               data-testid="connection-editor-save-connect"
             >
-              Save &amp; Connect
+              Save and connect
             </Button>
           </>
         )}

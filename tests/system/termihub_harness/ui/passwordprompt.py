@@ -1,6 +1,6 @@
 """SSH password-prompt modal helpers (issue #831).
 
-``PasswordPromptUi`` drives the modal that Save & Connect (or an auto-connecting
+``PasswordPromptUi`` drives the modal that Save and connect (or an auto-connecting
 SFTP browser) raises for password auth. It is a shared dependency of
 :class:`~termihub_harness.ui.SshUi` and :class:`~termihub_harness.ui.SftpUi`, and
 password-auth suites drive it directly.
@@ -140,7 +140,7 @@ class PasswordPromptUi(HarnessMixin):
         self.driver.click("password-prompt-cancel")
 
     # ── SSH keyboard-interactive (OTP / 2FA) dialog (#3371, #4005) ──────────────
-    #: The global "SSH Authentication" dialog's controls
+    #: The global "SSH authentication" dialog's controls
     #: (``SshKeyboardInteractivePrompt``). One ``kbd-interactive-input-<i>`` per
     #: server prompt, labelled (``aria-label``) by the prompt text.
     KBD_INTERACTIVE_TARGET = "kbd-interactive-target"
