@@ -460,10 +460,9 @@ const PORT_RANGE_HI: u16 = 20200;
 /// A plain counter starting at a fixed 19200 for every process means two
 /// concurrent `cargo test` invocations (e.g. parallel CI jobs on one runner)
 /// march through the *same* ports in lockstep and keep colliding. Seeding the
-/// base from the PID desynchronises them so they walk different sub-ranges,
-/// making a collision rare — and [`spawn_ready_listener`] retries on the rare
-/// one that still lands on a `TIME_WAIT`/in-use port left by another run
-/// (#1398).
+/// base from the PID desynchronises them so they walk different sub-ranges.
+/// It does not desynchronise nextest's one-process-per-test runs, whose PIDs
+/// are near-consecutive (#5475), which is why live agents no longer use it.
 fn port_counter() -> &'static AtomicU16 {
     static COUNTER: OnceLock<AtomicU16> = OnceLock::new();
     COUNTER.get_or_init(|| {
@@ -475,19 +474,14 @@ fn port_counter() -> &'static AtomicU16 {
     })
 }
 
-/// Reserve a candidate TCP port for a test agent.
+/// Reserve a candidate TCP port that no agent will listen on.
 ///
-/// Advances the per-process counter (wrapping within the range) so tests in the
-/// same process never pick the same port, and skips any port currently held by
-/// an unrelated process via a bind probe.
-///
-/// # Why a counter and not an ephemeral `:0` port
-///
-/// Binding `:0`, reading back the OS-assigned port, dropping the listener, and
-/// letting the agent re-bind it opens a TOCTOU window: a concurrent test can
-/// grab the same port in the gap. The counter (plus the bind probe here, and
-/// [`spawn_ready_listener`]'s retry on a bind failure) gives each test a
-/// private port far more reliably than `:0` round-tripping would.
+/// Advances the per-process counter (wrapping within the range) and skips any
+/// port currently held via a bind probe. It is **not** how a live agent gets its
+/// port: the probe is check-then-act, and the PID-seeded counters of concurrent
+/// test processes overlap, so two processes can be handed the same port. Live
+/// agents bind `:0` and report the port they got (see [`spawn_ready_listener`],
+/// #5475). This remains only for an address nothing is expected to serve.
 fn unique_agent_port() -> u16 {
     let counter = port_counter();
     loop {
@@ -592,9 +586,14 @@ fn spawn_listener_process(
         )
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle));
-    if let Some(log) = rust_log {
-        cmd.env("RUST_LOG", log);
-    }
+    // Keep the `Listening on` line whatever the level: the caller reads the
+    // bound address from it. With no level asked for, the developer's own
+    // RUST_LOG (or the agent's default, `info`) still applies.
+    let base = rust_log
+        .map(str::to_string)
+        .or_else(|| std::env::var("RUST_LOG").ok())
+        .unwrap_or_else(|| "info".to_string());
+    cmd.env("RUST_LOG", format!("{base},{LISTEN_LOG_DIRECTIVE}"));
 
     let child = cmd.spawn_guarded().expect("failed to spawn termihub-agent");
     (child, stderr_file)
@@ -634,8 +633,8 @@ fn read_stderr(path: &Path) -> String {
 ///   If the agent process has already exited we return
 ///   [`ReadyError::ProcessExited`] at once — with its exit status and captured
 ///   stderr — instead of blindly retrying `connect()` for the whole timeout
-///   against a port that will never open. This lets [`spawn_ready_listener`]
-///   retry on a fresh port when the exit was a bind collision (#1398).
+///   against a port that will never open, so a startup crash is reported at
+///   once (#1398).
 /// * **Rich timeout diagnostics.** On genuine timeout the returned
 ///   [`ReadyError::Timeout`] reports whether the process is still running plus
 ///   its stderr — so a CI failure says whether the agent never spawned,
@@ -702,21 +701,68 @@ enum ReadyError {
     Timeout(String),
 }
 
-/// Max attempts to bring up a `--listen` agent on a bindable port.
-const MAX_SPAWN_ATTEMPTS: u32 = 5;
+/// Log directive that keeps the agent's `Listening on <addr>` line visible
+/// whatever level a test asks for: [`spawn_ready_listener`] reads the bound
+/// address from it.
+const LISTEN_LOG_DIRECTIVE: &str = "termihub_agent::io::tcp=info";
 
-/// Spawn a `--listen` agent and block until it is ready, retrying on a fresh
-/// port if the process dies during startup.
+/// Wait for the agent's `Listening on <addr>` log line and return `<addr>`.
 ///
-/// The fixed test-port range can collide with a socket left in `TIME_WAIT` (or
-/// held) by a previous or concurrent run on the same host — the agent then
-/// exits with `Address already in use` before its port ever opens (#1398). The
-/// bind probe in [`unique_agent_port`] cannot prevent this because another
-/// process owns the port, so we detect the early exit via
-/// [`ReadyError::ProcessExited`] and simply try the next port. A genuine
-/// startup bug fails the same way on every port and surfaces after the retry
-/// budget with full diagnostics; a slow-but-alive start ([`ReadyError::Timeout`])
-/// is not retried (that would just burn another full timeout).
+/// Fails fast with [`ReadyError::ProcessExited`] if the child dies first, and
+/// with [`ReadyError::Timeout`] (carrying the stderr) if the line never comes.
+fn wait_for_listen_addr(
+    child: &mut Child,
+    stderr_path: &Path,
+    timeout: Duration,
+) -> Result<String, ReadyError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let log = std::fs::read_to_string(stderr_path).unwrap_or_default();
+        if let Some(addr) = log
+            .lines()
+            .find_map(|line| line.split("Listening on ").nth(1))
+        {
+            return Ok(addr.trim().to_string());
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(ReadyError::ProcessExited(format!(
+                "agent process exited before binding — exit: {status}\n\
+                 --- agent stderr ---\n{}",
+                read_stderr(stderr_path)
+            )));
+        }
+        if Instant::now() >= deadline {
+            return Err(ReadyError::Timeout(format!(
+                "agent never logged a listen address within {timeout:?}\n\
+                 --- agent stderr ---\n{}",
+                read_stderr(stderr_path)
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Spawn a `--listen` agent and block until it is ready.
+///
+/// # The agent picks its own port (#5475)
+///
+/// The agent binds `127.0.0.1:0` and the address is read back from its
+/// `Listening on` line, so the port belongs to the process that will serve it
+/// from the moment it is chosen.
+///
+/// It used to bind a port from [`unique_agent_port`]: a per-process counter
+/// seeded from the PID, plus a bind probe. Under nextest every test is its own
+/// process, and concurrent processes have near-consecutive PIDs, so their
+/// counters overlapped: process P's second port was process P+1's first. The
+/// bind probe is check-then-act, so both could pass it, and only one agent then
+/// bound the port. The loser's readiness probe was answered by the *winner's*
+/// agent, and the test then presented its own token to that foreign agent:
+/// `invalid or missing auth token`. A test that starts two agents in turn, like
+/// `live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent`,
+/// was the most exposed.
+///
+/// With no port collision left, an early exit is a genuine startup failure, so
+/// it is reported at once rather than retried on another port.
 fn spawn_ready_listener(
     config_home: &Path,
     registry_endpoint: &str,
@@ -730,48 +776,42 @@ fn spawn_ready_listener(
     let slot = AgentSlot::acquire();
     let gate_wait = gate_started.elapsed();
 
-    let mut last_diag = String::new();
-    for attempt in 1..=MAX_SPAWN_ATTEMPTS {
-        let port = unique_agent_port();
-        let addr = format!("127.0.0.1:{port}");
-        let spawn_started = Instant::now();
-        let (mut child, stderr) =
-            spawn_listener_process(&addr, config_home, registry_endpoint, rust_log);
-        match wait_for_agent_ready(&mut child, &addr, stderr.path(), ready_timeout()) {
-            Ok(()) => {
-                log_timing(format_args!(
-                    "spawn[{addr}] gate_wait={gate_wait:?} cold_start={:?} attempts={attempt}",
-                    spawn_started.elapsed()
-                ));
-                return (child, addr, stderr, slot);
-            }
-            Err(ReadyError::ProcessExited(diag)) => {
-                child.kill().ok();
-                child.wait().ok();
-                last_diag = format!("attempt {attempt}/{MAX_SPAWN_ATTEMPTS}: {diag}");
-            }
-            Err(ReadyError::Timeout(diag)) => {
-                let cold_start = spawn_started.elapsed();
-                child.kill().ok();
-                child.wait().ok();
-                // Attribute the stall: a large `cold_start` with a small
-                // `gate_wait` means the agent process itself was slow to bring
-                // its accept loop up (facet 3, spawn side); a large `gate_wait`
-                // means the runner was saturated by other agents (the gate is
-                // working but the cap is still too high for this runner).
-                panic!(
-                    "{diag}\n--- #2495 spawn timing --- gate_wait={gate_wait:?}, \
-                     cold_start={cold_start:?} before the ready deadline, attempt \
-                     {attempt}/{MAX_SPAWN_ATTEMPTS}, concurrency_cap={}",
-                    max_concurrent_agents()
-                );
-            }
+    let spawn_started = Instant::now();
+    let (mut child, stderr) =
+        spawn_listener_process("127.0.0.1:0", config_home, registry_endpoint, rust_log);
+    let ready = wait_for_listen_addr(&mut child, stderr.path(), ready_timeout()).and_then(|addr| {
+        let remaining = ready_timeout().saturating_sub(spawn_started.elapsed());
+        wait_for_agent_ready(&mut child, &addr, stderr.path(), remaining).map(|()| addr)
+    });
+    match ready {
+        Ok(addr) => {
+            log_timing(format_args!(
+                "spawn[{addr}] gate_wait={gate_wait:?} cold_start={:?}",
+                spawn_started.elapsed()
+            ));
+            (child, addr, stderr, slot)
+        }
+        Err(ReadyError::ProcessExited(diag)) => {
+            child.kill().ok();
+            child.wait().ok();
+            panic!("{diag}\n(#2495 gate_wait={gate_wait:?})");
+        }
+        Err(ReadyError::Timeout(diag)) => {
+            let cold_start = spawn_started.elapsed();
+            child.kill().ok();
+            child.wait().ok();
+            // Attribute the stall: a large `cold_start` with a small
+            // `gate_wait` means the agent process itself was slow to bring
+            // its accept loop up (facet 3, spawn side); a large `gate_wait`
+            // means the runner was saturated by other agents (the gate is
+            // working but the cap is still too high for this runner).
+            panic!(
+                "{diag}\n--- #2495 spawn timing --- gate_wait={gate_wait:?}, \
+                 cold_start={cold_start:?} before the ready deadline, concurrency_cap={}",
+                max_concurrent_agents()
+            );
         }
     }
-    panic!(
-        "agent listener failed to become ready after {MAX_SPAWN_ATTEMPTS} attempts \
-         (each exited during startup) — {last_diag} (#2495 gate_wait={gate_wait:?})"
-    );
 }
 
 // ── Client connect with bounded retry ────────────────────────────────────────
@@ -999,9 +1039,7 @@ fn read_line_until_deadline_fails_fast_on_silent_peer() {
 /// Regression guard for #1398's diagnostics: if the child exits before the port
 /// ever opens, `wait_for_agent_ready` must fail fast (via `try_wait`) with a
 /// [`ReadyError::ProcessExited`] that identifies the crash — never blindly retry
-/// `connect()` for the whole timeout against a port that will never listen. It
-/// is this fast, classified exit that lets `spawn_ready_listener` retry on a
-/// fresh port when the cause is a bind collision.
+/// `connect()` for the whole timeout against a port that will never listen.
 #[test]
 fn wait_for_agent_ready_reports_dead_process_fast() {
     // `--version` makes the agent print and exit at once instead of listening,

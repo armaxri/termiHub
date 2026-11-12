@@ -1,0 +1,9 @@
+{
+  "reason": "^(armed |keyboard-interactive |real-swap )?deployed-agent (container )?fixture unavailable: (no container runtime \\(Docker/Podman\\) reachable|the docker daemon runs windows containers)",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "the deployed-agent suites bake a Linux agent into their containers. The hosted macOS runners ship no container runtime; on Windows the daemon runs only Windows containers or never comes up (#4842). Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) minus the suites #5176 re-points at the native sshd; the cap fails the lane when one more suite skips for this reason.",
+  "max_skips": {
+    "bulk-macos": 18,
+    "bulk-windows": 18
+  }
+}
