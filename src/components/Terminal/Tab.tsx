@@ -173,18 +173,18 @@ function TabMoveItems({
         onSelect={() => onMoveLeft?.()}
         data-testid="tab-context-move-left"
       >
-        <ArrowLeft size={14} /> Move Left
+        <ArrowLeft size={14} /> Move left
       </MenuItem>
       <MenuItem
         disabled={!onMoveRight}
         onSelect={() => onMoveRight?.()}
         data-testid="tab-context-move-right"
       >
-        <ArrowRight size={14} /> Move Right
+        <ArrowRight size={14} /> Move right
       </MenuItem>
       {onMoveToNewPanel && (
         <MenuItem onSelect={() => onMoveToNewPanel()} data-testid="tab-context-move-new-panel">
-          <SquareSplitHorizontal size={14} /> Move to New Panel
+          <SquareSplitHorizontal size={14} /> Move to new panel
         </MenuItem>
       )}
     </>
@@ -480,13 +480,13 @@ export function Tab({
         <ContextMenuTrigger asChild>{tabElement}</ContextMenuTrigger>
         <ContextMenuContent>
           <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
-            <Palette size={14} /> Set Color…
+            <Palette size={14} /> Set color…
           </MenuItem>
           <MenuSeparator />
           {moveItems}
           <MenuSeparator />
           <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
-            <X size={14} /> Close Tab
+            <X size={14} /> Close tab
           </MenuItem>
         </ContextMenuContent>
       </ContextMenuRoot>
@@ -511,19 +511,19 @@ export function Tab({
         <MenuSeparator />
         {moveItems}
         <MenuItem onSelect={() => onMoveToNewWindow?.()} data-testid="tab-context-move-new-window">
-          <ExternalLink size={14} /> Move to New Window
+          <ExternalLink size={14} /> Move to new window
         </MenuItem>
         {showMoveToExisting && (
           <MenuSub>
             <MenuSubTrigger data-testid="tab-context-move-window">
-              <AppWindow size={14} /> Move to Window
+              <AppWindow size={14} /> Move to window
             </MenuSubTrigger>
             <MenuSubContent data-testid="tab-context-move-window-submenu">
               <MenuItem
                 onSelect={() => onMoveToNewWindow?.()}
                 data-testid="tab-context-move-window-new"
               >
-                <Plus size={14} /> New Window
+                <Plus size={14} /> New window
               </MenuItem>
               <MenuSeparator />
               {pickerEntries.map((entry) => (
@@ -550,16 +550,16 @@ export function Tab({
         )}
         <MenuSeparator />
         <MenuItem onSelect={() => onSave?.()} data-testid="tab-context-save">
-          <FileDown size={14} /> Save to File
+          <FileDown size={14} /> Save to file
         </MenuItem>
         <MenuItem onSelect={() => onOpenInEditor?.()} data-testid="tab-context-open-in-editor">
-          <FileSearch size={14} /> Open in Editor
+          <FileSearch size={14} /> Open in editor
         </MenuItem>
         <MenuItem onSelect={() => onCopyToClipboard?.()} data-testid="tab-context-copy">
-          <ClipboardCopy size={14} /> Copy All
+          <ClipboardCopy size={14} /> Copy all
         </MenuItem>
         <MenuItem onSelect={() => onClear?.()} data-testid="tab-context-clear">
-          <Eraser size={14} /> Clear Terminal
+          <Eraser size={14} /> Clear terminal
         </MenuItem>
         <MenuSeparator />
         <MenuCheckboxItem
@@ -570,16 +570,16 @@ export function Tab({
           <MenuItemIndicator>
             <Check size={14} />
           </MenuItemIndicator>
-          <ArrowRightLeft size={14} /> Horizontal Scrolling
+          <ArrowRightLeft size={14} /> Horizontal scrolling
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
-          <Palette size={14} /> Set Color…
+          <Palette size={14} /> Set color…
         </MenuItem>
         {focusOwningWindowItem}
         <MenuSeparator />
         <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
-          <X size={14} /> Close Tab
+          <X size={14} /> Close tab
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

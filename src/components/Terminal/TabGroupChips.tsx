@@ -216,14 +216,14 @@ function TabGroupChip({
           onSelect={() => onMoveLeft?.()}
           data-testid="tab-group-ctx-move-left"
         >
-          <ArrowLeft size={14} /> Move Left
+          <ArrowLeft size={14} /> Move left
         </MenuItem>
         <MenuItem
           disabled={!onMoveRight}
           onSelect={() => onMoveRight?.()}
           data-testid="tab-group-ctx-move-right"
         >
-          <ArrowRight size={14} /> Move Right
+          <ArrowRight size={14} /> Move right
         </MenuItem>
         {canClose && (
           <>
@@ -232,7 +232,7 @@ function TabGroupChip({
               onSelect={(e) => onClose(e as unknown as React.SyntheticEvent)}
               data-testid="tab-group-ctx-close"
             >
-              Close Group
+              Close group
             </MenuItem>
           </>
         )}

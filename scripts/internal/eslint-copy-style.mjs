@@ -4,7 +4,8 @@
  *
  * Checks (the id in brackets is what the baseline is keyed by):
  *
- * - [sentence-case] Button text, dialog titles and labels use sentence case.
+ * - [sentence-case] Button text, dialog titles, labels and menu items use
+ *   sentence case.
  *   A capitalized word after the first word of a sentence is flagged unless it
  *   is a known proper noun. Acronyms (SSH) and mixed-case names (termiHub,
  *   PowerShell, macOS) never match.
@@ -91,6 +92,9 @@ export const PROPER_NOUNS = new Set([
   "Windows",
   "Zsh",
 ]);
+
+/** Multi-word names whose later words are capitalized ("VS Code"). */
+export const PROPER_PHRASES = ["VS Code"];
 
 /** British spellings and their US form. */
 const BRITISH_SPELLINGS = [
@@ -182,7 +186,11 @@ export function titleCaseWords(text) {
   const offending = [];
   let sentenceStart = true;
   let inQuote = false;
-  for (const token of text.split(/\s+/).filter(Boolean)) {
+  const plain = PROPER_PHRASES.reduce(
+    (acc, phrase) => acc.split(phrase).join(phrase.replace(/\s+/g, "")),
+    text
+  );
+  for (const token of plain.split(/\s+/).filter(Boolean)) {
     if (/^["“‘«]/.test(token)) inQuote = true;
     const quoted = inQuote;
     if (/["”’»][.,:;!?)]*$/.test(token)) inQuote = false;
@@ -239,6 +247,14 @@ function attribute(element, name) {
 const isButtonElement = (name) => name === "Button" || name === "button";
 const isDialogElement = (name) => /(Modal|Dialog)$/.test(name);
 const isDialogTitleElement = (name) => /^(Dialog|AlertDialog)\.Title$/.test(name);
+/**
+ * Menu rows whose text is a label (#5491): our ui/Menu wrappers (`MenuItem`,
+ * `MenuSubTrigger`, ...) and the raw Radix parts (`ContextMenu.Item`,
+ * `RadixDropdownMenu.SubTrigger`, `Menubar.Label`, ...).
+ */
+const isMenuItemElement = (name) =>
+  /^Menu(Item|CheckboxItem|RadioItem|SubTrigger|Label)$/.test(name) ||
+  /^\w*(Menu|Menubar)\w*\.(Item|CheckboxItem|RadioItem|SubTrigger|Label)$/.test(name);
 
 /** Attributes whose text is button copy (a confirm or cancel label). */
 const BUTTON_LABEL_ATTR = /^(confirm|cancel|submit|primary|secondary|action|discard)Label$/;
@@ -316,6 +332,30 @@ function buttonLabel(button) {
     child.type === "JSXText" || child.type === "JSXExpressionContainer" ? staticTexts(child) : []
   );
   return texts.join(" / ") || "?";
+}
+
+/**
+ * Static text rendered inside a menu row: its own text children plus text in
+ * plain HTML wrappers (`<span>`), but not in nested components (icons, hints).
+ */
+function menuItemTexts(element) {
+  const out = [];
+  const visit = (children) => {
+    for (const child of children) {
+      if (child.type === "JSXText" || child.type === "JSXExpressionContainer") {
+        for (const text of staticTexts(child)) out.push([child, text]);
+      } else if (child.type === "JSXFragment") {
+        visit(child.children);
+      } else if (
+        child.type === "JSXElement" &&
+        /^[a-z]/.test(elementName(child.openingElement.name))
+      ) {
+        visit(child.children);
+      }
+    }
+  };
+  visit(element.children);
+  return out;
 }
 
 /** Whether a fragment is nested in JSX (its parent element is checked instead). */
@@ -425,7 +465,9 @@ export const copyStyleRule = {
     return {
       JSXElement(node) {
         const name = elementName(node.openingElement.name);
-        if (isButtonElement(name) || isDialogTitleElement(name)) {
+        if (isMenuItemElement(name)) {
+          for (const [child, text] of menuItemTexts(node)) checkLabel(child, text);
+        } else if (isButtonElement(name) || isDialogTitleElement(name)) {
           for (const child of node.children) {
             if (child.type === "JSXText" || child.type === "JSXExpressionContainer") {
               for (const text of staticTexts(child)) {
