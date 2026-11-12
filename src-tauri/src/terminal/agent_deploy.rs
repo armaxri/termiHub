@@ -8,8 +8,11 @@
 //! - **Update** the agent: shut down the running agent, then deploy a new
 //!   version.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use termihub_core::backends::ssh::handler::SshSession;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
@@ -307,69 +310,40 @@ pub fn deploy_agent(
     app_handle: &AppHandle,
     cancel: Option<&CancellationToken>,
 ) -> Result<AgentDeployResult, TerminalError> {
+    deploy_agent_with(
+        agent_id,
+        config,
+        deploy_config,
+        cancel,
+        app_resolver(app_handle),
+    )
+}
+
+/// [`deploy_agent`] with the binary resolution passed in as `resolve` (see
+/// [`app_resolver`]), so the host tests (#5208) can run the whole deploy,
+/// connect and detect included, without a Tauri `AppHandle`.
+fn deploy_agent_with<R>(
+    agent_id: &str,
+    config: &RemoteAgentConfig,
+    deploy_config: &AgentDeployConfig,
+    cancel: Option<&CancellationToken>,
+    resolve: R,
+) -> Result<AgentDeployResult, TerminalError>
+where
+    R: FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf>,
+{
     let remote_path = deploy_config
         .remote_path
         .as_deref()
         .unwrap_or(DEFAULT_REMOTE_PATH);
 
-    // 1. SSH connect
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "connecting", "Connecting to host…", -1.0);
-    // Expand `${env:…}` / `~` in host / username / key path like the agent
-    // connect path does (#3661); the password stays verbatim.
-    let ssh_config = config.clone().expand().to_ssh_config();
-    let session = connect_and_authenticate(&ssh_config)?;
+    // 1–2. SSH connect, detect the remote OS/arch.
+    let (session, remote_os, remote_arch) = connect_and_detect(agent_id, config, cancel)?;
 
-    // 2. Detect remote arch
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "detecting", "Detecting remote system…", -1.0);
-    let (remote_os, remote_arch) = detect_remote_info(&session)?;
-
-    let arch_suffix = agent_binary::artifact_name_for_os_arch(&remote_os, &remote_arch)
-        .ok_or_else(|| {
-            TerminalError::RemoteError(format!(
-                "Unsupported remote platform: {remote_os} {remote_arch}"
-            ))
-        })?;
-
-    // 3. Resolve binary locally
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "resolving", "Resolving agent binary…", 0.1);
+    // 3–4. Resolve the binary locally and validate its ELF architecture.
     let version = env!("CARGO_PKG_VERSION");
-    let agent_id_owned = agent_id.to_string();
     let binary_path =
-        agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, move |dl, total| {
-            let pct = if total > 0 {
-                dl as f64 / total as f64
-            } else {
-                -1.0
-            };
-            log_progress(
-                &agent_id_owned,
-                "downloading",
-                &format!("Downloading agent binary ({dl} bytes)…"),
-                pct,
-            );
-        })
-        .map_err(|e| TerminalError::RemoteError(format!("Failed to resolve binary: {e}")))?;
-
-    // 4. Validate ELF architecture
-    log_progress(
-        agent_id,
-        "validating",
-        "Validating binary architecture…",
-        0.3,
-    );
-    let binary_path_str = binary_path.to_string_lossy();
-    if let Ok(elf_arch) = detect_binary_arch(&binary_path_str) {
-        if let Some(expected_arch) = expected_arch_for_uname(&remote_arch) {
-            if elf_arch != expected_arch {
-                return Err(TerminalError::RemoteError(format!(
-                    "Architecture mismatch: binary is {elf_arch:?}, remote expects {expected_arch:?}"
-                )));
-            }
-        }
-    }
+        resolve_binary_for_host(agent_id, &remote_os, &remote_arch, version, cancel, resolve)?;
 
     // 5–9. Read + re-verify, upload, install, verify, resolve the install path.
     bail_if_cancelled(cancel)?;
@@ -385,6 +359,96 @@ pub fn deploy_agent(
         &progress,
         cancel,
     )
+}
+
+/// The production binary resolver: the cache → bundled → download chain of
+/// [`agent_binary::resolve_agent_binary`], which needs the app handle.
+fn app_resolver(
+    app_handle: &AppHandle,
+) -> impl FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf> + '_ {
+    move |version, arch_suffix, progress| {
+        agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, |dl, total| {
+            progress(dl, total)
+        })
+    }
+}
+
+/// Deploy/stage steps 1–2: connect and authenticate, then detect the remote
+/// OS and architecture (`uname`, or the Windows probes).
+fn connect_and_detect(
+    agent_id: &str,
+    config: &RemoteAgentConfig,
+    cancel: Option<&CancellationToken>,
+) -> Result<(SshSession, String, String), TerminalError> {
+    bail_if_cancelled(cancel)?;
+    log_progress(agent_id, "connecting", "Connecting to host…", -1.0);
+    // Expand `${env:…}` / `~` in host / username / key path like the agent
+    // connect path does (#3661); the password stays verbatim.
+    let ssh_config = config.clone().expand().to_ssh_config();
+    let session = connect_and_authenticate(&ssh_config)?;
+
+    bail_if_cancelled(cancel)?;
+    log_progress(agent_id, "detecting", "Detecting remote system…", -1.0);
+    let (remote_os, remote_arch) = detect_remote_info(&session)?;
+    Ok((session, remote_os, remote_arch))
+}
+
+/// Deploy/stage steps 3–4: pick the release artifact for the detected host,
+/// resolve it locally through `resolve`, and refuse an ELF binary built for
+/// another architecture.
+fn resolve_binary_for_host<R>(
+    agent_id: &str,
+    remote_os: &str,
+    remote_arch: &str,
+    version: &str,
+    cancel: Option<&CancellationToken>,
+    resolve: R,
+) -> Result<PathBuf, TerminalError>
+where
+    R: FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf>,
+{
+    let arch_suffix =
+        agent_binary::artifact_name_for_os_arch(remote_os, remote_arch).ok_or_else(|| {
+            TerminalError::RemoteError(format!(
+                "Unsupported remote platform: {remote_os} {remote_arch}"
+            ))
+        })?;
+
+    bail_if_cancelled(cancel)?;
+    log_progress(agent_id, "resolving", "Resolving agent binary…", 0.1);
+    let download_progress = |dl: u64, total: u64| {
+        let pct = if total > 0 {
+            dl as f64 / total as f64
+        } else {
+            -1.0
+        };
+        log_progress(
+            agent_id,
+            "downloading",
+            &format!("Downloading agent binary ({dl} bytes)…"),
+            pct,
+        );
+    };
+    let binary_path = resolve(version, arch_suffix, &download_progress)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to resolve binary: {e}")))?;
+
+    log_progress(
+        agent_id,
+        "validating",
+        "Validating binary architecture…",
+        0.3,
+    );
+    let binary_path_str = binary_path.to_string_lossy();
+    if let Ok(elf_arch) = detect_binary_arch(&binary_path_str) {
+        if let Some(expected_arch) = expected_arch_for_uname(remote_arch) {
+            if elf_arch != expected_arch {
+                return Err(TerminalError::RemoteError(format!(
+                    "Architecture mismatch: binary is {elf_arch:?}, remote expects {expected_arch:?}"
+                )));
+            }
+        }
+    }
+    Ok(binary_path)
 }
 
 /// Read the resolved binary, re-verify its release signature over exactly the
@@ -769,6 +833,26 @@ where
     L: FnOnce() -> Result<Vec<ConnectedHost>, TerminalError>,
     F: FnOnce() -> Result<u32, TerminalError>,
 {
+    update_agent_with(agent_id, force, list_other_hosts_fn, shutdown_fn, || {
+        deploy_agent(agent_id, config, deploy_config, app_handle, cancel)
+    })
+}
+
+/// [`update_agent`] with the re-deploy passed in as `deploy_fn` — production
+/// passes [`deploy_agent`], the host tests (#5208) [`deploy_agent_with`] and a
+/// local binary.
+fn update_agent_with<L, F, D>(
+    agent_id: &str,
+    force: bool,
+    list_other_hosts_fn: L,
+    shutdown_fn: F,
+    deploy_fn: D,
+) -> Result<AgentDeployResult, TerminalError>
+where
+    L: FnOnce() -> Result<Vec<ConnectedHost>, TerminalError>,
+    F: FnOnce() -> Result<u32, TerminalError>,
+    D: FnOnce() -> Result<AgentDeployResult, TerminalError>,
+{
     // 0. Connected-host guard: refuse an unforced update while other hosts are
     // connected to the agent. Runs before shutdown so
     // the agent is still reachable for `agent.list_connections`.
@@ -795,7 +879,7 @@ where
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 2. Deploy the new binary
-    deploy_agent(agent_id, config, deploy_config, app_handle, cancel)
+    deploy_fn()
 }
 
 // ── Coordinated staging (#1616) ──────────────────────────────────────────
@@ -820,23 +904,34 @@ pub fn stage_agent_binary(
     app_handle: &AppHandle,
     cancel: Option<&CancellationToken>,
 ) -> Result<StagedBinary, TerminalError> {
+    stage_agent_binary_with(
+        agent_id,
+        config,
+        deploy_config,
+        cancel,
+        app_resolver(app_handle),
+    )
+}
+
+/// [`stage_agent_binary`] with the binary resolution passed in as `resolve`
+/// (see [`deploy_agent_with`]).
+fn stage_agent_binary_with<R>(
+    agent_id: &str,
+    config: &RemoteAgentConfig,
+    deploy_config: &AgentDeployConfig,
+    cancel: Option<&CancellationToken>,
+    resolve: R,
+) -> Result<StagedBinary, TerminalError>
+where
+    R: FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf>,
+{
     let remote_path = deploy_config
         .remote_path
         .as_deref()
         .unwrap_or(DEFAULT_REMOTE_PATH);
 
-    // 1. SSH connect
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "connecting", "Connecting to host…", -1.0);
-    // Expand `${env:…}` / `~` in host / username / key path like the agent
-    // connect path does (#3661); the password stays verbatim.
-    let ssh_config = config.clone().expand().to_ssh_config();
-    let session = connect_and_authenticate(&ssh_config)?;
-
-    // 2. Detect remote OS/arch
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "detecting", "Detecting remote system…", -1.0);
-    let (remote_os, remote_arch) = detect_remote_info(&session)?;
+    // 1–2. SSH connect, detect the remote OS/arch.
+    let (session, remote_os, remote_arch) = connect_and_detect(agent_id, config, cancel)?;
 
     // Windows agents cannot self-swap a running binary (apply.rs is Unix-only):
     // stop here so the caller falls back to an immediate deploy (#1616).
@@ -854,51 +949,11 @@ pub fn stage_agent_binary(
         });
     }
 
-    let arch_suffix = agent_binary::artifact_name_for_os_arch(&remote_os, &remote_arch)
-        .ok_or_else(|| {
-            TerminalError::RemoteError(format!(
-                "Unsupported remote platform: {remote_os} {remote_arch}"
-            ))
-        })?;
-
-    // 3. Resolve binary locally
-    bail_if_cancelled(cancel)?;
-    log_progress(agent_id, "resolving", "Resolving agent binary…", 0.1);
+    // 3–4. Resolve the binary locally and validate its ELF architecture (POSIX
+    // hosts only reach here).
     let version = env!("CARGO_PKG_VERSION");
-    let agent_id_owned = agent_id.to_string();
     let binary_path =
-        agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, move |dl, total| {
-            let pct = if total > 0 {
-                dl as f64 / total as f64
-            } else {
-                -1.0
-            };
-            log_progress(
-                &agent_id_owned,
-                "downloading",
-                &format!("Downloading agent binary ({dl} bytes)…"),
-                pct,
-            );
-        })
-        .map_err(|e| TerminalError::RemoteError(format!("Failed to resolve binary: {e}")))?;
-
-    // 4. Validate ELF architecture (POSIX hosts only reach here)
-    log_progress(
-        agent_id,
-        "validating",
-        "Validating binary architecture…",
-        0.3,
-    );
-    let binary_path_str = binary_path.to_string_lossy();
-    if let Ok(elf_arch) = detect_binary_arch(&binary_path_str) {
-        if let Some(expected_arch) = expected_arch_for_uname(&remote_arch) {
-            if elf_arch != expected_arch {
-                return Err(TerminalError::RemoteError(format!(
-                    "Architecture mismatch: binary is {elf_arch:?}, remote expects {expected_arch:?}"
-                )));
-            }
-        }
-    }
+        resolve_binary_for_host(agent_id, &remote_os, &remote_arch, version, cancel, resolve)?;
 
     // 5. Verify, then upload WITHOUT installing.
     bail_if_cancelled(cancel)?;
@@ -1260,3 +1315,7 @@ mod fake_host;
 #[cfg(test)]
 #[path = "agent_deploy_host_tests.rs"]
 mod host_tests;
+
+#[cfg(test)]
+#[path = "agent_deploy_prologue_tests.rs"]
+mod prologue_tests;

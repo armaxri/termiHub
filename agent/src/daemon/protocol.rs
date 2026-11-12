@@ -188,6 +188,15 @@ pub const MSG_DAEMON_PING: u8 = 0x8D;
 /// compatible: a pre-#4081 worker logs the unknown frame and carries on; a
 /// pre-#4081 daemon never sends it, and its session ends as it always did.
 pub const MSG_FILES_ONLY: u8 = 0x8E;
+/// Daemon → Agent: one step of the session's in-place reconnect (#5396) — an
+/// agent-hosted serial port reopening after its USB adapter dropped. Payload:
+/// JSON `{"seq": u64, ...SessionReconnectStatus}` (see
+/// `termihub_core::protocol::methods::ConnectionReconnectNotification`, without
+/// its session id). Sent to the attached worker on every step, and the latest
+/// running step again right after [`MSG_READY`] to a worker that attaches
+/// mid-loop. Append-only: a pre-#5396 worker logs the unknown frame and carries
+/// on; a pre-#5396 daemon never reopens, and its session ends on a drop.
+pub const MSG_RECONNECT: u8 = 0x8F;
 
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
 /// its session backend's process manager.

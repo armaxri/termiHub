@@ -943,6 +943,12 @@ a budget, or both:
 - Guided-manual tests gated off by conftest (`@pytest.mark.manual` plus a
   "guided-manual test" reason) need their entry but do not count against the
   budget (#4921).
+- A fragment with both an entry and a `max_skips` also **caps** its entry: more
+  counted skips matching it on a lane than its `max_skips` fails that lane, even
+  when the lane total has headroom (#5176). The macOS/Windows container-fixture
+  reasons (`5176-*.json`) are capped this way, so a suite that newly skips for
+  "no Linux containers" is caught. To admit one more such skip on purpose,
+  raise that fragment's cap in the same PR and say why.
 
 To admit a new skip, **add a new file** named `<issue>-<slug>.json`. If the
 reason is new, the fragment carries the entry and its `max_skips`. If the skip
@@ -1014,17 +1020,22 @@ harness checks every test for JavaScript errors in the app under test (#5364):
 
 `TERMIHUB_JS_ERROR_GATE` picks what happens next:
 
-| Value                | Effect                                                  |
-| -------------------- | ------------------------------------------------------- |
-| `annotate` (default) | Report every unique error with its tests (see below)    |
-| `fail`               | Report, and fail a passing test with an uncovered error |
-| `off`                | No collection                                           |
+| Value            | Effect                                                  |
+| ---------------- | ------------------------------------------------------- |
+| `fail` (default) | Report, and fail a passing test with an uncovered error |
+| `annotate`       | Report every unique error with its tests (see below)    |
+| `off`            | No collection                                           |
 
 The report goes to the terminal summary, the GitHub step summary and
 `artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
 
-The default is `annotate` while the current offenders are moved into the
-allowlist with tracking issues. A later change switches the nightly to `fail`.
+The gate started in `annotate` mode and moved to `fail` (#5464) once the errors
+the annotate runs reported were fixed: the clipboard rejection (#5383), the
+closed-session rejections (#5384), and the uncaught `reading 'dimensions'`
+TypeError from scrolling an xterm that was disposed before the next frame.
+A new uncaught error now fails the test that caused it, and the failure names
+the error with its first stack frames. Set `TERMIHUB_JS_ERROR_GATE=annotate` to
+only report while you investigate.
 
 An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
 issue that tracks the error:
@@ -1071,9 +1082,15 @@ off:
    effort, so a connection that opens and closes between two samples is
    missed.
 
-`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
-(the default), `fail` and `off`. The report goes to the terminal summary, the
-GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+`TERMIHUB_EGRESS_GATE` takes the same modes as the JS error gate: `fail`,
+`annotate` and `off`. Unlike that gate, it defaults to `fail`: a passing test
+whose app connects to a destination that is neither a fixture nor allowlisted
+fails, and the failure names the destination. The probe started in `annotate`
+mode. It moved to `fail` once two full System Integration (nightly) runs on
+Linux, macOS and Windows reported no destination other than the allowlisted
+plugin discovery suite. Set `TERMIHUB_EGRESS_GATE=annotate` to only report
+while you investigate a new destination. The report goes to the terminal
+summary, the GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
 a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
 entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
 a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
@@ -1312,6 +1329,64 @@ The portable parts of those (key auth for every key type, exec/stdin, SFTP
 round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
 all three OSes.
 
+### System-test SSH suites on the native sshd (#5176)
+
+The app-driven SSH/SFTP suites in `tests/system/` run on macOS and Windows
+too, against the same fixture. The macOS/Windows integration lane in
+[`system-integration.yml`](../.github/workflows/system-integration.yml) brings it
+up with `--password-login` (and `--jump-host` on macOS) and sets
+`TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
+[`termihub_harness/native_ssh.py`](../tests/system/termihub_harness/native_ssh.py)
+takes over:
+
+- `SSH_PASSWORD_PORT`, `SSH_KEYS_PORT`, `SSH_USERNAME` and `SSH_PASSWORD` point
+  at the native sshd and its dedicated user. The repo's fixture keys are in its
+  `authorized_keys`. The jump-host bastion is the fixture's second sshd, and the
+  target is the first one.
+- `ssh_fixtures`, `ssh_password_fixtures` and `ssh_bastion_fixtures` return the
+  native target instead of starting containers.
+- Only suites marked `@pytest.mark.native_sshd` (optionally
+  `platforms=("darwin",)`) run. Every other test that asks for one of those
+  fixtures is skipped with `SSH suite not ported to the native sshd fixture
+(#5176)`, which has its own skip budget.
+- `test_ssh_tunnels.py` uses the native fixture on Windows as well (it already
+  did on macOS).
+
+**Password login.** An unprivileged sshd cannot check a password. On macOS,
+`--password-login` therefore creates a dedicated local user `termihubssh` with a
+random password and runs sshd as root with PAM (passwordless `sudo`, which the
+hosted runner has). That user's home is a fresh, throwaway home, and `down`
+deletes the user again. The flag refuses to run off CI unless
+`TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1` is set, so a developer machine never
+gets the account by accident. On Windows the fixture's own test user gets
+password auth. The password is exported as `TERMIHUB_NATIVE_SSHD_PASSWORD` and
+masked in the job log.
+
+**Jump host (macOS).** `--jump-host` starts a second sshd on the next free port
+with the same user and keys. `jump-stop` / `jump-start` drop and restore only
+that bastion. The jump-host reconnect suite counts gateway sessions as the
+bastion master's per-connection children.
+
+Which suites run where:
+
+| Suite(s)                                                                                                                                                                                                | macOS | Windows                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------- |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py` | yes   | yes                                                                                                  |
+| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output), SSH connect flash, SFTP VS Code handoff, jump host                                             | yes   | no: they type POSIX shell commands, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+
+**What stays on the Linux lane in `tests/system/`.** These suites still skip on
+macOS and Windows. Each skip reason has a capped fragment in
+`tests/system/skip-allowlist.d/` (`5176-*.json`), so one more suite skipping for
+that reason fails the lane:
+
+| Suite(s)                                                                                                                              | Why                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                     | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
+| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites     | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
+| `test_ssh.py` (server disconnect), `test_transfer_*`, `test_file_browser_drag_sftp_live.py`, `test_session_sftp_no_orphan_on_quit.py` | control or inspect the server through the container (`SshServerControl`, `/proc`), or use GNU `stat`                                                                 |
+| `test_remote_agent*.py`, `test_agent_*_live.py`, `test_file_browser_remote_to_local.py`                                               | deploy a Linux agent baked into the `remote-agent` containers                                                                                                        |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)                                               | the app's host-stats command reads Linux `/proc`, so a macOS or Windows host shows no stats                                                                          |
+
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 
 [`native_sshd_deploy_journey_tests.rs`](../src-tauri/src/terminal/agent_manager/native_sshd_deploy_journey_tests.rs)
@@ -1345,8 +1420,14 @@ Run it locally the same way:
 scripts/internal/run-native-sshd-deploy-journey.sh
 ```
 
-The line coverage of `agent_deploy.rs` is not measured in this lane (the job
-runs plain `cargo test`). The nightly coverage overlay reports it.
+This lane is not instrumented for coverage (the job runs plain `cargo test`).
+The line coverage of `agent_deploy.rs` comes from the per-PR unit tests
+instead. The in-process host tests (#5162) drive the install half.
+[`agent_deploy_prologue_tests.rs`](../src-tauri/src/terminal/agent_deploy_prologue_tests.rs)
+drives what runs before it in `deploy_agent`, `stage_agent_binary`,
+`update_agent` and `probe_remote_agent`. The fake host listens on a loopback
+port, so the production `connect_and_authenticate` dials it. A local file
+stands in for the `AppHandle`-bound binary resolution.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
@@ -1942,13 +2023,14 @@ component starts gating once its baseline is recorded.
   because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux` and, in
   the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
   the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
-  Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
-  tests in the Windows test leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
-  heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
+  Linux number never sees. Both jobs run `./scripts/coverage.sh --split`: the workspace Rust
+  tests in the Run Tests legs' partition (`scripts/internal/ci-rust-tests.sh` bulk, heavy and
+  serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
   live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
-  with the nextest `ci` profile (#5349), so a hung test fails by name within its per-test
-  timeout and the `#[serial(key)]` test groups hold there too. The heartbeat names the failing job, so a
-  Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
+  with the nextest `ci` profile (#5349, on Linux since #5428), so a hung test fails by name
+  within its per-test timeout and the `#[serial(key)]` test groups hold there too. The
+  heartbeat names the failing job, so a Windows-only drop reads
+  `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
   The release check grades the machine it runs on. A platform with no baseline fails with
   the command that records one.
 - **What `plugin-runner` counts:** its own unit tests (including the session server's

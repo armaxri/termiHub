@@ -167,6 +167,14 @@ networkToolHistoryEnabled?: boolean, layout?: LayoutConfig,
  */
 credentialStorageMode?: CredentialStorageMode, 
 /**
+ * Whether the user has made a credential-storage choice (#5187): set by
+ * the first-use storage chooser (including "Don't save") and by every
+ * store switch. Absent on installs that never chose; a persisted
+ * `credential_storage_mode` also counts as chosen. Owned by the backend:
+ * a frontend whole-document save never changes it.
+ */
+credentialStorageChosen?: boolean, 
+/**
  * Auto-lock timeout in minutes for master password mode. None = never.
  */
 credentialAutoLockMinutes?: number, 

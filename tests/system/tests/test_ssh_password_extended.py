@@ -31,6 +31,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshPasswordExtended(
     TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SftpUi, SystemTest
 ):

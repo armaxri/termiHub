@@ -390,6 +390,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
     if (xterm) {
       requestAnimationFrame(() => {
+        // The tab may have closed or reconnected before this frame. Its xterm is
+        // then unregistered and disposed, and xterm's renderer is gone, so a
+        // scroll would throw an uncaught TypeError (#5464).
+        if (xtermRegistryRef.current.get(tabId) !== xterm) return;
         if (wasAtBottom) {
           xterm.scrollToBottom();
         }
@@ -416,7 +420,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       // processed before the scrollback is purged.
       xterm.write("\x1b[2J\x1b[H", () => {
         xterm.clear();
-        requestAnimationFrame(() => xterm.scrollToBottom());
+        requestAnimationFrame(() => {
+          // Skip an xterm disposed before this frame (see fitTerminal, #5464).
+          if (xtermRegistryRef.current.get(tabId) === xterm) xterm.scrollToBottom();
+        });
       });
     }
   }, []);

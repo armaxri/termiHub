@@ -252,14 +252,17 @@ function findFieldKey(schema: SettingsSchema, key: string): string | null {
  *
  * In every mode the `savePassword` help text gains the paragraph describing
  * where credentials go for that mode (see `credentialStorageCopy`), so no copy
- * mentions a master password unless the mode is Master Password.
+ * mentions a master password unless the mode is Master Password. Before any
+ * storage choice exists (`needsChoice`, #5187) the toggle is live and its help
+ * says that turning it on asks where to keep passwords.
  *
  * Returns a shallow-cloned schema; the original schema is never mutated. An
  * unknown mode (`undefined`) returns the schema unchanged.
  */
 export function filterCredentialFields(
   schema: SettingsSchema,
-  credentialMode: CredentialStorageMode | undefined
+  credentialMode: CredentialStorageMode | undefined,
+  needsChoice = false
 ): SettingsSchema {
   if (!credentialMode) return schema;
   return {
@@ -267,7 +270,7 @@ export function filterCredentialFields(
       ...group,
       fields: group.fields
         .filter((f) => credentialMode !== "none" || f.key !== "password")
-        .map((f) => withModeAwareSaveHelp(f, credentialMode)),
+        .map((f) => withModeAwareSaveHelp(f, credentialMode, needsChoice)),
     })),
   };
 }
