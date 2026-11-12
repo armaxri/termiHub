@@ -26,16 +26,25 @@ from termihub_harness import js_errors as je
 @pytest.mark.parametrize(
     "value, mode",
     [
-        ("", "annotate"),
+        ("", "fail"),
         ("fail", "fail"),
         (" FAIL ", "fail"),
         ("off", "off"),
         ("annotate", "annotate"),
+        (" Annotate ", "annotate"),
     ],
 )
-def test_gate_mode_reads_the_env_and_defaults_to_annotate(value, mode):
+def test_gate_mode_reads_the_env_and_defaults_to_fail(value, mode):
     assert je.gate_mode({je.GATE_ENV: value}) == mode
-    assert je.gate_mode({}) == "annotate"
+    assert je.gate_mode({}) == "fail"
+
+
+def test_gate_from_an_empty_env_fails_and_annotate_overrides_it():
+    """No TERMIHUB_JS_ERROR_GATE (a plain nightly or local run) means fail mode;
+    ``annotate`` is the override back to report-only (#5464)."""
+    assert je.DEFAULT_MODE == "fail"
+    assert je.Gate.from_env({}).mode == "fail"
+    assert je.Gate.from_env({je.GATE_ENV: "annotate"}).mode == "annotate"
 
 
 def test_gate_mode_rejects_an_unknown_value():
@@ -359,13 +368,14 @@ def test_summary_lists_each_unique_error_once_with_its_tests(tmp_path):
 
 @pytest.mark.parametrize(
     "mode, expected_rc, summary",
-    [("fail", 1, True), ("annotate", 0, True), ("off", 0, False)],
+    [("fail", 1, True), (None, 1, True), ("annotate", 0, True), ("off", 0, False)],
 )
 def test_the_conftest_hook_gates_a_test_that_logged_a_js_error(
     tmp_path, mode, expected_rc, summary
 ):
     """A real pytest session with this conftest: a test whose (fake) app logs an
-    unhandled rejection fails only in ``fail`` mode, and is reported unless off."""
+    unhandled rejection fails in ``fail`` mode, which is also the mode when the
+    variable is unset (``None``), and is reported unless off."""
     harness_root = Path(je.__file__).resolve().parents[1]
     log = tmp_path / "app.log"
     log.write_text("CONSOLE JS ERROR launched before the test\n", encoding="utf-8")
@@ -393,9 +403,16 @@ def test_the_conftest_hook_gates_a_test_that_logged_a_js_error(
             """),
         encoding="utf-8",
     )
-    env = {**os.environ, je.GATE_ENV: mode}
-    for name in ("TERMIHUB_SKIP_GUARD_LANE", "GITHUB_STEP_SUMMARY", "PYTEST_XDIST_WORKER"):
+    env = dict(os.environ)
+    for name in (
+        "TERMIHUB_SKIP_GUARD_LANE",
+        "GITHUB_STEP_SUMMARY",
+        "PYTEST_XDIST_WORKER",
+        je.GATE_ENV,
+    ):
         env.pop(name, None)
+    if mode is not None:
+        env[je.GATE_ENV] = mode
     result = subprocess.run(
         [
             sys.executable,
@@ -424,8 +441,9 @@ def test_the_conftest_hook_gates_a_test_that_logged_a_js_error(
         assert "[NEW] unhandledrejection: e2e-canary  (1 test(s))" in out
         # The line already in the log before the test started is not its error.
         assert "launched before the test" not in out
-    if mode == "fail":
+    if expected_rc:
         assert "1 failed, 1 passed" in out
+        assert "JS error gate" in out, out
 
 
 def test_an_invalid_mode_is_a_usage_error(tmp_path):
