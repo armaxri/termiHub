@@ -113,7 +113,14 @@ export function CredentialStorageChooser() {
       data-testid="credential-storage-chooser"
       footer={
         <>
-          {settingUpVault ? (
+          <Button
+            variant="secondary"
+            onClick={cancel}
+            data-testid="credential-storage-chooser-cancel"
+          >
+            Cancel
+          </Button>
+          {settingUpVault && (
             <Button
               variant="secondary"
               onClick={() => {
@@ -123,14 +130,6 @@ export function CredentialStorageChooser() {
               data-testid="credential-storage-chooser-back"
             >
               Back
-            </Button>
-          ) : (
-            <Button
-              variant="secondary"
-              onClick={cancel}
-              data-testid="credential-storage-chooser-cancel"
-            >
-              Cancel
             </Button>
           )}
           <Button

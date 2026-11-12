@@ -115,7 +115,7 @@ export const CREDENTIAL_STORAGE_CHOICES: CredentialStorageChoiceCopy[] = [
   },
   {
     mode: "master_password",
-    label: "Master Password",
+    label: "Master password",
     description:
       "An encrypted termiHub vault, locked with a master password you set. " +
       "Portable — you can export it to another machine.",
