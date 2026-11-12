@@ -377,11 +377,13 @@ impl russh::server::Handler for FakeAgentHandler {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         // Everything is answered through the handler callbacks; an unread
         // channel object would only fill up, so it is dropped right away.
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn exec_request(

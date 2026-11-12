@@ -17,7 +17,7 @@ use super::prompt_clock::PromptClock;
 
 /// Convenience alias for the connected session handle.
 ///
-/// In russh 0.61 `Handle` is **not** `Clone` (it owns the session task's join
+/// In russh 0.65 `Handle` is **not** `Clone` (it owns the session task's join
 /// handle and reply receiver); share it via `Arc<SshSession>`, as the pooled
 /// endpoint / gateway sessions do.
 pub type SshSession = russh::client::Handle<TermiHubHandler>;
@@ -250,6 +250,26 @@ impl Default for TermiHubHandler {
     }
 }
 
+/// The bare host key to verify, or `None` for an OpenSSH host certificate,
+/// which termiHub does not trust (see `check_server_key`, #5498).
+fn plain_host_key(key: &russh::keys::PublicKeyOrCertificate) -> Option<&russh::keys::PublicKey> {
+    match key {
+        russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => Some(key),
+        russh::keys::PublicKeyOrCertificate::Certificate(_) => None,
+    }
+}
+
+/// The live listener registered for a server-opened forwarded channel's
+/// `port`, if any. `None` (no listener, or its receiver is gone) makes the
+/// caller reject the open (#5498).
+fn forwarded_listener(
+    registry: &ForwardedChannelRegistry,
+    port: u32,
+) -> Option<UnboundedSender<IncomingChannel>> {
+    let registry = registry.lock().ok()?;
+    registry.get(&port).filter(|tx| !tx.is_closed()).cloned()
+}
+
 impl russh::client::Handler for TermiHubHandler {
     type Error = russh::Error;
 
@@ -296,10 +316,22 @@ impl russh::client::Handler for TermiHubHandler {
     /// for unknown or changed keys). Returning `Ok(false)` aborts the handshake,
     /// so a man-in-the-middle presenting an untrusted key is rejected instead of
     /// blindly accepted as it was before this issue.
+    ///
+    /// russh (0.65+) hands over either a bare key or an OpenSSH host
+    /// certificate. termiHub never advertises the `*-cert-v01@openssh.com`
+    /// host-key algorithms (russh's `Preferred::host_key_certificates` stays
+    /// empty) and has no `@cert-authority` trust store, so a certificate cannot
+    /// legitimately arrive here. Should one ever do, it is refused outright
+    /// (fail closed) rather than trusting the key it wraps: russh deliberately
+    /// does not also ask about that inner key (#5498).
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let Some(server_public_key) = plain_host_key(server_key) else {
+            debug!("refusing an SSH host certificate: no certificate authority is trusted");
+            return Ok(self.refuse(HostKeyRefusal::NotTrusted));
+        };
         // Consult the host's own `~/.ssh/known_hosts` once and carry the verdict
         // into the trust decision (#1969). A recorded key is trusted silently by
         // every path (exactly as `ssh` would); a *changed* key there is the
@@ -337,20 +369,33 @@ impl russh::client::Handler for TermiHubHandler {
         connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         debug!(
             connected_address,
             connected_port, "Incoming forwarded-tcpip channel"
         );
-        if let Ok(registry) = self.forwarded_channel_registry.lock() {
-            if let Some(tx) = registry.get(&connected_port) {
-                let _ = tx.send(IncomingChannel {
-                    channel,
-                    connected_address: connected_address.to_string(),
-                    connected_port,
-                });
-            }
+        // Since russh 0.65 a server-opened channel is only confirmed when the
+        // handler accepts it. Accept only when a live listener is registered
+        // for this port; otherwise refuse, so the server sees an open failure
+        // instead of a confirmed channel that nobody reads (#5498). The
+        // confirmation is queued before the listener gets the channel, so its
+        // first write cannot overtake the open confirmation.
+        if let Some(tx) = forwarded_listener(&self.forwarded_channel_registry, connected_port) {
+            reply.accept().await;
+            // A listener that went away in between drops the channel, which
+            // closes it.
+            let _ = tx.send(IncomingChannel {
+                channel,
+                connected_address: connected_address.to_string(),
+                connected_port,
+            });
+        } else {
+            debug!(connected_port, "rejecting forwarded-tcpip channel: no listener");
+            reply
+                .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
         }
         Ok(())
     }
@@ -362,19 +407,28 @@ impl russh::client::Handler for TermiHubHandler {
     /// target contacts its `$SSH_AUTH_SOCK`. We hand it to
     /// `spawn_forwarded_agent_bridge`,
     /// which pumps bytes between it and the local `ssh-agent`. When forwarding was
-    /// not requested the channel is dropped (closed), so a server can never reach
-    /// the local agent unsolicited.
+    /// not requested the open is rejected (`SSH_OPEN_ADMINISTRATIVELY_PROHIBITED`),
+    /// so a server can never reach the local agent unsolicited.
+    ///
+    /// termiHub only *bridges* bytes to the user's own agent (OpenSSH
+    /// `ssh-agent`, Pageant, the Windows agent); it never runs russh's agent
+    /// server, so per-use confirmation of `ssh-add -c` keys stays with that
+    /// agent (RUSTSEC-2026-0495 does not apply, #5498).
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: russh::Channel<russh::client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         if self.forward_agent {
             debug!("bridging forwarded SSH agent channel to the local agent");
+            reply.accept().await;
             super::agent_forward::spawn_forwarded_agent_bridge(channel);
         } else {
             debug!("rejecting agent-forward channel: forwarding was not requested");
-            // Dropping `channel` closes it, refusing the unsolicited forward.
+            reply
+                .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
         }
         Ok(())
     }

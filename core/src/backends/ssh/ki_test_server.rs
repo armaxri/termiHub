@@ -204,9 +204,11 @@ impl russh::server::Handler for KiServer {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut Session,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn pty_request(
@@ -255,7 +257,7 @@ impl russh::client::Handler for AcceptAnyKey {
 
     async fn check_server_key(
         &mut self,
-        _key: &russh::keys::PublicKey,
+        _key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }

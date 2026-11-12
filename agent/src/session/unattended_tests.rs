@@ -156,8 +156,12 @@ impl russh::server::Handler for Server {
         })
     }
 
-    async fn auth_publickey(&mut self, _user: &str, key: &PublicKey) -> Result<Auth, Self::Error> {
-        Ok(if key.key_data() == self.client_key.key_data() {
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        key: russh::server::VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
+        Ok(if key.public_key.key_data() == self.client_key.key_data() {
             Auth::Accept
         } else {
             Auth::reject()
@@ -194,9 +198,11 @@ impl russh::server::Handler for Server {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut Session,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn shell_request(
