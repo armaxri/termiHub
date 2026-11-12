@@ -17,9 +17,11 @@ and a test that grades those features points them at a loopback fixture server
   destination) that legitimately reaches the internet:
   ``{"nodeid"?: <regex>, "remote"?: <regex>, "issue": <n>, "reason": <text>}``,
   at least one of ``nodeid``/``remote``. ``remote`` is searched in ``ip:port``.
-* **Mode.** ``TERMIHUB_EGRESS_GATE=fail|annotate|off`` (default ``annotate``).
+* **Mode.** ``TERMIHUB_EGRESS_GATE=fail|annotate|off`` (default ``fail``).
   ``fail`` turns a passing test with a new, un-allowlisted destination into a
-  failure; ``annotate`` only reports. Both list every destination with its tests
+  failure; ``annotate`` only reports. The default moved from ``annotate`` to
+  ``fail`` once the nightly's annotate runs showed no destination outside the
+  fixtures and the allowlist. Both list every destination with its tests
   in the terminal summary and in ``artifacts/egress/<lane>.json``.
 
 Sampling is best effort: a connection that opens and closes between two samples
@@ -45,7 +47,7 @@ ALLOWLIST_DIR = SYSTEM_DIR / "egress-allowlist.d"
 GATE_ENV = "TERMIHUB_EGRESS_GATE"
 ALLOW_ENV = "TERMIHUB_EGRESS_ALLOW"
 MODES = ("fail", "annotate", "off")
-DEFAULT_MODE = "annotate"
+DEFAULT_MODE = "fail"
 #: Seconds between two samples of the app's sockets.
 SAMPLE_INTERVAL = 0.2
 
@@ -73,7 +75,7 @@ class GateConfigError(ValueError):
 
 
 def gate_mode(env: Mapping[str, str] = os.environ) -> str:
-    """The configured mode; ``annotate`` when unset."""
+    """The configured mode; :data:`DEFAULT_MODE` (``fail``) when unset."""
     value = env.get(GATE_ENV, "").strip().lower() or DEFAULT_MODE
     if value not in MODES:
         raise GateConfigError(f"{GATE_ENV}={value!r}: expected one of {', '.join(MODES)}")

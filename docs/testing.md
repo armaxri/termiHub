@@ -1062,9 +1062,15 @@ off:
    effort, so a connection that opens and closes between two samples is
    missed.
 
-`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
-(the default), `fail` and `off`. The report goes to the terminal summary, the
-GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+`TERMIHUB_EGRESS_GATE` takes the same modes as the JS error gate: `fail`,
+`annotate` and `off`. Unlike that gate, it defaults to `fail`: a passing test
+whose app connects to a destination that is neither a fixture nor allowlisted
+fails, and the failure names the destination. The probe started in `annotate`
+mode. It moved to `fail` once two full System Integration (nightly) runs on
+Linux, macOS and Windows reported no destination other than the allowlisted
+plugin discovery suite. Set `TERMIHUB_EGRESS_GATE=annotate` to only report
+while you investigate a new destination. The report goes to the terminal
+summary, the GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
 a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
 entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
 a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
