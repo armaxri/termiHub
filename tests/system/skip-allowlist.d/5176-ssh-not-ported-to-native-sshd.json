@@ -1,9 +1,9 @@
 {
   "reason": "^SSH suite not ported to the native sshd fixture \\(#5176\\)$",
   "lanes": ["bulk-macos", "bulk-windows"],
-  "why": "SSH suites not (yet) marked native_sshd for this OS: they control the server (SshServerControl), need GNU tools or a POSIX remote shell (Windows' is cmd.exe), or deploy an agent. Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) against the native_sshd markers (#5176).",
+  "why": "SSH suites not (yet) marked native_sshd for this OS: they control the server (SshServerControl), need GNU tools or a POSIX remote shell (Windows' is cmd.exe), deploy an agent, or need host stats the app only reads from Linux /proc (macOS host monitoring, see the follow-up). Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) against the native_sshd markers (#5176).",
   "max_skips": {
-    "bulk-macos": 27,
+    "bulk-macos": 41,
     "bulk-windows": 59
   }
 }
