@@ -113,19 +113,25 @@ ESLint enforces the mechanically checkable rules on production frontend code (`s
 through the local rule in
 [`scripts/internal/eslint-copy-style.mjs`](../scripts/internal/eslint-copy-style.mjs):
 
-| Check             | What it flags                                                               |
-| ----------------- | --------------------------------------------------------------------------- |
-| `sentence-case`   | A capitalized word after the first in button text, dialog titles and labels |
-| `acknowledgement` | A button labeled Done, Dismiss, OK, Okay or Got it                          |
-| `discard`         | A discard button labeled anything but "Discard changes"                     |
-| `us-spelling`     | British spelling in any user-facing string                                  |
-| `one-primary`     | Two primary `<Button>`s that can render together in one parent              |
-| `cancel-left`     | A "Cancel" `<Button>` that is not the first button in its parent            |
-| (ellipsis, #5379) | Three dots `...` in user-facing text                                        |
+| Check             | What it flags                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `sentence-case`   | A capitalized word after the first in button text, dialog titles, labels and menu items |
+| `acknowledgement` | A button labeled Done, Dismiss, OK, Okay or Got it                                      |
+| `discard`         | A discard button labeled anything but "Discard changes"                                 |
+| `us-spelling`     | British spelling in any user-facing string                                              |
+| `one-primary`     | Two primary `<Button>`s that can render together in one parent                          |
+| `cancel-left`     | A "Cancel" `<Button>` that is not the first button in its parent                        |
+| (ellipsis, #5379) | Three dots `...` in user-facing text                                                    |
 
 The sentence-case check knows a list of proper nouns (`PROPER_NOUNS` in the rule). Acronyms and
 mixed-case names (SSH, termiHub, PowerShell) never match, so they need no entry. Add a word to
-the list only when it is a name.
+the list only when it is a name; a multi-word name ("VS Code") goes in `PROPER_PHRASES`.
+
+Menu items are the text of `MenuItem`, `MenuCheckboxItem`, `MenuRadioItem`, `MenuSubTrigger` and
+`MenuLabel` from `src/components/ui/Menu.tsx` (or a raw Radix `*.Item`), plus `label:` fields of
+menu and command descriptors. Text inside a nested component (an icon, a shortcut hint) is not
+checked as the label. The native macOS app menu (Rust) follows Apple's Title Case convention and
+is not linted.
 
 When a flagged string is a deliberate exception (an OK that confirms a choice, a product name
 the list does not know), disable the rule on that line with a reason:

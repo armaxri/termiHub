@@ -43,7 +43,7 @@ async function flush(): Promise<void> {
   });
 }
 
-async function copyVia(label: "Copy Entry" | "Copy All Logs"): Promise<void> {
+async function copyVia(label: "Copy entry" | "Copy all logs"): Promise<void> {
   const row = container.querySelector(".log-viewer__entry");
   expect(row).not.toBeNull();
   act(() => {
@@ -79,7 +79,7 @@ describe("LogViewer copy via the Tauri clipboard (#4327)", () => {
   it("copies one entry through the plugin, redacted, and confirms it", async () => {
     const successSpy = vi.spyOn(toast, "success");
 
-    await copyVia("Copy Entry");
+    await copyVia("Copy entry");
 
     expect(writeText).toHaveBeenCalledTimes(1);
     const copied = vi.mocked(writeText).mock.calls[0][0];
@@ -92,7 +92,7 @@ describe("LogViewer copy via the Tauri clipboard (#4327)", () => {
   it("copies all logs through the plugin and confirms it", async () => {
     const successSpy = vi.spyOn(toast, "success");
 
-    await copyVia("Copy All Logs");
+    await copyVia("Copy all logs");
 
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(browserWriteText).not.toHaveBeenCalled();
@@ -103,12 +103,12 @@ describe("LogViewer copy via the Tauri clipboard (#4327)", () => {
     const errorSpy = vi.spyOn(toast, "error");
     vi.mocked(writeText).mockRejectedValue(new Error("clipboard denied"));
 
-    await copyVia("Copy Entry");
+    await copyVia("Copy entry");
     expect(errorSpy).toHaveBeenCalledWith("Could not copy log entry", {
       description: "clipboard denied",
     });
 
-    await copyVia("Copy All Logs");
+    await copyVia("Copy all logs");
     expect(errorSpy).toHaveBeenCalledWith("Could not copy logs", {
       description: "clipboard denied",
     });
@@ -119,7 +119,7 @@ describe("LogViewer copy via the Tauri clipboard (#4327)", () => {
     const logged: LogEntry[] = [];
     const unsub = onFrontendLog((entry) => logged.push(entry));
 
-    await copyVia("Copy Entry");
+    await copyVia("Copy entry");
     unsub();
 
     expect(

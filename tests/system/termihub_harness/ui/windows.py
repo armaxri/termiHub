@@ -124,17 +124,17 @@ class WindowsUi(HarnessMixin):
     def move_tab_to_window(self, source: Driver, tab_id: str, target_label: str) -> None:
         """Move tab ``tab_id`` from ``source``'s window into window ``target_label``.
 
-        Uses the tab context menu's "Move to Window ▸ <window>" submenu (#1901),
+        Uses the tab context menu's "Move to window ▸ <window>" submenu (#1901),
         which lists the live windows when the menu opens.
         """
         source.context_menu(f"tab-{tab_id}")
         self.wait(
             lambda: source.exists("tab-context-move-window"),
-            what="the Move to Window submenu trigger",
+            what="the Move to window submenu trigger",
         )
         source.click("tab-context-move-window")
         item = f"tab-context-move-window-{target_label}"
-        self.wait(lambda: source.exists(item), what=f"the {target_label} entry in Move to Window")
+        self.wait(lambda: source.exists(item), what=f"the {target_label} entry in Move to window")
         source.click(item)
 
     def wait_for_session_tab(self, driver: Driver, session_id: str) -> dict[str, Any]:

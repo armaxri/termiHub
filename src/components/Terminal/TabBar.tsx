@@ -95,7 +95,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
-  // Open native windows for the "Move to Window ▸" picker (#1901). Refreshed
+  // Open native windows for the "Move to window ▸" picker (#1901). Refreshed
   // each time a tab context menu opens, since windows live in separate JS
   // contexts and can open/close without notifying this one.
   const [windows, setWindows] = useState<WindowInfo[]>([]);
@@ -107,7 +107,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     }
   }, []);
 
-  // Refresh the window list when a tab context menu opens, so "Move to Window ▸"
+  // Refresh the window list when a tab context menu opens, so "Move to window ▸"
   // always reflects the live set of windows.
   const refreshWindowsOnOpen = (open: boolean) => {
     if (!open) return;

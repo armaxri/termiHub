@@ -343,7 +343,7 @@ have no entry point.
 Open terminals appear as tabs with type-specific icons and optional colored borders. Actions:
 
 - **Click** to switch, **drag** to reorder or move between panels
-- **Right-click** a tab for: Save to File, Copy All, Clear Terminal, Horizontal Scrolling, Set Color
+- **Right-click** a tab for: Save to file, Copy all, Clear terminal, Horizontal scrolling, Set color
 
 Each connection also has terminal options: **horizontal scrolling** and **tab color**, configurable in the editor or via the tab context menu.
 

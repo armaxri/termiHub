@@ -54,7 +54,7 @@ export function TabGroupChips() {
     [tabGroups, reorderTabGroups]
   );
 
-  // Both the chip X and the "Close Group" item go through the shared guard, which
+  // Both the chip X and the "Close group" item go through the shared guard, which
   // confirms before ending the group's live sessions or unsaved editors (UX2-001).
   const handleClose = useCallback((groupId: string, e: React.SyntheticEvent) => {
     e.stopPropagation();
@@ -193,7 +193,7 @@ function TabGroupChip({
           )}
           <span className="tab-group-chip__name">{group.name}</span>
           {/* Pointer-only close glyph, hidden from assistive tech (A11Y2-011):
-              keyboard users press Delete on the chip or use "Close Group". */}
+              keyboard users press Delete on the chip or use "Close group". */}
           {canClose && (
             <span
               className="tab-group-chip__close"

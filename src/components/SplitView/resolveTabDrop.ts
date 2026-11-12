@@ -8,7 +8,7 @@
  *
  * Tear-off (#4916): a tab released outside the window's viewport opens in a new
  * window through the same `moveTabToWindow({ kind: "new" })` hand-off the tab
- * context menu's "Move to New Window" uses, so the live session moves with it.
+ * context menu's "Move to new window" uses, so the live session moves with it.
  * The drag is a dnd-kit pointer drag (not native HTML5 DnD), so detection reads
  * only the pointer position — no `dragend` coordinates or `dropEffect`, which
  * WKWebView (macOS) and WebKitGTK do not report reliably. The OS keeps routing
@@ -187,7 +187,7 @@ export function dispatchTabDrop(
       ops.reorderTabs(action.panelId, action.oldIndex, action.newIndex);
       break;
     case "tearOff":
-      // The same hand-off as the tab context menu's "Move to New Window": the
+      // The same hand-off as the tab context menu's "Move to new window": the
       // live session is marked moving and adopted by the new window.
       void ops.moveTabToWindow(tabId, fromPanelId, { kind: "new" });
       break;

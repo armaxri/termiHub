@@ -102,7 +102,7 @@ export interface TabGroupsSlice {
    * Re-parent a session-bearing tab into another window (a brand-new window or
    * an existing one). The backend session keeps running; the source view is
    * disposed and the destination re-attaches with scrollback replay. This is the
-   * store seam the "Move to Window" UI (#1901) builds on.
+   * store seam the "Move to window" UI (#1901) builds on.
    */
   moveTabToWindow: (tabId: string, fromPanelId: string, target: MoveWindowTarget) => Promise<void>;
 

@@ -1,7 +1,7 @@
 /**
  * Regression tests for UX2-001 (#4306).
  *
- * Closing a tab group from its chip X (or the chip's "Close Group" item) used to
+ * Closing a tab group from its chip X (or the chip's "Close group" item) used to
  * call `closeTabGroup` directly, ending every live session in the group and
  * dropping unsaved editors with no confirmation. These tests pin that the chip
  * close is routed through the live-session confirm (ConfirmSessionCloseDialog,

@@ -2,7 +2,7 @@
  * Keyboard alternatives to dragging a tab-group chip (A11Y2-003, #4329).
  *
  * Group order was drag-only. The chip's context menu (Shift+F10 / Menu key on
- * a focused chip) now offers Move Left / Move Right, which reorder the groups
+ * a focused chip) now offers Move left / Move right, which reorder the groups
  * through the same `reorderTabGroups` action as the drag path.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -64,7 +64,7 @@ afterEach(() => {
 });
 
 describe("TabGroupChips — reorder groups without a pointer (#4329)", () => {
-  it("Move Right / Move Left reorder the group via reorderTabGroups", async () => {
+  it("Move right / Move left reorder the group via reorderTabGroups", async () => {
     useAppStore.getState().addTabGroup();
     useAppStore.getState().addTabGroup();
     const ids = getLayoutTabGroups().map((g) => g.id);
@@ -81,7 +81,7 @@ describe("TabGroupChips — reorder groups without a pointer (#4329)", () => {
     expect(reorderTabGroups).toHaveBeenCalledWith(1, 0);
   });
 
-  it("disables Move Left on the first group and Move Right on the last", async () => {
+  it("disables Move left on the first group and Move right on the last", async () => {
     useAppStore.getState().addTabGroup();
     const ids = getLayoutTabGroups().map((g) => g.id);
     await render();

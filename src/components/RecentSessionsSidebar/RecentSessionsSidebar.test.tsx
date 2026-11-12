@@ -177,7 +177,7 @@ describe("RecentSessionsSidebar", () => {
     useAppStore.setState({ sessionHistory: entries });
     await render();
 
-    // Open the row's context menu, then invoke "Connect in New Panel".
+    // Open the row's context menu, then invoke "Connect in new panel".
     const row = query("recent-session-serial:/dev/ttyUSB0:115200")!;
     act(() => {
       row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));

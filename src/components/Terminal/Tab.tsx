@@ -137,7 +137,7 @@ interface TabProps {
   displayTitle?: string;
   /**
    * All currently-open native windows (#1901), used to populate the
-   * "Move to Window ▸" picker. Empty until the context menu opens and the list
+   * "Move to window ▸" picker. Empty until the context menu opens and the list
    * is fetched.
    */
   windows?: WindowInfo[];
@@ -456,7 +456,7 @@ export function Tab({
       {/* Pointer-only close glyph (A11Y2-011). A focusable button nested in
           `role="tab"` is invalid and folded its label into the tab's name, so
           it is hidden from assistive tech; keyboard users close the focused
-          tab with Delete/Backspace or the "Close Tab" context-menu item
+          tab with Delete/Backspace or the "Close tab" context-menu item
           (Shift+F10 / ContextMenu key). */}
       <Tooltip content="Close" side="bottom">
         <span

@@ -563,7 +563,7 @@
   margin-left: 0;
 }
 
-/* Submenu trigger (e.g. "Move to Window ▸") and its trailing chevron. */
+/* Submenu trigger (e.g. "Move to window ▸") and its trailing chevron. */
 .ui-menu__sub-trigger[data-state="open"] {
   /* #5249: secondary text here sits on --bg-hover / --bg-active. */
   --text-secondary: var(--text-secondary-on-selection);

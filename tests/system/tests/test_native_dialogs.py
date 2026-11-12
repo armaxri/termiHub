@@ -386,7 +386,7 @@ class TestNativeDialogs(
             what="the deleted connection to be imported back",
         )
 
-    # ── Open in Editor → Save As + unsaved warning (MT-TAB-17/18/19) ──────────
+    # ── Open in editor → Save As + unsaved warning (MT-TAB-17/18/19) ──────────
     def test_open_in_editor_save_as_and_unsaved_warning(self):
         """Capture terminal output to a scratch editor, Save As, then verify the
         unsaved-changes warning on a fresh unsaved capture.
@@ -406,7 +406,7 @@ class TestNativeDialogs(
 
         tab = self.active_tab()
         assert tab is not None
-        # MT-TAB-17: Open in Editor → a scratch "(output)" tab with an Unsaved badge.
+        # MT-TAB-17: Open in editor → a scratch "(output)" tab with an Unsaved badge.
         self.driver.context_menu(f"tab-{tab['id']}")
         self.wait(
             lambda: self.driver.exists("tab-context-open-in-editor"),
