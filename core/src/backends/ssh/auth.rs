@@ -814,17 +814,41 @@ mod tests {
 
     /// `AuthenticationMethods password,keyboard-interactive` with a mistyped OTP.
     ///
-    /// With a real sshd the accepted password is a partial success, so the
-    /// exchange runs in [`KiMode::SecondFactor`] and the wrong code is the typed
-    /// `SecondFactorFailed` (covered at the exchange level by
-    /// `wrong_answer_in_second_factor_mode_is_second_factor_failed`, and the
-    /// partial-success → second-factor routing by
-    /// `continuation_decisions`, and end to end against OpenSSH by
-    /// `core/tests/ssh_mfa.rs`, #3384). The in-process russh 0.61 server,
-    /// however, always clears `partial_success` on a password rejection, so
-    /// here the client only sees "password refused,
-    /// keyboard-interactive offered" and nothing proves the saved password was
-    /// accepted: the typed OTP rejection conservatively stays `AuthFailed`.
+    /// The accepted password is a partial success, so the exchange runs in
+    /// [`KiMode::SecondFactor`] and the wrong code is the typed
+    /// `SecondFactorFailed` — the saved password survives. Since russh 0.64
+    /// (#773) the in-process server reports that partial success like a real
+    /// sshd (0.61 cleared it, #5498); end to end against OpenSSH this is
+    /// `core/tests/ssh_mfa.rs` (#3384).
+    #[tokio::test]
+    async fn wrong_otp_after_partial_password_success_is_second_factor_failed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![Round::new(
+                vec![("Verification code: ", false)],
+                vec!["271828"],
+            )],
+            password: PasswordPolicy::FirstFactor("hunter2"),
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![Some(vec!["000000"])]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("hunter2")),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("rejected");
+        assert!(
+            matches!(err, SessionError::SecondFactorFailed),
+            "got {err:?}"
+        );
+    }
+
+    /// The password is refused outright (no partial success) and only
+    /// keyboard-interactive is offered; a wrong one-time code there is
+    /// `AuthFailed`: nothing proves the saved password was accepted, so the
+    /// typed OTP rejection conservatively does not claim a second factor.
     #[tokio::test]
     async fn wrong_otp_without_accepted_password_evidence_stays_auth_failed() {
         let (mut session, _observed) = ki_connect(Script {
@@ -832,7 +856,7 @@ mod tests {
                 vec![("Verification code: ", false)],
                 vec!["271828"],
             )],
-            password: PasswordPolicy::FirstFactor("hunter2"),
+            password: PasswordPolicy::Disabled,
         })
         .await;
         let prompter = ScriptedPrompter::new(vec![Some(vec!["000000"])]);
