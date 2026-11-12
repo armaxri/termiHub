@@ -10,7 +10,8 @@ No app is launched. The harness checks the host's precondition, asks the
 operator to provide it when it is missing, runs the cargo command from the
 docs, and grades the output itself.
 
-Covered: MT-RUST-01 (Podman machine routing on macOS).
+Covered: MT-RUST-01 (Podman machine routing on macOS), MT-RUST-02 (USB identity
+of real serial ports).
 
 Run with ``./pytest.sh --manual -k guided_rust_live_smokes -s``.
 """
@@ -28,6 +29,9 @@ from termihub_harness.guided import (
     podman_machine_smoke_command,
     podman_machine_smoke_problem,
     running_podman_machines,
+    serial_ports_with_usb_identity,
+    serial_usb_identity_command,
+    serial_usb_identity_problem,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
@@ -36,6 +40,22 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: A cold ``termihub-core`` build with the docker feature can take a while.
 _CARGO_TIMEOUT_S = 30 * 60
+
+
+def _run_cargo(label: str, command: list[str]) -> subprocess.CompletedProcess:
+    """Run ``command`` from the repo root, echo its output, and return the result."""
+    print(f"[{label}] running from {REPO_ROOT}: {' '.join(command)}")
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=_CARGO_TIMEOUT_S,
+        check=False,
+    )
+    print(result.stdout)
+    return result
 
 
 def _running_machines() -> list[str]:
@@ -84,20 +104,35 @@ class TestGuidedRustLiveSmokes(ManualUi):
         assert machines, "no Podman machine is running"
         print(f"\n[MT-RUST-01] running Podman machine(s): {', '.join(machines)}")
 
-        command = podman_machine_smoke_command()
-        print(f"[MT-RUST-01] running from {REPO_ROOT}: {' '.join(command)}")
-        result = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=_CARGO_TIMEOUT_S,
-            check=False,
-        )
-        print(result.stdout)
+        result = _run_cargo("MT-RUST-01", podman_machine_smoke_command())
         problem = podman_machine_smoke_problem(result.stdout)
         assert result.returncode == 0 and problem is None, (
             f"MT-RUST-01 failed (cargo exit {result.returncode}): "
             f"{problem or 'cargo test exited non-zero'}"
+        )
+
+    @pytest.mark.manual(platforms=["all"])
+    def test_serial_ports_report_their_usb_identity(self):
+        """MT-RUST-02: a plugged-in USB serial adapter is listed with its USB identity.
+
+        Runs ``list_serial_ports_with_usb_identity`` (ignored in
+        ``core/src/session/serial_reconnect_tests.rs``, #5394). The test only
+        enumerates the ports and reads their identity; it never opens one, so
+        nothing is sent to the adapter or any other device.
+        """
+        self.manual_step(
+            "Plug a USB serial adapter (FTDI, CP210x, CH340, …) into this machine.",
+            "the adapter is connected (its port appears under /dev or as a COM port)",
+        )
+        result = _run_cargo("MT-RUST-02", serial_usb_identity_command())
+        problem = serial_usb_identity_problem(result.stdout)
+        assert result.returncode == 0 and problem is None, (
+            f"MT-RUST-02 failed (cargo exit {result.returncode}): "
+            f"{problem or 'cargo test exited non-zero'}"
+        )
+        ports = ", ".join(serial_ports_with_usb_identity(result.stdout))
+        self.manual_step(
+            f"The harness listed these ports with a USB identity: {ports}. "
+            "Check that your adapter's port is among them.",
+            "the plugged-in adapter's port is listed with a USB vendor:product id",
         )
