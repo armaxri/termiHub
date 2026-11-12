@@ -2,6 +2,11 @@
 
 After ``cd`` in an SSH terminal, opening the SFTP file browser follows that
 working directory (PR #186).
+
+On macOS the suite runs against the native sshd fixture (#5421). There ``/tmp``
+and ``/var`` are symlinks into ``/private``, so the browser may show the path the
+shell was given or the one SFTP ``realpath`` resolves it to (``/private/tmp``).
+The checks are substring matches, which accept both.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, SftpUi, SystemTest):
     @pytest.fixture(autouse=True)
     def _close_tabs_between_tests(self):
@@ -41,6 +47,7 @@ class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromp
         self.run_command("cd /tmp")
         self._cd_settles()
         path = self.connect_sftp_browser()
+        # A substring: "/private/tmp" on macOS (see the module docstring).
         assert self.wait(
             lambda: "/tmp" in self.file_browser_path(), what="the browser at /tmp"
         )

@@ -41,13 +41,13 @@ from termihub_harness import (
     PasswordPromptUi,
     SettingsUi,
     SidebarUi,
-    SshServerControl,
     SystemTest,
     TabsUi,
+    ssh_server_control,
     unique_name,
 )
+from termihub_harness.native_ssh import NativeSshExecError
 from termihub_harness.ui.diagnostics import (
-    AGENT_CRASH_DIR,
     agent_crash_notice_testid,
     crash_report_names,
     crash_report_text,
@@ -60,6 +60,7 @@ SECRETS = "password=hunter2-4009 addr 10.20.30.40"
 
 
 @pytest.mark.usefixtures("remote_agent_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestAgentCrashNoticeLive(
     AgentUi,
     CrashReportUi,
@@ -74,15 +75,18 @@ class TestAgentCrashNoticeLive(
     @pytest.fixture(autouse=True)
     def _agent_host(self) -> Iterator[None]:
         """Exec access to the agent host; removes every report a test seeded."""
-        self.host = SshServerControl(REMOTE_AGENT_SERVICE)
+        # The agent container, or on macOS the native sshd's user (#5424).
+        self.host = ssh_server_control(REMOTE_AGENT_SERVICE)
         if not self.host.available:
             pytest.skip("no container runtime to seed agent crash reports")
+        #: Where the deployed agent looks for crash reports on its host.
+        self.crash_dir = self.host.agent_crash_dir()
         self.seeded: list[str] = []
         yield
         for name in self.seeded:
             try:
-                self.host.remove_path(f"{AGENT_CRASH_DIR}/{name}")
-            except (ContainerRuntimeUnavailable, ComposeFixtureFailed):
+                self.host.remove_path(f"{self.crash_dir}/{name}")
+            except (ContainerRuntimeUnavailable, ComposeFixtureFailed, NativeSshExecError):
                 pass
         if not self.crash_notice_setting():
             self.set_crash_notice_enabled(True)
@@ -96,7 +100,7 @@ class TestAgentCrashNoticeLive(
     # ── helpers ──────────────────────────────────────────────────────────────
     def _seed_agent_report(self, name: str, text: str) -> None:
         self.seeded.append(name)
-        self.host.write_file(f"{AGENT_CRASH_DIR}/{name}", text, user=SSH_USERNAME)
+        self.host.write_file(f"{self.crash_dir}/{name}", text, user=SSH_USERNAME)
 
     def _connect(self, name: str) -> None:
         self.connect_agent(name)

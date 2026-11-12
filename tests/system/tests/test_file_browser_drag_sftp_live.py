@@ -5,7 +5,8 @@ backend as one rename with every IPC mocked; the local twin
 (``test_file_browser_local.py``) drives the real pointer gesture against the
 host disk. This drives the same gesture in the SFTP browser of a live SSH session
 on the Docker ``ssh-password`` fixture and checks the result **on the host**
-through a container exec:
+through a container exec (on macOS: the native sshd fixture and a key-auth
+``ssh`` exec as its user, #5421):
 
 - the file appears at its new path with its bytes intact, and the old path is
   gone;
@@ -27,24 +28,24 @@ from termihub_harness import (
     PasswordPromptUi,
     SftpUi,
     SidebarUi,
-    SshServerControl,
     SshUi,
     SystemTest,
     TabsUi,
     TerminalUi,
     file_row_testid,
+    ssh_server_control,
     unique_name,
 )
+from termihub_harness.native_ssh import NativeSshExecError
 
 pytestmark = pytest.mark.integration
 
-#: The ``ssh-password`` fixture user's home (``useradd -m testuser``).
-REMOTE_HOME = "/home/testuser"
 #: What the dragged file holds; the moved file must match it exactly.
 PAYLOAD = "drag me over sftp\n"
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestFileBrowserDragSftpLive(
     TerminalUi,
     TabsUi,
@@ -59,9 +60,11 @@ class TestFileBrowserDragSftpLive(
     @pytest.fixture(autouse=True)
     def _host(self):
         """Exec access to the fixture host; tabs + remote paths cleaned after."""
-        self._server = SshServerControl()
+        self._server = ssh_server_control()
         if not self._server.available:
             pytest.skip("no container runtime to check the host side of the move")
+        #: The test user's home on the host (``/home/testuser`` in the container).
+        self._home = self._server.home()
         self._remote_paths: list[str] = []
         try:
             yield
@@ -71,14 +74,14 @@ class TestFileBrowserDragSftpLive(
             for path in self._remote_paths:
                 try:
                     self._server.remove_path(path)
-                except (ContainerRuntimeUnavailable, ComposeFixtureFailed):
+                except (ContainerRuntimeUnavailable, ComposeFixtureFailed, NativeSshExecError):
                     pass
 
     def test_dragging_a_remote_file_onto_a_folder_renames_it_on_the_server(self):
         prefix = f"{unique_name('sftp-dm')}_"
         dest_name, file_name = f"{prefix}dest", f"{prefix}file.txt"
-        dest = f"{REMOTE_HOME}/{dest_name}"
-        source = f"{REMOTE_HOME}/{file_name}"
+        dest = f"{self._home}/{dest_name}"
+        source = f"{self._home}/{file_name}"
         moved = f"{dest}/{file_name}"
         self._remote_paths += [dest, source]
 
@@ -90,7 +93,7 @@ class TestFileBrowserDragSftpLive(
         inode = self._server.inode(source)
 
         self.connect_sftp_browser()
-        self.wait_for_path_contains(REMOTE_HOME)
+        self.wait_for_path_contains(self._home)
         self.wait_for_file_row(file_name)
         self.filter_entries(prefix)  # both rows mounted, side by side
         self.wait(

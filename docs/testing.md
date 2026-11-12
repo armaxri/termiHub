@@ -1367,25 +1367,91 @@ with the same user and keys. `jump-stop` / `jump-start` drop and restore only
 that bastion. The jump-host reconnect suite counts gateway sessions as the
 bastion master's per-connection children.
 
+**Server-side checks (#5421).** Suites that inspect or control the server
+call `ssh_server_control()` instead of building `SshServerControl` directly. On
+the native target it returns `NativeSshServerControl`, which runs each step as
+a key-auth `ssh` exec as the fixture user with the fixture's client key
+(`TERMIHUB_NATIVE_SSHD_KEY`). It reads, writes and removes files in that user's
+home with POSIX tools (`wc -c`, `ls -di`, `shasum`, not GNU `stat`), and
+`home()` gives that home in place of `/home/testuser`. To drop a session, it
+finds the user's terminal connections locally with `ps` as children of the
+fixture's master sshd and `SIGKILL`s their user-owned processes. Killing only
+the user-owned process drops the connection (checked on the unprivileged
+fixture), so the root-owned handler of a `--password-login` fixture is left
+alone. Off the native target it returns the Docker `SshServerControl` as before.
+
+**Deployed agent (#5424, macOS).** `remote_agent_fixtures` builds the
+`--features test-hooks` agent for the host
+(`scripts/internal/build-system-test-agent.sh --host`, into
+`target/system-test-agent/`) and installs it as the fixture user's
+`$HOME/.local/bin/termihub-agent`, where the app runs it. The install goes
+through a temp file and a rename, and is skipped when the installed digest
+already matches, so parallel workers share one agent. `REMOTE_AGENT_PORT` then
+points at the native sshd. The plain agent suites (`test_remote_agent_live.py`,
+`test_agent_crash_notice_live.py`, `test_agent_update_banner_live.py`, the agent
+half of `test_file_browser_remote_to_local.py`, most of `test_remote_agent.py`)
+run there. The crash notice seeds reports into the agent's real config dir,
+which `agent_crash_dir()` resolves (`~/Library/Application Support` on macOS
+unless `XDG_CONFIG_HOME` is set). On Windows the agent suites keep the
+container skip.
+
+**Agent-host variants (#5444, macOS).** The armed (Apply Now), real-swap and
+keyboard-interactive agent suites log in to extra sshds of the fixture,
+started by the harness with `native-sshd-fixture.sh variant-up` on fixed ports
+above the main one (`+10` pending, `+11` swap, `+12` kbdint). Each variant has
+its own `HOME`, XDG dirs and agent registry, and gets its test-hook env through
+sshd `SetEnv`, so the pending-update announcement never reaches the plain agent
+suites. The real-swap host is reset per test attempt: its home is wiped, the
+variant restarts with a fresh registry and the hook armed with the staged
+binary's path and digest, the agent is reinstalled, and the update is staged in
+the agent's `<config>/updates`, signed with the TEST-ONLY key
+(`termihub_harness/ed25519.py`; the runner's `openssl` is LibreSSL). The
+keyboard-interactive variant authenticates through PAM, so it needs the root
+sshd of a `--password-login` fixture and only runs on CI.
+
+**Fixture-specific hosts (#5423, macOS).** The editor-permission, banner and
+SFTP-only suites log in to more variants (`+13` sudo, `+14` nosudo, `+15`
+banner, `+16` sftponly), each brought up with its own `variant-up` flag:
+
+- `--sudoer`: a sudoers drop-in, `/etc/sudoers.d/termihub-native-sshd`, lets the
+  fixture user run anything as root with its password. `visudo -c` checks the
+  file before it goes in and the whole policy after.
+- `--second-user`: the `nosudo` host logs in as a second dedicated user,
+  `termihubnosudo`, with the same password and keys and no sudo rule.
+- `--elevated-target`: the root-owned `/etc/termihub-elevated-target.txt` the
+  editor opens read-only and saves with sudo.
+- `--banner`: a pre-auth `Banner`, plus a MOTD line the variant home's `.zshrc`
+  prints at login.
+- `--sftp-only`: `ForceCommand internal-sftp`. macOS has no `/etc/hostname` and
+  its `/etc` is a symlink, so the SFTP-only suite opens `/etc/hosts` through
+  `/private/etc` there.
+
+The first three change system config. Like `--password-login`, they refuse off
+CI unless `TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1` is set, and they need that
+fixture's root sshd. `down` removes the drop-in, the file and the second user,
+and only the fixed paths and names it recorded in the state dir.
+
 Which suites run where:
 
-| Suite(s)                                                                                                                                                                                                | macOS | Windows                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------- |
-| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py` | yes   | yes                                                                                                  |
-| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output), SSH connect flash, SFTP VS Code handoff, jump host                                             | yes   | no: they type POSIX shell commands, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                      | macOS | Windows                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py`                                                                                                                                                                                                                       | yes   | yes                                                                                                                                       |
+| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output), SSH connect flash, SFTP VS Code handoff, jump host, `test_ssh.py` (server disconnect), `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py`, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below) | yes   | no: they type POSIX shell commands or check the server with POSIX tools, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
+| `test_editor_permissions_live.py`, `test_ssh_banner.py`, `test_sftp_only_host_live.py`                                                                                                                                                                                                                                                                                                                                        | yes   | no: no sudo, banner or SFTP-only host on the Windows fixture yet                                                                          |
 
 **What stays on the Linux lane in `tests/system/`.** These suites still skip on
 macOS and Windows. Each skip reason has a capped fragment in
 `tests/system/skip-allowlist.d/` (`5176-*.json`), so one more suite skipping for
 that reason fails the lane:
 
-| Suite(s)                                                                                                                              | Why                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                                                     | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                                                         |
-| `test_ssh_banner.py`, `test_ssh_kbd_interactive.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py`, X11 suites     | fixture-specific servers: a pre-auth banner, a two-factor PAM module, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host, X11 forwarding |
-| `test_ssh.py` (server disconnect), `test_transfer_*`, `test_file_browser_drag_sftp_live.py`, `test_session_sftp_no_orphan_on_quit.py` | control or inspect the server through the container (`SshServerControl`, `/proc`), or use GNU `stat`                                                                 |
-| `test_remote_agent*.py`, `test_agent_*_live.py`, `test_file_browser_remote_to_local.py`                                               | deploy a Linux agent baked into the `remote-agent` containers                                                                                                        |
-| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)                                               | the app's host-stats command reads Linux `/proc`, so a macOS or Windows host shows no stats                                                                          |
+| Suite(s)                                                                                              | Why                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `test_telnet.py`, `test_ftp_file_browser_live.py`, `test_vnc*.py`                                     | need a telnet daemon, the `ftp-server` container, or Xvfb-backed VNC servers                                                |
+| `test_ssh_kbd_interactive.py`, X11 suites                                                             | fixture-specific servers: a two-factor PAM module, X11 forwarding                                                           |
+| `test_ssh_banner.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py` (Windows only) | fixture-specific servers: a pre-auth banner, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host |
+| `test_session_sftp_no_orphan_on_quit.py`                                                              | inspects the server's SFTP connections through the container (`/proc`)                                                      |
+| `test_network_tools_agent_live.py`, `test_remote_agent.py` (missing agent)                            | on the native target the agent host is this computer, and its user has an agent installed                                   |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)               | the app's host-stats command reads Linux `/proc`, so a macOS or Windows host shows no stats                                 |
 
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 

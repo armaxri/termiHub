@@ -44,6 +44,7 @@ from termihub_harness import (
     REMOTE_AGENT_PORT,
     REMOTE_AGENT_SERVICE,
     REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX,
+    REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX,
     REMOTE_AGENT_UPDATE_SWAP_PORT,
     REMOTE_AGENT_UPDATE_SWAP_SERVICE,
     SSH_BANNER_PORT,
@@ -60,6 +61,8 @@ from termihub_harness import (
     SSH_PASSWORD_SERVICE,
     SSH_NOSUDO_PORT,
     SSH_NOSUDO_SERVICE,
+    SSH_SFTP_ONLY_PORT,
+    SSH_SFTP_ONLY_SERVICE,
     SSH_SUDO_PORT,
     SSH_SUDO_SERVICE,
     SSH_TUNNEL_PORT,
@@ -87,6 +90,12 @@ from termihub_harness import (
     require_test_bridge_build,
     find_rdp_helper,
     stage_remote_agent_binary,
+    install_native_agent,
+    container_swap_host,
+    native_pending_variant,
+    native_kbdint_variant,
+    native_swap_host,
+    native_system_hosts,
     wait_for_banner,
     wait_for_rdp,
 )
@@ -693,8 +702,26 @@ def ssh_x11_fixtures():
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def ssh_banner_fixtures():
-    """Pre-auth-banner / MOTD SSH container (port 2206)."""
+    """Pre-auth-banner / MOTD SSH container (port 2206), or on the macOS
+    native target the fixture's ``banner`` host (#5423)."""
+    native = _native_system_hosts("ssh_banner_fixtures")
+    if native is not None:
+        return native
     return _ensure_ssh_services([(SSH_BANNER_SERVICE, SSH_BANNER_PORT)])
+
+
+def _native_system_hosts(fixture):
+    """The native target's hosts for ``fixture`` on macOS (#5423), else None.
+
+    Off CI a host that cannot come up (no root ``--password-login`` fixture)
+    skips the suite; on CI it errors, like the container fixtures.
+    """
+    if NATIVE_SSH_TARGET is None or not native_ssh.serves_hosts():
+        return None
+    try:
+        return native_system_hosts(NATIVE_SSH_TARGET, fixture)
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"native SSH host unavailable: {exc}")
 
 
 @pytest.fixture(scope="session")
@@ -748,13 +775,29 @@ def ssh_permission_fixtures():
     """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
     password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
     ``sudo``). Both ship the root-owned ``/etc/termihub-elevated-target.txt``.
+    On the macOS native target: the fixture's ``sudo`` host (a sudoers drop-in
+    for its user) and ``nosudo`` host (its second user), with that file (#5423).
     """
+    native = _native_system_hosts("ssh_permission_fixtures")
+    if native is not None:
+        return native
     return _ensure_ssh_services(
         [
             (SSH_SUDO_SERVICE, SSH_SUDO_PORT),
             (SSH_NOSUDO_SERVICE, SSH_NOSUDO_PORT),
         ]
     )
+
+
+@pytest.fixture(scope="session")
+@tool_preflight.fixture_needs("docker")
+def ssh_sftp_only_fixtures():
+    """The SFTP-only SSH container (2215, ``ForceCommand internal-sftp``), or
+    on the macOS native target the fixture's ``sftponly`` host (#5423)."""
+    native = _native_system_hosts("ssh_sftp_only_fixtures")
+    if native is not None:
+        return native
+    return _ensure_ssh_services([(SSH_SFTP_ONLY_SERVICE, SSH_SFTP_ONLY_PORT)])
 
 
 @pytest.fixture(scope="session")
@@ -901,7 +944,8 @@ def traceroute_fixtures():
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def remote_agent_fixtures():
-    """Deployed-agent SSH container (compose profile ``agent``, port 2211).
+    """Deployed-agent SSH container (compose profile ``agent``, port 2211), or
+    on the macOS native target the native sshd with a host agent installed.
 
     Unlike ``ssh_fixtures``, this bakes a freshly-built ``termihub-agent`` binary
     into the image, so a live connect finds the agent already installed (#995).
@@ -911,6 +955,14 @@ def remote_agent_fixtures():
     same contract as the other container fixtures, so hosts without the cross
     toolchain (or without Docker) stay green.
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5424): a host-OS test-hooks agent installed for
+        # the native sshd's user stands in for the container's baked-in one.
+        try:
+            install_native_agent(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"deployed-agent native install unavailable: {exc}")
+        return NATIVE_SSH_TARGET
     try:
         stage_remote_agent_binary()
         fixture = ComposeFixture()
@@ -935,6 +987,12 @@ def remote_agent_pending_fixtures():
     binary staging, and skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5444): the fixture's armed agent-host variant.
+        try:
+            return native_pending_variant(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"armed deployed-agent native host unavailable: {exc}")
     try:
         stage_remote_agent_binary()
         fixture = ComposeFixture()
@@ -962,11 +1020,18 @@ def remote_agent_update_swap_fixtures():
     session-scoped container stays swapped after the first attempt, so every
     rerun failed up front on "the staged update must differ from the installed
     agent" and masked the first attempt's real failure. The image build is
-    cached, so the recreate costs only a container restart. Returns a
-    :class:`ContainerControl` for server-side evidence (installed binary digest,
-    ``state.json``). Skips cleanly on the same contract as
+    cached, so the recreate costs only a container restart. Returns an
+    :class:`AgentSwapHost` for server-side evidence (installed binary digest,
+    ``state.json``); on the macOS native target it is the ``swap`` variant,
+    reset the same way per attempt (#5444). Skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5444): the swap variant, reset per attempt.
+        try:
+            return native_swap_host(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"real-swap deployed-agent native host unavailable: {exc}")
     try:
         stage_remote_agent_binary()
         ComposeFixture().ensure(
@@ -977,7 +1042,7 @@ def remote_agent_update_swap_fixtures():
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"real-swap deployed-agent container fixture unavailable: {exc}")
-    return ContainerControl(REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX)
+    return container_swap_host()
 
 
 @pytest.fixture(scope="session")
@@ -989,19 +1054,27 @@ def remote_agent_kbdint_fixtures():
     password as a keyboard-interactive prompt, so an agent whose auth method is
     "Keyboard-Interactive" connects only once the in-app dialog is answered
     (#3377 / #4005). Reuses the shared agent binary staging, and skips cleanly on
-    the same contract as :func:`remote_agent_fixtures`.
+    the same contract as :func:`remote_agent_fixtures`. Returns what the suite
+    reads sshd's accept lines from (``logs()``): the container, or on the
+    macOS native target the ``kbdint`` variant (#5444).
     """
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+        # macOS native target (#5444): the keyboard-interactive variant (CI's
+        # root sshd only). Its ``logs()`` carry sshd's accept lines.
+        try:
+            return native_kbdint_variant(NATIVE_SSH_TARGET)
+        except ContainerRuntimeUnavailable as exc:
+            pytest.skip(f"keyboard-interactive deployed-agent native host unavailable: {exc}")
     try:
         stage_remote_agent_binary()
-        fixture = ComposeFixture()
-        fixture.ensure(
+        ComposeFixture().ensure(
             REMOTE_AGENT_KBDINT_SERVICE,
             ports=[(SSH_HOST, REMOTE_AGENT_KBDINT_PORT)],
             build=True,
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"keyboard-interactive deployed-agent fixture unavailable: {exc}")
-    return fixture
+    return ContainerControl(REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX)
 
 
 #: Attempts of an item whose failure text was already saved this session, so a

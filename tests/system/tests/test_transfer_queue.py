@@ -137,6 +137,7 @@ class TransferQueueReads(ProjectionHarness):
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestTransferQueueLiveTransfer(
     TerminalUi,
     TabsUi,
@@ -299,10 +300,12 @@ class TestTransferQueueLiveTransfer(
         # browser lists it, and the remote shell (still in the source directory)
         # reports its byte size. The listing itself lives in the per-client
         # `file-browser@<clientId>` region now, not in an `appStore` slice, so the
-        # size is read where it is authoritative: on the host.
+        # size is read where it is authoritative: on the host. `wc -c`, not GNU
+        # `stat -c`, so the check also runs on the macOS native sshd (#5421); the
+        # arithmetic expansion drops the padding BSD `wc` puts before the count.
         self.wait_for_file_row(name)
         size = self.FILE_MB * 1024 * 1024
-        self.run_command(f"stat -c 'TQ_SIZE:%s:' {dest}/{name}")
+        self.run_command(f"echo TQ_SIZE:$(($(wc -c < {dest}/{name}))):")
         self.wait_for_output(f"TQ_SIZE:{size}:")
 
     def test_clear_completed_empties_the_panel_after_a_real_transfer(self):

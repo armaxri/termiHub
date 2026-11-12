@@ -54,6 +54,8 @@ def desktop_probe_port() -> Iterator[int]:
         sock.close()
 
 
+# Not marked native_sshd: on the macOS native target the agent host IS this
+# computer, so the desktop probe listener would show on both sides (#5424).
 @pytest.mark.usefixtures("remote_agent_fixtures")
 class TestNetworkToolsAgentLive(
     NetworkToolsUi,

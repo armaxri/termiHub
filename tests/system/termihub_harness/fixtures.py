@@ -18,6 +18,8 @@ TCP port** — the same signal the Rust integration tests use.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import os
 import platform
 import re
@@ -27,7 +29,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Sequence, Union
+from typing import Callable, Iterable, Mapping, Optional, Sequence, Union
 
 from . import dev_local, native_ssh
 
@@ -81,6 +83,10 @@ SSH_SUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_SUDO_PORT", 2212)
 #: same root-owned :data:`ELEVATED_TARGET_PATH`.
 SSH_NOSUDO_SERVICE = "ssh-nosudo"
 SSH_NOSUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", 2213)
+#: Service + host port for the SFTP-only SSH container (``ForceCommand
+#: internal-sftp``, ``tests/docker/ssh-sftp-only``).
+SSH_SFTP_ONLY_SERVICE = "ssh-sftp-only"
+SSH_SFTP_ONLY_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_SFTP_ONLY_PORT", 2215)
 #: Root-owned (``root:root``, 0644) file on ``ssh-sudo`` / ``ssh-nosudo`` that the
 #: test user can read but not write — the editor's read-only / sudo target.
 ELEVATED_TARGET_DIR = "/etc"
@@ -122,6 +128,17 @@ if NATIVE_SSH_TARGET is not None:
         SSH_BASTION_PORT = NATIVE_SSH_TARGET.jump_port
         SSH_JUMP_TARGET_HOST = SSH_HOST
         SSH_JUMP_TARGET_PORT = NATIVE_SSH_TARGET.port
+#: The login user of the no-sudo host: the containers share ``testuser``; the
+#: macOS native ``nosudo`` host logs in as the fixture's second user (#5423).
+SSH_NOSUDO_USERNAME = SSH_USERNAME
+#: On macOS the fixture-specific hosts are variants of the native sshd on fixed
+#: ports above it (#5423), brought up by :func:`native_system_hosts`.
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_hosts():
+    SSH_SUDO_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "sudo")
+    SSH_NOSUDO_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "nosudo")
+    SSH_NOSUDO_USERNAME = native_ssh.SECOND_USER
+    SSH_BANNER_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "banner")
+    SSH_SFTP_ONLY_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "sftponly")
 
 # ── Telnet fixture coordinates (mirror tests/docker/docker-compose.yml) ───────
 #: Host the published container ports are reachable on (shared with SSH).
@@ -297,9 +314,20 @@ REMOTE_AGENT_UPDATE_SWAP_PORT = dev_local.service_port(
 #: ``container_name`` suffix of that service (``<project>-<suffix>``), for
 #: :class:`ContainerControl`.
 REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX = "remote-agent-update-swap"
+#: ``container_name`` suffix of the keyboard-interactive agent service.
+REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX = "remote-agent-kbdint"
 #: Version the armed image advertises (mirrors the compose build arg), so the test
 #: can assert the banner names it.
 REMOTE_AGENT_PENDING_VERSION = "9.9.9"
+#: On the macOS native target the deployed-agent suites log in to the native
+#: sshd, where :func:`install_native_agent` put a host-OS agent (#5424), and
+#: the armed, real-swap and keyboard-interactive suites to its agent-host
+#: variants on fixed ports above it (#5444).
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    REMOTE_AGENT_PORT = NATIVE_SSH_TARGET.port
+    REMOTE_AGENT_PENDING_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "pending")
+    REMOTE_AGENT_UPDATE_SWAP_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "swap")
+    REMOTE_AGENT_KBDINT_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "kbdint")
 #: Build context the harness stages the per-arch agent binary into before the
 #: image is built (git-ignored — see the sibling ``.gitignore``). Shared by both
 #: the plain and the armed deployed-agent images (same context, different build
@@ -1066,6 +1094,216 @@ def system_test_agent_binary(target: str) -> Path:
     return REPO_ROOT / SYSTEM_TEST_AGENT_TARGET_DIR / target / "release" / "termihub-agent"
 
 
+def build_host_test_agent(*, build_timeout: float = 1500.0) -> Path:
+    """Build (a no-op when current) the test-hooks agent for this host (#5424).
+
+    ``build-system-test-agent.sh --host``: the same ``--features test-hooks``
+    recipe as the container agent, for the host's own triple, in
+    :data:`SYSTEM_TEST_AGENT_TARGET_DIR`. Returns the binary. Raises
+    :class:`ContainerRuntimeUnavailable` (a skip) off CI and
+    :class:`ComposeFixtureFailed` on CI when the build fails.
+    """
+    script = REPO_ROOT / "scripts" / "internal" / "build-system-test-agent.sh"
+    try:
+        result = subprocess.run(
+            ["bash", str(script), "--host"],
+            check=True,
+            timeout=build_timeout,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        output = "\n".join(
+            part for part in (getattr(exc, "stdout", None), getattr(exc, "stderr", None)) if part
+        )
+        detail = f"`build-system-test-agent.sh --host` failed: {exc}\n{_tail(output)}"
+        if _strict_fixtures():
+            raise ComposeFixtureFailed(detail) from exc
+        raise ContainerRuntimeUnavailable(detail) from exc
+    lines = result.stdout.strip().splitlines()
+    built = REPO_ROOT / lines[-1] if lines else None
+    if built is None or not built.is_file() or not embeds_test_signing_key(built):
+        detail = f"`build-system-test-agent.sh --host` left no test-hooks agent ({built})"
+        if _strict_fixtures():
+            raise ComposeFixtureFailed(detail)
+        raise ContainerRuntimeUnavailable(detail)
+    return built
+
+
+def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
+    """Build the host test-hooks agent and install it for the native sshd's user.
+
+    The plain deployed-agent suites then find it where the app runs it,
+    ``$HOME/.local/bin/termihub-agent``, as they do in the ``remote-agent``
+    container (#5424). Returns the installed path.
+    """
+    binary = build_host_test_agent()
+    control = native_ssh.NativeSshServerControl(target)
+    if not control.available:
+        raise ContainerRuntimeUnavailable(
+            "the native sshd fixture exported no client key to install the agent with"
+        )
+    return control.install_agent(binary)
+
+
+#: The agent test hook's env (``agent/src/update/test_hook.rs``): arm it with a
+#: version, point it at a staged binary and carry that binary's digest.
+PENDING_UPDATE_ENV = "TERMIHUB_AGENT_TEST_PENDING_UPDATE"
+PENDING_UPDATE_BINARY_ENV = "TERMIHUB_AGENT_TEST_PENDING_UPDATE_BINARY"
+PENDING_UPDATE_SHA256_ENV = "TERMIHUB_AGENT_TEST_PENDING_UPDATE_SHA256"
+#: Appended to the agent to make the staged swap binary distinguishable, as the
+#: ``update-swap`` image does (``tests/docker/remote-agent/Dockerfile``).
+SWAP_TRAILER = b"\nTERMIHUB-TEST-SWAPPED-AGENT-BUILD (#4083)\n"
+#: The committed TEST-ONLY update-signing key only a ``test-hooks`` agent trusts.
+TEST_ONLY_UPDATE_KEY = REPO_ROOT / "agent" / "keys" / "test-only" / "update-signing-TEST-ONLY.key.pem"
+
+
+@dataclasses.dataclass(frozen=True)
+class AgentSwapHost:
+    """Server-side evidence for the real-swap suite, on either agent host.
+
+    The paths of the installed agent, the staged signed update and the agent's
+    ``state.json``, plus how to hash and read files there: the
+    ``remote-agent-update-swap`` container, or the native ``swap`` variant.
+    """
+
+    installed_agent: str
+    staged_agent: str
+    agent_state: str
+    sha256: Callable[[str], str]
+    read_text: Callable[[str], str]
+
+
+def container_swap_host() -> AgentSwapHost:
+    """The ``remote-agent-update-swap`` container as an :class:`AgentSwapHost`."""
+    control = ContainerControl(REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX)
+    config = f"{CONTAINER_SSH_HOME}/.config/termihub-agent"
+    return AgentSwapHost(
+        installed_agent=f"{CONTAINER_SSH_HOME}/.local/bin/termihub-agent",
+        staged_agent=f"{config}/updates/termihub-agent-swap-test",
+        agent_state=f"{config}/state.json",
+        sha256=lambda path: control.exec("sha256sum", path).split()[0],
+        read_text=lambda path: control.exec("cat", path),
+    )
+
+
+def _native_host_failed(exc: Exception) -> RuntimeError:
+    """A native agent host that could not come up: a skip off CI, an error on CI."""
+    detail = f"native agent host failed: {exc}"
+    if _strict_fixtures():
+        return ComposeFixtureFailed(detail)
+    return ContainerRuntimeUnavailable(detail)
+
+
+def native_pending_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.NativeAgentVariant":
+    """The armed agent host on the native sshd (#5444).
+
+    The ``pending`` variant: its sessions carry the pending-update hook, so
+    every agent it launches stages an update and announces it on attach. It
+    has its own home, so the plain agent suites never see the announcement.
+    """
+    binary = build_host_test_agent()
+    variant = native_ssh.NativeAgentVariant(target, "pending")
+    try:
+        home = variant.ensure({PENDING_UPDATE_ENV: REMOTE_AGENT_PENDING_VERSION})
+        variant.control.install_agent(binary, home=home)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
+    return variant
+
+
+def native_kbdint_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.NativeAgentVariant":
+    """The keyboard-interactive-only agent host on the native sshd (#5444).
+
+    Needs the root sshd of a ``--password-login`` fixture (PAM), so it only
+    comes up on CI; elsewhere ``variant-up --kbdint`` refuses.
+    """
+    binary = build_host_test_agent()
+    variant = native_ssh.NativeAgentVariant(target, "kbdint")
+    try:
+        home = variant.ensure(kbdint=True)
+        variant.control.install_agent(binary, home=home)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
+    return variant
+
+
+def native_system_hosts(
+    target: "native_ssh.NativeSshTarget", fixture: str
+) -> "list[native_ssh.NativeAgentVariant]":
+    """The fixture-specific SSH hosts ``fixture`` needs, on the native sshd (#5423).
+
+    Each is a variant brought up with its :data:`~.native_ssh.HOST_VARIANT_FLAGS`
+    (the sudo rule, the second user, the banner, ``ForceCommand
+    internal-sftp``); a worker that finds one running reuses it. The sudo and
+    second-user hosts need the root sshd of CI's ``--password-login`` fixture.
+    """
+    hosts = []
+    for name in native_ssh.HOST_FIXTURES[fixture]:
+        variant = native_ssh.NativeAgentVariant(target, name)
+        try:
+            variant.ensure(flags=native_ssh.HOST_VARIANT_FLAGS[name])
+        except native_ssh.NativeSshExecError as exc:
+            raise _native_host_failed(exc) from exc
+        hosts.append(variant)
+    return hosts
+
+
+def native_swap_host(target: "native_ssh.NativeSshTarget") -> AgentSwapHost:
+    """A pristine real-swap agent host on the native sshd, per test attempt (#5444).
+
+    The ``swap`` variant's home is wiped, the variant restarted (dropping its
+    sessions) with a fresh agent registry and the hook armed with the staged
+    binary's path and digest, the agent reinstalled, and the signed update
+    staged in the agent's own ``<config>/updates`` (AGT-003 confinement), as
+    the ``update-swap`` image does.
+    """
+    binary = build_host_test_agent()
+    try:
+        return _stage_native_swap_host(target, binary)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
+
+
+def _stage_native_swap_host(target: "native_ssh.NativeSshTarget", binary: Path) -> AgentSwapHost:
+    from . import ed25519
+
+    staged_bytes = binary.read_bytes() + SWAP_TRAILER
+    digest = hashlib.sha256(staged_bytes).hexdigest()
+    variant = native_ssh.NativeAgentVariant(target, "swap")
+    variant.control.remove_path(variant.ensure())
+    config = "{home}/.config/termihub-agent"
+    staged_tpl = config + "/updates/termihub-agent-swap-test"
+    home_guess = variant.home()
+    nonce = f"{os.getpid()}-{time.monotonic_ns()}"
+    home = variant.up(
+        {
+            PENDING_UPDATE_ENV: REMOTE_AGENT_PENDING_VERSION,
+            PENDING_UPDATE_BINARY_ENV: staged_tpl.format(home=home_guess),
+            PENDING_UPDATE_SHA256_ENV: digest,
+            "TERMIHUB_REGISTRY_ENDPOINT": f"/tmp/thub-nsv-{variant.port}-{nonce}/registry",
+        }
+    )
+    if home != home_guess:
+        raise native_ssh.NativeSshExecError(f"swap variant home moved: {home_guess} -> {home}")
+    control = variant.control
+    installed = control.install_agent(binary, home=home)
+    staged = staged_tpl.format(home=home)
+    control.write_bytes(staged, staged_bytes, mode="755")
+    control.write_bytes(
+        f"{staged}.sig", ed25519.sign_agent_update(staged_bytes, TEST_ONLY_UPDATE_KEY).encode()
+    )
+    control.write_bytes(f"{staged}.sha256", f"{digest}  termihub-agent-swap-test\n".encode())
+    return AgentSwapHost(
+        installed_agent=installed,
+        staged_agent=staged,
+        agent_state=config.format(home=home) + "/state.json",
+        sha256=control.sha256,
+        read_text=control.read_file,
+    )
+
+
 def stage_remote_agent_binary(*, build_timeout: float = 1500.0) -> Path:
     """Build (if needed) and stage the agent binary into the remote-agent context.
 
@@ -1178,6 +1416,34 @@ _SSHD_PID_SCAN = (
 )
 
 
+#: The SSH containers' test user home (``useradd -m testuser``).
+CONTAINER_SSH_HOME = "/home/testuser"
+
+
+def ssh_server_control(service: str = SSH_PASSWORD_SERVICE):
+    """Server-side control of the SSH host the suites log in to.
+
+    The native sshd's :class:`~termihub_harness.native_ssh.NativeSshServerControl`
+    when the native target is selected and ``service`` is one of the SSH
+    services it stands in for (#5421); else the Docker :class:`SshServerControl`
+    for ``service``. Both offer the same calls plus ``home()`` and
+    ``agent_crash_dir()``. On macOS the deployed-agent service maps to the
+    native sshd too, where the plain agent suites run (#5424), and so do the
+    sudo and SFTP-only hosts (#5423): they are variants for the same login
+    user, so its key-auth exec on the main sshd sees the same files.
+    """
+    if NATIVE_SSH_TARGET is not None and (
+        service in (SSH_PASSWORD_SERVICE, SSH_KEYS_SERVICE)
+        or (service == REMOTE_AGENT_SERVICE and native_ssh.serves_agent())
+        or (
+            service in (SSH_SUDO_SERVICE, SSH_SFTP_ONLY_SERVICE)
+            and native_ssh.serves_hosts()
+        )
+    ):
+        return native_ssh.NativeSshServerControl(NATIVE_SSH_TARGET)
+    return SshServerControl(service)
+
+
 class SshServerControl:
     """Server-side control of a shared SSH container for the disconnect test.
 
@@ -1204,6 +1470,16 @@ class SshServerControl:
     def available(self) -> bool:
         """Whether a container runtime is reachable to exec into the container."""
         return self._runtime is not None
+
+    def home(self) -> str:
+        """The test user's home in the container (``useradd -m testuser``): where
+        its SSH session and the SFTP browser start. The native twin reads it
+        from its target (#5421)."""
+        return CONTAINER_SSH_HOME
+
+    def agent_crash_dir(self) -> str:
+        """The deployed agent's crash-report dir in the agent container."""
+        return f"{CONTAINER_SSH_HOME}/.config/termihub-agent/logs/crash-reports"
 
     def session_pids(self) -> set[str]:
         """PIDs of the sshd session processes currently serving the test user."""

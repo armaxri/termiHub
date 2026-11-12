@@ -4,7 +4,8 @@ The Rust unit tests from #5161 (``src-tauri/src/files/transfer/relaunch_session_
 cover how a rehydrated session transfer resolves its session and credentials.
 This suite is the harness half: it drives the real app end to end.
 
-For an upload and for a download over the Docker ``ssh-password`` fixture:
+For an upload and for a download over the Docker ``ssh-password`` fixture (on
+macOS, the native sshd fixture, #5421):
 
 1. connect through a :class:`~termihub_harness.throttle_proxy.ThrottleProxy`
    and start the transfer from the file browser (native dialog stubbed);
@@ -46,11 +47,11 @@ from termihub_harness import (
     PasswordPromptUi,
     ProjectionHarness,
     SidebarUi,
-    SshServerControl,
     SshUi,
     SystemTest,
     TabsUi,
     TerminalUi,
+    ssh_server_control,
     unique_name,
 )
 from termihub_harness.throttle_proxy import ThrottleProxy
@@ -116,6 +117,7 @@ def persisted_record(config_dir: Path, file_name: str) -> Optional[dict[str, Any
 @pytest.mark.integration
 @pytest.mark.category("sftp")
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestTransferRelaunch(
     TerminalUi,
     TabsUi,
@@ -132,12 +134,13 @@ class TestTransferRelaunch(
     request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
     proxy: ThrottleProxy
-    server: SshServerControl
+    #: :class:`~termihub_harness.SshServerControl` or its native twin.
+    server: Any
 
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _throttle_proxy(cls, request: pytest.FixtureRequest):
-        server = SshServerControl()
+        server = ssh_server_control()
         if not server.available:
             pytest.skip("SSH container fixtures unavailable: no container runtime available")
         request.cls.server = server

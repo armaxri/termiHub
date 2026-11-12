@@ -5,7 +5,8 @@ agent: creating a remote-agent definition, the connection-error feedback dialog
 a failed connect raises (unreachable host, wrong password, host with no agent
 binary), and the agent-setup wizard (context menu + arch-detection reaching the
 setup form). Drives the real UI through the bridge against the existing
-password-SSH container (port 2201) and an unreachable local port.
+password-SSH container (port 2201) and an unreachable local port. On macOS the
+tests marked ``native_sshd`` run against the native sshd fixture instead (#5424).
 
 The original WebdriverIO suite asserted with ``if (await x.isExisting())`` guards,
 so its checks passed vacuously when the dialog/menu never appeared; this port
@@ -47,7 +48,6 @@ import pytest
 
 from termihub_harness import (
     AgentUi,
-    SshServerControl,
     PasswordPromptUi,
     SettingsUi,
     SidebarUi,
@@ -58,6 +58,7 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
+    ssh_server_control,
     unique_name,
 )
 
@@ -97,6 +98,7 @@ class TestRemoteAgent(
         self.switch_to_connections_sidebar()
 
     # ── creation ────────────────────────────────────────────────────────────────
+    @pytest.mark.native_sshd(platforms=("darwin",))
     def test_create_remote_agent(self):
         name = unique_name("agent-create")
         agent = self.create_remote_agent(
@@ -110,6 +112,7 @@ class TestRemoteAgent(
         )
 
     # ── connection-error feedback dialog ────────────────────────────────────────
+    @pytest.mark.native_sshd(platforms=("darwin",))
     def test_unreachable_host_shows_error_dialog(self):
         name = unique_name("agent-unreachable")
         self.create_remote_agent(
@@ -123,6 +126,7 @@ class TestRemoteAgent(
         assert title.strip()
         self.dismiss_connection_error()
 
+    @pytest.mark.native_sshd(platforms=("darwin",))
     def test_wrong_password_shows_error_dialog(self):
         name = unique_name("agent-auth")
         self.create_remote_agent(
@@ -136,6 +140,9 @@ class TestRemoteAgent(
         assert title.strip() == "Authentication Failed", self.connection_error_message()
         self.dismiss_connection_error()
 
+    # Not on the macOS native sshd (no native_sshd marker): its user is also the
+    # deployed-agent host there, with an agent installed (#5424), so "no agent
+    # binary" does not hold.
     def test_missing_agent_errors_and_close_keeps_agent(self):
         # The password container accepts SSH but has no agent binary, so the
         # connect fails after auth; the dialog appears, Close dismisses it, and the
@@ -156,6 +163,7 @@ class TestRemoteAgent(
         assert self.find_agent(name) is not None
 
     # ── setup wizard ────────────────────────────────────────────────────────────
+    @pytest.mark.native_sshd(platforms=("darwin",))
     def test_setup_wizard_opens_and_detects(self):
         # The setup wizard appears in the agent context menu; opening it connects
         # over SSH to detect the remote architecture, then shows the setup form
@@ -174,11 +182,12 @@ class TestRemoteAgent(
         assert self.driver.exists(self.SETUP_ARCH)
         self.cancel_agent_setup()
 
+    @pytest.mark.native_sshd(platforms=("darwin",))
     def test_cancel_setup_leaves_no_partial_upload(self, tmp_path):
         # MT-AGENT-29 (#3686): cancelling a running setup aborts it and rolls the
         # partial upload back. The throwaway file is random (incompressible) and
         # not an ELF binary, so the arch check is skipped and the upload proceeds.
-        server = SshServerControl()
+        server = ssh_server_control()
         if not server.available:
             pytest.skip("no container runtime to inspect the SSH container")
         if server.path_exists(UPLOAD_PATH):

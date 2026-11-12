@@ -1,8 +1,8 @@
 """The dual-pane transfer view against a live SSH host (PROD-007, #3558, #4007).
 
 ``TransferView.test.tsx`` covers the view with every IPC mocked. This drives the
-real app against the Docker ``ssh-password`` fixture and checks the bytes, not
-just the listing:
+real app against the Docker ``ssh-password`` fixture (on macOS, the native sshd
+fixture, #5421) and checks the bytes, not just the listing:
 
 - **upload via the arrow** — a local file selected in the left pane and copied
   with the → button lands on the host, byte for byte;
@@ -37,18 +37,18 @@ from termihub_harness import (
     ProjectionHarness,
     SftpUi,
     SidebarUi,
-    SshServerControl,
+    SSH_USERNAME,
     SshUi,
     SystemTest,
     TabsUi,
     TerminalUi,
+    ssh_server_control,
     unique_name,
 )
+from termihub_harness.native_ssh import NativeSshExecError
 
 pytestmark = pytest.mark.integration
 
-#: The ``ssh-password`` fixture user's home (``useradd -m testuser``).
-REMOTE_HOME = "/home/testuser"
 #: The upload the cancel test starts: big enough that a localhost SFTP upload is
 #: still running when the cancel lands (a sparse local file, so it costs no disk).
 LARGE_BYTES = 2 * 1024 * 1024 * 1024
@@ -67,6 +67,7 @@ def pane_row(side: str, name: str) -> str:
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestTransferViewLive(
     TerminalUi,
     TabsUi,
@@ -84,9 +85,13 @@ class TestTransferViewLive(
     @pytest.fixture(autouse=True)
     def _workspace(self):
         """A fresh local dir for the left pane; tabs + remote paths cleaned after."""
-        self._host = SshServerControl()
+        self._host = ssh_server_control()
         if not self._host.available:
             pytest.skip("no container runtime to check the host side of a transfer")
+        #: The test user's home on the host, where the SSH session and the SFTP
+        #: browser start: ``/home/testuser`` in the container, the fixture
+        #: user's home on the native sshd.
+        self._home = self._host.home()
         self._local = Path(tempfile.mkdtemp(prefix="e2e_tv_"))
         self._remote_paths: list[str] = []
         try:
@@ -98,13 +103,13 @@ class TestTransferViewLive(
             for path in self._remote_paths:
                 try:
                     self._host.remove_path(path)
-                except (ContainerRuntimeUnavailable, ComposeFixtureFailed):
+                except (ContainerRuntimeUnavailable, ComposeFixtureFailed, NativeSshExecError):
                     pass
 
     # -- helpers -----------------------------------------------------------------
     def _remote(self, name: str) -> str:
         """``name`` in the remote home, registered for cleanup."""
-        path = f"{REMOTE_HOME}/{name}"
+        path = f"{self._home}/{name}"
         self._remote_paths.append(path)
         return path
 
@@ -134,11 +139,11 @@ class TestTransferViewLive(
         """
         ssh_tab = self._connect()
         self.connect_sftp_browser()
-        self.wait_for_path_contains(REMOTE_HOME)
+        self.wait_for_path_contains(self._home)
         self.driver.click(OPEN_TRANSFER_VIEW)
         self.wait(lambda: self.driver.exists(VIEW), what="the transfer view")
         self.wait(
-            lambda: self.driver.get_value("transfer-pane-remote-path") == REMOTE_HOME,
+            lambda: self.driver.get_value("transfer-pane-remote-path") == self._home,
             what="the remote pane to list the home dir",
         )
         self._point_local_pane()
@@ -209,8 +214,8 @@ class TestTransferViewLive(
     def test_dragging_a_remote_folder_onto_the_local_pane_copies_its_tree(self):
         name = unique_name("tv-dir")
         remote_dir = self._remote(name)
-        self._host.write_file(f"{remote_dir}/top.txt", "top\n", user="testuser")
-        self._host.write_file(f"{remote_dir}/sub/nested.txt", "nested\n", user="testuser")
+        self._host.write_file(f"{remote_dir}/top.txt", "top\n", user=SSH_USERNAME)
+        self._host.write_file(f"{remote_dir}/sub/nested.txt", "nested\n", user=SSH_USERNAME)
 
         self._open_view()
         self._wait_for_row("remote", name)
@@ -258,7 +263,7 @@ class TestTransferViewLive(
 
     def test_closing_the_ssh_tab_then_picking_another_remote(self):
         name = f"{unique_name('tv-repick')}.txt"
-        self._host.write_file(self._remote(name), "pick me\n", user="testuser")
+        self._host.write_file(self._remote(name), "pick me\n", user=SSH_USERNAME)
 
         first = self._open_view()
         view = self._view_tab_id()
