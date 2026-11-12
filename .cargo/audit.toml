@@ -15,7 +15,7 @@
 
 [advisories]
 ignore = [
-    # rsa (RUSTSEC-2023-0071, Marvin timing sidechannel): pulled by russh 0.61
+    # rsa (RUSTSEC-2023-0071, Marvin timing sidechannel): pulled by russh 0.65
     # and ssh-key. termiHub is an SSH client only: the private key is used to
     # sign the server-chosen session hash once per public-key login, and server
     # host-key checks are public-key verifications (not affected). There is no
