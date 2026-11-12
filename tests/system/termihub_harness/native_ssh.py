@@ -46,19 +46,24 @@ DEFAULT_PLATFORMS: tuple[str, ...] = ("darwin", "win32")
 #: The conftest fixtures that the native target replaces.
 SSH_FIXTURES = frozenset({"ssh_fixtures", "ssh_password_fixtures", "ssh_bastion_fixtures"})
 
-#: The deployed-agent fixtures the native target also serves (#5424, #5444):
-#: they install a host-OS ``termihub-agent`` for the fixture user instead of
-#: baking a Linux agent into a container.
-AGENT_FIXTURES = frozenset(
+#: The plain deployed-agent fixture the native target also serves (#5424,
+#: #5511): it installs a host-OS ``termihub-agent`` for the fixture user
+#: instead of baking a Linux agent into a container.
+PLAIN_AGENT_FIXTURES = frozenset({"remote_agent_fixtures"})
+
+#: The deployed-agent fixtures served by agent-host variants (#5444): they run
+#: on their own sshd of the fixture (``variant-up``), so their env never
+#: reaches the plain agent suites.
+AGENT_VARIANT_FIXTURES = frozenset(
     {
-        "remote_agent_fixtures",
-        # #5444: the variants run on their own sshd of the fixture
-        # (``variant-up``), so their env never reaches the plain agent suites.
         "remote_agent_pending_fixtures",
         "remote_agent_update_swap_fixtures",
         "remote_agent_kbdint_fixtures",
     }
 )
+
+#: Every deployed-agent fixture the native target serves somewhere.
+AGENT_FIXTURES = PLAIN_AGENT_FIXTURES | AGENT_VARIANT_FIXTURES
 
 #: Each agent-host variant's port, as an offset from the fixture's main port
 #: (#5444). Fixed, because the suites import the ports as module constants
@@ -100,16 +105,26 @@ HOST_PLATFORMS: tuple[str, ...] = ("darwin",)
 #: with the same password and keys and no sudo rule (``--second-user``).
 SECOND_USER = "termihubnosudo"
 
-#: Where the native target serves :data:`AGENT_FIXTURES`: the agent is built
-#: for the host and installed over a POSIX ``sh`` exec into ``~/.local/bin``,
-#: so macOS only (a Windows host gets a ``.exe`` under Windows paths, which
-#: this installer does not do).
-AGENT_PLATFORMS: tuple[str, ...] = ("darwin",)
+#: Where the native target serves :data:`PLAIN_AGENT_FIXTURES`: the agent is
+#: built for the host and installed over the fixture's exec, into
+#: ``~/.local/bin`` on macOS and as ``termihub-agent.exe`` under
+#: ``%LOCALAPPDATA%\termiHub\agent`` on Windows (#5511), where the app
+#: deploys it.
+AGENT_PLATFORMS: tuple[str, ...] = ("darwin", "win32")
+
+#: Where the native target serves :data:`AGENT_VARIANT_FIXTURES`: the variants
+#: are extra sshds of the macOS fixture (``variant-up``), so macOS only.
+AGENT_VARIANT_PLATFORMS: tuple[str, ...] = ("darwin",)
 
 
 def serves_agent(platform: str = sys.platform) -> bool:
-    """Whether the native target stands in for :data:`AGENT_FIXTURES` here."""
+    """Whether the native target stands in for :data:`PLAIN_AGENT_FIXTURES` here."""
     return platform in AGENT_PLATFORMS
+
+
+def serves_agent_variants(platform: str = sys.platform) -> bool:
+    """Whether the native target stands in for :data:`AGENT_VARIANT_FIXTURES` here."""
+    return platform in AGENT_VARIANT_PLATFORMS
 
 
 def serves_hosts(platform: str = sys.platform) -> bool:
@@ -125,7 +140,9 @@ def served_fixtures(platform: str = sys.platform) -> frozenset[str]:
     """The fixtures the native target replaces on ``platform``."""
     served = set(SSH_FIXTURES)
     if serves_agent(platform):
-        served |= AGENT_FIXTURES
+        served |= PLAIN_AGENT_FIXTURES
+    if serves_agent_variants(platform):
+        served |= AGENT_VARIANT_FIXTURES
     if serves_hosts(platform):
         served |= set(HOST_FIXTURES)
     return frozenset(served)
@@ -237,7 +254,7 @@ def skip_reason(
 
     ``marker_platforms`` is None for a test without the ``native_sshd`` marker.
     Tests that use none of :func:`served_fixtures` (:data:`SSH_FIXTURES`, plus
-    :data:`AGENT_FIXTURES` on macOS) are never affected, and neither
+    the deployed-agent fixtures where they are served) are never affected, and neither
     are tests that also need another container fixture (``container_fixtures``,
     e.g. a VNC server reached over SSH): that fixture skips them with its own,
     more precise reason at setup, so the SSH side is not what keeps them off.
@@ -421,6 +438,24 @@ WINDOWS_EXEC_MARKER = "termihub_server_control"
 #: ``sh -s`` the same way, ``core/src/backends/ssh/remote_cwd.rs``).
 WINDOWS_EXEC_COMMAND = f"sh -s {WINDOWS_EXEC_MARKER}"
 
+#: A launch path the app accepts for the encoded PowerShell deploy step on a
+#: Git Bash login shell (``parse_encoded_install_path``): drive-absolute,
+#: forward slashes, no space or shell metacharacter (#5511).
+WINDOWS_AGENT_PATH_RE = re.compile(
+    r"[A-Za-z]:/(?:[A-Za-z0-9._+@-]+/)*termiHub/agent/termihub-agent\.exe"
+)
+
+#: How the Windows twin installs the agent at ``$1`` (#5511): the binary is
+#: streamed behind the script (``_run(..., stream=True)``) into a temp name
+#: beside it. A running agent's ``.exe`` cannot be overwritten but can be
+#: renamed, so the old one moves aside first; removing it may fail while it
+#: runs, which is harmless.
+WINDOWS_AGENT_INSTALL_SCRIPT = (
+    'mkdir -p "$(dirname "$1")" && t="$1.tmp.$$" && o="$1.old.$$" '
+    '&& cat > "$t" && { [ ! -e "$1" ] || mv -f "$1" "$o"; } '
+    '&& mv -f "$t" "$1" && { rm -f "$o" 2>/dev/null || true; }'
+)
+
 _SFTP_DRIVE_PATH = re.compile(r"^/(?P<drive>[A-Za-z]):(?P<rest>/.*)?$")
 
 
@@ -515,6 +550,7 @@ class NativeSshServerControl:
         self._target = target
         self._platform = platform
         self._home: Optional[str] = None
+        self._agent_path: Optional[str] = None
 
     @property
     def available(self) -> bool:
@@ -557,42 +593,85 @@ class NativeSshServerControl:
         """The deployed agent's crash-report dir (``<config>/logs/crash-reports``).
 
         Mirrors the agent's ``config_dir``: ``$XDG_CONFIG_HOME`` when set,
-        else ``~/Library/Application Support`` on macOS and ``~/.config``
-        elsewhere.
+        else ``~/Library/Application Support`` on macOS, the roaming
+        ``%APPDATA%`` on Windows (as a Git Bash ``C:/…`` path, #5511) and
+        ``~/.config`` elsewhere.
         """
         return self._run(
             'if [ -n "${XDG_CONFIG_HOME:-}" ]; then c="$XDG_CONFIG_HOME"; '
             'elif [ "$(uname -s)" = Darwin ]; then c="$HOME/Library/Application Support"; '
+            'elif [ -n "${APPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then '
+            'c="$(cygpath -m "$APPDATA")"; '
             'else c="$HOME/.config"; fi; '
             'printf "%s" "$c/termihub-agent/logs/crash-reports"'
         )
 
     def install_agent(self, binary: Path, *, home: Optional[str] = None) -> str:
-        """Install ``binary`` as the login user's ``$HOME/.local/bin/termihub-agent``.
+        """Install ``binary`` where the app runs the deployed agent; return that path.
+
+        macOS: the login user's ``$HOME/.local/bin/termihub-agent`` (``home``
+        overrides ``$HOME``, for an agent-host variant). Windows (#5511):
+        :meth:`windows_agent_path`, where the app's PowerShell deploy step puts
+        it; there are no variants there, so ``home`` is refused.
 
         Skipped when the installed one already has the same SHA-256. Otherwise
         the binary is streamed to a temp name beside it and renamed over it, so
         a parallel worker's install or an agent already running from the old
-        file never sees a half-written binary. Returns the installed path.
+        file never sees a half-written binary.
         """
         data = Path(binary).read_bytes()
         digest = hashlib.sha256(data).hexdigest()
-        dest = f"{home or self.env_home()}/.local/bin/termihub-agent"
+        if self._windows:
+            if home is not None:
+                raise ValueError("the Windows fixture has no agent-host variants")
+            dest = self.windows_agent_path()
+        else:
+            dest = f"{home or self.env_home()}/.local/bin/termihub-agent"
         if self.path_exists(dest) and self.sha256(dest) == digest:
             return dest
-        self._run(
-            'mkdir -p "$(dirname "$1")" && t="$1.tmp.$$" && cat > "$t" '
-            '&& chmod 755 "$t" && mv -f "$t" "$1"',
-            dest,
-            stdin=data,
-            timeout=300.0,
-        )
+        if self._windows:
+            # Streamed raw after the script (no base64 inlining: the script is
+            # read a byte at a time, which would take minutes for an agent).
+            self._run(WINDOWS_AGENT_INSTALL_SCRIPT, dest, stdin=data, stream=True, timeout=300.0)
+        else:
+            self._run(
+                'mkdir -p "$(dirname "$1")" && t="$1.tmp.$$" && cat > "$t" '
+                '&& chmod 755 "$t" && mv -f "$t" "$1"',
+                dest,
+                stdin=data,
+                timeout=300.0,
+            )
         installed = self.sha256(dest)
         if installed != digest:
             raise NativeSshExecError(
                 f"installed agent {dest} has SHA-256 {installed}, expected {digest}"
             )
         return dest
+
+    def windows_agent_path(self) -> str:
+        """Where the app deploys the agent on the Windows fixture, as it launches it.
+
+        ``%LOCALAPPDATA%\\termiHub\\agent\\termihub-agent.exe`` (``WINDOWS_INSTALL_SUBDIR``
+        / ``WINDOWS_AGENT_EXE`` in ``src-tauri/src/terminal/agent_install.rs``), in
+        the forward-slash form the encoded PowerShell deploy step stores for a
+        Git Bash login shell (``parse_encoded_install_path``): the app runs it
+        unquoted, so a path with a space or a shell metacharacter is refused
+        here as it is there.
+        """
+        if self._agent_path is None:
+            out = self._run(
+                'd="${LOCALAPPDATA:-}"; [ -n "$d" ] || d="$USERPROFILE/AppData/Local"; '
+                'cygpath -m "$d/termiHub/agent/termihub-agent.exe"'
+            ).strip()
+            if not WINDOWS_AGENT_PATH_RE.fullmatch(out) or any(
+                part in (".", "..") for part in out.split("/")
+            ):
+                raise NativeSshExecError(
+                    f"the Windows fixture's agent install path {out!r} is not a plain drive "
+                    "path the app can launch unquoted"
+                )
+            self._agent_path = out
+        return self._agent_path
 
     # -- sessions ------------------------------------------------------------
     def _master_pid(self) -> str:
@@ -789,11 +868,22 @@ class NativeSshServerControl:
         *args: str,
         text: bool = True,
         stdin: Optional[bytes] = None,
+        stream: bool = False,
         timeout: float = 60.0,
     ):
-        """Run ``script`` on the fixture as the login user; return its stdout."""
+        """Run ``script`` on the fixture as the login user; return its stdout.
+
+        On Windows ``stdin`` is inlined into the script as base64
+        (:meth:`windows_script`), or with ``stream`` sent raw after it: ``sh -s``
+        reads its script from the pipe a byte at a time, so the script's first
+        command that reads stdin gets exactly the bytes behind it. The script
+        must then be one line that reads all of them.
+        """
         if self._windows:
-            stdin = self.windows_script(script, *args, stdin=stdin)
+            if stream:
+                stdin = self.windows_script(script, *args) + (stdin or b"")
+            else:
+                stdin = self.windows_script(script, *args, stdin=stdin)
         try:
             result = subprocess.run(
                 self.ssh_argv(script, *args),
