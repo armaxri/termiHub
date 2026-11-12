@@ -98,7 +98,8 @@ if [ -f "dev.local.json" ]; then
     _DEV_NAME=$(grep -oE '"dev_name"[[:space:]]*:[[:space:]]*"[^"]+"' dev.local.json | grep -oE '"[^"]+"$' | tr -d '"' || true)
     # Per-checkout OS keychain namespace (#5478): a dev build stores its
     # secrets under "termiHub-dev-<dev_name>", never the installed app's names.
-    if [ -n "${_DEV_NAME:-}" ]; then
+    # An already-set, non-empty TERMIHUB_DEV_NAME wins (explicit override, #5499).
+    if [ -z "${TERMIHUB_DEV_NAME:-}" ] && [ -n "${_DEV_NAME:-}" ]; then
         export TERMIHUB_DEV_NAME="$_DEV_NAME"
     fi
     if [[ "${_DEV_AGENT_PORT:-}" =~ ^[0-9]+$ ]]; then
