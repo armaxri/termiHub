@@ -95,7 +95,7 @@ describe("SessionRestoreDialog", () => {
     expect(dismissRestorePrompt).not.toHaveBeenCalled();
   });
 
-  it("starts fresh (without remember) when Start Fresh is clicked", async () => {
+  it("starts fresh (without remember) when Start fresh is clicked", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
     await render();
 

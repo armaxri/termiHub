@@ -31,7 +31,7 @@ interface StorageModeOption {
 const STORAGE_MODE_OPTIONS: StorageModeOption[] = [
   {
     value: "master_password",
-    label: "Master Password",
+    label: "Master password",
     description:
       "Encrypt credentials with a master password. You'll need to enter it when the app starts or after a timeout.",
     testId: "storage-mode-master-password",
@@ -349,7 +349,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     <div className="settings-panel__category">
       {show("credentialStorageMode") && (
         <div className="settings-panel__section">
-          <h3 className="settings-panel__section-title">Credential Storage</h3>
+          <h3 className="settings-panel__section-title">Credential storage</h3>
           <p className="settings-panel__description">
             Choose how connection passwords, SSH key passphrases, and other secrets are stored.
           </p>
@@ -380,7 +380,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           {masterPasswordSetup && confirmSwitch === "master_password" && (
             <form className="settings-panel__inline-dialog" data-testid="master-password-setup">
-              <h4 className="settings-panel__inline-dialog-title">Set Master Password</h4>
+              <h4 className="settings-panel__inline-dialog-title">Set master password</h4>
               <p className="settings-panel__inline-dialog-text">
                 Choose a strong password to encrypt your credentials.
               </p>
@@ -394,6 +394,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 errorClassName="settings-panel__inline-dialog-error"
               />
               <div className="settings-panel__inline-dialog-actions">
+                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
+                  Cancel
+                </Button>
                 <Button
                   type="submit"
                   variant="primary"
@@ -405,9 +408,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   data-testid="master-password-confirm-btn"
                 >
                   Confirm
-                </Button>
-                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
-                  Cancel
                 </Button>
               </div>
             </form>
@@ -427,6 +427,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
+                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
+                  Cancel
+                </Button>
                 <Button
                   variant="primary"
                   size="sm"
@@ -437,9 +440,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   data-testid="confirm-switch-confirm-btn"
                 >
                   Confirm
-                </Button>
-                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
-                  Cancel
                 </Button>
               </div>
             </div>
@@ -486,10 +486,10 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         <>
           {show("credentialAutoLockMinutes") && (
             <div className="settings-panel__section">
-              <h3 className="settings-panel__section-title">Master Password Options</h3>
+              <h3 className="settings-panel__section-title">Master password options</h3>
 
               <SettingsField
-                label="Auto-Lock Timeout"
+                label="Auto-lock timeout"
                 hint="Lock the credential store after a period of inactivity."
               >
                 <Select
@@ -514,7 +514,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                       : undefined
                   }
                 >
-                  Change Master Password
+                  Change master password
                 </Button>
               </div>
 
@@ -523,7 +523,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   className="settings-panel__inline-dialog"
                   data-testid="change-password-dialog"
                 >
-                  <h4 className="settings-panel__inline-dialog-title">Change Master Password</h4>
+                  <h4 className="settings-panel__inline-dialog-title">Change master password</h4>
                   <PasswordInput
                     className="settings-panel__inline-dialog-input"
                     placeholder="Current password"
@@ -550,6 +550,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     <p className="settings-panel__inline-dialog-error">{changePasswordError}</p>
                   )}
                   <div className="settings-panel__inline-dialog-actions">
+                    <Button variant="secondary" size="sm" onClick={resetChangePasswordDialog}>
+                      Cancel
+                    </Button>
                     <Button
                       type="submit"
                       variant="primary"
@@ -560,9 +563,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                       data-testid="change-master-password-confirm-btn"
                     >
                       Change
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={resetChangePasswordDialog}>
-                      Cancel
                     </Button>
                   </div>
                 </form>
@@ -580,7 +580,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
       {show("workflowLocalProcess") && (
         <div className="settings-panel__section">
-          <h3 className="settings-panel__section-title">Workflow Local Process Execution</h3>
+          <h3 className="settings-panel__section-title">Workflow local process execution</h3>
           <p className="settings-panel__description">
             The guarded <code>run-local-process</code> workflow step runs a program on this
             computer. This is off by default. When enabled, each not-yet-trusted program still

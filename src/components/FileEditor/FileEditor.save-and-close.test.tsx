@@ -115,7 +115,7 @@ function typeInto(el: HTMLInputElement, value: string): void {
 }
 
 /**
- * Arm a "Save & Close" close request against this tab and swap in a spy for
+ * Arm a "Save and close" close request against this tab and swap in a spy for
  * `closeTab`, so a test can observe whether the tab is actually closed. The
  * UnsavedChangesDialog renders once `pendingCloseRequest` targets this tab.
  */
@@ -130,7 +130,7 @@ function armCloseRequest(): ReturnType<typeof vi.fn> {
   return closeTabSpy;
 }
 
-describe("FileEditor — Save & Close gates on a real save (FEC-010)", () => {
+describe("FileEditor — Save and close gates on a real save (FEC-010)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

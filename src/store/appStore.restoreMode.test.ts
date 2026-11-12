@@ -219,7 +219,7 @@ describe("startup restore mode", () => {
     });
   });
 
-  describe("dismissRestorePrompt (Start Fresh)", () => {
+  describe("dismissRestorePrompt (Start fresh)", () => {
     beforeEach(() => {
       useAppStore.setState({
         restorePrompt: { tabCount: 1, tabs: [{ title: "x", typeLabel: "Local" }] },

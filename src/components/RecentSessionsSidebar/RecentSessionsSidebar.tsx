@@ -221,7 +221,7 @@ export function RecentSessionsSidebar() {
         open={confirmClear}
         title="Clear session history"
         message="Remove all recorded sessions? Pinned entries are removed too. This cannot be undone."
-        confirmLabel="Clear History"
+        confirmLabel="Clear history"
         onConfirm={handleConfirmClear}
         onCancel={() => setConfirmClear(false)}
       />

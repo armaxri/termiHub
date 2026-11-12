@@ -130,7 +130,7 @@ export function SshKeyboardInteractivePrompt() {
       onOpenChange={(open) => {
         if (!open) handleCancel();
       }}
-      title="SSH Authentication"
+      title="SSH authentication"
       footer={
         <>
           <Button variant="secondary" onClick={handleCancel} data-testid="kbd-interactive-cancel">

@@ -3055,6 +3055,30 @@ which is stable across projects, and the network-fault container is addressed vi
 `compose exec` under the active project — so namespacing the containers does not
 break them.
 
+#### OS keychain isolation (#5478)
+
+Config, logs and the launch socket follow the profile directory; the OS
+keychain does not (macOS login Keychain, Windows Credential Manager and the
+Linux Secret Service are per user, not per profile). So every keychain name the
+app uses is resolved through `credential::keychain_namespace` and is suffixed in
+any **debug build** and any **test-instance build** (`--features test-bridge`,
+even in release mode):
+
+| Build                                          | Credential service        |
+| ---------------------------------------------- | ------------------------- |
+| Release (the installed app)                    | `termiHub` (unchanged)    |
+| Dev/test build, no instance name               | `termiHub-dev`            |
+| `./scripts/dev.sh` in a checkout with dev_name | `termiHub-dev-<dev_name>` |
+
+The same suffix applies to the backup-restore seal keys
+(`termiHub-backup-restore`), the biometric-unlock wrapping key
+(`termiHub-biometric-unlock`) and the OS-enforced biometric key
+(`termiHub-biometric-unlock-v2`). `scripts/dev.sh` / `scripts/dev.cmd` export
+`dev.local.json`'s `dev_name` as `TERMIHUB_DEV_NAME`; release builds ignore that
+variable. A dev or test instance can therefore choose OS keychain storage or
+enable biometric unlock without reading, overwriting or deleting the installed
+app's entries, and parallel checkouts do not share entries with each other.
+
 #### Verifying isolation
 
 ```bash
