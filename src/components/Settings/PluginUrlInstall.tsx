@@ -79,7 +79,7 @@ export function PluginUrlInstall({ onReady }: PluginUrlInstallProps) {
         />
       </SettingsField>
       <SettingsField
-        label="SHA-256 Checksum"
+        label="SHA-256 checksum"
         hint="As published by the plugin author. The download is refused unless it matches."
         error={shaError ?? undefined}
       >

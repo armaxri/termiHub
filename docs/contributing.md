@@ -934,6 +934,14 @@ anything.
 - **Props interfaces** always defined (e.g., `interface MyComponentProps { ... }`)
 - **JSDoc** for public functions
 
+### User-facing copy
+
+Dialog titles, buttons, menu items, Settings labels and messages follow the
+[copy style guide](copy-style.md): sentence case, one primary button per footer with Cancel on
+the left, "Close" to acknowledge, "Discard changes" to discard, Delete vs Remove, `…` only and
+US spelling. ESLint enforces the checkable parts; today's violations sit in a baseline that only
+shrinks (see [Enforcement](copy-style.md#enforcement)).
+
 ### Rust
 
 - **No `.unwrap()` in production code** — Use `?` with `anyhow::Result`. Every first-party crate
@@ -1986,7 +1994,7 @@ The release workflow adds two supply-chain records to every release (CI-022,
 - **Third-party license notices.** `termiHub-X.Y.Z-THIRD_PARTY_NOTICES.txt` holds the full
   license text of every Rust crate and npm production package shipped in the desktop app,
   the agent and the RDP sidecar (the same file every installer bundles for **About →
-  Third-Party Licenses**). Regenerate it with `pnpm notices:generate`; see
+  Third-party licenses**). Regenerate it with `pnpm notices:generate`; see
   [Licensing → Generated third-party notices](licensing.md#generated-third-party-notices).
 
 To reproduce the SBOMs locally (no build needed; generated files land next to each crate):

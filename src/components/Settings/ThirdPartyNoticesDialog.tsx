@@ -65,7 +65,7 @@ export function ThirdPartyNoticesDialog({ open, onOpenChange }: ThirdPartyNotice
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Third-Party Licenses"
+      title="Third-party licenses"
       description="License notices of the open-source software termiHub is built from"
       size="lg"
       data-testid="third-party-notices-dialog"
@@ -77,7 +77,7 @@ export function ThirdPartyNoticesDialog({ open, onOpenChange }: ThirdPartyNotice
           onClick={handleViewOnline}
           data-testid="third-party-notices-online"
         >
-          View Online
+          View online
         </Button>
       }
     >

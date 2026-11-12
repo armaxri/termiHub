@@ -102,7 +102,7 @@ export function SafetyPromptSettings({
 
           {show("warnLargePortScan") && (
             <SettingsField
-              label="Warn Before a Large Port Scan"
+              label="Warn before a large port scan"
               hint="Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations."
             >
               <Toggle
@@ -117,7 +117,7 @@ export function SafetyPromptSettings({
 
           {show("warnLargePingSweep") && (
             <SettingsField
-              label="Warn Before a Large Ping Sweep"
+              label="Warn before a large ping sweep"
               hint="Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)."
             >
               <Toggle

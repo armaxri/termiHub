@@ -182,7 +182,7 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
 
   return (
     <div className="custom-rule-editor" data-testid="custom-rule-editor">
-      <div className="custom-rule-editor__title">{isNew ? "New Custom Rule" : "Edit Rule"}</div>
+      <div className="custom-rule-editor__title">{isNew ? "New custom rule" : "Edit rule"}</div>
 
       <Controller
         name="name"
@@ -366,7 +366,7 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
           disabled={!canSave}
           data-testid="custom-rule-save"
         >
-          {isNew ? "Save Rule" : "Save Changes"}
+          {isNew ? "Save rule" : "Save changes"}
         </Button>
       </div>
     </div>

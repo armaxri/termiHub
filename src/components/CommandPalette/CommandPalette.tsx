@@ -116,7 +116,7 @@ function isDisabled(entry: PaletteEntry): boolean {
  * delegated to `match-sorter`. Connecting reuses {@link useConnectSavedConnection}
  * so the palette shares the sidebar's exact credential flow.
  *
- * While broadcasting, a "Run Workflow on Broadcast Group" entry (#3430) opens a
+ * While broadcasting, a "Run workflow on broadcast group" entry (#3430) opens a
  * workflow sub-picker; the chosen workflow runs concurrently on the group's
  * connected terminals via `runWorkflow(id, { targetTabIds })`, which owns the
  * progress toast and per-target run history. Backspace on an empty picker
@@ -174,13 +174,13 @@ export function CommandPalette(): React.ReactElement {
     const macroEntries: PaletteEntry[] = macros.map((m) => ({
       kind: "macro",
       key: `macro:${m.id}`,
-      label: `Run Macro: ${m.name}`,
+      label: `Run macro: ${m.name}`,
       macroId: m.id,
     }));
     const workflowEntries: PaletteEntry[] = workflows.map((w) => ({
       kind: "workflow",
       key: `workflow:${w.id}`,
-      label: `Run Workflow: ${w.name}`,
+      label: `Run workflow: ${w.name}`,
       workflowId: w.id,
     }));
     // Only offered while broadcasting (#3430); disabled when the group has no
@@ -192,7 +192,7 @@ export function CommandPalette(): React.ReactElement {
       broadcastEntries.push({
         kind: "broadcast-workflow",
         key: "broadcast-workflow",
-        label: `Run Workflow on Broadcast Group (${connectedCount} ${noun})…`,
+        label: `Run workflow on broadcast group (${connectedCount} ${noun})…`,
         available: connectedCount > 0 && workflows.length > 0,
         unavailableReason:
           connectedCount === 0
@@ -203,7 +203,7 @@ export function CommandPalette(): React.ReactElement {
     const workspaceEntries: PaletteEntry[] = workspaces.map((ws) => ({
       kind: "workspace",
       key: `workspace:${ws.id}`,
-      label: `Launch Workspace: ${ws.name}`,
+      label: `Launch workspace: ${ws.name}`,
       workspaceId: ws.id,
     }));
     return [
@@ -310,7 +310,7 @@ export function CommandPalette(): React.ReactElement {
     <Modal
       open={open}
       onOpenChange={setOpen}
-      title="Command Palette"
+      title="Command palette"
       description="Fuzzy-find and run a command or connect to a saved connection"
       size="lg"
       hideClose
@@ -329,7 +329,7 @@ export function CommandPalette(): React.ReactElement {
             data-testid="command-palette-picker"
           >
             <ChevronLeft size={14} aria-hidden="true" />
-            Run Workflow on Broadcast Group
+            Run workflow on broadcast group
           </button>
         )}
         <Input

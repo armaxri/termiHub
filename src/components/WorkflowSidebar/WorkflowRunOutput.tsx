@@ -17,7 +17,7 @@ const STATUS_META: Record<
     Icon: CheckCircle2,
     className: "workflow-run-output--completed",
   },
-  cancelled: { label: "Cancelled", Icon: Ban, className: "workflow-run-output--cancelled" },
+  cancelled: { label: "Canceled", Icon: Ban, className: "workflow-run-output--cancelled" },
   failed: { label: "Failed", Icon: XCircle, className: "workflow-run-output--failed" },
 };
 

@@ -227,12 +227,12 @@ describe("CustomGrammarsSettings", () => {
 
   it("hides content when customLanguageGrammars not in visibleFields", () => {
     render({ visibleFields: new Set(["someOtherField"]) });
-    expect(container.textContent).not.toContain("Custom Language Grammars");
+    expect(container.textContent).not.toContain("Custom language grammars");
   });
 
   it("shows content when customLanguageGrammars is in visibleFields", () => {
     render({ visibleFields: new Set(["customLanguageGrammars"]) });
-    expect(container.textContent).toContain("Custom Language Grammars");
+    expect(container.textContent).toContain("Custom language grammars");
   });
 
   it("does not open dialog when import is cancelled", async () => {

@@ -27,7 +27,7 @@ export function RecoveryDialog({ open, onOpenChange, warnings }: RecoveryDialogP
       title={
         <span className="recovery-dialog__title-row">
           <AlertTriangle size={20} className="recovery-dialog__icon" />
-          Configuration Recovery
+          Configuration recovery
         </span>
       }
       footer={
@@ -36,7 +36,7 @@ export function RecoveryDialog({ open, onOpenChange, warnings }: RecoveryDialogP
           onClick={() => onOpenChange(false)}
           data-testid="recovery-dialog-close"
         >
-          OK
+          Close
         </Button>
       }
     >

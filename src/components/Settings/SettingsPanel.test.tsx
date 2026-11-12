@@ -208,7 +208,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
   });
 
-  it("marks settings dirty when toggling Provide X Server Automatically", async () => {
+  it("marks settings dirty when toggling Provide X server automatically", async () => {
     seedSettings(FULL_SETTINGS);
     render();
     selectCategory("x-server");
@@ -248,7 +248,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     expect(isChecked(findProvideXServerCheckbox()!)).toBe(false);
   });
 
-  it("marks settings dirty when toggling Stop X Server When Idle", async () => {
+  it("marks settings dirty when toggling Stop X server when idle", async () => {
     seedSettings(FULL_SETTINGS);
     render();
     selectCategory("x-server");
@@ -279,7 +279,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     const checkbox = findShellIntegrationCheckbox();
     expect(checkbox).not.toBeNull();
     expect(isChecked(checkbox!)).toBe(false);
-    expect(container.textContent).toContain("Command Marks (Shell Hook) by Default");
-    expect(container.textContent).not.toContain("Shell Integration by Default");
+    expect(container.textContent).toContain("Command marks (shell hook) by default");
+    expect(container.textContent).not.toContain("Shell integration by Default");
   });
 });

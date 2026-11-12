@@ -79,7 +79,7 @@ function installButtonLabel(level: PluginTrustInfo["level"], trustPublisher: boo
     case "signed":
       return trustPublisher ? "Trust & Install" : "Install once";
     case "untrusted":
-      return "Install Anyway";
+      return "Install anyway";
     case "tampered":
       return "Close";
   }
@@ -190,7 +190,7 @@ export function PluginInstallDialog({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      title="Install Plugin"
+      title="Install plugin"
       description={`Review ${manifest.name} before installing`}
       data-testid="plugin-install-dialog"
       footer={
@@ -234,7 +234,7 @@ export function PluginInstallDialog({
 
       {unavailable && platforms && (
         <>
-          <div className="plugin-install__perm-title">Supported Platforms</div>
+          <div className="plugin-install__perm-title">Supported platforms</div>
           <PluginPlatformList support={platforms} testIdBase="plugin-install" />
         </>
       )}
@@ -325,12 +325,12 @@ export function PluginInstallDialog({
 
           {platforms && (
             <>
-              <div className="plugin-install__perm-title">Supported Platforms</div>
+              <div className="plugin-install__perm-title">Supported platforms</div>
               <PluginPlatformList support={platforms} testIdBase="plugin-install" />
             </>
           )}
 
-          <div className="plugin-install__perm-title">Requested Permissions</div>
+          <div className="plugin-install__perm-title">Requested permissions</div>
           {manifest.permissions.length === 0 ? (
             <div className="plugin-install__perm-empty" data-testid="plugin-install-no-perms">
               This plugin requests no special permissions.

@@ -83,7 +83,7 @@ export function CustomizeLayoutDialog() {
   const updateLayout = useAppStore((s) => s.updateLayoutConfig);
   const applyPreset = useAppStore((s) => s.applyLayoutPreset);
 
-  // Track the last non-hidden Activity Bar position so unchecking/rechecking
+  // Track the last non-hidden Activity bar position so unchecking/rechecking
   // visibility restores it rather than defaulting to "left".
   const lastNonHiddenPos = useRef<"left" | "right" | "top">(
     layoutConfig.activityBarPosition !== "hidden" ? layoutConfig.activityBarPosition : "left"
@@ -132,7 +132,7 @@ export function CustomizeLayoutDialog() {
     <Modal
       open={open}
       onOpenChange={setOpen}
-      title="Customize Layout"
+      title="Customize layout"
       hideClose
       footer={
         <>
@@ -141,7 +141,7 @@ export function CustomizeLayoutDialog() {
             onClick={() => applyPreset("default")}
             data-testid="layout-reset-default"
           >
-            Reset to Default
+            Reset to default
           </Button>
           <Button variant="primary" onClick={() => setOpen(false)} data-testid="layout-close">
             Close
@@ -165,15 +165,15 @@ export function CustomizeLayoutDialog() {
           ))}
         </div>
 
-        {/* Activity Bar */}
+        {/* Activity bar */}
         <div className="customize-layout-dialog__section">
-          <span className="customize-layout-dialog__section-title">Activity Bar</span>
+          <span className="customize-layout-dialog__section-title">Activity bar</span>
           <div className="customize-layout-dialog__control-row">
             <label className="customize-layout-dialog__label">
               <Checkbox
                 checked={!abHidden}
                 onCheckedChange={handleActivityBarVisibilityChange}
-                aria-label="Activity Bar visible"
+                aria-label="Activity bar visible"
                 data-testid="layout-ab-visible"
               />
               <span>Visible</span>
@@ -184,7 +184,7 @@ export function CustomizeLayoutDialog() {
               value={abHidden ? lastNonHiddenPos.current : layoutConfig.activityBarPosition}
               onValueChange={(v) => handleActivityBarPosition(v as ActivityBarPosition)}
               disabled={abHidden}
-              aria-label="Activity Bar position"
+              aria-label="Activity bar position"
             >
               {(["left", "right", "top"] as ActivityBarPosition[]).map((pos) => (
                 <label
@@ -241,15 +241,15 @@ export function CustomizeLayoutDialog() {
           </div>
         </div>
 
-        {/* Status Bar */}
+        {/* Status bar */}
         <div className="customize-layout-dialog__section">
-          <span className="customize-layout-dialog__section-title">Status Bar</span>
+          <span className="customize-layout-dialog__section-title">Status bar</span>
           <div className="customize-layout-dialog__control-row">
             <label className="customize-layout-dialog__label">
               <Checkbox
                 checked={layoutConfig.statusBarVisible}
                 onCheckedChange={handleStatusBarVisible}
-                aria-label="Status Bar visible"
+                aria-label="Status bar visible"
                 data-testid="layout-statusbar-visible"
               />
               <span>Visible</span>
@@ -257,9 +257,9 @@ export function CustomizeLayoutDialog() {
           </div>
         </div>
 
-        {/* Layout Preview */}
+        {/* Layout preview */}
         <div className="customize-layout-dialog__section">
-          <span className="customize-layout-dialog__section-title">Layout Preview</span>
+          <span className="customize-layout-dialog__section-title">Layout preview</span>
           <LayoutPreview layout={layoutConfig} />
         </div>
       </div>

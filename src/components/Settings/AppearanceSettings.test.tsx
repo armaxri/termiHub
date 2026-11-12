@@ -102,45 +102,45 @@ describe("AppearanceSettings — numeric fields", () => {
 
   it("renders font size and line height through the shared NumberInput primitive (#1453)", () => {
     renderWith(defaultSettings);
-    expect(fieldInput("Font Size").classList.contains("ui-input")).toBe(true);
-    expect(fieldInput("Font Size").type).toBe("number");
-    expect(fieldInput("Line Height").classList.contains("ui-input")).toBe(true);
-    expect(fieldInput("Line Height").type).toBe("number");
+    expect(fieldInput("Font size").classList.contains("ui-input")).toBe(true);
+    expect(fieldInput("Font size").type).toBe("number");
+    expect(fieldInput("Line height").classList.contains("ui-input")).toBe(true);
+    expect(fieldInput("Line height").type).toBe("number");
   });
 
   it("shows a blank font size and line height when unset (#1453)", () => {
     renderWith(defaultSettings);
-    expect(fieldInput("Font Size").value).toBe("");
-    expect(fieldInput("Line Height").value).toBe("");
+    expect(fieldInput("Font size").value).toBe("");
+    expect(fieldInput("Line height").value).toBe("");
   });
 
   it("reflects the configured font size and line height", () => {
     renderWith({ ...defaultSettings, fontSize: 18, lineHeight: 1.4 });
-    expect(fieldInput("Font Size").value).toBe("18");
-    expect(fieldInput("Line Height").value).toBe("1.4");
+    expect(fieldInput("Font size").value).toBe("18");
+    expect(fieldInput("Line height").value).toBe("1.4");
   });
 
   it("editing the font size emits the parsed number (#1453)", () => {
     const onChange = renderWith(defaultSettings);
-    setValue(fieldInput("Font Size"), "20");
+    setValue(fieldInput("Font size"), "20");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 20 }));
   });
 
   it("editing the line height emits the parsed float (#1453)", () => {
     const onChange = renderWith(defaultSettings);
-    setValue(fieldInput("Line Height"), "1.2");
+    setValue(fieldInput("Line height"), "1.2");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ lineHeight: 1.2 }));
   });
 
   it("clearing the font size emits undefined instead of coercing (#1453)", () => {
     const onChange = renderWith({ ...defaultSettings, fontSize: 16 });
-    setValue(fieldInput("Font Size"), "");
+    setValue(fieldInput("Font size"), "");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: undefined }));
   });
 
   it("clearing the line height emits undefined instead of coercing (#1453)", () => {
     const onChange = renderWith({ ...defaultSettings, lineHeight: 1.5 });
-    setValue(fieldInput("Line Height"), "");
+    setValue(fieldInput("Line height"), "");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ lineHeight: undefined }));
   });
 });
@@ -180,7 +180,7 @@ describe("AppearanceSettings — custom themes", () => {
     expect((byId("appearance-theme-delete") as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("opens the theme editor when New Theme is clicked", () => {
+  it("opens the theme editor when New theme is clicked", () => {
     renderWith(defaultSettings);
     act(() => (byId("appearance-theme-new") as HTMLButtonElement).click());
     expect(byId("theme-editor")).toBeTruthy();

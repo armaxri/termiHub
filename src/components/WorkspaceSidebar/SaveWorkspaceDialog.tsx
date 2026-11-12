@@ -39,7 +39,7 @@ export function SaveWorkspaceDialog({
     <Modal
       open
       onOpenChange={(isOpen) => !isOpen && onCancel()}
-      title="Save Current Layout as Workspace"
+      title="Save current layout as workspace"
       data-testid="save-workspace-dialog"
       footer={
         <>

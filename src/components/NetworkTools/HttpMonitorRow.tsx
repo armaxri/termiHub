@@ -81,13 +81,13 @@ export function HttpMonitorRow({
           />
         </Tooltip>
       )}
-      <Tooltip content="Remove" side="left">
+      <Tooltip content="Delete" side="left">
         <Button
           variant="ghost"
           size="sm"
           icon={<Trash2 size={13} />}
           onClick={() => onRemove(id)}
-          aria-label={`Remove monitor ${m.config.url}`}
+          aria-label={`Delete monitor ${m.config.url}`}
           data-testid={`monitor-remove-${id}`}
         />
       </Tooltip>

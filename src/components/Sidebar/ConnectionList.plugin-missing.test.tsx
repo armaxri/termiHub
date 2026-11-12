@@ -157,7 +157,7 @@ describe("ConnectionList — missing-plugin marker", () => {
     useAppStore.setState({ plugins: [], pluginsLoaded: true, setSidebarView });
     await render([conn("kube", "plugin:acme:k8s")]);
     const item = openMenu("kube");
-    expect(item?.textContent).toContain("Install Plugin 'acme'");
+    expect(item?.textContent).toContain("Install plugin 'acme'");
     act(() => item!.click());
     expect(setSidebarView).toHaveBeenCalledWith("plugins");
   });
@@ -171,7 +171,7 @@ describe("ConnectionList — missing-plugin marker", () => {
     });
     await render([conn("kube", "plugin:acme:k8s")]);
     const item = openMenu("kube");
-    expect(item?.textContent).toContain("Manage Plugin 'Acme K8s'");
+    expect(item?.textContent).toContain("Manage plugin 'Acme K8s'");
     act(() => item!.click());
     expect(selectPlugin).toHaveBeenCalledWith("acme");
   });

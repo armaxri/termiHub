@@ -212,7 +212,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   return (
     <form className="network-panel" data-testid="port-scanner-panel">
       <div className="network-panel__header">
-        <span className="network-panel__title">Port Scanner</span>
+        <span className="network-panel__title">Port scanner</span>
         <div className="network-panel__actions">
           <Button
             variant="secondary"

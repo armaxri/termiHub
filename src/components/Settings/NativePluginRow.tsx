@@ -66,10 +66,10 @@ export interface NativePluginRowProps {
 }
 
 /**
- * One row of Settings → Plugins → Native Plugins (concept
+ * One row of Settings → Plugins → Native plugins (concept
  * `plugin-os-sandbox.html`, "UI Interface"): name, trust state, the sandbox
  * status (isolation badge, process status, access chips) and the actions the
- * state allows — Trust & Load, Load with reduced isolation…, Restart /
+ * state allows — Trust & load, Load with reduced isolation…, Restart /
  * Re-enable and Revoke. Reduced isolation is a recorded, hash-bound choice
  * made in a confirmation dialog that names the missing layer.
  */
@@ -135,7 +135,7 @@ export function NativePluginRow({
         ? "Permissions changed — review"
         : ack?.state === "libraryChanged"
           ? "Trust new build"
-          : "Trust & Load"}
+          : "Trust & load"}
     </Button>
   );
   const reducedAction = isTrusted && badge?.kind === "unavailable" && (
@@ -263,7 +263,7 @@ export function NativePluginRow({
             : "What you approved earlier no longer matches this plugin. ") +
           "Trusting it again lets it use:"
         }
-        confirmLabel="Trust & Load"
+        confirmLabel="Trust & load"
         confirmVariant="primary"
         confirmIcon={<ShieldCheck size={14} />}
         confirmErrorToast={false}

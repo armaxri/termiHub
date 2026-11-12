@@ -118,7 +118,7 @@ export function OpenPortsPanel() {
 
   const columns = [
     { key: "protocol", label: "Proto" },
-    { key: "localAddr", label: "Local Address" },
+    { key: "localAddr", label: "Local address" },
     { key: "pid", label: "PID" },
     { key: "process", label: "Process" },
   ];
@@ -133,7 +133,7 @@ export function OpenPortsPanel() {
   return (
     <div className="network-panel" data-testid="open-ports-panel">
       <div className="network-panel__header">
-        <span className="network-panel__title">Open Ports</span>
+        <span className="network-panel__title">Open ports</span>
         <div className="network-panel__actions">
           <Button
             variant="primary"

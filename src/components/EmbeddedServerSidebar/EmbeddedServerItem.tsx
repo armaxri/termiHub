@@ -355,7 +355,7 @@ export function EmbeddedServerItem({
           onSelect={() => setShowActivity((v) => !v)}
           data-testid={`ctx-activity-${config.id}`}
         >
-          <Activity size={14} /> {showActivity ? "Hide Activity" : "Show Activity"}
+          <Activity size={14} /> {showActivity ? "Hide activity" : "Show activity"}
         </MenuItem>
         <MenuSeparator />
         <MenuItem onSelect={handleCopyUrl} data-testid={`ctx-copy-url-${config.id}`}>
@@ -363,7 +363,7 @@ export function EmbeddedServerItem({
         </MenuItem>
         {config.serverType === "http" && (
           <MenuItem onSelect={handleOpenBrowser} data-testid={`ctx-open-browser-${config.id}`}>
-            <ExternalLink size={14} /> Open in Browser
+            <ExternalLink size={14} /> Open in browser
           </MenuItem>
         )}
         <MenuSeparator />

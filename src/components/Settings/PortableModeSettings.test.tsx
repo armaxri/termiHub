@@ -267,7 +267,7 @@ describe("PortableModeSettings", () => {
 
       expect(m.listConfigFiles).toHaveBeenCalledWith("/media/usb/termihub/data");
       const dialog = q('[data-testid="migration-dialog"]')!;
-      expect(dialog.textContent).toContain("Export Config to Portable");
+      expect(dialog.textContent).toContain("Export config to portable");
       expect(dialog.textContent).toContain("/media/usb/termihub/data");
       expect(fileCheckbox("settings.json").disabled).toBe(true);
 
@@ -430,7 +430,7 @@ describe("PortableModeSettings", () => {
       await clickTestId("import-config-btn");
 
       expect(q('[data-testid="migration-dialog"]')!.textContent).toContain(
-        "Import Config from Portable"
+        "Import config from portable"
       );
       await clickTestId("migration-confirm");
 

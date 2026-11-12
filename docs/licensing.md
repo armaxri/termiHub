@@ -85,7 +85,7 @@ redistribution obligation. termiHub's own MIT terms are unaffected.
 - [ ] The winget install command in `THIRD_PARTY_LICENSES.md` matches
       `WINGET_INSTALL_VCXSRV_COMMAND` in
       `src-tauri/src/terminal/xserver/types.rs`.
-- [ ] The in-app **About → Third-Party Licenses** viewer shows the bundled
+- [ ] The in-app **About → Third-party licenses** viewer shows the bundled
       `THIRD_PARTY_NOTICES.txt` (it includes this attribution index).
 - [ ] The process-boundary rationale (this document) is current.
 - [ ] **Counsel has confirmed** the arm's-length stance (installing via a package
@@ -121,7 +121,7 @@ flowchart LR
     CA --> GEN["scripts/internal/<br/>third-party-notices.mjs"]
     PN --> GEN
     GEN --> N["THIRD_PARTY_NOTICES.txt"]
-    N --> APP["every installer<br/>(About → Third-Party Licenses)"]
+    N --> APP["every installer<br/>(About → Third-party licenses)"]
     N --> REL["release asset next to<br/>the agent binaries"]
 ```
 

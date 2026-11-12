@@ -75,7 +75,7 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
   return (
     <div className="settings-panel__section" data-testid="settings-serial-port-prefixes">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">Serial Port Scan Prefixes</h3>
+        <h3 className="settings-panel__section-title">Serial port scan prefixes</h3>
         <span className="settings-panel__section-badge">
           {enabledCount} / {prefixes.length} enabled
         </span>

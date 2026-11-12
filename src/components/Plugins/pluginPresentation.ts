@@ -110,7 +110,7 @@ export interface ExtensionPointInfo {
   /** Stable key for React lists. */
   key: string;
   icon: LucideIcon;
-  /** The extension-point kind, e.g. "Terminal Backend". */
+  /** The extension-point kind, e.g. "Terminal backend". */
   label: string;
   /** Optional specifics (connection type, parser name, theme count). */
   detail?: string;
@@ -127,7 +127,7 @@ export function extensionPoints(extensions: PluginExtensions): ExtensionPointInf
     points.push({
       key: "terminalBackend",
       icon: Network,
-      label: "Terminal Backend",
+      label: "Terminal backend",
       detail: extensions.terminalBackend.connectionType,
     });
   }
@@ -135,7 +135,7 @@ export function extensionPoints(extensions: PluginExtensions): ExtensionPointInf
     points.push({
       key: "protocolParser",
       icon: SlidersHorizontal,
-      label: "Protocol Parser",
+      label: "Protocol parser",
       detail: extensions.protocolParser.name,
     });
   }
@@ -152,7 +152,7 @@ export function extensionPoints(extensions: PluginExtensions): ExtensionPointInf
     points.push({
       key: "statusBarWidget",
       icon: LayoutDashboard,
-      label: "Status Bar Widget",
+      label: "Status bar widget",
       detail: extensions.statusBarWidget.position,
     });
   }

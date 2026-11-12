@@ -113,7 +113,7 @@ export function ExternalFilesSettings() {
     <div className="settings-panel__category" data-testid="settings-external-files">
       <div className="settings-panel__section">
         <div className="settings-panel__section-header">
-          <h3 className="settings-panel__section-title">External Connection Files</h3>
+          <h3 className="settings-panel__section-title">External connection files</h3>
           <div className="settings-panel__section-actions">
             <Button
               variant="secondary"
@@ -137,7 +137,7 @@ export function ExternalFilesSettings() {
               onClick={() => setShowCreatePrompt((v) => !v)}
               title="Create a new external connection file from your current connections"
             >
-              Create File
+              Create file
             </Button>
             <Button
               variant="primary"
@@ -147,7 +147,7 @@ export function ExternalFilesSettings() {
               title="Add external connection file"
               data-testid="external-files-add"
             >
-              Add File
+              Add file
             </Button>
           </div>
         </div>
@@ -170,6 +170,9 @@ export function ExternalFilesSettings() {
               placeholder="e.g. Test Farm Connections"
               autoFocus
             />
+            <Button variant="secondary" size="sm" onClick={() => setShowCreatePrompt(false)}>
+              Cancel
+            </Button>
             <Button
               variant="primary"
               size="sm"
@@ -177,9 +180,6 @@ export function ExternalFilesSettings() {
               disabled={!createName.trim()}
             >
               Save
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => setShowCreatePrompt(false)}>
-              Cancel
             </Button>
           </div>
         )}
@@ -225,7 +225,7 @@ export function ExternalFilesSettings() {
           their SSH settings. Disabling a default disconnects active sessions that use the default.
         </p>
         <SettingsField
-          label="Power Monitoring"
+          label="Power monitoring"
           hint="Monitor CPU, memory, and power events via SSH agent connections."
         >
           <Toggle
@@ -241,7 +241,7 @@ export function ExternalFilesSettings() {
         </SettingsField>
 
         <SettingsField
-          label="File Browser"
+          label="File browser"
           hint="Enable the SFTP file browser for SSH agent sessions."
         >
           <Toggle

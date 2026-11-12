@@ -117,4 +117,4 @@ class TestNetworkTools(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
         self.driver.click("network-quick-action-dns-lookup")
         self.wait(lambda: self.driver.exists("dns-lookup-panel"), what="the DNS panel")
         assert self.find_tab("Ping") is not None
-        assert self.find_tab("DNS Lookup") is not None
+        assert self.find_tab("DNS lookup") is not None

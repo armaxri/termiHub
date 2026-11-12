@@ -186,36 +186,36 @@ function LayoutNodePreview({
         </span>
         <div className="layout-split-container__actions">
           {hasSizes && (
-            <Tooltip content="Reset to Equal" side="top">
+            <Tooltip content="Reset to equal" side="top">
               <Button
                 variant="secondary"
                 size="xs"
                 iconOnly
                 icon={<RotateCcw size={10} />}
                 onClick={() => onUpdateSizes(node, null)}
-                aria-label="Reset to Equal"
+                aria-label="Reset to equal"
                 data-testid="layout-size-reset"
               />
             </Tooltip>
           )}
-          <Tooltip content="Split Horizontal" side="top">
+          <Tooltip content="Split horizontal" side="top">
             <Button
               variant="secondary"
               size="xs"
               iconOnly
               icon={<SplitSquareHorizontal size={10} />}
               onClick={() => onSplitContainer(node, "horizontal")}
-              aria-label="Split Horizontal"
+              aria-label="Split horizontal"
             />
           </Tooltip>
-          <Tooltip content="Split Vertical" side="top">
+          <Tooltip content="Split vertical" side="top">
             <Button
               variant="secondary"
               size="xs"
               iconOnly
               icon={<SplitSquareVertical size={10} />}
               onClick={() => onSplitContainer(node, "vertical")}
-              aria-label="Split Vertical"
+              aria-label="Split vertical"
             />
           </Tooltip>
         </div>
@@ -368,7 +368,7 @@ function LeafPanel({
     <div className={className} onClick={onSelect} data-testid={`layout-leaf-${idx}`}>
       <div className="layout-leaf__header">
         <div className="layout-leaf__actions">
-          <Tooltip content="Split Horizontal" side="top">
+          <Tooltip content="Split horizontal" side="top">
             <Button
               variant="secondary"
               size="xs"
@@ -378,11 +378,11 @@ function LeafPanel({
                 e.stopPropagation();
                 onSplitH();
               }}
-              aria-label="Split Horizontal"
+              aria-label="Split horizontal"
               data-testid={`layout-leaf-split-h-${idx}`}
             />
           </Tooltip>
-          <Tooltip content="Split Vertical" side="top">
+          <Tooltip content="Split vertical" side="top">
             <Button
               variant="secondary"
               size="xs"
@@ -392,11 +392,11 @@ function LeafPanel({
                 e.stopPropagation();
                 onSplitV();
               }}
-              aria-label="Split Vertical"
+              aria-label="Split vertical"
               data-testid={`layout-leaf-split-v-${idx}`}
             />
           </Tooltip>
-          <Tooltip content="Add Connection" side="top">
+          <Tooltip content="Add connection" side="top">
             <Button
               variant="secondary"
               size="xs"
@@ -406,20 +406,20 @@ function LeafPanel({
                 e.stopPropagation();
                 onAddTab();
               }}
-              aria-label="Add Connection"
+              aria-label="Add connection"
               data-testid={`layout-leaf-add-tab-${idx}`}
             />
           </Tooltip>
         </div>
         {leafCount > 1 && (
-          <Tooltip content="Remove Panel" side="top">
+          <Tooltip content="Remove panel" side="top">
             <button
               className="layout-leaf__remove"
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove();
               }}
-              aria-label="Remove Panel"
+              aria-label="Remove panel"
               data-testid={`layout-remove-leaf-${idx}`}
             >
               <X size={10} />
@@ -438,16 +438,16 @@ function LeafPanel({
           node.tabs.map((tab, tabIdx) => (
             <div key={tabIdx} className="layout-tab">
               <span className="layout-tab__name">
-                {tab.title ?? tab.connectionRef ?? "Inline Connection"}
+                {tab.title ?? tab.connectionRef ?? "Inline connection"}
               </span>
-              <Tooltip content="Remove Tab" side="top">
+              <Tooltip content="Remove tab" side="top">
                 <button
                   className="layout-tab__remove"
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemoveTab(tabIdx);
                   }}
-                  aria-label="Remove Tab"
+                  aria-label="Remove tab"
                   data-testid={`layout-remove-tab-${idx}-${tabIdx}`}
                 >
                   <X size={10} />

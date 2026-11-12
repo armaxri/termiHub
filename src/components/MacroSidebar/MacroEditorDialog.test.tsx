@@ -275,9 +275,9 @@ describe("MacroEditorDialog", () => {
   });
 
   describe("authoring a new macro (macro = null)", () => {
-    it("opens blank titled New Macro with one empty step and Save disabled", () => {
+    it("opens blank titled New macro with one empty step and Save disabled", () => {
       render({ macro: null });
-      expect(document.body.textContent).toContain("New Macro");
+      expect(document.body.textContent).toContain("New macro");
       expect((query("macro-editor-name") as HTMLInputElement).value).toBe("");
       expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("");
       expect(query("macro-editor-step-1")).toBeNull();

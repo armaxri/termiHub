@@ -302,7 +302,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
       open={open}
       onOpenChange={onOpenChange}
       dirty={isDirty}
-      title={isNew ? "New Macro" : "Edit Macro"}
+      title={isNew ? "New macro" : "Edit macro"}
       description={
         isNew
           ? "Author a macro by hand: name it and type the input each step sends"
@@ -388,7 +388,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
           onClick={addStep}
           data-testid="macro-editor-add-step"
         >
-          Add Step
+          Add step
         </Button>
       </div>
       <p className="macro-editor__hint" data-testid="macro-editor-escape-hint">

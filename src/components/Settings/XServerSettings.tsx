@@ -24,11 +24,11 @@ export function XServerSettings({ settings, onChange, visibleFields }: XServerSe
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">X Server</h3>
+      <h3 className="settings-panel__category-title">X server</h3>
 
       {show("provideXServerAutomatically") && (
         <SettingsField
-          label="Provide X Server Automatically"
+          label="Provide X server automatically"
           hint="Windows: download & run VcXsrv automatically. macOS/Linux: use the detected/guided server."
         >
           <Toggle
@@ -43,7 +43,7 @@ export function XServerSettings({ settings, onChange, visibleFields }: XServerSe
 
       {show("stopXServerWhenIdle") && (
         <SettingsField
-          label="Stop X Server When Idle"
+          label="Stop X server when idle"
           hint="Shut the managed X server down once no connection is using it."
         >
           <Toggle

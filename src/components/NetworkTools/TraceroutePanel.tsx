@@ -173,7 +173,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
         </Field>
         <Field
           className="network-panel__field network-panel__field--small"
-          label="Max Hops"
+          label="Max hops"
           htmlFor="traceroute-max-hops"
           error={maxHopsError ?? undefined}
         >

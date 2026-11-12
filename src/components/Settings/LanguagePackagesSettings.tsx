@@ -100,7 +100,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
     <div className="settings-panel__category" data-testid="language-packages-settings">
       {show("installedLanguagePackages") && (
         <>
-          <h3 className="settings-panel__category-title">Language Packages</h3>
+          <h3 className="settings-panel__category-title">Language packages</h3>
 
           {/* Installed packages */}
           <div className="settings-panel__section">
@@ -179,12 +179,12 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
           {/* Package browser */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Available Packages</h3>
+              <h3 className="settings-panel__section-title">Available packages</h3>
             </div>
             <p className="settings-panel__description">
               {ALL_LANGUAGE_PACKAGES.length} language packages from Shiki's TextMate grammar library
               (the same grammars used by VS Code). Installed packages are active immediately; the
-              language ID can be used in File Type Mappings.
+              language ID can be used in File type mappings.
             </p>
 
             <div className="settings-panel__create-prompt">

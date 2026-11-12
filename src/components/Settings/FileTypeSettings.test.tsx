@@ -158,12 +158,12 @@ describe("FileTypeSettings", () => {
     expect(query("file-type-remove-Jenkinsfile")).toBeNull();
   });
 
-  it("shows Reset All button when custom mappings exist", async () => {
+  it("shows Reset all button when custom mappings exist", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
     await render();
 
     const resetBtn = Array.from(container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Reset All")
+      b.textContent?.includes("Reset all")
     );
     expect(resetBtn).not.toBeUndefined();
   });
@@ -213,7 +213,7 @@ describe("FileTypeSettings", () => {
 
   it("shows the built-in defaults reference section", async () => {
     await render();
-    expect(container.textContent).toContain("Built-in Defaults");
+    expect(container.textContent).toContain("Built-in defaults");
     expect(container.textContent).toContain("Dockerfile");
     expect(container.textContent).toContain("dockerfile");
   });

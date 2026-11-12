@@ -36,7 +36,7 @@ export function HttpMonitorChecks({ history, intervalMs, onExport }: HttpMonitor
   return (
     <>
       <div className="network-panel__chart-section" data-testid="http-monitor-chart">
-        <span className="network-panel__chart-title">Response Time</span>
+        <span className="network-panel__chart-title">Response time</span>
         <LatencyChart points={latencyPoints} intervalMs={intervalMs} />
       </div>
       <div className="network-panel__stats">
@@ -55,7 +55,7 @@ export function HttpMonitorChecks({ history, intervalMs, onExport }: HttpMonitor
       </div>
 
       <div className="network-panel__section-title network-panel__section-title--with-action">
-        <span>Recent Checks</span>
+        <span>Recent checks</span>
         <Button
           variant="secondary"
           size="sm"

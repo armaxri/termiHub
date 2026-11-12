@@ -219,10 +219,10 @@ describe("AgentSetupDialog control names (UISF2-010, #4351)", () => {
     vi.clearAllMocks();
   });
 
-  it("names the install path input by its 'Remote Install Path' label", async () => {
+  it("names the install path input by its 'Remote install path' label", async () => {
     detectAgentArch.mockResolvedValue(makeArchInfo());
     await renderAndDetect(makeAgent());
-    expect(getByRole("textbox", "Remote Install Path")).toBe(
+    expect(getByRole("textbox", "Remote install path")).toBe(
       document.querySelector('[data-testid="agent-setup-remote-path"]')
     );
   });
@@ -230,7 +230,7 @@ describe("AgentSetupDialog control names (UISF2-010, #4351)", () => {
   it("names the binary source radio group by its visible heading", async () => {
     detectAgentArch.mockResolvedValue(makeArchInfo());
     await renderAndDetect(makeAgent());
-    expect(getByRole("radiogroup", "Binary Source")).not.toBeNull();
+    expect(getByRole("radiogroup", "Binary source")).not.toBeNull();
   });
 
   it("leaves no <label> in the dialog that labels nothing", async () => {

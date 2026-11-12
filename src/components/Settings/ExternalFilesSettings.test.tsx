@@ -65,14 +65,14 @@ describe("ExternalFilesSettings", () => {
     expect(add?.tagName).toBe("BUTTON");
     expect(add?.className).toContain("ui-btn--primary");
     expect(buttonByText("Reload")).not.toBeNull();
-    expect(buttonByText("Create File")).not.toBeNull();
+    expect(buttonByText("Create file")).not.toBeNull();
   });
 
-  it("toggles the create-file prompt when 'Create File' is clicked", () => {
+  it("toggles the create-file prompt when 'Create file' is clicked", () => {
     render();
     expect(container.querySelector(".settings-panel__create-prompt")).toBeNull();
     act(() => {
-      buttonByText("Create File")?.click();
+      buttonByText("Create file")?.click();
     });
     expect(container.querySelector(".settings-panel__create-prompt")).not.toBeNull();
     // Save + Cancel are now shared Button primitives.
@@ -83,7 +83,7 @@ describe("ExternalFilesSettings", () => {
   it("hides the create-file prompt when Cancel is clicked", () => {
     render();
     act(() => {
-      buttonByText("Create File")?.click();
+      buttonByText("Create file")?.click();
     });
     act(() => {
       buttonByText("Cancel")?.click();
@@ -105,13 +105,13 @@ describe("ExternalFilesSettings", () => {
     const children = Array.from(header?.children ?? []);
     expect(children).toHaveLength(2);
     expect(children[0].tagName).toBe("H3");
-    expect(children[0].textContent).toBe("External Connection Files");
+    expect(children[0].textContent).toBe("External connection files");
     expect(children[1].classList.contains("settings-panel__section-actions")).toBe(true);
     const actions = children[1];
     // Every header control, including the primary Add button, lives in that group.
     expect(actions.contains(query("external-files-add"))).toBe(true);
     expect(actions.contains(buttonByText("Reload"))).toBe(true);
-    expect(actions.contains(buttonByText("Create File"))).toBe(true);
+    expect(actions.contains(buttonByText("Create file"))).toBe(true);
   });
 });
 

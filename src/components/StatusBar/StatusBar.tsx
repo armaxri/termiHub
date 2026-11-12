@@ -140,7 +140,7 @@ export function StatusBar() {
   const indentLabel = editorStatus
     ? editorStatus.insertSpaces
       ? `Spaces: ${editorStatus.tabSize}`
-      : `Tab Size: ${editorStatus.tabSize}`
+      : `Tab size: ${editorStatus.tabSize}`
     : "";
 
   return (
@@ -190,7 +190,7 @@ export function StatusBar() {
                 </DropdownMenuTrigger>
               </Tooltip>
               <DropdownMenuContent side="top" align="start" sideOffset={4}>
-                <MenuLabel>Indent Using Spaces</MenuLabel>
+                <MenuLabel>Indent using spaces</MenuLabel>
                 {INDENT_SIZES.map((size) => (
                   <MenuItem
                     key={`spaces-${size}`}
@@ -201,14 +201,14 @@ export function StatusBar() {
                   </MenuItem>
                 ))}
                 <MenuSeparator />
-                <MenuLabel>Indent Using Tabs</MenuLabel>
+                <MenuLabel>Indent using tabs</MenuLabel>
                 {INDENT_SIZES.map((size) => (
                   <MenuItem
                     key={`tabs-${size}`}
                     onSelect={() => editorActions?.setIndent(size, false)}
                     data-testid={`indent-tabs-${size}`}
                   >
-                    Tab Size: {size}
+                    Tab size: {size}
                   </MenuItem>
                 ))}
               </DropdownMenuContent>
@@ -740,7 +740,7 @@ function MonitoringStatus() {
     if (!activeMonitorKey) return;
     try {
       await cancelMonitoring(activeMonitorKey);
-      toast.success("Monitoring connect cancelled");
+      toast.success("Monitoring connect canceled");
     } catch (err) {
       frontendLog("monitoring", `Failed to cancel monitoring: ${errorMessage(err)}`);
       toast.error(`Failed to cancel: ${errorMessage(err)}`);

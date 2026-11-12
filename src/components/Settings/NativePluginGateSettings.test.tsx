@@ -486,11 +486,11 @@ describe("NativePluginGateSettings", () => {
       mockPlugins = [plugin("echo", "Echo", true)];
     });
 
-    it("titles the section Native Plugins without an Advanced framing", async () => {
+    it("titles the section Native plugins without an Advanced framing", async () => {
       withStatus({ isolation: "full", enforced: ["seatbelt"] });
       await renderFlushed();
       const section = query("settings-native-plugin-gate")!;
-      expect(section.querySelector("h3")!.textContent).toBe(" Native Plugins");
+      expect(section.querySelector("h3")!.textContent).toBe(" Native plugins");
       expect(query("native-plugin-disclosure")!.textContent).toContain("sandboxed process");
     });
 

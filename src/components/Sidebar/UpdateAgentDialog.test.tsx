@@ -131,11 +131,11 @@ describe("UpdateAgentDialog", () => {
     expect(warning?.textContent).not.toMatch(/cut|disconnect notice/i);
   });
 
-  it("offers Notify Others & Update only when the coordinated strategy sends a notice", () => {
+  it("offers Notify others and update only when the coordinated strategy sends a notice", () => {
     const coordinated = { ...CONFIG, updateStrategy: "coordinated" } as RemoteAgentConfig;
     render(<UpdateAgentDialog {...baseProps()} config={coordinated} otherHosts={HOSTS} />);
     const confirm = document.querySelector('[data-testid="update-agent-confirm"]');
-    expect(confirm?.textContent).toContain("Notify Others & Update");
+    expect(confirm?.textContent).toContain("Notify others and update");
   });
 
   it("offers a plain Update with other hosts when no notice is sent (immediate strategy)", () => {

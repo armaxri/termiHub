@@ -84,7 +84,7 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
 
   return (
     <div className="settings-panel__section" data-testid="credential-vault-backup">
-      <h3 className="settings-panel__section-title">Credential Vault Backup</h3>
+      <h3 className="settings-panel__section-title">Credential vault backup</h3>
       <p className="settings-panel__description">
         Export your saved credentials to a passphrase-protected, encrypted file to back them up or
         move them to another machine, and import such a file into your current store.

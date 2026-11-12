@@ -320,7 +320,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
 
       {results.length > 0 && (
         <div className="network-panel__chart-section" data-testid="ping-chart">
-          <span className="network-panel__chart-title">Latency Graph</span>
+          <span className="network-panel__chart-title">Latency graph</span>
           <LatencyChart
             points={latencyPoints}
             intervalMs={intervalMs === "" ? undefined : intervalMs}

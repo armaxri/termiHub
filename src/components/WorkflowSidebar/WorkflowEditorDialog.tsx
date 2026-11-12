@@ -259,7 +259,7 @@ export function WorkflowEditorDialog({
       open={open}
       onOpenChange={onOpenChange}
       dirty={isDirty}
-      title={isNew ? "New Workflow" : "Edit Workflow"}
+      title={isNew ? "New workflow" : "Edit workflow"}
       description="Author an ordered list of typed steps and bind its triggers"
       size="lg"
       data-testid="workflow-editor-dialog"

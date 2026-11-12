@@ -147,7 +147,7 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
         if (!next) onCancel();
       }}
       dirty={isDirty}
-      title="Theme Editor"
+      title="Theme editor"
       data-testid="theme-editor-dialog"
       footer={
         <>
@@ -163,7 +163,7 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
             disabled={!canSave}
             data-testid="theme-editor-save"
           >
-            Save Theme
+            Save theme
           </Button>
         </>
       }

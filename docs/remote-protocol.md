@@ -429,7 +429,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 **0.33.0 (additive, minor)** — saved connection definitions carry an optional **icon colour** and **emoji** (#5021): [`connections.create`](#connectionscreate) takes `icon_color` / `icon_emoji`, [`connections.update`](#connectionsupdate) takes them as tri-state patches (explicit `null` clears, omitted leaves unchanged), and [`connections.list`](#connectionslist) and the create / update results report them when set. The agent stores both opaquely (a palette name or `#rrggbb`, and a single emoji, validated by the desktop) and leaves them out of `connections.json` when unset, so the keys need no store schema step of their own (the store version is unchanged by this release); an agent that loads a file carrying them without knowing them keeps them as unknown fields. The `initialize` result gains `capabilities.definitionIconStyle: true`. Negotiation is by **capability**: an older agent ignores the unknown keys and would silently drop the choice, so the desktop shows the icon colour / emoji controls only for an agent that advertises the flag. An older desktop never sends the keys. The desktop still requests `0.24.0`.
 
-**0.32.0 (additive, minor)** — adds [`agent.logs.list`](#agentlogslist) and [`agent.logs.read`](#agentlogsread) (#4519): a connected desktop pulls the agent's own per-process log files (`<config-dir>/logs/termihub-agent-<role>-<pid>.log`, their rotated archives, and the capped `termihub-agent-stderr-….log` captures of detached daemons, #4319) into its **Export Diagnostics** bundle, so a support case no longer needs shell access to the agent host. Read-only, confined to the agent's fixed log directory, redacted on the agent and again on the desktop, and size-capped per file and per export. No capability flag: an older agent answers `-32601` Method not found, which the desktop reports as "this agent version cannot share its log files" and skips. The desktop still requests `0.24.0`.
+**0.32.0 (additive, minor)** — adds [`agent.logs.list`](#agentlogslist) and [`agent.logs.read`](#agentlogsread) (#4519): a connected desktop pulls the agent's own per-process log files (`<config-dir>/logs/termihub-agent-<role>-<pid>.log`, their rotated archives, and the capped `termihub-agent-stderr-….log` captures of detached daemons, #4319) into its **Export diagnostics** bundle, so a support case no longer needs shell access to the agent host. Read-only, confined to the agent's fixed log directory, redacted on the agent and again on the desktop, and size-capped per file and per export. No capability flag: an older agent answers `-32601` Method not found, which the desktop reports as "this agent version cannot share its log files" and skips. The desktop still requests `0.24.0`.
 
 **0.31.0 (additive, minor)** — network tool results carry **fractional** milliseconds (#4542): `latencyMs` in a `ping` / `port_scan` / `ping_sweep` `result` event is now a number with microsecond precision (`0.42`) rather than a whole number, so a sub-millisecond LAN reply no longer reads `0`. The `initialize` **params** gain `clientCapabilities.fractionalLatency`. Negotiation is by **capability** from the desktop side, like `keyboardInteractivePrompts`: an older desktop parses `latencyMs` as an unsigned integer and would reject `0.42`, so the agent rounds every streamed (`tool.event`) and collected (`tool.run`) `latencyMs` to the nearest whole millisecond unless the desktop sent `fractionalLatency: true`. An older agent ignores the member and always sends whole milliseconds, which the desktop reads as the same number. The aggregate `PingStats` (`minMs`, `avgMs`, …) and traceroute `rttMs` were already fractional and are unchanged. The desktop still requests `0.24.0`.
 
@@ -1462,7 +1462,7 @@ Primary consumer is the **connected-host update guard**: before updating an agen
 ### `agent.crash_reports.list`
 
 List the agent's own local crash reports (OBS-010 follow-up, #3574) so a connected desktop can
-offer them in its **Export Diagnostics** bundle. Read-only, takes no parameters, and only ever
+offer them in its **Export diagnostics** bundle. Read-only, takes no parameters, and only ever
 looks at the agent's fixed crash-report directory (`<config-dir>/logs/crash-reports/`, written by
 the agent panic hook — see ADR-16 in `docs/architecture.md`). Added append-only without a
 protocol bump: an older agent answers `-32601` Method not found, which the desktop treats as
@@ -1571,7 +1571,7 @@ own redactor before writing it into the bundle.
 ### `agent.logs.list`
 
 List the agent's own log files (#4519, protocol 0.32.0) so a connected desktop can offer them in
-its **Export Diagnostics** bundle. Mirrors [`agent.crash_reports.list`](#agentcrash_reportslist):
+its **Export diagnostics** bundle. Mirrors [`agent.crash_reports.list`](#agentcrash_reportslist):
 read-only, takes no parameters, and only ever looks at the agent's fixed log directory
 (`<config-dir>/logs/`). Only the agent log family is listed — `termihub-agent.log`,
 `termihub-agent-<role>-<pid>.log`, their rotated archives (`….N.log`) and the detached daemons'
@@ -1940,7 +1940,7 @@ ambiguous) build-version record. A debug agent tolerates an _unknown_ version wi
 
 ### `agent.request_deferred_update`
 
-Request a **deferred agent update** (#1352). The agent records a pending update in `state.json` and applies it **only** when it has zero active sessions — so active sessions are never interrupted. When the agent is already idle it applies immediately (this is the "Apply Now" path); otherwise the update is deferred until the last session disconnects (the agent also emits an `agent.update_available` notification when it stages a self-update, which drives the desktop's "Apply Now" banner).
+Request a **deferred agent update** (#1352). The agent records a pending update in `state.json` and applies it **only** when it has zero active sessions — so active sessions are never interrupted. When the agent is already idle it applies immediately (this is the "Apply now" path); otherwise the update is deferred until the last session disconnects (the agent also emits an `agent.update_available` notification when it stages a self-update, which drives the desktop's "Apply now" banner).
 
 Applying swaps the on-disk agent binary with the staged one and re-execs it (Unix only). The detached-daemon model means persistent sessions survive the swap and are recovered on the next connect, which reports the new version. Because the agent re-execs on a successful immediate apply, the current connection is torn down — the desktop should treat a subsequent disconnect as expected and reconnect.
 

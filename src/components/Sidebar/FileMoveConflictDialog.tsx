@@ -11,7 +11,7 @@ interface FileMoveConflictDialogProps {
   /** Proceed, replacing the conflicting names. */
   onConfirm: () => void | Promise<void>;
   /**
-   * Write the pending upload under its free name instead ("Keep Both",
+   * Write the pending upload under its free name instead ("Keep both",
    * #5157). Only offered when the pending request carries a `keepBothName`.
    */
   onKeepBoth?: () => void | Promise<void>;
@@ -48,7 +48,7 @@ function writeMessage(pending: PendingFileWriteConflict): string {
  * folder — or that targets a folder that could not be listed to check: a
  * drag-to-move / Move to… / Paste (PROD-006), and a rename, upload or New File
  * (#5157). Nothing is overwritten without this confirmation. An upload also
- * offers "Keep Both" (write under a free name), and its cancel reads "Skip".
+ * offers "Keep both" (write under a free name), and its cancel reads "Skip".
  */
 export function FileMoveConflictDialog({
   pending,
@@ -68,14 +68,14 @@ export function FileMoveConflictDialog({
             pending.conflicts.length === 1 ? "exists" : "exist"
           } in ${pending.destDir}. Replace ${pending.conflicts.length === 1 ? "it" : "them"}?`;
   const keepBoth =
-    write?.keepBothName && onKeepBoth ? { label: "Keep Both", onClick: onKeepBoth } : undefined;
+    write?.keepBothName && onKeepBoth ? { label: "Keep both", onClick: onKeepBoth } : undefined;
   return (
     <ConfirmDialog
       open={pending !== null}
-      title={`${verb} and Replace?`}
+      title={`${verb} and replace?`}
       variant="warn"
       message={message}
-      confirmLabel={`${verb} and Replace`}
+      confirmLabel={`${verb} and replace`}
       confirmVariant="danger"
       cancelLabel={write?.verb === "Upload" ? "Skip" : "Cancel"}
       alternateAction={keepBoth}

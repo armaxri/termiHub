@@ -74,7 +74,7 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-rdp-trust">
-        <h3 className="settings-panel__section-title">Remembered RDP Certificates</h3>
+        <h3 className="settings-panel__section-title">Remembered RDP certificates</h3>
         <p className="settings-panel__description">
           Hosts whose RDP server certificate you chose to trust ("Accept for host") are remembered
           here. Revoke a single fingerprint or forget a host to be prompted again on the next

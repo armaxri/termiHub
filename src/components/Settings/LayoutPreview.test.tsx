@@ -171,10 +171,10 @@ describe("LayoutPreview", () => {
     expect(query("preview-ab")?.textContent).toBe("AB");
     expect(query("preview-sidebar")?.textContent).toBe("Sidebar");
     expect(query("preview-terminal")?.textContent).toBe("Terminal");
-    expect(query("preview-statusbar")?.textContent).toBe("Status Bar");
+    expect(query("preview-statusbar")?.textContent).toBe("Status bar");
   });
 
-  it("renders Activity Bar label when position is top", () => {
+  it("renders Activity bar label when position is top", () => {
     render({
       activityBarPosition: "top",
       sidebarPosition: "left",
@@ -182,7 +182,7 @@ describe("LayoutPreview", () => {
       statusBarVisible: true,
     });
 
-    expect(query("preview-ab-top")?.textContent).toBe("Activity Bar");
+    expect(query("preview-ab-top")?.textContent).toBe("Activity bar");
   });
 
   it("does not duplicate sidebar when visible", () => {

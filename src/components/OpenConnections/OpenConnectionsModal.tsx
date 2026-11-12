@@ -442,7 +442,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       if (state === "connecting") {
         await cancelConnectAgent(agentId);
-        toast.success("Connect cancelled");
+        toast.success("Connect canceled");
       } else {
         await disconnectRemoteAgent(agentId);
         toast.success("Reconnect stopped");
@@ -726,7 +726,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleCancelTransfer = async (transferId: string) => {
     try {
       await cancelTransfer(transferId);
-      toast.success("Transfer cancelled");
+      toast.success("Transfer canceled");
     } catch (err) {
       frontendLog("open_connections", `Failed to cancel transfer: ${errorMessage(err)}`);
       toast.error(`Failed to cancel transfer: ${errorMessage(err)}`);
@@ -736,7 +736,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleCancelAllTransfers = async () => {
     try {
       await Promise.all(transferList.map((t) => cancelTransfer(t.transferId)));
-      toast.success("All transfers cancelled");
+      toast.success("All transfers canceled");
     } catch (err) {
       frontendLog("open_connections", `Failed to cancel transfers: ${errorMessage(err)}`);
       toast.error(`Failed to cancel transfers: ${errorMessage(err)}`);
@@ -879,7 +879,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       size="lg"
       title={
         <span className="open-connections__title-row">
-          Open Connections
+          Open connections
           {totalCount > 0 && <span className="oc-section__count">{totalCount}</span>}
         </span>
       }
@@ -932,7 +932,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             icon={<Loader2 size={14} />}
             count={establishingAgents.length}
             onKillAll={handleCancelAllEstablishingAgents}
-            killAllLabel="Cancel All"
+            killAllLabel="Cancel all"
             data-testid="open-connections-establishing-agents-section"
           >
             {establishingAgents.map((a) => (
@@ -962,7 +962,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {/* Local Sessions (excluding spawned containers, tracked below) */}
         {plainLocalSessions.length > 0 && (
           <Section
-            title="Local Sessions"
+            title="Local sessions"
             icon={<Terminal size={14} />}
             count={plainLocalSessions.length}
             onKillAll={handleKillAllLocal}
@@ -988,7 +988,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             connections (#1446). */}
         {spawnedSessions.length > 0 && (
           <Section
-            title="Spawned Containers"
+            title="Spawned containers"
             icon={<Package size={14} />}
             count={spawnedSessions.length}
             onKillAll={handleKillAllSpawned}
@@ -1011,7 +1011,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {/* Agent Connections */}
         {connectedAgents.length > 0 && (
           <Section
-            title="Agent Connections"
+            title="Agent connections"
             icon={<Server size={14} />}
             count={connectedAgents.length}
             onKillAll={handleKillAllAgents}
@@ -1158,7 +1158,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {/* SSH Tunnels */}
         {activeTunnels.length > 0 && (
           <Section
-            title="SSH Tunnels"
+            title="SSH tunnels"
             icon={<ArrowLeftRight size={14} />}
             count={activeTunnels.length}
             onKillAll={handleKillAllTunnels}
@@ -1236,7 +1236,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             icon={<ArrowDownUp size={14} />}
             count={transferList.length}
             onKillAll={handleCancelAllTransfers}
-            killAllLabel="Cancel All"
+            killAllLabel="Cancel all"
             data-testid="open-connections-transfers-section"
           >
             {transferList.map((t) => (
@@ -1283,11 +1283,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {/* HTTP Monitors (backend-owned polling loops) */}
         {httpMonitors.length > 0 && (
           <Section
-            title="HTTP Monitors"
+            title="HTTP monitors"
             icon={<Globe size={14} />}
             count={httpMonitors.length}
             onKillAll={handleStopAllHttpMonitors}
-            killAllLabel="Stop All"
+            killAllLabel="Stop all"
             data-testid="open-connections-http-monitors-section"
           >
             {httpMonitors.map((m) => (
@@ -1318,11 +1318,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             them so this "kill everything" surface can see and stop them. */}
         {runningEmbeddedServers.length > 0 && (
           <Section
-            title="Embedded Servers"
+            title="Embedded servers"
             icon={<Server size={14} />}
             count={runningEmbeddedServers.length}
             onKillAll={handleStopAllEmbeddedServers}
-            killAllLabel="Stop All"
+            killAllLabel="Stop all"
             data-testid="open-connections-embedded-servers-section"
           >
             {runningEmbeddedServers.map((s) => {
@@ -1347,7 +1347,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {/* X Servers (the single shared X server, or a Set up affordance) */}
         {(showXServer || showXServerSetup) && (
           <Section
-            title="X Servers"
+            title="X servers"
             icon={<MonitorCog size={14} />}
             count={showXServer ? 1 : 0}
             onKillAll={showXServer && xServerManaged ? handleStopXServer : undefined}
@@ -1517,7 +1517,7 @@ interface SectionProps {
   count: number;
   /** When omitted, no bulk-action button is rendered (nothing to stop). */
   onKillAll?: () => void | Promise<void>;
-  /** Label for the bulk-action button (defaults to "Kill All"). */
+  /** Label for the bulk-action button (defaults to "Kill all"). */
   killAllLabel?: string;
   "data-testid"?: string;
   children: React.ReactNode;
@@ -1527,7 +1527,7 @@ function Section({
   title,
   count,
   onKillAll,
-  killAllLabel = "Kill All",
+  killAllLabel = "Kill all",
   "data-testid": testId,
   children,
 }: SectionProps) {

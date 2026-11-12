@@ -42,7 +42,7 @@ function editorTab(workspaceId: string | null): TerminalTab {
   return {
     id: "tab-src",
     sessionId: null,
-    title: workspaceId ? "Edit: Ops" : "New Workspace",
+    title: workspaceId ? "Edit: Ops" : "New workspace",
     connectionType: "local",
     contentType: "workspace-editor",
     config: { type: "local", config: {} },

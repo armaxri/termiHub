@@ -584,7 +584,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         />
 
         <Field
-          label="SSH Connection"
+          label="SSH connection"
           htmlFor={`tunnel-ssh-${tabId}`}
           error={
             sshConnectionAmbiguous
@@ -607,7 +607,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 ? t("tunnel.editor.chooseSshConnection")
                 : "No SSH connections available"
             }
-            aria-label="SSH Connection"
+            aria-label="SSH connection"
             data-testid="tunnel-editor-ssh-connection"
           />
         </Field>
@@ -625,7 +625,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
         <div className="tunnel-editor__field">
           <span className="tunnel-editor__label" id={`tunnel-type-label-${tabId}`}>
-            Tunnel Type
+            Tunnel type
           </span>
           <RadioGroup
             variant="cards"
@@ -705,10 +705,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
         {tunnelType.type === "local" && (
           <>
-            <span className="tunnel-editor__section-title">Local Bind</span>
+            <span className="tunnel-editor__section-title">Local bind</span>
             <div className="tunnel-editor__row">
               <Field
-                label="Local Host"
+                label="Local host"
                 htmlFor={`tunnel-local-host-${tabId}`}
                 error={errors.localHost}
               >
@@ -721,7 +721,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
               <Field
-                label="Local Port"
+                label="Local port"
                 htmlFor={`tunnel-local-port-${tabId}`}
                 className="tunnel-editor__port-field"
                 error={errors.localPort}
@@ -735,10 +735,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
             </div>
-            <span className="tunnel-editor__section-title">Remote Target</span>
+            <span className="tunnel-editor__section-title">Remote target</span>
             <div className="tunnel-editor__row">
               <Field
-                label="Remote Host"
+                label="Remote host"
                 htmlFor={`tunnel-remote-host-${tabId}`}
                 error={errors.remoteHost}
               >
@@ -752,7 +752,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
               <Field
-                label="Remote Port"
+                label="Remote port"
                 htmlFor={`tunnel-remote-port-${tabId}`}
                 className="tunnel-editor__port-field"
                 error={errors.remotePort}
@@ -774,7 +774,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             <span className="tunnel-editor__section-title">Remote Bind (on SSH Server)</span>
             <div className="tunnel-editor__row">
               <Field
-                label="Remote Host"
+                label="Remote host"
                 htmlFor={`tunnel-r-remote-host-${tabId}`}
                 error={errors.remoteHost}
               >
@@ -788,7 +788,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
               <Field
-                label="Remote Port"
+                label="Remote port"
                 htmlFor={`tunnel-r-remote-port-${tabId}`}
                 className="tunnel-editor__port-field"
                 error={errors.remotePort}
@@ -802,10 +802,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
             </div>
-            <span className="tunnel-editor__section-title">Local Target</span>
+            <span className="tunnel-editor__section-title">Local target</span>
             <div className="tunnel-editor__row">
               <Field
-                label="Local Host"
+                label="Local host"
                 htmlFor={`tunnel-r-local-host-${tabId}`}
                 error={errors.localHost}
               >
@@ -818,7 +818,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
               <Field
-                label="Local Port"
+                label="Local port"
                 htmlFor={`tunnel-r-local-port-${tabId}`}
                 className="tunnel-editor__port-field"
                 error={errors.localPort}
@@ -837,10 +837,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
         {tunnelType.type === "dynamic" && (
           <>
-            <span className="tunnel-editor__section-title">SOCKS5 Proxy Bind</span>
+            <span className="tunnel-editor__section-title">SOCKS5 proxy bind</span>
             <div className="tunnel-editor__row">
               <Field
-                label="Local Host"
+                label="Local host"
                 htmlFor={`tunnel-d-local-host-${tabId}`}
                 error={errors.localHost}
               >
@@ -853,7 +853,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 />
               </Field>
               <Field
-                label="Local Port"
+                label="Local port"
                 htmlFor={`tunnel-d-local-port-${tabId}`}
                 className="tunnel-editor__port-field"
                 error={errors.localPort}
@@ -926,6 +926,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </div>
 
         <div className="tunnel-editor__actions">
+          <Button variant="secondary" onClick={handleCancel} data-testid="tunnel-editor-cancel">
+            Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => handleSave(true)}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
+            data-testid="tunnel-editor-save-start"
+          >
+            Save and start
+          </Button>
           <Button
             variant="primary"
             onClick={() => handleSave(false)}
@@ -934,18 +946,6 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             data-testid="tunnel-editor-save"
           >
             Save
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => handleSave(true)}
-            aria-disabled={!canSave}
-            data-invalid={!canSave || undefined}
-            data-testid="tunnel-editor-save-start"
-          >
-            Save &amp; Start
-          </Button>
-          <Button variant="secondary" onClick={handleCancel} data-testid="tunnel-editor-cancel">
-            Cancel
           </Button>
         </div>
       </div>

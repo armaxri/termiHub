@@ -91,7 +91,7 @@ export function PermissionsDialog({ entry, onApply, onClose }: PermissionsDialog
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="Change Permissions"
+      title="Change permissions"
       description={entry ? `Change permissions for ${entry.name}` : undefined}
       data-testid="permissions-dialog"
       footer={

@@ -48,7 +48,7 @@ export interface UpdateAgentDialogProps {
  * those hosts off: each runs its own agent worker, which keeps running until
  * that host reconnects, and their sessions survive either way (#4037). With
  * other hosts the update is forced ({@link updateAgentForce}), and the action
- * reads "Notify Others & Update" when the coordinated strategy will send them a
+ * reads "Notify others and update" when the coordinated strategy will send them a
  * notice; with none it is a plain "Update" ({@link updateAgent}). Both actions
  * use the async Button lifecycle and surface success/failure feedback.
  */
@@ -145,7 +145,7 @@ export function UpdateAgentDialog({
       testIdBase="update-agent"
       confirmVariant="primary"
       confirmIcon={<ArrowUp size={13} aria-hidden="true" />}
-      confirmLabel={notifiesOthers ? "Notify Others & Update" : "Update"}
+      confirmLabel={notifiesOthers ? "Notify others and update" : "Update"}
       onConfirm={handleConfirm}
       onCancel={() => onOpenChange(false)}
     >

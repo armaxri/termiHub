@@ -128,7 +128,7 @@ describe("AboutSettings", () => {
     await render();
     const btn = container.querySelector("[data-testid='about-third-party-licenses-link']");
     expect(btn).not.toBeNull();
-    expect(btn?.textContent).toContain("Third-Party Licenses");
+    expect(btn?.textContent).toContain("Third-party licenses");
   });
 
   it("opens the bundled third-party notices viewer when the link is clicked", async () => {

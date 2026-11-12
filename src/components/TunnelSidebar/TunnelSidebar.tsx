@@ -143,7 +143,7 @@ export function TunnelSidebar() {
         actions={[
           {
             id: "new",
-            label: "New Tunnel",
+            label: "New tunnel",
             icon: <Plus size={14} />,
             onClick: handleNew,
             primary: true,
@@ -154,7 +154,7 @@ export function TunnelSidebar() {
       {tunnels.length === 0 ? (
         <EmptyState
           title="No SSH tunnels configured."
-          description={<>Click &quot;+ New Tunnel&quot; to create one.</>}
+          description={<>Click &quot;+ New tunnel&quot; to create one.</>}
           data-testid="tunnel-empty-message"
         />
       ) : (

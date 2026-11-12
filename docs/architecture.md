@@ -1665,7 +1665,7 @@ mode or the choice. Both stay changeable under Settings → Security → Credent
 
 #### Credential vault export / import
 
-Settings → Security → **Credential Vault Backup** exports every saved credential to an encrypted
+Settings → Security → **Credential vault backup** exports every saved credential to an encrypted
 file and imports such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
 
 - **Export** requires re-authentication (in master-password mode the store must be unlocked and the
@@ -1734,7 +1734,7 @@ credentials section.
 A **shared (named) credential** is one password or SSH key passphrase that several saved
 connections and remote agents use, so a shared bastion secret is stored and rotated in one place
 ([#3557](https://github.com/armaxri/termiHub/issues/3557), PROD-065,
-`src-tauri/src/credential/named/`). Settings → Security → **Shared Credentials** creates, renames,
+`src-tauri/src/credential/named/`). Settings → Security → **Shared credentials** creates, renames,
 rotates and deletes them; a connection picks one in its Authentication settings (the picker offers
 only credentials of the kind its auth method needs and hides the connection's own password fields
 while one is chosen).
@@ -1786,7 +1786,7 @@ section, whose preview labels them "`<name>` (shared credential)". Restoring bot
 reference back. Older builds skip the unknown section and ignore `credentialRef` (they prompt), so
 a downgrade loses no secret.
 
-**Connection export / import** (#3564). The "Export Connections" file adds a `namedCredentials`
+**Connection export / import** (#3564). The "Export connections" file adds a `namedCredentials`
 list (id, name, kind — no secret) of only the credentials the exported connections and agents
 reference, and — with an export password — their secrets in a separate `$namedCredentialSecrets`
 envelope sealed like the per-connection `$encrypted` one. Without a password only the references
@@ -2093,7 +2093,7 @@ sequenceDiagram
 
 #### Unified backup and restore
 
-Settings → **Backup & Restore** backs up all app data to one file and restores it (PROD-068,
+Settings → **Backup & restore** backs up all app data to one file and restores it (PROD-068,
 `src-tauri/src/backup/`). Each persisted store is one **section** carrying the store's own schema
 version; the registry in `backup/sections.rs` lists them — connections (with agents; passwords are
 stripped as defence in depth), settings (including custom themes and keyboard shortcuts),
@@ -2135,7 +2135,7 @@ refused where that is unavailable, while the rest of the backup still works).
 
 ```mermaid
 sequenceDiagram
-    participant UI as Settings → Backup & Restore
+    participant UI as Settings → Backup & restore
     participant BE as backup::restore
     participant Cred as Credential store
     participant Boot as Next start (backup::pending)
@@ -2593,7 +2593,7 @@ The subsystem straddles the core/desktop boundary because core cannot provision 
 | `core/src/backends/ssh/x11.rs`                         | The forwarding mechanism (russh reverse `tcpip_forward` → local X socket/TCP), the `XServerProvisioner` **seam** (trait + `set_x_server_provisioner`), `ResolvedXServer`/`XServerLease`, and the no-provisioner fallback `detect_local_x_server` for a user-run server              |
 | `src-tauri/src/terminal/xserver/`                      | The desktop provisioner: `orchestrator` (cross-platform decision), `manager` (managed-server lifecycle + session refcount), `windows` (VcXsrv resolve + winget install), `macos` (XQuartz), `linux_gap` (Linux hint classifier), `consent` (connect-time gate), `auth` (MIT cookie) |
 | `src-tauri/src/commands/xserver.rs`                    | Tauri command surface: `x_server_status`, `x_server_ensure`, `x_server_stop`, `x_server_install_dependency`, `x_server_connect_consent_reply`                                                                                                                                       |
-| `src/components/OpenConnections/XServer*`, `Settings/` | Frontend: settings toggles (`provideXServerAutomatically`, `stopXServerWhenIdle`), the Open Connections **X Servers** section, the manual **Set up** dialog, and the connect-time consent dialog                                                                                    |
+| `src/components/OpenConnections/XServer*`, `Settings/` | Frontend: settings toggles (`provideXServerAutomatically`, `stopXServerWhenIdle`), the Open Connections **X servers** section, the manual **Set up** dialog, and the connect-time consent dialog                                                                                    |
 
 Core stays transport-only: at startup the desktop registers `XServerProvisionerImpl` via `set_x_server_provisioner`, and `SshConnector` consults it whenever `enable_x11_forwarding` is set. With no provisioner registered (core standalone / tests), behavior is unchanged — the forwarder falls back to detecting a user-run server.
 
@@ -3488,7 +3488,7 @@ terminal sessions for people who expect nothing to leave their machine.
   biased toward over-redaction.
 - **The user decides what leaves the machine.** On the next start after a crash, a non-blocking
   notice offers to view the report or export diagnostics (dismissible; "Don't show again" persists
-  `showCrashReportNotice: false`). **Export Diagnostics** (settings menu, or Settings → General →
+  `showCrashReportNotice: false`). **Export diagnostics** (settings menu, or Settings → General →
   Diagnostics) shows the exact file list first, then writes a redacted zip (logs, crash reports,
   version/platform info) only to a path the user picks in the save dialog.
 - **Remote agent reports are pulled only on request, only from connected agents** (#3574). When

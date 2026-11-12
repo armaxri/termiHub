@@ -102,10 +102,10 @@ describe("SessionSettings", () => {
     container.remove();
   });
 
-  it("renders the Restore and Session History groups with their controls", () => {
+  it("renders the Restore and Session history groups with their controls", () => {
     renderWith(defaultSettings);
     expect(container.textContent).toContain("Restore");
-    expect(container.textContent).toContain("Session History");
+    expect(container.textContent).toContain("Session history");
     expect(query("settings-restore-last-session-mode")).not.toBeNull();
     expect(query("settings-session-history-enabled")).not.toBeNull();
     expect(query("settings-session-history-limit")).not.toBeNull();
@@ -169,7 +169,7 @@ describe("SessionSettings", () => {
     expect(clearSessionHistory).toHaveBeenCalledTimes(1);
   });
 
-  it("hides the Session History group when visibleFields excludes its fields", () => {
+  it("hides the Session history group when visibleFields excludes its fields", () => {
     renderWith(defaultSettings, new Set(["restoreLastSessionOnStartup"]));
     expect(query("settings-restore-last-session-mode")).not.toBeNull();
     expect(query("settings-session-history-enabled")).toBeNull();

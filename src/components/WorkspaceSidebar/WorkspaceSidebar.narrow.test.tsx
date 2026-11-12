@@ -1,7 +1,7 @@
 /**
  * Workspaces sidebar at narrow widths (#4709): the toolbar used to clip
- * "Save Current" and hide import/export. At the minimum sidebar width every
- * action must stay reachable by role/name — the primary "New Workspace" inline,
+ * "Save current" and hide import/export. At the minimum sidebar width every
+ * action must stay reachable by role/name — the primary "New workspace" inline,
  * the rest in one overflow "…" menu (#4824) — and workspace names must not lose width to hidden actions.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -72,10 +72,10 @@ let root: Root;
 let ro: ResizeObserverMock;
 
 const ACTION_NAMES = [
-  "New Workspace",
-  "Save Current Layout",
-  "Export Workspaces",
-  "Import Workspaces",
+  "New workspace",
+  "Save current layout",
+  "Export workspaces",
+  "Import workspaces",
 ];
 
 const workspaces: WorkspaceSummary[] = [
@@ -124,19 +124,19 @@ describe("WorkspaceSidebar at narrow widths (#4709)", () => {
     ro.restore();
   });
 
-  it("keeps New Workspace labelled and moves the rest into one '…' menu at the minimum width", async () => {
+  it("keeps New workspace labelled and moves the rest into one '…' menu at the minimum width", async () => {
     render();
     // 200px minimum sidebar width minus the toolbar's horizontal padding.
     ro.resize(184);
-    expect(inlineNames()).toEqual(["New Workspace"]);
+    expect(inlineNames()).toEqual(["New workspace"]);
     expect(document.querySelector('[data-testid="workspace-new-btn"]')?.textContent).toBe(
-      "New Workspace"
+      "New workspace"
     );
     expect(await checkA11y(container)).toHaveNoViolations();
     expect(overflowNames()).toEqual([
-      "Save Current Layout",
-      "Export Workspaces",
-      "Import Workspaces",
+      "Save current layout",
+      "Export workspaces",
+      "Import workspaces",
     ]);
   });
 
@@ -152,7 +152,7 @@ describe("WorkspaceSidebar at narrow widths (#4709)", () => {
     render();
     ro.resize(400);
     const save = document.querySelector('[data-testid="workspace-save-current-btn"]');
-    expect(save?.textContent).toBe("Save Current");
+    expect(save?.textContent).toBe("Save current");
   });
 
   it("renders each workspace name in full in a truncating name slot", () => {

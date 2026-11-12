@@ -129,7 +129,7 @@ describe("BiometricUnlockSettings", () => {
     mockedEnable.mockRejectedValueOnce({ kind: "cancelled", message: "x" });
     setPassword("master-pw");
     await click("biometric-unlock-enable-btn");
-    expect(query("biometric-unlock-error")?.textContent).toMatch(/cancelled/);
+    expect(query("biometric-unlock-error")?.textContent).toMatch(/canceled/);
     expect(toast.success).not.toHaveBeenCalled();
   });
 

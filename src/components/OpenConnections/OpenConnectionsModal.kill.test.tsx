@@ -1,5 +1,5 @@
 /**
- * Kill / cancel paths of the Open Connections panel that had no unit coverage
+ * Kill / cancel paths of the Open connections panel that had no unit coverage
  * (COV-015, #5275): cancel-all-connecting, cancel (all) establishing agents,
  * kill (all) proxy sessions via an agent, close (all) native agent sessions and
  * cancel (all) transfers.
@@ -244,13 +244,13 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       useAppStore.setState({ closeTab });
     }
 
-    it("Cancel All cancels every handshake and closes every tab without an error", async () => {
+    it("Cancel all cancels every handshake and closes every tab without an error", async () => {
       seedConnecting();
       await renderModal();
       expect(rowsMatching("app-server")).toHaveLength(1);
       expect(rowsMatching("db-server")).toHaveLength(1);
 
-      await bulkAndConfirm("Kill All Connecting");
+      await bulkAndConfirm("Kill all Connecting");
 
       expect(cancelConnecting).toHaveBeenCalledWith("tab-1");
       expect(cancelConnecting).toHaveBeenCalledWith("tab-2");
@@ -260,14 +260,14 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(frontendErrorMock).not.toHaveBeenCalled();
     });
 
-    it("Cancel All reports the one failed cancel and still closes both tabs", async () => {
+    it("Cancel all reports the one failed cancel and still closes both tabs", async () => {
       seedConnecting();
       cancelConnecting.mockImplementation((id) =>
         id === "tab-2" ? Promise.reject(new Error("handshake stuck")) : Promise.resolve(true)
       );
       await renderModal();
 
-      await bulkAndConfirm("Kill All Connecting");
+      await bulkAndConfirm("Kill all Connecting");
 
       expect(cancelConnecting).toHaveBeenCalledTimes(2);
       expect(closeTab).toHaveBeenCalledTimes(2);
@@ -280,12 +280,12 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
     });
 
-    it("Cancel All pluralises the toast when several cancels fail", async () => {
+    it("Cancel all pluralises the toast when several cancels fail", async () => {
       seedConnecting();
       cancelConnecting.mockRejectedValue(new Error("down"));
       await renderModal();
 
-      await bulkAndConfirm("Kill All Connecting");
+      await bulkAndConfirm("Kill all Connecting");
 
       expect(toastError).toHaveBeenCalledWith("Failed to cancel 2 connections");
       expect(frontendErrorMock).toHaveBeenCalledTimes(2);
@@ -322,10 +322,10 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       await renderModal();
     }
 
-    it("Cancel All cancels the connecting agent and stops the reconnecting one", async () => {
+    it("Cancel all cancels the connecting agent and stops the reconnecting one", async () => {
       await renderEstablishing();
 
-      await bulkAndConfirm("Cancel All Establishing / recovering");
+      await bulkAndConfirm("Cancel all Establishing / recovering");
 
       expect(cancelConnectAgent).toHaveBeenCalledWith("a1");
       expect(cancelConnectAgent).not.toHaveBeenCalledWith("a2");
@@ -334,11 +334,11 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastError).not.toHaveBeenCalled();
     });
 
-    it("Cancel All reports the failed agent and names it in the log", async () => {
+    it("Cancel all reports the failed agent and names it in the log", async () => {
       await renderEstablishing();
       cancelConnectAgent.mockRejectedValue(new Error("no such agent"));
 
-      await bulkAndConfirm("Cancel All Establishing / recovering");
+      await bulkAndConfirm("Cancel all Establishing / recovering");
 
       expect(disconnectRemoteAgent).toHaveBeenCalledWith("a2");
       expect(toastError).toHaveBeenCalledTimes(1);
@@ -349,12 +349,12 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
     });
 
-    it("Cancel All pluralises the toast when both agents fail", async () => {
+    it("Cancel all pluralises the toast when both agents fail", async () => {
       await renderEstablishing();
       cancelConnectAgent.mockRejectedValue(new Error("x"));
       disconnectRemoteAgent.mockRejectedValue(new Error("y"));
 
-      await bulkAndConfirm("Cancel All Establishing / recovering");
+      await bulkAndConfirm("Cancel all Establishing / recovering");
 
       expect(toastError).toHaveBeenCalledWith("Failed to cancel 2 agents");
       expect(frontendErrorMock).toHaveBeenCalledTimes(2);
@@ -365,7 +365,7 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
 
       await clickKill("build-box");
       expect(cancelConnectAgent).toHaveBeenCalledWith("a1");
-      expect(toastSuccess).toHaveBeenCalledWith("Connect cancelled");
+      expect(toastSuccess).toHaveBeenCalledWith("Connect canceled");
 
       await clickKill("edge");
       expect(disconnectRemoteAgent).toHaveBeenCalledWith("a2");
@@ -401,17 +401,17 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(sectionTitles()).toContain("Connections via build-box");
     }
 
-    it("lists proxy sessions under their agent, not under Local Sessions", async () => {
+    it("lists proxy sessions under their agent, not under Local sessions", async () => {
       await renderProxy();
-      expect(sectionTitles()).not.toContain("Local Sessions");
+      expect(sectionTitles()).not.toContain("Local sessions");
       expect(rowsMatching("Good Proxy")).toHaveLength(1);
       expect(rowsMatching("Bad Proxy")).toHaveLength(1);
     });
 
-    it("Kill All kills every proxy session and drops the section", async () => {
+    it("Kill all kills every proxy session and drops the section", async () => {
       await renderProxy();
 
-      await bulkAndConfirm("Kill All Connections via build-box");
+      await bulkAndConfirm("Kill all Connections via build-box");
 
       expect(closeTerminal).toHaveBeenCalledWith("p-ok", true);
       expect(closeTerminal).toHaveBeenCalledWith("p-bad", true);
@@ -425,13 +425,13 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastError).not.toHaveBeenCalled();
     });
 
-    it("Kill All keeps only the session whose kill failed", async () => {
+    it("Kill all keeps only the session whose kill failed", async () => {
       closeTerminal.mockImplementation((id) =>
         id === "p-bad" ? Promise.reject(new Error("stuck")) : Promise.resolve()
       );
       await renderProxy();
 
-      await bulkAndConfirm("Kill All Connections via build-box");
+      await bulkAndConfirm("Kill all Connections via build-box");
 
       expect(rowsMatching("Good Proxy")).toHaveLength(0);
       expect(rowsMatching("Bad Proxy")).toHaveLength(1);
@@ -513,10 +513,10 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
     });
 
-    it("Kill All closes every agent session and drops the section", async () => {
+    it("Kill all closes every agent session and drops the section", async () => {
       await renderAgentSessions();
 
-      await bulkAndConfirm("Kill All Sessions on build-box");
+      await bulkAndConfirm("Kill all Sessions on build-box");
 
       expect(closeAgentSession).toHaveBeenCalledWith("a1", "s-ok");
       expect(closeAgentSession).toHaveBeenCalledWith("a1", "s-bad");
@@ -524,13 +524,13 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastError).not.toHaveBeenCalled();
     });
 
-    it("Kill All keeps only the session whose close failed", async () => {
+    it("Kill all keeps only the session whose close failed", async () => {
       closeAgentSession.mockImplementation((_agentId, sessionId) =>
         sessionId === "s-bad" ? Promise.reject(new Error("busy")) : Promise.resolve()
       );
       await renderAgentSessions();
 
-      await bulkAndConfirm("Kill All Sessions on build-box");
+      await bulkAndConfirm("Kill all Sessions on build-box");
 
       expect(rowsMatching("bash ok")).toHaveLength(0);
       expect(rowsMatching("bash bad")).toHaveLength(1);
@@ -542,11 +542,11 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       );
     });
 
-    it("Kill All pluralises the toast when every close fails", async () => {
+    it("Kill all pluralises the toast when every close fails", async () => {
       closeAgentSession.mockRejectedValue(new Error("busy"));
       await renderAgentSessions();
 
-      await bulkAndConfirm("Kill All Sessions on build-box");
+      await bulkAndConfirm("Kill all Sessions on build-box");
 
       expect(rowsMatching("bash ok")).toHaveLength(1);
       expect(rowsMatching("bash bad")).toHaveLength(1);
@@ -591,7 +591,7 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
 
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
       expect(sftpCancelTransfer).toHaveBeenCalledTimes(1);
-      expect(toastSuccess).toHaveBeenCalledWith("Transfer cancelled");
+      expect(toastSuccess).toHaveBeenCalledWith("Transfer canceled");
       expect(toastError).not.toHaveBeenCalled();
     });
 
@@ -606,24 +606,24 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
     });
 
-    it("Cancel All cancels every transfer and confirms it", async () => {
+    it("Cancel all cancels every transfer and confirms it", async () => {
       await renderTransfers();
 
-      await bulkAndConfirm("Cancel All Transfers");
+      await bulkAndConfirm("Cancel all Transfers");
 
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t2");
-      expect(toastSuccess).toHaveBeenCalledWith("All transfers cancelled");
+      expect(toastSuccess).toHaveBeenCalledWith("All transfers canceled");
       expect(toastError).not.toHaveBeenCalled();
     });
 
-    it("Cancel All reports a failure when one cancel rejects", async () => {
+    it("Cancel all reports a failure when one cancel rejects", async () => {
       sftpCancelTransfer.mockImplementation((id) =>
         id === "t2" ? Promise.reject(new Error("io error")) : Promise.resolve()
       );
       await renderTransfers();
 
-      await bulkAndConfirm("Cancel All Transfers");
+      await bulkAndConfirm("Cancel all Transfers");
 
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t2");

@@ -20,7 +20,7 @@ export interface AgentUpdateBannerProps {
  * near a connected agent's header when the agent has reported a staged update
  * (`agent.update_available`, `staged: true`) that the user has not dismissed.
  *
- * "Apply Now" requests the deferred update: when the agent is idle it swaps
+ * "Apply now" requests the deferred update: when the agent is idle it swaps
  * immediately (`applied: true`); otherwise it defers until the last active
  * session disconnects (`applied: false`, `activeSessions: N`). The staged
  * binary is applied automatically on that last disconnect regardless — the
@@ -32,7 +32,7 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
   const dismissed = useAppStore((s) => s.agentUpdatesDismissed[agentId] ?? false);
   const dismissAgentUpdate = useAppStore((s) => s.dismissAgentUpdate);
   // A coordinated-strategy agent stages its self-update and waits for a
-  // coordinated apply (#1351): "Apply Now" must go through `agent.request_update`
+  // coordinated apply (#1351): "Apply now" must go through `agent.request_update`
   // so every *other* connected host is warned and given a clean reconnect
   // window, rather than updated without notice by the plain deferred apply
   // (#1602). Neither path cuts the other hosts off (#4037).
@@ -119,7 +119,7 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
           onClick={handleDismiss}
           data-testid={`agent-update-banner-dismiss-${agentId}`}
         >
-          Dismiss
+          Close
         </Button>
         <Button
           variant="primary"
@@ -127,7 +127,7 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
           onClick={handleApply}
           data-testid={`agent-update-banner-apply-${agentId}`}
         >
-          Apply Now
+          Apply now
         </Button>
       </div>
     </div>

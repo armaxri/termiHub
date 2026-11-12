@@ -4,7 +4,7 @@
  *
  * A focused connection row moves within its folder with
  * Ctrl/Cmd+Shift+ArrowUp/Down, and its context menu (reachable with Shift+F10 /
- * the Menu key) offers Move to Folder, Move Up and Move Down. All of them route
+ * the Menu key) offers Move to folder, Move Up and Move Down. All of them route
  * through the store actions the drag-and-drop path uses.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
@@ -228,11 +228,11 @@ describe("ConnectionList — move connections without dragging (#4528)", () => {
       expect(isDisabled("context-connection-move-down")).toBe(true);
     });
 
-    it("Move to Folder lists the top level and every folder by its path", async () => {
+    it("Move to folder lists the top level and every folder by its path", async () => {
       await render();
       await openMoveToFolder("r1");
       expect(menuItem("context-connection-move-folder-submenu")).not.toBeNull();
-      expect(menuItem("context-connection-move-folder-root")?.textContent).toContain("Top Level");
+      expect(menuItem("context-connection-move-folder-root")?.textContent).toContain("Top level");
       expect(menuItem("context-connection-move-folder-work")?.textContent).toContain("Work");
       expect(menuItem("context-connection-move-folder-dev")?.textContent).toContain("Work / Dev");
     });
@@ -258,14 +258,14 @@ describe("ConnectionList — move connections without dragging (#4528)", () => {
       expect(isDisabled("context-connection-move-folder-work")).toBe(false);
     });
 
-    it("offers only Top Level when there are no folders", async () => {
+    it("offers only Top level when there are no folders", async () => {
       await render([conn("a"), conn("b")], []);
       await openMoveToFolder("a");
       expect(menuItem("context-connection-move-folder-root")).not.toBeNull();
       expect(
         document.querySelectorAll('[data-testid^="context-connection-move-folder-"]').length
       ).toBe(
-        2 // the submenu container + Top Level
+        2 // the submenu container + Top level
       );
     });
 

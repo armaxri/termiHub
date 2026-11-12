@@ -31,7 +31,7 @@ export function PluginUpdateCheckSettings() {
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-plugin-update-check">
         <h3 className="settings-panel__section-title">
-          <RefreshCw size={16} aria-hidden="true" /> Plugin Updates
+          <RefreshCw size={16} aria-hidden="true" /> Plugin updates
         </h3>
         <p className="settings-panel__description">
           “Check for updates” in the Plugins view checks plugins that publish an update URL and
@@ -40,7 +40,7 @@ export function PluginUpdateCheckSettings() {
         </p>
 
         <SettingsField
-          label="Check for Plugin Updates Automatically"
+          label="Check for plugin updates automatically"
           hint="Checks update URLs and the plugin index once a day while termiHub runs. Off by default."
         >
           <Toggle

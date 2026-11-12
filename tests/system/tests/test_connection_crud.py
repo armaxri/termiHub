@@ -287,7 +287,7 @@ class TestConnectionCrud(TabsUi, SidebarUi, SettingsUi, ConnectionsUi, SystemTes
     def test_export_dialog_opens(self):
         self.open_import_migration_action("import-migration-json-export-btn")
         self.wait(lambda: self.driver.exists("export-dialog-title"), what="the export dialog")
-        assert "Export Connections" in self.driver.get_text("export-dialog-title")
+        assert "Export connections" in self.driver.get_text("export-dialog-title")
         self.dismiss_menu()  # close the dialog
 
     # ── MT-CONN-07: import entry point (native dialog not driven) ───────────────

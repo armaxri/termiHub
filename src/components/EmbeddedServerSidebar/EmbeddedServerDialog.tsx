@@ -125,7 +125,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
   const [lanWarning, setLanWarning] = useState(false);
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
     { name: "Loopback", addr: "127.0.0.1" },
-    { name: "All Interfaces", addr: "0.0.0.0" },
+    { name: "All interfaces", addr: "0.0.0.0" },
   ]);
 
   // The shared RHF + zod scaffold (UISF2-003): `form` is a complete, stable
@@ -224,7 +224,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
         title={
           <>
             <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
-            Security Warning
+            Security warning
           </>
         }
         footer={
@@ -233,7 +233,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
               Cancel
             </Button>
             <Button variant="primary" onClick={handleLanConfirm} data-testid="lan-warning-confirm">
-              I Understand
+              I understand
             </Button>
           </>
         }
@@ -248,7 +248,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
       <Modal
         open={open && !lanWarning}
         onOpenChange={onOpenChange}
-        title={config ? "Edit Service" : "New Service"}
+        title={config ? "Edit service" : "New service"}
         footer={
           <>
             <Button
@@ -318,7 +318,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
             control={control}
             render={({ field }) => (
               <Field
-                label="Root Directory"
+                label="Root directory"
                 htmlFor="server-dialog-root-input"
                 error={errors["rootDirectory"]}
                 className="server-dialog__label"
@@ -341,7 +341,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
             <legend className="server-dialog__legend">Network</legend>
             <div className="server-dialog__row">
               <label className="server-dialog__label server-dialog__label--inline">
-                Bind Address
+                Bind address
                 <Select
                   value={form.bindHost}
                   onChange={handleBindHostChange}
@@ -352,7 +352,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                         ? `${iface.addr} — ${iface.name}`
                         : `${iface.addr} (${iface.name})`,
                   }))}
-                  aria-label="Bind Address"
+                  aria-label="Bind address"
                   data-testid="server-dialog-bind-host"
                 />
               </label>
@@ -515,7 +515,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                   },
                   {
                     value: "credentials",
-                    label: "Username / Password",
+                    label: "Username and password",
                     "data-testid": "server-dialog-ftp-creds",
                   },
                 ]}

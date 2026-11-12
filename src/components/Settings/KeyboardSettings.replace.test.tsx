@@ -1,5 +1,5 @@
 /**
- * "Reset to Safer Defaults" and the JSON import replace every custom binding:
+ * "Reset to safer defaults" and the JSON import replace every custom binding:
  * both confirm first with a summary of what changes, and offer a 10 s Undo that
  * restores the previous bindings exactly (#5375).
  */
@@ -102,7 +102,7 @@ describe("KeyboardSettings — confirmed reset / import with undo (#5375)", () =
     clearOverrides();
   });
 
-  describe("Reset to Safer Defaults", () => {
+  describe("Reset to safer defaults", () => {
     it("asks first with a summary, and resets on confirm", async () => {
       await renderComponent();
       await click("keyboard-settings-reset-all");

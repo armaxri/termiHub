@@ -73,7 +73,7 @@ describe("UpdateSettings", () => {
     expect(checkForUpdates).toHaveBeenCalledWith(true);
   });
 
-  it("shows 'Open Downloads Page' when an update is available", async () => {
+  it("shows 'Open downloads page' when an update is available", async () => {
     useAppStore.setState({
       updateCheckState: "available",
       updateInfo: {
@@ -91,7 +91,7 @@ describe("UpdateSettings", () => {
     expect(btn?.className).toContain("ui-btn--primary");
   });
 
-  it("opens the release URL when 'Open Downloads Page' is clicked", async () => {
+  it("opens the release URL when 'Open downloads page' is clicked", async () => {
     useAppStore.setState({
       updateCheckState: "available",
       updateInfo: {
@@ -110,7 +110,7 @@ describe("UpdateSettings", () => {
     expect(mockedOpenUrl).toHaveBeenCalledWith("https://example.com/release");
   });
 
-  it("shows the newer develop build and an 'Open Download Page' button (#5023)", async () => {
+  it("shows the newer develop build and an 'Open download page' button (#5023)", async () => {
     useAppStore.setState({
       updateCheckState: "available",
       updateInfo: {
@@ -128,7 +128,7 @@ describe("UpdateSettings", () => {
     expect(container.textContent).toContain("Latest develop build");
     expect(query("update-latest-version")?.textContent).toMatch(/^Built .+ from 0e3504c$/);
     const btn = query("update-open-downloads") as HTMLButtonElement;
-    expect(btn.textContent).toBe("Open Download Page");
+    expect(btn.textContent).toBe("Open download page");
     await act(async () => {
       btn.click();
     });

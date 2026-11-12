@@ -100,7 +100,7 @@ export function ShellIntegrationEntryEditor({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={isNew ? "Add Entry" : "Edit Entry"}
+      title={isNew ? "Add entry" : "Edit entry"}
       data-testid="shell-integration-entry-editor"
       footer={
         <>

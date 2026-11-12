@@ -201,6 +201,31 @@ describe("CredentialStorageChooser (#5187)", () => {
     expect(query("credential-storage-chooser-options")).not.toBeNull();
   });
 
+  it("orders the master password setup footer Cancel, Back, Create vault (#5391)", async () => {
+    const { outcome } = await openChooser();
+    await click("credential-storage-chooser-option-master_password");
+    await click("credential-storage-chooser-continue");
+
+    const footerIds = [
+      "credential-storage-chooser-cancel",
+      "credential-storage-chooser-back",
+      "credential-storage-chooser-continue",
+    ].map((id) => query(id));
+    expect(footerIds.every((el) => el !== null)).toBe(true);
+    const [cancelBtn, backBtn, createBtn] = footerIds as HTMLElement[];
+    expect(cancelBtn.compareDocumentPosition(backBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    expect(backBtn.compareDocumentPosition(createBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    expect(createBtn.textContent).toBe("Create vault");
+
+    await click("credential-storage-chooser-cancel");
+    expect(outcome()).toBe("canceled");
+    expect(calls("switch_credential_store")).toHaveLength(0);
+  });
+
   it("records Don't save without switching any store", async () => {
     const { outcome } = await openChooser();
 

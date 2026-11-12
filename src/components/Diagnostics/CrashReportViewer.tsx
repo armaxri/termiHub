@@ -47,7 +47,7 @@ export function CrashReportViewer() {
       open={name !== null || agentReport !== null}
       onOpenChange={(open) => !open && close()}
       size="lg"
-      title="Crash Report"
+      title="Crash report"
       description={
         agentReport
           ? "A crash report from a connected agent, redacted again on this computer"
@@ -67,7 +67,7 @@ export function CrashReportViewer() {
             }}
             data-testid="crash-report-viewer-export"
           >
-            Export Diagnostics…
+            Export diagnostics…
           </Button>
         </>
       }

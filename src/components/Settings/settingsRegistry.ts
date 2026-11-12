@@ -45,19 +45,19 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "terminal", label: "Terminal" },
   { id: "serial", label: "Serial" },
   { id: "accessibility", label: "Accessibility" },
-  { id: "shell-integration", label: "Shell Integration" },
+  { id: "shell-integration", label: "Shell integration" },
   { id: "keyboard", label: "Keyboard" },
   { id: "sessions", label: "Sessions" },
-  { id: "safety-prompts", label: "Safety Prompts" },
-  { id: "x-server", label: "X Server" },
+  { id: "safety-prompts", label: "Safety prompts" },
+  { id: "x-server", label: "X server" },
   { id: "security", label: "Security" },
-  { id: "external-files", label: "External Files" },
+  { id: "external-files", label: "External files" },
   { id: "editor", label: "Editor" },
   { id: "plugins", label: "Plugins" },
-  { id: "backup", label: "Backup & Restore" },
-  { id: "import", label: "Import & Migration" },
+  { id: "backup", label: "Backup & restore" },
+  { id: "import", label: "Import & migration" },
   { id: "schedules", label: "Schedules" },
-  { id: "portable", label: "Portable Mode" },
+  { id: "portable", label: "Portable mode" },
   { id: "updates", label: "Updates" },
 ];
 
@@ -72,28 +72,28 @@ export const CATEGORIES: CategoryDefinition[] = [
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "defaultUser",
-    label: "Default User",
+    label: "Default user",
     description: "Default username for new SSH connections",
     category: "general",
     keywords: ["username", "ssh", "login"],
   },
   {
     id: "defaultSshKeyPath",
-    label: "Default SSH Key Path",
+    label: "Default SSH key path",
     description: "Default private key path for SSH key authentication",
     category: "general",
     keywords: ["key", "ssh", "identity", "private key", "authentication"],
   },
   {
     id: "defaultShell",
-    label: "Default Shell",
+    label: "Default shell",
     description: "Default shell for new local terminal sessions",
     category: "general",
     keywords: ["shell", "bash", "zsh", "powershell", "terminal"],
   },
   {
     id: "defaultShellIntegration",
-    label: "Command Marks (Shell Hook) by Default",
+    label: "Command marks (shell hook) by default",
     description:
       "Pre-enable command marks (OSC 133, a small hook typed into the shell) for new local, SSH and WSL connections",
     category: "general",
@@ -112,8 +112,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "defaultX11Forwarding",
-    label: "X11 Forwarding by Default",
-    description: "Pre-enable X11 Forwarding for new SSH connections",
+    label: "X11 forwarding by default",
+    description: "Pre-enable X11 forwarding for new SSH connections",
     category: "general",
     keywords: [
       "ssh",
@@ -135,56 +135,56 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "fontFamily",
-    label: "Font Family",
+    label: "Font family",
     description: "Terminal font family",
     category: "appearance",
     keywords: ["font", "typeface", "monospace", "nerd font"],
   },
   {
     id: "fontSize",
-    label: "Font Size",
+    label: "Font size",
     description: "Terminal font size in pixels",
     category: "appearance",
     keywords: ["font", "size", "text", "pixels"],
   },
   {
     id: "lineHeight",
-    label: "Line Height",
+    label: "Line height",
     description: "Terminal line height; use 1.0 for seamless box-drawing characters",
     category: "appearance",
     keywords: ["line height", "line spacing", "spacing", "leading", "font", "box-drawing"],
   },
   {
     id: "defaultHorizontalScrolling",
-    label: "Default Horizontal Scrolling",
+    label: "Default horizontal scrolling",
     description: "Enable horizontal scrolling for new terminals by default",
     category: "terminal",
     keywords: ["scroll", "horizontal", "wrap", "overflow"],
   },
   {
     id: "scrollbackBuffer",
-    label: "Scrollback Buffer",
+    label: "Scrollback buffer",
     description: "Number of lines to keep in the terminal scrollback buffer",
     category: "terminal",
     keywords: ["buffer", "history", "lines", "scroll"],
   },
   {
     id: "cursorStyle",
-    label: "Cursor Style",
+    label: "Cursor style",
     description: "Terminal cursor shape",
     category: "terminal",
     keywords: ["cursor", "block", "underline", "bar", "caret"],
   },
   {
     id: "cursorBlink",
-    label: "Cursor Blink",
+    label: "Cursor blink",
     description: "Whether the terminal cursor blinks",
     category: "terminal",
     keywords: ["cursor", "blink", "animation", "flash"],
   },
   {
     id: "defaultLineEnding",
-    label: "Line Ending (Enter & Paste)",
+    label: "Line ending (Enter & paste)",
     description: "Line ending sent on Enter and used to normalize pasted text",
     category: "terminal",
     keywords: [
@@ -203,14 +203,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "rightClickBehavior",
-    label: "Right-Click Behavior",
+    label: "Right-click behavior",
     description: "Terminal right-click action: context menu or quick copy/paste",
     category: "terminal",
     keywords: ["right-click", "context menu", "copy", "paste", "quick action", "mouse"],
   },
   {
     id: "terminalCommandDecorations",
-    label: "Command Status Marks",
+    label: "Command status marks",
     description:
       "Show a success/failure mark next to each finished command (needs shell integration)",
     category: "terminal",
@@ -229,7 +229,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "terminalInlineImages",
-    label: "Inline Images",
+    label: "Inline images",
     description: "Render SIXEL and iTerm2 inline images in the terminal",
     category: "terminal",
     keywords: [
@@ -264,14 +264,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "askOpenSavedFileInTab",
-    label: "Open Saved File in Tab",
+    label: "Open saved file in tab",
     description: "Offer to open terminal content in an editor tab after saving it to a file",
     category: "terminal",
     keywords: ["save", "file", "tab", "editor", "monaco", "terminal", "open", "prompt"],
   },
   {
     id: "screenReaderMode",
-    label: "Screen Reader Mode",
+    label: "Screen reader mode",
     description: "Expose terminal output to assistive technology (screen readers)",
     category: "accessibility",
     keywords: [
@@ -288,7 +288,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "syntaxHighlighting",
-    label: "Syntax Highlighting",
+    label: "Syntax highlighting",
     description: "Colorize errors, URLs, paths, IPs, and other patterns in plain terminal output",
     category: "terminal",
     keywords: [
@@ -310,7 +310,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "shellIntegrationRegistration",
-    label: "Context Menu Registration",
+    label: "Context menu registration",
     description: "Register or remove the file-manager right-click integration",
     category: "shell-integration",
     keywords: [
@@ -328,42 +328,42 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "shellIntegrationEntries",
-    label: "Quick-Access Entries",
+    label: "Quick-access entries",
     description: "Configure the entries shown in your file manager's right-click menu",
     category: "shell-integration",
     keywords: ["entry", "quick access", "context menu", "shell", "connection", "picker", "reorder"],
   },
   {
     id: "shellIntegrationFallback",
-    label: "Shell Integration Fallback",
+    label: "Shell integration fallback",
     description: "What to open when no quick-access entry matches a request",
     category: "shell-integration",
     keywords: ["fallback", "picker", "default shell", "shell integration", "new window"],
   },
   {
     id: "shellIntegrationLinux",
-    label: "Linux File Manager Integrations",
+    label: "Linux file manager integrations",
     description: "Install Nautilus, KDE, or Thunar file-manager integrations on Linux",
     category: "shell-integration",
     keywords: ["linux", "nautilus", "kde", "dolphin", "thunar", "file manager", "service menu"],
   },
   {
     id: "keybindings",
-    label: "Keyboard Shortcuts",
+    label: "Keyboard shortcuts",
     description: "Customize keyboard shortcuts and key bindings",
     category: "keyboard",
     keywords: ["keyboard", "shortcut", "keybinding", "hotkey", "key combination", "binding"],
   },
   {
     id: "credentialStorageMode",
-    label: "Credential Storage Mode",
+    label: "Credential storage mode",
     description: "How connection passwords and keys are stored",
     category: "security",
     keywords: ["credential", "keychain", "master password", "security", "encryption", "password"],
   },
   {
     id: "credentialAutoLockMinutes",
-    label: "Auto-Lock Timeout",
+    label: "Auto-lock timeout",
     description: "Lock the master password credential store after inactivity",
     category: "security",
     keywords: [
@@ -381,7 +381,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "sharedCredentials",
-    label: "Shared Credentials",
+    label: "Shared credentials",
     description:
       "Passwords and key passphrases shared by several connections, changed in one place",
     category: "security",
@@ -398,7 +398,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "credentialVaultBackup",
-    label: "Credential Vault Backup",
+    label: "Credential vault backup",
     description:
       "Export or import your saved credentials as an encrypted, passphrase-protected file",
     category: "security",
@@ -417,7 +417,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "rdpTrustedCertificates",
-    label: "Remembered RDP Certificates",
+    label: "Remembered RDP certificates",
     description: "Review and revoke RDP server certificates you chose to trust",
     category: "security",
     experimental: true,
@@ -436,7 +436,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "sshTrustedHostKeys",
-    label: "Remembered SSH Host Keys",
+    label: "Remembered SSH host keys",
     description: "Review and revoke SSH host keys you chose to trust",
     category: "security",
     keywords: [
@@ -455,7 +455,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "workflowLocalProcess",
-    label: "Workflow Local Process Execution",
+    label: "Workflow local process execution",
     description:
       "Allow workflows to run local programs on this computer, and manage which programs are allowed",
     category: "security",
@@ -473,7 +473,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "workspaceImportConfirmations",
-    label: "Imported Workspace Confirmations",
+    label: "Imported workspace confirmations",
     description:
       "See and revoke the imported workspace commands and connections confirmed on this machine",
     category: "security",
@@ -493,14 +493,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "fileLanguageMappings",
-    label: "File Type Mappings",
+    label: "File type mappings",
     description: "Map filenames and extensions to syntax highlighting languages",
     category: "editor",
     keywords: ["syntax", "highlight", "language", "filetype", "extension", "mapping", "monaco"],
   },
   {
     id: "installedLanguagePackages",
-    label: "Language Packages",
+    label: "Language packages",
     description:
       "Install additional syntax highlighting packages from Shiki's TextMate grammar library",
     category: "editor",
@@ -522,7 +522,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "customLanguageGrammars",
-    label: "Custom Language Grammars",
+    label: "Custom language grammars",
     description: "Import custom TextMate grammar files (.tmLanguage.json) for your own languages",
     category: "editor",
     keywords: [
@@ -538,7 +538,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "serialPortScanPrefixes",
-    label: "Serial Port Scan Prefixes",
+    label: "Serial port scan prefixes",
     description:
       "Linux /dev prefixes scanned to discover serial ports that the system library may not enumerate (e.g. ttyAMA* on Raspberry Pi)",
     category: "serial",
@@ -640,7 +640,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "warnLargePortScan",
-    label: "Warn Before a Large Port Scan",
+    label: "Warn before a large port scan",
     description:
       "Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations",
     category: "safety-prompts",
@@ -659,7 +659,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "warnLargePingSweep",
-    label: "Warn Before a Large Ping Sweep",
+    label: "Warn before a large ping sweep",
     description:
       "Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)",
     category: "safety-prompts",
@@ -680,7 +680,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "fileLogLevel",
-    label: "Log File Verbosity",
+    label: "Log file verbosity",
     description: "How much detail termiHub writes to its log file; raise it when reporting a bug",
     category: "general",
     keywords: [
@@ -702,7 +702,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "showCrashReportNotice",
-    label: "Crash Report Notice",
+    label: "Crash report notice",
     description:
       "Offer to view or export the local crash report on the next start after a crash; export a diagnostics bundle",
     category: "general",
@@ -728,7 +728,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "frontendPluginsEnabled",
-    label: "Enable Frontend (JavaScript) Plugins",
+    label: "Enable frontend (JavaScript) plugins",
     description:
       "Experimental: run plugin-provided JavaScript (protocol parsers, status-bar widgets) in the app. Off by default — these plugins run with full access and weak isolation.",
     category: "plugins",
@@ -746,9 +746,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "pluginIndexUrl",
-    label: "Plugin Index URL",
+    label: "Plugin index URL",
     description:
-      "Browse Plugins: the curated plugin index to list (termiHub-maintained by default). Fetched only when you click Load; installs are checksum-verified and always need your confirmation.",
+      "Browse plugins: the curated plugin index to list (termiHub-maintained by default). Fetched only when you click Load; installs are checksum-verified and always need your confirmation.",
     category: "plugins",
     keywords: [
       "plugin",
@@ -765,7 +765,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "pluginUpdateCheckEnabled",
-    label: "Check for Plugin Updates Automatically",
+    label: "Check for plugin updates automatically",
     description:
       "Off by default. When on, plugins that publish an update URL are checked once a day. Updates are never installed without your confirmation.",
     category: "plugins",
@@ -773,7 +773,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "nativePluginsEnabled",
-    label: "Enable Native Plugins",
+    label: "Enable native plugins",
     description:
       "Off by default: native plugins run in a separate, sandboxed process. Each must be trusted individually before it loads (PLG-006).",
     category: "plugins",
@@ -792,7 +792,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "restoreLastSessionOnStartup",
-    label: "Restore Last Session on Startup",
+    label: "Restore last session on startup",
     description:
       "Never, ask, or always reopen the tabs and layout from your previous session when the app starts",
     category: "sessions",
@@ -815,28 +815,28 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "sessionHistoryEnabled",
-    label: "Auto-Save Sessions to History",
+    label: "Auto-save sessions to history",
     description: "Record every session opened so it can be reconnected from Recent Sessions",
     category: "sessions",
     keywords: ["session", "history", "recent", "record", "auto-save", "mobaxterm", "quick connect"],
   },
   {
     id: "sessionHistoryLimit",
-    label: "Session History Limit",
+    label: "Session history limit",
     description: "Maximum number of recent sessions to keep before the oldest is evicted",
     category: "sessions",
     keywords: ["session", "history", "limit", "recent", "max", "count", "evict"],
   },
   {
     id: "showRecentSessions",
-    label: "Show Recent Sessions Panel",
+    label: "Show recent sessions panel",
     description: "Show the Recent Sessions sidebar panel and its activity-bar icon",
     category: "sessions",
     keywords: ["session", "history", "recent", "sidebar", "panel", "show", "hide"],
   },
   {
     id: "networkToolHistoryEnabled",
-    label: "Record Network Tool History",
+    label: "Record network tool history",
     description:
       "Keep a local history of finished network tool runs (ping, traceroute, port scan, DNS, …) and HTTP monitor checks to revisit, re-run and export",
     category: "sessions",
@@ -858,21 +858,21 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "provideXServerAutomatically",
-    label: "Provide X Server Automatically",
+    label: "Provide X server automatically",
     description: "Start a local X server automatically for X11 forwarding",
     category: "x-server",
     keywords: ["x server", "x11", "xserver", "display", "vcxsrv", "forwarding", "gui"],
   },
   {
     id: "stopXServerWhenIdle",
-    label: "Stop X Server When Idle",
+    label: "Stop X server when idle",
     description: "Shut down the auto-provided X server when no connection uses it",
     category: "x-server",
     keywords: ["x server", "x11", "idle", "stop", "shutdown", "display"],
   },
   {
     id: "pluginSettings",
-    label: "Plugin Settings",
+    label: "Plugin settings",
     description: "Configure settings for installed plugins that declare them",
     category: "plugins",
     keywords: [
@@ -889,7 +889,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "backupRestore",
-    label: "Backup & Restore",
+    label: "Backup & restore",
     description:
       "Back up all app data (optionally with encrypted credentials) to one file and restore it",
     category: "backup",
@@ -943,14 +943,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "importExportConnections",
-    label: "Import / Export Connections",
+    label: "Import / export connections",
     description: "Move saved connections and folders between termiHub installs as a JSON file",
     category: "import",
     keywords: ["import", "export", "json", "connections", "share", "transfer", "file"],
   },
   {
     id: "portableMode",
-    label: "Portable Mode",
+    label: "Portable mode",
     description: "Run termiHub from a USB drive or any directory without system installation",
     category: "portable",
     keywords: [
@@ -965,7 +965,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "portableMigration",
-    label: "Config Migration",
+    label: "Config migration",
     description: "Export or import configuration between installed and portable mode",
     category: "portable",
     keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
@@ -989,7 +989,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "externalConnectionFiles",
-    label: "External Connection Files",
+    label: "External connection files",
     description:
       "Load shared connection configs from external JSON files, e.g. from a git repository",
     category: "external-files",
@@ -1006,21 +1006,21 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "powerMonitoring",
-    label: "Power Monitoring",
+    label: "Power monitoring",
     description: "Monitor CPU, memory, and power events via SSH agent connections",
     category: "external-files",
     keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced"],
   },
   {
     id: "fileBrowser",
-    label: "File Browser",
+    label: "File browser",
     description: "Enable the SFTP file browser for SSH agent sessions",
     category: "external-files",
     keywords: ["file browser", "sftp", "files", "agent", "ssh", "advanced"],
   },
   {
     id: "trustedPublishers",
-    label: "Trusted Publishers",
+    label: "Trusted publishers",
     description: "Publisher keys termiHub trusts to sign plugins",
     category: "plugins",
     keywords: [
@@ -1035,15 +1035,15 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "updateAutoCheck",
-    label: "Auto-check for Updates",
+    label: "Auto-check for updates",
     description: "Check for app updates on startup and every 24 hours while running",
     category: "updates",
     keywords: ["update", "updates", "auto-check", "auto check", "automatic", "startup", "release"],
   },
   {
     id: "updateStatus",
-    label: "Update Status",
-    description: "Current and latest version, last check time, and Check Now",
+    label: "Update status",
+    description: "Current and latest version, last check time, and Check now",
     category: "updates",
     keywords: ["update", "updates", "version", "check now", "build", "download", "latest"],
   },

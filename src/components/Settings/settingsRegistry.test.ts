@@ -74,6 +74,20 @@ describe("settingsRegistry", () => {
       expect(results.some((s) => s.id === "cursorBlink")).toBe(true);
     });
 
+    it("still finds settings by their old Title Case labels (#5391)", () => {
+      const oldLabels: [string, string][] = [
+        ["Font Family", "fontFamily"],
+        ["Restore Last Session on Startup", "restoreLastSessionOnStartup"],
+        ["Warn Before a Large Port Scan", "warnLargePortScan"],
+        ["Provide X Server Automatically", "provideXServerAutomatically"],
+        ["Check for Plugin Updates Automatically", "pluginUpdateCheckEnabled"],
+        ["Command Marks (Shell Hook) by Default", "defaultShellIntegration"],
+      ];
+      for (const [query, id] of oldLabels) {
+        expect(filterSettings(query).some((s) => s.id === id)).toBe(true);
+      }
+    });
+
     it("returns empty for non-matching query", () => {
       expect(filterSettings("xyznonexistent")).toHaveLength(0);
     });

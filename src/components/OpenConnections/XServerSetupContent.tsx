@@ -294,7 +294,8 @@ export function XServerSetupContent({
             onClick={() => openUrl(APP_INSTALLER_URL)}
             data-testid={`${testIdPrefix}-install-app-installer`}
           >
-            Install App Installer
+            {/* eslint-disable-next-line copy/copy-style -- "App Installer" is the Microsoft product */}
+            {"Install App Installer"}
           </Button>
         </>
       );

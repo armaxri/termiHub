@@ -121,7 +121,7 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
     <Modal
       open
       onOpenChange={(isOpen) => !isOpen && onCancel()}
-      title="Add Connection"
+      title="Add connection"
       description="Search, then pick a connection to add as a tab to this panel"
       initialFocusRef={searchRef}
       data-testid="connection-picker"
@@ -196,7 +196,7 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
           {hasAgents && (
             <>
               <div className="connection-picker__group-name" role="presentation">
-                Remote Agents
+                Remote agents
               </div>
               {filteredAgents.map((agent) => {
                 const isConnected = agent.connectionState === "connected";

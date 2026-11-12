@@ -166,7 +166,7 @@ export function WolPanel() {
       <div className="network-panel__form">
         <Field
           className="network-panel__field"
-          label="MAC Address"
+          label="MAC address"
           htmlFor="wol-mac"
           error={macError ?? undefined}
         >
@@ -214,7 +214,7 @@ export function WolPanel() {
       {error && <div className="network-panel__error">{error}</div>}
 
       {/* Saved Devices */}
-      <div className="network-panel__section-title">Saved Devices</div>
+      <div className="network-panel__section-title">Saved devices</div>
       {savedDevices.length === 0 && (
         <EmptyState variant="panel" title="No saved devices" data-testid="wol-devices-empty" />
       )}
@@ -252,12 +252,12 @@ export function WolPanel() {
         data-testid="wol-save-device"
         style={{ alignSelf: "flex-start" }}
       >
-        Save Current
+        Save current
       </Button>
 
       <ConfirmDialog
         open={saveModalOpen}
-        title="Save Wake-on-LAN Device"
+        title="Save Wake-on-LAN device"
         icon={<Save size={16} />}
         confirmLabel="Save"
         confirmVariant="primary"

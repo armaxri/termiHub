@@ -36,11 +36,11 @@ const KIND_OPTIONS = [
 function titleFor(mode: SharedCredentialDialogMode): string {
   switch (mode.kind) {
     case "create":
-      return "New Shared Credential";
+      return "New shared credential";
     case "rename":
       return `Rename "${mode.credential.name}"`;
     case "rotate":
-      return `Change Secret of "${mode.credential.name}"`;
+      return `Change secret of "${mode.credential.name}"`;
   }
 }
 

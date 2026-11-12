@@ -249,7 +249,7 @@ export function canMoveTabWithoutSession(tab: TerminalTab): boolean {
 }
 
 /** The title of a transfer view that is not paired with a terminal. */
-export const UNPAIRED_TRANSFER_VIEW_TITLE = "File Transfer";
+export const UNPAIRED_TRANSFER_VIEW_TITLE = "File transfer";
 
 /**
  * Whether `tab` is a transfer view whose paired terminal is not among

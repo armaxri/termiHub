@@ -1,5 +1,5 @@
 /**
- * Tests for errored / stale tunnels in the Open Connections kill panel (#1240,
+ * Tests for errored / stale tunnels in the Open connections kill panel (#1240,
  * Stage S1 / GAP 3).
  *
  * The canonical kill panel must list an `error` tunnel (its leaked
@@ -94,7 +94,7 @@ function erroredState(id: string, error: string): TunnelState {
 
 function tunnelRows(): Element[] {
   const section = Array.from(document.querySelectorAll(".oc-section__title")).find(
-    (t) => t.textContent === "SSH Tunnels"
+    (t) => t.textContent === "SSH tunnels"
   );
   if (!section) return [];
   const sectionEl = section.closest("div")?.parentElement;

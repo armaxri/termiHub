@@ -443,7 +443,7 @@ here.
 Also manually verify these Windows-specific behaviors:
 
 - [ ] PowerShell is the default shell
-- [ ] Right-click defaults to "Quick Copy/Paste" mode
+- [ ] Right-click defaults to "Quick copy/paste" mode
 - [ ] Ctrl+Shift+C/V works for copy/paste (not Ctrl+C/V)
 - [ ] .msi installer works, app launches, uninstall works
 - [ ] WSL shell detection works (if WSL is installed)

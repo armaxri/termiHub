@@ -59,14 +59,14 @@ vi.mock("@/components/Plugins", () => ({
 /** Every view value paired with the panel marker it must render, and its header title. */
 const VIEWS: ReadonlyArray<{ view: SidebarView; panelTestid: string; title: string }> = [
   { view: "connections", panelTestid: "panel-connections", title: "Connections" },
-  { view: "files", panelTestid: "panel-files", title: "File Browser" },
-  { view: "tunnels", panelTestid: "panel-tunnels", title: "SSH Tunnels" },
+  { view: "files", panelTestid: "panel-files", title: "File browser" },
+  { view: "tunnels", panelTestid: "panel-tunnels", title: "SSH tunnels" },
   { view: "services", panelTestid: "panel-services", title: "Services" },
   { view: "workspaces", panelTestid: "panel-workspaces", title: "Workspaces" },
   { view: "macros", panelTestid: "panel-macros", title: "Macros" },
   { view: "workflows", panelTestid: "panel-workflows", title: "Workflows" },
-  { view: "network-tools", panelTestid: "panel-network-tools", title: "Network Tools" },
-  { view: "recent-sessions", panelTestid: "panel-recent-sessions", title: "Recent Sessions" },
+  { view: "network-tools", panelTestid: "panel-network-tools", title: "Network tools" },
+  { view: "recent-sessions", panelTestid: "panel-recent-sessions", title: "Recent sessions" },
   { view: "plugins", panelTestid: "panel-plugins", title: "Plugins" },
 ];
 
@@ -192,7 +192,7 @@ describe("Sidebar landmark (A11Y2-012, #4351)", () => {
       useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
     });
     renderSidebar();
-    const aside = getByRole("complementary", "SSH Tunnels", container);
+    const aside = getByRole("complementary", "SSH tunnels", container);
     expect(aside).toBe(container.querySelector('[data-testid="sidebar"]'));
 
     act(() => {

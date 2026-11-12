@@ -1,7 +1,7 @@
 /**
  * Tunnel-type selector semantics (UISF2-002 / UI2-006): the Local/Remote/Dynamic
  * choice is the shared ui/RadioGroup card variant, so it is a radiogroup named
- * by its visible "Tunnel Type" label, exposes aria-checked, and supports Radix
+ * by its visible "Tunnel type" label, exposes aria-checked, and supports Radix
  * arrow-key roving selection.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -108,12 +108,12 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
     vi.clearAllMocks();
   });
 
-  it("is a radiogroup named by the visible Tunnel Type label", async () => {
+  it("is a radiogroup named by the visible Tunnel type label", async () => {
     await render();
     const group = q("tunnel-editor-type-selector");
     expect(group.getAttribute("role")).toBe("radiogroup");
     const labelId = group.getAttribute("aria-labelledby") as string;
-    expect(document.getElementById(labelId)?.textContent).toBe("Tunnel Type");
+    expect(document.getElementById(labelId)?.textContent).toBe("Tunnel type");
     expect(q("tunnel-type-local").getAttribute("role")).toBe("radio");
     expect(q("tunnel-type-local").getAttribute("type")).toBe("button");
     expect(q("tunnel-type-local").getAttribute("aria-checked")).toBe("true");
@@ -144,7 +144,7 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
 
   it("names every control and leaves no orphan <label> (UISF2-010, #4351)", async () => {
     await render();
-    expect(getByRole("radiogroup", "Tunnel Type", container)).toBe(
+    expect(getByRole("radiogroup", "Tunnel type", container)).toBe(
       q("tunnel-editor-type-selector")
     );
     const orphans = Array.from(container.querySelectorAll("label"))

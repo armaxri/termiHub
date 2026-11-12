@@ -221,11 +221,11 @@ describe("appStore — moveTabToGroup same-group guard", () => {
 });
 
 describe("appStore — openTunnelEditorTab title for an unknown tunnel id", () => {
-  it("titles a brand-new editor 'New Tunnel' when the id resolves to no tunnel", () => {
+  it("titles a brand-new editor 'New tunnel' when the id resolves to no tunnel", () => {
     // No tunnels seeded, so the id matches nothing → the `if (tunnel)` false arm.
     useAppStore.getState().openTunnelEditorTab("missing-tunnel");
 
     const editor = allTabs().find((t) => t.contentType === "tunnel-editor");
-    expect(editor?.title).toBe("New Tunnel");
+    expect(editor?.title).toBe("New tunnel");
   });
 });

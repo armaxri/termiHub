@@ -98,7 +98,7 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
       container.querySelector('[aria-label="Pause monitoring https://example.com"]')
     ).not.toBeNull();
     expect(
-      container.querySelector('[aria-label="Remove monitor https://example.com"]')
+      container.querySelector('[aria-label="Delete monitor https://example.com"]')
     ).not.toBeNull();
   });
 
@@ -155,7 +155,7 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
       '[data-testid="monitor-remove-mon-1"]'
     );
     expect(resumeBtn?.getAttribute("aria-label")).toBe("Resume monitoring https://example.com");
-    expect(removeBtn?.getAttribute("aria-label")).toBe("Remove monitor https://example.com");
+    expect(removeBtn?.getAttribute("aria-label")).toBe("Delete monitor https://example.com");
 
     await act(async () => {
       resumeBtn!.click();
@@ -176,7 +176,7 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
 
     await act(async () => {
       container
-        .querySelector<HTMLButtonElement>('[aria-label="Remove monitor https://example.com"]')!
+        .querySelector<HTMLButtonElement>('[aria-label="Delete monitor https://example.com"]')!
         .click();
     });
     await flush();

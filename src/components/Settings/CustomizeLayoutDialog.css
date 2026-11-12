@@ -103,8 +103,6 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .customize-layout-dialog__control-row {

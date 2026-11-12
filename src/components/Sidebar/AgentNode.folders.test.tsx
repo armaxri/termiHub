@@ -1,10 +1,10 @@
 /**
- * Agent folder paths in the Remote Agents tree (#5322, COV-027).
+ * Agent folder paths in the Remote agents tree (#5322, COV-027).
  *
  * - Search filter: matched folders are force-expanded (even when stored
  *   collapsed), folders and definitions without a match are hidden, and folder
  *   toggles are suppressed so clearing the filter restores the stored state.
- * - "New Subfolder" from the folder menu creates the folder under its parent
+ * - "New subfolder" from the folder menu creates the folder under its parent
  *   through the real `createAgentFolder` action.
  * - Keyboard: ArrowRight expands a collapsed folder then moves into its first
  *   child, ArrowLeft collapses an expanded folder or moves to the parent, and
@@ -206,7 +206,7 @@ describe("AgentNode — folder paths (#5322)", () => {
     });
   });
 
-  describe("New Subfolder", () => {
+  describe("New subfolder", () => {
     // #5322: the menu used to hand focus back to the folder row as it closed,
     // which blurred (and so cancelled) the input that had just opened, and on a
     // collapsed folder the input was never rendered at all.
@@ -215,7 +215,7 @@ describe("AgentNode — folder paths (#5322)", () => {
       act(() => folderRow("prod").focus());
       await press(folderRow("prod"), "F10", { shiftKey: true });
       const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-        (el) => el.textContent?.includes("New Subfolder")
+        (el) => el.textContent?.includes("New subfolder")
       );
       expect(item).toBeDefined();
       await act(async () => item!.click());

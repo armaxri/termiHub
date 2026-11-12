@@ -47,7 +47,7 @@ export function LayoutPreview({ layout }: LayoutPreviewProps) {
     <div className="layout-preview" data-testid="layout-preview">
       {abIsTop && (
         <div className="layout-preview__activity-bar--top" data-testid="preview-ab-top">
-          <span className="layout-preview__label">Activity Bar</span>
+          <span className="layout-preview__label">Activity bar</span>
         </div>
       )}
       {abIsTop ? (
@@ -63,7 +63,7 @@ export function LayoutPreview({ layout }: LayoutPreviewProps) {
       )}
       {statusVisible && (
         <div className="layout-preview__status-bar" data-testid="preview-statusbar">
-          <span className="layout-preview__label">Status Bar</span>
+          <span className="layout-preview__label">Status bar</span>
         </div>
       )}
     </div>

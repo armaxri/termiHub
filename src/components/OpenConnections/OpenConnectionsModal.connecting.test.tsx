@@ -1,5 +1,5 @@
 /**
- * Tests for the "Connecting" section of the Open Connections panel (#952):
+ * Tests for the "Connecting" section of the Open connections panel (#952):
  * sessions still establishing their handshake are listed and can be cancelled,
  * which aborts the in-flight connect via cancel_connecting.
  */
@@ -110,7 +110,7 @@ describe("OpenConnectionsModal — Connecting section", () => {
     await renderWithConnectingTab();
     const modal = document.querySelector(".ui-modal");
     expect(modal).not.toBeNull();
-    expect(modal?.querySelector(".ui-modal__title")?.textContent).toContain("Open Connections");
+    expect(modal?.querySelector(".ui-modal__title")?.textContent).toContain("Open connections");
   });
 
   it("shows no Connecting section when nothing is connecting", async () => {

@@ -90,7 +90,7 @@ export function CrashReportNotice() {
           onClick={dismiss}
           data-testid="crash-report-notice-dismiss"
         >
-          Dismiss
+          Close
         </Button>
         <Button
           variant="secondary"
@@ -106,7 +106,7 @@ export function CrashReportNotice() {
           onClick={handleView}
           data-testid="crash-report-notice-view"
         >
-          View Report
+          View report
         </Button>
       </div>
     </div>

@@ -305,7 +305,7 @@ export function WorkflowSidebar() {
         actions={[
           {
             id: "new",
-            label: "New Workflow",
+            label: "New workflow",
             shortLabel: "New",
             icon: <Plus size={12} />,
             primary: true,
@@ -336,8 +336,8 @@ export function WorkflowSidebar() {
           ...exportImportActions({
             onExport: handleExportAll,
             onImport: handleImport,
-            exportLabel: "Export All Workflows",
-            importLabel: "Import Workflows",
+            exportLabel: "Export all workflows",
+            importLabel: "Import workflows",
             exportDisabled: workflows.length === 0,
             exportTestId: "workflow-export-all-btn",
             importTestId: "workflow-import-btn",

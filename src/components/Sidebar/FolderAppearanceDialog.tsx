@@ -30,7 +30,7 @@ export function FolderAppearanceDialog({
     <Modal
       open={folder !== null}
       onOpenChange={onOpenChange}
-      title="Folder Appearance"
+      title="Folder appearance"
       description="Choose an icon color and emoji for this folder."
       data-testid="folder-appearance-dialog"
       footer={

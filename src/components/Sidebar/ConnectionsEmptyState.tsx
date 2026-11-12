@@ -54,7 +54,7 @@ export function ConnectionsEmptyState({ onNewConnection }: ConnectionsEmptyState
           onClick={onNewConnection}
           data-testid="connections-empty-new-connection"
         >
-          New Connection
+          New connection
         </Button>
       }
     />

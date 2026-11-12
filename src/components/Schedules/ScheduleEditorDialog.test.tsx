@@ -156,7 +156,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     expect((query("schedule-editor-time") as HTMLInputElement).value).toBe("03:15");
     expect(query("schedule-editor-day-sat")!.getAttribute("aria-pressed")).toBe("true");
     expect(query("schedule-editor-day-mon")!.getAttribute("aria-pressed")).toBe("false");
-    expect(query("schedule-editor-dialog")!.textContent).toContain("Edit Schedule");
+    expect(query("schedule-editor-dialog")!.textContent).toContain("Edit schedule");
   });
 
   describe("an open editor follows connection id changes (#3603)", () => {
