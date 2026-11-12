@@ -9,4 +9,13 @@
  * frontend `events.ts` wrapper renames to camelCase. The `state` value itself
  * is a camelCase-serialized [`GraphicalState`] (e.g. `"connectFailed"`).
  */
-export type RemoteDesktopStateEvent = { session_id: string, state: import("./GraphicalState").GraphicalState, reconnect_attempt: number, message?: string, };
+export type RemoteDesktopStateEvent = { session_id: string, state: import("./GraphicalState").GraphicalState, reconnect_attempt: number, message?: string, 
+/**
+ * The typed failure category of a `connectFailed` / `authFailed` state
+ * (#5380) — the same [`IpcErrorCode`] the structured IPC error envelope
+ * carries (`refused`, `unreachable`, `dns`, `timeout`, `auth_failed`, …),
+ * so the frontend shows the same heading and hint a terminal tab does,
+ * with `message` as the OS detail. Absent for an unclassified failure and
+ * for every non-failure state.
+ */
+code?: import("./IpcErrorCode").IpcErrorCode, };
