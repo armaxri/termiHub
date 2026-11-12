@@ -346,7 +346,7 @@ impl ConnectionType for Serial {
     }
 
     fn display_name(&self) -> &str {
-        "Serial Port"
+        "Serial port"
     }
 
     fn settings_schema(&self) -> SettingsSchema {
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn display_name() {
         let serial = Serial::new();
-        assert_eq!(serial.display_name(), "Serial Port");
+        assert_eq!(serial.display_name(), "Serial port");
     }
 
     #[test]

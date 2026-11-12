@@ -228,7 +228,7 @@ termiHub uses a VS Code-inspired three-column layout:
 ### Managing Connections
 
 1. Click **Connections** in the Activity Bar, then **+** to create a new connection
-2. Fill in Name, Folder, Type (Local Shell / SSH / Serial / Telnet / Docker / WSL / FTP / remote agent, plus RDP / VNC when experimental features are enabled), and type-specific settings
+2. Fill in Name, Folder, Type (Local shell / SSH / Serial / Telnet / Docker / WSL / FTP / remote agent, plus RDP / VNC when experimental features are enabled), and type-specific settings
 3. Click **Save**
 
 **Right-click** a connection for: Connect, Ping Host (SSH/Telnet), Edit, Duplicate, Delete. **Double-click** to connect immediately.
@@ -259,7 +259,7 @@ The import lives under **Settings → Import & migration**. It always shows a pr
 
 ### Connection Types
 
-- **Local Shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
+- **Local shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
 - **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
 - **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23). See [Telnet](#telnet) below for window size, terminal type, and auto-login.
 - **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. Resizing the tab does not tell the device the new size (serial has no channel for it). See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions and [Terminal Size](#terminal-size).

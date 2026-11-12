@@ -442,7 +442,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     }
 
     fn display_name(&self) -> &str {
-        "Local Shell"
+        "Local shell"
     }
 
     fn settings_schema(&self) -> SettingsSchema {
@@ -1420,7 +1420,7 @@ mod tests {
     #[test]
     fn display_name() {
         let shell = LocalShell::new();
-        assert_eq!(shell.display_name(), "Local Shell");
+        assert_eq!(shell.display_name(), "Local shell");
     }
 
     #[test]

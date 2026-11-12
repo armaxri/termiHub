@@ -24,7 +24,7 @@ function makeType(typeId: string, displayName: string, graphical = false): Conne
 }
 
 const SSH = makeType("ssh", "SSH");
-const LOCAL = makeType("local", "Local Shell");
+const LOCAL = makeType("local", "Local shell");
 const VNC = makeType("vnc", "VNC", true);
 const RDP = makeType("rdp", "RDP", true);
 const MOCK = makeType("mock-remote-desktop", "Mock Remote Desktop", true);

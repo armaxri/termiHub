@@ -103,9 +103,9 @@ pub fn service_id_for(server_type: &ServerType) -> &'static str {
 /// Human-readable [`display_name`](Service::display_name) for a [`ServerType`].
 pub fn display_name_for(server_type: &ServerType) -> &'static str {
     match server_type {
-        ServerType::Http => "HTTP Server",
-        ServerType::Ftp => "FTP Server",
-        ServerType::Tftp => "TFTP Server",
+        ServerType::Http => "HTTP server",
+        ServerType::Ftp => "FTP server",
+        ServerType::Tftp => "TFTP server",
     }
 }
 
