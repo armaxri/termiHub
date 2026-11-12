@@ -50,7 +50,8 @@
 
 .terminal-reconnect-strip__note {
   display: block;
-  color: var(--text-muted);
+  /* #5459: on the warning-tinted strip plain --text-muted falls below AA. */
+  color: var(--text-muted-on-selection);
 }
 
 /* The input note turns to the warning tone once the user types into the

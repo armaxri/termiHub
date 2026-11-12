@@ -19,14 +19,16 @@ use tracing::{debug, info, trace, warn};
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install::{
-    self, detect_windows_shell, posix_install_plan, prepare_posix_upload_dir, windows_install_plan,
-    windows_resolve_command, InstallPlan,
+    self, detect_windows_deploy_shell, posix_install_plan, prepare_posix_upload_dir,
+    resolve_encoded_install_path, windows_deploy_install_plan, windows_resolve_command,
+    InstallPlan, WindowsDeployShell,
 };
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
-    detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
-    run_remote_command, run_remote_command_checked, upload_bytes_via_sftp_cancellable,
+    detect_binary_arch, detect_pe_machine, detect_remote_info, expected_arch_for_uname,
+    expected_pe_machine_for_arch, remove_via_sftp, run_remote_command, run_remote_command_checked,
+    upload_bytes_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 #[cfg(test)]
@@ -438,6 +440,10 @@ where
         "Validating binary architecture…",
         0.3,
     );
+    if agent_binary::is_windows_os(remote_os) {
+        check_windows_binary_arch(&binary_path, remote_arch)?;
+        return Ok(binary_path);
+    }
     let binary_path_str = binary_path.to_string_lossy();
     if let Ok(elf_arch) = detect_binary_arch(&binary_path_str) {
         if let Some(expected_arch) = expected_arch_for_uname(remote_arch) {
@@ -449,6 +455,34 @@ where
         }
     }
     Ok(binary_path)
+}
+
+/// Refuse a Windows agent binary that is not a PE image for the host's
+/// architecture (#5449). Fails closed: a binary that cannot be read, is not a
+/// PE executable, or targets another machine type stops the deploy before
+/// anything is uploaded.
+fn check_windows_binary_arch(
+    binary_path: &std::path::Path,
+    remote_arch: &str,
+) -> Result<(), TerminalError> {
+    use std::io::Read;
+    let expected = expected_pe_machine_for_arch(remote_arch).ok_or_else(|| {
+        TerminalError::RemoteError(format!("Unsupported Windows architecture: {remote_arch}"))
+    })?;
+    let mut header = Vec::with_capacity(4096);
+    std::fs::File::open(binary_path)
+        .and_then(|f| f.take(4096).read_to_end(&mut header))
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    match detect_pe_machine(&header) {
+        Some(machine) if machine == expected => Ok(()),
+        Some(machine) => Err(TerminalError::RemoteError(format!(
+            "Architecture mismatch: binary is PE machine 0x{machine:04x}, remote {remote_arch} \
+             expects 0x{expected:04x}"
+        ))),
+        None => Err(TerminalError::RemoteError(
+            "The agent binary for a Windows host is not a Windows executable".to_string(),
+        )),
+    }
 }
 
 /// Read the resolved binary, re-verify its release signature over exactly the
@@ -512,15 +546,21 @@ pub fn install_agent_bytes(
     // PowerShell/cmd commands and a different upload/install location; no
     // POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`) are issued. POSIX hosts
     // upload into a fresh private dir, never a shared `/tmp` name (AGT2-002).
-    let (plan, windows_shell): (InstallPlan, Option<agent_install::WindowsShell>) =
-        if agent_binary::is_windows_os(remote_os) {
-            let shell = detect_windows_shell(session);
-            info!("Remote host is Windows; using {shell:?} install commands");
-            (windows_install_plan(shell), Some(shell))
-        } else {
-            let upload_dir = prepare_posix_upload_dir(session)?;
-            (posix_install_plan(remote_path, &upload_dir), None)
+    // A Windows login shell that is neither cmd.exe nor PowerShell gets the
+    // PowerShell plan as encoded `powershell.exe` commands (#5449); its launch
+    // path is resolved and validated here, before anything touches the host.
+    let (plan, windows_shell, encoded_launch_path) = if agent_binary::is_windows_os(remote_os) {
+        let shell = detect_windows_deploy_shell(session)?;
+        info!("Remote host is Windows; using {shell:?} install commands");
+        let launch_path = match shell {
+            WindowsDeployShell::EncodedPowerShell => Some(resolve_encoded_install_path(session)?),
+            WindowsDeployShell::Native(_) => None,
         };
+        (windows_deploy_install_plan(shell), Some(shell), launch_path)
+    } else {
+        let upload_dir = prepare_posix_upload_dir(session)?;
+        (posix_install_plan(remote_path, &upload_dir), None, None)
+    };
 
     // Delete images an earlier update renamed aside because a running agent
     // held them, now that their processes may have exited (#5254).
@@ -613,11 +653,15 @@ pub fn install_agent_bytes(
 
     // Resolve the concrete install path. On Windows this expands
     // `%LOCALAPPDATA%`/`$env:LOCALAPPDATA` to an absolute, shell-agnostic path.
+    // The encoded step's path was resolved and validated before the upload.
     let installed_path = match windows_shell {
-        Some(shell) => run_remote_command(session, &windows_resolve_command(shell))
-            .ok()
-            .filter(|p| !p.is_empty())
-            .or_else(|| Some(plan.install_path.clone())),
+        Some(WindowsDeployShell::Native(shell)) => {
+            run_remote_command(session, &windows_resolve_command(shell))
+                .ok()
+                .filter(|p| !p.is_empty())
+                .or_else(|| Some(plan.install_path.clone()))
+        }
+        Some(WindowsDeployShell::EncodedPowerShell) => encoded_launch_path,
         None => Some(plan.install_path.clone()),
     };
 
@@ -1319,3 +1363,7 @@ mod host_tests;
 #[cfg(test)]
 #[path = "agent_deploy_prologue_tests.rs"]
 mod prologue_tests;
+
+#[cfg(test)]
+#[path = "agent_deploy_windows_tests.rs"]
+mod windows_tests;

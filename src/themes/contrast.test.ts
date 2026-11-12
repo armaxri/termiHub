@@ -497,7 +497,7 @@ describe("solarized light sidebar on base3 (#5457)", () => {
       colors.textMuted,
     ].map((fg) => contrastRatio(fg, colors.sidebarBg));
     expect(muted).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
-    expect(secondary).toBeGreaterThanOrEqual(muted);
+    expect(secondary).toBeGreaterThan(muted);
     expect(primary).toBeGreaterThan(secondary);
   });
 
@@ -513,6 +513,54 @@ describe("solarized light sidebar on base3 (#5457)", () => {
 
   it("the panel border separates the sidebar from the editor", () => {
     expect(contrastRatio(colors.borderPrimary, colors.sidebarBg)).toBeGreaterThanOrEqual(1.3);
+  });
+});
+
+/**
+ * Solarized Light muted text (#5459). Maintainer decision: the canonical
+ * mapping, base01 for muted, base02 for secondary. base01 reaches 4.99:1 on
+ * base3 (editor, sidebar, menus) but only 4.39:1 on base2 (`bgSecondary`) and
+ * 3.92:1 on `bgTertiary`, so the surfaces that paint those behind muted text
+ * redirect it to `--text-muted-on-selection` (pinned by
+ * src/styles/mutedOnSelection.test.ts). That token is graded here on every
+ * such surface in all four themes.
+ */
+describe("solarized light muted text is base01 (#5459)", () => {
+  const { colors } = solarizedLightTheme;
+
+  it("muted is base01 and secondary stays base02", () => {
+    expect(colors.textMuted).toBe(SOLARIZED_PALETTE.base01);
+    expect(colors.textSecondary).toBe(SOLARIZED_PALETTE.base02);
+  });
+
+  it("documents the gap the chrome redirect closes: base01 fails on base2 and bgTertiary", () => {
+    expect(contrastRatio(colors.textMuted, colors.bgSecondary)).toBeLessThan(AA_NORMAL_TEXT);
+    expect(contrastRatio(colors.textMuted, colors.bgTertiary)).toBeLessThan(AA_NORMAL_TEXT);
+  });
+});
+
+describe("muted text on raised chrome surfaces (WCAG 2.2 AA, #5459)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    const fg = theme.colors.textMutedOnSelection;
+    const surfaces: [string, string][] = [
+      ["bgSecondary", theme.colors.bgSecondary],
+      ["bgTertiary", theme.colors.bgTertiary],
+      // Terminal reconnect strip: 12% warning over the terminal background.
+      ["reconnect strip", composite(theme.colors.colorWarning, theme.colors.terminalBg, 0.12)],
+    ];
+    for (const [name, bg] of surfaces) {
+      it(`${theme.id} textMutedOnSelection (${fg}) meets AA on ${name} (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+  }
+
+  it("muted still marks the unfocused active tab (3:1 on tabBg)", () => {
+    for (const theme of BUILT_IN_THEMES) {
+      expect(contrastRatio(theme.colors.textMuted, theme.colors.tabBg)).toBeGreaterThanOrEqual(
+        UI_COMPONENT_MIN
+      );
+    }
   });
 });
 

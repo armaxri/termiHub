@@ -36,7 +36,8 @@
 
 .oc-section__count {
   font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  /* #5459: on --bg-tertiary plain --text-muted falls below AA. */
+  color: var(--text-muted-on-selection);
   background: var(--bg-tertiary);
   border-radius: var(--radius-full);
   padding: 1px var(--spacing-sm);
@@ -203,5 +204,6 @@
 /* Adopted external X server: neutral, matches the section count chip. */
 .oc-row__badge--external {
   background: var(--bg-tertiary);
-  color: var(--text-muted);
+  /* #5459: on --bg-tertiary plain --text-muted falls below AA. */
+  color: var(--text-muted-on-selection);
 }

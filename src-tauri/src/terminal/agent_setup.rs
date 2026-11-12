@@ -512,8 +512,28 @@ fn run_windows_install(
     session_manager: &SessionManager,
     rt_handle: &tokio::runtime::Handle,
 ) {
-    let shell = agent_install::detect_windows_shell(sftp_session);
-    let plan = agent_install::windows_install_plan(shell);
+    // Fail closed when no PowerShell or cmd.exe syntax works (#5449): typing
+    // a guessed syntax into the terminal would leave the upload behind.
+    let shell = match agent_install::detect_windows_deploy_shell(sftp_session) {
+        Ok(shell) => shell,
+        Err(e) => {
+            error!("Agent setup: {e}");
+            rollback_uploaded_binary(sftp_session, agent_install::WINDOWS_UPLOAD_NAME);
+            emit_progress(app_handle, agent_id, "error", &e.to_string());
+            // A fixed text: the error quotes remote output, which must never
+            // be typed into the terminal.
+            inject_setup_error(
+                true,
+                sftp_session,
+                session_manager,
+                session_id,
+                "termiHub could not run PowerShell on this host to install the agent",
+                rt_handle,
+            );
+            return;
+        }
+    };
+    let plan = agent_install::windows_deploy_install_plan(shell);
     info!("Agent setup: installing on Windows via {shell:?}");
 
     emit_progress(

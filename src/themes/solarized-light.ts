@@ -37,11 +37,15 @@ export const solarizedLightTheme: ThemeDefinition = {
     // 1.80:1 on the old base2 sidebar. base01 only reaches 4.39:1 on base2,
     // which the status bar and tab bar (bgSecondary / tabBg) still paint, so
     // the first canonical tone that passes everywhere is base02.
+    // #5459: with the sidebar on base3, muted takes the canonical third level,
+    // base01, so secondary and muted read as distinct. Surfaces that still
+    // paint base2 / bgTertiary behind muted text (search bar, transfer queue,
+    // badges) redirect it to textMutedOnSelection (base02).
     // Locked by contrast.test.ts, which also checks palette membership.
     textPrimary: "#002b36", // base03: 13.92:1 on sidebar, 9.64:1 on bgActive
     textSecondary: "#073642", // base02: 10.61:1 on bgSecondary / tabBg
     textSecondaryOnSelection: "#073642", // base02: 8.35:1 on bgActive
-    textMuted: "#073642", // base02: 12.05:1 on bgPrimary and sidebar
+    textMuted: "#586e75", // base01: 4.99:1 on bgPrimary, sidebar and bgDropdown
     textMutedOnSelection: "#073642", // base02
     textDisabled: "#c5bfae",
     // #5399: canonical blue measured 3.00:1 on base2 (bgSecondary). Darkened
