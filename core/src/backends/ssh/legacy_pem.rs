@@ -5,10 +5,16 @@
 //! header and a `DEK-Info: AES-128-CBC,<iv>` line, deriving the cipher key from
 //! the passphrase via OpenSSL's MD5-based `EVP_BytesToKey`.
 //!
-//! russh 0.61 recognises the PEM label but its `decode_pkcs5` decrypts the blob
-//! and then parses the plaintext **only as PKCS#1 RSA** (it carries a literal
-//! `// TODO: presumably pkcs5 could contain non-RSA keys?`). So a SEC1 EC key
-//! fails to load with a misleading "Pkcs1: expected INTEGER, got OCTET STRING".
+//! russh (re-verified on 0.65.1, #5500) still cannot load these keys. Its
+//! `decode_secret_key` recognises only an `AES-128-CBC` `DEK-Info` line, and its
+//! `decode_pkcs5` decrypts the blob and then parses the plaintext **only as
+//! PKCS#1 RSA** (it still carries a literal
+//! `// TODO: presumably pkcs5 could contain non-RSA keys?`). So an AES-128 SEC1
+//! EC key fails with a misleading "Pkcs1: expected INTEGER, got OCTET STRING",
+//! and an AES-192/256 one is base64-decoded as if it were unencrypted and fails
+//! with a DER error. The canary test
+//! `russh_still_cannot_load_encrypted_legacy_pem_ec_keys` fails once a russh
+//! upgrade loads them natively; this module can then be deleted.
 //! Before russh's migration off libssh2 these keys were handled by libssh2
 //! directly; this module restores that support natively.
 //!
@@ -110,6 +116,11 @@ fn decrypt(
     passphrase: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, LegacyPemError> {
+    // Name an unsupported cipher (e.g. DES-EDE3-CBC, whose IV is 8 bytes)
+    // before the IV check, so the error says why and how to fix it.
+    if !matches!(cipher, "AES-128-CBC" | "AES-192-CBC" | "AES-256-CBC") {
+        return Err(LegacyPemError::UnsupportedCipher(cipher.to_string()));
+    }
     if iv.len() != 16 {
         return Err(LegacyPemError::Malformed(format!(
             "expected a 16-byte IV, got {}",
@@ -152,7 +163,7 @@ fn evp_bytes_to_key(passphrase: &[u8], salt: &[u8], key_len: usize) -> Vec<u8> {
         ctx.consume(&block);
         ctx.consume(passphrase);
         ctx.consume(salt);
-        block = ctx.compute().0.to_vec();
+        block = ctx.finalize().0.to_vec();
         key.extend_from_slice(&block);
     }
     key.truncate(key_len);

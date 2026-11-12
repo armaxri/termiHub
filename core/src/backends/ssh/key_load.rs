@@ -12,6 +12,9 @@
 //! missing or unreadable, it is not a private key, or its format or cipher is
 //! not supported.
 //!
+//! A passphrase supplied for an **unencrypted** key is ignored, as OpenSSH
+//! does, whatever the key's format (#5503).
+//!
 //! Unattended (#3877), an encrypted key with no passphrase is still the typed
 //! `InteractionRequired` refusal, since nobody is there to type one.
 
@@ -44,8 +47,9 @@ pub(super) fn load_private_key(
         Err(e) => e,
     };
 
-    // russh 0.61 can't load passphrase-protected legacy-PEM EC keys (its
-    // PKCS#5 path assumes RSA), so those go through our own loader.
+    // russh (re-verified on 0.65.1, #5500) can't load passphrase-protected
+    // legacy-PEM EC keys (its PKCS#5 path assumes RSA and only AES-128), so
+    // those go through our own loader.
     if legacy_pem::is_encrypted_ec_pem(&contents) {
         let Some(passphrase) = passphrase else {
             return Err(missing_passphrase(display, unattended));
@@ -54,11 +58,26 @@ pub(super) fn load_private_key(
             // A wrong passphrase decrypts to garbage: the padding or the SEC1
             // parse of the plaintext fails.
             LegacyPemError::Decrypt | LegacyPemError::UnsupportedCurve => SessionError::AuthFailed,
+            LegacyPemError::UnsupportedCipher(cipher) => unsupported_cipher(display, &cipher),
             other => SessionError::SpawnFailed(format!("Failed to load key {display}: {other}")),
         });
     }
 
     if !is_encrypted_key(&contents) {
+        // A passphrase for an unencrypted key is superfluous (#5503): OpenSSH
+        // ignores it, and russh does too for OpenSSH and PKCS#1 keys. For a
+        // PKCS#8 or SEC1 PEM key russh instead tries to decrypt and fails, so
+        // load it without one, for the same behaviour across every format.
+        if passphrase.is_some() {
+            if let Ok(key) = russh::keys::decode_secret_key(&contents, None) {
+                let key_name: &str = display;
+                tracing::debug!(
+                    key = key_name,
+                    "ignored the passphrase supplied for an unencrypted key"
+                );
+                return Ok(key);
+            }
+        }
         return Err(SessionError::SpawnFailed(format!(
             "Failed to load key {display}: {original}"
         )));
@@ -70,10 +89,7 @@ pub(super) fn load_private_key(
     // would fail as if the passphrase were wrong, and re-entering it would
     // never help, so name the cause instead.
     if let Some(cipher) = unsupported_pem_cipher(&contents) {
-        return Err(SessionError::SpawnFailed(format!(
-            "Failed to load key {display}: the key is encrypted with {cipher}, which is not \
-             supported. Re-encrypt it with `ssh-keygen -p -f <key file>`."
-        )));
+        return Err(unsupported_cipher(display, &cipher));
     }
     if is_structural_error(&original) {
         return Err(SessionError::SpawnFailed(format!(
@@ -83,6 +99,16 @@ pub(super) fn load_private_key(
     // An encrypted key, a passphrase, and a failed decrypt: the passphrase
     // was rejected.
     Err(SessionError::AuthFailed)
+}
+
+/// The failure for a PEM key encrypted with a cipher that cannot be decrypted.
+///
+/// Re-entering the passphrase would never help, so this names the cause.
+fn unsupported_cipher(display: &str, cipher: &str) -> SessionError {
+    SessionError::SpawnFailed(format!(
+        "Failed to load key {display}: the key is encrypted with {cipher}, which is not \
+         supported. Re-encrypt it with `ssh-keygen -p -f <key file>`."
+    ))
 }
 
 /// The failure for an encrypted key that has no passphrase.
@@ -283,3 +309,11 @@ mod tests {
         assert!(!is_encrypted_key("not a key"));
     }
 }
+
+#[cfg(test)]
+#[path = "key_load_legacy_pem_tests.rs"]
+mod legacy_pem_matrix_tests;
+
+#[cfg(test)]
+#[path = "key_load_format_matrix_tests.rs"]
+mod format_matrix_tests;
