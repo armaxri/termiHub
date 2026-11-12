@@ -37,8 +37,7 @@ class TestThemeLayout(TabsUi, SettingsUi, SystemTest):
         self.wait(lambda: self.driver.exists("layout-close"), what="the customize layout dialog")
 
     def test_switching_theme_updates_state_and_css_variables(self):
-        self.open_settings_tab()
-        self.driver.click("settings-nav-appearance")
+        self.open_settings_category("appearance")
         self.wait(lambda: self.driver.exists(THEME_SELECT), what="the theme selector")
 
         self.driver.select(THEME_SELECT, "light")

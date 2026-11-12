@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
-import { INPUT_PAUSED_NOTE } from "./TerminalReconnectStrip";
+import { INPUT_PAUSED_NOTE, LAST_ATTEMPT_PREFIX } from "./TerminalReconnectStrip";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -202,5 +202,89 @@ describe("reconnect strip (#5179)", () => {
     });
     elsewhere.remove();
     expect(byTestId("terminal-reconnect-input-paused")?.className).not.toContain("--typed");
+  });
+});
+
+describe("reconnect strip: why the last attempt failed (#5395)", () => {
+  const MISSING = "Serial port /dev/ttyUSB0 is not present.";
+  const OTHER_DEVICE = "A different device (USB 1a86:7523) is on /dev/ttyUSB0. It was not opened.";
+
+  function withReason(reconnect: ProjectedReconnect, lastAttemptError?: string) {
+    return {
+      ...reconnecting(reconnect),
+      ...(lastAttemptError !== undefined ? { lastAttemptError } : {}),
+    };
+  }
+
+  const reasonLine = () => byTestId("terminal-reconnect-last-attempt-reason")?.textContent;
+  const announcement = () => byTestId("terminal-reconnect-strip-announcement")?.textContent ?? "";
+
+  it("shows no reason line before an attempt has failed", async () => {
+    await renderWith(withReason(waiting({ attempt: 0 })));
+    expect(reasonLine()).toBeUndefined();
+    expect(announcement()).not.toContain(LAST_ATTEMPT_PREFIX);
+  });
+
+  it("shows the region's reason as a secondary line while waiting", async () => {
+    await renderWith(withReason(waiting({ attempt: 1, delayMs: 2_000 }), OTHER_DEVICE));
+    expect(reasonLine()).toBe(`${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`);
+    expect(announcement()).toBe(
+      `Connection lost — reconnecting… Attempt 2 of 10. ${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`
+    );
+    // The countdown line is unchanged by it.
+    expect(byTestId("terminal-auto-reconnect-countdown")?.textContent).toBe(
+      "Retrying in 2s · Attempt 2 of 10"
+    );
+  });
+
+  it("announces the reason when it changes, not with every attempt or tick", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    await renderWith(withReason(waiting({ attempt: 1, delayMs: 2_000 }), MISSING));
+    const spoken: string[] = [announcement()];
+    const record = () => {
+      if (spoken[spoken.length - 1] !== announcement()) spoken.push(announcement());
+    };
+
+    // Countdown ticks: nothing new is spoken.
+    act(() => vi.advanceTimersByTime(1_500));
+    record();
+    // The next attempt runs and fails the same way: only the attempt is spoken.
+    harness.transport.setSession(
+      TAB,
+      withReason({ phase: "connecting", attempt: 2, delayMs: 0 }, MISSING)
+    );
+    await flushSessionRegion();
+    record();
+    harness.transport.setSession(TAB, withReason(waiting({ attempt: 2, delayMs: 4_000 }), MISSING));
+    await flushSessionRegion();
+    record();
+    act(() => vi.advanceTimersByTime(1_500));
+    record();
+    // A different reason is news.
+    harness.transport.setSession(
+      TAB,
+      withReason(waiting({ attempt: 3, delayMs: 8_000 }), OTHER_DEVICE)
+    );
+    await flushSessionRegion();
+    record();
+    act(() => vi.advanceTimersByTime(1_500));
+    record();
+
+    expect(spoken).toEqual([
+      `Connection lost — reconnecting… Attempt 2 of 10. ${LAST_ATTEMPT_PREFIX} ${MISSING}`,
+      "Connection lost — reconnecting… Attempt 3 of 10.",
+      `Connection lost — reconnecting… Attempt 4 of 10. ${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`,
+    ]);
+    // The visible line always shows the current reason.
+    expect(reasonLine()).toBe(`${LAST_ATTEMPT_PREFIX} ${OTHER_DEVICE}`);
+  });
+
+  it("drops the reason line when the region clears it", async () => {
+    await renderWith(withReason(waiting({ attempt: 1 }), MISSING));
+    expect(reasonLine()).toBe(`${LAST_ATTEMPT_PREFIX} ${MISSING}`);
+    harness.transport.setSession(TAB, withReason(waiting({ attempt: 0 })));
+    await flushSessionRegion();
+    expect(reasonLine()).toBeUndefined();
+    expect(announcement()).not.toContain(LAST_ATTEMPT_PREFIX);
   });
 });
