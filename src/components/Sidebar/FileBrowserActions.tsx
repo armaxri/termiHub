@@ -186,6 +186,7 @@ export function FileBrowserActions({
           <Button
             variant="ghost"
             size="sm"
+            iconOnly={!action.inlineText}
             icon={action.icon}
             onClick={action.onClick}
             disabled={action.disabled}
