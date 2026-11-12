@@ -215,7 +215,6 @@ class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTe
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, MonitoringUi, SystemTest):
     """SSH-08: monitoring follows the active tab between an SSH and a local tab.
 

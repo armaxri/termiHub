@@ -112,7 +112,7 @@ fn serve_host(realpath: bool) -> Box<Responder> {
 }
 
 #[cfg(unix)]
-async fn agent(realpath: bool) -> (Arc<MockAgentRpcClient>, RemoteProxy) {
+async fn agent(realpath: bool) -> (Arc<FakeAgent>, RemoteProxy) {
     let mut mock = mock_agent(true, true);
     mock.responder = Some(serve_host(realpath));
     let mock = Arc::new(mock);
@@ -124,8 +124,8 @@ async fn agent(realpath: bool) -> (Arc<MockAgentRpcClient>, RemoteProxy) {
     (mock, proxy)
 }
 
-fn methods(mock: &MockAgentRpcClient) -> Vec<String> {
-    mock.sent_requests
+fn methods(mock: &FakeAgent) -> Vec<String> {
+    mock.requests
         .lock()
         .unwrap()
         .iter()
@@ -162,7 +162,7 @@ async fn a_file_paste_through_an_alias_is_refused_and_keeps_the_bytes() {
         "nothing but realpath reached the agent: {sent:?}"
     );
     // Resolved inside the agent-hosted session, never on the agent host.
-    for (_, params) in mock.sent_requests.lock().unwrap().iter() {
+    for (_, params) in mock.requests.lock().unwrap().iter() {
         if params.get("path").is_some() {
             assert!(params["connection_id"].is_string(), "{params}");
         }

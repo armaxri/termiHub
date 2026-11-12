@@ -37,14 +37,14 @@ fn types_reply(type_id: &str) -> serde_json::Value {
 }
 
 /// Mock agent with the given `sessionFiles` / `fileRanges` flags.
-pub(super) fn mock_agent(session_files: bool, file_ranges: bool) -> MockAgentRpcClient {
-    let mut mock = MockAgentRpcClient::with_capabilities(types_reply("docker"));
-    mock.session_files = Some(session_files);
-    mock.file_ranges = Some(file_ranges);
+pub(super) fn mock_agent(session_files: bool, file_ranges: bool) -> FakeAgent {
+    let mut mock = proxy_agent(types_reply("docker"));
+    mock.capabilities_mut().session_files = session_files;
+    mock.capabilities_mut().file_ranges = file_ranges;
     mock
 }
 
-async fn connected_proxy(mock: Arc<MockAgentRpcClient>) -> RemoteProxy {
+async fn connected_proxy(mock: Arc<FakeAgent>) -> RemoteProxy {
     let mut proxy = RemoteProxy::new("agent-1".to_string(), mock);
     proxy
         .connect(json!({ "type": "docker", "config": {"image": "alpine"} }))
@@ -123,8 +123,8 @@ pub(super) fn contents(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
-fn range_requests(mock: &MockAgentRpcClient) -> Vec<(String, serde_json::Value)> {
-    mock.sent_requests
+fn range_requests(mock: &FakeAgent) -> Vec<(String, serde_json::Value)> {
+    mock.requests
         .lock()
         .unwrap()
         .iter()

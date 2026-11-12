@@ -132,9 +132,19 @@ export interface TerminalSessionStateSlice {
   setTerminalConnecting: (tabId: string, connecting: boolean) => void;
   /** Auto-retry attempt count for agent sessions (> 0 = actively auto-retrying). */
   terminalAutoRetryCount: Record<string, number>;
+  /**
+   * Epoch ms the next agent first-connect retry starts (#5397), while its
+   * shared-policy backoff window is open; absent while an attempt is in flight.
+   */
+  terminalAutoRetryNextAt: Record<string, number>;
   /** Tab is parked waiting for its parent agent to connect; value = agentId. */
   terminalWaitingForAgent: Record<string, string>;
-  setTerminalAutoRetrying: (tabId: string, count: number) => void;
+  /**
+   * Set the agent first-connect retry count (`0` clears it). `nextAttemptAt`
+   * (epoch ms) marks an open backoff window for the countdown; omit it while
+   * the attempt runs.
+   */
+  setTerminalAutoRetrying: (tabId: string, count: number, nextAttemptAt?: number) => void;
   setTerminalWaitingForAgent: (tabId: string, agentId: string | null) => void;
   /**
    * Client-side timeout for a pre-connect state. Transitions the tab to Failed
@@ -314,6 +324,7 @@ export const createTerminalSessionStateSlice: StateCreator<
   terminalRetryCounters: {},
   terminalConnectDeadline: {},
   terminalAutoRetryCount: {},
+  terminalAutoRetryNextAt: {},
   terminalWaitingForAgent: {},
   setTerminalSpawnError: (tabId, error, kind) => {
     // #2205 PR-B: the resilient-reconnect loop is owned by the backend redrive,
@@ -338,6 +349,7 @@ export const createTerminalSessionStateSlice: StateCreator<
       terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
       terminalSpawnErrorKinds: omitKey(state.terminalSpawnErrorKinds, tabId),
       terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+      terminalAutoRetryNextAt: omitKey(state.terminalAutoRetryNextAt, tabId),
       terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
       terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
       terminalRetryCounters: {
@@ -362,13 +374,17 @@ export const createTerminalSessionStateSlice: StateCreator<
         : omitKey(state.terminalConnectDeadline, tabId),
     }));
   },
-  setTerminalAutoRetrying: (tabId, count) =>
+  setTerminalAutoRetrying: (tabId, count, nextAttemptAt) =>
     set((state) => ({
       terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
       terminalAutoRetryCount:
         count === 0
           ? omitKey(state.terminalAutoRetryCount, tabId)
           : { ...state.terminalAutoRetryCount, [tabId]: count },
+      terminalAutoRetryNextAt:
+        count === 0 || nextAttemptAt === undefined
+          ? omitKey(state.terminalAutoRetryNextAt, tabId)
+          : { ...state.terminalAutoRetryNextAt, [tabId]: nextAttemptAt },
     })),
   setTerminalWaitingForAgent: (tabId, agentId) =>
     set((state) => ({
@@ -415,6 +431,7 @@ export const createTerminalSessionStateSlice: StateCreator<
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+        terminalAutoRetryNextAt: omitKey(state.terminalAutoRetryNextAt, tabId),
         terminalSpawnErrors: {
           ...state.terminalSpawnErrors,
           [tabId]: connectTimeoutMessage(kind),
@@ -441,6 +458,7 @@ export const createTerminalSessionStateSlice: StateCreator<
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+        terminalAutoRetryNextAt: omitKey(state.terminalAutoRetryNextAt, tabId),
         terminalSpawnErrors: {
           ...state.terminalSpawnErrors,
           [tabId]: ABORTED_CONNECT_MESSAGE,
@@ -609,6 +627,7 @@ export const createTerminalSessionStateSlice: StateCreator<
       terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
       terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
       terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+      terminalAutoRetryNextAt: omitKey(state.terminalAutoRetryNextAt, tabId),
       terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
     }));
     get().settleRestoreTab(tabId, "failed");
@@ -631,6 +650,7 @@ export const createTerminalSessionStateSlice: StateCreator<
       terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
       terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
       terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+      terminalAutoRetryNextAt: omitKey(state.terminalAutoRetryNextAt, tabId),
       terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
     }));
     get().settleRestoreTab(tabId, "failed");
@@ -715,6 +735,7 @@ export const createTerminalSessionStateSlice: StateCreator<
         terminalAgentDisconnected: omitKey(state.terminalAgentDisconnected, tabId),
         terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+        terminalAutoRetryNextAt: omitKey(state.terminalAutoRetryNextAt, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
         // The projected `connecting` status now drives the "Connecting…" overlay
