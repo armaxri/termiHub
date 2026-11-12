@@ -27,12 +27,12 @@ pub use termihub_core::monitoring::{LocalCollector, StatsCollector};
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
     parse_stats, CpuDeltaTracker, NetDeltaTracker, PerCoreCpuTracker, SystemStats,
-    MONITORING_COMMAND,
+    HOST_MONITORING_COMMAND,
 };
 
 // ── SSH collector ───────────────────────────────────────────────────
 
-/// Collects system statistics from a remote Linux host via SSH exec.
+/// Collects system statistics from a remote Linux or macOS host via SSH exec.
 ///
 /// Opens a persistent russh connection and executes the monitoring
 /// command on each collection cycle via async exec channels.
@@ -99,16 +99,20 @@ impl SshCollector {
 impl StatsCollector for SshCollector {
     fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
         let output = self
-            .exec(MONITORING_COMMAND)
+            .exec(HOST_MONITORING_COMMAND)
             .map_err(|e| CoreError::Other(e.to_string()))?;
         // A parse failure is typed apart from the exec failure above so the
         // monitoring loop can bound it separately (#3252/#3300).
         let (mut stats, counters, per_core_counters, net_counters) =
             parse_stats(&output).map_err(|e| CoreError::Unparseable(e.to_string()))?;
 
-        // First sample has no prior snapshot to diff against, so report 0 %/0 B/s;
-        // core's Cpu/NetDeltaTracker encapsulate that previous-snapshot state.
-        stats.cpu_usage_percent = self.cpu_tracker.update(counters).unwrap_or(0.0);
+        // core's Cpu/NetDeltaTracker encapsulate the previous-snapshot state. The
+        // first sample has nothing to diff against and keeps the parsed 0 %. A
+        // macOS sample carries its CPU percentage directly and no counters, so
+        // the tracker returns `None` and the parsed value stays (#5471).
+        if let Some(pct) = self.cpu_tracker.update(counters) {
+            stats.cpu_usage_percent = pct;
+        }
         stats.per_core_cpu_percent = self.per_core_tracker.update(&per_core_counters);
         let (net_rx, net_tx) = self.net_tracker.update(net_counters, Instant::now());
         stats.net_rx_bytes_per_sec = net_rx;

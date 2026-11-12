@@ -21,10 +21,10 @@ use crate::config::SshConfig;
 use crate::errors::CoreError;
 use crate::monitoring::loop_control::{cancellable_sleep, LoopControls};
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
-    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
-    NetDeltaTracker, PerCoreCpuTracker, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
-    MONITORING_COMMAND,
+    parse_stats, unsupported_host, BackoffSchedule, CollectLoopState, CpuDeltaTracker,
+    MonitorStatusReason, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
+    MonitoringSender, MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker,
+    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD, HOST_MONITORING_COMMAND,
 };
 
 use super::handler::{ForwardedChannelRegistry, SshSession};
@@ -105,7 +105,8 @@ impl MonitoringTransport for SshTransport {
     }
 
     async fn collect(&self, session: &Self::Session) -> Result<String, CoreError> {
-        ssh_exec(&session.session, MONITORING_COMMAND).await
+        // The OS-detecting command: SSH remotes may be Linux or macOS (#5471).
+        ssh_exec(&session.session, HOST_MONITORING_COMMAND).await
     }
 }
 
@@ -219,6 +220,8 @@ enum TickOutcome {
     Failed,
     /// The transport answered, but `parse_stats` rejected the output (#3252).
     Unparseable,
+    /// The host has no stats source this app can read (#5471).
+    Unsupported,
 }
 
 /// Re-dial the transport under a bounded exponential backoff (#1230, gap G2).
@@ -329,6 +332,13 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                 // `Live` a sustained run resolves to `Offline` instead of
                 // hanging in `Connecting` (#3252).
                 let outcome = match collect_once(&*transport, &session, collect_timeout).await {
+                    Ok(output) if unsupported_host(&output).is_some() => {
+                        debug!(
+                            "Monitoring not supported on this host (OS: {})",
+                            unsupported_host(&output).unwrap_or_default()
+                        );
+                        TickOutcome::Unsupported
+                    }
                     Ok(output) => match parse_stats(&output) {
                         Ok((mut stats, counters, per_core_counters, net_counters)) => {
                             if let Some(pct) = cpu_tracker.update(counters) {
@@ -359,6 +369,13 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     TickOutcome::Sample => loop_state.on_success(),
                     TickOutcome::Failed => loop_state.on_failure(),
                     TickOutcome::Unparseable => loop_state.on_parse_failure(),
+                    // Bounded like a parse failure, but attributed so the UI
+                    // says "not supported on this host" (#5471).
+                    TickOutcome::Unsupported => {
+                        let transition = loop_state.on_parse_failure();
+                        loop_state.attribute(MonitorStatusReason::Unsupported);
+                        transition
+                    }
                 };
                 if transition.is_some() {
                     emit_status(&status_tx, &loop_state).await;
@@ -1198,5 +1215,61 @@ Inter-|   Receive                                                |  Transmit
         assert_eq!(stats.os_info, "Linux 5.15.0-0-virt");
 
         provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// A host with no readable stats source resolves to `Offline` attributed
+    /// `Unsupported`, both for the command's explicit marker and for an empty
+    /// stdout (a `cmd.exe` / PowerShell login shell), so the UI can say "not
+    /// supported on this host" (#5471).
+    #[tokio::test]
+    async fn unsupported_host_resolves_offline_with_unsupported_reason() {
+        for output in ["termihub-monitoring-unsupported FreeBSD\n", "", "\r\n"] {
+            let provider = degraded_provider(output);
+            let mut sub = provider.subscribe().await.expect("subscribe");
+            assert_eq!(
+                next_update(&mut sub.status).await,
+                crate::monitoring::MonitorStatusUpdate::with_reason(
+                    MonitorStatus::Offline,
+                    Some(MonitorStatusReason::Unsupported)
+                ),
+                "output {output:?} must resolve Offline as unsupported"
+            );
+            assert!(
+                sub.stats.try_recv().is_err(),
+                "an unsupported host must never push a stats sample"
+            );
+        }
+    }
+
+    /// A macOS host's output (#5471) yields a `Live` sample whose CPU comes
+    /// straight from `top` and whose per-core list is empty.
+    #[tokio::test]
+    async fn darwin_output_goes_live_with_direct_cpu() {
+        const DARWIN: &str = "\
+termihub-monitoring-os darwin
+@@hostname
+mac
+@@loadavg
+{ 1.00 2.00 3.00 }
+@@memsize
+17179869184
+@@vmstat
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                   100000.
+@@cpu
+CPU usage: 10.00% user, 15.00% sys, 75.00% idle
+";
+        let provider = degraded_provider(DARWIN);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(
+            next_update(&mut sub.status).await.status,
+            MonitorStatus::Live
+        );
+        for _ in 0..2 {
+            let stats = next_stats(&mut sub.stats).await;
+            assert_eq!(stats.hostname, "mac");
+            assert!((stats.cpu_usage_percent - 25.0).abs() < 0.001);
+            assert!(stats.per_core_cpu_percent.is_empty());
+        }
     }
 }
