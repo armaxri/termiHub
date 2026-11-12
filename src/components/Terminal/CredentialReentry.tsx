@@ -7,6 +7,7 @@ import { t, tf } from "@/i18n/catalog";
 import {
   credentialReentryTarget,
   reconnectWithReenteredCredentials,
+  type CredentialReentryInput,
   type CredentialReentryTarget,
 } from "@/utils/credentialReentry";
 import {
@@ -16,9 +17,28 @@ import {
 } from "@/utils/credentialStorageChoice";
 import "./CredentialReentry.css";
 
+/**
+ * Reconnect with the entered credential; resolves `false` when a requested
+ * save cannot happen (the reconnect still runs).
+ */
+export type CredentialReentrySubmit = (
+  target: CredentialReentryTarget,
+  input: CredentialReentryInput
+) => Promise<boolean>;
+
 interface CredentialReentryProps {
   /** The tab whose connection the server rejected. */
   tabId: string;
+  /**
+   * The re-entry target, for a tab whose connection is not a terminal one
+   * (VNC/RDP, FTP, #5377). Omitted: derived from the tab's terminal config.
+   */
+  target?: CredentialReentryTarget | null;
+  /**
+   * How to reconnect with the entered credential. Omitted: a terminal tab's
+   * fresh shell ({@link reconnectWithReenteredCredentials}).
+   */
+  onSubmit?: CredentialReentrySubmit;
 }
 
 interface CredentialReentryFormProps {
@@ -32,6 +52,7 @@ interface CredentialReentryFormProps {
    */
   needsStorageChoice: boolean;
   onCancel: () => void;
+  onSubmit?: CredentialReentrySubmit;
 }
 
 /**
@@ -45,6 +66,7 @@ function CredentialReentryForm({
   storeActive,
   needsStorageChoice,
   onCancel,
+  onSubmit,
 }: CredentialReentryFormProps) {
   const [secret, setSecret] = useState("");
   const [keyPath, setKeyPath] = useState(target.keyPath);
@@ -56,14 +78,17 @@ function CredentialReentryForm({
   // Driven by the submit Button's async lifecycle (click or Enter), so the
   // button shows a pending state while the store is unlocked for a save.
   const handleSubmit = useCallback(async () => {
-    const saved = await reconnectWithReenteredCredentials(tabId, target, {
+    const input = {
       secret,
       keyPath: isKey ? keyPath : undefined,
       // Only ever into a store the user chose (#5187).
       save: storeActive && canSave && save,
-    });
+    };
+    const saved = onSubmit
+      ? await onSubmit(target, input)
+      : await reconnectWithReenteredCredentials(tabId, target, input);
     if (!saved) toast.error(t("credentialReentry.saveFailed"));
-  }, [tabId, target, secret, isKey, keyPath, storeActive, canSave, save]);
+  }, [tabId, target, secret, isKey, keyPath, storeActive, canSave, save, onSubmit]);
 
   const handleSaveChange = useCallback(
     (checked: boolean) => {
@@ -177,15 +202,20 @@ function CredentialReentryForm({
  * re-enter. Collapsed to an "Update Credentials" button until opened; Cancel
  * collapses it again and leaves the tab in its auth-failed state.
  */
-export function CredentialReentry({ tabId }: CredentialReentryProps) {
+export function CredentialReentry({
+  tabId,
+  target: targetOverride,
+  onSubmit,
+}: CredentialReentryProps) {
   const config = useAppStore((s) => s.tabContent[tabId]?.config);
   const connectionId = useAppStore((s) => s.tabContent[tabId]?.connectionId);
   const storeStatus = useAppStore((s) => s.credentialStoreStatus);
   const [open, setOpen] = useState(false);
-  const target = useMemo(
+  const derived = useMemo(
     () => credentialReentryTarget(config, connectionId),
     [config, connectionId]
   );
+  const target = targetOverride !== undefined ? targetOverride : derived;
 
   if (!target) return null;
   if (!open) {
@@ -207,6 +237,7 @@ export function CredentialReentry({ tabId }: CredentialReentryProps) {
       storeActive={credentialStoreActive(storeStatus)}
       needsStorageChoice={credentialStorageNeedsChoice(storeStatus)}
       onCancel={() => setOpen(false)}
+      onSubmit={onSubmit}
     />
   );
 }
