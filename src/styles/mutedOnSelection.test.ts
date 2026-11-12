@@ -33,18 +33,61 @@ const ROW_HINT_OVERRIDES: [string, string][] = [
   ["NetworkTools/NetworkTools.css", ".sidebar-list-item:hover .network-sidebar__monitor-meta"],
 ];
 
-/** Map each selector in `css` to the declarations of the rule it heads. */
+/** Map each selector in `css` to the declarations of the rules it heads. */
 function rules(css: string): Map<string, string> {
   const out = new Map<string, string>();
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
   for (const m of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    for (const sel of m[1].split(",")) out.set(sel.trim(), m[2]);
+    // A selector may head several rules (e.g. one inside a media query);
+    // keep every body so a declaration in any of them is found.
+    for (const sel of m[1].split(",")) {
+      const key = sel.trim();
+      out.set(key, (out.get(key) ?? "") + m[2]);
+    }
   }
   return out;
 }
 
 describe("muted row hints use --text-muted-on-selection on hover/selection (#5200)", () => {
   for (const [file, selector] of ROW_HINT_OVERRIDES) {
+    it(`${file}: ${selector}`, () => {
+      const body = rules(readFileSync(join(COMPONENTS_DIR, file), "utf8")).get(selector);
+      expect(body, `missing rule for ${selector}`).toBeDefined();
+      expect(body).toMatch(/color:\s*var\(--text-muted-on-selection\)/);
+    });
+  }
+});
+
+/**
+ * Muted text on raised chrome (#5459). Solarized Light's muted text is base01,
+ * which falls below AA on `--bg-secondary` (4.39:1), `--bg-tertiary` (3.92:1)
+ * and the warning-tinted reconnect strip (4.25:1). These surfaces use
+ * `--text-muted-on-selection` instead; the token is graded in
+ * `src/themes/contrast.test.ts`.
+ */
+const CHROME_SCOPED_REDIRECTS: [string, string][] = [
+  ["Terminal/TerminalSearchBar.css", ".terminal-search-bar"],
+  ["FileEditor/SudoPromptDialog.css", ".sudo-prompt__facts"],
+  ["TransferQueue/TransferQueue.css", ".transfer-queue"],
+  ["EmbeddedServerSidebar/EmbeddedServerSidebar.css", ".server-activity"],
+];
+
+const CHROME_DIRECT_OVERRIDES: [string, string][] = [
+  ["OpenConnections/OpenConnectionsModal.css", ".oc-section__count"],
+  ["OpenConnections/OpenConnectionsModal.css", ".oc-row__badge--external"],
+  ["Terminal/TerminalReconnectStrip.css", ".terminal-reconnect-strip__note"],
+];
+
+describe("muted text on raised chrome uses --text-muted-on-selection (#5459)", () => {
+  for (const [file, selector] of CHROME_SCOPED_REDIRECTS) {
+    it(`${file}: ${selector} redirects --text-muted`, () => {
+      const body = rules(readFileSync(join(COMPONENTS_DIR, file), "utf8")).get(selector);
+      expect(body, `missing rule for ${selector}`).toBeDefined();
+      expect(body).toMatch(/--text-muted:\s*var\(--text-muted-on-selection\)/);
+    });
+  }
+
+  for (const [file, selector] of CHROME_DIRECT_OVERRIDES) {
     it(`${file}: ${selector}`, () => {
       const body = rules(readFileSync(join(COMPONENTS_DIR, file), "utf8")).get(selector);
       expect(body, `missing rule for ${selector}`).toBeDefined();

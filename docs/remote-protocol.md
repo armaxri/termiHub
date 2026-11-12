@@ -198,11 +198,13 @@ The protocol itself is platform-independent — the same JSON-RPC messages, NDJS
 The desktop auto-deploys the agent to a Windows host over the same SSH/SFTP path it uses for Linux and macOS, with three Windows-specific steps:
 
 1. **Host detection** — the desktop probes `uname -s` first (which also covers MinGW/MSYS/Cygwin shells). When `uname` is absent it falls back to `%PROCESSOR_ARCHITECTURE%` (cmd.exe) / `$env:PROCESSOR_ARCHITECTURE` (PowerShell), so a host whose default OpenSSH shell is cmd.exe or PowerShell is recognized as Windows rather than misdetected as Linux. x64 → `windows-x64`, ARM64 → `windows-arm64`.
-2. **Default-shell detection** — before issuing install commands the desktop detects whether the remote OpenSSH `DefaultShell` is `cmd.exe` or PowerShell (it probes how `%PROCESSOR_ARCHITECTURE%` expands). This selects the command syntax for the install step.
+2. **Default-shell detection** — before issuing install commands the desktop detects whether the remote OpenSSH `DefaultShell` is `cmd.exe` or PowerShell (it probes how `%PROCESSOR_ARCHITECTURE%` and `$env:PROCESSOR_ARCHITECTURE` expand). Any other login shell (Git Bash, MSYS2, Cygwin) gets the **PowerShell deploy step**: every install command is the PowerShell one, sent as `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand <base64>` so no login shell can reinterpret it (#5449). When `powershell.exe` does not run either, the deploy stops with an error before anything is uploaded; it never guesses a syntax.
 3. **Shell-appropriate install** — no POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`, `/tmp`) are sent to a Windows remote. The binary is uploaded to the SFTP home, then moved into `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`:
    - **cmd.exe**: `(if not exist "<dir>" md "<dir>") & move /Y "<upload>" "<install>"`
-   - **PowerShell**: `New-Item -ItemType Directory -Force -Path "<dir>" | Out-Null; Move-Item -Force -Path "<upload>" -Destination "<install>"`
+   - **PowerShell** (native or encoded): `New-Item -ItemType Directory -Force -Path "<dir>" | Out-Null; Move-Item -Force -Path "<upload>" -Destination "<install>"`
    - Verified with `<install> --version` (cmd) or `& "<install>" --version` (PowerShell).
+   - Under the encoded step the stored agent path is the resolved install path with forward slashes (`C:/Users/<u>/AppData/Local/termiHub/agent/termihub-agent.exe`), which a POSIX login shell runs unquoted; a path with a space or a shell metacharacter is refused before the upload.
+   - The binary must be a PE image for the host's architecture (x64 / ARM64), or the deploy is refused before the upload.
 
 For the current phase the agent launches on demand via `--stdio` over an SSH exec channel; no Windows service is installed. See [Deployment View](architecture.md#7-deployment-view) for the binary-target table and the full deploy flow.
 

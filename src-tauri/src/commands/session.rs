@@ -434,6 +434,17 @@ pub async fn set_session_line_ending(
     Ok(())
 }
 
+/// **Send now** for an initial command held because the shell never announced
+/// its prompt (#5509). Types the command once; returns whether one was held
+/// (`false` when it was already sent, so a second click sends nothing).
+#[tauri::command]
+pub async fn send_held_initial_command(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<bool, TerminalError> {
+    Ok(manager.send_held_initial_command(&session_id))
+}
+
 /// Pause or resume a session's output stream (PERF2-002, #4307).
 ///
 /// The terminal sends `paused = true` once xterm.js has too many unparsed

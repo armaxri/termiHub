@@ -18,7 +18,7 @@ use super::host_tests::{installed, on_blocking, resolved_binary, BINARY_SIZE, VE
 use super::*;
 
 /// A password-auth agent config for the fake host on `port`.
-fn config(port: u16) -> RemoteAgentConfig {
+pub(super) fn config(port: u16) -> RemoteAgentConfig {
     RemoteAgentConfig {
         host: "127.0.0.1".to_string(),
         port,
@@ -30,10 +30,10 @@ fn config(port: u16) -> RemoteAgentConfig {
 }
 
 /// What the resolver was asked for: `(version, arch_suffix)`.
-type Requests = Arc<Mutex<Vec<(String, String)>>>;
+pub(super) type Requests = Arc<Mutex<Vec<(String, String)>>>;
 
 /// A resolver that hands out `binary` and records each request.
-fn local_resolver(
+pub(super) fn local_resolver(
     binary: PathBuf,
     requests: Requests,
 ) -> impl FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf> {
@@ -56,7 +56,7 @@ fn unreachable_resolver(
 }
 
 /// The fake host reports `os` from `uname -s` (and `arch` from `uname -m`).
-fn report(state: &Arc<Mutex<HostState>>, os: &str, arch: &str) {
+pub(super) fn report(state: &Arc<Mutex<HostState>>, os: &str, arch: &str) {
     let mut st = state.lock().expect("host");
     st.faults.uname_s = Some(os.to_string());
     st.faults.uname_m = Some(arch.to_string());
@@ -74,7 +74,7 @@ fn elf_binary(dir: &tempfile::TempDir, e_machine: u16) -> PathBuf {
     path
 }
 
-async fn deploy(
+pub(super) async fn deploy(
     port: u16,
     cancel: Option<CancellationToken>,
     resolve: impl FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf> + Send + 'static,
@@ -107,7 +107,7 @@ async fn stage(
     .await
 }
 
-fn requested(requests: &Requests) -> Vec<(String, String)> {
+pub(super) fn requested(requests: &Requests) -> Vec<(String, String)> {
     requests.lock().expect("requests").clone()
 }
 

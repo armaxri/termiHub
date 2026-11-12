@@ -37,6 +37,7 @@ import type { LocalFileChangedPayload } from "@/types/generated/LocalFileChanged
 import type { LocalDirChangedPayload } from "@/types/generated/LocalDirChangedPayload";
 import type { HopStatusPayload } from "@/types/generated/HopStatusPayload";
 import type { ConnectProgressEvent } from "@/types/generated/ConnectProgressEvent";
+import type { InitialCommandHeldEvent } from "@/types/generated/InitialCommandHeldEvent";
 import type { ProbeCompletePayload } from "@/types/generated/ProbeCompletePayload";
 import type { SpawnRequest } from "@/types/generated/SpawnRequest";
 
@@ -734,6 +735,21 @@ export async function onConnectProgress(
   callback: (payload: ConnectProgressEvent) => void
 ): Promise<UnlistenFn> {
   return await listen<ConnectProgressEvent>(TAURI_EVENT.connectProgress, (event) => {
+    callback(event.payload);
+  });
+}
+
+export type { InitialCommandHeldEvent };
+
+/**
+ * Subscribe to held initial commands (#5509): a session's initial command
+ * waits for a prompt the shell has not announced (bracketed paste off), or no
+ * longer does (`held: false`: sent, or the session closed).
+ */
+export async function onInitialCommandHeld(
+  callback: (payload: InitialCommandHeldEvent) => void
+): Promise<UnlistenFn> {
+  return await listen<InitialCommandHeldEvent>(TAURI_EVENT.initialCommandHeld, (event) => {
     callback(event.payload);
   });
 }

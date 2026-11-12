@@ -19,7 +19,7 @@ use tracing::debug;
 use termihub_core::backends::ssh::handler::SshSession;
 
 use crate::utils::errors::TerminalError;
-use crate::utils::remote_exec::{is_windows_arch, run_remote_command};
+use crate::utils::remote_exec::{is_windows_arch, probe_output, run_remote_command};
 
 /// Remote command that creates a fresh private upload dir on a POSIX host and
 /// prints its absolute path (AGT2-002, #4287).
@@ -375,6 +375,11 @@ pub fn windows_resolve_command(shell: WindowsShell) -> String {
 /// Probes `echo %PROCESSOR_ARCHITECTURE%`: `cmd.exe` expands it to a real
 /// architecture string, while PowerShell echoes the literal `%…%`. Defaults to
 /// [`WindowsShell::PowerShell`] when the `cmd`-style expansion does not occur.
+///
+/// Test-only: the live Windows SSH-host suites pick their probe syntax with it.
+/// The deploy uses [`detect_windows_deploy_shell`], which fails closed instead
+/// of guessing (#5449).
+#[cfg(test)]
 pub fn detect_windows_shell(session: &SshSession) -> WindowsShell {
     // cmd.exe expands `%PROCESSOR_ARCHITECTURE%` to e.g. `AMD64`; PowerShell
     // echoes the literal `%PROCESSOR_ARCHITECTURE%`.
@@ -386,6 +391,230 @@ pub fn detect_windows_shell(session: &SshSession) -> WindowsShell {
         debug!("Detected remote Windows shell: PowerShell (cmd expansion failed)");
         WindowsShell::PowerShell
     }
+}
+
+// ── PowerShell deploy step for any login shell (#5449) ──────────────────────
+
+/// The Windows PowerShell executable the encoded deploy step runs. It ships in
+/// `System32\WindowsPowerShell\v1.0`, on the system `PATH` of every supported
+/// Windows (10 / Server 2016 and later).
+pub const WINDOWS_POWERSHELL_EXE: &str = "powershell.exe";
+
+/// What the PowerShell availability probe prints (see
+/// [`detect_windows_deploy_shell`]).
+const POWERSHELL_PROBE_SCRIPT: &str = "Write-Output $env:PROCESSOR_ARCHITECTURE";
+
+/// How the deploy runs its commands on a Windows host.
+///
+/// Win32-OpenSSH hands every exec to the account's `DefaultShell`. `cmd.exe`
+/// and PowerShell get the native [`windows_install_plan`] in their own syntax.
+/// Any other login shell (Git Bash, MSYS2, Cygwin, …) gets the PowerShell plan
+/// with every command wrapped as `powershell.exe … -EncodedCommand <base64>`
+/// ([`powershell_encoded_command`]): the base64 text has no character any of
+/// those shells treats specially, so the script reaches PowerShell unchanged.
+/// The deploy never needs Git Bash and never issues a POSIX command there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsDeployShell {
+    /// The `DefaultShell` is `cmd.exe` or PowerShell: commands in its syntax.
+    Native(WindowsShell),
+    /// Any other login shell: each command is an encoded PowerShell script.
+    EncodedPowerShell,
+}
+
+/// Quote `value` as a PowerShell single-quoted (verbatim) string literal.
+///
+/// Nothing inside single quotes is expanded; the only special characters are
+/// the quotes themselves, which PowerShell also recognises in their typographic
+/// forms (U+2018–U+201B). Each is escaped by doubling it.
+pub fn powershell_single_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for c in value.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+/// A command line that runs `script` in Windows PowerShell from any login
+/// shell: `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand
+/// <base64 of the UTF-16LE script>`.
+///
+/// No value is spliced into a shell command line: the script travels as
+/// standard base64 (`A–Z a–z 0–9 + / =`), which `cmd.exe`, PowerShell and
+/// POSIX shells all pass through as one plain word. PowerShell reports the
+/// script's success as its exit status exactly as it does for the `-c` that
+/// OpenSSH uses when PowerShell is the `DefaultShell`, so the exit-status
+/// checks of the deploy keep their meaning.
+pub fn powershell_encoded_command(script: &str) -> String {
+    use base64::Engine;
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    format!("{WINDOWS_POWERSHELL_EXE} -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
+}
+
+/// Classify the Windows deploy shell from the three probe outputs of
+/// [`detect_windows_deploy_shell`]: `echo %PROCESSOR_ARCHITECTURE%` (expands in
+/// `cmd.exe` only), `echo $env:PROCESSOR_ARCHITECTURE` (expands in PowerShell
+/// only) and the encoded PowerShell probe (`None` when it was not run).
+///
+/// `None` means no probe printed an architecture: PowerShell could not be run.
+pub fn classify_windows_deploy_shell(
+    cmd_probe: &str,
+    powershell_probe: &str,
+    encoded_probe: Option<&str>,
+) -> Option<WindowsDeployShell> {
+    if is_windows_arch(cmd_probe.trim()) {
+        Some(WindowsDeployShell::Native(WindowsShell::Cmd))
+    } else if is_windows_arch(powershell_probe.trim()) {
+        Some(WindowsDeployShell::Native(WindowsShell::PowerShell))
+    } else if encoded_probe.is_some_and(|out| last_line(out).is_some_and(is_windows_arch)) {
+        Some(WindowsDeployShell::EncodedPowerShell)
+    } else {
+        None
+    }
+}
+
+/// The last non-empty, trimmed line of `output` (a login banner may precede it).
+fn last_line(output: &str) -> Option<&str> {
+    output.lines().map(str::trim).rfind(|line| !line.is_empty())
+}
+
+/// Detect how the deploy must run commands on a Windows host
+/// ([`WindowsDeployShell`]), failing closed.
+///
+/// Tries `cmd.exe` syntax, then PowerShell syntax, then an encoded
+/// `powershell.exe` probe. When none of them prints the host's architecture,
+/// PowerShell cannot be run there and the deploy stops with an error before
+/// anything is uploaded — it never guesses a syntax. A timeout propagates
+/// (#3698).
+pub fn detect_windows_deploy_shell(
+    session: &SshSession,
+) -> Result<WindowsDeployShell, TerminalError> {
+    let cmd_probe = probe_output(run_remote_command(session, "echo %PROCESSOR_ARCHITECTURE%"))?;
+    let powershell_probe = if is_windows_arch(cmd_probe.trim()) {
+        String::new()
+    } else {
+        probe_output(run_remote_command(
+            session,
+            "echo $env:PROCESSOR_ARCHITECTURE",
+        ))?
+    };
+    let encoded_probe = match classify_windows_deploy_shell(&cmd_probe, &powershell_probe, None) {
+        Some(shell) => {
+            debug!(?shell, "Detected remote Windows deploy shell");
+            return Ok(shell);
+        }
+        None => probe_output(run_remote_command(
+            session,
+            &powershell_encoded_command(POWERSHELL_PROBE_SCRIPT),
+        ))?,
+    };
+    match classify_windows_deploy_shell(&cmd_probe, &powershell_probe, Some(&encoded_probe)) {
+        Some(shell) => {
+            debug!(?shell, "Detected remote Windows deploy shell");
+            Ok(shell)
+        }
+        None => Err(TerminalError::RemoteError(format!(
+            "The remote Windows host's login shell is neither cmd.exe nor PowerShell, and \
+             {WINDOWS_POWERSHELL_EXE} could not be run from it (got {:?}). The agent is \
+             installed with PowerShell; nothing was changed on the host.",
+            last_line(&encoded_probe).unwrap_or_default()
+        ))),
+    }
+}
+
+/// The install plan for a [`WindowsDeployShell`]: the native
+/// [`windows_install_plan`], or the PowerShell plan with every command wrapped
+/// by [`powershell_encoded_command`].
+///
+/// The encoded plan's [`InstallPlan::install_path`] / `backup_path` keep the
+/// PowerShell `$env:LOCALAPPDATA\…` form: they only name the paths in messages;
+/// the launch path comes from [`resolve_encoded_install_path`].
+pub fn windows_deploy_install_plan(shell: WindowsDeployShell) -> InstallPlan {
+    match shell {
+        WindowsDeployShell::Native(shell) => windows_install_plan(shell),
+        WindowsDeployShell::EncodedPowerShell => {
+            let plan = windows_install_plan(WindowsShell::PowerShell);
+            InstallPlan {
+                install_command: powershell_encoded_command(&plan.install_command),
+                verify_command: powershell_encoded_command(&plan.verify_command),
+                backup_verify_command: powershell_encoded_command(&plan.backup_verify_command),
+                backup_command: powershell_encoded_command(&plan.backup_command),
+                restore_command: powershell_encoded_command(&plan.restore_command),
+                discard_backup_command: powershell_encoded_command(&plan.discard_backup_command),
+                cleanup_stale_command: plan
+                    .cleanup_stale_command
+                    .as_deref()
+                    .map(powershell_encoded_command),
+                ..plan
+            }
+        }
+    }
+}
+
+/// The PowerShell script printing the absolute install path for the encoded
+/// deploy step, as UTF-8 so a non-ASCII profile name survives the pipe.
+fn encoded_resolve_script() -> String {
+    format!(
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+         Write-Output (Join-Path -Path $env:LOCALAPPDATA -ChildPath {})",
+        powershell_single_quote(&format!(r"{WINDOWS_INSTALL_SUBDIR}\{WINDOWS_AGENT_EXE}"))
+    )
+}
+
+/// The command printing the absolute install path for the encoded deploy step.
+pub fn encoded_resolve_command() -> String {
+    powershell_encoded_command(&encoded_resolve_script())
+}
+
+/// Parse the output of [`encoded_resolve_command`] into the agent's launch
+/// path on a host whose login shell is neither `cmd.exe` nor PowerShell.
+///
+/// That shell runs the stored path unquoted (`<path> --stdio`), so the path is
+/// returned with forward slashes (`C:/Users/me/AppData/Local/termiHub/agent/
+/// termihub-agent.exe`), which POSIX shells and Windows both accept, and it is
+/// refused unless it is a drive-absolute path ending in the install location
+/// with no `..` component and only letters, digits and `/ : . _ - + @`. Any
+/// other output (PowerShell missing, a space or a shell metacharacter in the
+/// profile path) is an error, so the deploy fails closed before it uploads.
+pub fn parse_encoded_install_path(output: &str) -> Result<String, TerminalError> {
+    let raw = last_line(output).unwrap_or_default();
+    let path = raw.replace('\\', "/");
+    let bytes = path.as_bytes();
+    let drive_absolute =
+        bytes.len() > 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/';
+    let suffix = format!(
+        "/{}/{WINDOWS_AGENT_EXE}",
+        WINDOWS_INSTALL_SUBDIR.replace('\\', "/")
+    );
+    let safe_chars = path
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '/' | ':' | '.' | '_' | '-' | '+' | '@'));
+    let ok = drive_absolute
+        && path.ends_with(&suffix)
+        && safe_chars
+        && !path[2..].contains(':')
+        && !path.split('/').any(|part| part == ".." || part == ".");
+    if ok {
+        Ok(path)
+    } else {
+        Err(TerminalError::RemoteError(format!(
+            "Could not determine a usable agent install path on the remote Windows host \
+             (PowerShell printed {raw:?}). The path must be a plain drive path without \
+             spaces or shell metacharacters; nothing was changed on the host."
+        )))
+    }
+}
+
+/// Resolve the agent's launch path for the encoded deploy step over `session`
+/// (see [`parse_encoded_install_path`]). A timeout propagates (#3698).
+pub fn resolve_encoded_install_path(session: &SshSession) -> Result<String, TerminalError> {
+    let output = probe_output(run_remote_command(session, &encoded_resolve_command()))?;
+    parse_encoded_install_path(&output)
 }
 
 #[cfg(test)]
@@ -810,3 +1039,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "agent_install_encoded_tests.rs"]
+mod encoded_tests;

@@ -259,7 +259,7 @@ The import lives under **Settings → Import & migration**. It always shows a pr
 
 ### Connection Types
 
-- **Local shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
+- **Local shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor. A connection's **Initial command** is typed once the shell waits at its prompt, never into a question an rc file asks during startup. bash and zsh from 5.1 announce their prompt by turning bracketed paste on; if you turned it off (`unset zle_bracketed_paste`, `set enable-bracketed-paste off`), the tab shows "Waiting for the shell prompt — initial command not sent yet" after about 10 seconds. Choose **Send now** to type the command at once, or **Hide** the notice to leave it unsent. termiHub never sends it on its own; the notice goes away by itself if the prompt appears and the command goes out.
 - **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
 - **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23). See [Telnet](#telnet) below for window size, terminal type, and auto-login.
 - **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. Resizing the tab does not tell the device the new size (serial has no channel for it). See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions and [Terminal Size](#terminal-size).
