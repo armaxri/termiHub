@@ -323,7 +323,7 @@ fn temp_socket_path(label: &str) -> (tempfile::TempDir, PathBuf) {
 /// Test basic Docker session: spawn daemon with Docker backend, connect,
 /// send input, verify output from inside the container.
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_session_basic() {
     if !docker_ready() {
         return;
@@ -364,7 +364,7 @@ async fn test_docker_session_basic() {
 /// Each daemon creates its own container via the Docker backend, so this
 /// tests that a new session can be started after the first one is killed.
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_session_recovery() {
     if !docker_ready() {
         return;
@@ -429,7 +429,7 @@ async fn test_docker_session_recovery() {
 
 /// Test resize works inside a Docker session.
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_resize() {
     if !docker_ready() {
         return;
@@ -464,7 +464,7 @@ async fn test_docker_resize() {
 
 /// Test killing a Docker daemon session via MSG_KILL.
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_kill() {
     if !docker_ready() {
         return;
@@ -666,7 +666,7 @@ async fn first_monitoring_sample(
 /// back to the Docker Engine stats API (#3202), end to end through the
 /// session daemon (#3871).
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_session_monitoring_distroless_uses_docker_stats() {
     if !docker_ready() {
         return;
@@ -702,7 +702,7 @@ async fn test_docker_session_monitoring_distroless_uses_docker_stats() {
 
 /// A `/proc`-capable container keeps the richer `/proc` source.
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_session_monitoring_proc_container_uses_proc() {
     if !docker_ready() {
         return;
@@ -795,7 +795,7 @@ async fn file_call(
 /// and a multi-chunk write reads back intact — none of it touches the agent
 /// host.
 #[tokio::test]
-#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+#[ignore = "docker: real-daemon test (TIN-008); lane: system-integration.yml#agent-docker-integration"]
 async fn test_docker_session_browses_inside_the_container() {
     if !docker_ready() {
         return;

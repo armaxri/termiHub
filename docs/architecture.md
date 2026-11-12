@@ -949,6 +949,7 @@ windows.
 | SSH tunnels                | `src-tauri/src/tunnel/tunnel_manager.rs`              | shared                                  |
 | Graphical (VNC/RDP)        | `src-tauri/src/session/graphical_supervisor.rs`       | shared                                  |
 | Monitoring (desktop/agent) | `core/src/monitoring/status.rs` (`BackoffSchedule`)   | shared                                  |
+| Agent tab first connect    | `src/components/Terminal/Terminal.tsx` (create loop)  | shared                                  |
 | FTP file operation         | `core/src/backends/ftp/reconnect.rs`                  | **override**: 3 retries, 100 ms → 1.6 s |
 
 **The one override.** The FTP file browser does not run a session reconnect loop; it
@@ -978,10 +979,17 @@ attempt. Living in the backend redrive, this survived the client reconnect engin
 removal (#2205). Before each **serial** attempt the redrive asks
 `core::session::serial_reconnect::resolve_reconnect_port` whether the configured device
 is back: it matches the configured port name and, where the platform reports one (Linux
-sysfs), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
+sysfs, the macOS IOKit registry, the Windows device tree, #5394), the USB identity (VID/PID/serial) remembered from the first open. A missing port,
 an unidentifiable device or a different device on the name is a failed attempt with a
 reason, so the shared policy backs off and gives up; nothing is opened. A device with a
 serial number is followed to a new name only when exactly one port carries its identity.
+
+**Why the last attempt failed (#5395).** While the tab loop waits, the
+`session-lifecycle` entry carries the last failed attempt's reason as
+`lastAttemptError` (for example "A different device (USB 1a86:7523) is on
+/dev/ttyUSB0. It was not opened."). The reconnect strip shows it under the countdown
+and announces it only when it changes. On give-up it moves to `error`; success, Cancel
+and every other resolution clear it.
 
 ```mermaid
 flowchart TD
@@ -1003,6 +1011,15 @@ runs for a tab whose session dropped while the transport was up or gone; each of
 attempts makes at most one cold transport connect, and is a no-op when the in-task loop
 is already reconnecting. So no single drop runs more than one policy's worth of
 network re-dials.
+
+**Agent tabs: the first connect (#5397).** Before an agent tab has a session there
+is nothing for the backend redrive to re-attach, so the tab's own create loop in
+`Terminal.tsx` retries a failed session start while the agent is up. It follows the
+shared policy (10 retries, the same jittered windows) and the connecting overlay shows
+"Attempt n of 10 · next try in Ns" with the last failure. Before #5397 it made 5
+retries after a fixed 5.5 s each. This loop is the client's create path, not the
+reconnect engine that #2205 removed: a dropped agent tab is still re-established by the
+backend.
 
 The give-up window bounds the _waiting_. The attempts themselves are bounded by each
 transport's own timeout (for example the agent's 45 s SSH connect timeout, or the
@@ -1266,12 +1283,12 @@ never build scripts or proc macros; the agent's `cargo test` builds stay dynamic
 About 28 GitHub Actions workflows live in `.github/workflows/`. They form three lanes; the
 authoritative, per-job description is [Contributing → CI lanes](contributing.md#ci-lanes-what-a-green-pr-proves-and-what-it-does-not).
 
-| Lane                    | Trigger                                                                 | Main workflows                                                                                                                                                        |
-| ----------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Per-PR (lean)**       | PR to `develop` or `main`                                               | `code-quality.yml`, `build.yml`, `agent.yml`, `security-audit.yml`, plugin and vendored-fork checks — jobs gated on the changed areas                                 |
-| **Post-merge (full)**   | Push to `develop` or `main`                                             | `code-quality.yml`, `agent.yml`, `dev-build.yml` and the other push-triggered checks run the full matrix; `coverage.yml` runs on `main`                               |
-| **Nightly / scheduled** | Schedule (crons in `scripts/internal/scheduled-lanes.mjs`) and dispatch | `scheduled-dispatch.yml` fans out `system-integration.yml`, `integration-fixtures.yml`, `windows-ssh-host.yml`, `wsl-live.yml`, `plugin-sandbox-nightly.yml` and more |
-| **Release**             | Tag `v*.*.*` (`release.yml`) and manual RC dispatch                     | `release.yml`, `release-candidate.yml` and the per-platform `release-*-smoke.yml` workflows                                                                           |
+| Lane                    | Trigger                                                                 | Main workflows                                                                                                                                                                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Per-PR (lean)**       | PR to `develop` or `main`                                               | `code-quality.yml` and `build.yml` (plus the small path-filtered `security-audit.yml`, plugin and vendored-fork checks) — jobs gated on the changed areas (#5461)                                                                                      |
+| **Post-merge (full)**   | Push to `develop` or `main`                                             | `code-quality.yml`, `agent.yml`, `dev-build.yml` and the other push-triggered checks run the full matrix; path-filtered `develop` pushes also run `integration-fixtures.yml`, `wsl-live.yml` and `windows-ssh-host.yml`; `coverage.yml` runs on `main` |
+| **Nightly / scheduled** | Schedule (crons in `scripts/internal/scheduled-lanes.mjs`) and dispatch | `scheduled-dispatch.yml` fans out `system-integration.yml`, `integration-fixtures.yml`, `windows-ssh-host.yml`, `wsl-live.yml`, `plugin-sandbox-nightly.yml` and more                                                                                  |
+| **Release**             | Tag `v*.*.*` (`release.yml`) and manual RC dispatch                     | `release.yml`, `release-candidate.yml` and the per-platform `release-*-smoke.yml` workflows                                                                                                                                                            |
 
 See [Releasing](contributing.md#release-process) for the full release process.
 

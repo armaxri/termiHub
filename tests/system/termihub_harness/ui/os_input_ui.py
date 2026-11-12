@@ -41,6 +41,9 @@ class OsInputUi(HarnessMixin):
             if os.environ.get("GITHUB_ACTIONS") == "true":
                 pytest.fail(f"OS input unavailable on the CI runner: {reason}")
             pytest.skip(reason)
+        shared = os_input.shared_session_reason()
+        if shared is not None:
+            pytest.fail(shared)
         pid = self.app.pid
         if pid is None:
             raise AssertionError("the test instance is not running")
