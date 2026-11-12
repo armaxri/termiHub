@@ -101,12 +101,18 @@ class TerminalUi(HarnessMixin):
             return False
         return life.get("status") in _EXITED_STATUSES or life.get("exit") is not None
 
+    def terminal_session_lifecycle(self, tab_id: str) -> dict:
+        """The ``session-lifecycle`` region entry of tab ``tab_id`` (``status``,
+        ``reconnect``, ``reconnectError``, ``sessionId``, …), or ``{}`` when it
+        has no entry."""
+        sessions = self.projection_region_cache(SESSION_LIFECYCLE_REGION).get("sessions")
+        life = sessions.get(tab_id) if isinstance(sessions, dict) else None
+        return life if isinstance(life, dict) else {}
+
     def terminal_session_status(self, tab_id: str) -> Optional[str]:
         """The ``session-lifecycle`` status of tab ``tab_id`` (e.g.
         ``"connected"``, ``"reconnecting"``), or ``None`` when it has no entry."""
-        sessions = self.projection_region_cache(SESSION_LIFECYCLE_REGION).get("sessions")
-        life = sessions.get(tab_id) if isinstance(sessions, dict) else None
-        return life.get("status") if isinstance(life, dict) else None
+        return self.terminal_session_lifecycle(tab_id).get("status")
 
     def has_terminal(self) -> bool:
         """Whether the **active** tab is a readable terminal.
