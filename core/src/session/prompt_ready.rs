@@ -11,7 +11,11 @@
 //!    shell to find out.
 //! 3. **A timeout**, last: [`PROBE_CAP`] when a probe is watching (it only
 //!    runs out on a shell the probe cannot read, e.g. bash with line editing
-//!    turned off), [`MARK_ONLY_TIMEOUT`] when nothing is.
+//!    turned off), [`MARK_ONLY_TIMEOUT`] when nothing is. A probe that tells
+//!    a startup question from the prompt (a local bash/zsh announcing its
+//!    line editor, #5455) is waited for without a cap
+//!    ([`wait_for_prompt_uncapped`]): a question can stay open for as long
+//!    as the user takes to answer it.
 
 use std::time::Duration;
 
@@ -51,10 +55,24 @@ pub enum PromptSignal {
 /// 133 prompt-start mark, `probe` is the backend's hook-free check. See the
 /// module docs for the order.
 pub async fn wait_for_prompt(mark: Option<&Notify>, probe: Option<&PromptProbe>) -> PromptSignal {
-    let timeout = if probe.is_some() {
-        PROBE_CAP
-    } else {
-        MARK_ONLY_TIMEOUT
+    wait(mark, probe, false).await
+}
+
+/// As [`wait_for_prompt`], but a present `probe` is waited for without
+/// [`PROBE_CAP`]: for a probe that never reports a startup question, so
+/// timing out could only type into one (#5455).
+pub async fn wait_for_prompt_uncapped(
+    mark: Option<&Notify>,
+    probe: Option<&PromptProbe>,
+) -> PromptSignal {
+    wait(mark, probe, true).await
+}
+
+async fn wait(mark: Option<&Notify>, probe: Option<&PromptProbe>, uncapped: bool) -> PromptSignal {
+    let timeout = match probe {
+        Some(_) if uncapped => None,
+        Some(_) => Some(PROBE_CAP),
+        None => Some(MARK_ONLY_TIMEOUT),
     };
     tokio::select! {
         () = async {
@@ -69,7 +87,12 @@ pub async fn wait_for_prompt(mark: Option<&Notify>, probe: Option<&PromptProbe>)
                 None => std::future::pending().await,
             }
         } => PromptSignal::Probe,
-        () = tokio::time::sleep(timeout) => PromptSignal::Timeout,
+        () = async {
+            match timeout {
+                Some(timeout) => tokio::time::sleep(timeout).await,
+                None => std::future::pending().await,
+            }
+        } => PromptSignal::Timeout,
     }
 }
 
@@ -101,6 +124,32 @@ mod tests {
         let flag = Arc::new(AtomicBool::new(false));
         let probe_flag = flag.clone();
         (flag, Arc::new(move || probe_flag.load(Ordering::SeqCst)))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_uncapped_probe_is_never_timed_out() {
+        let (flag, probe) = flag_probe();
+        let waited = tokio::time::timeout(
+            PROBE_CAP * 100,
+            wait_for_prompt_uncapped(None, Some(&probe)),
+        )
+        .await;
+        assert!(waited.is_err(), "nothing may be typed blind: {waited:?}");
+        flag.store(true, Ordering::SeqCst);
+        assert_eq!(
+            wait_for_prompt_uncapped(None, Some(&probe)).await,
+            PromptSignal::Probe
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn uncapped_without_a_probe_keeps_the_short_wait() {
+        let start = tokio::time::Instant::now();
+        assert_eq!(
+            wait_for_prompt_uncapped(None, None).await,
+            PromptSignal::Timeout
+        );
+        assert_eq!(start.elapsed(), MARK_ONLY_TIMEOUT);
     }
 
     #[tokio::test(start_paused = true)]
