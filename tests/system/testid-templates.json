@@ -67,6 +67,11 @@
       "globs": ["workflow-editor-add-step-*"],
       "source": "src/components/WorkflowSidebar/workflowStepMeta.tsx",
       "extract": { "kind": "array", "const": "WORKFLOW_STEP_KINDS" }
+    },
+    {
+      "globs": ["keyboard-settings-group-title-*"],
+      "source": "src/components/Settings/KeyboardSettings.tsx",
+      "extract": { "kind": "array", "const": "CATEGORY_ORDER" }
     }
   ],
   "dynamic": {
