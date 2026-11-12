@@ -21,6 +21,8 @@ from termihub_harness.native_ssh import (
     NativeBastionControl,
     NativeSshTarget,
     NativeSshTargetError,
+    fixture_argv,
+    gateway_count_from_output,
     per_connection_children,
     skip_reason,
     target_from_env,
@@ -140,7 +142,7 @@ def test_gateway_count_is_the_masters_children():
 
 def test_gateway_count_reads_the_bastion_pid(tmp_path, monkeypatch):
     target = NativeSshTarget(port=1, username="u", password="p", state_dir=str(tmp_path), jump_port=2)
-    bastion = NativeBastionControl(target)
+    bastion = NativeBastionControl(target, platform="darwin")
     assert bastion.gateway_sessions() == 0, "no pid file: the bastion is down"
     (tmp_path / "jump_sshd.pid").write_text("4242\n", encoding="utf-8")
     calls = []
@@ -155,6 +157,54 @@ def test_gateway_count_reads_the_bastion_pid(tmp_path, monkeypatch):
     monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
     assert bastion.gateway_sessions() == 1
     assert calls == [["pgrep", "-P", "4242"]]
+
+
+def test_fixture_runs_through_the_sh_off_windows_and_the_ps1_on_windows():
+    posix = fixture_argv("jump-stop", "/s", platform="darwin")
+    assert posix[0] == "bash" and posix[1].endswith("native-sshd-fixture.sh")
+    assert posix[2:] == ["jump-stop", "--dir", "/s"]
+    win = fixture_argv("jump-stop", "C:\\state", platform="win32")
+    assert win[0] == "pwsh" and "bash" not in win, "no bare bash: it can resolve to WSL's"
+    assert win[win.index("-File") + 1].endswith("native-sshd-fixture.ps1")
+    assert win[-4:] == ["-Action", "jump-stop", "-Dir", "C:\\state"]
+
+
+def test_windows_bastion_is_driven_by_the_powershell_fixture(monkeypatch):
+    bastion = NativeBastionControl(TARGET, platform="win32")
+    calls = []
+
+    class _Done:
+        returncode = 0
+        stderr = ""
+        stdout = "native-sshd: ignored\r\n2\r\n"
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return _Done()
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    bastion.stop()
+    bastion.start()
+    assert bastion.gateway_sessions() == 2
+    assert [cmd[0] for cmd in calls] == ["pwsh", "pwsh", "pwsh"]
+    assert [cmd[cmd.index("-Action") + 1] for cmd in calls] == [
+        "jump-stop",
+        "jump-start",
+        "jump-sessions",
+    ]
+
+
+def test_windows_gateway_count_needs_a_number():
+    assert gateway_count_from_output("0\n") == 0
+    with pytest.raises(RuntimeError):
+        gateway_count_from_output("")
+    with pytest.raises(RuntimeError):
+        gateway_count_from_output("oops\n")
+
+
+def test_jump_host_suite_runs_on_windows_with_the_bastion():
+    names = ["ssh_bastion_fixtures"]
+    assert skip_reason(names, ("darwin", "win32"), target=TARGET, platform="win32") is None
 
 
 def test_bastion_control_needs_a_jump_port():
@@ -214,10 +264,12 @@ def test_no_master_children_means_no_sessions():
 KEYED = NativeSshTarget(port=22400, username="u", password="p", state_dir="/s", key="/s/client")
 
 
-def test_server_control_needs_a_key_and_a_posix_host():
+def test_server_control_needs_a_key():
     assert native_ssh.NativeSshServerControl(KEYED, platform="darwin").available
-    assert not native_ssh.NativeSshServerControl(KEYED, platform="win32").available
+    # #5449: Windows too, through the Git Bash login shell.
+    assert native_ssh.NativeSshServerControl(KEYED, platform="win32").available
     assert not native_ssh.NativeSshServerControl(TARGET, platform="darwin").available
+    assert not native_ssh.NativeSshServerControl(TARGET, platform="win32").available
 
 
 def test_target_reads_the_client_key():
@@ -226,7 +278,7 @@ def test_target_reads_the_client_key():
 
 
 def test_ssh_argv_runs_sh_with_quoted_args_and_ignores_the_callers_config():
-    argv = native_ssh.NativeSshServerControl(KEYED).ssh_argv('cat -- "$1"', "/a b/it's")
+    argv = native_ssh.NativeSshServerControl(KEYED, platform="darwin").ssh_argv('cat -- "$1"', "/a b/it's")
     assert argv[:3] == ["ssh", "-F", "/dev/null"]
     assert argv[argv.index("-i") + 1] == "/s/client"
     assert argv[argv.index("-p") + 1] == "22400"
@@ -238,7 +290,7 @@ def test_ssh_argv_runs_sh_with_quoted_args_and_ignores_the_callers_config():
 
 
 def test_server_control_writes_only_as_the_login_user():
-    control = native_ssh.NativeSshServerControl(KEYED)
+    control = native_ssh.NativeSshServerControl(KEYED, platform="darwin")
     with pytest.raises(ValueError, match="only write as its login user"):
         control.write_file("/x", "x", user="testuser")
     with pytest.raises(ValueError, match="only write as its login user"):
@@ -246,7 +298,7 @@ def test_server_control_writes_only_as_the_login_user():
 
 
 def test_server_control_runs_over_ssh_and_reports_failures(monkeypatch):
-    control = native_ssh.NativeSshServerControl(KEYED)
+    control = native_ssh.NativeSshServerControl(KEYED, platform="darwin")
     calls = []
 
     class _Result:
@@ -270,7 +322,113 @@ def test_server_control_runs_over_ssh_and_reports_failures(monkeypatch):
 
 def test_kill_sessions_refuses_non_pids():
     with pytest.raises(ValueError):
-        native_ssh.NativeSshServerControl(KEYED).kill_sessions(["123; rm -rf /"])
+        native_ssh.NativeSshServerControl(KEYED, platform="darwin").kill_sessions(["123; rm -rf /"])
+
+
+# ── The Windows server-control twin (#5449) ──────────────────────────────────
+#: ``native-sshd-fixture.ps1 -Action sessions`` around master 100: an app's
+#: terminal connection (200: shell below it), the twin's own exec (300: its
+#: marker below it), a pre-auth connection (400: sshd only), and a process
+#: that is no sshd child of the master (500).
+WIN_SESSIONS = (
+    '{"master":100,"processes":['
+    '{"pid":200,"ppid":100,"name":"sshd.exe","cmd":"sshd.exe -R"},'
+    '{"pid":201,"ppid":200,"name":"sshd.exe","cmd":"sshd.exe -z"},'
+    '{"pid":202,"ppid":201,"name":"bash.exe","cmd":"C:\\\\Git\\\\bin\\\\bash.exe"},'
+    '{"pid":300,"ppid":100,"name":"sshd.exe","cmd":"sshd.exe -R"},'
+    '{"pid":301,"ppid":300,"name":"sshd.exe","cmd":"sshd.exe -z"},'
+    '{"pid":302,"ppid":301,"name":"bash.exe","cmd":"bash.exe -c \\"sh -s termihub_server_control\\""},'
+    '{"pid":400,"ppid":100,"name":"sshd.exe","cmd":"sshd.exe -R"},'
+    '{"pid":401,"ppid":400,"name":"sshd.exe","cmd":"sshd.exe -y"},'
+    '{"pid":500,"ppid":100,"name":"conhost.exe","cmd":"conhost.exe 0x4"}'
+    "]}"
+)
+
+
+def test_windows_terminal_connections_are_the_masters_session_children():
+    assert native_ssh.windows_terminal_connections(WIN_SESSIONS) == {"200"}
+    assert native_ssh.windows_terminal_connections('{"master":null,"processes":[]}') == set()
+    assert native_ssh.windows_terminal_connections("") == set()
+
+
+def test_sftp_paths_become_git_bash_paths():
+    assert native_ssh.git_bash_path("/C:/Users/u/f.txt") == "C:/Users/u/f.txt"
+    assert native_ssh.git_bash_path("/d:") == "d:/"
+    assert native_ssh.git_bash_path("/home/u") == "/home/u"
+
+
+def test_windows_exec_sends_the_script_on_stdin_without_quotes_in_the_command():
+    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
+    argv = control.ssh_argv('cat -- "$1"', "/C:/x")
+    assert argv[0].lower().endswith("openssh\\ssh.exe") or argv[0].endswith("OpenSSH/ssh.exe")
+    assert argv[argv.index("-F") + 1] == "NUL"
+    assert argv[-1] == native_ssh.WINDOWS_EXEC_COMMAND
+    assert not set(argv[-1]) & set("\"'\\"), "Win32-OpenSSH mangles quotes"
+
+
+def test_windows_script_sets_args_and_inlines_stdin_data():
+    import base64
+    import subprocess as sp
+
+    script = native_ssh.NativeSshServerControl.windows_script(
+        'mkdir -p "$(dirname "$1")" && cat > "$1"', "/C:/a b/it's", stdin=b"x\r\ny"
+    ).decode()
+    first, rest = script.split("\n", 1)
+    import shlex
+
+    assert shlex.split(first) == ["set", "--", "C:/a b/it's"]
+    assert base64.b64encode(b"x\r\ny").decode() in rest
+    # The script is valid sh (parse only).
+    assert sp.run(["sh", "-n"], input=script.encode(), check=False).returncode == 0
+
+
+def test_windows_script_runs_in_a_posix_sh(tmp_path):
+    import subprocess as sp
+
+    target = tmp_path / "sub" / "f.txt"
+    script = native_ssh.NativeSshServerControl.windows_script(
+        'mkdir -p "$(dirname "$1")" && cat > "$1"', str(target), stdin=b"a\r\nb\n"
+    )
+    sp.run(["sh", "-s", native_ssh.WINDOWS_EXEC_MARKER], input=script, check=True)
+    assert target.read_bytes() == b"a\r\nb\n"
+
+
+def test_windows_sessions_and_kills_go_through_the_powershell_fixture(monkeypatch):
+    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
+    calls = []
+
+    class _Done:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    replies = iter([_Done(WIN_SESSIONS), _Done("")])
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return next(replies)
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    assert control.session_pids() == {"200"}
+    control.kill_sessions({"200"})
+    assert [c[0] for c in calls] == ["pwsh", "pwsh"]
+    assert calls[0][calls[0].index("-Action") + 1] == "sessions"
+    assert calls[1][-4:] == ["-Dir", "/s", "-Pids", "200"]
+    assert calls[1][calls[1].index("-Action") + 1] == "kill-sessions"
+
+
+def test_windows_home_is_the_sftp_form(monkeypatch):
+    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
+
+    class _Result:
+        returncode = 0
+        stdout = b"C:/Users/termihubssh\n"
+        stderr = b""
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", lambda cmd, **kw: _Result())
+    assert control.home() == "/C:/Users/termihubssh"
 
 
 def test_ssh_server_control_picks_the_native_twin(monkeypatch):
@@ -416,7 +574,7 @@ def test_install_agent_fails_on_a_digest_mismatch(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(native_ssh.subprocess, "run", fake)
     with pytest.raises(native_ssh.NativeSshExecError, match="expected"):
-        native_ssh.NativeSshServerControl(KEYED).install_agent(binary)
+        native_ssh.NativeSshServerControl(KEYED, platform="darwin").install_agent(binary)
 
 
 def test_agent_service_control_is_native_on_macos(monkeypatch):

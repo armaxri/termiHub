@@ -3,8 +3,9 @@
 The Docker SSH fixtures need a Linux container daemon, which the hosted macOS
 and Windows runners do not have, so every SSH/SFTP suite used to skip there.
 The macOS/Windows lanes therefore bring up the platform's own OpenSSH server
-(``scripts/internal/native-sshd-fixture.sh up --password-login [--jump-host]``)
-and set :data:`TARGET_ENV` to ``native``. Then:
+(``scripts/internal/native-sshd-fixture.sh up --password-login --jump-host``,
+plus ``--default-shell bash`` on Windows, #5422) and set :data:`TARGET_ENV` to
+``native``. Then:
 
 * :mod:`.fixtures` points the SSH coordinates (``SSH_PASSWORD_PORT``,
   ``SSH_KEYS_PORT``, ``SSH_USERNAME``, ``SSH_PASSWORD``, the jump-host bastion
@@ -13,7 +14,8 @@ and set :data:`TARGET_ENV` to ``native``. Then:
   fixtures return the :class:`NativeSshTarget` instead of starting containers;
 * only suites marked ``@pytest.mark.native_sshd`` (optionally
   ``platforms=(...)``) run against it. They are the ones that need nothing but
-  an sshd: password or key login, a POSIX shell (macOS) and SFTP. Every other
+  an sshd: password or key login, a POSIX shell (macOS, and Git Bash as the
+  Windows login shell) and SFTP. Every other
   test that asks for one of those fixtures is skipped with
   :data:`NOT_PORTED_REASON`, which the skip guard budgets per lane.
 
@@ -99,8 +101,9 @@ HOST_PLATFORMS: tuple[str, ...] = ("darwin",)
 SECOND_USER = "termihubnosudo"
 
 #: Where the native target serves :data:`AGENT_FIXTURES`: the agent is built
-#: for the host and installed over a POSIX ``sh`` exec, so macOS only (the
-#: Windows fixture's login shell is ``cmd.exe``).
+#: for the host and installed over a POSIX ``sh`` exec into ``~/.local/bin``,
+#: so macOS only (a Windows host gets a ``.exe`` under Windows paths, which
+#: this installer does not do).
 AGENT_PLATFORMS: tuple[str, ...] = ("darwin",)
 
 
@@ -142,6 +145,35 @@ _REQUIRED = (
 )
 
 _FIXTURE_SH = Path(__file__).resolve().parents[3] / "scripts" / "internal" / "native-sshd-fixture.sh"
+#: Its PowerShell twin, which the ``.sh`` hands over to on Windows (#5422).
+_FIXTURE_PS1 = _FIXTURE_SH.with_suffix(".ps1")
+
+
+def fixture_argv(
+    action: str, state_dir: str, *extra: str, platform: str = sys.platform
+) -> list[str]:
+    """The command that runs fixture ``action`` on the fixture in ``state_dir``.
+
+    On Windows the PowerShell twin is called directly: a bare ``bash`` from a
+    Windows Python can resolve to ``System32\\bash.exe`` (WSL) ahead of Git
+    Bash, and the ``.sh`` only hands over to the ``.ps1`` anyway.
+    """
+    if platform == "win32":
+        return [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(_FIXTURE_PS1),
+            "-Action",
+            action,
+            "-Dir",
+            state_dir,
+            *extra,
+        ]
+    return ["bash", str(_FIXTURE_SH), action, "--dir", state_dir, *extra]
 
 
 class NativeSshTargetError(RuntimeError):
@@ -258,27 +290,38 @@ def per_connection_children(pgrep_output: str) -> int:
     return sum(1 for line in pgrep_output.split() if line.strip().isdigit())
 
 
+def gateway_count_from_output(output: str) -> int:
+    """The count the Windows fixture's ``jump-sessions`` printed (its last line)."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines or not lines[-1].isdigit():
+        raise RuntimeError(f"native sshd fixture 'jump-sessions' printed no count: {output!r}")
+    return int(lines[-1])
+
+
 class NativeBastionControl:
     """:class:`~termihub_harness.fixtures.BastionControl` for the native bastion.
 
     The fixture's ``--jump-host`` bastion is a second sshd: ``stop`` drops it
     (and every session riding it) with ``jump-stop``, ``restore`` brings it back
     with ``jump-start``, and :meth:`gateway_sessions` counts the connections
-    its master sshd is serving -- one per gateway session.
+    its master sshd is serving -- one per gateway session. On Windows (#5422)
+    the bastion is a second scheduled-task sshd and the PowerShell fixture
+    counts them (``jump-sessions``).
     """
 
     available = True
 
-    def __init__(self, target: NativeSshTarget) -> None:
+    def __init__(self, target: NativeSshTarget, *, platform: str = sys.platform) -> None:
         if target.jump_port is None:
             raise NativeSshTargetError(NO_BASTION_REASON)
         self._target = target
+        self._platform = platform
         self.port: int = target.jump_port
         self.container = f"native bastion sshd 127.0.0.1:{self.port}"
 
-    def _fixture(self, action: str) -> None:
+    def _fixture(self, action: str) -> str:
         result = subprocess.run(
-            ["bash", str(_FIXTURE_SH), action, "--dir", self._target.state_dir],
+            fixture_argv(action, self._target.state_dir, platform=self._platform),
             capture_output=True,
             text=True,
             timeout=120,
@@ -288,6 +331,7 @@ class NativeBastionControl:
                 f"native sshd fixture '{action}' failed ({result.returncode}): "
                 f"{result.stderr.strip() or result.stdout.strip()}"
             )
+        return result.stdout
 
     def stop(self) -> None:
         self._fixture("jump-stop")
@@ -304,6 +348,8 @@ class NativeBastionControl:
 
     def gateway_sessions(self) -> int:
         """Connections the bastion is serving right now (0 while it is down)."""
+        if self._platform == "win32":
+            return gateway_count_from_output(self._fixture("jump-sessions"))
         pid_file = Path(self._target.state_dir) / "jump_sshd.pid"
         try:
             pid = pid_file.read_text(encoding="utf-8").strip()
@@ -365,6 +411,77 @@ def terminal_session_pids(
     return found
 
 
+#: The argument the Windows twin's own exec sessions carry (``sh -s <it>``), so
+#: they never count as a test's terminal connection (#5449).
+WINDOWS_EXEC_MARKER = "termihub_server_control"
+
+#: The remote command of a Windows exec: the script arrives on stdin. No
+#: quotes or backslashes, which Win32-OpenSSH's hand-over to the
+#: ``DefaultShell`` does not keep intact (the app's own side-channel reads use
+#: ``sh -s`` the same way, ``core/src/backends/ssh/remote_cwd.rs``).
+WINDOWS_EXEC_COMMAND = f"sh -s {WINDOWS_EXEC_MARKER}"
+
+_SFTP_DRIVE_PATH = re.compile(r"^/(?P<drive>[A-Za-z]):(?P<rest>/.*)?$")
+
+
+def git_bash_path(path: str) -> str:
+    """An SFTP path of a Win32-OpenSSH host (``/C:/Users/u``) as Git Bash takes it.
+
+    Git Bash opens ``C:/Users/u`` as it is; any other path is returned unchanged.
+    """
+    match = _SFTP_DRIVE_PATH.match(path)
+    if match is None:
+        return path
+    return f"{match['drive']}:{match['rest'] or '/'}"
+
+
+def windows_terminal_connections(sessions_json: str, *, marker: str = WINDOWS_EXEC_MARKER) -> set[str]:
+    """The Windows fixture's connections that serve a session, from ``sessions``.
+
+    ``sessions_json`` is ``native-sshd-fixture.ps1 -Action sessions``: the main
+    sshd's master PID and every process below it. Each direct ``sshd*`` child
+    of the master is one connection. One counts when something other than
+    sshd runs below it (its login shell) and none of those processes carries
+    ``marker``: the twin's own exec sessions, so one test's helper session
+    never lands in another test's before/after diff. A connection still in
+    pre-auth (sshd processes only) does not count either.
+    """
+    import json
+
+    data = json.loads(sessions_json or "{}")
+    master = data.get("master")
+    procs = data.get("processes") or []
+    if master is None:
+        return set()
+    children: dict[int, list[dict]] = {}
+    for proc in procs:
+        children.setdefault(int(proc["ppid"]), []).append(proc)
+
+    def subtree(pid: int) -> list[dict]:
+        out: list[dict] = []
+        stack = [pid]
+        seen = {pid}
+        while stack:
+            for child in children.get(stack.pop(), []):
+                cpid = int(child["pid"])
+                if cpid not in seen:
+                    seen.add(cpid)
+                    out.append(child)
+                    stack.append(cpid)
+        return out
+
+    found: set[str] = set()
+    for handler in children.get(int(master), []):
+        if not str(handler.get("name", "")).lower().startswith("sshd"):
+            continue
+        below = subtree(int(handler["pid"]))
+        if any(marker in str(proc.get("cmd") or "") for proc in below):
+            continue
+        if any(not str(proc.get("name", "")).lower().startswith("sshd") for proc in below):
+            found.add(str(handler["pid"]))
+    return found
+
+
 class NativeSshExecError(RuntimeError):
     """A command run on the native sshd over ``ssh`` failed.
 
@@ -384,9 +501,14 @@ class NativeSshServerControl:
     ``ps`` as the descendants of the fixture's master sshd (its PID file), so
     only this fixture's connections are ever touched.
 
-    The commands are POSIX ``sh`` with BSD/GNU-neutral tools, so the twin
-    serves the macOS fixture; on Windows (``cmd.exe`` login shell, no ``ps``)
-    it reports itself unavailable.
+    The commands are POSIX ``sh`` with BSD/GNU-neutral tools. On Windows
+    (#5449) they run in the fixture's Git Bash login shell (``--default-shell
+    bash``): the script goes over stdin to ``sh -s`` (:data:`WINDOWS_EXEC_COMMAND`),
+    with Win32-OpenSSH's own ``ssh.exe``; paths come in SFTP form
+    (``/C:/Users/u``, what the app's browser shows) and are handed to Git
+    Bash as ``C:/Users/u``. Sessions are listed and dropped by the
+    PowerShell fixture (``sessions`` / ``kill-sessions``), which sees the
+    SYSTEM-run sshd's processes.
     """
 
     def __init__(self, target: NativeSshTarget, *, platform: str = sys.platform) -> None:
@@ -396,8 +518,12 @@ class NativeSshServerControl:
 
     @property
     def available(self) -> bool:
-        """Whether the fixture exported a client key and the host is POSIX."""
-        return self._target.key is not None and self._platform != "win32"
+        """Whether the fixture exported a client key to log in with."""
+        return self._target.key is not None
+
+    @property
+    def _windows(self) -> bool:
+        return self._platform == "win32"
 
     @property
     def username(self) -> str:
@@ -411,7 +537,11 @@ class NativeSshServerControl:
         (symlinks resolved, as SFTP ``realpath`` does).
         """
         if self._home is None:
-            self._home = self._run("pwd -P").strip()
+            if self._windows:
+                # The SFTP form of the profile dir Win32-OpenSSH starts in.
+                self._home = "/" + self._run('cygpath -m "$(pwd -P)"').strip()
+            else:
+                self._home = self._run("pwd -P").strip()
         return self._home
 
     def env_home(self) -> str:
@@ -475,8 +605,24 @@ class NativeSshServerControl:
             raise NativeSshExecError(f"{pid_file} holds no PID: {pid!r}")
         return pid
 
+    def _windows_fixture(self, action: str, *extra: str) -> str:
+        result = subprocess.run(
+            fixture_argv(action, self._target.state_dir, *extra, platform=self._platform),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            raise NativeSshExecError(
+                f"native sshd fixture '{action}' failed ({result.returncode}): "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        return result.stdout
+
     def session_pids(self) -> set[str]:
         """PIDs serving the login user's terminal connections to the fixture."""
+        if self._windows:
+            return windows_terminal_connections(self._windows_fixture("sessions"))
         import pwd  # POSIX only; this module is imported on Windows too.
 
         output = subprocess.run(
@@ -500,6 +646,11 @@ class NativeSshServerControl:
             return
         if not all(pid.isdigit() for pid in targets):
             raise ValueError(f"not PIDs: {targets!r}")
+        if self._windows:
+            # The connection processes run as SYSTEM: the elevated fixture
+            # ends them, checking each is a connection of its sshd.
+            self._windows_fixture("kill-sessions", "-Pids", " ".join(targets))
+            return
         self._run('kill -9 "$@"', *targets)
 
     # -- files ---------------------------------------------------------------
@@ -571,16 +722,26 @@ class NativeSshServerControl:
 
         ``-F /dev/null`` and ``IdentitiesOnly`` keep the caller's own ssh
         config, agent and keys out of it; the host key is not recorded anywhere.
+        On Windows the remote command is :data:`WINDOWS_EXEC_COMMAND` and the
+        script comes on stdin (:meth:`windows_script`).
         """
         if self._target.key is None:
             raise NativeSshExecError(
                 "the native sshd fixture exported no client key (TERMIHUB_NATIVE_SSHD_KEY)"
             )
-        remote = shlex.join(["sh", "-c", script, "sh", *args])
+        if self._windows:
+            # Win32-OpenSSH's own client: a Git Bash `ssh` on PATH would read
+            # `NUL` as a file name.
+            ssh = str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe")
+            null = "NUL"
+            remote = WINDOWS_EXEC_COMMAND
+        else:
+            ssh, null = "ssh", "/dev/null"
+            remote = shlex.join(["sh", "-c", script, "sh", *args])
         return [
-            "ssh",
+            ssh,
             "-F",
-            "/dev/null",
+            null,
             "-T",
             "-p",
             str(self._target.port),
@@ -593,9 +754,9 @@ class NativeSshServerControl:
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
-            "UserKnownHostsFile=/dev/null",
+            f"UserKnownHostsFile={null}",
             "-o",
-            "GlobalKnownHostsFile=/dev/null",
+            f"GlobalKnownHostsFile={null}",
             "-o",
             "LogLevel=ERROR",
             "-o",
@@ -603,6 +764,24 @@ class NativeSshServerControl:
             f"{self._target.username}@127.0.0.1",
             remote,
         ]
+
+    @staticmethod
+    def windows_script(script: str, *args: str, stdin: Optional[bytes] = None) -> bytes:
+        """The stdin of a Windows exec: ``args`` as ``$1``..., then ``script``.
+
+        Paths among ``args`` in SFTP form become Git Bash paths
+        (:func:`git_bash_path`). Data the script reads from stdin is inlined as
+        base64 and piped into it, since stdin itself carries the script.
+        """
+        import base64
+
+        lines = [shlex.join(["set", "--", *(git_bash_path(arg) for arg in args)])]
+        if stdin is None:
+            lines.append(script)
+        else:
+            data = base64.b64encode(stdin).decode("ascii")
+            lines.append(f"printf %s {data} | base64 -d | {{ {script}\n}}")
+        return ("\n".join(lines) + "\n").encode("utf-8")
 
     def _run(
         self,
@@ -613,6 +792,8 @@ class NativeSshServerControl:
         timeout: float = 60.0,
     ):
         """Run ``script`` on the fixture as the login user; return its stdout."""
+        if self._windows:
+            stdin = self.windows_script(script, *args, stdin=stdin)
         try:
             result = subprocess.run(
                 self.ssh_argv(script, *args),

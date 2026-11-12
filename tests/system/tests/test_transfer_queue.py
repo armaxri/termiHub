@@ -137,7 +137,7 @@ class TransferQueueReads(ProjectionHarness):
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestTransferQueueLiveTransfer(
     TerminalUi,
     TabsUi,

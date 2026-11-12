@@ -1359,8 +1359,8 @@ all three OSes.
 The app-driven SSH/SFTP suites in `tests/system/` run on macOS and Windows
 too, against the same fixture. The macOS/Windows integration lane in
 [`system-integration.yml`](../.github/workflows/system-integration.yml) brings it
-up with `--password-login` (and `--jump-host` on macOS) and sets
-`TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
+up with `--password-login --jump-host` (plus `--default-shell bash` on Windows)
+and sets `TERMIHUB_SYSTEM_SSH_TARGET=native`. Then
 [`termihub_harness/native_ssh.py`](../tests/system/termihub_harness/native_ssh.py)
 takes over:
 
@@ -1387,10 +1387,24 @@ gets the account by accident. On Windows the fixture's own test user gets
 password auth. The password is exported as `TERMIHUB_NATIVE_SSHD_PASSWORD` and
 masked in the job log.
 
-**Jump host (macOS).** `--jump-host` starts a second sshd on the next free port
-with the same user and keys. `jump-stop` / `jump-start` drop and restore only
-that bastion. The jump-host reconnect suite counts gateway sessions as the
-bastion master's per-connection children.
+**Jump host.** `--jump-host` starts a second sshd on the next free port with
+the same user and keys. `jump-stop` / `jump-start` drop and restore only that
+bastion. The jump-host reconnect suite counts gateway sessions as the bastion
+master's per-connection children. On Windows (#5422) the bastion is a second
+scheduled task (`termihub-native-sshd-jump`); the harness calls the PowerShell
+fixture directly there, and its `jump-sessions` action does the count.
+
+**Windows login shell (#5422).** Win32-OpenSSH starts `cmd.exe` by default,
+and many suites type POSIX commands (`echo`, `touch`, `exit`). The lane passes
+`--default-shell bash`, which sets the OpenSSH `DefaultShell` to Git for
+Windows' `bin\bash.exe` for the fixture's lifetime, as
+`run-windows-ssh-host-suite.sh` does for its Git Bash leg. `down` restores the
+value it replaced. `cmd` and `powershell` are accepted too.
+
+The monitoring suites run there too (#5449). The app's stats command
+(`MONITORING_COMMAND` in `core/src/monitoring/parser.rs`) reads `/proc`, and
+under a Git Bash login that is the MSYS runtime's emulated `/proc`. macOS has
+no `/proc`, so they stay off the macOS native target (#5471).
 
 **Server-side checks (#5421).** Suites that inspect or control the server
 call `ssh_server_control()` instead of building `SshServerControl` directly. On
@@ -1404,6 +1418,16 @@ fixture's master sshd and `SIGKILL`s their user-owned processes. Killing only
 the user-owned process drops the connection (checked on the unprivileged
 fixture), so the root-owned handler of a `--password-login` fixture is left
 alone. Off the native target it returns the Docker `SshServerControl` as before.
+
+On Windows (#5449) the same twin runs its steps in the fixture's Git Bash
+login shell. The script goes over stdin to `sh -s`, because Win32-OpenSSH does
+not hand quotes in an exec command to the `DefaultShell` intact. Paths are in
+SFTP form (`/C:/Users/termihubssh`, what the app's browser shows), and the twin
+passes them to Git Bash as `C:/...`. The connections run as SYSTEM, so the
+elevated PowerShell fixture lists them (`sessions`, as JSON) and ends them
+(`kill-sessions`, only direct children of its own sshd master). A connection
+counts when a non-sshd process runs below it and none carries the twin's own
+exec marker.
 
 **Deployed agent (#5424, macOS).** `remote_agent_fixtures` builds the
 `--features test-hooks` agent for the host
@@ -1458,11 +1482,12 @@ and only the fixed paths and names it recorded in the state dir.
 
 Which suites run where:
 
-| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                      | macOS | Windows                                                                                                                                   |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth), `test_ssh_tunnels.py`                                                                                                                                                                                                                       | yes   | yes                                                                                                                                       |
-| `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, `test_ssh.py` (session output), SSH connect flash, SFTP VS Code handoff, jump host, `test_ssh.py` (server disconnect), `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py`, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below) | yes   | no: they type POSIX shell commands or check the server with POSIX tools, and the Windows login shell is `cmd.exe`; no Windows bastion yet |
-| `test_editor_permissions_live.py`, `test_ssh_banner.py`, `test_sftp_only_host_live.py`                                                                                                                                                                                                                                                                                                                                        | yes   | no: no sudo, banner or SFTP-only host on the Windows fixture yet                                                                          |
+| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | macOS                                                                           | Windows                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth, session output, server disconnect), `test_ssh_tunnels.py`, `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, SSH connect flash, jump host, `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py` | yes                                                                             | yes                                                                                                                                                                                                                                              |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)                                                                                                                                                                                                                                                                                                                                                                                       | no (#5471): the app's host-stats command reads Linux `/proc`, which macOS lacks | yes: the MSYS runtime behind the Git Bash login emulates `/proc`                                                                                                                                                                                 |
+| SFTP VS Code handoff, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below)                                                                                                                                                                                                                                                                                                                                                       | yes                                                                             | no (#5449): the browser following a `cd` (a Windows host is followed only through the shell hook), or a deployed host agent (the app deploys to a Windows host only through a cmd.exe or PowerShell `DefaultShell`, and this lane's is Git Bash) |
+| `test_editor_permissions_live.py`, `test_ssh_banner.py`, `test_sftp_only_host_live.py`                                                                                                                                                                                                                                                                                                                                                                                        | yes                                                                             | no: no sudo, banner or SFTP-only host on the Windows fixture yet                                                                                                                                                                                 |
 
 **What stays on the Linux lane in `tests/system/`.** These suites still skip on
 macOS and Windows. Each skip reason has a capped fragment in
@@ -1476,7 +1501,7 @@ that reason fails the lane:
 | `test_ssh_banner.py`, `test_editor_permissions_live.py`, `test_sftp_only_host_live.py` (Windows only) | fixture-specific servers: a pre-auth banner, sudo/no-sudo hosts with a root-owned file, a `ForceCommand internal-sftp` host |
 | `test_session_sftp_no_orphan_on_quit.py`                                                              | inspects the server's SFTP connections through the container (`/proc`)                                                      |
 | `test_network_tools_agent_live.py`, `test_remote_agent.py` (missing agent)                            | on the native target the agent host is this computer, and its user has an agent installed                                   |
-| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)               | the app's host-stats command reads Linux `/proc`, so a macOS or Windows host shows no stats                                 |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)               | macOS only: the app's host-stats command reads Linux `/proc`, so a macOS host shows no stats (#5471)                        |
 
 ### Agent deploy, probe, update and reattach on the native sshd (#5208)
 

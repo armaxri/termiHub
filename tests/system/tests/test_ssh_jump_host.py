@@ -7,9 +7,10 @@ both tabs, starts it again, and asserts that both tabs reconnect on their own
 (Auto-Reconnect is on by default) and that the re-established chains share one
 new gateway session — counted on the bastion itself by :class:`BastionControl`.
 
-On the macOS lane (#5176) the bastion is the native sshd fixture's second sshd
-(``--jump-host``) and the target is its first one; :func:`bastion_control`
-returns the matching controller.
+On the macOS and Windows lanes (#5176, #5422) the bastion is the native sshd
+fixture's second sshd (``--jump-host``) and the target is its first one;
+:func:`bastion_control` returns the matching controller. The Windows fixture's
+login shell is Git Bash there, so the typed ``echo`` works as on Linux.
 
 The pooling and eviction rules underneath are also covered headlessly against the
 same fixture by ``core/tests/ssh_advanced.rs`` (SSH-JUMP-03 and SSH-JUMP-07).
@@ -56,7 +57,7 @@ RECONNECT_TIMEOUT = 150.0
 
 
 @pytest.mark.usefixtures("ssh_bastion_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestSshJumpHostReconnect(
     JumpHostUi, TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest
 ):

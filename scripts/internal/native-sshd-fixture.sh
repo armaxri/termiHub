@@ -24,6 +24,7 @@
 #   scripts/internal/native-sshd-fixture.sh up    [--dir DIR] [--port N] [--github-env]
 #                                                 [--agent-binary PATH] [--scratch-home]
 #                                                 [--password-login] [--jump-host]
+#                                                 [--default-shell cmd|powershell|bash]
 #   scripts/internal/native-sshd-fixture.sh stop  [--dir DIR]   # listener down, state kept
 #   scripts/internal/native-sshd-fixture.sh start [--dir DIR]   # restart after stop
 #   scripts/internal/native-sshd-fixture.sh jump-stop  [--dir DIR]  # bastion down only
@@ -63,10 +64,14 @@
 # machine you care about: it adds a local account for the fixture's lifetime.
 # On Windows the fixture's own test user gets password auth (-PasswordLogin).
 #
-# `--jump-host` (#5176, macOS/Linux) starts a second sshd on the next free port
-# with the same users and keys: the bastion of the jump-host suite, which
-# forwards to the first sshd. `jump-stop` / `jump-start` drop and restore only
-# the bastion, so the suite can sever every session that rides it.
+# `--jump-host` (#5176; Windows since #5422) starts a second sshd on the next
+# free port with the same users and keys: the bastion of the jump-host suite,
+# which forwards to the first sshd. `jump-stop` / `jump-start` drop and restore
+# only the bastion, so the suite can sever every session that rides it.
+#
+# `--default-shell` (#5422, Windows only) sets Win32-OpenSSH's DefaultShell
+# for the fixture's lifetime (`bash` = Git Bash, so the suites that type POSIX
+# commands run there); `down` restores the previous value.
 #
 # `variant-up` (#5444, macOS/Linux) starts, or restarts with a fresh config,
 # one more sshd on --port for the same login user: an agent "host" of its own.
@@ -146,6 +151,7 @@ AGENT_BIN=""
 SCRATCH_HOME=0
 PASSWORD_LOGIN=0
 JUMP_HOST=0
+DEFAULT_SHELL=""
 VARIANT=""
 KBDINT=0
 SETENV=()
@@ -183,6 +189,10 @@ while [ $# -gt 0 ]; do
     --jump-host)
       JUMP_HOST=1
       shift
+      ;;
+    --default-shell)
+      DEFAULT_SHELL="${2:?--default-shell needs cmd, powershell or bash}"
+      shift 2
       ;;
     --variant)
       VARIANT="${2:?--variant needs a value}"
@@ -234,13 +244,16 @@ case "$(uname -s)" in
     [ "$GITHUB_ENV_OUT" -eq 0 ] || ps_args+=(-GitHubEnv)
     [ -z "$AGENT_BIN" ] || ps_args+=(-AgentBinary "$(cygpath -w "$AGENT_BIN")")
     [ "$PASSWORD_LOGIN" -eq 0 ] || ps_args+=(-PasswordLogin)
-    if [ "$JUMP_HOST" -eq 1 ]; then
-      echo "error: --jump-host is not supported on Windows yet" >&2
-      exit 2
-    fi
+    [ "$JUMP_HOST" -eq 0 ] || ps_args+=(-JumpHost)
+    [ -z "$DEFAULT_SHELL" ] || ps_args+=(-DefaultShell "$DEFAULT_SHELL")
     exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$SCRIPT_DIR/native-sshd-fixture.ps1")" "${ps_args[@]}"
     ;;
 esac
+
+if [ -n "$DEFAULT_SHELL" ]; then
+  echo "error: --default-shell is a Win32-OpenSSH setting (Windows only)" >&2
+  exit 2
+fi
 
 CURRENT_USER="$(id -un)"
 if [ -z "$STATE_DIR" ]; then

@@ -50,7 +50,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestSftpInfra(
     TerminalUi,
     TabsUi,

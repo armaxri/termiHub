@@ -5,8 +5,8 @@ backend as one rename with every IPC mocked; the local twin
 (``test_file_browser_local.py``) drives the real pointer gesture against the
 host disk. This drives the same gesture in the SFTP browser of a live SSH session
 on the Docker ``ssh-password`` fixture and checks the result **on the host**
-through a container exec (on macOS: the native sshd fixture and a key-auth
-``ssh`` exec as its user, #5421):
+through a container exec (on macOS and Windows: the native sshd fixture and a
+key-auth ``ssh`` exec as its user, #5421, #5449):
 
 - the file appears at its new path with its bytes intact, and the old path is
   gone;
@@ -45,7 +45,7 @@ PAYLOAD = "drag me over sftp\n"
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestFileBrowserDragSftpLive(
     TerminalUi,
     TabsUi,

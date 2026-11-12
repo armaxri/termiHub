@@ -674,7 +674,9 @@ jobs:
         # #5176: the Docker SSH fixtures cannot run here, so the SSH/SFTP suites
         # marked native_sshd log in to the platform's own OpenSSH server
         # instead: a dedicated local user with password and key auth, plus a
-        # second sshd as the jump-host bastion on macOS. TERMIHUB_SYSTEM_SSH_TARGET
+        # second sshd as the jump-host bastion. On Windows the login shell is
+        # Git Bash (#5422), so the suites that type POSIX commands run there
+        # too; `down` restores the DefaultShell. TERMIHUB_SYSTEM_SSH_TARGET
         # points the harness at it (termihub_harness/native_ssh.py). The recipe
         # lives in the checked-out script (a scheduled run uses main's workflow).
         if: runner.os != 'Linux'
@@ -684,7 +686,8 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then
             scripts/internal/native-sshd-fixture.sh up --github-env --password-login --jump-host >/dev/null
           else
-            scripts/internal/native-sshd-fixture.sh up --github-env --password-login >/dev/null
+            scripts/internal/native-sshd-fixture.sh up --github-env --password-login --jump-host \
+              --default-shell bash >/dev/null
           fi
           echo "TERMIHUB_SYSTEM_SSH_TARGET=native" >>"$GITHUB_ENV"
 

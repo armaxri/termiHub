@@ -190,7 +190,7 @@ class TestSshConnectionFailure(ConnectionsUi, PasswordPromptUi, SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-05: the SSH terminal is interactive and streams command output."""
 
@@ -215,6 +215,7 @@ class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTe
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd(platforms=("win32",))
 class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, MonitoringUi, SystemTest):
     """SSH-08: monitoring follows the active tab between an SSH and a local tab.
 
@@ -268,7 +269,7 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-06: a mid-session server-side disconnect surfaces the disconnect UX.
 
@@ -294,7 +295,8 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         disconnect overlay is up.
         """
         # The container exec, or on the macOS native sshd (#5421) a key-auth ssh
-        # exec as the fixture user that kills its per-connection sshd process.
+        # exec as the fixture user that kills its per-connection sshd process;
+        # on Windows (#5449) the elevated fixture ends the SYSTEM-run connection.
         control = ssh_server_control()
         if not control.available:
             pytest.skip("no container runtime to drop the SSH session server-side")
