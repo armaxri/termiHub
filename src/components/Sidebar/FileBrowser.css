@@ -31,21 +31,26 @@
   gap: var(--spacing-xxs);
 }
 
-/* Editable breadcrumb path bar */
+/* Editable breadcrumb path bar (#5521). One fixed-height row in both states,
+   so switching to the input never shifts the list below. A path wider than
+   the bar collapses its middle segments into "…"; the leaf stays visible and
+   ellipsizes only when it alone is wider than the bar. Never scrolls or clips. */
 .file-browser__path-bar {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
   width: 100%;
   min-width: 0;
+  height: var(--control-height-md);
 }
 
 .file-browser__breadcrumbs {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
+  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -53,6 +58,12 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
+  min-width: 0;
+}
+
+/* The leaf segment is the only one allowed to shrink (and ellipsize). */
+.file-browser__crumb-group--leaf {
+  flex-shrink: 1;
 }
 
 .file-browser__crumb-sep {
@@ -61,6 +72,11 @@
 }
 
 .file-browser__crumb {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   padding: 0 var(--spacing-xxs);
@@ -79,19 +95,48 @@
   cursor: default;
 }
 
+/* Inset the global focus ring: the breadcrumb row clips its overflow. */
+.file-browser__crumb:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-border);
+}
+
+/* Invisible copy of every segment the collapse measures its natural widths on. */
+.file-browser__crumb-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
+  width: max-content;
+  white-space: nowrap;
+  top: 0;
+  left: 0;
+}
+
 .file-browser__path-edit {
   flex-shrink: 0;
 }
 
 .file-browser__path-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   font-size: var(--font-size-xs);
 }
 
+/* Header action row (#5520): a few icons plus the "…" menu, one line always. */
 .file-browser__actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.file-browser__actions-spacer {
+  flex: 1;
+}
+
+.file-browser__actions-overflow {
+  flex-shrink: 0;
 }
 
 .file-browser__menu-reveal {

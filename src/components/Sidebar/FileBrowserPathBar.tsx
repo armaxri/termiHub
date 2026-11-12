@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { Button, Tooltip, Input } from "@/components/ui";
-import { splitPathSegments } from "@/utils/fileBrowserNav";
-import { useFileDropTarget } from "./fileBrowserDnd";
+import { CollapsingBreadcrumbs } from "./FileBrowserBreadcrumbs";
 import { isImeComposing } from "@/utils/imeComposition";
 
 interface FileBrowserPathBarProps {
@@ -12,41 +11,12 @@ interface FileBrowserPathBarProps {
   onNavigate: (path: string) => void;
 }
 
-interface CrumbProps {
-  label: string;
-  path: string;
-  isCurrent: boolean;
-  onNavigate: (path: string) => void;
-}
-
-/**
- * One breadcrumb segment. Besides navigating on click, each segment is a drop
- * target for drag-to-move (PROD-006), so a row can be dragged "up" into any
- * ancestor folder; it highlights valid vs refused drops.
- */
-function Crumb({ label, path, isCurrent, onNavigate }: CrumbProps) {
-  const { setNodeRef, highlight } = useFileDropTarget(`crumb:${path}`, path);
-  return (
-    <button
-      ref={setNodeRef}
-      type="button"
-      className={`file-browser__crumb${highlight ? ` file-browser__crumb--drop-${highlight}` : ""}`}
-      onClick={() => onNavigate(path)}
-      disabled={isCurrent}
-      // Per-segment id so a drag can target one ancestor (`dragTo`, #4007).
-      data-testid={`file-browser-crumb-${label}`}
-      data-drop-highlight={highlight ?? undefined}
-    >
-      {label}
-    </button>
-  );
-}
-
 /**
  * Editable breadcrumb path bar for the file browser.
  *
  * In its default state it renders `currentPath` as a row of clickable
- * breadcrumb segments (each navigates to its cumulative path). Clicking the
+ * breadcrumb segments (each navigates to its cumulative path) that folds its
+ * middle segments into "…" when the path is wider than the bar. Clicking the
  * pencil affordance switches to a free-text input pre-filled with the current
  * path: Enter navigates to the typed path, Escape (or blur) cancels.
  */
@@ -82,6 +52,7 @@ export function FileBrowserPathBar({ currentPath, onNavigate }: FileBrowserPathB
       <div className="file-browser__path-bar">
         <Input
           ref={inputRef}
+          size="sm"
           className="file-browser__path-input"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -103,28 +74,9 @@ export function FileBrowserPathBar({ currentPath, onNavigate }: FileBrowserPathB
     );
   }
 
-  const crumbs = splitPathSegments(currentPath);
-
   return (
     <div className="file-browser__path-bar">
-      <nav
-        className="file-browser__breadcrumbs"
-        aria-label="Path"
-        title={currentPath}
-        data-testid="file-browser-current-path"
-      >
-        {crumbs.map((crumb, i) => (
-          <span className="file-browser__crumb-group" key={crumb.path}>
-            {i > 0 && <ChevronRight size={11} className="file-browser__crumb-sep" aria-hidden />}
-            <Crumb
-              label={crumb.label}
-              path={crumb.path}
-              isCurrent={crumb.path === currentPath}
-              onNavigate={onNavigate}
-            />
-          </span>
-        ))}
-      </nav>
+      <CollapsingBreadcrumbs currentPath={currentPath} onNavigate={onNavigate} />
       <Tooltip content="Edit path" side="top">
         <Button
           variant="ghost"
