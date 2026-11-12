@@ -22,9 +22,9 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
+use termihub_core::session::prompt_ready::wait_for_prompt;
 #[cfg(test)]
 use termihub_core::session::prompt_ready::MARK_ONLY_TIMEOUT;
-use termihub_core::session::prompt_ready::wait_for_prompt;
 use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
@@ -2710,8 +2710,8 @@ mod plugin_exit;
 /// The initial command held for a prompt that never comes, and its Send now
 /// (#5509).
 mod held_initial_command;
-use held_initial_command::{HeldInitialCommands, InitialCommandCue};
 pub use held_initial_command::InitialCommandHeldEvent;
+use held_initial_command::{HeldInitialCommands, InitialCommandCue};
 
 /// Backend write / resize / teardown outside the session-map lock (#4300).
 pub(super) mod session_io;
