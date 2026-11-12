@@ -6,6 +6,6 @@
  *
  * Carried on the `connection.monitoring.status` notification so the desktop
  * can tell a dead transport apart from a remote that answers with unreadable
- * output. Serialised in `camelCase` (`"transport"`, `"parse"`).
+ * output. Serialised in `camelCase` (`"transport"`, `"parse"`, …).
  */
-export type MonitorStatusReason = "transport" | "parse" | "silent";
+export type MonitorStatusReason = "transport" | "parse" | "silent" | "unsupported";
