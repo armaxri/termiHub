@@ -71,7 +71,7 @@ export function describeFanoutProgress(statuses: readonly FanoutTargetStatus[]):
   push(count("queued"), "queued");
   push(count("completed"), "done");
   push(count("failed"), "failed");
-  push(count("cancelled"), "cancelled");
+  push(count("cancelled"), "canceled");
   return parts.join(" · ");
 }
 
@@ -155,7 +155,7 @@ export function toastFanoutSummary(
       description: `${summary}. ${detail}`,
     });
   } else if (cancelled) {
-    toast.info(`Workflow "${workflowName}" cancelled`, { id: toastId, description: summary });
+    toast.info(`Workflow "${workflowName}" canceled`, { id: toastId, description: summary });
   } else if (skipped > 0 || tolerated) {
     toast.info(`Ran workflow "${workflowName}" on ${completed} terminal(s)`, {
       id: toastId,

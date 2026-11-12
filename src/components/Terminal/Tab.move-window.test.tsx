@@ -1,8 +1,8 @@
 /**
- * Tests for the "Move to Window" tab context-menu commands (#1901).
+ * Tests for the "Move to window" tab context-menu commands (#1901).
  *
- * Covers that a session tab's context menu exposes "Move to New Window" and,
- * when other windows exist, a "Move to Window ▸" submenu, and that picking an
+ * Covers that a session tab's context menu exposes "Move to new window" and,
+ * when other windows exist, a "Move to window ▸" submenu, and that picking an
  * entry invokes the matching move handler with the right target.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -76,7 +76,7 @@ function openMenu() {
   });
 }
 
-describe("Tab — Move to Window commands (#1901)", () => {
+describe("Tab — Move to window commands (#1901)", () => {
   let root: Root | null = null;
 
   beforeEach(() => {
@@ -89,13 +89,13 @@ describe("Tab — Move to Window commands (#1901)", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows 'Move to New Window' in a session tab's context menu", () => {
+  it("shows 'Move to new window' in a session tab's context menu", () => {
     root = renderTab();
     openMenu();
     expect(document.querySelector('[data-testid="tab-context-move-new-window"]')).not.toBeNull();
   });
 
-  it("invokes onMoveToNewWindow when 'Move to New Window' is picked", () => {
+  it("invokes onMoveToNewWindow when 'Move to new window' is picked", () => {
     const onMoveToNewWindow = vi.fn();
     root = renderTab({ onMoveToNewWindow });
     openMenu();
@@ -106,7 +106,7 @@ describe("Tab — Move to Window commands (#1901)", () => {
     expect(onMoveToNewWindow).toHaveBeenCalledOnce();
   });
 
-  it("hides the 'Move to Window ▸' submenu when only the current window exists", () => {
+  it("hides the 'Move to window ▸' submenu when only the current window exists", () => {
     root = renderTab({ windows: [{ label: "main" }], currentWindowLabel: "main" });
     openMenu();
     expect(document.querySelector('[data-testid="tab-context-move-window"]')).toBeNull();
@@ -114,7 +114,7 @@ describe("Tab — Move to Window commands (#1901)", () => {
     expect(document.querySelector('[data-testid="tab-context-move-new-window"]')).not.toBeNull();
   });
 
-  it("shows the 'Move to Window ▸' submenu trigger once another window exists", () => {
+  it("shows the 'Move to window ▸' submenu trigger once another window exists", () => {
     root = renderTab({
       windows: [{ label: "main" }, { label: "win-1" }],
       currentWindowLabel: "main",

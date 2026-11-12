@@ -1733,7 +1733,7 @@ export function FileEditor({
             errorToast={false}
             title={
               sftpOnlyReadonly
-                ? "This file is read-only — use “Save a copy…” or Download"
+                ? "This file is read-only — use “Save a copy…” or “Download”"
                 : listingReadonly
                   ? "This file is read-only on the server — saving is disabled"
                   : `${isUnsavedScratch ? "Save as…" : "Save"} (${modKeyAccelerator("S")})`

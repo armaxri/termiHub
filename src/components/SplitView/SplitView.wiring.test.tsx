@@ -610,7 +610,7 @@ describe("SplitView zoomed tab menu and dialogs (#5171)", () => {
     expect(ops.setTabColor).toHaveBeenLastCalledWith("t1", null);
   });
 
-  it("a non-terminal zoomed tab offers only Set Color", async () => {
+  it("a non-terminal zoomed tab offers only Set color", async () => {
     await zoom("s1", leaf("left", [tab("s1", "left", "settings")]));
     await openTitleMenu();
     expect(q("zoom-context-set-color")).not.toBeNull();

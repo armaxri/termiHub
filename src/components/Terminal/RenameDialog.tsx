@@ -33,7 +33,7 @@ export function RenameDialog({ open, onOpenChange, currentTitle, onRename }: Ren
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Rename Tab"
+      title="Rename tab"
       footer={
         <>
           <Button

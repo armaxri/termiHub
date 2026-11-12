@@ -9,7 +9,7 @@
  *
  * Single-terminal playback is deliberately NOT marked: it types into exactly the
  * tab the user started it from, which already shows the in-terminal
- * "Stop Playback (n/m)" toolbar state — there is no multi-host risk to flag.
+ * "Stop playback (n/m)" toolbar state — there is no multi-host risk to flag.
  */
 import type { MacroPlaybackState } from "@/store/appStore";
 

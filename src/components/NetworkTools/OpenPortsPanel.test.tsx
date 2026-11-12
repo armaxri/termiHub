@@ -115,7 +115,7 @@ describe("OpenPortsPanel — Button migration", () => {
     });
     await flush();
     expect(container.textContent).not.toContain("sshd");
-    expect(container.textContent).toContain("Click Refresh to list listening ports");
+    expect(container.textContent).toContain("Click “Refresh” to list listening ports");
     // No automatic re-fetch (it could race the backend recording the choice).
     expect(networkOpenPorts).toHaveBeenCalledTimes(1);
   });

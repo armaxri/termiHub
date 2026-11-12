@@ -37,7 +37,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // General
   {
     action: "toggle-sidebar",
-    label: "Toggle Sidebar",
+    label: "Toggle sidebar",
     category: "general",
     macDefault: { key: "b", meta: true },
     // Avoid Ctrl+B: tmux default prefix key.
@@ -46,7 +46,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "open-settings",
-    label: "Open Settings",
+    label: "Open settings",
     category: "general",
     macDefault: { key: ",", meta: true },
     winLinuxDefault: { key: ",", ctrl: true },
@@ -54,7 +54,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "command-palette",
-    label: "Command Palette",
+    label: "Command palette",
     category: "general",
     macDefault: { key: "p", meta: true },
     // Cmd+Shift+P is the VS Code habit (#5084). Cmd combos never collide with
@@ -68,7 +68,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "new-window",
-    label: "New Window",
+    label: "New window",
     category: "general",
     // Opens a new empty native window (#1902). Ctrl/Cmd+Shift+N does not collide
     // with the shell key map and mirrors the familiar "new window" convention.
@@ -78,7 +78,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts",
-    label: "Keyboard Shortcuts",
+    label: "Keyboard shortcuts",
     category: "general",
     macDefault: [
       { key: "k", meta: true },
@@ -92,7 +92,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts-outside-terminal",
-    label: "Keyboard Shortcuts (Outside Terminals)",
+    label: "Keyboard shortcuts (outside terminals)",
     category: "general",
     // Bare F1 is the long-standing "help" key, but terminal programs own it
     // (htop, mc, nano, vim, …): a focused terminal keeps it, the same as F6
@@ -106,7 +106,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Terminal
   {
     action: "new-terminal",
-    label: "New Terminal",
+    label: "New terminal",
     category: "terminal",
     macDefault: { key: "`", meta: true, shift: true },
     winLinuxDefault: { key: "`", ctrl: true, shift: true },
@@ -114,7 +114,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "close-tab",
-    label: "Close Tab",
+    label: "Close tab",
     category: "terminal",
     macDefault: { key: "w", meta: true },
     // Avoid Ctrl+W: readline "delete-word-backward" and vim window-command prefix.
@@ -123,7 +123,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "next-tab",
-    label: "Next Tab",
+    label: "Next tab",
     category: "terminal",
     macDefault: { key: "Tab", ctrl: true },
     winLinuxDefault: { key: "Tab", ctrl: true },
@@ -131,7 +131,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "prev-tab",
-    label: "Previous Tab",
+    label: "Previous tab",
     category: "terminal",
     macDefault: { key: "Tab", ctrl: true, shift: true },
     winLinuxDefault: { key: "Tab", ctrl: true, shift: true },
@@ -139,7 +139,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "clear-terminal",
-    label: "Clear Terminal",
+    label: "Clear terminal",
     category: "terminal",
     macDefault: { key: "K", meta: true, shift: true },
     winLinuxDefault: { key: "K", ctrl: true, shift: true },
@@ -148,7 +148,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "find-in-terminal",
-    label: "Find in Terminal",
+    label: "Find in terminal",
     category: "terminal",
     macDefault: { key: "f", meta: true },
     winLinuxDefault: { key: "F", ctrl: true, shift: true },
@@ -162,7 +162,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // editors use for word/paragraph movement.
   {
     action: "jump-prev-prompt",
-    label: "Jump to Previous Prompt",
+    label: "Jump to previous prompt",
     category: "terminal",
     macDefault: { key: "ArrowUp", meta: true },
     winLinuxDefault: { key: "ArrowUp", ctrl: true, shift: true },
@@ -171,7 +171,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "jump-next-prompt",
-    label: "Jump to Next Prompt",
+    label: "Jump to next prompt",
     category: "terminal",
     macDefault: { key: "ArrowDown", meta: true },
     winLinuxDefault: { key: "ArrowDown", ctrl: true, shift: true },
@@ -180,7 +180,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "select-last-command-output",
-    label: "Select Last Command Output",
+    label: "Select last command output",
     category: "terminal",
     macDefault: null,
     winLinuxDefault: null,
@@ -189,7 +189,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "copy-last-command-output",
-    label: "Copy Last Command Output",
+    label: "Copy last command output",
     category: "terminal",
     macDefault: null,
     winLinuxDefault: null,
@@ -198,7 +198,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "move-tab-to-new-window",
-    label: "Move Tab to New Window",
+    label: "Move tab to new window",
     category: "terminal",
     // Ships unbound: the primary surface is the tab context menu (#1901); this
     // entry exists so the action is command-palette reachable.
@@ -208,7 +208,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "toggle-macro-recording",
-    label: "Record Macro (Start/Stop)",
+    label: "Record macro (start/stop)",
     category: "terminal",
     // Ships unbound to avoid colliding with shell/tmux/vim keys; the user can
     // assign a binding in Settings. Reachable now via the toolbar button and the
@@ -219,7 +219,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "toggle-broadcast",
-    label: "Toggle Broadcast Input",
+    label: "Toggle broadcast input",
     category: "terminal",
     macDefault: { key: "B", meta: true, shift: true },
     // Ctrl+Shift+B is already the default for toggle-sidebar on Windows/Linux
@@ -234,7 +234,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Clipboard
   {
     action: "copy",
-    label: "Copy Selection",
+    label: "Copy selection",
     category: "clipboard",
     macDefault: { key: "c", meta: true },
     winLinuxDefault: { key: "C", ctrl: true, shift: true },
@@ -252,7 +252,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "select-all",
-    label: "Select All",
+    label: "Select all",
     category: "clipboard",
     macDefault: { key: "a", meta: true },
     winLinuxDefault: { key: "A", ctrl: true, shift: true },
@@ -263,7 +263,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Navigation / Split
   {
     action: "split-right",
-    label: "Split Right",
+    label: "Split right",
     category: "navigation",
     macDefault: { key: "\\", meta: true },
     // Avoid Ctrl+\: sends SIGQUIT (force-kill) to foreground process.
@@ -272,7 +272,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "split-down",
-    label: "Split Down",
+    label: "Split down",
     category: "navigation",
     macDefault: { key: "\\", meta: true, shift: true },
     // Sibling to split-right; "-" reads as a horizontal divider for a downward split.
@@ -281,7 +281,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-up",
-    label: "Focus Panel Above",
+    label: "Focus panel above",
     category: "navigation",
     macDefault: { key: "ArrowUp", meta: true, alt: true },
     // Avoid Ctrl+Alt+Arrow: GNOME/KDE workspace switching and Intel-driver screen rotation.
@@ -290,7 +290,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-down",
-    label: "Focus Panel Below",
+    label: "Focus panel below",
     category: "navigation",
     macDefault: { key: "ArrowDown", meta: true, alt: true },
     winLinuxDefault: { key: "ArrowDown", alt: true, shift: true },
@@ -298,7 +298,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-left",
-    label: "Focus Panel Left",
+    label: "Focus panel left",
     category: "navigation",
     macDefault: { key: "ArrowLeft", meta: true, alt: true },
     winLinuxDefault: { key: "ArrowLeft", alt: true, shift: true },
@@ -306,7 +306,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-right",
-    label: "Focus Panel Right",
+    label: "Focus panel right",
     category: "navigation",
     macDefault: { key: "ArrowRight", meta: true, alt: true },
     winLinuxDefault: { key: "ArrowRight", alt: true, shift: true },
@@ -314,7 +314,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-next-region",
-    label: "Focus Next Region",
+    label: "Focus next region",
     category: "navigation",
     // F6 / Shift+F6 cycle the shell landmarks (activity bar, sidebar, terminal
     // area, status bar), as in VS Code and browsers (#4773). A focused terminal
@@ -327,7 +327,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-prev-region",
-    label: "Focus Previous Region",
+    label: "Focus previous region",
     category: "navigation",
     macDefault: { key: "F6", shift: true },
     winLinuxDefault: { key: "F6", shift: true },
@@ -336,7 +336,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-next-region-anywhere",
-    label: "Focus Next Region (Also from Terminal)",
+    label: "Focus next region (also from terminal)",
     category: "navigation",
     // Cmd on macOS: Ctrl+F6 is the system "move focus to floating window" key.
     macDefault: { key: "F6", meta: true },
@@ -345,7 +345,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "focus-prev-region-anywhere",
-    label: "Focus Previous Region (Also from Terminal)",
+    label: "Focus previous region (also from terminal)",
     category: "navigation",
     macDefault: { key: "F6", meta: true, shift: true },
     winLinuxDefault: { key: "F6", ctrl: true, shift: true },
@@ -353,7 +353,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "zoom-panel",
-    label: "Toggle Panel Zoom",
+    label: "Toggle panel zoom",
     category: "navigation",
     macDefault: { key: "Enter", meta: true, shift: true },
     winLinuxDefault: { key: "Enter", ctrl: true, shift: true },
@@ -361,7 +361,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "zoom-in",
-    label: "Zoom In",
+    label: "Zoom in",
     category: "navigation",
     macDefault: { key: "=", meta: true },
     winLinuxDefault: { key: "=", ctrl: true },
@@ -369,7 +369,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "zoom-out",
-    label: "Zoom Out",
+    label: "Zoom out",
     category: "navigation",
     macDefault: { key: "-", meta: true },
     winLinuxDefault: { key: "-", ctrl: true },
@@ -377,7 +377,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "zoom-reset",
-    label: "Reset Zoom",
+    label: "Reset zoom",
     category: "navigation",
     macDefault: { key: "0", meta: true },
     winLinuxDefault: { key: "0", ctrl: true },
@@ -387,7 +387,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Tab Groups
   {
     action: "new-tab-group",
-    label: "New Tab Group",
+    label: "New tab group",
     category: "tab-groups",
     macDefault: { key: "t", meta: true, shift: true },
     winLinuxDefault: { key: "t", ctrl: true, shift: true },
@@ -395,7 +395,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "close-tab-group",
-    label: "Close Tab Group",
+    label: "Close tab group",
     category: "tab-groups",
     macDefault: { key: "w", meta: true, shift: true },
     // Ctrl+Shift+W is Close Tab on Win/Linux. Ctrl+Shift+Q is the usual Linux
@@ -407,7 +407,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "next-tab-group",
-    label: "Next Tab Group",
+    label: "Next tab group",
     category: "tab-groups",
     macDefault: { key: "]", meta: true, shift: true },
     winLinuxDefault: { key: "]", ctrl: true, shift: true },
@@ -415,7 +415,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "prev-tab-group",
-    label: "Previous Tab Group",
+    label: "Previous tab group",
     category: "tab-groups",
     macDefault: { key: "[", meta: true, shift: true },
     winLinuxDefault: { key: "[", ctrl: true, shift: true },
@@ -425,7 +425,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Remote desktop
   {
     action: RELEASE_CHORD_ACTION,
-    label: "Release Remote Desktop Keyboard",
+    label: "Release remote desktop keyboard",
     category: "remote-desktop",
     // The only keyboard way out of a focused remote-desktop canvas, which
     // forwards every other key to the remote machine (#4328, #4524). A

@@ -28,7 +28,7 @@ const TIMING_MODE_OPTIONS: { value: MacroTimingMode; label: string }[] = [
 ];
 
 /**
- * Picker shown from the terminal toolbar's "Play Macro" action: choose a stored
+ * Picker shown from the terminal toolbar's "Play macro" action: choose a stored
  * macro, a timing mode and a target, then replay it. Composed from the shared UI
  * primitives. When no macros exist the dialog explains how to record one rather
  * than presenting an empty, un-actionable list.
@@ -99,7 +99,7 @@ export function MacroPlaybackDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Play Macro"
+      title="Play macro"
       description="Replay a stored macro's input into the active terminal"
       onKeyDown={(e) => {
         // Enter that a focused control already consumed (e.g. opening a Select)

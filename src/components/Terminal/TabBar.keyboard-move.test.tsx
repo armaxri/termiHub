@@ -2,8 +2,8 @@
  * Keyboard alternatives to dragging a tab (A11Y2-003, #4329).
  *
  * A focused tab moves left/right with Ctrl/Cmd+Shift+ArrowLeft/Right, and its
- * context menu (reachable with Shift+F10 / the Menu key) offers Move Left,
- * Move Right and Move to New Panel. All of them route through the same store
+ * context menu (reachable with Shift+F10 / the Menu key) offers Move left,
+ * Move right and Move to new panel. All of them route through the same store
  * actions the drag-and-drop path uses.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -157,7 +157,7 @@ describe("TabBar — move a tab with the keyboard (#4329)", () => {
     expect(document.activeElement).toBe(tabEl("t2"));
   });
 
-  it("context menu offers Move Left / Move Right that reorder the tab", async () => {
+  it("context menu offers Move left / Move right that reorder the tab", async () => {
     render(THREE());
     await openMenu("t2");
     await select("tab-context-move-right");
@@ -167,21 +167,21 @@ describe("TabBar — move a tab with the keyboard (#4329)", () => {
     expect(reorderTabs).toHaveBeenCalledWith(PANEL_ID, 1, 0);
   });
 
-  it("disables Move Left on the first tab and Move Right on the last", async () => {
+  it("disables Move left on the first tab and Move right on the last", async () => {
     render(THREE());
     await openMenu("t1");
     expect(menuItem("tab-context-move-left")?.hasAttribute("data-disabled")).toBe(true);
     expect(menuItem("tab-context-move-right")?.hasAttribute("data-disabled")).toBe(false);
   });
 
-  it("Move to New Panel splits the tab out to the right", async () => {
+  it("Move to new panel splits the tab out to the right", async () => {
     render(THREE());
     await openMenu("t3");
     await select("tab-context-move-new-panel");
     expect(splitPanelWithTab).toHaveBeenCalledWith("t3", PANEL_ID, PANEL_ID, "right");
   });
 
-  it("hides Move to New Panel when the tab is alone in its panel", async () => {
+  it("hides Move to new panel when the tab is alone in its panel", async () => {
     render([makeTab("t1", true)]);
     await openMenu("t1");
     expect(menuItem("tab-context-move-new-panel")).toBeNull();

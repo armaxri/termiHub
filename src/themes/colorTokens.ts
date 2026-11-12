@@ -32,7 +32,7 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
     ],
   },
   {
-    label: "Activity Bar",
+    label: "Activity bar",
     tokens: [
       { key: "activityBarBg", label: "Background" },
       { key: "activityBarActive", label: "Active" },
@@ -41,13 +41,13 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
     ],
   },
   {
-    label: "Sidebar & Tabs",
+    label: "Sidebar and tabs",
     tokens: [
-      { key: "sidebarBg", label: "Sidebar Background" },
-      { key: "sidebarHeaderBg", label: "Sidebar Header" },
-      { key: "tabBg", label: "Tab Background" },
-      { key: "tabActiveBg", label: "Active Tab" },
-      { key: "tabBorder", label: "Tab Border" },
+      { key: "sidebarBg", label: "Sidebar background" },
+      { key: "sidebarHeaderBg", label: "Sidebar header" },
+      { key: "tabBg", label: "Tab background" },
+      { key: "tabActiveBg", label: "Active tab" },
+      { key: "tabBorder", label: "Tab border" },
     ],
   },
   {
@@ -62,13 +62,13 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
     ],
   },
   {
-    label: "Borders & Accent",
+    label: "Borders and accent",
     tokens: [
-      { key: "borderPrimary", label: "Border Primary" },
-      { key: "borderSecondary", label: "Border Secondary" },
+      { key: "borderPrimary", label: "Border primary" },
+      { key: "borderSecondary", label: "Border secondary" },
       { key: "accentColor", label: "Accent" },
-      { key: "accentHover", label: "Accent Hover" },
-      { key: "focusBorder", label: "Focus Border" },
+      { key: "accentHover", label: "Accent hover" },
+      { key: "focusBorder", label: "Focus border" },
     ],
   },
   {
@@ -103,21 +103,21 @@ export const COLOR_TOKEN_GROUPS: ColorTokenGroup[] = [
       { key: "ansiMagenta", label: "Magenta" },
       { key: "ansiCyan", label: "Cyan" },
       { key: "ansiWhite", label: "White" },
-      { key: "ansiBrightBlack", label: "Bright Black" },
-      { key: "ansiBrightRed", label: "Bright Red" },
-      { key: "ansiBrightGreen", label: "Bright Green" },
-      { key: "ansiBrightYellow", label: "Bright Yellow" },
-      { key: "ansiBrightBlue", label: "Bright Blue" },
-      { key: "ansiBrightMagenta", label: "Bright Magenta" },
-      { key: "ansiBrightCyan", label: "Bright Cyan" },
-      { key: "ansiBrightWhite", label: "Bright White" },
+      { key: "ansiBrightBlack", label: "Bright black" },
+      { key: "ansiBrightRed", label: "Bright red" },
+      { key: "ansiBrightGreen", label: "Bright green" },
+      { key: "ansiBrightYellow", label: "Bright yellow" },
+      { key: "ansiBrightBlue", label: "Bright blue" },
+      { key: "ansiBrightMagenta", label: "Bright magenta" },
+      { key: "ansiBrightCyan", label: "Bright cyan" },
+      { key: "ansiBrightWhite", label: "Bright white" },
     ],
   },
   {
     label: "Scrollbar",
     tokens: [
       { key: "scrollbarThumb", label: "Thumb" },
-      { key: "scrollbarThumbHover", label: "Thumb Hover" },
+      { key: "scrollbarThumbHover", label: "Thumb hover" },
     ],
   },
 ];

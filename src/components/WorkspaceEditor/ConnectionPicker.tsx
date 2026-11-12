@@ -77,7 +77,7 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
   // definitions) are disabled options and are skipped by keyboard navigation.
   const options = useMemo<PickerOption[]>(() => {
     const list: PickerOption[] = [
-      { key: "inline", tab: { inlineConfig: { type: "local", config: {} }, title: "Local Shell" } },
+      { key: "inline", tab: { inlineConfig: { type: "local", config: {} }, title: "Local shell" } },
     ];
     const addConnection = (conn: (typeof filtered)[number]) =>
       list.push({ key: `conn-${conn.id}`, tab: { connectionRef: conn.id, title: conn.name } });
@@ -151,7 +151,7 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
             className={`${optionProps("inline").className} connection-picker__item--inline`}
             data-testid="connection-picker-inline"
           >
-            <span className="connection-picker__item-name">Local Shell</span>
+            <span className="connection-picker__item-name">Local shell</span>
             <span className="connection-picker__item-type">inline</span>
           </div>
 

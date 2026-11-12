@@ -1,7 +1,7 @@
 /**
  * Automated replacements for legacy manual items (#3681, audit TIN-015):
  *
- * - MT-TAB-08 — "Save to File" opens the save dialog with the default filename.
+ * - MT-TAB-08 — "Save to file" opens the save dialog with the default filename.
  * - MT-TAB-10 — cancelling the save dialog writes nothing and offers no tab.
  * - MT-TAB-13 — "Ask again" off saves silently; on (default) offers the tab.
  * - MT-KB-05  — a single-target paste above 5000 characters asks first; at the
@@ -105,7 +105,7 @@ afterEach(() => {
   container.remove();
 });
 
-describe("Save to File (MT-TAB-08/10/13)", () => {
+describe("Save to file (MT-TAB-08/10/13)", () => {
   it("opens the save dialog with the terminal-output.txt default name (MT-TAB-08)", async () => {
     vi.mocked(save).mockResolvedValue(null);
     await act(async () => {

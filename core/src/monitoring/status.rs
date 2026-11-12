@@ -52,7 +52,7 @@ pub enum MonitorStatus {
 ///
 /// Carried on the `connection.monitoring.status` notification so the desktop
 /// can tell a dead transport apart from a remote that answers with unreadable
-/// output. Serialised in `camelCase` (`"transport"`, `"parse"`).
+/// output. Serialised in `camelCase` (`"transport"`, `"parse"`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -69,6 +69,12 @@ pub enum MonitorStatusReason {
     /// Inferred by the desktop for an agent-hosted monitor whose agent stopped
     /// streaming; an agent never reports it about its own loop.
     Silent,
+    /// The host answered, but has no stats source this app can read: it is
+    /// neither Linux (`/proc`) nor macOS, or it could not run a POSIX `sh`
+    /// script at all, like a Windows host with a `cmd.exe` login shell
+    /// (#5471). Reported instead of [`Parse`](Self::Parse) so the UI can say
+    /// "not supported on this host" rather than "output unreadable".
+    Unsupported,
 }
 
 /// One observable status transition of a collector loop, with the kind of
@@ -808,6 +814,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(MonitorStatusReason::Silent).unwrap(),
             serde_json::json!("silent")
+        );
+        assert_eq!(
+            serde_json::to_value(MonitorStatusReason::Unsupported).unwrap(),
+            serde_json::json!("unsupported")
         );
     }
 

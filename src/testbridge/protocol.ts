@@ -321,7 +321,7 @@ export interface EditorCursorCommand {
  * Read the reconstructed text of a terminal's scrollback + viewport.
  *
  * When `tabId` is omitted the active tab's terminal is used. `joinFullWidthRows`
- * rejoins hard wraps at the terminal width (matching "Save to File" behavior).
+ * rejoins hard wraps at the terminal width (matching "Save to file" behavior).
  */
 export interface ReadTerminalCommand {
   action: "readTerminal";

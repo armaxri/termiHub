@@ -171,7 +171,7 @@ export function TerminalDisconnectOverlay({
                 onClick={handleStartNewShell}
                 data-testid="terminal-session-lost-new-shell-btn"
               >
-                Start New Shell
+                Start new shell
               </Button>
               <Button
                 variant="secondary"
@@ -179,7 +179,7 @@ export function TerminalDisconnectOverlay({
                 onClick={handleDismiss}
                 data-testid="terminal-disconnect-view-btn"
               >
-                View Scrollback
+                View scrollback
               </Button>
             </>
           }
@@ -262,7 +262,7 @@ export function TerminalDisconnectOverlay({
                 onClick={handleReconnect}
                 data-testid="terminal-disconnect-reconnect-btn"
               >
-                Try Again
+                Try again
               </Button>
               <Button
                 variant="secondary"
@@ -270,7 +270,7 @@ export function TerminalDisconnectOverlay({
                 onClick={handleDismiss}
                 data-testid="terminal-disconnect-view-btn"
               >
-                View Scrollback
+                View scrollback
               </Button>
             </>
           }
@@ -336,7 +336,7 @@ export function TerminalDisconnectOverlay({
               onClick={handleDismiss}
               data-testid="terminal-disconnect-view-btn"
             >
-              View Scrollback
+              View scrollback
             </Button>
           </>
         }

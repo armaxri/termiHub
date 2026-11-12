@@ -234,7 +234,7 @@ export function TransferPane({
         {headerControls}
       </div>
       <div className="transfer-pane__toolbar">
-        <Tooltip content="Go Up" side="top">
+        <Tooltip content="Go up" side="top">
           <Button
             variant="ghost"
             size="sm"

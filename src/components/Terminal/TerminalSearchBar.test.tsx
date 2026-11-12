@@ -68,8 +68,8 @@ async function render() {
 describe("TerminalSearchBar (Button migration)", () => {
   it("renders the controls as shared Button primitives", async () => {
     await render();
-    expect(buttonByLabel("Match Case").className).toContain("ui-btn");
-    expect(buttonByLabel("Use Regular Expression").className).toContain("ui-btn");
+    expect(buttonByLabel("Match case").className).toContain("ui-btn");
+    expect(buttonByLabel("Use regular expression").className).toContain("ui-btn");
     expect(buttonByLabel("Previous match").className).toContain("ui-btn");
     expect(buttonByLabel("Next match").className).toContain("ui-btn");
     expect(buttonByLabel("Close search").className).toContain("ui-btn");
@@ -86,7 +86,7 @@ describe("TerminalSearchBar (Button migration)", () => {
 
   it("reflects toggle state through the Button variant and aria-pressed", async () => {
     await render();
-    const matchCase = buttonByLabel("Match Case");
+    const matchCase = buttonByLabel("Match case");
     // Inactive → ghost variant.
     expect(matchCase.className).toContain("ui-btn--ghost");
     expect(matchCase.getAttribute("aria-pressed")).toBe("false");
@@ -97,7 +97,7 @@ describe("TerminalSearchBar (Button migration)", () => {
     await flush();
 
     // Active → secondary variant.
-    const matchCaseActive = buttonByLabel("Match Case");
+    const matchCaseActive = buttonByLabel("Match case");
     expect(matchCaseActive.className).toContain("ui-btn--secondary");
     expect(matchCaseActive.getAttribute("aria-pressed")).toBe("true");
   });
@@ -201,7 +201,7 @@ describe("TerminalSearchBar match count + whole word (PROD-058)", () => {
 
     // Toggling whole-word re-runs the search with the option flipped on.
     await act(async () => {
-      buttonByLabel("Match Whole Word").click();
+      buttonByLabel("Match whole word").click();
     });
     await flush();
 
@@ -212,7 +212,7 @@ describe("TerminalSearchBar match count + whole word (PROD-058)", () => {
     );
 
     // And reflects its pressed state through the Button variant.
-    const toggle = buttonByLabel("Match Whole Word");
+    const toggle = buttonByLabel("Match whole word");
     expect(toggle.className).toContain("ui-btn--secondary");
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
   });

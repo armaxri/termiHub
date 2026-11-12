@@ -138,7 +138,7 @@ export function RecentSessionItem({
           onSelect={() => onConnectInNewPanel(entry)}
           data-testid={`recent-session-menu-connect-new-panel-${key}`}
         >
-          <SplitSquareHorizontal size={14} /> Connect in New Panel
+          <SplitSquareHorizontal size={14} /> Connect in new panel
         </MenuItem>
         <MenuSeparator />
         <MenuItem
@@ -146,7 +146,7 @@ export function RecentSessionItem({
           data-testid={`recent-session-menu-pin-${key}`}
         >
           {entry.pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
-          {entry.pinned ? "Unpin" : "Pin to Top"}
+          {entry.pinned ? "Unpin" : "Pin to top"}
         </MenuItem>
         <MenuItem
           onSelect={() => onSaveAsConnection(entry)}
@@ -159,13 +159,13 @@ export function RecentSessionItem({
           onSelect={() => onCopyString(entry)}
           data-testid={`recent-session-menu-copy-${key}`}
         >
-          <Copy size={14} /> Copy Connection String
+          <Copy size={14} /> Copy connection string
         </MenuItem>
         <MenuItem
           onSelect={() => onRemove(entry)}
           data-testid={`recent-session-menu-remove-${key}`}
         >
-          <Trash2 size={14} /> Remove from History
+          <Trash2 size={14} /> Remove from history
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>

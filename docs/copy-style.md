@@ -9,8 +9,10 @@ The mechanically checkable parts are enforced by ESLint; see [Enforcement](#enfo
 
 ## Sentence case
 
-Dialog titles, buttons, menu items, tabs, tooltips and **Settings labels** use sentence case.
-Capitalize the first word and proper nouns, nothing else.
+Dialog titles, buttons, menu items, tabs, tooltips, **Settings labels**, accessible names
+(`aria-label`) and the titles of errors and toasts use sentence case. Capitalize the first word
+and proper nouns, nothing else. A screen reader announces an `aria-label` exactly as written, so
+it follows the same rule as the visible text.
 
 | Do                          | Don't                       |
 | --------------------------- | --------------------------- |
@@ -26,6 +28,8 @@ Capitalize the first word and proper nouns, nothing else.
   Shift, Enter).
 - A user's own names (a connection called "My Server") keep the capitals the user typed. Quote
   them in prose: `Delete "My Server"?`.
+- Text that names another control quotes it, like a user's name: "Click “Refresh” to list
+  ports".
 - A new sentence after `.`, `:`, `!` or `?` starts with a capital: "Saved. Reconnect to apply".
 - Do not write copy in capitals to style it. Headings that should look uppercase use CSS
   (`text-transform`), and the source string stays in sentence case; screen readers and
@@ -113,19 +117,30 @@ ESLint enforces the mechanically checkable rules on production frontend code (`s
 through the local rule in
 [`scripts/internal/eslint-copy-style.mjs`](../scripts/internal/eslint-copy-style.mjs):
 
-| Check             | What it flags                                                               |
-| ----------------- | --------------------------------------------------------------------------- |
-| `sentence-case`   | A capitalized word after the first in button text, dialog titles and labels |
-| `acknowledgement` | A button labeled Done, Dismiss, OK, Okay or Got it                          |
-| `discard`         | A discard button labeled anything but "Discard changes"                     |
-| `us-spelling`     | British spelling in any user-facing string                                  |
-| `one-primary`     | Two primary `<Button>`s that can render together in one parent              |
-| `cancel-left`     | A "Cancel" `<Button>` that is not the first button in its parent            |
-| (ellipsis, #5379) | Three dots `...` in user-facing text                                        |
+| Check             | What it flags                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| `sentence-case`   | A capitalized word after the first word of a label, title, tooltip or `aria-label` |
+| `acknowledgement` | A button labeled Done, Dismiss, OK, Okay or Got it                                 |
+| `discard`         | A discard button labeled anything but "Discard changes"                            |
+| `us-spelling`     | British spelling in any user-facing string                                         |
+| `one-primary`     | Two primary `<Button>`s that can render together in one parent                     |
+| `cancel-left`     | A "Cancel" `<Button>` that is not the first button in its parent                   |
+| (ellipsis, #5379) | Three dots `...` in user-facing text                                               |
 
 The sentence-case check knows a list of proper nouns (`PROPER_NOUNS` in the rule). Acronyms and
 mixed-case names (SSH, termiHub, PowerShell) never match, so they need no entry. Add a word to
-the list only when it is a name.
+the list only when it is a name; a multi-word name ("VS Code") goes in `PROPER_PHRASES`.
+
+Since [#5493](https://github.com/armaxri/termiHub/issues/5493) the sentence-case check also covers
+accessible names and tooltips (the `aria-label`, `title`, `tooltip` and `heading` attributes, and
+`content` on a `<Tooltip>`) and `title:` keys in objects, which is where error, toast and dialog
+descriptors keep their titles (for example `classifyAgentError`).
+
+Menu items are the text of `MenuItem`, `MenuCheckboxItem`, `MenuRadioItem`, `MenuSubTrigger` and
+`MenuLabel` from `src/components/ui/Menu.tsx` (or a raw Radix `*.Item`), plus `label:` fields of
+menu and command descriptors. Text inside a nested component (an icon, a shortcut hint) is not
+checked as the label. The native macOS app menu (Rust) follows Apple's Title Case convention and
+is not linted.
 
 When a flagged string is a deliberate exception (an OK that confirms a choice, a product name
 the list does not know), disable the rule on that line with a reason:

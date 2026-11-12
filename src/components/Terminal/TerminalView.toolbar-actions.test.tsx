@@ -170,7 +170,7 @@ describe("TerminalView — broadcast toggle (#5172)", () => {
     await renderView();
     const btn = button("terminal-view-broadcast")!;
     expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.getAttribute("aria-label")).toBe("Stop Broadcast");
+    expect(btn.getAttribute("aria-label")).toBe("Stop broadcast");
 
     await act(async () => {
       btn.click();
@@ -273,7 +273,7 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     const btn = button("terminal-view-play-macro")!;
-    expect(btn.getAttribute("aria-label")).toBe("Stop Macro Playback");
+    expect(btn.getAttribute("aria-label")).toBe("Stop macro playback");
     expect(btn.getAttribute("aria-pressed")).toBe("true");
 
     click("terminal-view-play-macro");

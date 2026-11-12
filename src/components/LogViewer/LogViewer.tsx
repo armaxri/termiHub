@@ -298,14 +298,14 @@ export function LogViewer({ isVisible }: LogViewerProps) {
               </ContextMenuTrigger>
               <ContextMenuContent>
                 <MenuItem onSelect={() => handleCopyEntry(entry)}>
-                  <ClipboardCopy size={14} /> Copy Entry
+                  <ClipboardCopy size={14} /> Copy entry
                 </MenuItem>
                 <MenuItem onSelect={() => handleCopyAll(filteredEntries)}>
-                  <ClipboardCopy size={14} /> Copy All Logs
+                  <ClipboardCopy size={14} /> Copy all logs
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem onSelect={() => handleSave(filteredEntries)}>
-                  <FileDown size={14} /> Save All Logs
+                  <FileDown size={14} /> Save all logs
                 </MenuItem>
               </ContextMenuContent>
             </ContextMenuRoot>

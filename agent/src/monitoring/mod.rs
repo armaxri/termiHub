@@ -24,8 +24,8 @@ use tracing::{debug, info, warn};
 
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
-    BackoffSchedule, CollectLoopState, MonitorStatus, MonitoringProvider, DEFAULT_COLLECT_TIMEOUT,
-    DEFAULT_MONITORING_INTERVAL_MS,
+    BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusReason, MonitoringProvider,
+    DEFAULT_COLLECT_TIMEOUT, DEFAULT_MONITORING_INTERVAL_MS,
 };
 
 use crate::io::transport::NotificationSender;
@@ -345,6 +345,8 @@ enum CollectOutcome {
     Failed,
     /// The transport answered, but its output could not be parsed (#3300).
     Unparseable,
+    /// The host answered, but has no stats source this app can read (#5488).
+    Unsupported,
 }
 
 /// Run one bounded collect against the shared collector.
@@ -371,6 +373,10 @@ async fn collect_tick(
         Ok(Ok(Err(CoreError::Unparseable(e)))) => {
             warn!("Monitoring output unparseable for '{host}': {e}");
             CollectOutcome::Unparseable
+        }
+        Ok(Ok(Err(CoreError::UnsupportedHost(os)))) => {
+            debug!("Monitoring not supported on '{host}' (OS: {os})");
+            CollectOutcome::Unsupported
         }
         Ok(Ok(Err(e))) => {
             warn!("Monitoring collection failed for '{host}': {e}");
@@ -498,6 +504,16 @@ async fn monitoring_task(
                     }
                     CollectOutcome::Unparseable => {
                         if loop_state.on_parse_failure().is_some() {
+                            emit_status(&tx, &host, &loop_state);
+                        }
+                    }
+                    // Bounded like a parse failure, but attributed so the UI
+                    // says "not supported on this host" (#5488), as the
+                    // desktop's own SSH monitor does (#5471).
+                    CollectOutcome::Unsupported => {
+                        let transition = loop_state.on_parse_failure();
+                        loop_state.attribute(MonitorStatusReason::Unsupported);
+                        if transition.is_some() {
                             emit_status(&tx, &host, &loop_state);
                         }
                     }
@@ -953,6 +969,63 @@ mod tests {
             )],
             "the unparseable Offline is reported, typed as a parse failure (#3321)"
         );
+    }
+
+    /// A collector whose every collect returns the same canned stdout, run
+    /// through the SSH collector's own output handling (#5488).
+    struct CannedOutputCollector {
+        output: &'static str,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl StatsCollector for CannedOutputCollector {
+        fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            collector::sample_from_output(
+                self.output,
+                &mut termihub_core::monitoring::CpuDeltaTracker::new(),
+                &mut termihub_core::monitoring::PerCoreCpuTracker::new(),
+                &mut termihub_core::monitoring::NetDeltaTracker::new(),
+            )
+        }
+    }
+
+    /// A host with no stats source — the command's unsupported marker, or an
+    /// empty stdout from a host without POSIX `sh` — resolves `Offline` on the
+    /// parse bound and is reported as `Unsupported`, not `Parse` (#5488).
+    #[tokio::test]
+    async fn monitoring_task_reports_unsupported_host() {
+        for output in ["termihub-monitoring-unsupported FreeBSD\n", ""] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let redials = Arc::new(AtomicUsize::new(0));
+            let first = Box::new(CannedOutputCollector {
+                output,
+                calls: calls.clone(),
+            }) as Box<dyn StatsCollector>;
+
+            let mut rx = run_until_task_ends(
+                first,
+                counting_failing_factory(redials.clone(), calls.clone(), true),
+            )
+            .await;
+
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                termihub_core::monitoring::DEFAULT_STALE_THRESHOLD as usize,
+                "{output:?}: an unsupported host uses the strict parse bound"
+            );
+            assert_eq!(redials.load(Ordering::SeqCst), 0, "no re-dial before Live");
+            let notifs = drain(&mut rx);
+            assert_eq!(data_count(&notifs), 0, "no sample was ever streamed");
+            assert_eq!(
+                statuses(&notifs),
+                vec![status(
+                    MonitorStatus::Offline,
+                    Some(MonitorStatusReason::Unsupported)
+                )],
+                "{output:?}: the Offline is attributed to an unsupported host"
+            );
+        }
     }
 
     /// After a mid-stream drop the re-dial succeeds but the fresh collector

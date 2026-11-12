@@ -1340,7 +1340,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends).toEqual([["tab-a", "one\n"]]);
       expect(toast.info).toHaveBeenCalledWith(
-        'Workflow "Workflow w1" cancelled',
+        'Workflow "Workflow w1" canceled',
         expect.objectContaining({ id: "workflow-run-w1-fanout" })
       );
     });
@@ -1486,7 +1486,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
       expect(statuses).toEqual(Array(WORKFLOW_FANOUT_CONCURRENCY).fill("cancelled"));
       expect(toast.info).toHaveBeenCalledWith(
-        'Workflow "Workflow w1" cancelled',
+        'Workflow "Workflow w1" canceled',
         expect.objectContaining({ description: expect.stringContaining("10 not finished") })
       );
     });
@@ -1601,7 +1601,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await run;
 
       expect(injected).toEqual([]);
-      expect(toast.info).toHaveBeenCalledWith('Workflow "Workflow wp" cancelled');
+      expect(toast.info).toHaveBeenCalledWith('Workflow "Workflow wp" canceled');
       expect(apiRecordWorkflowRun).not.toHaveBeenCalled();
     });
 

@@ -159,7 +159,7 @@ describe("ConnectionErrorDialog", () => {
           open={true}
           onOpenChange={vi.fn()}
           error={makeError("already-connected", {
-            title: "Already Connected",
+            title: "Already connected",
             message: "This agent is already connected.",
           })}
           onForceReconnect={vi.fn()}
@@ -167,7 +167,7 @@ describe("ConnectionErrorDialog", () => {
       );
 
       expect(document.querySelector('[data-testid="connection-error-title"]')?.textContent).toBe(
-        "Already Connected"
+        "Already connected"
       );
       expect(document.querySelector('[data-testid="connection-error-message"]')?.textContent).toBe(
         "This agent is already connected."

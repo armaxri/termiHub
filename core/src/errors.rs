@@ -35,6 +35,17 @@ pub enum CoreError {
     #[error("{0}")]
     Unparseable(String),
 
+    /// The remote answered, but has no stats source this app can read — a
+    /// monitoring collect on a host that is neither Linux nor macOS, or that
+    /// could not run a POSIX `sh` script at all (#5471, #5488).
+    ///
+    /// Typed apart from [`CoreError::Unparseable`] so a collect loop can
+    /// attribute the resulting `Offline` to
+    /// [`MonitorStatusReason::Unsupported`](crate::monitoring::MonitorStatusReason::Unsupported)
+    /// instead of `Parse`. Carries the remote OS name (or `"unknown"`).
+    #[error("Monitoring not supported on this host (OS: {0})")]
+    UnsupportedHost(String),
+
     /// Catch-all for errors that don't fit other categories.
     #[error("{0}")]
     Other(String),
