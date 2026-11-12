@@ -241,6 +241,25 @@ pub enum AgentDeployResult {
     },
 }
 
+impl AgentDeployResult {
+    /// The install path to store as the agent's `agentPath` (#5522): the path
+    /// of a verified install, or of the previous binary a rollback restored —
+    /// in both cases the binary the next connect must launch. `None` for an
+    /// install whose `--version` verify failed, a blocked update, and a
+    /// coordinated update (the agent swaps itself in place).
+    pub fn launchable_install_path(&self) -> Option<&str> {
+        match self {
+            AgentDeployResult::Deployed {
+                success: true,
+                installed_path,
+                ..
+            }
+            | AgentDeployResult::RolledBack { installed_path, .. } => installed_path.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 /// A binary staged for a coordinated update (#1616) — uploaded to the remote
 /// temp path but not installed. Handed to `agent.request_update{binaryPath}`,
 /// which the agent applies via its Unix-only self-swap.
@@ -656,10 +675,8 @@ pub fn install_agent_bytes(
     // The encoded step's path was resolved and validated before the upload.
     let installed_path = match windows_shell {
         Some(WindowsDeployShell::Native(shell)) => {
-            run_remote_command(session, &windows_resolve_command(shell))
-                .ok()
-                .filter(|p| !p.is_empty())
-                .or_else(|| Some(plan.install_path.clone()))
+            let output = run_remote_command(session, &windows_resolve_command(shell)).ok();
+            Some(agent_install::native_install_path(shell, output.as_deref()))
         }
         Some(WindowsDeployShell::EncodedPowerShell) => encoded_launch_path,
         None => Some(plan.install_path.clone()),
@@ -1234,6 +1251,26 @@ mod tests {
         assert!(!json.contains("installedPath"));
         let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, result);
+    }
+
+    #[test]
+    fn launchable_install_path_only_for_a_binary_that_runs() {
+        let path = || Some(r"C:\Users\me\AppData\Local\termiHub\agent\termihub-agent.exe".into());
+        let deployed = |success| AgentDeployResult::Deployed {
+            success,
+            installed_version: None,
+            installed_path: path(),
+        };
+        assert_eq!(deployed(true).launchable_install_path(), path().as_deref());
+        assert_eq!(deployed(false).launchable_install_path(), None);
+        let rolled_back = AgentDeployResult::RolledBack {
+            reason: "verify failed".into(),
+            restored_version: "0.8.0".into(),
+            installed_path: path(),
+        };
+        assert_eq!(rolled_back.launchable_install_path(), path().as_deref());
+        let blocked = AgentDeployResult::OtherHostsConnected { hosts: Vec::new() };
+        assert_eq!(blocked.launchable_install_path(), None);
     }
 
     #[test]

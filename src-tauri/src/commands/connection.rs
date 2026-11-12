@@ -352,6 +352,33 @@ pub fn save_remote_agent<R: Runtime>(
     })
 }
 
+/// Store the path a deploy/setup reported as the agent's `agentPath`, so the
+/// next connect launches the binary that was just installed (#5522).
+///
+/// Persisted here in the backend, through the same `commit` + agents fold as
+/// [`save_remote_agent`], rather than by the dialog that started the deploy:
+/// the region then carries the new path to every window, and a dialog that
+/// closed (or a window that reloaded) mid-deploy cannot lose it. See
+/// [`ConnectionManager::record_agent_install_path`] for when the stored path
+/// is replaced. Best-effort: a failure is logged and the deploy result stands.
+pub(crate) fn record_installed_agent_path<R: Runtime>(
+    app: &AppHandle<R>,
+    agent_id: &str,
+    installed_path: &str,
+) {
+    let Some(manager) = app.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let result = commit(app, &[Fold::Agents], || {
+        manager.record_agent_install_path(agent_id, installed_path)
+    });
+    match result {
+        Ok(true) => info!(agent_id, installed_path, "Stored the agent install path"),
+        Ok(false) => debug!(agent_id, installed_path, "Kept the stored agent path"),
+        Err(e) => tracing::warn!(agent_id, "Could not store the agent install path: {e:#}"),
+    }
+}
+
 /// Delete a remote agent definition by ID.
 #[tauri::command]
 pub fn delete_remote_agent<R: Runtime>(
