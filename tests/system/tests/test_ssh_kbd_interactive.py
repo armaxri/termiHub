@@ -2,7 +2,7 @@
 
 The core suite (``core/tests/ssh_mfa.rs``) proves the client's
 keyboard-interactive *protocol* against a real OpenSSH; this module proves the
-**app** end of it: the global "SSH Authentication" dialog
+**app** end of it: the global "SSH authentication" dialog
 (``SshKeyboardInteractivePrompt``) that every SSH connect path raises when a
 server asks a keyboard-interactive question, and that answering it connects.
 

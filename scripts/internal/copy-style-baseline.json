@@ -1,43 +1,4 @@
 {
-  "src/components/RecentSessionsSidebar/RecentSessionsSidebar.tsx": {
-    "sentence-case": {
-      "Clear History": 1
-    }
-  },
-  "src/components/RecentSessionsSidebar/SaveAsConnectionDialog.tsx": {
-    "sentence-case": {
-      "Save Connection": 1,
-      "Save as Connection": 1,
-      "Set Icon": 1
-    }
-  },
-  "src/components/SessionRestoreDialog.tsx": {
-    "sentence-case": {
-      "Restore Previous Session?": 1,
-      "Start Fresh": 1
-    }
-  },
-  "src/components/Settings/SecuritySettings.tsx": {
-    "cancel-left": {
-      "Change | Cancel": 1,
-      "Confirm | Cancel": 2
-    },
-    "sentence-case": {
-      "Auto-Lock Timeout": 1,
-      "Change Master Password": 1,
-      "Master Password": 1
-    }
-  },
-  "src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx": {
-    "sentence-case": {
-      "Install Now": 1
-    }
-  },
-  "src/components/SshKeyboardInteractivePrompt/SshKeyboardInteractivePrompt.tsx": {
-    "sentence-case": {
-      "SSH Authentication": 1
-    }
-  },
   "src/components/Terminal/BroadcastScopeDialog.tsx": {
     "sentence-case": {
       "Broadcast Input": 1,
@@ -102,16 +63,6 @@
   "src/components/Terminal/TerminalReconnectPrompt.tsx": {
     "sentence-case": {
       "Stay in View Mode": 1
-    }
-  },
-  "src/components/ui/Modal.tsx": {
-    "discard": {
-      "Just Close": 1
-    },
-    "sentence-case": {
-      "Just Close": 1,
-      "Save & Close": 1,
-      "Unsaved Changes": 1
     }
   },
   "src/services/keybindings.ts": {
