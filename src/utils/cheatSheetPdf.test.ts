@@ -29,8 +29,8 @@ describe("buildCheatSheetHtml", () => {
 
   it("includes known shortcut labels", () => {
     const html = buildCheatSheetHtml();
-    expect(html).toContain("Toggle Sidebar");
-    expect(html).toContain("New Terminal");
+    expect(html).toContain("Toggle sidebar");
+    expect(html).toContain("New terminal");
   });
 
   it("marks overridden bindings with the dagger symbol", () => {
@@ -137,7 +137,7 @@ describe("buildCheatSheetHtml experimental gate (#5403)", () => {
       buildCheatSheetHtml("all", { experimental: false }),
     ]) {
       expect(html).not.toContain("<h3>Remote Desktop</h3>");
-      expect(html).not.toContain("Release Remote Desktop Keyboard");
+      expect(html).not.toContain("Release remote desktop keyboard");
       expect(html).toContain("<h3>General</h3>");
     }
   });
@@ -145,7 +145,7 @@ describe("buildCheatSheetHtml experimental gate (#5403)", () => {
   it("includes the Remote Desktop group while experimental features are on", () => {
     const html = buildCheatSheetHtml("current", { experimental: true });
     expect(html).toContain("<h3>Remote Desktop</h3>");
-    expect(html).toContain("Release Remote Desktop Keyboard");
+    expect(html).toContain("Release remote desktop keyboard");
   });
 
   it("passes the gate through when exporting", async () => {
@@ -159,9 +159,9 @@ describe("buildCheatSheetHtml experimental gate (#5403)", () => {
 
   it("keeps a Remote Desktop override stored while the group is hidden", () => {
     setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
-    expect(buildCheatSheetHtml()).not.toContain("Release Remote Desktop Keyboard");
+    expect(buildCheatSheetHtml()).not.toContain("Release remote desktop keyboard");
     expect(buildCheatSheetHtml("current", { experimental: true })).toContain(
-      "Release Remote Desktop Keyboard"
+      "Release remote desktop keyboard"
     );
   });
 });

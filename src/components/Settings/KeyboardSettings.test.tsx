@@ -60,9 +60,9 @@ describe("KeyboardSettings", () => {
 
   it("renders binding rows for known actions", async () => {
     await renderComponent();
-    expect(container.textContent).toContain("Toggle Sidebar");
-    expect(container.textContent).toContain("Close Tab");
-    expect(container.textContent).toContain("Copy Selection");
+    expect(container.textContent).toContain("Toggle sidebar");
+    expect(container.textContent).toContain("Close tab");
+    expect(container.textContent).toContain("Copy selection");
     expect(container.textContent).toContain("Paste");
   });
 
@@ -389,7 +389,7 @@ describe("KeyboardSettings", () => {
       expect(btn.tagName).toBe("BUTTON");
       expect(btn.getAttribute("type")).toBe("button");
       expect(btn.getAttribute("aria-label")).toMatch(
-        /^Change shortcut for Toggle Sidebar, currently .+/
+        /^Change shortcut for Toggle sidebar, currently .+/
       );
     });
 
@@ -407,7 +407,7 @@ describe("KeyboardSettings", () => {
       await renderComponent();
       startRecordingWith("toggle-sidebar", "Enter");
       expect(bindingButton("toggle-sidebar").textContent).toContain("Press a key combination");
-      expect(announcement()).toContain("Recording shortcut for Toggle Sidebar");
+      expect(announcement()).toContain("Recording shortcut for Toggle sidebar");
       expect(announcement()).toContain("Escape");
     });
 
@@ -430,7 +430,7 @@ describe("KeyboardSettings", () => {
         (o) => o.action === "new-terminal"
       );
       expect(entry?.key).toBe("Ctrl+k Ctrl+j");
-      expect(announcement()).toBe("New Terminal shortcut set to Ctrl+K Ctrl+J.");
+      expect(announcement()).toBe("New terminal shortcut set to Ctrl+K Ctrl+J.");
       // Focus stays on (returns to) the binding button so the user can carry on.
       expect(document.activeElement).toBe(bindingButton("new-terminal"));
     });
@@ -443,7 +443,7 @@ describe("KeyboardSettings", () => {
 
       expect(bindingButton("toggle-sidebar").textContent).toBe(before);
       expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
-      expect(announcement()).toBe("Recording canceled. Toggle Sidebar shortcut unchanged.");
+      expect(announcement()).toBe("Recording canceled. Toggle sidebar shortcut unchanged.");
       expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
     });
 
@@ -456,7 +456,7 @@ describe("KeyboardSettings", () => {
       });
 
       expect(bindingButton("toggle-sidebar").getAttribute("data-unbound")).toBe("true");
-      expect(announcement()).toBe("Toggle Sidebar shortcut cleared.");
+      expect(announcement()).toBe("Toggle sidebar shortcut cleared.");
       expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
     });
 
@@ -465,7 +465,7 @@ describe("KeyboardSettings", () => {
       const clearBtn = container.querySelector<HTMLButtonElement>(
         '[data-testid="keybinding-unbind-toggle-sidebar"]'
       )!;
-      expect(clearBtn.getAttribute("aria-label")).toBe("Clear shortcut for Toggle Sidebar");
+      expect(clearBtn.getAttribute("aria-label")).toBe("Clear shortcut for Toggle sidebar");
       act(() => clearBtn.focus());
       await act(async () => {
         clearBtn.click();
@@ -473,7 +473,7 @@ describe("KeyboardSettings", () => {
       });
 
       expect(bindingButton("toggle-sidebar").getAttribute("data-unbound")).toBe("true");
-      expect(announcement()).toBe("Toggle Sidebar shortcut cleared.");
+      expect(announcement()).toBe("Toggle sidebar shortcut cleared.");
       // The Clear button unmounts once nothing is bound — focus must not be lost.
       expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
     });
@@ -483,7 +483,7 @@ describe("KeyboardSettings", () => {
       try {
         await renderComponent();
         startRecordingWith("new-terminal", "Enter");
-        // Ctrl+Tab is the default for Next Tab on Windows/Linux and macOS.
+        // Ctrl+Tab is the default for Next tab on Windows/Linux and macOS.
         press("Tab", { ctrlKey: true });
         await act(async () => {
           vi.advanceTimersByTime(2000);
@@ -495,7 +495,7 @@ describe("KeyboardSettings", () => {
         ) as HTMLElement;
         expect(conflict).not.toBeNull();
         expect(conflict.getAttribute("role")).toBe("alert");
-        expect(conflict.textContent).toContain("Next Tab");
+        expect(conflict.textContent).toContain("Next tab");
         expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
       } finally {
         vi.useRealTimers();
@@ -506,7 +506,7 @@ describe("KeyboardSettings", () => {
       vi.useFakeTimers();
       try {
         await renderComponent();
-        // Unbind Previous Tab first so Ctrl+Shift+Tab is free to record elsewhere.
+        // Unbind Previous tab first so Ctrl+Shift+Tab is free to record elsewhere.
         await act(async () => {
           container
             .querySelector<HTMLElement>('[data-testid="keybinding-unbind-prev-tab"]')
@@ -539,7 +539,7 @@ describe("KeyboardSettings", () => {
         expect(bindingButton("toggle-sidebar").textContent).not.toContain(
           "Press a key combination"
         );
-        expect(announcement()).toBe("Recording canceled. Toggle Sidebar shortcut unchanged.");
+        expect(announcement()).toBe("Recording canceled. Toggle sidebar shortcut unchanged.");
       }
       expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
     });
