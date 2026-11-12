@@ -19,6 +19,7 @@ use super::*;
 #[derive(Clone, Default)]
 struct StateSink {
     states: Arc<StdMutex<Vec<GraphicalState>>>,
+    codes: Arc<StdMutex<Vec<Option<IpcErrorCode>>>>,
 }
 
 impl GraphicalEventSink for StateSink {
@@ -27,6 +28,7 @@ impl GraphicalEventSink for StateSink {
     fn emit_clipboard(&self, _: &RemoteDesktopClipboardEvent) {}
     fn emit_state(&self, event: &RemoteDesktopStateEvent) {
         self.states.lock().unwrap().push(event.state);
+        self.codes.lock().unwrap().push(event.code);
     }
     fn emit_cert_prompt(&self, _: &RemoteDesktopCertPromptEvent) {}
 }
@@ -34,6 +36,11 @@ impl GraphicalEventSink for StateSink {
 impl StateSink {
     fn states(&self) -> Vec<GraphicalState> {
         self.states.lock().unwrap().clone()
+    }
+
+    /// The typed code of the last emitted state (#5380).
+    fn last_code(&self) -> Option<IpcErrorCode> {
+        self.codes.lock().unwrap().last().copied().flatten()
     }
 }
 
@@ -101,12 +108,20 @@ async fn vnc_connect_times_out_when_the_peer_never_speaks_rfb() {
     let elapsed = started.elapsed();
 
     match result {
-        Err(TerminalError::ConnectionFailed(msg)) => {
+        Err(err @ TerminalError::ConnectionFailed(_)) => {
+            // The envelope and the state event carry the typed timeout (#5380).
+            assert_eq!(err.code(), IpcErrorCode::Timeout);
+            let msg = serde_json::to_value(&err).expect("serialize")["message"]
+                .as_str()
+                .expect("message")
+                .to_string();
             assert!(msg.contains("timed out"), "unexpected message: {msg}");
             assert!(msg.contains("1s"), "message names the timeout: {msg}");
+            assert!(!msg.contains("thub-code"), "marker stripped: {msg}");
         }
         other => panic!("expected a connect timeout, got {other:?}"),
     }
+    assert_eq!(sink.last_code(), Some(IpcErrorCode::Timeout));
     assert!(
         elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(5),
         "timed out after {elapsed:?}, expected about 1 s"
@@ -177,6 +192,37 @@ async fn cancelling_a_connecting_vnc_session_aborts_it_promptly() {
     assert!(!mgr.cancel_connecting("tab-c:1"), "the entry is cleared");
 
     assert_client_closed(sock).await;
+}
+
+/// A closed port is the typed `refused` failure (#5380) on both the
+/// `remote-desktop-state` event and the rejected connect's envelope, with the
+/// target and OS detail as the message (no `Spawn failed:` prefix).
+#[cfg(feature = "vnc")]
+#[tokio::test]
+async fn vnc_connect_to_a_closed_port_carries_the_refused_code() {
+    let port = {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let mgr = manager();
+    let sink = StateSink::default();
+    let settings = serde_json::json!({ "host": "127.0.0.1", "port": port });
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        mgr.connect_routed("vnc", settings, None, Some("tab-r:1"), sink.clone()),
+    )
+    .await
+    .expect("a refused connect fails promptly");
+
+    let err = result.expect_err("a closed port must fail");
+    assert_eq!(err.code(), IpcErrorCode::Refused, "{err:?}");
+    let json = serde_json::to_value(&err).expect("serialize");
+    let msg = json["message"].as_str().expect("message");
+    assert!(msg.contains(&format!("127.0.0.1:{port}")), "{msg}");
+    assert!(!msg.contains("Spawn failed"), "{msg}");
+    assert_eq!(sink.states().last(), Some(&GraphicalState::ConnectFailed));
+    assert_eq!(sink.last_code(), Some(IpcErrorCode::Refused));
 }
 
 #[tokio::test]

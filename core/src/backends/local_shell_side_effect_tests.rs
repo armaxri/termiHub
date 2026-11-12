@@ -88,6 +88,12 @@ pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> Shel
     let home = tempfile::tempdir().expect("temp HOME");
     let hist = home.path().join(".th_history");
     let h = hist.to_string_lossy().to_string();
+    // No /etc/zshrc & co. (#5452): Debian/Ubuntu's runs `compinit`, which
+    // on a runner whose completion directories `compaudit` finds insecure
+    // stops at an "Ignore insecure directories?" question that eats the
+    // typed command.
+    // Both measurements (plain and injected) skip them alike.
+    std::fs::write(home.path().join(".zshenv"), "setopt no_global_rcs\n").expect("zshenv");
     // History on, written at exit, no ignorespace — the default on macOS
     // and Fedora (Debian/Ubuntu's .bashrc sets ignoreboth).
     std::fs::write(
@@ -105,6 +111,10 @@ pub(super) async fn measure(shell_name: &str, integration: Option<bool>) -> Shel
             "envVars": [
                 { "key": "HOME", "value": home_str },
                 { "key": "ZDOTDIR", "value": home_str },
+                { "key": "XDG_CONFIG_HOME", "value": format!("{home_str}/.config") },
+                { "key": "XDG_DATA_HOME", "value": format!("{home_str}/.local/share") },
+                { "key": "XDG_STATE_HOME", "value": format!("{home_str}/.local/state") },
+                { "key": "XDG_CACHE_HOME", "value": format!("{home_str}/.cache") },
                 // Like an app started from Finder/Dock: no Terminal.app
                 // session history or cwd hooks inherited from the test runner.
                 { "key": "TERM_PROGRAM", "value": "" },

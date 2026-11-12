@@ -34,6 +34,8 @@ export const GATE_JOB_NAME = "PR Gate";
  */
 export const GATE_EXCLUDED = {
   "bundle-size": "post-merge alarm (#3757); push-only, never runs on a PR",
+  "rust-quality-windows": "post-merge only (#5465); never runs on a PR",
+  "agent-live-windows": "post-merge only (#5465); never runs on a PR",
 };
 
 /** Job results that count as a pass. */

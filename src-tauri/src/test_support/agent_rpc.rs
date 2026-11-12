@@ -202,6 +202,9 @@ pub(crate) struct FakeAgent {
     /// registers here and `unregister_session_output` removes the route, so a
     /// test can deliver `connection.filesOnly` notifications through it.
     pub(crate) files_only_routes: Mutex<FilesOnlyRoutes>,
+    /// What `agent_host_hint` answers: the SSH server the agent was dialled
+    /// to (#5439); `None` (the default) for an agent the desktop cannot place.
+    pub(crate) agent_host_hint: Option<termihub_core::files::shared_fs::FilesystemHint>,
 }
 
 impl FakeAgent {
@@ -490,6 +493,13 @@ impl AgentRpcClient for FakeAgent {
             None => !self.offline,
         }
     }
+    fn agent_host_hint(
+        &self,
+        _agent_id: &str,
+    ) -> Option<termihub_core::files::shared_fs::FilesystemHint> {
+        self.agent_host_hint.clone()
+    }
+
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         if self.offline {
             return None;

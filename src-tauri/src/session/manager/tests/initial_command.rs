@@ -277,6 +277,9 @@ impl ConnectionType for Recording {
     fn prompt_probe(&self) -> Option<termihub_core::connection::PromptProbe> {
         self.inner.prompt_probe()
     }
+    fn prompt_probe_uncapped(&self) -> bool {
+        self.inner.prompt_probe_uncapped()
+    }
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         None
     }

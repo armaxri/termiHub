@@ -1161,6 +1161,16 @@ pub trait GraphicalBackend: Send + Sync {
     ) -> Option<std::sync::Arc<crate::backends::ssh::handler::SshSession>> {
         None
     }
+
+    /// The filesystem [`file_side_channel_ssh_session`](Self::file_side_channel_ssh_session)
+    /// reaches, derived from the config the tunnel dialled (#5439), so the
+    /// side channel's browser reports the same identity as a direct SFTP
+    /// session to that server. `None` by default: no identity, never taken
+    /// for another session's filesystem.
+    #[cfg(feature = "ssh")]
+    fn file_side_channel_identity(&self) -> Option<crate::files::shared_fs::FilesystemIdentity> {
+        None
+    }
 }
 
 #[cfg(test)]

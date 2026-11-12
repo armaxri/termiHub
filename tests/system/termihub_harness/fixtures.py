@@ -83,6 +83,10 @@ SSH_SUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_SUDO_PORT", 2212)
 #: same root-owned :data:`ELEVATED_TARGET_PATH`.
 SSH_NOSUDO_SERVICE = "ssh-nosudo"
 SSH_NOSUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", 2213)
+#: Service + host port for the SFTP-only SSH container (``ForceCommand
+#: internal-sftp``, ``tests/docker/ssh-sftp-only``).
+SSH_SFTP_ONLY_SERVICE = "ssh-sftp-only"
+SSH_SFTP_ONLY_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_SFTP_ONLY_PORT", 2215)
 #: Root-owned (``root:root``, 0644) file on ``ssh-sudo`` / ``ssh-nosudo`` that the
 #: test user can read but not write — the editor's read-only / sudo target.
 ELEVATED_TARGET_DIR = "/etc"
@@ -124,6 +128,17 @@ if NATIVE_SSH_TARGET is not None:
         SSH_BASTION_PORT = NATIVE_SSH_TARGET.jump_port
         SSH_JUMP_TARGET_HOST = SSH_HOST
         SSH_JUMP_TARGET_PORT = NATIVE_SSH_TARGET.port
+#: The login user of the no-sudo host: the containers share ``testuser``; the
+#: macOS native ``nosudo`` host logs in as the fixture's second user (#5423).
+SSH_NOSUDO_USERNAME = SSH_USERNAME
+#: On macOS the fixture-specific hosts are variants of the native sshd on fixed
+#: ports above it (#5423), brought up by :func:`native_system_hosts`.
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_hosts():
+    SSH_SUDO_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "sudo")
+    SSH_NOSUDO_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "nosudo")
+    SSH_NOSUDO_USERNAME = native_ssh.SECOND_USER
+    SSH_BANNER_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "banner")
+    SSH_SFTP_ONLY_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "sftponly")
 
 # ── Telnet fixture coordinates (mirror tests/docker/docker-compose.yml) ───────
 #: Host the published container ports are reachable on (shared with SSH).
@@ -1214,6 +1229,27 @@ def native_kbdint_variant(target: "native_ssh.NativeSshTarget") -> "native_ssh.N
     return variant
 
 
+def native_system_hosts(
+    target: "native_ssh.NativeSshTarget", fixture: str
+) -> "list[native_ssh.NativeAgentVariant]":
+    """The fixture-specific SSH hosts ``fixture`` needs, on the native sshd (#5423).
+
+    Each is a variant brought up with its :data:`~.native_ssh.HOST_VARIANT_FLAGS`
+    (the sudo rule, the second user, the banner, ``ForceCommand
+    internal-sftp``); a worker that finds one running reuses it. The sudo and
+    second-user hosts need the root sshd of CI's ``--password-login`` fixture.
+    """
+    hosts = []
+    for name in native_ssh.HOST_FIXTURES[fixture]:
+        variant = native_ssh.NativeAgentVariant(target, name)
+        try:
+            variant.ensure(flags=native_ssh.HOST_VARIANT_FLAGS[name])
+        except native_ssh.NativeSshExecError as exc:
+            raise _native_host_failed(exc) from exc
+        hosts.append(variant)
+    return hosts
+
+
 def native_swap_host(target: "native_ssh.NativeSshTarget") -> AgentSwapHost:
     """A pristine real-swap agent host on the native sshd, per test attempt (#5444).
 
@@ -1392,11 +1428,17 @@ def ssh_server_control(service: str = SSH_PASSWORD_SERVICE):
     services it stands in for (#5421); else the Docker :class:`SshServerControl`
     for ``service``. Both offer the same calls plus ``home()`` and
     ``agent_crash_dir()``. On macOS the deployed-agent service maps to the
-    native sshd too, where the plain agent suites run (#5424).
+    native sshd too, where the plain agent suites run (#5424), and so do the
+    sudo and SFTP-only hosts (#5423): they are variants for the same login
+    user, so its key-auth exec on the main sshd sees the same files.
     """
     if NATIVE_SSH_TARGET is not None and (
         service in (SSH_PASSWORD_SERVICE, SSH_KEYS_SERVICE)
         or (service == REMOTE_AGENT_SERVICE and native_ssh.serves_agent())
+        or (
+            service in (SSH_SUDO_SERVICE, SSH_SFTP_ONLY_SERVICE)
+            and native_ssh.serves_hosts()
+        )
     ):
         return native_ssh.NativeSshServerControl(NATIVE_SSH_TARGET)
     return SshServerControl(service)

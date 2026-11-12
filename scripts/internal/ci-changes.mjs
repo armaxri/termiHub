@@ -66,8 +66,8 @@
  *     [--base HEAD^1 --head HEAD] [--event pull_request --head-sha <sha>]
  *   node scripts/internal/ci-changes.mjs --all
  * Prints `key=value` lines suitable for appending to $GITHUB_OUTPUT, including
- * `tests` (false only under `[skip-tests]`) and `test_matrix` — the JSON OS list
- * for the "Run Tests" matrix on a PR.
+ * `tests` (false only under `[skip-tests]`) and `test_matrix` — the JSON
+ * `matrix.include` list for the "Run Tests" matrix (see testMatrix).
  */
 
 import { execFileSync } from "node:child_process";
@@ -88,9 +88,6 @@ export const AREAS = [
   "rustdoc",
   "plugin_fuzz",
 ];
-
-/** Every OS the "Run Tests" matrix knows about (the post-merge set). */
-export const ALL_TEST_OS = ["ubuntu-latest", "windows-latest", "macos-latest"];
 
 const ALL = "ALL";
 
@@ -392,20 +389,44 @@ export function allAreas() {
 }
 
 /**
- * The "Run Tests" OS list for a PR. Ubuntu runs Rust and/or the frontend suite;
- * Windows runs only for Rust changes (it catches real Windows-only Rust bugs; the
- * platform-independent vitest suite is not repeated there on a PR). macOS runs
- * post-merge only — macOS runners are the scarcest in the pool.
+ * How many parallel shards the Linux "Run Tests" leg splits the Rust tests into
+ * (#5465): nextest `--partition hash:<k>/<N>` (scripts/internal/ci-rust-tests.sh).
+ * Each shard compiles the workspace itself, so compile time is paid per shard;
+ * past 2 the saving on the test half no longer pays for the extra runner.
+ */
+export const LINUX_TEST_SHARDS = 2;
+
+/**
+ * The "Run Tests" matrix legs, as GitHub `matrix.include` entries:
+ * `{ os, shard, shards, label }`. `label` is the check-name suffix, so the job
+ * reports as `Run Tests (<label>)`: `ubuntu-latest, 1/2` for a Linux shard and
+ * the bare OS for an unsharded leg (`windows-latest`, `macos-latest`).
+ *
+ * On a PR only the Linux shards run, and only for Rust changes (#5465). The
+ * vitest suite runs in its own Frontend Tests jobs. Windows and macOS run
+ * post-merge only: macOS runners are the scarcest in the pool, and the Windows
+ * leg was the slowest per-PR job after Linux.
  * @param {Record<string, boolean>} flags
  * @param {boolean} pullRequest - false for push/schedule: full matrix.
- * @returns {string[]}
+ * @returns {{ os: string, shard: number, shards: number, label: string }[]}
  */
 export function testMatrix(flags, pullRequest) {
-  if (!pullRequest) return [...ALL_TEST_OS];
-  const os = [];
-  if (flags.rust || flags.frontend) os.push("ubuntu-latest");
-  if (flags.rust) os.push("windows-latest");
-  return os;
+  const legs = [];
+  if (!pullRequest || flags.rust) {
+    for (let shard = 1; shard <= LINUX_TEST_SHARDS; shard++) {
+      legs.push(testLeg("ubuntu-latest", shard, LINUX_TEST_SHARDS));
+    }
+  }
+  if (!pullRequest) {
+    legs.push(testLeg("windows-latest", 1, 1), testLeg("macos-latest", 1, 1));
+  }
+  return legs;
+}
+
+/** One "Run Tests" matrix leg (see testMatrix). */
+function testLeg(os, shard, shards) {
+  const label = shards > 1 ? `${os}, ${shard}/${shards}` : os;
+  return { os, shard, shards, label };
 }
 
 /** The commit-message tag that skips a PR's test and build lanes (#3915). */

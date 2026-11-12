@@ -397,6 +397,14 @@ pub trait ConnectionType: Send + Sync {
     fn prompt_probe(&self) -> Option<PromptProbe> {
         None
     }
+
+    /// Whether [`prompt_probe`](Self::prompt_probe) never reports a startup
+    /// question as the prompt, so the initial command waits for it without a
+    /// cap (#5455): typing on a timeout could only answer such a question.
+    /// `false`, the default, keeps the capped wait.
+    fn prompt_probe_uncapped(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

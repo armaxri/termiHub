@@ -33,6 +33,8 @@
 #   scripts/internal/native-sshd-fixture.sh down  [--dir DIR]   # stop + delete all state
 #   scripts/internal/native-sshd-fixture.sh variant-up  --variant NAME [--port N]
 #                                     [--setenv KEY=VALUE]... [--kbdint] [--dir DIR]
+#                                     [--banner] [--sftp-only]
+#                                     [--sudoer | --second-user] [--elevated-target]
 #   scripts/internal/native-sshd-fixture.sh variant-log --variant NAME [--dir DIR]
 #
 # `up` creates the state, starts sshd, proves a real `ssh -p` login + sftp
@@ -83,6 +85,21 @@
 # --password-login fixture. It prints the variant home as its last line.
 # `variant-log` prints that sshd's log; `down` stops every variant too.
 #
+# Fixture-specific hosts (#5423) are variants too, for the editor-permission,
+# banner and SFTP-only suites:
+#   --banner           a pre-auth `Banner`, plus a MOTD line the variant home's
+#                      .zshrc prints at login
+#   --sftp-only        `ForceCommand internal-sftp`: no shell, SFTP only
+#   --sudoer           a sudoers drop-in (/etc/sudoers.d/termihub-native-sshd)
+#                      that lets the login user run anything as root WITH its
+#                      password; checked with `visudo -c` before and after
+#   --second-user      log in as a second dedicated user, `termihubnosudo`
+#                      (same password and keys, no sudo rule)
+#   --elevated-target  a root-owned /etc/termihub-elevated-target.txt (mode 644)
+# The last three change system config, so like --password-login they need its
+# root fixture, run only on CI (or with TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1)
+# and refuse anywhere else. `down` removes the drop-in, the file and the user.
+#
 # `--scratch-home` (macOS/Linux; ignored on Windows, whose fixture logs in as
 # its own dedicated user): sshd `SetEnv`s HOME, XDG_CONFIG/DATA/STATE/CACHE_HOME
 # and HISTFILE into a `home` dir in the state dir, plus a private agent
@@ -106,7 +123,8 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,104p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # The header comment, up to its first non-comment line.
+  awk 'NR < 3 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -137,6 +155,11 @@ DEFAULT_SHELL=""
 VARIANT=""
 KBDINT=0
 SETENV=()
+BANNER=0
+SFTP_ONLY=0
+SUDOER=0
+SECOND_USER_LOGIN=0
+ELEVATED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)
@@ -181,6 +204,26 @@ while [ $# -gt 0 ]; do
       ;;
     --kbdint)
       KBDINT=1
+      shift
+      ;;
+    --banner)
+      BANNER=1
+      shift
+      ;;
+    --sftp-only)
+      SFTP_ONLY=1
+      shift
+      ;;
+    --sudoer)
+      SUDOER=1
+      shift
+      ;;
+    --second-user)
+      SECOND_USER_LOGIN=1
+      shift
+      ;;
+    --elevated-target)
+      ELEVATED=1
       shift
       ;;
     *)
@@ -244,6 +287,16 @@ ASKPASS="$STATE_DIR/askpass.sh"
 # The dedicated password-login user (macOS). A fixed name, so `down` can only
 # ever delete this one account.
 SYSTEM_USER="termihubssh"
+# --second-user (#5423): a second dedicated user with no sudo rule, recorded the
+# same way and only ever this fixed name.
+SECOND_USER="termihubnosudo"
+SECOND_USER_FILE="$STATE_DIR/second_user"
+# --sudoer / --elevated-target (#5423): fixed system paths, recorded in the
+# state dir when installed so `down` removes exactly these and nothing else.
+SUDOERS_DROPIN="/etc/sudoers.d/termihub-native-sshd"
+SUDOERS_STATE="$STATE_DIR/sudoers_dropin"
+ELEVATED_TARGET="/etc/termihub-elevated-target.txt"
+ELEVATED_STATE="$STATE_DIR/elevated_target"
 
 log() { echo "native-sshd: $*" >&2; }
 die() {
@@ -411,62 +464,172 @@ stop_sshd() {
   ${SUDO[@]+"${SUDO[@]}"} rm -f "$pid_file"
 }
 
+# The guard every system change sits behind: it adds a local account, a sudo
+# rule or a root-owned file, so only on a throwaway CI runner, unless asked for.
+# $1 names the change in the refusal.
+require_system_change_allowed() {
+  if [ -z "${CI:-}" ] && [ "${TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER:-}" != 1 ]; then
+    die "$1; it runs only on CI" \
+      "(or set TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1 on a machine you can throw away)"
+  fi
+}
+
 # --password-login on macOS: a dedicated local user with a random password and
 # a fresh home that holds the fixture keys. Needs passwordless sudo.
 create_system_user() {
   [ "$(uname -s)" = Darwin ] ||
     die "--password-login needs a dedicated user; only macOS and Windows support it"
-  # It adds a local account: only on a throwaway CI runner, unless asked for.
-  if [ -z "${CI:-}" ] && [ "${TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER:-}" != 1 ]; then
-    die "--password-login creates the local user $SYSTEM_USER; it runs only on CI" \
-      "(or set TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER=1 on a machine you can throw away)"
-  fi
+  require_system_change_allowed "--password-login creates the local user $SYSTEM_USER"
   sudo -n true 2>/dev/null || die "--password-login needs passwordless sudo"
   if dscl . -read "/Users/$SYSTEM_USER" >/dev/null 2>&1; then
     die "local user $SYSTEM_USER already exists; remove it or run 'down' on its fixture"
   fi
-  local uid home="/Users/$SYSTEM_USER" password
-  uid="$(dscl . -list /Users UniqueID | awk '$2 >= 600 && $2 < 1000 { print $2 }' | sort -n | tail -1)"
-  uid=$((${uid:-600} + 1))
+  local password
   # Hex only: no shell, PAM or form-field quoting can mangle it.
   password="Tn$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
   # Recorded first, so a half-created user is still removed by `down`.
   echo "$SYSTEM_USER" >"$SYSTEM_USER_FILE"
   (umask 077 && echo "$password" >"$PASSWORD_FILE")
-  sudo -n dscl . -create "/Users/$SYSTEM_USER"
-  sudo -n dscl . -create "/Users/$SYSTEM_USER" UserShell /bin/zsh
-  sudo -n dscl . -create "/Users/$SYSTEM_USER" RealName "termiHub native sshd fixture"
-  sudo -n dscl . -create "/Users/$SYSTEM_USER" UniqueID "$uid"
-  sudo -n dscl . -create "/Users/$SYSTEM_USER" PrimaryGroupID 20
-  sudo -n dscl . -create "/Users/$SYSTEM_USER" NFSHomeDirectory "$home"
-  sudo -n dscl . -passwd "/Users/$SYSTEM_USER" "$password"
+  create_local_user "$SYSTEM_USER" "$password"
+}
+
+# create_local_user NAME PASSWORD: a macOS local user with a fresh home holding
+# the fixture's authorized_keys. The caller records NAME in the state dir first.
+create_local_user() {
+  local user="$1" password="$2" uid home="/Users/$1"
+  uid="$(dscl . -list /Users UniqueID | awk '$2 >= 600 && $2 < 1000 { print $2 }' | sort -n | tail -1)"
+  uid=$((${uid:-600} + 1))
+  sudo -n dscl . -create "/Users/$user"
+  sudo -n dscl . -create "/Users/$user" UserShell /bin/zsh
+  sudo -n dscl . -create "/Users/$user" RealName "termiHub native sshd fixture"
+  sudo -n dscl . -create "/Users/$user" UniqueID "$uid"
+  sudo -n dscl . -create "/Users/$user" PrimaryGroupID 20
+  sudo -n dscl . -create "/Users/$user" NFSHomeDirectory "$home"
+  sudo -n dscl . -passwd "/Users/$user" "$password"
   # Remote Login restricted to a group: let the fixture user in.
   if dscl . -read /Groups/com.apple.access_ssh >/dev/null 2>&1; then
-    sudo -n dseditgroup -o edit -a "$SYSTEM_USER" -t user com.apple.access_ssh
+    sudo -n dseditgroup -o edit -a "$user" -t user com.apple.access_ssh
   fi
   sudo -n mkdir -p "$home/.ssh"
   sudo -n cp "$AUTH_KEYS" "$home/.ssh/authorized_keys"
   # An empty .zshrc: a zsh login shell starts at a prompt, not zsh-newuser-install.
   echo "# native-sshd-fixture password-login home (#5176)" | sudo -n tee "$home/.zshrc" >/dev/null
-  sudo -n chown -R "$SYSTEM_USER:staff" "$home"
+  sudo -n chown -R "$user:staff" "$home"
   sudo -n chmod 700 "$home" "$home/.ssh"
   sudo -n chmod 600 "$home/.ssh/authorized_keys"
-  log "local user $SYSTEM_USER (uid $uid) ready"
+  log "local user $user (uid $uid) ready"
 }
 
-delete_system_user() {
-  [ -s "$SYSTEM_USER_FILE" ] || return 0
-  local user
-  user="$(cat "$SYSTEM_USER_FILE")"
+# delete_local_user STATE_FILE EXPECTED: the user recorded in STATE_FILE, which
+# must be the fixed EXPECTED name, and its home. A no-op when none is recorded.
+delete_local_user() {
+  local state_file="$1" expected="$2" user
+  [ -s "$state_file" ] || return 0
+  user="$(cat "$state_file")"
   # Only ever the fixture's own fixed account.
-  [ "$user" = "$SYSTEM_USER" ] || die "refusing to delete unexpected user '$user'"
+  [ "$user" = "$expected" ] || die "refusing to delete unexpected user '$user'"
   # Whatever a test session left running as the fixture user.
   sudo -n pkill -KILL -U "$user" 2>/dev/null || true
   if dscl . -read "/Users/$user" >/dev/null 2>&1; then
     sudo -n dscl . -delete "/Users/$user" || log "could not delete local user $user"
   fi
   sudo -n rm -rf "/Users/$user"
+  rm -f "$state_file"
   log "local user $user removed"
+}
+
+delete_system_user() {
+  delete_local_user "$SECOND_USER_FILE" "$SECOND_USER"
+  delete_local_user "$SYSTEM_USER_FILE" "$SYSTEM_USER"
+}
+
+# ── System changes of the fixture-specific hosts (#5423) ──────────────────────
+# Each one is CI-only (require_system_change_allowed) and needs the root sshd
+# of a --password-login fixture, whose passwordless sudo it uses.
+require_system_change() {
+  require_system_change_allowed "$1 changes the system configuration"
+  [ "${#SUDO[@]}" -gt 0 ] || die "$1 needs a --password-login fixture (a root sshd); CI only"
+  [ "$(uname -s)" = Darwin ] || die "$1 is only supported on macOS"
+  sudo -n true 2>/dev/null || die "$1 needs passwordless sudo"
+}
+
+# The second, no-sudo login user: same password and keys as the first.
+ensure_second_user() {
+  if [ -s "$SECOND_USER_FILE" ] && dscl . -read "/Users/$SECOND_USER" >/dev/null 2>&1; then
+    return 0
+  fi
+  if dscl . -read "/Users/$SECOND_USER" >/dev/null 2>&1; then
+    die "local user $SECOND_USER already exists; remove it or run 'down' on its fixture"
+  fi
+  # Recorded first, so a half-created user is still removed by `down`.
+  echo "$SECOND_USER" >"$SECOND_USER_FILE"
+  create_local_user "$SECOND_USER" "$(cat "$PASSWORD_FILE")"
+}
+
+# A sudoers drop-in scoped to the login user: everything as root, password
+# required (no NOPASSWD), no lecture. `visudo -c` checks the new file before it
+# goes in and the whole policy after; a policy that fails is rolled back.
+install_sudoers() {
+  local user="$1" tmp="$STATE_DIR/sudoers.$$"
+  case "$user" in
+    "$SYSTEM_USER") ;;
+    *) die "refusing a sudo rule for '$user': only $SYSTEM_USER gets one" ;;
+  esac
+  {
+    echo "# termiHub native sshd fixture (#5423): CI-only, removed by its 'down'."
+    echo "Defaults:$user !lecture"
+    echo "$user ALL=(ALL) ALL"
+  } >"$tmp"
+  sudo -n visudo -c -q -f "$tmp" || {
+    rm -f "$tmp"
+    die "visudo rejects the fixture's sudoers drop-in"
+  }
+  echo "$SUDOERS_DROPIN" >"$SUDOERS_STATE"
+  sudo -n mkdir -p "$(dirname "$SUDOERS_DROPIN")"
+  sudo -n install -m 0440 -o root -g wheel "$tmp" "$SUDOERS_DROPIN"
+  rm -f "$tmp"
+  if ! sudo -n visudo -c -q; then
+    sudo -n rm -f "$SUDOERS_DROPIN"
+    die "the sudoers policy fails 'visudo -c' with the drop-in; removed it again"
+  fi
+  # The rule must really be in effect (sudoers.d is included by the policy).
+  local rules
+  rules="$(sudo -n sudo -l -U "$user" 2>/dev/null || true)"
+  case "$rules" in
+    *"(ALL) ALL"*) ;;
+    *) die "sudo does not list the drop-in's rule for $user ($SUDOERS_DROPIN)" ;;
+  esac
+  log "sudoers drop-in $SUDOERS_DROPIN lets $user use sudo (password required)"
+}
+
+remove_sudoers() {
+  [ -s "$SUDOERS_STATE" ] || return 0
+  [ "$(cat "$SUDOERS_STATE")" = "$SUDOERS_DROPIN" ] ||
+    die "refusing to remove unexpected sudoers file '$(cat "$SUDOERS_STATE")'"
+  sudo -n rm -f "$SUDOERS_DROPIN"
+  rm -f "$SUDOERS_STATE"
+  log "sudoers drop-in $SUDOERS_DROPIN removed"
+}
+
+# The root-owned file the editor-permission suites open read-only and save
+# with sudo; known contents, like the ssh-sudo image's. Written to a temp name
+# and renamed, so two variants bringing it up at once never see a torn file.
+install_elevated_target() {
+  local tmp="$ELEVATED_TARGET.termihub.$$"
+  echo "$ELEVATED_TARGET" >"$ELEVATED_STATE"
+  printf 'original-root-owned-content\n' | sudo -n tee "$tmp" >/dev/null
+  sudo -n chown root:wheel "$tmp"
+  sudo -n chmod 644 "$tmp"
+  sudo -n mv -f "$tmp" "$ELEVATED_TARGET"
+}
+
+remove_elevated_target() {
+  [ -s "$ELEVATED_STATE" ] || return 0
+  [ "$(cat "$ELEVATED_STATE")" = "$ELEVATED_TARGET" ] ||
+    die "refusing to remove unexpected file '$(cat "$ELEVATED_STATE")'"
+  sudo -n rm -f "$ELEVATED_TARGET"
+  rm -f "$ELEVATED_STATE"
+  log "$ELEVATED_TARGET removed"
 }
 
 emit_env() {
@@ -672,6 +835,13 @@ cmd_variant_up() {
   if [ "$KBDINT" -eq 1 ] && [ "${#SUDO[@]}" -eq 0 ]; then
     die "--kbdint needs a --password-login fixture (a root sshd with PAM); CI only"
   fi
+  # The system changes (#5423): refused before anything is touched.
+  if [ "$SUDOER" -eq 1 ] && [ "$SECOND_USER_LOGIN" -eq 1 ]; then
+    die "--sudoer and --second-user exclude each other: the second user has no sudo rule"
+  fi
+  [ "$SUDOER" -eq 0 ] || require_system_change "--sudoer"
+  [ "$SECOND_USER_LOGIN" -eq 0 ] || require_system_change "--second-user"
+  [ "$ELEVATED" -eq 0 ] || require_system_change "--elevated-target"
   mkdir -p "$VARIANTS_DIR"
   # One caller at a time: parallel test workers may bring the same variant up.
   lock="$vdir.lock"
@@ -695,19 +865,29 @@ cmd_variant_up() {
   if port_in_use "$port"; then
     die "variant $VARIANT: port $port is already taken"
   fi
+  if [ "$SECOND_USER_LOGIN" -eq 1 ]; then
+    ensure_second_user
+    LOGIN_USER="$SECOND_USER"
+  fi
+  [ "$SUDOER" -eq 0 ] || install_sudoers "$LOGIN_USER"
+  [ "$ELEVATED" -eq 0 ] || install_elevated_target
+  # The variant home's .zshrc; a --banner host also prints a MOTD at login.
+  local zshrc="# native-sshd-fixture variant home (#5444)"
+  if [ "$BANNER" -eq 1 ]; then
+    zshrc="$zshrc"$'\n'"echo 'Welcome to the termiHub native sshd fixture (MOTD, #5423)'"
+  fi
   if [ "${#SUDO[@]}" -gt 0 ]; then
     # The dedicated user cannot enter the runner-owned state dir: its home.
     home="/Users/$LOGIN_USER/variants/$VARIANT"
     sudo -n mkdir -p "$home"
     sudo -n chown "$LOGIN_USER:staff" "/Users/$LOGIN_USER/variants" "$home"
     sudo -n chmod 700 "$home"
-    [ -e "$home/.zshrc" ] ||
-      echo "# native-sshd-fixture variant home (#5444)" | sudo -n -u "$LOGIN_USER" tee "$home/.zshrc" >/dev/null
+    printf '%s\n' "$zshrc" | sudo -n -u "$LOGIN_USER" tee "$home/.zshrc" >/dev/null
   else
     home="$vdir/home"
     mkdir -p "$home"
     chmod 700 "$home"
-    [ -e "$home/.zshrc" ] || echo "# native-sshd-fixture variant home (#5444)" >"$home/.zshrc"
+    printf '%s\n' "$zshrc" >"$home/.zshrc"
   fi
   local config="$vdir/sshd_config"
   write_config "$port" "$config" "$vdir/sshd.pid"
@@ -748,6 +928,20 @@ cmd_variant_up() {
     line="$line \"$kv\""
   done
   echo "$line" >>"$config"
+  if [ "$BANNER" -eq 1 ]; then
+    # The pre-auth banner, as the ssh-banner image shows it.
+    printf '%s\n' "========================================================" \
+      "  AUTHORIZED ACCESS ONLY - TEST SYSTEM" \
+      "  This is a termiHub test server (native sshd fixture, #5423)." \
+      "========================================================" >"$vdir/banner.txt"
+    chmod 644 "$vdir/banner.txt"
+    echo "Banner \"$vdir/banner.txt\"" >>"$config"
+  fi
+  if [ "$SFTP_ONLY" -eq 1 ]; then
+    # Every session is the SFTP server: a shell or exec request is refused
+    # ("This service allows sftp connections only."), as on ssh-sftp-only.
+    echo "ForceCommand internal-sftp" >>"$config"
+  fi
   local sshd
   sshd="$(find_sshd)" || die "no sshd binary found"
   ${SUDO[@]+"${SUDO[@]}"} "$sshd" -t -f "$config" ||
@@ -791,6 +985,8 @@ cmd_down() {
   stop_variants
   stop_sshd "$JUMP_PID_FILE" "$JUMP_CONFIG"
   stop_sshd "$PID_FILE" "$CONFIG"
+  remove_sudoers
+  remove_elevated_target
   delete_system_user
   case "$STATE_DIR" in
     "" | / | "$HOME") die "refusing to delete state dir '$STATE_DIR'" ;;

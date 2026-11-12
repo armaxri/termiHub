@@ -135,7 +135,7 @@ where
 /// [`handshake_and_authenticate`] with an explicit host-key verifier in place of
 /// the process-wide one (`None` = the process-wide one). The override exists for
 /// tests, since the global verifier can be registered only once per process.
-async fn handshake_and_authenticate_with<S>(
+pub(super) async fn handshake_and_authenticate_with<S>(
     config: &SshConfig,
     stream: S,
     verifier: Option<Arc<dyn HostKeyVerifier>>,

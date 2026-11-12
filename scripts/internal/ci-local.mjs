@@ -90,10 +90,18 @@ export const CI_LOCAL_JOBS = {
     notReproduced: "Windows cmd Script Smoke: runs on a Windows CI runner only",
   },
   tests: {
-    gates: ["Rust workspace: cargo test", "Frontend: vitest + coverage floors"],
+    gates: ["Rust workspace: cargo test"],
     omitted:
-      "Run Tests: the Windows/macOS legs and the ci-rust-tests.sh bulk/serial " +
-      "split (this host's OS only, one cargo test run)",
+      "Run Tests: the Windows/macOS legs, the Linux shards and the ci-rust-tests.sh " +
+      "bulk/serial split (this host's OS only, one cargo test run)",
+  },
+  "frontend-tests": {
+    gates: ["Frontend: vitest + coverage floors"],
+    omitted: "Frontend Tests: the 3-way --shard split (one unsharded vitest run)",
+  },
+  "frontend-coverage": {
+    gates: ["Frontend: vitest + coverage floors"],
+    omitted: "Frontend Tests (coverage): the blob merge (the unsharded run checks the floors)",
   },
   "agent-live-windows": {
     notReproduced: "Agent Live Tests (Windows, serial): needs a Windows runner",

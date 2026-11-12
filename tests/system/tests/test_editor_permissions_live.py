@@ -18,6 +18,13 @@ browser follows. The buffer is dirtied by toggling the EOL (see
 :class:`~termihub_harness.EditorUi`), so the expected file contents are the
 original with its line endings flipped.
 
+On the macOS native target (#5423) the two hosts are variants of the native
+sshd: ``sudo`` logs in as the fixture user, whom a sudoers drop-in lets use
+sudo with its password, and ``nosudo`` as the fixture's second user, who has
+no sudo rule (sudo is installed on macOS, so the elevated save would answer
+"not in sudoers" rather than "sudo missing"; these tests do not save there).
+``/etc`` is ``/private/etc`` there, which still contains ``/etc``.
+
 Not covered here: the SFTP-only fallback (#1330) on ``ssh-sftp-only``. That host
 refuses the shell, so its session is kept files-only (#4078); the fallback is
 driven from the UI in ``test_sftp_only_host_live.py``.
@@ -35,20 +42,22 @@ from termihub_harness import (
     ELEVATED_TARGET_NAME,
     ELEVATED_TARGET_PATH,
     SSH_NOSUDO_PORT,
+    SSH_NOSUDO_USERNAME,
     SSH_PASSWORD,
     SSH_SUDO_PORT,
     SSH_SUDO_SERVICE,
+    SSH_USERNAME,
     ConnectionsUi,
     EditorUi,
     FilesUi,
     PasswordPromptUi,
     SftpUi,
     SidebarUi,
-    SshServerControl,
     SshUi,
     SystemTest,
     TabsUi,
     TerminalUi,
+    ssh_server_control,
     unique_name,
 )
 
@@ -63,6 +72,7 @@ def _flip_eol(text: str) -> str:
 
 
 @pytest.mark.usefixtures("ssh_permission_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestEditorPermissionsLive(
     TerminalUi,
     TabsUi,
@@ -83,12 +93,14 @@ class TestEditorPermissionsLive(
         self.switch_to_connections_sidebar()
 
     # -- helpers -----------------------------------------------------------------
-    def _open_root_owned_file(self, purpose: str, port: int) -> dict:
+    def _open_root_owned_file(
+        self, purpose: str, port: int, *, username: str = SSH_USERNAME
+    ) -> dict:
         """Connect to a shell host, follow ``cd /etc``, open the root-owned file.
 
         Returns the editor tab, once the write probe has marked it read-only.
         """
-        self.connect_ssh_password(unique_name(purpose), port=port)
+        self.connect_ssh_password(unique_name(purpose), port=port, username=username)
         self.run_command(f"cd {ELEVATED_TARGET_DIR}")
         self.connect_sftp_browser()
         self.wait_for_path_contains(ELEVATED_TARGET_DIR)
@@ -123,12 +135,14 @@ class TestEditorPermissionsLive(
         self._assert_shell_host_read_only_ui()
 
     def test_root_owned_file_is_read_only_on_the_nosudo_host(self):
-        self._open_root_owned_file("perm-ro-nosudo", SSH_NOSUDO_PORT)
+        self._open_root_owned_file(
+            "perm-ro-nosudo", SSH_NOSUDO_PORT, username=SSH_NOSUDO_USERNAME
+        )
         self._assert_shell_host_read_only_ui()
 
     # -- #1329: elevated (sudo) save -------------------------------------------
     def test_sudo_save_reprompts_a_wrong_password_then_writes_the_file(self):
-        host = SshServerControl(SSH_SUDO_SERVICE)
+        host = ssh_server_control(SSH_SUDO_SERVICE)
         before = host.read_file(ELEVATED_TARGET_PATH)
         tab = self._open_root_owned_file("perm-sudo-save", SSH_SUDO_PORT)
 

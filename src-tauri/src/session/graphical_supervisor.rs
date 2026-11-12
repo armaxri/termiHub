@@ -101,10 +101,12 @@ use termihub_core::reconnect_backoff::{
 use crate::session::frame_guard::REJECTED_FRAMES_MESSAGE;
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_manager::{
-    cert_pump, clipboard_pump, cursor_pump, emit_state, frame_pump, Activation, GraphicalEventSink,
-    LastClipboard, OnReactivated, PendingCert,
+    cert_pump, clipboard_pump, cursor_pump, emit_coded_state, emit_state, failure_code,
+    failure_message, frame_pump, Activation, GraphicalEventSink, LastClipboard, OnReactivated,
+    PendingCert,
 };
 use crate::session::rdp_trust_store::RdpTrustStore;
+use crate::utils::errors::IpcErrorCode;
 
 #[cfg(doc)]
 use termihub_core::connection::auto_reconnect_enabled;
@@ -218,9 +220,9 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         let mut retrying = false;
         loop {
             let end = self.run_generation(generation, retrying).await;
-            if let Some((state, message)) = self.fatal_rest(end, retrying).await {
+            if let Some((state, message, code)) = self.fatal_rest(end, retrying).await {
                 warn!(session_id = %self.session_id, ?state, %message, "graphical session ended with a typed failure; not auto-reconnecting");
-                self.rest(state, Some(message)).await;
+                self.rest_coded(state, Some(message), code).await;
                 return;
             }
             if end.aborted {
@@ -271,17 +273,30 @@ impl<S: GraphicalEventSink> Supervisor<S> {
     /// - Any other typed failure rests in `ConnectFailed` only for the first
     ///   generation that never painted — the asynchronous twin of a failed
     ///   initial `connect()`.
-    async fn fatal_rest(&self, end: PumpEnd, retrying: bool) -> Option<(GraphicalState, String)> {
+    ///
+    /// The resting failure carries its typed [`IpcErrorCode`] (#5380) — e.g.
+    /// `refused` for a closed RDP port — so the frontend shows the same heading
+    /// a terminal tab does, with the message as the detail.
+    async fn fatal_rest(
+        &self,
+        end: PumpEnd,
+        retrying: bool,
+    ) -> Option<(GraphicalState, String, Option<IpcErrorCode>)> {
         let fatal = {
             let slot = self.connection.lock().await;
             slot.graphical().and_then(|backend| backend.fatal_error())
         }?;
+        let code = failure_code(&fatal);
         match fatal {
-            SessionError::AuthFailed => Some((GraphicalState::AuthFailed, fatal.to_string())),
-            SessionError::ProtocolError(reason) => Some((GraphicalState::Disconnected, reason)),
-            SessionError::ServerClosed(reason) => Some((GraphicalState::ServerClosed, reason)),
+            SessionError::AuthFailed => Some((GraphicalState::AuthFailed, fatal.to_string(), code)),
+            SessionError::ProtocolError(reason) => {
+                Some((GraphicalState::Disconnected, reason, None))
+            }
+            SessionError::ServerClosed(reason) => {
+                Some((GraphicalState::ServerClosed, reason, None))
+            }
             other if !retrying && !end.painted && !end.aborted => {
-                Some((GraphicalState::ConnectFailed, other.to_string()))
+                Some((GraphicalState::ConnectFailed, failure_message(&other), code))
             }
             _ => None,
         }
@@ -400,7 +415,19 @@ impl<S: GraphicalEventSink> Supervisor<S> {
     }
 
     /// Settle the session in a resting state (no retry running).
+    /// A rejected credential is always the typed `auth_failed` (#5380).
     async fn rest(&self, target: GraphicalState, message: Option<String>) {
+        let code = (target == GraphicalState::AuthFailed).then_some(IpcErrorCode::AuthFailed);
+        self.rest_coded(target, message, code).await;
+    }
+
+    /// [`rest`](Self::rest) with the failure's typed [`IpcErrorCode`] (#5380).
+    async fn rest_coded(
+        &self,
+        target: GraphicalState,
+        message: Option<String>,
+        code: Option<IpcErrorCode>,
+    ) {
         let mut sm = self.state.lock().await;
         if sm.state() == GraphicalState::Closed {
             return;
@@ -411,12 +438,13 @@ impl<S: GraphicalEventSink> Supervisor<S> {
             GraphicalState::ServerClosed => sm.server_closed(),
             _ => sm.disconnected(),
         };
-        emit_state(
+        emit_coded_state(
             &self.sink,
             &self.session_id,
             state,
             sm.reconnect_attempt(),
             message,
+            code,
         );
     }
 

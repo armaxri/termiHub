@@ -10,6 +10,7 @@ import {
   classify,
   allAreas,
   testMatrix,
+  LINUX_TEST_SHARDS,
   formatOutputs,
   findCommentOnlyRust,
   isNarrowableRustSource,
@@ -205,7 +206,9 @@ describe("classify", () => {
   it("runs the scripts/internal vitest suite for a PR touching only a pinned Python script", () => {
     const flags = classify(["scripts/build-testid-catalog.py"]);
     expect(flags).toMatchObject({ frontend: true, harness: true });
-    expect(testMatrix(flags, true)).toEqual(["ubuntu-latest"]);
+    // The vitest suite runs in the Frontend Tests jobs (gated on `frontend`),
+    // not in a Run Tests leg (#5465).
+    expect(testMatrix(flags, true)).toEqual([]);
   });
 
   it("runs the scripts/internal vitest suite for every file under scripts/", () => {
@@ -531,27 +534,132 @@ describe("comment-only Rust changes (#3903)", () => {
 });
 
 describe("testMatrix", () => {
-  it("is the full OS set post-merge", () => {
+  const linux = (shard) => ({
+    os: "ubuntu-latest",
+    shard,
+    shards: LINUX_TEST_SHARDS,
+    label: `ubuntu-latest, ${shard}/${LINUX_TEST_SHARDS}`,
+  });
+  const linuxShards = () => Array.from({ length: LINUX_TEST_SHARDS }, (_, i) => linux(i + 1));
+
+  it("is every Linux shard plus Windows and macOS post-merge", () => {
     expect(testMatrix(classify(["docs/a.md"]), false)).toEqual([
-      "ubuntu-latest",
-      "windows-latest",
-      "macos-latest",
+      ...linuxShards(),
+      { os: "windows-latest", shard: 1, shards: 1, label: "windows-latest" },
+      { os: "macos-latest", shard: 1, shards: 1, label: "macos-latest" },
     ]);
   });
 
-  it("runs ubuntu + windows for Rust PRs, never macOS", () => {
-    expect(testMatrix(classify(["core/src/lib.rs"]), true)).toEqual([
-      "ubuntu-latest",
-      "windows-latest",
-    ]);
+  it("runs only the Linux shards for Rust PRs, never Windows or macOS (#5465)", () => {
+    expect(testMatrix(classify(["core/src/lib.rs"]), true)).toEqual(linuxShards());
   });
 
-  it("runs only ubuntu for frontend-only PRs", () => {
-    expect(testMatrix(classify(["src/main.tsx"]), true)).toEqual(["ubuntu-latest"]);
+  it("numbers the Linux shards 1..N exactly once, so every partition runs", () => {
+    expect(LINUX_TEST_SHARDS).toBeGreaterThanOrEqual(1);
+    const shards = testMatrix(classify(["core/src/lib.rs"]), true).map((leg) => leg.shard);
+    expect(shards).toEqual(Array.from({ length: LINUX_TEST_SHARDS }, (_, i) => i + 1));
+  });
+
+  it("has no Run Tests leg for frontend-only PRs (Frontend Tests runs vitest)", () => {
+    expect(testMatrix(classify(["src/main.tsx"]), true)).toEqual([]);
   });
 
   it("is empty for docs-only PRs", () => {
     expect(testMatrix(classify(["docs/a.md"]), true)).toEqual([]);
+  });
+});
+
+// code-quality.yml holds two copies of shard counts the scripts cannot read at
+// run time: the Run Tests fail-open fallback matrix and the Frontend Tests
+// shard list. Drift would silently drop a shard (#5465).
+describe("code-quality.yml shard drift", () => {
+  const text = readFileSync(path.join(REPO_ROOT, ".github/workflows/code-quality.yml"), "utf8");
+
+  it("falls back to exactly the post-merge Run Tests matrix", () => {
+    const m = text.match(
+      /include: \$\{\{ fromJSON\(needs\.changes\.outputs\.test_matrix \|\| '([^']+)'\) \}\}/
+    );
+    expect(m, "Run Tests matrix fallback not found").not.toBeNull();
+    expect(JSON.parse(m[1])).toEqual(testMatrix(allAreas(), false));
+  });
+
+  it("merges exactly as many vitest blobs as there are Frontend Tests shards", () => {
+    const shards = text.match(/^ {8}shard: \[([0-9, ]+)\]$/m);
+    expect(shards, "Frontend Tests shard list not found").not.toBeNull();
+    const list = shards[1].split(",").map((n) => Number(n.trim()));
+    expect(list).toEqual(Array.from({ length: list.length }, (_, i) => i + 1));
+    const expected = text.match(/^ {6}FRONTEND_TEST_SHARDS: '([0-9]+)'$/m);
+    expect(expected, "FRONTEND_TEST_SHARDS not found").not.toBeNull();
+    expect(Number(expected[1])).toBe(list.length);
+  });
+});
+
+// rust-cache-warm.yml saves the Linux key the Run Tests shards restore
+// (#5469). rust-cache keys on `v0-rust-<key>[-<job id>]-<OS>-<arch>-<env>-<lock>`,
+// where <env> hashes the rustc versions and every CARGO/CC/CFLAGS/CXX/CMAKE/RUST
+// env var present at the cache step. Pin every input of that key on both sides.
+describe("rust-cache-warm.yml saves the key Run Tests restores", () => {
+  const read = (file) => readFileSync(path.join(REPO_ROOT, ".github/workflows", file), "utf8");
+  const quality = read("code-quality.yml");
+  const warm = read("rust-cache-warm.yml");
+  const KEY_ENV = /^\s*(CARGO|CC|CFLAGS|CXX|CMAKE|RUST)\w*:/m;
+
+  /** The `steps:` of the job `id`, cut at the next top-level job. */
+  const jobText = (text, id) => {
+    const start = text.indexOf(`\n  ${id}:\n`);
+    expect(start, `job ${id}`).toBeGreaterThan(-1);
+    const rest = text.slice(start + 1);
+    const next = rest.slice(1).search(/\n {2}[a-z][a-z0-9_-]*:\n/);
+    return next === -1 ? rest : rest.slice(0, next + 1);
+  };
+  /** The step names before the rust-cache step, and that step's `with:` lines. */
+  const cacheStep = (job) => {
+    const at = job.indexOf("uses: Swatinem/rust-cache@");
+    expect(at, "rust-cache step").toBeGreaterThan(-1);
+    const names = [...job.slice(0, at).matchAll(/^ {6}- name: (.+)$/gm)].map((m) => m[1]);
+    const uses = job.slice(at).split("\n")[0];
+    const withBlock = job.slice(at).split(/\n {6}- /)[0];
+    return { names: names.slice(0, -1), uses, withBlock };
+  };
+
+  const tests = cacheStep(jobText(quality, "tests"));
+  const warmJob = jobText(warm, "warm-linux");
+  const warmCache = cacheStep(warmJob);
+
+  it("uses the same rust-cache pin and an explicit, job-id-free key", () => {
+    expect(warmCache.uses).toBe(tests.uses);
+    for (const side of [tests, warmCache]) {
+      expect(side.withBlock).toMatch(/^ {10}key: tests$/m);
+      expect(side.withBlock).toMatch(/^ {10}add-job-id-key: 'false'$/m);
+      expect(side.withBlock).not.toMatch(/prefix-key|shared-key|env-vars|workspaces:/);
+    }
+  });
+
+  it("sets up nothing before the cache step that could change the env hash", () => {
+    expect(warmCache.names).toEqual(["Checkout code", "Setup Rust"]);
+    // The Run Tests steps before its cache step: the Node steps run only on the
+    // Windows/macOS legs, so the Linux shard sees checkout + Setup Rust too.
+    expect(tests.names).toEqual(["Checkout code", "Setup Rust", "Setup pnpm", "Setup Node.js"]);
+    expect(jobText(quality, "tests")).toMatch(
+      /- name: Setup Rust\n {8}if: [^\n]*\n {8}uses: \.\/\.github\/actions\/setup-rust\n/
+    );
+    expect(warmJob).toMatch(/- name: Setup Rust\n {8}uses: \.\/\.github\/actions\/setup-rust\n/);
+  });
+
+  it("sets no key-relevant env var at workflow or job level", () => {
+    for (const text of [quality, warm]) {
+      for (const block of text.matchAll(/^( {0}| {4})env:\n((?:\1 {2}.*\n)+)/gm)) {
+        expect(block[2]).not.toMatch(KEY_ENV);
+      }
+    }
+  });
+
+  it("builds the targets ci-rust-tests.sh compiles", () => {
+    const script = readFileSync(path.join(REPO_ROOT, "scripts/internal/ci-rust-tests.sh"), "utf8");
+    expect(script).toContain("targets=(--all-features --lib --bins --tests)");
+    expect(warmJob).toContain(
+      "cargo test --workspace --all-features --lib --bins --tests --no-run"
+    );
   });
 });
 
@@ -562,13 +670,15 @@ describe("formatOutputs", () => {
     expect(out).toContain("rust=false\n");
     expect(out).toContain("agent=false\n");
     expect(out).toContain("workflows=false\n");
-    expect(out).toContain('test_matrix=["ubuntu-latest"]\n');
+    expect(out).toContain("test_matrix=[]\n");
   });
 
   it("reports tests=true by default and keeps the matrix", () => {
     const out = formatOutputs(classify(["core/src/lib.rs"]), true);
     expect(out).toContain("tests=true\n");
-    expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
+    expect(out).toContain(
+      `test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`
+    );
   });
 
   it("under [skip-tests] reports tests=false and an empty matrix, areas unchanged", () => {
@@ -738,7 +848,9 @@ describe("[skip-tests] tag (#3915)", () => {
         const headSha = git(dir, "rev-parse", "HEAD^2");
         const { out, summary } = run(dir, ["--event", "pull_request", "--head-sha", headSha]);
         expect(out).toContain("tests=true\n");
-        expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
+        expect(out).toContain(
+          `test_matrix=${JSON.stringify(testMatrix(classify(["core/src/lib.rs"]), true))}\n`
+        );
         expect(summary).toBe("");
       } finally {
         rmSync(dir, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "url";
 
-export default defineConfig({
+const config = defineConfig({
   resolve: {
     alias: [
       { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
@@ -177,3 +177,14 @@ export default defineConfig({
     },
   },
 });
+
+// A sharded CI run (#5465): each Frontend Tests shard runs a slice of the files
+// with `--shard=k/N --reporter=blob` and covers only that slice, so the floors
+// above would fail on its partial coverage. A shard therefore checks none; the
+// merge job (`vitest --merge-reports --coverage`) combines every shard's
+// coverage and checks all the floors once, against the whole suite.
+if (process.env.TERMIHUB_VITEST_COVERAGE_SHARD === "1" && config.test?.coverage) {
+  config.test.coverage.thresholds = {};
+}
+
+export default config;

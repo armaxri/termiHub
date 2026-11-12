@@ -3,7 +3,10 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
-import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
+import {
+  connectionErrorKindFromCode,
+  type ConnectionErrorKind,
+} from "@/utils/connectionErrorHints";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -158,6 +161,45 @@ describe("RemoteDesktopOverlay", () => {
       const el = query("remote-desktop-overlay-error");
       expect(el?.querySelector(".ui-connect-progress")?.getAttribute("data-phase")).toBe("timeout");
       expect(el?.textContent).toContain("Timed out");
+    });
+
+    // The `remote-desktop-state` event's typed code (#5380), mapped the way the
+    // session hook maps it, gives the same heading a terminal tab shows, with
+    // the OS detail behind Details.
+    it.each([
+      ["refused", "Connection refused"],
+      ["unreachable", "Host unreachable"],
+      ["dns", "Host not found"],
+    ] as const)(
+      "state-event code %s shows %s with the OS detail behind Details",
+      (code, heading) => {
+        const detail = "RDP TCP connect to rd-host:3389 failed: os error";
+        render("connectFailed", { message: detail, errorKind: connectionErrorKindFromCode(code) });
+        const el = query("remote-desktop-overlay-error");
+        expect(el?.textContent).toContain(heading);
+        expect(el?.textContent).not.toContain("Connection failed");
+        expect(query("terminal-connection-error-details")?.textContent).toContain(detail);
+      }
+    );
+
+    it("state-event code timeout rests on the timed-out phase (#5380)", () => {
+      render("connectFailed", {
+        message: "RDP connect to rd-host:3389 timed out after 30s",
+        errorKind: connectionErrorKindFromCode("timeout"),
+      });
+      const el = query("remote-desktop-overlay-error");
+      expect(el?.querySelector(".ui-connect-progress")?.getAttribute("data-phase")).toBe("timeout");
+      expect(el?.textContent).toContain("Timed out");
+    });
+
+    it("state-event code auth_failed shows the credential hint and re-entry (#5380)", () => {
+      render("connectFailed", {
+        message: "NLA rejected",
+        errorKind: connectionErrorKindFromCode("auth_failed"),
+      });
+      expect(query("remote-desktop-overlay-error")?.textContent).toContain(
+        "The server rejected the credentials"
+      );
     });
 
     it("user abort: Connection aborted with Retry and Close tab, no Edit", () => {

@@ -302,7 +302,8 @@ jobs:
   # production `.expect()` (TOOL-010) merged undetected. `cargo test` on the
   # Windows test leg compiles that code but does not lint it. This job closes
   # the gap with the same `-D warnings` gate over the same workspace/target/
-  # feature set, so a lint in Windows-gated code fails the offending PR.
+  # feature set, so a lint in Windows-gated code turns develop red right after
+  # the merge that brought it in.
   #
   # fmt and the other ubuntu steps are platform-independent and are not
   # repeated here; this job is clippy only.
@@ -310,8 +311,12 @@ jobs:
     name: Rust Code Quality (Windows)
     runs-on: windows-latest
     needs: changes
-    # PR lane: only when Rust changed (#3325). Post-merge: always.
-    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    # Post-merge only (#5465): push to develop/main and workflow_dispatch, never
+    # on a pull_request, so the PR gate waits on no Windows runner. A Windows
+    # lint then reddens develop and is fixed after the merge.
+    if: >-
+      ${{ !cancelled() && github.event_name != 'pull_request' &&
+      needs.changes.outputs.rust != 'false' }}
 
     steps:
       - name: Checkout code
@@ -1559,8 +1564,18 @@ jobs:
   #               ~15 min on Windows and is not repeated there on a PR).
   #   * macos   — never on a PR: macOS runners are the scarcest in the pool.
   # On push to develop/main the full 3-OS matrix runs both halves everywhere.
+  # The legs come from the `changes` job as `matrix.include` entries (#5465,
+  # scripts/internal/ci-changes.mjs testMatrix): the Linux leg is split into
+  # LINUX_TEST_SHARDS nextest hash partitions, `Run Tests (ubuntu-latest, k/N)`,
+  # so no single runner carries the whole suite. Each shard compiles the
+  # workspace itself (the compile is the larger half of a shard) and runs its
+  # partition of the bulk phase; the once-only steps (doc-tests, heavy phase,
+  # real-keychain tests, the shard partition check) run on shard 1 only. On a
+  # PR only the Linux shards run, and only for Rust changes; the Windows and
+  # macOS legs run post-merge (push to develop/main), nightly and in the
+  # release gate. The vitest suite runs in the Frontend Tests jobs below.
   tests:
-    name: Run Tests
+    name: Run Tests (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     needs: changes
     # [skip-tests] on the PR head commit (#3915) empties test_matrix and sets
@@ -1576,8 +1591,10 @@ jobs:
       # so each reports its own true pass/fail. (#1669)
       fail-fast: false
       matrix:
-        # Fail-open fallback: if `changes` failed, run the full matrix.
-        os: ${{ fromJSON(needs.changes.outputs.test_matrix || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+        # Fail-open fallback: if `changes` failed, run the full post-merge matrix
+        # (keep it equal to testMatrix(allAreas(), false); ci-changes.test.mjs
+        # checks it).
+        include: ${{ fromJSON(needs.changes.outputs.test_matrix || '[{"os":"ubuntu-latest","shard":1,"shards":2,"label":"ubuntu-latest, 1/2"},{"os":"ubuntu-latest","shard":2,"shards":2,"label":"ubuntu-latest, 2/2"},{"os":"windows-latest","shard":1,"shards":1,"label":"windows-latest"},{"os":"macos-latest","shard":1,"shards":1,"label":"macos-latest"}]') }}
 
     steps:
       - name: Checkout code
@@ -1590,11 +1607,12 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Setup pnpm
-        # Only on a leg that runs vitest (see the frontend steps below); the Rust
-        # tests need no node_modules (debug builds use devUrl, not ../dist).
+        # Only on a leg that runs vitest: the post-merge Windows/macOS legs (see
+        # the last step). Linux vitest is the Frontend Tests jobs; the Rust tests
+        # need no node_modules (debug builds use devUrl, not ../dist).
         if: >-
           needs.changes.outputs.frontend != 'false' &&
-          (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
+          matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
         uses: ./.github/actions/setup-pnpm
         with:
           cache: "true"
@@ -1602,7 +1620,7 @@ jobs:
       - name: Setup Node.js
         if: >-
           needs.changes.outputs.frontend != 'false' &&
-          (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
+          matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
@@ -1618,6 +1636,18 @@ jobs:
           # caches are dead weight after merge — and the repo cache was already
           # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+          # Save even when a test fails (#5465): the deps build is still good.
+          # rust-cache saves only after a successful job otherwise, and the
+          # develop Linux leg rarely finished green (a red test, or a newer push
+          # cancelling it), so on 2026-11-11 no Linux `rust-tests` cache existed
+          # for develop and every PR leg compiled the workspace cold. The shards
+          # share one key (no matrix in it); the first to finish saves it.
+          cache-on-failure: true
+          # The key is spelled out (v0-rust-tests-<os>-<arch>-<env>-<lock>), not
+          # taken from the job id, because rust-cache-warm.yml saves the same
+          # Linux key from its own job (#5469); ci-changes.test.mjs pins both.
+          key: tests
+          add-job-id-key: 'false'
 
       # cargo-nextest runs the Rust tests with a per-test timeout (#5345). The
       # action checks the release archive's SHA-256 against its manifest;
@@ -1632,7 +1662,7 @@ jobs:
       - name: Install frontend dependencies
         if: >-
           needs.changes.outputs.frontend != 'false' &&
-          (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
+          matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
         run: pnpm install --frozen-lockfile
 
       - name: Make apt retry downloads
@@ -1687,10 +1717,13 @@ jobs:
       # (CI_RUST_TESTS_SPLIT_SERIAL) and run in the `agent-live-windows` job below
       # instead — serially, isolated from this leg (#2495, #3615). Linux and
       # macOS still run them here.
+      # On Linux this leg runs one hash partition of the bulk phase
+      # (CI_RUST_TESTS_SHARD, #5465); the script keeps the doc-tests on shard 1.
       - name: Run Rust tests
         if: needs.changes.outputs.rust != 'false'
         shell: bash
         env:
+          CI_RUST_TESTS_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
           TERMIHUB_AGENT_TEST_MAX_CONCURRENT: ${{ matrix.os == 'windows-latest' && '2' || '' }}
           CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
           # The Linux X11 delayed-render paste test (#4087) starts its own Xvfb and
@@ -1708,13 +1741,26 @@ jobs:
       # or agent binary a failure instead of a skip on Linux (openssh-server is
       # installed above) and macOS (ships sshd), so the #2476/#2491 regression
       # guard cannot pass without running (#4338, TBE2-006).
+      # Not partitioned: it runs once, on shard 1 (#5465).
       - name: Run Rust tests (contention-sensitive suites, capped threads)
-        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' && matrix.shard == 1 }}
         shell: bash
         env:
           CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
           TERMIHUB_REQUIRE_LOCAL_SSHD: ${{ matrix.os != 'windows-latest' && '1' || '' }}
         run: ./scripts/internal/ci-rust-tests.sh heavy --workspace
+
+      # Prove the shards split the bulk phase exactly (#5465): the N nextest
+      # hash partitions are disjoint and together list every bulk test. It
+      # lists the binaries this leg already built (no new compile), once per
+      # shard; a partition the listing ignored shows as overlap and fails.
+      - name: Check the Rust test shards cover the bulk phase exactly
+        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' && matrix.shards > 1 && matrix.shard == 1 }}
+        shell: bash
+        env:
+          CI_RUST_TESTS_SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
+          CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+        run: ./scripts/internal/ci-rust-tests.sh shards --workspace
 
       # The per-phase nextest JUnit reports (bulk, heavy), kept only when a test
       # step failed: they name every failed and timed-out test with its output.
@@ -1722,7 +1768,7 @@ jobs:
         if: failure() && needs.changes.outputs.rust != 'false'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rust-junit-${{ matrix.os }}
+          name: rust-junit-${{ matrix.os }}-${{ matrix.shard }}
           path: target/nextest/ci/junit-*.xml
           if-no-files-found: ignore
 
@@ -1737,7 +1783,7 @@ jobs:
       # tests ran — a missing keyring is a failure, not a skip. Windows runs the
       # .cmd twin against Credential Manager (run-unique names, self-cleaning).
       - name: Run real-keychain restore tests
-        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' && matrix.os != 'windows-latest' }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' && matrix.os != 'windows-latest' && matrix.shard == 1 }}
         shell: bash
         run: ./scripts/internal/real-keychain-tests.sh
 
@@ -1760,34 +1806,145 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/internal/shell-integration-cli-smoke.ps1 -Exe target/debug/termihub.exe
 
-      # Run coverage-gated tests once (Ubuntu) to enforce the vitest coverage
-      # floors from vitest.config.ts (#2066). Coverage is computed from the
-      # platform-independent TS sources, so gating on a single leg avoids
-      # per-platform coverage drift while still failing CI on a real drop. The
-      # other legs run the plain suite so every platform still exercises the tests.
-      - name: Run frontend tests with coverage
-        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.frontend != 'false'
-        run: pnpm test:coverage
+      # Non-Ubuntu vitest legs run post-merge only (#3325): the suite is
+      # platform-independent TS and already gates the PR in Frontend Tests.
+      - name: Run frontend tests
+        if: matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
+        run: pnpm test
+
+  # Frontend tests (vitest), sharded (#5465). The whole suite (~1270 files) took
+  # ~16-21 min on one runner, after the Rust tests in the same Linux leg, and was
+  # the PR gate's long pole. Each shard runs `--shard=k/N` of the files with
+  # coverage on and writes a blob report; Frontend Tests (coverage) merges them
+  # and checks the coverage floors from vitest.config.ts once, against the
+  # whole suite (a shard covers only its slice, so it checks none:
+  # TERMIHUB_VITEST_COVERAGE_SHARD). Coverage is computed from the
+  # platform-independent TS sources, so it gates on Linux only (#2066); the
+  # Windows/macOS Run Tests legs run the plain suite post-merge.
+  frontend-tests:
+    name: Frontend Tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    needs: changes
+    # Also skipped when the PR head commit carries [skip-tests] (#3915).
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      needs.changes.outputs.frontend != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep FRONTEND_TEST_SHARDS in frontend-coverage equal to the length.
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          cache: "true"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `--reporter=github-actions` keeps the failure annotations that vitest's
+      # default CI reporters add; naming any reporter replaces the defaults.
+      - name: Run frontend tests with coverage (shard)
+        env:
+          TERMIHUB_VITEST_COVERAGE_SHARD: '1'
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+          BLOB: .vitest-reports/blob-${{ matrix.shard }}.json
+        run: >-
+          pnpm exec vitest run --coverage --shard="$SHARD"
+          --reporter=default --reporter=github-actions --reporter=blob
+          --outputFile.blob="$BLOB"
+
+      - name: Upload the blob report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: .vitest-reports/
+          # upload-artifact skips dot-directories unless told otherwise, and
+          # .vitest-reports/ is vitest's default --merge-reports directory.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merges the Frontend Tests shards (#5465): every shard's results and coverage
+  # are combined, the coverage floors from vitest.config.ts are checked once
+  # over the whole suite, and the report is published (TOOL-004). Runs only when
+  # every shard passed; a failed shard already fails the PR Gate.
+  frontend-coverage:
+    name: Frontend Tests (coverage)
+    runs-on: ubuntu-latest
+    needs: [changes, frontend-tests]
+    if: ${{ !cancelled() && needs.frontend-tests.result == 'success' }}
+    env:
+      FRONTEND_TEST_SHARDS: '3'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          cache: "true"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download the shards' blob reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: vitest-blob-*
+          path: .vitest-reports
+          merge-multiple: true
+
+      # A missing blob would merge to lower coverage and fewer tests without
+      # saying why, so require exactly one per shard.
+      - name: Check every shard reported
+        shell: bash
+        run: |
+          set -euo pipefail
+          found="$(find .vitest-reports -maxdepth 1 -name 'blob-*.json' | wc -l | tr -d ' ')"
+          echo "blob reports: ${found} of ${FRONTEND_TEST_SHARDS}"
+          if [ "$found" -ne "$FRONTEND_TEST_SHARDS" ]; then
+            echo "::error::expected ${FRONTEND_TEST_SHARDS} vitest blob reports, found ${found}"
+            exit 1
+          fi
+
+      # Enforces the vitest coverage floors (#2066): the merge checks the
+      # thresholds against the combined coverage of every shard.
+      - name: Merge the shards and check the coverage floors
+        run: pnpm exec vitest --merge-reports --coverage --reporter=default
 
       # Publish the vitest coverage report (html + lcov + text) as a downloadable
-      # CI artifact (TOOL-004). `pnpm test:coverage` writes it to coverage/ (see
-      # vitest.config.ts) but nothing surfaced it before, so the html report was
-      # only ever produced locally. `if: always()` uploads it even when the
-      # coverage step failed a threshold, so a coverage drop can be inspected from
-      # the failed run. This is a plain artifact upload — advisory only, no gate.
+      # CI artifact (TOOL-004). The merge writes it to coverage/ (see
+      # vitest.config.ts). `if: always()` uploads it even when a threshold
+      # failed, so a coverage drop can be inspected from the failed run. This is
+      # a plain artifact upload, advisory only, no gate.
       - name: Upload coverage report artifact
-        if: always() && matrix.os == 'ubuntu-latest' && needs.changes.outputs.frontend != 'false'
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frontend-coverage
           path: coverage/
           if-no-files-found: warn
-
-      # Non-Ubuntu vitest legs run post-merge only (#3325): the suite is
-      # platform-independent TS and already gates the PR on the Ubuntu leg.
-      - name: Run frontend tests
-        if: matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
-        run: pnpm test
 
   # Windows live-agent-TCP tests, serial + isolated (#2495, #3615). BLOCKING.
   #
@@ -1804,20 +1961,19 @@ jobs:
   # else on the runner. Its non-blocking predecessor (the "Serial Grade" lane)
   # was green on 29/29 non-cancelled runs before this was made blocking.
   #
-  # Runs on any PR that touches what the agent builds from (the `agent` area:
-  # agent/, core/, plugin-api/, plugin-runner/, vendor/, workspace manifests/toolchain, the test
-  # driver script) and on every push to develop/main. A skipped job reports
-  # success, so requiring this check does not block unrelated PRs. The script's
-  # `serial` phase fails if fewer than the expected count ran (26 on Windows)
-  # or any was ignored, so the filter can never go green by selecting nothing.
+  # Post-merge only (#5465): every push to develop/main and workflow_dispatch,
+  # never on a pull_request, so the PR gate waits on no Windows runner. The
+  # script's `serial` phase fails if fewer than the expected count ran (26 on
+  # Windows) or any was ignored, so the filter can never go green by selecting
+  # nothing.
   agent-live-windows:
     name: Agent Live Tests (Windows, serial)
     runs-on: windows-latest
     needs: changes
-    # Also skipped when the PR head commit carries [skip-tests] (#3915).
+    # Post-merge only (#5465); `tests`/`agent` are always on there.
     if: >-
-      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
-      needs.changes.outputs.agent != 'false' }}
+      ${{ !cancelled() && github.event_name != 'pull_request' &&
+      needs.changes.outputs.tests != 'false' && needs.changes.outputs.agent != 'false' }}
     # The 26 tests take ~1min serially; a cold build is the long pole. The
     # script's own deadline (CI_SERIAL_TIMEOUT_SECS) kills a wedged run first
     # and names the stuck test; this ceiling is only the backstop.
@@ -2004,7 +2160,6 @@ jobs:
     needs:
       - changes
       - rust-quality
-      - rust-quality-windows
       - rustdoc
       - plugin-fuzz-check
       - rdp-sidecar-quality
@@ -2014,7 +2169,8 @@ jobs:
       - actionlint
       - cmd-scripts-windows
       - tests
-      - agent-live-windows
+      - frontend-tests
+      - frontend-coverage
       - system-test-machinery
       - testid-drift-guard
       - commit-lint

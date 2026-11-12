@@ -102,4 +102,16 @@ impl RangedTransferTarget for RemoteFileBrowserProxy {
     async fn realpath(&self, path: &str) -> Result<String, FileError> {
         PathCanonicalizer::realpath(self, path).await
     }
+
+    /// The same filesystem the session's file browser reports (#5355), so a
+    /// streamed copy between two sessions on one agent host runs the
+    /// same-file guard.
+    fn filesystem_id(&self) -> Option<termihub_core::files::shared_fs::FilesystemId> {
+        FileBrowser::filesystem_id(self)
+    }
+
+    /// The same hint the session's file browser reports (#5430).
+    fn filesystem_hint(&self) -> Option<termihub_core::files::shared_fs::FilesystemHint> {
+        FileBrowser::filesystem_hint(self)
+    }
 }

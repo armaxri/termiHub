@@ -448,7 +448,7 @@ pub async fn remote_desktop_upload(
 /// user-facing reason files are refused (uploads, and browsing since #4193).
 pub(crate) async fn upload_carrier(
     channel: RemoteDesktopFileChannel,
-    ssh: Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
+    ssh: Option<crate::session::graphical_file_channel::SideChannelSsh>,
     agents: Arc<dyn AgentRequests>,
 ) -> Result<
     (
@@ -475,15 +475,10 @@ pub(crate) async fn upload_carrier(
         (termihub_core::connection::FileSideChannelKind::Agent, Some(agent_id), _) => {
             UploadCarrier::Agent(Arc::new(AgentHostFiles::new(agent_id, agents)))
         }
-        (termihub_core::connection::FileSideChannelKind::Ssh, _, Some(session)) => {
-            let browser = termihub_core::backends::ssh::SftpFileBrowser::from_session(session)
-                .await
-                .map_err(|e| {
-                    TerminalError::SftpError(format!(
-                        "SFTP is not enabled on {} ({e})",
-                        channel.host
-                    ))
-                })?;
+        (termihub_core::connection::FileSideChannelKind::Ssh, _, Some(ssh)) => {
+            let browser = ssh.sftp_browser().await.map_err(|e| {
+                TerminalError::SftpError(format!("SFTP is not enabled on {} ({e})", channel.host))
+            })?;
             UploadCarrier::Sftp(Arc::new(browser))
         }
         _ => {

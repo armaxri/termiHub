@@ -8,6 +8,8 @@ bastion's gateway count, and the server-control twin's session lookup and
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 
 import pytest
@@ -439,8 +441,17 @@ def test_ssh_server_control_picks_the_native_twin(monkeypatch):
     assert isinstance(
         fixtures.ssh_server_control(fixtures.SSH_KEYS_SERVICE), native_ssh.NativeSshServerControl
     )
-    # A fixture-specific container (sudo host, SFTP-only host, agent) stays Docker.
+    # Where the native target serves no fixture-specific hosts (Windows), the
+    # sudo and SFTP-only hosts stay Docker; on macOS they are native (#5423).
+    monkeypatch.setattr(native_ssh, "HOST_PLATFORMS", ())
     assert isinstance(fixtures.ssh_server_control("ssh-sudo"), fixtures.SshServerControl)
+    monkeypatch.setattr(native_ssh, "HOST_PLATFORMS", (sys.platform,))
+    for service in (fixtures.SSH_SUDO_SERVICE, fixtures.SSH_SFTP_ONLY_SERVICE):
+        assert isinstance(fixtures.ssh_server_control(service), native_ssh.NativeSshServerControl)
+    # The no-sudo host's files are another user's: no control of it is offered.
+    assert isinstance(
+        fixtures.ssh_server_control(fixtures.SSH_NOSUDO_SERVICE), fixtures.SshServerControl
+    )
     monkeypatch.setattr(fixtures, "NATIVE_SSH_TARGET", None)
     control = fixtures.ssh_server_control()
     assert isinstance(control, fixtures.SshServerControl)
@@ -650,3 +661,150 @@ def test_ed25519_reads_the_committed_test_only_key():
     assert len(base64.b64decode(signature)) == 64
     with pytest.raises(ValueError):
         ed25519.seed_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")
+
+
+# ── Fixture-specific hosts (#5423) ────────────────────────────────────────────
+def test_fixture_specific_hosts_are_served_on_macos_only():
+    hosts = set(native_ssh.HOST_FIXTURES)
+    assert hosts == {"ssh_permission_fixtures", "ssh_banner_fixtures", "ssh_sftp_only_fixtures"}
+    assert native_ssh.served_fixtures("darwin") >= hosts
+    assert not native_ssh.served_fixtures("win32") & hosts
+    containers = hosts | {"vnc_fixtures"}
+    for name in hosts:
+        # Unmarked: not ported on macOS; marked: runs; Windows keeps the
+        # container fixture's own skip reason.
+        assert (
+            skip_reason([name], None, target=TARGET, platform="darwin", container_fixtures=containers)
+            == NOT_PORTED_REASON
+        )
+        assert (
+            skip_reason([name], ("darwin",), target=TARGET, platform="darwin", container_fixtures=containers)
+            is None
+        )
+        assert (
+            skip_reason([name], None, target=TARGET, platform="win32", container_fixtures=containers)
+            is None
+        )
+
+
+def test_every_host_is_a_variant_with_flags_and_its_own_port():
+    names = [name for hosts in native_ssh.HOST_FIXTURES.values() for name in hosts]
+    assert sorted(names) == sorted(native_ssh.HOST_VARIANT_FLAGS)
+    ports = {name: native_ssh.variant_port(TARGET, name) for name in native_ssh.VARIANT_PORT_OFFSETS}
+    assert len(set(ports.values())) == len(ports), "two variants share a port"
+    assert TARGET.jump_port not in ports.values()
+    assert ports["sudo"] == 22413 and ports["sftponly"] == 22416
+    # Only the sudo host gets the sudo rule; the no-sudo host is the second user.
+    assert "--sudoer" in native_ssh.HOST_VARIANT_FLAGS["sudo"]
+    assert "--sudoer" not in native_ssh.HOST_VARIANT_FLAGS["nosudo"]
+    assert "--second-user" in native_ssh.HOST_VARIANT_FLAGS["nosudo"]
+
+
+def test_variant_up_passes_the_host_flags(monkeypatch, tmp_path):
+    target = NativeSshTarget(port=1000, username="u", password="p", state_dir=str(tmp_path))
+    calls = []
+
+    class _Done:
+        returncode = 0
+        stdout = "/home/v/sudo\n"
+        stderr = ""
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        return _Done()
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    variant = native_ssh.NativeAgentVariant(target, "sudo")
+    assert variant.ensure(flags=native_ssh.HOST_VARIANT_FLAGS["sudo"]) == "/home/v/sudo"
+    (cmd,) = calls
+    assert cmd[2:7] == ["variant-up", "--variant", "sudo", "--port", "1013"]
+    assert cmd[7:9] == ["--sudoer", "--elevated-target"]
+
+
+@pytest.fixture
+def fixture_state(tmp_path, monkeypatch):
+    """A fake fixture state dir (no sshd), and a ``sudo`` shim that records any call.
+
+    The real script runs against it: every refusal below must happen before
+    anything privileged, so the shim must never be called.
+    """
+    if sys.platform == "win32":
+        pytest.skip("the fixture script's POSIX path")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "sshd_config").write_text("# fake\n", encoding="utf-8")
+    (state / "port").write_text("1\n", encoding="utf-8")
+    shims = tmp_path / "bin"
+    shims.mkdir()
+    marker = tmp_path / "sudo-called"
+    shim = shims / "sudo"
+    shim.write_text(f"#!/bin/sh\necho \"$@\" >> '{marker}'\nexit 1\n", encoding="utf-8")
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shims}:{os.environ['PATH']}")
+    for name in ("CI", "TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER", "GITHUB_ACTIONS"):
+        monkeypatch.delenv(name, raising=False)
+    return state, marker
+
+
+def _fixture_sh(*args):
+    return subprocess.run(
+        ["bash", str(native_ssh._FIXTURE_SH), *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+@pytest.mark.parametrize("flag", ["--sudoer", "--second-user", "--elevated-target"])
+def test_system_changes_refuse_off_ci(fixture_state, flag):
+    state, marker = fixture_state
+    result = _fixture_sh("variant-up", "--variant", "sudo", "--port", "2", flag, "--dir", str(state))
+    assert result.returncode != 0
+    assert "runs only on CI" in result.stderr
+    assert not marker.exists(), "nothing privileged may run before the guard"
+    assert not (state / "variants" / "sudo").exists()
+
+
+def test_system_changes_need_the_root_fixture_even_when_allowed(fixture_state, monkeypatch):
+    state, marker = fixture_state
+    monkeypatch.setenv("TERMIHUB_NATIVE_SSHD_ALLOW_SYSTEM_USER", "1")
+    result = _fixture_sh("variant-up", "--variant", "sudo", "--port", "2", "--sudoer", "--dir", str(state))
+    assert result.returncode != 0
+    assert "needs a --password-login fixture" in result.stderr
+    assert not marker.exists()
+
+
+def test_sudoer_and_second_user_exclude_each_other(fixture_state):
+    state, marker = fixture_state
+    result = _fixture_sh(
+        "variant-up", "--variant", "x", "--port", "2", "--sudoer", "--second-user", "--dir", str(state)
+    )
+    assert result.returncode != 0
+    assert "exclude each other" in result.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("state_file", "content", "message"),
+    [
+        ("sudoers_dropin", "/etc/sudoers", "unexpected sudoers file"),
+        ("elevated_target", "/etc/passwd", "unexpected file"),
+        ("second_user", "someone", "unexpected user"),
+    ],
+)
+def test_down_removes_only_the_recorded_fixed_paths(fixture_state, state_file, content, message):
+    state, marker = fixture_state
+    (state / state_file).write_text(content + "\n", encoding="utf-8")
+    result = _fixture_sh("down", "--dir", str(state))
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert not marker.exists()
+
+
+def test_down_without_system_changes_is_idempotent(fixture_state):
+    state, marker = fixture_state
+    for _ in range(2):
+        result = _fixture_sh("down", "--dir", str(state))
+        assert result.returncode == 0, result.stderr
+    assert not state.exists()
+    assert not marker.exists()

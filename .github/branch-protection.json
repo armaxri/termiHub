@@ -57,7 +57,7 @@
       },
       "pending": {
         "when": "On the next develop -> main release merge: right after the release PR into main is opened, before it has to go green (the current set names checks the slim lane no longer reports, so that PR could never merge).",
-        "note": "Same non-matrix set as develop: every context is a code-quality.yml job gated by a job-level `if`, so it reports (success or skipped) on every PR, and 'PR Gate' (#3678) aggregates the Run Tests matrix legs. Dropped: the Run Tests / Build matrix legs (a skipped matrix reports under its bare name; macOS/Windows legs are post-merge only) and Security Audit (workflow-level paths filter; post-merge and daily per #3326). The rest of main's rules are unchanged.",
+        "note": "Same non-matrix set as develop: every context is a code-quality.yml job gated by a job-level `if`, so it reports (success or skipped) on every PR, and 'PR Gate' (#3678) aggregates the Run Tests matrix legs. Dropped: the Run Tests / Build matrix legs (a skipped matrix reports under its bare name; macOS/Windows legs are post-merge only), Rust Code Quality (Windows) and Agent Live Tests (Windows, serial) (post-merge only since #5465, never reported on a PR) and Security Audit (workflow-level paths filter; post-merge and daily per #3326). The rest of main's rules are unchanged.",
         "protection": {
           "required_status_checks": {
             "strict": false,
@@ -65,9 +65,7 @@
             "contexts": [
               "Lint Commit Messages",
               "Rust Code Quality",
-              "Rust Code Quality (Windows)",
               "Frontend Code Quality",
-              "Agent Live Tests (Windows, serial)",
               "RDP Sidecar Quality",
               "Shell Script Quality",
               "Windows cmd Script Smoke",
@@ -97,7 +95,7 @@
     },
     "develop": {
       "status": "proposed",
-      "note": "PROPOSED - maintainer applies with scripts/internal/apply-branch-protection.sh --branch develop --apply, then flips status to enforced. Every context is a non-matrix job of code-quality.yml gated by a job-level `if`, so it reports (success or skipped) on every PR to develop. 'PR Gate' (#3678) is the always-reporting aggregate that gates the Run Tests matrix legs.",
+      "note": "PROPOSED - maintainer applies with scripts/internal/apply-branch-protection.sh --branch develop --apply, then flips status to enforced. Every context is a non-matrix job of code-quality.yml gated by a job-level `if`, so it reports (success or skipped) on every PR to develop. 'PR Gate' (#3678) is the always-reporting aggregate that gates the Run Tests matrix legs and the Frontend Tests shards. The Windows jobs (Rust Code Quality (Windows), Agent Live Tests (Windows, serial)) run post-merge only (#5465), so they are not required.",
       "protection": {
         "required_status_checks": {
           "strict": false,
@@ -105,9 +103,7 @@
           "contexts": [
             "Lint Commit Messages",
             "Rust Code Quality",
-            "Rust Code Quality (Windows)",
             "Frontend Code Quality",
-            "Agent Live Tests (Windows, serial)",
             "RDP Sidecar Quality",
             "Shell Script Quality",
             "Windows cmd Script Smoke",

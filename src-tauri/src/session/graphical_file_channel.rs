@@ -40,6 +40,8 @@ use termihub_core::connection::graphical_files::{
 use termihub_core::connection::{
     FileChannelPolicy, FileChannelUnavailable, FileSideChannel, FileSideChannelKind,
 };
+use termihub_core::errors::FileError;
+use termihub_core::files::shared_fs::FilesystemIdentity;
 use termihub_core::files::{FileBrowser, FileEntry};
 use termihub_core::protocol::methods::CONNECTION_FILES_STAT;
 
@@ -339,7 +341,7 @@ enum LinkedRoute {
     /// No usable link: no route from it.
     None,
     /// The link resolved and its session is up.
-    Ready(FileSideChannel, Arc<SshSession>),
+    Ready(FileSideChannel, SideChannelSsh),
     /// The link resolved but its host refused or cannot be signed in to; with
     /// the secret to ask the user for when that would fix it (#4265).
     Degraded(FileSideChannel, String, Option<LinkedSecretRequest>),
@@ -384,15 +386,19 @@ async fn resolve_linked_route(route: &LinkedFileRoute, linked: &LinkedResolver) 
         &target.name,
     );
     let key = LinkedKey::of(&target);
+    let ssh = |session: Arc<SshSession>| SideChannelSsh {
+        session,
+        identity: Some(FilesystemIdentity::ssh(&target.config)),
+    };
     if let Some((held, conn)) = cache.held.as_ref() {
         if *held == key && !conn.session.is_closed() {
-            return LinkedRoute::Ready(channel, conn.session.clone());
+            return LinkedRoute::Ready(channel, ssh(conn.session.clone()));
         }
     }
     cache.held = None;
     match linked.source.connect(&target.config).await {
         Ok(conn) => {
-            let session = conn.session.clone();
+            let session = ssh(conn.session.clone());
             cache.held = Some((key, conn));
             LinkedRoute::Ready(channel, session)
         }
@@ -468,7 +474,31 @@ pub enum RemoteDesktopFileChannel {
 #[derive(Default)]
 pub(crate) struct BackendSideChannel {
     pub channel: Option<FileSideChannel>,
-    pub session: Option<Arc<SshSession>>,
+    pub session: Option<SideChannelSsh>,
+}
+
+/// The SSH session an SSH route's SFTP channel opens on, with the
+/// filesystem identity of the server it was dialled to (#5439): the tunnel's
+/// config, or the linked saved connection's. The side channel's browser
+/// reports it, so a paste between it and another session to that server is
+/// guarded like one between two SFTP sessions.
+#[derive(Clone)]
+pub(crate) struct SideChannelSsh {
+    pub session: Arc<SshSession>,
+    pub identity: Option<FilesystemIdentity>,
+}
+
+impl SideChannelSsh {
+    /// An SFTP browser on this session, reporting the server's identity.
+    pub(crate) async fn sftp_browser(&self) -> Result<SftpFileBrowser, FileError> {
+        match &self.identity {
+            Some(identity) => {
+                SftpFileBrowser::from_session_identified(self.session.clone(), identity.clone())
+                    .await
+            }
+            None => SftpFileBrowser::from_session(self.session.clone()).await,
+        }
+    }
 }
 
 /// The agent calls the agent route needs — a seam so route resolution is
@@ -539,7 +569,7 @@ pub(crate) async fn resolve_file_channel_routed(
     backend: BackendSideChannel,
     agents: Option<Arc<dyn AgentFiles>>,
     linked: Option<&LinkedResolver>,
-) -> (RemoteDesktopFileChannel, Option<Arc<SshSession>>) {
+) -> (RemoteDesktopFileChannel, Option<SideChannelSsh>) {
     let agent = ctx
         .agent
         .as_ref()
@@ -594,7 +624,7 @@ pub(crate) async fn resolve_file_channel_routed(
         }
         _ => {
             let dir = match ssh_session.clone() {
-                Some(session) => ssh_default_dir(session, configured.as_deref()).await,
+                Some(ssh) => ssh_default_dir(ssh.session, configured.as_deref()).await,
                 None => Err("The SSH tunnel is not connected".to_string()),
             };
             (None, dir)
