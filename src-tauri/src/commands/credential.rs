@@ -136,6 +136,11 @@ fn unreadable_source_error(current_mode: &StorageMode, detail: &str) -> String {
 ///   shared named credentials (#3557) — is probed explicitly (#3844). The
 ///   keychain's key index is seeded from them (and from recorded candidates)
 ///   first, so items only the index can name are listed too.
+/// - A probe key that is **not** listed and cannot be read does not abort
+///   the switch (#5514): the store has no record of holding a secret under
+///   it, so it is skipped with a warning and left untouched in the store. A
+///   fresh OS keychain store lists nothing, so a probe error there must not
+///   strand the user in it. Listed keys stay fail-closed.
 fn collect_credentials_for_migration(
     manager: &CredentialManager,
     current_mode: &StorageMode,
@@ -146,27 +151,50 @@ fn collect_credentials_for_migration(
     // secrets. It reads the keychain, so it runs here — in the user-initiated
     // switch — and never at startup. A no-op for the other stores.
     manager.seed_key_index(probe_keys);
-    let mut keys_to_migrate = manager
+    let listed = manager
         .list_keys()
         .map_err(|e| unreadable_source_error(current_mode, &e.to_string()))?;
+    read_for_migration(&listed, probe_keys, |key| manager.get(key))
+        .map_err(|e| unreadable_source_error(current_mode, &e))
+}
+
+/// Read every `listed` key and every not-listed `probe_keys` entry with
+/// `get` (see [`collect_credentials_for_migration`]). A read error of a
+/// listed key fails the whole read; one of a probe-only key skips that key.
+fn read_for_migration(
+    listed: &[CredentialKey],
+    probe_keys: &[CredentialKey],
+    get: impl Fn(&CredentialKey) -> anyhow::Result<Option<String>>,
+) -> Result<Vec<(CredentialKey, String)>, String> {
+    let mut credentials = Vec::new();
+    for key in listed {
+        match get(key) {
+            Ok(Some(value)) => credentials.push((key.clone(), value)),
+            // Key vanished between list and get — nothing to migrate for it.
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let mut probed: Vec<&CredentialKey> = Vec::new();
     for key in probe_keys {
-        if !keys_to_migrate.contains(key) {
-            keys_to_migrate.push(key.clone());
+        if listed.contains(key) || probed.contains(&key) {
+            continue;
         }
-    }
-
-    let mut credentials_to_migrate = Vec::new();
-    for key in &keys_to_migrate {
-        match manager.get(key) {
-            Ok(Some(value)) => credentials_to_migrate.push((key.clone(), value)),
-            Ok(None) => {
-                // Key vanished between list and get — nothing to migrate for it.
+        probed.push(key);
+        match get(key) {
+            Ok(Some(value)) => credentials.push((key.clone(), value)),
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    key = %key,
+                    error = %e,
+                    "Skipping an unlisted credential key that could not be read; \
+                     it is left untouched in the current store"
+                );
             }
-            Err(e) => return Err(unreadable_source_error(current_mode, &e.to_string())),
         }
     }
-
-    Ok(credentials_to_migrate)
+    Ok(credentials)
 }
 
 /// Migrate collected credentials into the freshly-switched store, logging the
@@ -1112,6 +1140,33 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(mgr.get(&key).unwrap(), Some("my-secret".to_string()));
+    }
+
+    /// #5514: a probe key the store never listed must not block a switch
+    /// when it cannot be read; a listed key still does (fail-closed).
+    #[test]
+    fn an_unreadable_probe_only_key_does_not_block_the_switch() {
+        let own = CredentialKey::new("conn-own", CredentialType::Password);
+        let probe = CredentialKey::new("Chooser test (SSH)", CredentialType::Password);
+        let get = |key: &CredentialKey| {
+            if *key == probe {
+                Err(anyhow::anyhow!("Failed to read OS keychain entry for {key}"))
+            } else {
+                Ok(Some(format!("secret-of-{key}")))
+            }
+        };
+
+        let read = read_for_migration(
+            std::slice::from_ref(&own),
+            &[probe.clone(), own.clone(), probe.clone()],
+            get,
+        )
+        .unwrap();
+        assert_eq!(read, vec![(own.clone(), "secret-of-conn-own:password".to_string())]);
+
+        // The same error on a listed key aborts.
+        let err = read_for_migration(&[own.clone(), probe.clone()], &[], get).unwrap_err();
+        assert!(err.contains("Chooser test (SSH):password"), "{err}");
     }
 
     /// A readable master-password source returns every credential so the switch

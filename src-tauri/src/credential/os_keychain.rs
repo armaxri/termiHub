@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use keyring::{Entry, Error as KeyringError};
 use tracing::{debug, info, warn};
 use zeroize::Zeroize;
 
+use super::keychain_error;
 use super::keychain_index::KeychainKeyIndex;
 use super::keychain_namespace::KeychainNamespace;
 use super::keyring_thread::off_runtime;
@@ -163,6 +164,24 @@ impl OsKeychainStore {
         }
     }
 
+    /// The error of a failed keychain write of `key`, with the keyring error
+    /// and — when an item this build may not read blocks the write — what
+    /// the user can do about it (#5514).
+    fn write_error(&self, key: &CredentialKey, error: &KeyringError) -> anyhow::Error {
+        let detail = keychain_error::describe(error);
+        if keychain_error::is_duplicate_item(error) {
+            anyhow!(
+                "Failed to write OS keychain entry for {key}: {detail}. The keychain already holds \
+                 an item for it (service \"{}\") that this build may not change, likely written \
+                 by another termiHub build. Allow access when macOS asks, or delete that item in \
+                 Keychain Access, then save again.",
+                self.service
+            )
+        } else {
+            anyhow!("Failed to write OS keychain entry for {key}: {detail}")
+        }
+    }
+
     /// Return a cached [`keyring::Entry`] for the given credential key,
     /// creating and caching it on first use.
     ///
@@ -199,14 +218,31 @@ impl CredentialStore for OsKeychainStore {
                 }
                 Ok(None)
             }
-            Err(e) => Err(e).with_context(|| format!("Failed to read OS keychain entry for {key}")),
+            Err(e) if keychain_error::is_access_denied(&e) && !self.index.contains(key) => {
+                // An item exists that this build may not read — written by an
+                // earlier, differently signed build (every unsigned dev build
+                // is), or a prompt the user declined. This store never wrote
+                // it, so it holds none of this store's secrets: treat it as
+                // absent rather than strand the store on it (#5514). A key the
+                // store did write (indexed) stays fail-closed below.
+                warn!(
+                    key = %key,
+                    service = %self.service,
+                    error = %keychain_error::describe(&e),
+                    "Ignoring an OS keychain item this build may not read and never wrote"
+                );
+                Ok(None)
+            }
+            Err(e) => Err(anyhow!(
+                "Failed to read OS keychain entry for {key}: {}",
+                keychain_error::describe(&e)
+            )),
         }
     }
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
         let entry = self.entry(key)?;
-        off_runtime(|| entry.set_password(value))
-            .with_context(|| format!("Failed to write OS keychain entry for {key}"))?;
+        off_runtime(|| entry.set_password(value)).map_err(|e| self.write_error(key, &e))?;
         // The secret is stored; failing to record its name must not fail the
         // write. The in-memory index keeps it for the next successful persist.
         if let Err(e) = self.index.insert(key) {
@@ -219,10 +255,23 @@ impl CredentialStore for OsKeychainStore {
         let entry = self.entry(key)?;
         match off_runtime(|| entry.delete_credential()) {
             Ok(()) | Err(KeyringError::NoEntry) => {}
+            Err(e) if keychain_error::is_access_denied(&e) && !self.index.contains(key) => {
+                // A leftover this store never wrote and may not touch (see
+                // `get`): nothing of this store's to delete (#5514).
+                warn!(
+                    key = %key,
+                    service = %self.service,
+                    error = %keychain_error::describe(&e),
+                    "Left an OS keychain item this build may not delete and never wrote"
+                );
+                return Ok(());
+            }
             Err(e) => {
                 // The item may still be there: keep it indexed.
-                return Err(e)
-                    .with_context(|| format!("Failed to delete OS keychain entry for {key}"));
+                return Err(anyhow!(
+                    "Failed to delete OS keychain entry for {key}: {}",
+                    keychain_error::describe(&e)
+                ));
             }
         }
         if let Err(e) = self.index.remove(key) {
