@@ -1535,3 +1535,102 @@ fn removing_a_gave_up_tab_forgets_the_give_up() {
     store.reconnect("tab");
     assert_eq!(store.status("tab"), Some(SessionStatus::Reconnecting));
 }
+
+// ── #5395: the last attempt's failure reason ─────────────────────────────────
+
+/// A store with `s1` in a running loop whose first attempt failed with `reason`.
+fn store_waiting_after_a_failed_attempt(reason: &str) -> SessionLifecycleStore {
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    store.reconnect_attempt("s1");
+    store.reconnect_failed("s1", Some(reason.to_string()));
+    store
+}
+
+#[test]
+fn a_failed_attempt_keeps_its_reason_while_the_loop_waits() {
+    let store = store_waiting_after_a_failed_attempt("Serial port /dev/ttyUSB0 is not present.");
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Waiting);
+    assert_eq!(
+        s.last_attempt_error.as_deref(),
+        Some("Serial port /dev/ttyUSB0 is not present.")
+    );
+    // Still waiting, so it is not the terminal error.
+    assert_eq!(s.error, None);
+}
+
+#[test]
+fn the_reason_survives_the_next_attempt_and_is_replaced_by_its_failure() {
+    let store = store_waiting_after_a_failed_attempt("Serial port /dev/ttyUSB0 is not present.");
+    store.reconnect_attempt("s1");
+    assert_eq!(
+        store.get("s1").unwrap().last_attempt_error.as_deref(),
+        Some("Serial port /dev/ttyUSB0 is not present."),
+        "kept while the next attempt is in flight"
+    );
+    store.reconnect_failed(
+        "s1",
+        Some("A different device (USB 1a86:7523) is on /dev/ttyUSB0. It was not opened.".into()),
+    );
+    assert_eq!(
+        store.get("s1").unwrap().last_attempt_error.as_deref(),
+        Some("A different device (USB 1a86:7523) is on /dev/ttyUSB0. It was not opened.")
+    );
+}
+
+#[test]
+fn a_successful_attempt_clears_the_reason() {
+    let store = store_waiting_after_a_failed_attempt("port missing");
+    store.reconnect_attempt("s1");
+    store.connected("s1");
+    assert_eq!(store.get("s1").unwrap().last_attempt_error, None);
+}
+
+#[test]
+fn cancelling_the_loop_clears_the_reason() {
+    let store = store_waiting_after_a_failed_attempt("port missing");
+    store.cancel_reconnect("s1");
+    assert_eq!(store.get("s1").unwrap().last_attempt_error, None);
+}
+
+#[test]
+fn giving_up_moves_the_reason_to_the_terminal_error() {
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    let max = TERMINAL_RECONNECT_POLICY.max_attempts;
+    for n in 1..max {
+        store.reconnect_attempt("s1");
+        store.reconnect_failed("s1", Some(format!("attempt {n} failed")));
+    }
+    store.reconnect_attempt("s1");
+    store.reconnect_failed("s1", Some("last attempt failed".into()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::Failed);
+    assert_eq!(s.error.as_deref(), Some("last attempt failed"));
+    assert_eq!(s.last_attempt_error, None);
+}
+
+#[test]
+fn a_restarted_loop_starts_without_a_stale_reason() {
+    let store = store_waiting_after_a_failed_attempt("port missing");
+    store.reconnect_attempt("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    assert_eq!(store.get("s1").unwrap().last_attempt_error, None);
+}
+
+#[test]
+fn the_reason_is_published_as_last_attempt_error() {
+    let store = store_waiting_after_a_failed_attempt("port missing");
+    let json = serde_json::to_value(store.get("s1").unwrap()).unwrap();
+    assert_eq!(json["lastAttemptError"], "port missing");
+    store.reconnect_attempt("s1");
+    store.connected("s1");
+    let json = serde_json::to_value(store.get("s1").unwrap()).unwrap();
+    assert!(json.get("lastAttemptError").is_none(), "omitted when unset");
+}

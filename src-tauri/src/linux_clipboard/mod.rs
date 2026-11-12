@@ -403,6 +403,70 @@ mod tests {
         assert_eq!(Target::from_mime(""), None);
     }
 
+    /// A context whose fake fetcher maps index `i` to `outcomes[i]` (a staged
+    /// path, or `None` for a failed fetch) and records every call.
+    fn fake_ctx(
+        outcomes: Vec<Option<PathBuf>>,
+        indices: Vec<u32>,
+    ) -> (FetchContext, std::sync::Arc<std::sync::Mutex<Vec<u32>>>) {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = std::sync::Arc::clone(&calls);
+        let ctx = FetchContext {
+            fetcher: Fetcher::Fake(std::sync::Arc::new(move |index| {
+                recorded.lock().unwrap().push(index);
+                outcomes
+                    .get(index as usize)
+                    .cloned()
+                    .flatten()
+                    .ok_or_else(|| anyhow::anyhow!("fetch {index} failed"))
+            })),
+            indices,
+        };
+        (ctx, calls)
+    }
+
+    #[test]
+    fn render_fetches_each_index_in_order_for_each_target() {
+        let (ctx, calls) = fake_ctx(
+            vec![
+                Some(PathBuf::from("/tmp/a.txt")),
+                Some(PathBuf::from("/tmp/b c.txt")),
+            ],
+            vec![1, 0],
+        );
+        assert_eq!(
+            ctx.render(Target::UriList),
+            Some(b"file:///tmp/b%20c.txt\r\nfile:///tmp/a.txt\r\n".to_vec())
+        );
+        assert_eq!(
+            ctx.render(Target::GnomeCopiedFiles),
+            Some(b"copy\nfile:///tmp/b%20c.txt\nfile:///tmp/a.txt".to_vec())
+        );
+        // Every render is a fresh fetch of every promised file.
+        assert_eq!(*calls.lock().unwrap(), vec![1, 0, 1, 0]);
+    }
+
+    #[test]
+    fn render_skips_a_failed_fetch_and_serves_the_rest() {
+        let (ctx, calls) = fake_ctx(vec![None, Some(PathBuf::from("/tmp/ok.bin"))], vec![0, 1]);
+        assert_eq!(
+            ctx.render(Target::UriList),
+            Some(b"file:///tmp/ok.bin\r\n".to_vec())
+        );
+        assert_eq!(*calls.lock().unwrap(), vec![0, 1]);
+    }
+
+    #[test]
+    fn render_refuses_rather_than_serving_empty_when_nothing_fetched() {
+        let (ctx, _) = fake_ctx(vec![None, None], vec![0, 1]);
+        assert_eq!(ctx.render(Target::UriList), None);
+        assert_eq!(ctx.render(Target::GnomeCopiedFiles), None);
+        // No promised files at all is a refusal too, not an empty payload.
+        let (empty, calls) = fake_ctx(vec![], vec![]);
+        assert_eq!(empty.render(Target::UriList), None);
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn var_is_present_requires_a_non_empty_value() {
         use std::ffi::OsStr;
