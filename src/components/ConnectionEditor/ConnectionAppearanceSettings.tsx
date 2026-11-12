@@ -36,7 +36,7 @@ export function ConnectionAppearanceSettings({
 
       <Field
         variant="settings"
-        label="Tab Color"
+        label="Tab color"
         hint="Accent color shown on the connection tab and sidebar entry."
       >
         {/* Fragment: the buttons carry their own accessible names. */}
@@ -54,7 +54,7 @@ export function ConnectionAppearanceSettings({
               onClick={() => setColorPickerOpen(true)}
               data-testid="connection-editor-color-picker"
             >
-              {color ? "Change" : "Set Color"}
+              {color ? "Change" : "Set color"}
             </Button>
             {color && (
               <Button
@@ -84,7 +84,7 @@ export function ConnectionAppearanceSettings({
               onClick={() => setIconPickerOpen(true)}
               data-testid="connection-editor-icon-picker"
             >
-              {icon ? "Change" : "Set Icon"}
+              {icon ? "Change" : "Set icon"}
             </Button>
             {icon && (
               <Button

@@ -297,7 +297,7 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
 
     # ── MT-SSH-09 ────────────────────────────────────────────────────────────
     def test_setup_ssh_agent_button_runs_the_agent_setup_in_a_tab(self):
-        """MT-SSH-09: "Setup SSH Agent" opens a tab that runs the agent setup.
+        """MT-SSH-09: "Set up SSH agent" opens a tab that runs the agent setup.
 
         macOS/Linux: the tab evaluates ``ssh-agent -s`` (its "Agent pid N" line
         proves it ran) and the started agent is stopped by that PID afterwards.
@@ -316,9 +316,9 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
         self.select_connection_type("ssh")
         self.wait(lambda: self.driver.exists("field-authMethod"), what="the SSH fields")
         self.driver.select("field-authMethod", "agent")
-        self.wait(lambda: self.driver.exists("ssh-setup-agent"), what="the Setup SSH Agent button")
+        self.wait(lambda: self.driver.exists("ssh-setup-agent"), what="the Set up SSH agent button")
         self.driver.click("ssh-setup-agent")
-        tab = self.wait(lambda: self.find_tab("Setup SSH Agent"), what="the Setup SSH Agent tab")
+        tab = self.wait(lambda: self.find_tab("Set up SSH agent"), what="the Set up SSH agent tab")
         if sys.platform == "win32":
             self._assert_windows_agent_setup(tab["id"])
         else:
@@ -328,7 +328,7 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
     def _assert_posix_agent_setup(self, tab_id: str) -> None:
         output = self.wait_for_output("Agent pid ", tab_id=tab_id, timeout=30.0)
         match = re.search(r"Agent pid (\d+)", output)
-        assert match, f"no 'Agent pid' line in the Setup SSH Agent tab: {output[-400:]!r}"
+        assert match, f"no 'Agent pid' line in the Set up SSH agent tab: {output[-400:]!r}"
         try:
             agent = psutil.Process(int(match.group(1)))
             if agent.name().startswith("ssh-agent"):

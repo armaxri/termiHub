@@ -322,7 +322,7 @@ class TestWsl(
     def _open_wsl_terminal(self, purpose: str) -> str:
         """Create + open a WSL terminal on the default distro and await its prompt.
 
-        Returns the connection name. Uses **Save & Connect** — WSL has no auth
+        Returns the connection name. Uses **Save and connect** — WSL has no auth
         step, so the session opens directly with no password prompt.
         """
         self.close_all_tabs()

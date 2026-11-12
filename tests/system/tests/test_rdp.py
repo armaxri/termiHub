@@ -92,7 +92,7 @@ class _RdpSuite(
         wait_active: bool = True,
         **editor: object,
     ) -> str:
-        """Create an RDP connection in the editor, Save & Connect, answer the
+        """Create an RDP connection in the editor, Save and connect, answer the
         password prompt and (by default) wait for the session to go live.
 
         Closes every open tab first, so this tab's canvas is the only

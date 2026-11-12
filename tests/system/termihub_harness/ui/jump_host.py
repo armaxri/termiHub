@@ -83,7 +83,7 @@ class JumpHostUi(HarnessMixin):
         connect: bool = False,
     ) -> None:
         """Create a key-auth SSH connection to ``target_host`` through one inline
-        bastion hop, then Save (or Save & Connect).
+        bastion hop, then Save (or Save and connect).
 
         Both the bastion and the target authenticate with ``key_path``.
         """

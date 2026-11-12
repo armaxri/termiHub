@@ -77,7 +77,7 @@ class TestSshJumpHostReconnect(
         return life.get("status") if life else None
 
     def _open_jump_tab(self, name: str) -> str:
-        """Create + Save & Connect a jump-host connection; return its tab id."""
+        """Create + Save and connect a jump-host connection; return its tab id."""
         self.create_jump_host_connection(
             name,
             target_host=SSH_JUMP_TARGET_HOST,

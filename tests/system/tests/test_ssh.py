@@ -177,7 +177,7 @@ class TestSshConnectionFailure(ConnectionsUi, PasswordPromptUi, SystemTest):
             username=SSH_USERNAME,
             connect=True,
         )
-        # Save & Connect raises the password prompt before connecting; provide the
+        # Save and connect raises the password prompt before connecting; provide the
         # password, then the TCP connection to a closed localhost port fails fast
         # (connection refused). The original WebdriverIO test's only real pass
         # condition was "the app does not hang or crash" — assert exactly that.

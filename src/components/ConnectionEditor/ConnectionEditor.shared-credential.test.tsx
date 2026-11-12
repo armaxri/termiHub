@@ -203,7 +203,7 @@ describe("ConnectionEditor — shared named credential (#3557)", () => {
     expect(cfg.credentialRef).toBe("nc-pw");
   });
 
-  it("Save & Connect uses the shared secret without prompting", async () => {
+  it("Save and connect uses the shared secret without prompting", async () => {
     renderEditor();
     await flush();
 

@@ -5,7 +5,7 @@
  * credential store is unlocked. Before this helper the same check was duplicated
  * across four call sites (sidebar `ConnectionList`, `AgentNode`, `AgentErrorTab`,
  * workspace launch) and was missing entirely on `ConnectionEditor`'s
- * "Save & Connect" path — see the credential-store audit gaps G1/G2/G3 (#1144).
+ * "Save and connect" path — see the credential-store audit gaps G1/G2/G3 (#1144).
  *
  * Centralising the gate guarantees the check runs *before* `resolveCredential`,
  * so the unlock dialog is the primary trigger rather than the after-the-fact

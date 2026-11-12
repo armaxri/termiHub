@@ -31,7 +31,7 @@ const en = {
     "The server rejected the credentials. Check the username, password, or key and try again.",
   "connection.hint.agentAuth.title": "SSH Agent not running",
   "connection.hint.agentAuth.ssh":
-    "Open the connection editor and use the Setup SSH Agent button, or run:",
+    'Open the connection editor and use the "Set up SSH agent" button, or run:',
   "connection.hint.notFound.serial":
     "Serial port not found. Check that the device is connected and the port name is correct.",
   "connection.hint.notFound.docker":

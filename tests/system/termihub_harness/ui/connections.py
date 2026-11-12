@@ -266,7 +266,7 @@ class ConnectionsUi(HarnessMixin):
         default is kept. ``starting_directory`` fills the optional
         ``field-startingDirectory`` so the shell opens there (supports ``/tmp``,
         ``~/...`` and ``${env:VAR}``, which the backend expands). ``connect=True``
-        clicks **Save & Connect**, which saves then immediately opens the terminal
+        clicks **Save and connect**, which saves then immediately opens the terminal
         — so the caller never needs a sidebar double-click. ``command_marks``
         sets the opt-in "Command Marks (Shell Hook)" toggle on (``True``) or off
         (``False``); ``None`` keeps the editor's default, which the app-level
@@ -340,9 +340,9 @@ class ConnectionsUi(HarnessMixin):
         connect: bool = False,
         before_save: Optional[Callable[[], None]] = None,
     ) -> None:
-        """Fill the editor for an SSH connection and save (or Save & Connect).
+        """Fill the editor for an SSH connection and save (or Save and connect).
 
-        ``connect=True`` clicks **Save & Connect**, which saves then immediately
+        ``connect=True`` clicks **Save and connect**, which saves then immediately
         opens the session — raising the password prompt for password auth — so a
         test never needs a sidebar double-click. ``auth_method`` selects the
         native ``field-authMethod`` dropdown; pass ``key_path`` for key auth.
@@ -460,7 +460,7 @@ class ConnectionsUi(HarnessMixin):
         self.wait(holds_password, what=f"{field} to hold the typed password")
 
     def _click_editor_save(self, connect: bool) -> None:
-        """Click Save / Save & Connect once the form reports itself valid.
+        """Click Save / Save and connect once the form reports itself valid.
 
         Shared by every ``create_*_connection`` helper (SSH/local/telnet/serial/
         FTP/WSL), which all previously fired an immediate click.
@@ -492,7 +492,7 @@ class ConnectionsUi(HarnessMixin):
         port: int,
         connect: bool = False,
     ) -> None:
-        """Fill the editor for a Telnet connection and save (or Save & Connect).
+        """Fill the editor for a Telnet connection and save (or Save and connect).
 
         Telnet has no auth step in termiHub — login happens inside the session —
         so ``connect=True`` opens a live terminal directly with no password
@@ -519,7 +519,7 @@ class ConnectionsUi(HarnessMixin):
         anonymous: bool = False,
         connect: bool = False,
     ) -> None:
-        """Fill the editor for an FTP connection and save (or Save & Connect).
+        """Fill the editor for an FTP connection and save (or Save and connect).
 
         ``tls_mode`` selects the native ``field-tlsMode`` dropdown: ``"none"`` for
         plain FTP (the schema default), ``"explicit"`` / ``"implicit"`` for FTPS.
@@ -580,7 +580,7 @@ class ConnectionsUi(HarnessMixin):
         port: str,
         connect: bool = False,
     ) -> None:
-        """Fill the editor for a Serial connection and save (or Save & Connect).
+        """Fill the editor for a Serial connection and save (or Save and connect).
 
         ``port`` is typed directly into the ``field-port`` combobox, so a path the
         OS does not enumerate (a virtual/socat PTY) works — the field is no longer
@@ -615,7 +615,7 @@ class ConnectionsUi(HarnessMixin):
         starting_directory: Optional[str] = None,
         connect: bool = False,
     ) -> str:
-        """Fill the editor for a WSL connection and save (or Save & Connect).
+        """Fill the editor for a WSL connection and save (or Save and connect).
 
         ``distribution`` selects the ``field-distribution`` option (a distro name
         from ``wsl.exe --list``, e.g. ``"Ubuntu"``). WSL has no auth step, so
@@ -641,7 +641,7 @@ class ConnectionsUi(HarnessMixin):
 
         This is the only connect path that raises the SSH key-passphrase prompt
         (``ConnectionList``'s ``onDoubleClick`` → ``requestPassword``), unlike the
-        editor's Save & Connect. Mirrors :meth:`open_connection_menu`'s resilience:
+        editor's Save and connect. Mirrors :meth:`open_connection_menu`'s resilience:
         a save reloads connections from disk a few times and a connection's id can
         change across that reload, so the id is re-resolved by name on every poll
         and the double-click is dispatched only once the current item is mounted.

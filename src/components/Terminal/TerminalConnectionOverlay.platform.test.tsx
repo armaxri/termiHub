@@ -129,7 +129,7 @@ describe("TerminalConnectionOverlay — platform-aware serial permission hint (#
  * #2088: the SSH-agent-not-running hint used to show a Windows-only PowerShell
  * `Set-Service ssh-agent` command on every OS, which is non-actionable on
  * macOS/Linux (no such service exists there). The remedy must follow the host
- * OS, mirroring ConnectionEditor's "Setup SSH Agent" button.
+ * OS, mirroring ConnectionEditor's "Set up SSH agent" button.
  */
 describe("TerminalConnectionOverlay — platform-aware SSH-agent hint (#2088)", () => {
   const WIN_COMMAND = "Set-Service ssh-agent";
