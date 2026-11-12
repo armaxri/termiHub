@@ -5,8 +5,12 @@ macOS Keychain, the Linux Secret Service or the Windows Credential Manager
 (``src-tauri/src/credential/os_keychain.rs``). Each secret is one item with the
 service ``termiHub`` and the account ``<connection-id>:<type>``; the keys that
 seal a backup restore's deferred credential import use the service
-``termiHub-backup-restore``. This module lets a system test check those items
-directly, which used to be the guided-manual checks MT-CRED-01/02/03/18.
+``termiHub-backup-restore``. The test-bridge app is an isolated build, so it
+suffixes both with its keychain namespace (#5478): each store gives the app a
+fresh per-run namespace (``TERMIHUB_DEV_NAME=ci-<hex>``, so the service is
+``termiHub-dev-ci-<hex>``) and reads :attr:`OsCredentialStore.service`. This
+module lets a system test check those items directly, which used to be the
+guided-manual checks MT-CRED-01/02/03/18.
 
 It never touches the user's real secrets:
 
@@ -46,10 +50,28 @@ import time
 from pathlib import Path
 from typing import Optional
 
-#: The service of every termiHub credential (``SERVICE_NAME`` in os_keychain.rs).
+#: The base service of every termiHub credential (``SERVICE_NAME`` in
+#: os_keychain.rs). The test-bridge app suffixes it with its keychain namespace
+#: (#5478), so a store reads :attr:`OsCredentialStore.service` instead.
 SERVICE = "termiHub"
-#: The service of the backup-restore seal keys (``RESTORE_SEAL_SERVICE``).
+#: The base service of the backup-restore seal keys (``RESTORE_SEAL_SERVICE``),
+#: namespaced like :data:`SERVICE` (:attr:`OsCredentialStore.seal_service`).
 SEAL_SERVICE = "termiHub-backup-restore"
+
+#: The app's dev-instance variable (``DEV_INSTANCE_ENV`` in keychain_namespace.rs).
+#: A test-bridge build is an isolated build, so its keychain names are
+#: ``<base>-dev-<instance>``.
+DEV_INSTANCE_ENV = "TERMIHUB_DEV_NAME"
+
+
+def run_namespace() -> str:
+    """A fresh per-run keychain instance name (``ci-<hex>``, #5514)."""
+    return f"ci-{secrets.token_hex(6)}"
+
+
+def namespaced(base: str, instance: str) -> str:
+    """The keychain name of ``base`` in an isolated build's ``instance`` namespace."""
+    return f"{base}-dev-{instance}"
 
 #: Opt-in switch for the per-user macOS keychain swap outside CI (the same one
 #: the Rust real-keychain tests use).
@@ -106,28 +128,35 @@ class OsCredentialStore:
 
     def __init__(self) -> None:
         self._tracked: set[tuple[str, str]] = set()
+        #: The app's keychain instance for this run (#5514): every item it
+        #: writes is under :attr:`service` / :attr:`seal_service`, never under
+        #: the installed app's names or another run's.
+        self.instance = run_namespace()
+        self.service = namespaced(SERVICE, self.instance)
+        self.seal_service = namespaced(SEAL_SERVICE, self.instance)
 
     def app_env(self) -> dict[str, str]:
         """Environment overrides that point the app at this store."""
-        return {}
+        return {DEV_INSTANCE_ENV: self.instance}
 
-    def accounts(self, service: str = SERVICE) -> set[str]:
+    def accounts(self, service: Optional[str] = None) -> set[str]:
         """Every account stored under ``service`` (in this store)."""
         raise NotImplementedError
 
-    def exists(self, account: str, service: str = SERVICE) -> bool:
+    def exists(self, account: str, service: Optional[str] = None) -> bool:
         """Whether an item for ``service`` / ``account`` exists."""
         return account in self.accounts(service)
 
-    def value(self, account: str, service: str = SERVICE) -> Optional[str]:
+    def value(self, account: str, service: Optional[str] = None) -> Optional[str]:
         """The secret of ``service`` / ``account``, or ``None`` when absent."""
         raise NotImplementedError
 
-    def track(self, account: str, service: str = SERVICE) -> None:
+    def track(self, account: str, service: Optional[str] = None) -> None:
         """Remember an item a test made the app write, so :meth:`close` removes it."""
+        service = service or self.service
         self._tracked.add((service, account))
 
-    def delete(self, account: str, service: str = SERVICE) -> None:
+    def delete(self, account: str, service: Optional[str] = None) -> None:
         """Remove one item if it exists."""
         raise NotImplementedError
 
@@ -220,11 +249,13 @@ class MacKeychainStore(OsCredentialStore):
             raise
         print(f"[os_store] using the throwaway keychain {self.keychain}")
 
-    def accounts(self, service: str = SERVICE) -> set[str]:
+    def accounts(self, service: Optional[str] = None) -> set[str]:
+        service = service or self.service
         dump = _run(["security", "dump-keychain", str(self.keychain)]).stdout
         return {i["acct"] for i in parse_keychain_dump(dump) if i["svce"] == service}
 
-    def exists(self, account: str, service: str = SERVICE) -> bool:
+    def exists(self, account: str, service: Optional[str] = None) -> bool:
+        service = service or self.service
         # No -g / -w: attributes only, so no access prompt.
         proc = _run(
             ["security", "find-generic-password", "-s", service, "-a", account, str(self.keychain)],
@@ -232,10 +263,11 @@ class MacKeychainStore(OsCredentialStore):
         )
         return proc.returncode == 0
 
-    def value(self, account: str, service: str = SERVICE) -> Optional[str]:
+    def value(self, account: str, service: Optional[str] = None) -> Optional[str]:
         raise NotImplementedError("reading a keychain secret raises an access prompt")
 
-    def delete(self, account: str, service: str = SERVICE) -> None:
+    def delete(self, account: str, service: Optional[str] = None) -> None:
+        service = service or self.service
         _run(
             ["security", "delete-generic-password", "-s", service, "-a", account, str(self.keychain)],
             check=False,
@@ -424,9 +456,10 @@ class SecretServiceStore(OsCredentialStore):
         return env
 
     def app_env(self) -> dict[str, str]:
-        return {"DBUS_SESSION_BUS_ADDRESS": self._bus_address}
+        return {**super().app_env(), "DBUS_SESSION_BUS_ADDRESS": self._bus_address}
 
-    def accounts(self, service: str = SERVICE) -> set[str]:
+    def accounts(self, service: Optional[str] = None) -> set[str]:
+        service = service or self.service
         proc = _run(
             ["secret-tool", "search", "--all", "service", service],
             env=self.tool_env(),
@@ -438,7 +471,8 @@ class SecretServiceStore(OsCredentialStore):
         # every username attribute from both.
         return parse_secret_tool_usernames(proc.stdout + "\n" + proc.stderr)
 
-    def value(self, account: str, service: str = SERVICE) -> Optional[str]:
+    def value(self, account: str, service: Optional[str] = None) -> Optional[str]:
+        service = service or self.service
         proc = _run(
             ["secret-tool", "lookup", "service", service, "username", account],
             env=self.tool_env(),
@@ -446,7 +480,8 @@ class SecretServiceStore(OsCredentialStore):
         )
         return proc.stdout if proc.returncode == 0 else None
 
-    def delete(self, account: str, service: str = SERVICE) -> None:
+    def delete(self, account: str, service: Optional[str] = None) -> None:
+        service = service or self.service
         _run(
             ["secret-tool", "clear", "service", service, "username", account],
             env=self.tool_env(),
@@ -534,7 +569,8 @@ class WindowsCredentialStore(OsCredentialStore):
     _CRED_TYPE_GENERIC = 1
     _ERROR_NOT_FOUND = 1168
 
-    def accounts(self, service: str = SERVICE) -> set[str]:
+    def accounts(self, service: Optional[str] = None) -> set[str]:
+        service = service or self.service
         ctypes, wintypes = self._ctypes, self._wintypes
         count = wintypes.DWORD(0)
         creds = ctypes.POINTER(self._pcred)()
@@ -562,10 +598,11 @@ class WindowsCredentialStore(OsCredentialStore):
         finally:
             self._advapi.CredFree(creds)
 
-    def exists(self, account: str, service: str = SERVICE) -> bool:
+    def exists(self, account: str, service: Optional[str] = None) -> bool:
         return self.value(account, service) is not None
 
-    def value(self, account: str, service: str = SERVICE) -> Optional[str]:
+    def value(self, account: str, service: Optional[str] = None) -> Optional[str]:
+        service = service or self.service
         ctypes = self._ctypes
         cred = self._pcred()
         target = windows_target(service, account)
@@ -582,7 +619,8 @@ class WindowsCredentialStore(OsCredentialStore):
         finally:
             self._advapi.CredFree(cred)
 
-    def delete(self, account: str, service: str = SERVICE) -> None:
+    def delete(self, account: str, service: Optional[str] = None) -> None:
+        service = service or self.service
         target = windows_target(service, account)
         if not self._advapi.CredDeleteW(target, self._CRED_TYPE_GENERIC, 0):
             err = self._ctypes.get_last_error()
