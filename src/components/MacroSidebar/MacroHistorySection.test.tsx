@@ -84,13 +84,15 @@ describe("MacroHistorySection (#3543)", () => {
 
     const first = query("macro-run-run-1")!;
     expect(first.textContent).toContain("Deploy");
-    expect(first.textContent).toContain("2/2");
+    // A full playback shows no redundant "2/2" (#5519).
+    expect(first.textContent).not.toContain("2/2");
     expect(first.textContent).toContain("manual");
     expect(first.textContent).toContain("3s");
     expect(query("macro-run-targets-run-1")!.textContent).toContain("prod-1");
 
     const second = query("macro-run-run-2")!;
-    expect(second.textContent).toContain("1/2");
+    // A partial playback notes how far it got, in the metadata after the name.
+    expect(query("macro-run-progress-run-2")!.textContent).toContain("1/2 steps");
     expect(second.textContent).toContain("scheduled");
     expect(second.querySelector('[aria-label="Target disconnected"]')).not.toBeNull();
     expect(query("macro-run-targets-run-2")!.textContent).toContain("3 terminals");

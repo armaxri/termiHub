@@ -109,7 +109,6 @@ export function WorkflowHistorySection() {
                     title={statusLabel(run.status)}
                   />
                 }
-                badge={`${run.stepsCompleted}/${run.total}`}
                 actions={null}
                 details={
                   <span className="workflow-history__meta">
@@ -118,6 +117,12 @@ export function WorkflowHistorySection() {
                     </time>
                     {duration ? <span> · {duration}</span> : null}
                     <span> · {run.triggeredBy}</span>
+                    {run.stepsCompleted < run.total ? (
+                      <span data-testid={`workflow-run-progress-${run.id}`}>
+                        {" "}
+                        · {run.stepsCompleted}/{run.total} steps
+                      </span>
+                    ) : null}
                     {run.continuedFailures ? (
                       <span data-testid={`workflow-run-tolerated-${run.id}`}>
                         {" "}
