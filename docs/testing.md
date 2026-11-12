@@ -1011,17 +1011,22 @@ harness checks every test for JavaScript errors in the app under test (#5364):
 
 `TERMIHUB_JS_ERROR_GATE` picks what happens next:
 
-| Value                | Effect                                                  |
-| -------------------- | ------------------------------------------------------- |
-| `annotate` (default) | Report every unique error with its tests (see below)    |
-| `fail`               | Report, and fail a passing test with an uncovered error |
-| `off`                | No collection                                           |
+| Value            | Effect                                                  |
+| ---------------- | ------------------------------------------------------- |
+| `fail` (default) | Report, and fail a passing test with an uncovered error |
+| `annotate`       | Report every unique error with its tests (see below)    |
+| `off`            | No collection                                           |
 
 The report goes to the terminal summary, the GitHub step summary and
 `artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
 
-The default is `annotate` while the current offenders are moved into the
-allowlist with tracking issues. A later change switches the nightly to `fail`.
+The gate started in `annotate` mode and moved to `fail` (#5464) once the errors
+the annotate runs reported were fixed: the clipboard rejection (#5383), the
+closed-session rejections (#5384), and the uncaught `reading 'dimensions'`
+TypeError from scrolling an xterm that was disposed before the next frame.
+A new uncaught error now fails the test that caused it, and the failure names
+the error with its first stack frames. Set `TERMIHUB_JS_ERROR_GATE=annotate` to
+only report while you investigate.
 
 An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
 issue that tracks the error:
@@ -1068,9 +1073,15 @@ off:
    effort, so a connection that opens and closes between two samples is
    missed.
 
-`TERMIHUB_EGRESS_GATE` uses the same modes as the JS error gate: `annotate`
-(the default), `fail` and `off`. The report goes to the terminal summary, the
-GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
+`TERMIHUB_EGRESS_GATE` takes the same modes as the JS error gate: `fail`,
+`annotate` and `off`. Unlike that gate, it defaults to `fail`: a passing test
+whose app connects to a destination that is neither a fixture nor allowlisted
+fails, and the failure names the destination. The probe started in `annotate`
+mode. It moved to `fail` once two full System Integration (nightly) runs on
+Linux, macOS and Windows reported no destination other than the allowlisted
+plugin discovery suite. Set `TERMIHUB_EGRESS_GATE=annotate` to only report
+while you investigate a new destination. The report goes to the terminal
+summary, the GitHub step summary and `artifacts/egress/<lane>.json`. For a local run behind
 a proxy, `TERMIHUB_EGRESS_ALLOW` adds comma-separated CIDRs or `ip:port`
 entries. An allowlist entry is one JSON file named `<issue>-<slug>.json`, with
 a `nodeid` regex, a `remote` regex (searched in `ip:port`), or both, plus an
@@ -1466,8 +1477,14 @@ Run it locally the same way:
 scripts/internal/run-native-sshd-deploy-journey.sh
 ```
 
-The line coverage of `agent_deploy.rs` is not measured in this lane (the job
-runs plain `cargo test`). The nightly coverage overlay reports it.
+This lane is not instrumented for coverage (the job runs plain `cargo test`).
+The line coverage of `agent_deploy.rs` comes from the per-PR unit tests
+instead. The in-process host tests (#5162) drive the install half.
+[`agent_deploy_prologue_tests.rs`](../src-tauri/src/terminal/agent_deploy_prologue_tests.rs)
+drives what runs before it in `deploy_agent`, `stage_agent_binary`,
+`update_agent` and `probe_remote_agent`. The fake host listens on a loopback
+port, so the production `connect_and_authenticate` dials it. A local file
+stands in for the `AppHandle`-bound binary resolution.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
@@ -1754,6 +1771,19 @@ that app and never tore off. The step has its own skip-guard lanes,
 `os-input-macos` and `os-input-windows`, and runs even when the bulk step
 failed. Linux needs no split: its bulk lane already runs one worker.
 
+Two guards keep the grades exclusive (#5467). An OS-input suite fails, never
+skips, in a session with more than one xdist worker. The develop nightly of
+2026-11-11 ran the suites that way: a scheduled run reads the default branch's
+copy of the workflow, and that copy did not have the split yet. Before every
+calibration, the harness also waits up to 10 s for any other termiHub process
+to exit. That covers an app leaked by an earlier session or a crashed worker,
+a parallel worker's app and an installed termiHub. If one is still alive, the
+grade fails with `ForeignAppAlive`, which names each PID, who launched it and
+whether that pytest process still runs. The guard only reads the process
+table: it never signals a foreign process or sends it input. The
+frontmost-window refusal (`GlobalInjectionRefused`) is unchanged, and it now
+also names a foreign termiHub that holds the foreground.
+
 A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
@@ -1775,8 +1805,11 @@ line, and its prompt showed the other app's `echo PERF05-40` (a PSReadLine
 history prediction). Since #5031 the OS-input suites run in
 their own `-n 1` step, and the grade passes there on Windows.
 
-On a missed calibration move, the Windows backend names the window under the
-pointer and lists every window on the desktop. That is how a DevTools window,
+On a missed calibration move, the Windows and macOS backends name the window
+under the pointer and list every window on the desktop. On macOS the active app
+is not what a pointer event hits: another process's always-on-top window can
+sit over the test window while the test app is active, so the macOS listing
+comes from `CGWindowList`, front to back (#5467). That is how a DevTools window,
 opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-16 (OS emoji picker) and the IME candidate window
@@ -2046,13 +2079,14 @@ component starts gating once its baseline is recorded.
   because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux` and, in
   the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
   the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
-  Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
-  tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
-  heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
+  Linux number never sees. Both jobs run `./scripts/coverage.sh --split`: the workspace Rust
+  tests in the per-PR legs' partition (`scripts/internal/ci-rust-tests.sh` bulk, heavy and
+  serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
   live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
-  with the nextest `ci` profile (#5349), so a hung test fails by name within its per-test
-  timeout and the `#[serial(key)]` test groups hold there too. The heartbeat names the failing job, so a
-  Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
+  with the nextest `ci` profile (#5349, on Linux since #5428), so a hung test fails by name
+  within its per-test timeout and the `#[serial(key)]` test groups hold there too. The
+  heartbeat names the failing job, so a Windows-only drop reads
+  `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
   The release check grades the machine it runs on. A platform with no baseline fails with
   the command that records one.
 - **What `plugin-runner` counts:** its own unit tests (including the session server's
