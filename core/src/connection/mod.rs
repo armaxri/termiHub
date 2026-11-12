@@ -175,6 +175,18 @@ pub struct Capabilities {
 /// [`ConnectionType::prompt_probe`].
 pub type PromptProbe = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 
+/// A session's typed shell-integration setup that waits, with no cap, for the
+/// line editor to announce a fresh prompt (#5452, #5512). See
+/// [`ConnectionType::gated_setup`].
+pub trait GatedSetup: Send + Sync {
+    /// Whether the setup still waits to be typed.
+    fn is_pending(&self) -> bool;
+
+    /// Type the setup now, at the user's word (**Send now**); a no-op once
+    /// it was typed.
+    fn send_now(&self);
+}
+
 /// Unified trait for all connection backends.
 ///
 /// Each connection type (local shell, SSH, serial, telnet, Docker, WSL)
@@ -404,6 +416,17 @@ pub trait ConnectionType: Send + Sync {
     /// `false`, the default, keeps the capped wait.
     fn prompt_probe_uncapped(&self) -> bool {
         false
+    }
+
+    /// The typed shell-integration setup, when it waits for the line
+    /// editor's own prompt mark without a cap (#5452, #5512). A shell whose
+    /// bracketed paste is off never sends that mark, so the setup would wait
+    /// silently forever: the session owner tells the user after a while and
+    /// offers to type it ([`GatedSetup::send_now`]). While it is pending, a
+    /// connection's initial command waits for the prompt mark the setup
+    /// brings, never for a timeout. `None`, the default: no such setup.
+    fn gated_setup(&self) -> Option<std::sync::Arc<dyn GatedSetup>> {
+        None
     }
 }
 
