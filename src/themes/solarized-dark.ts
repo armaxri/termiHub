@@ -42,8 +42,11 @@ export const solarizedDarkTheme: ThemeDefinition = {
     textMuted: "#93a1a1", // base1: 5.61:1 on bgPrimary, 4.86:1 on sidebar
     textMutedOnSelection: "#eee8d5", // base2
     textDisabled: "#3d5862",
-    textAccent: "#268bd2",
-    textLink: "#268bd2",
+    // #5399: canonical blue measured 3.53:1 on base02 (sidebar). Lightened
+    // along its hue (mixed towards white in 1% steps) just until it reaches AA
+    // on every text surface; locked by contrast.test.ts.
+    textAccent: "#4b9fda",
+    textLink: "#4b9fda",
 
     // Borders
     borderPrimary: "#586e75", // base01
@@ -57,16 +60,17 @@ export const solarizedDarkTheme: ThemeDefinition = {
     focusBorder: "#268bd2",
     textOnAccent: "#ffffff",
 
-    // Status
-    colorSuccess: "#859900",
-    colorWarning: "#b58900",
-    colorError: "#dc322f",
-    colorInfo: "#268bd2",
+    // Status — #5399: canonical green / yellow / red / blue lightened along
+    // their hue just until they reach AA (4.5:1) on every text surface.
+    colorSuccess: "#8fa114", // green
+    colorWarning: "#bc9417", // yellow
+    colorError: "#e87674", // red
+    colorInfo: "#4b9fda", // blue
 
-    // State dots
-    stateConnected: "#859900",
-    stateConnecting: "#b58900",
-    stateDisconnected: "#dc322f",
+    // State dots — #5399: only red missed the 3:1 UI minimum (2.81:1).
+    stateConnected: "#859900", // green, canonical
+    stateConnecting: "#b58900", // yellow, canonical
+    stateDisconnected: "#de3e3b", // red, nudged to 3:1
 
     // Terminal
     terminalBg: "#002b36",
