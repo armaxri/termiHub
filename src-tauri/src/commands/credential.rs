@@ -957,6 +957,11 @@ pub fn clear_field_secrets(
         .map_err(|e| e.to_string())
 }
 
+// Real-keychain tests of the OS keychain store and store switch (#5514).
+#[cfg(all(test, target_os = "macos"))]
+#[path = "credential_real_keychain_tests.rs"]
+mod real_keychain_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1150,7 +1155,9 @@ mod tests {
         let probe = CredentialKey::new("Chooser test (SSH)", CredentialType::Password);
         let get = |key: &CredentialKey| {
             if *key == probe {
-                Err(anyhow::anyhow!("Failed to read OS keychain entry for {key}"))
+                Err(anyhow::anyhow!(
+                    "Failed to read OS keychain entry for {key}"
+                ))
             } else {
                 Ok(Some(format!("secret-of-{key}")))
             }
@@ -1162,7 +1169,10 @@ mod tests {
             get,
         )
         .unwrap();
-        assert_eq!(read, vec![(own.clone(), "secret-of-conn-own:password".to_string())]);
+        assert_eq!(
+            read,
+            vec![(own.clone(), "secret-of-conn-own:password".to_string())]
+        );
 
         // The same error on a listed key aborts.
         let err = read_for_migration(&[own.clone(), probe.clone()], &[], get).unwrap_err();

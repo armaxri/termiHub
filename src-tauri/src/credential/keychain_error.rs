@@ -37,7 +37,10 @@ const STATUS_NAMES: [(i32, &str); 11] = [
     (-25295, "errSecInvalidKeychain"),
     (ERR_SEC_DUPLICATE_ITEM, "errSecDuplicateItem"),
     (-25300, "errSecItemNotFound"),
-    (ERR_SEC_INTERACTION_NOT_ALLOWED, "errSecInteractionNotAllowed"),
+    (
+        ERR_SEC_INTERACTION_NOT_ALLOWED,
+        "errSecInteractionNotAllowed",
+    ),
     (-34018, "errSecMissingEntitlement"),
 ];
 
@@ -129,14 +132,15 @@ mod tests {
     #[test]
     fn a_missing_item_is_not_access_denied() {
         assert!(!is_access_denied(&KeyringError::NoEntry));
-        assert_eq!(describe(&KeyringError::NoEntry), "NoEntry: no keychain item");
+        assert_eq!(
+            describe(&KeyringError::NoEntry),
+            "NoEntry: no keychain item"
+        );
     }
 
     #[cfg(target_os = "macos")]
     fn status_error(code: i32) -> KeyringError {
-        KeyringError::PlatformFailure(Box::new(security_framework::base::Error::from_code(
-            code,
-        )))
+        KeyringError::PlatformFailure(Box::new(security_framework::base::Error::from_code(code)))
     }
 
     #[cfg(target_os = "macos")]
@@ -153,7 +157,9 @@ mod tests {
     #[test]
     fn a_declined_or_suppressed_prompt_is_access_denied() {
         assert!(is_access_denied(&status_error(ERR_SEC_USER_CANCELED)));
-        assert!(is_access_denied(&status_error(ERR_SEC_INTERACTION_NOT_ALLOWED)));
+        assert!(is_access_denied(&status_error(
+            ERR_SEC_INTERACTION_NOT_ALLOWED
+        )));
     }
 
     #[cfg(target_os = "macos")]

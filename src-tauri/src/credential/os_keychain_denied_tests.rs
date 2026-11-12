@@ -9,11 +9,11 @@
 
 use keyring::Error as KeyringError;
 
+use super::test_support::install_mock;
+use super::*;
 use crate::credential::keychain_error::{
     ERR_SEC_AUTH_FAILED, ERR_SEC_DUPLICATE_ITEM, ERR_SEC_USER_CANCELED,
 };
-use super::test_support::install_mock;
-use super::*;
 
 /// The error the macOS keychain returns for `code`.
 fn status_error(code: i32) -> KeyringError {
