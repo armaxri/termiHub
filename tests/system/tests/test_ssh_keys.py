@@ -33,6 +33,7 @@ MASTER_PASSWORD = "system-test-master-pw"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshKeyAuthUi(
     TerminalUi,
     TabsUi,

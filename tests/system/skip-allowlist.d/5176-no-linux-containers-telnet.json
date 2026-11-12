@@ -1,0 +1,9 @@
+{
+  "reason": "^telnet container fixtures? unavailable: (no container runtime available|the docker daemon runs windows containers)",
+  "lanes": ["bulk-macos", "bulk-windows"],
+  "why": "neither hosted macOS nor Windows ships a telnet daemon. The hosted macOS runners ship no container runtime; on Windows the daemon runs only Windows containers or never comes up (#4842). Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) minus the suites #5176 re-points at the native sshd; the cap fails the lane when one more suite skips for this reason.",
+  "max_skips": {
+    "bulk-macos": 3,
+    "bulk-windows": 3
+  }
+}

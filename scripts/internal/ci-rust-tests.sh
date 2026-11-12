@@ -52,11 +52,11 @@
 # and test groups. Nextest runs each test in its own process; the processes of
 # one binary merge their profiles into a small file pool (see test_cmd). The
 # phases' profiles accumulate; the caller cleans first (`cargo llvm-cov clean
-# --workspace`) and writes the report after (scripts/coverage.sh --split, the
-# Windows coverage leg, #5160). Without nextest a local run falls back to
-# `cargo llvm-cov --no-report` (libtest); CI requires nextest here too.
+# --workspace`) and writes the report after (scripts/coverage.sh --split: the
+# Linux and Windows coverage jobs, #5160, #5428). Without nextest a local run
+# falls back to `cargo llvm-cov --no-report` (libtest); CI requires nextest.
 # Doc-tests are skipped there: llvm-cov measures them only on nightly, and the
-# Linux coverage run does not count them either.
+# single-pass `coverage.sh` run (no --split) does not count them either.
 #
 # Usage:
 #   scripts/internal/ci-rust-tests.sh <bulk|heavy|serial|list> [cargo selection args]
