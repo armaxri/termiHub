@@ -206,24 +206,24 @@ pub fn ssh_tunnel_group(server_kind: &str) -> SettingsGroup {
             description: Some(format!(
                 "Reach the {server_kind} server through an SSH tunnel (SSH local forward)."
             )),
-            ..field(USE_SSH_TUNNEL_KEY, "Use SSH Tunnel", FieldType::Boolean)
+            ..field(USE_SSH_TUNNEL_KEY, "Use SSH tunnel", FieldType::Boolean)
         },
         SettingsField {
             required: true,
             supports_env_expansion: true,
             placeholder: Some("bastion.example.com".to_string()),
             visible_when: tunnel_on(),
-            ..field("sshHost", "SSH Host", FieldType::Text)
+            ..field("sshHost", "SSH host", FieldType::Text)
         },
         SettingsField {
             default: Some(serde_json::json!(DEFAULT_SSH_TUNNEL_PORT)),
             visible_when: tunnel_on(),
-            ..field("sshPort", "SSH Port", FieldType::Port)
+            ..field("sshPort", "SSH port", FieldType::Port)
         },
         SettingsField {
             supports_env_expansion: true,
             visible_when: tunnel_on(),
-            ..field("sshUsername", "SSH Username", FieldType::Text)
+            ..field("sshUsername", "SSH username", FieldType::Text)
         },
         SettingsField {
             default: Some(serde_json::json!("password")),
@@ -235,12 +235,12 @@ pub fn ssh_tunnel_group(server_kind: &str) -> SettingsGroup {
             visible_when: tunnel_on(),
             ..field(
                 "sshAuthMethod",
-                "SSH Auth Method",
+                "SSH auth method",
                 FieldType::Select {
                     options: vec![
                         opt("password", "Password"),
-                        opt("key", "Key File"),
-                        opt("agent", "SSH Agent"),
+                        opt("key", "Key file"),
+                        opt("agent", "SSH agent"),
                     ],
                 },
             )
@@ -253,7 +253,7 @@ pub fn ssh_tunnel_group(server_kind: &str) -> SettingsGroup {
             visible_when: when_equals("sshAuthMethod", serde_json::json!("key")),
             ..field(
                 "sshKeyPath",
-                "SSH Key Path",
+                "SSH key path",
                 FieldType::FilePath {
                     kind: FilePathKind::File,
                 },
@@ -264,7 +264,7 @@ pub fn ssh_tunnel_group(server_kind: &str) -> SettingsGroup {
                 "SSH gateway password, or the passphrase for the selected key file.".to_string(),
             ),
             visible_when: tunnel_on(),
-            ..field("sshPassword", "SSH Password", FieldType::Password)
+            ..field("sshPassword", "SSH password", FieldType::Password)
         },
     ];
     fields.extend(proxy_fields(
@@ -281,7 +281,7 @@ pub fn ssh_tunnel_group(server_kind: &str) -> SettingsGroup {
     SettingsGroup {
         collapsed: false,
         key: SSH_TUNNEL_GROUP_KEY.to_string(),
-        label: "SSH Tunnel".to_string(),
+        label: "SSH tunnel".to_string(),
         fields,
     }
 }

@@ -2365,7 +2365,7 @@ mod tests {
             "types": [
                 {
                     "typeId": "local",
-                    "displayName": "Local Shell",
+                    "displayName": "Local shell",
                     "icon": "terminal",
                     "schema": {"groups": []},
                     "capabilities": {

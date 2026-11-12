@@ -114,7 +114,7 @@ impl Tool for PortScanTool {
         "port_scan"
     }
     fn display_name(&self) -> &str {
-        "Port Scan"
+        "Port scan"
     }
     async fn run(
         &self,
@@ -182,7 +182,7 @@ impl Tool for PingSweepTool {
         "ping_sweep"
     }
     fn display_name(&self) -> &str {
-        "Ping Sweep"
+        "Ping sweep"
     }
     async fn run(
         &self,
@@ -274,7 +274,7 @@ impl Tool for DnsTool {
         "dns"
     }
     fn display_name(&self) -> &str {
-        "DNS Lookup"
+        "DNS lookup"
     }
     async fn run(
         &self,
@@ -306,7 +306,7 @@ impl Tool for OpenPortsTool {
         "open_ports"
     }
     fn display_name(&self) -> &str {
-        "Open Ports"
+        "Open ports"
     }
     async fn run(
         &self,

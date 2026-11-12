@@ -388,12 +388,12 @@ mod tests {
                     label: "Authentication".to_string(),
                     fields: vec![
                         SettingsField {
-                            label: "Auth Method".to_string(),
+                            label: "Auth method".to_string(),
                             field_type: FieldType::Select {
                                 options: vec![
                                     SelectOption {
                                         value: "key".to_string(),
-                                        label: "SSH Key".to_string(),
+                                        label: "SSH key".to_string(),
                                     },
                                     SelectOption {
                                         value: "password".to_string(),
@@ -401,7 +401,7 @@ mod tests {
                                     },
                                     SelectOption {
                                         value: "agent".to_string(),
-                                        label: "SSH Agent".to_string(),
+                                        label: "SSH agent".to_string(),
                                     },
                                 ],
                             },
@@ -410,7 +410,7 @@ mod tests {
                             ..text_field("authMethod")
                         },
                         SettingsField {
-                            label: "Key Path".to_string(),
+                            label: "Key path".to_string(),
                             field_type: FieldType::FilePath {
                                 kind: crate::connection::schema::FilePathKind::File,
                             },
@@ -780,7 +780,7 @@ mod tests {
                 label: "Authentication".to_string(),
                 fields: vec![
                     SettingsField {
-                        label: "Auth Method".to_string(),
+                        label: "Auth method".to_string(),
                         field_type: FieldType::Select {
                             options: vec![SelectOption {
                                 value: "password".to_string(),

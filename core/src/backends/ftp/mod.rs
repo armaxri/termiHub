@@ -378,7 +378,7 @@ fn security_group() -> SettingsGroup {
                 ),
                 ..base_field(
                     "tlsMode",
-                    "TLS Mode",
+                    "TLS mode",
                     FieldType::Select {
                         options: vec![
                             opt("none", "None (plain FTP)"),
@@ -473,7 +473,7 @@ fn transfer_group() -> SettingsGroup {
             SettingsField {
                 supports_env_expansion: true,
                 placeholder: Some("/pub".to_string()),
-                ..base_field("initialDirectory", "Initial Dir", FieldType::Text)
+                ..base_field("initialDirectory", "Initial dir", FieldType::Text)
             },
             SettingsField {
                 default: Some(serde_json::json!(30)),

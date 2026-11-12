@@ -210,7 +210,7 @@ pub fn register_core_backends(registry: &mut ConnectionTypeRegistry) {
     #[cfg(feature = "local-shell")]
     registry.register(
         "local",
-        "Local Shell",
+        "Local shell",
         "terminal",
         Box::new(|| Box::new(crate::backends::local_shell::LocalShell::new())),
     );
@@ -219,7 +219,7 @@ pub fn register_core_backends(registry: &mut ConnectionTypeRegistry) {
     #[cfg(feature = "serial")]
     registry.register(
         "serial",
-        "Serial Port",
+        "Serial port",
         "serial",
         Box::new(|| Box::new(crate::backends::serial::Serial::new())),
     );

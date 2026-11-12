@@ -204,7 +204,7 @@ describe("api service", () => {
 
     it("getConnectionTypes returns available types", async () => {
       const types = [
-        { typeId: "local", displayName: "Local Shell", icon: "terminal", settingsSchema: {} },
+        { typeId: "local", displayName: "Local shell", icon: "terminal", settingsSchema: {} },
       ];
       mockedInvoke.mockResolvedValue(types);
 

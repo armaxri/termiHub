@@ -49,7 +49,7 @@ use crate::util::entry_extra::{EntryExtra, StoreEntry};
 pub const SERVICE_ID: &str = "http_monitor";
 
 /// Human-readable service name.
-pub const DISPLAY_NAME: &str = "HTTP Monitor";
+pub const DISPLAY_NAME: &str = "HTTP monitor";
 
 /// Icon identifier for the run-location / service-discovery UI.
 pub const ICON: &str = "activity";
@@ -265,7 +265,7 @@ impl HttpMonitorService {
             groups: vec![SettingsGroup {
                 collapsed: false,
                 key: "monitor".to_string(),
-                label: "HTTP Monitor".to_string(),
+                label: "HTTP monitor".to_string(),
                 fields: vec![
                     field("url", "URL", FieldType::Text, true, None),
                     field(

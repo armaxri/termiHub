@@ -23,7 +23,7 @@ pub async fn connect_transport(
 
     if cfg.use_ssh_tunnel {
         // Password, key file (with an optional passphrase), or ssh-agent —
-        // chosen by the editor's SSH-tunnel "SSH Auth Method" field (#1714).
+        // chosen by the editor's SSH-tunnel "SSH auth method" field (#1714).
         let tunnel = SshTunnel::establish(&cfg.tunnel_ssh_config(), host, port).await?;
         let stream = TcpStream::connect(("127.0.0.1", tunnel.local_port))
             .await

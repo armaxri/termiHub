@@ -42,7 +42,7 @@ const mockedInvoke = vi.mocked(invoke);
 /** Local type with no required config fields — Save gates on the name alone. */
 const LOCAL_TYPE: ConnectionTypeInfo = {
   typeId: "local",
-  displayName: "Local Shell",
+  displayName: "Local shell",
   icon: "local",
   schema: {
     groups: [

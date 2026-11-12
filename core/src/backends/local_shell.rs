@@ -442,7 +442,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     }
 
     fn display_name(&self) -> &str {
-        "Local Shell"
+        "Local shell"
     }
 
     fn settings_schema(&self) -> SettingsSchema {
@@ -493,7 +493,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         },
                         SettingsField {
                             key: "customShellPath".to_string(),
-                            label: "Shell Executable Path".to_string(),
+                            label: "Shell executable path".to_string(),
                             description: Some("Full path to the shell executable".to_string()),
                             help_text: None,
                             field_type: FieldType::Text,
@@ -510,7 +510,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         },
                         SettingsField {
                             key: "startingDirectory".to_string(),
-                            label: "Starting Directory".to_string(),
+                            label: "Starting directory".to_string(),
                             description: Some(
                                 "Directory to start the shell in (defaults to home)".to_string(),
                             ),
@@ -527,7 +527,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         },
                         SettingsField {
                             key: "initialCommand".to_string(),
-                            label: "Initial Command".to_string(),
+                            label: "Initial command".to_string(),
                             description: Some("Command to run after the shell starts".to_string()),
                             help_text: None,
                             field_type: FieldType::Text,
@@ -540,7 +540,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         },
                         SettingsField {
                             key: "shellIntegration".to_string(),
-                            label: "Command Marks (Shell Hook)".to_string(),
+                            label: "Command marks (shell hook)".to_string(),
                             description: Some(
                                 "Add a shell hook for command marks (OSC 133) and PowerShell's directory"
                                     .to_string(),
@@ -586,7 +586,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                     label: "Environment".to_string(),
                     fields: vec![SettingsField {
                         key: "envVars".to_string(),
-                        label: "Environment Variables".to_string(),
+                        label: "Environment variables".to_string(),
                         description: Some(
                             "Extra environment variables for the spawned shell. \
                              These override any inherited value of the same name."
@@ -1420,7 +1420,7 @@ mod tests {
     #[test]
     fn display_name() {
         let shell = LocalShell::new();
-        assert_eq!(shell.display_name(), "Local Shell");
+        assert_eq!(shell.display_name(), "Local shell");
     }
 
     #[test]

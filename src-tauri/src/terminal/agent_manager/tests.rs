@@ -246,7 +246,7 @@ fn parse_capabilities_with_connection_type_info_objects() {
         "connectionTypes": [
             {
                 "typeId": "local",
-                "displayName": "Local Shell",
+                "displayName": "Local shell",
                 "icon": "terminal",
                 "schema": { "groups": [] },
                 "capabilities": {

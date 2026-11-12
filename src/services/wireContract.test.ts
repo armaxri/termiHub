@@ -227,7 +227,7 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.serialPortRescan).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
-      displayName: "Local Shell",
+      displayName: "Local shell",
     });
   });
 

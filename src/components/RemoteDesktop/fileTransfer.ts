@@ -92,7 +92,7 @@ export function unavailableCopy(reason: FileChannelUnavailable): UnavailableCopy
     case "disabled":
       return {
         title,
-        hint: "File transfer is off for this connection. Turn on File Transfer in the connection settings.",
+        hint: "File transfer is off for this connection. Turn on File transfer in the connection settings.",
       };
     case "notOffered":
       // Never shown: the UI hides the feature for such a type (#4348).
@@ -101,7 +101,7 @@ export function unavailableCopy(reason: FileChannelUnavailable): UnavailableCopy
     default:
       return {
         title,
-        hint: "VNC has no portable file transfer. Enable the SSH Tunnel (or host this connection under an agent), or link a saved SSH connection under File Transfer in the connection settings.",
+        hint: "VNC has no portable file transfer. Enable the SSH tunnel (or host this connection under an agent), or link a saved SSH connection under File transfer in the connection settings.",
       };
   }
 }

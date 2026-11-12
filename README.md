@@ -127,7 +127,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Inline images** — SIXEL graphics and the iTerm2 inline image protocol render directly in the terminal (`img2sixel`, `chafa -f sixel`, `imgcat`)
 - **Connection management** — Organize connections in folder hierarchies with import/export from external files
 - **Find in terminal** — Search the terminal output (`Cmd+F` on macOS, `Ctrl+Shift+F` on Windows/Linux)
-- **Shell integration and prompt navigation** — The per-connection **Shell Integration** toggle (local shell, WSL and SSH; on by default) lets the file browser follow the shell's current directory and marks each prompt and command (OSC 7 / OSC 133). With the marks, jump between prompts, select or copy the last command's output from the command palette, and see a green or red exit-status mark next to each finished command — see [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md#prompt-navigation-and-command-output-osc-133)
+- **Shell integration and prompt navigation** — The per-connection **Command marks (shell hook)** toggle (local shell, WSL and SSH; on by default) lets the file browser follow the shell's current directory and marks each prompt and command (OSC 7 / OSC 133). With the marks, jump between prompts, select or copy the last command's output from the command palette, and see a green or red exit-status mark next to each finished command — see [Keyboard Shortcuts & Conflict Avoidance](docs/keyboard-shortcuts.md#prompt-navigation-and-command-output-osc-133)
 - **Open connections panel** — One place to inspect and close everything termiHub has open: local sessions, agent connections and their sessions, SSH tunnels, SFTP sessions, monitoring, embedded servers and X servers (gear menu → **Open connections**)
 
 ### SSH Features
@@ -228,7 +228,7 @@ termiHub uses a VS Code-inspired three-column layout:
 ### Managing Connections
 
 1. Click **Connections** in the Activity Bar, then **+** to create a new connection
-2. Fill in Name, Folder, Type (Local Shell / SSH / Serial / Telnet / Docker / WSL / FTP / remote agent, plus RDP / VNC when experimental features are enabled), and type-specific settings
+2. Fill in Name, Folder, Type (Local shell / SSH / Serial / Telnet / Docker / WSL / FTP / remote agent, plus RDP / VNC when experimental features are enabled), and type-specific settings
 3. Click **Save**
 
 **Right-click** a connection for: Connect, Ping Host (SSH/Telnet), Edit, Duplicate, Delete. **Double-click** to connect immediately.
@@ -248,7 +248,7 @@ The import lives under **Settings → Import & migration**. It always shows a pr
 - **Finding the file** — The settings page tells you whether it found your MobaXterm configuration (on Windows: `%APPDATA%\MobaXterm\MobaXterm.ini` for the installed edition, or a `MobaXterm` folder in your Documents). **Import from MobaXterm…** opens a preview of it right away. On any OS — and for the portable edition, whose `MobaXterm.ini` sits next to its `.exe` — click **Choose file…** and pick a `MobaXterm.ini` or an exported `.mxtsessions` file (MobaXterm: right-click **User sessions** → **Export all sessions to file**). Files in UTF-8 or MobaXterm's Windows-1252 encoding are both read.
 - **Sessions** — SSH (host, port, user, private key), Telnet, Serial, RDP, VNC, FTP, SFTP (imported as SSH), local shell and WSL sessions are importable; anything else (Browser, Mosh, XDMCP, Rsh, File, S3) is listed as **Not imported** with the reason. MobaXterm's folder tree is recreated under the target folder you pick, existing folders with the same name are reused, and names that already exist get a "(2)" suffix. Path placeholders in key paths (`_ProfileDir_`, `_MyDocuments_`, `_CurrentDrive_`, …) are resolved for this computer.
 - **Gateways** — SSH gateways become the SSH connection's jump-host chain; a single VNC or RDP SSH gateway becomes that connection's SSH tunnel.
-- **Login command** — An SSH session's "Execute command" becomes the connection's **Initial Command**, run once after connecting.
+- **Login command** — An SSH session's "Execute command" becomes the connection's **Initial command**, run once after connecting.
 - **Proxy** — An SSH session's SOCKS4, SOCKS5 or HTTP proxy becomes the connection's **Proxy** settings (type, host, port and user); a VNC session's becomes its SSH tunnel's proxy when the session has a single SSH gateway, and the VNC connection's own **Proxy** settings when it has none. Enter the proxy password after import.
 - **Host keys (opt-in)** — The SSH host keys MobaXterm has accepted are listed with their fingerprints. They are trusted only if you tick **Also import N trusted host keys**; a key is never imported when termiHub (or your `~/.ssh/known_hosts`) already trusts a different key for that host.
 - **Appearance** — A session whose font, font size or cursor style differs from MobaXterm's defaults keeps it as a per-connection terminal option (point sizes are converted to termiHub's pixel sizes); sessions at the defaults keep following termiHub's global appearance settings. Telnet sessions also keep their terminal type.
@@ -259,7 +259,7 @@ The import lives under **Settings → Import & migration**. It always shows a pr
 
 ### Connection Types
 
-- **Local Shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
+- **Local shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
 - **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
 - **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23). See [Telnet](#telnet) below for window size, terminal type, and auto-login.
 - **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. Resizing the tab does not tell the device the new size (serial has no channel for it). See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions and [Terminal Size](#terminal-size).
@@ -298,13 +298,13 @@ VNC itself has no portable file transfer (the RFB clipboard's file format was ne
 the vendor extensions only work between one vendor's own viewer and server). termiHub instead
 moves files over the side channel the VNC connection already has:
 
-- **SSH tunnel** — when the connection uses its **SSH Tunnel** group, files travel over SFTP on
+- **SSH tunnel** — when the connection uses its **SSH tunnel** group, files travel over SFTP on
   the tunnel's own SSH session. There is no second login, and the host key was already checked
   when the tunnel connected. Files land on the **SSH host**.
 - **Agent** — when the connection is hosted under a remote agent, files go through the agent's
   file service and land on the **agent host**.
 - **Linked SSH connection** — a direct VNC connection (no SSH tunnel, no agent) can name a saved
-  SSH connection under **File Transfer → File transfer via**. termiHub then opens that
+  SSH connection under **File transfer → File transfer via**. termiHub then opens that
   connection's own SSH session — its saved password or key, its jump hosts, and the usual
   host-key check — and moves files over SFTP on it. Files land on **that connection's host**.
   The picker preselects an SSH connection on the VNC host, and warns when the hosts differ. If
@@ -316,7 +316,7 @@ moves files over the side channel the VNC connection already has:
 
 Precedence when more than one applies: agent, then SSH tunnel, then the linked SSH connection.
 
-Turn it on per connection with **File Transfer → Allow file transfer over the side channel**
+Turn it on per connection with **File transfer → Allow file transfer over the side channel**
 (off by default) and optionally set a **Default folder** (empty means `~/Desktop` when it
 exists, else your home folder). View-only sessions never transfer files.
 
@@ -500,11 +500,11 @@ By default the file records **Info** level and above — enough to be readable w
 
 - **Window size** — termiHub offers NAWS (RFC 1073) on connect and reports the terminal size again after every resize, so full-screen programs (vim, htop, device menus) reflow with the window. Servers that refuse NAWS simply keep their own size.
 - **Terminal type** — reported when the server asks (TERMINAL-TYPE, RFC 1091); it usually becomes `TERM` on the remote side. Defaults to `xterm-256color`; set it to e.g. `vt100` for older devices.
-- **Echo and input mode** — termiHub accepts the server's ECHO (RFC 857) and SUPPRESS-GO-AHEAD (RFC 858) options, so the server echoes what you type without double echo. **Input Mode** _Character_ (default) sends every keystroke immediately; _Line_ echoes and edits the line locally (Backspace, Ctrl+U) and sends it on Enter — for line-oriented devices that never echo. In line mode, while the server takes over echo (for example at a password prompt), keystrokes pass straight through.
+- **Echo and input mode** — termiHub accepts the server's ECHO (RFC 857) and SUPPRESS-GO-AHEAD (RFC 858) options, so the server echoes what you type without double echo. **Input mode** _Character_ (default) sends every keystroke immediately; _Line_ echoes and edits the line locally (Backspace, Ctrl+U) and sends it on Enter — for line-oriented devices that never echo. In line mode, while the server takes over echo (for example at a password prompt), keystrokes pass straight through.
 - **Auto-login (optional, off by default)** — set **Login** to _Auto-login_ and enter a username and password. termiHub types the username when the output ends with a login prompt (default `login:`, `username:`, or `user name:`) and the password at the password prompt (default `password:`). Matching is case-insensitive; alternatives are separated with `|`. A device that asks only for a password gets the password at the first prompt. If a prompt does not appear within the prompt timeout (default 10 s), or the login prompt reappears after the username was sent (the login was rejected), auto-login stops and the session stays interactive — it never retries.
   - The password is kept in the credential store (keychain or master-password vault) when **Save password** is on and is never written to the connection file or logged. Leave it empty to be asked on connect.
   - **Telnet is unencrypted**: the username and password travel in cleartext and can be read by anyone on the network path. Only use auto-login on trusted networks and prefer SSH where the device supports it.
-- **Auto-Reconnect (optional, off by default)** — switch on **Auto-Reconnect** to have a dropped telnet connection retried in the same tab with a growing pause (up to 10 attempts, pauses of at most 30 s), with the same reconnect strip, countdown and **Cancel** as SSH. Each retry opens a fresh telnet session (and runs auto-login again when it is set up); the remote session is not preserved.
+- **Auto-Reconnect (optional, off by default)** — switch on **Auto-reconnect** to have a dropped telnet connection retried in the same tab with a growing pause (up to 10 attempts, pauses of at most 30 s), with the same reconnect strip, countdown and **Cancel** as SSH. Each retry opens a fresh telnet session (and runs auto-login again when it is set up); the remote session is not preserved.
 
 ## SSH Configuration
 
@@ -512,10 +512,10 @@ By default the file records **Info** level and above — enough to be readable w
 
 Pick the **Method** in the connection editor's Authentication group:
 
-- **SSH Key** (default) — Provide a path to your private key file. Recommended for frequent connections. termiHub asks for the key's passphrase when the key is encrypted.
+- **SSH key** (default) — Provide a path to your private key file. Recommended for frequent connections. termiHub asks for the key's passphrase when the key is encrypted.
 - **Password** — termiHub asks for the password when you connect. With **Save credentials** on, the password is kept in the credential store (OS keychain or master-password vault) and used for later connects. Passwords are never stored in the configuration file.
-- **SSH Agent** — Use the keys loaded in your local SSH agent (`ssh-agent` via `SSH_AUTH_SOCK`, or the OpenSSH Authentication Agent on Windows).
-- **Keyboard-Interactive (OTP / 2FA)** — Answer the server's prompts (one-time codes, 2FA, PAM) in a dialog. termiHub also shows these prompts when a server asks for a second factor after key, agent or password authentication, or offers keyboard-interactive after refusing a password.
+- **SSH agent** — Use the keys loaded in your local SSH agent (`ssh-agent` via `SSH_AUTH_SOCK`, or the OpenSSH Authentication Agent on Windows).
+- **Keyboard-interactive (OTP / 2FA)** — Answer the server's prompts (one-time codes, 2FA, PAM) in a dialog. termiHub also shows these prompts when a server asks for a second factor after key, agent or password authentication, or offers keyboard-interactive after refusing a password.
 
 **SSH Agent Forwarding** — Turn on **Forward SSH agent** to make your local agent's keys available on the target (and through the jump-host chain), so onward SSH from that host works without copying private keys. It is off by default.
 
@@ -535,7 +535,7 @@ Install the public key on the server:
 ssh-copy-id -i ~/.ssh/id_ed25519.pub user@hostname
 ```
 
-In termiHub, set **Method** to **SSH Key** and **Key Path** to `~/.ssh/id_ed25519`.
+In termiHub, set **Method** to **SSH key** and **Key path** to `~/.ssh/id_ed25519`.
 
 ### Platform-Specific Key Setup
 
@@ -562,7 +562,7 @@ ssh-add $env:USERPROFILE\.ssh\id_ed25519
 
 ### X11 Forwarding
 
-X11 forwarding lets you run graphical applications on a remote server and display them locally. Turn it on in the SSH connection editor's Advanced group (**X11 Forwarding** toggle, on by default for new connections).
+X11 forwarding lets you run graphical applications on a remote server and display them locally. Turn it on in the SSH connection editor's Advanced group (**X11 forwarding** toggle, on by default for new connections).
 
 **Platform requirements:**
 
@@ -578,22 +578,22 @@ When you click on an SSH terminal tab, the sidebar file browser auto-connects vi
 
 ### SSH Connection Settings
 
-| Field                 | Description                                                                                 | Default |
-| --------------------- | ------------------------------------------------------------------------------------------- | ------- |
-| Host                  | Server hostname or IP address                                                               | —       |
-| Port                  | SSH port                                                                                    | 22      |
-| Username              | Remote username                                                                             | —       |
-| Method                | SSH Key, Password, SSH Agent, or Keyboard-Interactive (OTP / 2FA)                           | SSH Key |
-| Key Path              | Path to private key (when using key auth)                                                   | —       |
-| Save credentials      | Keep the password or key passphrase in the credential store                                 | Off     |
-| X11 Forwarding        | Forward remote GUI apps to local display                                                    | On      |
-| Shell Integration     | Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)                          | On      |
-| Forward SSH agent     | Make your local SSH agent's keys available on the target                                    | Off     |
-| Initial Command       | Command run once after the first connect (e.g. `tmux attach`); not re-run on auto-reconnect | —       |
-| On-reconnect Command  | Command run once after an automatic reconnect                                               | —       |
-| Proxy Type            | Connect through a `socks5`, `socks4` (SOCKS4a for host names) or `http` (`CONNECT`) proxy   | None    |
-| Proxy Host / Port     | Proxy address; an empty port means 1080 for SOCKS, 8080 for HTTP                            | —       |
-| Proxy User / Password | Proxy credentials (SOCKS5 and HTTP; SOCKS4 sends only the user); password kept in the vault | —       |
+| Field                      | Description                                                                                 | Default |
+| -------------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| Host                       | Server hostname or IP address                                                               | —       |
+| Port                       | SSH port                                                                                    | 22      |
+| Username                   | Remote username                                                                             | —       |
+| Method                     | SSH key, Password, SSH agent, or Keyboard-interactive (OTP / 2FA)                           | SSH key |
+| Key path                   | Path to private key (when using key auth)                                                   | —       |
+| Save credentials           | Keep the password or key passphrase in the credential store                                 | Off     |
+| X11 forwarding             | Forward remote GUI apps to local display                                                    | On      |
+| Command marks (shell hook) | Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)                          | On      |
+| Forward SSH agent          | Make your local SSH agent's keys available on the target                                    | Off     |
+| Initial command            | Command run once after the first connect (e.g. `tmux attach`); not re-run on auto-reconnect | —       |
+| On-reconnect command       | Command run once after an automatic reconnect                                               | —       |
+| Proxy type                 | Connect through a `socks5`, `socks4` (SOCKS4a for host names) or `http` (`CONNECT`) proxy   | None    |
+| Proxy host / port          | Proxy address; an empty port means 1080 for SOCKS, 8080 for HTTP                            | —       |
+| Proxy user / password      | Proxy credentials (SOCKS5 and HTTP; SOCKS4 sends only the user); password kept in the vault | —       |
 
 With a proxy set, the host key is still checked against the SSH host, not the proxy. With jump hosts, only the connection to the first jump host goes through the proxy.
 
@@ -644,18 +644,18 @@ sudo usermod -a -G dialout $USER
 | Parameter      | Options                                                   | Default | Description                                             |
 | -------------- | --------------------------------------------------------- | ------- | ------------------------------------------------------- |
 | Port           | Auto-detected or manual                                   | —       | Serial port path                                        |
-| Baud Rate      | 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 | 9600    | Data transfer speed (bits/second)                       |
-| Data Bits      | 5, 6, 7, 8                                                | 8       | Number of data bits per frame                           |
-| Stop Bits      | 1, 2                                                      | 1       | Number of stop bits per frame                           |
+| Baud rate      | 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 | 9600    | Data transfer speed (bits/second)                       |
+| Data bits      | 5, 6, 7, 8                                                | 8       | Number of data bits per frame                           |
+| Stop bits      | 1, 2                                                      | 1       | Number of stop bits per frame                           |
 | Parity         | None, Odd, Even                                           | None    | Error-checking method                                   |
-| Flow Control   | None, Hardware (RTS/CTS), Software (XON/XOFF)             | None    | Data flow regulation                                    |
-| Auto-Reconnect | On, Off                                                   | On      | Reopen the port after the device comes back (see below) |
+| Flow control   | None, Hardware (RTS/CTS), Software (XON/XOFF)             | None    | Data flow regulation                                    |
+| Auto-reconnect | On, Off                                                   | On      | Reopen the port after the device comes back (see below) |
 
 **Common configurations:** Most embedded devices (Arduino, ESP32, STM32) use 115200/8/1/None/None. Legacy devices typically use 9600/8/1/None/None.
 
 ### Auto-Reconnect
 
-When a serial port disappears — a USB adapter is unplugged or re-enumerates — the tab stays open and termiHub reopens the port when it comes back, like Tera Term's COM-port auto-reconnect. Auto-Reconnect is **on by default** for serial connections; switch it off per connection.
+When a serial port disappears — a USB adapter is unplugged or re-enumerates — the tab stays open and termiHub reopens the port when it comes back, like Tera Term's COM-port auto-reconnect. Auto-reconnect is **on by default** for serial connections; switch it off per connection.
 
 - While the port is gone, the reconnect strip at the top of the tab shows the countdown and attempt number. termiHub checks for the port with a growing pause (up to 10 attempts, pauses of at most 30 s, about 3 minutes in all) and then shows **Reconnect failed** with **Try Again**.
 - Click **Cancel** on the strip to stop retrying. The tab then shows the manual reconnect prompt.

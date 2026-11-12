@@ -76,8 +76,8 @@ describe("RemoteDesktopDropOverlay (#4192)", () => {
   });
 
   it.each([
-    ["noRoute", "Enable the SSH Tunnel"],
-    ["disabled", "Turn on File Transfer"],
+    ["noRoute", "Enable the SSH tunnel"],
+    ["disabled", "Turn on File transfer"],
     ["viewOnly", "View-only session"],
   ] as const)("explains the %s state and how to enable it", (reason, hint) => {
     const overlay = render({ status: "unavailable", reason });

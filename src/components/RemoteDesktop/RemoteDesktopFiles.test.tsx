@@ -190,7 +190,7 @@ describe("RemoteDesktopFiles popover (#4192, #4193)", () => {
     render({ status: "unavailable", reason: "noRoute" });
     expect((query("remote-desktop-files-upload") as HTMLButtonElement).disabled).toBe(true);
     expect((query("remote-desktop-files-upload-folder") as HTMLButtonElement).disabled).toBe(true);
-    expect(query("remote-desktop-files-route")?.textContent).toContain("Enable the SSH Tunnel");
+    expect(query("remote-desktop-files-route")?.textContent).toContain("Enable the SSH tunnel");
   });
 
   it("shows a degraded route's message with a retry", () => {

@@ -526,7 +526,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
       "connectionTypes": [
         {
           "typeId": "local",
-          "displayName": "Local Shell",
+          "displayName": "Local shell",
           "icon": "terminal",
           "schema": { "groups": [] },
           "capabilities": {
@@ -1278,7 +1278,7 @@ The desktop calls it to refresh the agent's type list after connecting (the same
     "types": [
       {
         "typeId": "local",
-        "displayName": "Local Shell",
+        "displayName": "Local shell",
         "icon": "terminal",
         "schema": { "groups": [] },
         "capabilities": {
@@ -3447,7 +3447,7 @@ without a version bump.
   "result": {
     "tools": [
       { "toolId": "ping", "displayName": "Ping" },
-      { "toolId": "dns", "displayName": "DNS Lookup" }
+      { "toolId": "dns", "displayName": "DNS lookup" }
     ]
   },
   "id": 40
@@ -3671,7 +3671,7 @@ List the embedded-server types the agent can host — the read-only discovery me
     "services": [
       {
         "serviceId": "http_server",
-        "displayName": "HTTP Server",
+        "displayName": "HTTP server",
         "icon": "globe",
         "schema": { "groups": [] },
         "capabilities": {

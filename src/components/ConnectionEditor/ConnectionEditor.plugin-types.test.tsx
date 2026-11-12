@@ -33,7 +33,7 @@ const mockedInvoke = vi.mocked(invoke);
 
 const LOCAL_TYPE: ConnectionTypeInfo = {
   typeId: "local",
-  displayName: "Local Shell",
+  displayName: "Local shell",
   icon: "terminal",
   schema: { groups: [] },
   capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: false },

@@ -709,7 +709,7 @@ describe("ConnectionEditor — Save and connect credential handling", () => {
 
 const LOCAL_TYPE: ConnectionTypeInfo = {
   typeId: "local",
-  displayName: "Local Shell",
+  displayName: "Local shell",
   icon: "local",
   schema: {
     groups: [
@@ -890,7 +890,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   // app version or where the default was never explicitly persisted.
   const LOCAL_TYPE_WITH_DEFAULTS: ConnectionTypeInfo = {
     typeId: "local",
-    displayName: "Local Shell",
+    displayName: "Local shell",
     icon: "local",
     schema: {
       groups: [
@@ -965,7 +965,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
 
 const NAME_LOCAL_TYPE: ConnectionTypeInfo = {
   typeId: "local",
-  displayName: "Local Shell",
+  displayName: "Local shell",
   icon: "local",
   schema: {
     groups: [

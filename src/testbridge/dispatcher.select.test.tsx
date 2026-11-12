@@ -41,7 +41,7 @@ function deps(): BridgeDeps {
 }
 
 const OPTIONS = [
-  { value: "local", label: "Local Shell" },
+  { value: "local", label: "Local shell" },
   { value: "ssh", label: "SSH" },
   { value: "serial", label: "Serial" },
 ];

@@ -60,7 +60,7 @@ const mockedInvoke = vi.mocked(invoke);
 /** Minimal local connection type — no credential prompt, no jump hosts. */
 const LOCAL_TYPE: ConnectionTypeInfo = {
   typeId: "local",
-  displayName: "Local Shell",
+  displayName: "Local shell",
   icon: "local",
   schema: {
     groups: [

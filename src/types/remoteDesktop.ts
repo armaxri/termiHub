@@ -153,7 +153,7 @@ export type { RemoteDesktopCertPromptEvent as RemoteDesktopCertPromptPayload } f
 
 /** Human-readable label for a scale mode (for the toolbar menu). */
 export const SCALE_MODE_LABELS: Record<ScaleMode, string> = {
-  fit: "Fit to Tab",
-  pixel: "1:1 Pixel",
-  match: "Match Window",
+  fit: "Fit to tab",
+  pixel: "1:1 pixel",
+  match: "Match window",
 };

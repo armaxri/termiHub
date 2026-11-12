@@ -12,7 +12,7 @@
 //!
 //! ```ignore
 //! let mut registry = ServiceRegistry::new();
-//! registry.register("http_server", "HTTP Server", "server",
+//! registry.register("http_server", "HTTP server", "server",
 //!     Box::new(|| Box::new(HttpServerService::new())));
 //! let svc = registry.create("http_server")?;
 //! ```
@@ -33,7 +33,7 @@ pub type ServiceFactory = Box<dyn Fn() -> Box<dyn Service> + Send + Sync>;
 pub struct ServiceInfo {
     /// Machine-readable identifier (e.g. `"http_server"`).
     pub service_id: String,
-    /// Human-readable display name (e.g. `"HTTP Server"`).
+    /// Human-readable display name (e.g. `"HTTP server"`).
     pub display_name: String,
     /// Icon identifier for the UI.
     pub icon: String,
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn register_create_and_list() {
         let mut registry = ServiceRegistry::new();
-        registry.register("http", "HTTP Server", "server", mock_factory("http", false));
+        registry.register("http", "HTTP server", "server", mock_factory("http", false));
         registry.register("cred", "Credentials", "key", mock_factory("cred", true));
 
         let services = registry.available_services();
@@ -236,7 +236,7 @@ mod tests {
         // and leaves the running service untouched (#2607).
         let registry = {
             let mut r = ServiceRegistry::new();
-            r.register("http", "HTTP Server", "server", mock_factory("http", false));
+            r.register("http", "HTTP server", "server", mock_factory("http", false));
             r
         };
         let mut svc = registry.create("http").unwrap();
@@ -259,7 +259,7 @@ mod tests {
     async fn lifecycle_transitions_and_emits_events() {
         let registry = {
             let mut r = ServiceRegistry::new();
-            r.register("http", "HTTP Server", "server", mock_factory("http", false));
+            r.register("http", "HTTP server", "server", mock_factory("http", false));
             r
         };
         let mut svc = registry.create("http").unwrap();
