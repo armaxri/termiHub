@@ -910,6 +910,15 @@ jobs:
       - name: Headless smoke of shell scripts (--help paths)
         run: ./scripts/internal/check-script-headless.sh
 
+      # PowerShell parameter-case lint (#5506). PowerShell names are
+      # case-insensitive, so a local `$sshd` inside a function taking
+      # `[hashtable]$Sshd` IS that parameter and the assignment throws at run
+      # time. It broke the Windows native sshd fixture in a lane no PR runs.
+      # Parse-only AST walk with the runner's preinstalled pwsh; nothing runs.
+      - name: PowerShell parameter-case lint (.ps1)
+        shell: bash
+        run: pwsh -NoProfile -NonInteractive -File scripts/internal/check-ps1-param-case.ps1
+
   # Workflow lint (#3327). actionlint type-checks every workflow under
   # .github/workflows (expressions, `needs`/outputs wiring, runner labels,
   # action inputs) and runs shellcheck over each `run:` script. Nothing linted
