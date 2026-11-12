@@ -220,7 +220,7 @@ async fn run_remote_command_async(
 /// failure degrades to empty output (the probe callers treat "no output" as
 /// "not this platform"). Without this, a frozen server would be probed again
 /// and again, each probe waiting out its own deadline.
-fn probe_output(result: Result<String, TerminalError>) -> Result<String, TerminalError> {
+pub(crate) fn probe_output(result: Result<String, TerminalError>) -> Result<String, TerminalError> {
     match result {
         Err(e) if e.is_timeout() => Err(e),
         other => Ok(other.unwrap_or_default()),
@@ -607,6 +607,38 @@ pub fn detect_binary_arch(path: &str) -> Result<ElfArch, TerminalError> {
     Ok(arch)
 }
 
+/// PE/COFF machine type of an x86-64 Windows executable.
+pub const PE_MACHINE_AMD64: u16 = 0x8664;
+/// PE/COFF machine type of an ARM64 Windows executable.
+pub const PE_MACHINE_ARM64: u16 = 0xAA64;
+
+/// Read the PE/COFF machine type of a Windows executable from its leading
+/// bytes: the `MZ` stub's `e_lfanew` (offset `0x3C`) points at the `PE\0\0`
+/// signature, followed by the little-endian machine field. `None` when the
+/// bytes are not a PE image (or are cut off before the machine field).
+pub fn detect_pe_machine(bytes: &[u8]) -> Option<u16> {
+    if bytes.get(0..2)? != b"MZ" {
+        return None;
+    }
+    let lfanew = u32::from_le_bytes(bytes.get(0x3C..0x40)?.try_into().ok()?) as usize;
+    if bytes.get(lfanew..lfanew.checked_add(4)?)? != b"PE\0\0" {
+        return None;
+    }
+    let machine = bytes.get(lfanew + 4..lfanew + 6)?;
+    Some(u16::from_le_bytes([machine[0], machine[1]]))
+}
+
+/// Map a Windows host's architecture (`%PROCESSOR_ARCHITECTURE%` or a Git Bash
+/// `uname -m`) to the PE machine type its agent must have. `None` for any
+/// architecture no agent is published for.
+pub fn expected_pe_machine_for_arch(arch: &str) -> Option<u16> {
+    match arch.trim().to_ascii_lowercase().as_str() {
+        "x86_64" | "amd64" => Some(PE_MACHINE_AMD64),
+        "aarch64" | "arm64" => Some(PE_MACHINE_ARM64),
+        _ => None,
+    }
+}
+
 /// Map `uname -m` output to the expected ELF architecture.
 pub fn expected_arch_for_uname(uname_arch: &str) -> Option<ElfArch> {
     match uname_arch {
@@ -703,6 +735,59 @@ mod tests {
         std::fs::write(&path, b"\x7fELF").unwrap();
         let result = detect_binary_arch(path.to_str().unwrap());
         assert!(result.is_err());
+    }
+
+    fn pe_header(machine: u16, lfanew: u32) -> Vec<u8> {
+        let mut h = vec![0u8; 512];
+        h[0..2].copy_from_slice(b"MZ");
+        h[0x3C..0x40].copy_from_slice(&lfanew.to_le_bytes());
+        let at = lfanew as usize;
+        h[at..at + 4].copy_from_slice(b"PE\0\0");
+        h[at + 4..at + 6].copy_from_slice(&machine.to_le_bytes());
+        h
+    }
+
+    #[test]
+    fn detect_pe_machine_reads_the_coff_machine() {
+        assert_eq!(
+            detect_pe_machine(&pe_header(PE_MACHINE_AMD64, 0x80)),
+            Some(PE_MACHINE_AMD64)
+        );
+        assert_eq!(
+            detect_pe_machine(&pe_header(PE_MACHINE_ARM64, 0xF0)),
+            Some(PE_MACHINE_ARM64)
+        );
+    }
+
+    #[test]
+    fn detect_pe_machine_rejects_non_pe_and_truncated_input() {
+        assert_eq!(detect_pe_machine(b""), None);
+        assert_eq!(detect_pe_machine(&make_elf_header(0x3E, true)), None);
+        let mut no_sig = pe_header(PE_MACHINE_AMD64, 0x80);
+        no_sig[0x80] = b'X';
+        assert_eq!(detect_pe_machine(&no_sig), None);
+        let mut far = pe_header(PE_MACHINE_AMD64, 0x80);
+        far[0x3C..0x40].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(detect_pe_machine(&far), None, "e_lfanew past the end");
+        assert_eq!(
+            detect_pe_machine(&pe_header(PE_MACHINE_AMD64, 0x80)[..0x85]),
+            None
+        );
+    }
+
+    #[test]
+    fn expected_pe_machine_covers_published_windows_arches_only() {
+        for (arch, want) in [
+            ("AMD64", Some(PE_MACHINE_AMD64)),
+            ("x86_64", Some(PE_MACHINE_AMD64)),
+            ("ARM64", Some(PE_MACHINE_ARM64)),
+            ("aarch64", Some(PE_MACHINE_ARM64)),
+            ("x86", None),
+            ("IA64", None),
+            ("", None),
+        ] {
+            assert_eq!(expected_pe_machine_for_arch(arch), want, "{arch}");
+        }
     }
 
     #[test]
