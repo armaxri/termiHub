@@ -70,11 +70,10 @@ pub enum PasswordPolicy {
     /// yields partial success with keyboard-interactive remaining (sshd
     /// `AuthenticationMethods password,keyboard-interactive`).
     ///
-    /// Caveat: russh's server (0.61, still in 0.63) clears `partial_success` on
-    /// every password rejection, so the client actually receives
-    /// `partial_success: false` and takes the password-fallback path, not the
-    /// second-factor path. The real partial-success → second-factor path is
-    /// covered live against OpenSSH by `core/tests/ssh_mfa.rs` (#3384).
+    /// Before russh 0.64 the server cleared `partial_success` here, so the
+    /// client took the password-fallback path; it now sees the partial success
+    /// as from a real sshd (#5498). Live against OpenSSH this is covered by
+    /// `core/tests/ssh_mfa.rs` (#3384).
     FirstFactor(&'static str),
     /// `PasswordAuthentication yes` on its own: the given password fully
     /// authenticates (plain password login, e.g. the app-log secrecy test, #4011).
@@ -204,9 +203,11 @@ impl russh::server::Handler for KiServer {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut Session,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn pty_request(
@@ -255,7 +256,7 @@ impl russh::client::Handler for AcceptAnyKey {
 
     async fn check_server_key(
         &mut self,
-        _key: &russh::keys::PublicKey,
+        _key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }

@@ -74,7 +74,7 @@ impl ChannelOpener for SshChannelOpener {
 /// instead of a blanket "general failure" (#4337).
 pub(crate) fn open_error_to_io(err: russh::Error) -> std::io::Error {
     let kind = match &err {
-        russh::Error::ChannelOpenFailure(reason) => open_failure_kind(*reason),
+        russh::Error::ChannelOpenFailure(reason) => open_failure_kind(reason),
         _ => std::io::ErrorKind::Other,
     };
     std::io::Error::new(kind, err.to_string())
@@ -82,17 +82,19 @@ pub(crate) fn open_error_to_io(err: russh::Error) -> std::io::Error {
 
 /// Classify an SSH `SSH_MSG_CHANNEL_OPEN_FAILURE` reason code (RFC 4254 §5.1).
 ///
-/// The SSH server reports only these four coarse reasons. Its free-text
+/// The SSH server reports four coarse reasons, plus any non-standard code
+/// (russh's `Other`). Its free-text
 /// description (e.g. "Connection refused") is not part of russh's error, so
 /// `SSH_OPEN_CONNECT_FAILED` — which covers refused, unreachable and DNS
 /// failures alike — maps to the generic "host unreachable".
-pub(crate) fn open_failure_kind(reason: russh::ChannelOpenFailure) -> std::io::ErrorKind {
+pub(crate) fn open_failure_kind(reason: &russh::ChannelOpenFailure) -> std::io::ErrorKind {
     use russh::ChannelOpenFailure as F;
     match reason {
         F::AdministrativelyProhibited => std::io::ErrorKind::PermissionDenied,
         F::ConnectFailed => std::io::ErrorKind::HostUnreachable,
         F::UnknownChannelType => std::io::ErrorKind::Unsupported,
-        F::ResourceShortage | F::Unknown => std::io::ErrorKind::Other,
+        // `Other` carries any non-standard reason code the server sent.
+        F::ResourceShortage | F::Other { .. } => std::io::ErrorKind::Other,
     }
 }
 
@@ -247,7 +249,7 @@ mod tests {
     #[test]
     fn administratively_prohibited_maps_to_permission_denied() {
         assert_eq!(
-            open_failure_kind(ChannelOpenFailure::AdministrativelyProhibited),
+            open_failure_kind(&ChannelOpenFailure::AdministrativelyProhibited),
             ErrorKind::PermissionDenied
         );
     }
@@ -255,7 +257,7 @@ mod tests {
     #[test]
     fn connect_failed_maps_to_host_unreachable() {
         assert_eq!(
-            open_failure_kind(ChannelOpenFailure::ConnectFailed),
+            open_failure_kind(&ChannelOpenFailure::ConnectFailed),
             ErrorKind::HostUnreachable
         );
     }
@@ -263,7 +265,7 @@ mod tests {
     #[test]
     fn unknown_channel_type_maps_to_unsupported() {
         assert_eq!(
-            open_failure_kind(ChannelOpenFailure::UnknownChannelType),
+            open_failure_kind(&ChannelOpenFailure::UnknownChannelType),
             ErrorKind::Unsupported
         );
     }
@@ -271,11 +273,14 @@ mod tests {
     #[test]
     fn resource_shortage_and_unknown_map_to_other() {
         assert_eq!(
-            open_failure_kind(ChannelOpenFailure::ResourceShortage),
+            open_failure_kind(&ChannelOpenFailure::ResourceShortage),
             ErrorKind::Other
         );
         assert_eq!(
-            open_failure_kind(ChannelOpenFailure::Unknown),
+            open_failure_kind(&ChannelOpenFailure::Other {
+                code: 99,
+                reason: "Unknown code 99".into()
+            }),
             ErrorKind::Other
         );
     }

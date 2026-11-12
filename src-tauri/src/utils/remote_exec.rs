@@ -830,12 +830,14 @@ mod tests {
         async fn channel_open_session(
             &mut self,
             _channel: Channel<ServerMsg>,
+            reply: russh::server::ChannelOpenHandle,
             _session: &mut Session,
-        ) -> Result<bool, Self::Error> {
+        ) -> Result<(), Self::Error> {
             if let Freeze::AtChannelOpen = self.freeze {
                 std::future::pending::<()>().await;
             }
-            Ok(true)
+            reply.accept().await;
+            Ok(())
         }
 
         async fn exec_request(

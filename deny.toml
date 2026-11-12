@@ -29,7 +29,7 @@
 [advisories]
 # A yanked crate in the lockfile fails CI. This is the headline gate: it is how
 # the crypto-bigint 0.7.x yank surfaced (crypto-bigint reached 0.7.5, a
-# non-yanked release, pulled transitively via russh 0.61 -> RustCrypto).
+# non-yanked release, pulled transitively via russh -> RustCrypto).
 yanked = "deny"
 
 # Unmaintained-crate advisories are NOT gated here. The tree carries a
@@ -129,25 +129,18 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 [bans]
 # Pre-release RustCrypto stack — documented release sign-off (#2074).
 #
-# The SSH auth path pulls a pre-release RustCrypto stack via russh 0.61.1. The
-# accepted set is wider than just rsa + ssh-key — russh 0.61 pulls the whole
-# in-flight RustCrypto 0.7/0.10 line and the matching Dalek pre-releases. The
-# pre-release crates the tree currently carries (from Cargo.lock) are:
-#   - rsa 0.10.0-rc, ssh-key 0.7.0-rc, ssh-encoding 0.3.0-rc, ssh-cipher 0.3.0-rc
-#   - crypto-bigint 0.7.x (was yanked at 0.7.0-0.7.4; now the non-yanked 0.7.5)
-#   - AEAD/cipher: aead 0.6.0-rc, aes-gcm 0.11.0-rc
-#   - hashes/KDF: blake2 0.11.0-rc, argon2 0.6.0-rc
-#   - elliptic-curve 0.14.0-rc, ecdsa 0.17.0-rc, p256/p384/p521 0.14.0-rc,
-#     primefield 0.14.0-rc, primeorder 0.14.0-rc, rustcrypto-ff 0.14.0-rc,
-#     rustcrypto-group 0.14.0-rc, pkcs1 0.8.0-rc
-#   - Dalek edge (ride alongside via the SSH stack): curve25519-dalek 5.0.0-pre,
-#     ed25519-dalek 3.0.0-pre
+# Since russh 0.65 (#5498) the SSH stack is on the stable RustCrypto 0.7/0.10
+# line and the stable Dalek releases. The pre-release crates the tree still
+# carries (from Cargo.lock) are:
+#   - ssh-key 0.7.0-rc (russh pins it exactly), rsa 0.10.0-rc, pkcs1 0.8.0-rc
+#     (via russh and the rdp-sidecar IronRDP stack)
+#   - picky 7.0.0-rc (rdp-sidecar only)
 # These RC/pre crates are a deliberate, accepted risk (maintainer decision
 # 2026-10-06, see docs/supply-chain.md -> "Accepted risks (Rust advisories and
-# pre-release crates)"): russh has not yet cut a stable release on the final
-# RustCrypto 0.7/0.10 line. Cargo.lock pins each exact version, cargo-audit and
-# cargo-deny cover them like any other crate, and we move to stable releases when
-# upstream publishes them. The yanked gate above guards against the versions
+# pre-release crates)"): upstream has not yet cut stable ssh-key / rsa
+# releases. Cargo.lock pins each exact version, cargo-audit and cargo-deny cover
+# them like any other crate, and we move to stable releases when upstream
+# publishes them. The yanked gate above guards against the versions
 # silently regressing to a yanked release, which is the concrete failure mode.
 #
 # The exact pre-release set is also pinned as a reviewed allowlist in
