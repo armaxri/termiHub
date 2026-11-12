@@ -44,7 +44,11 @@ pub const WRAPPING_KEY_LEN: usize = 32;
 /// A 256-bit wrapping key, zeroized on drop.
 pub type WrappingKey = Zeroizing<[u8; WRAPPING_KEY_LEN]>;
 
-/// Name of the OS-enforced key (keychain service / Hello key credential).
+/// Base name of the OS-enforced key (keychain service / Hello key credential).
+const HW_KEY_BASE_NAME: &str = "termiHub-biometric-unlock-v2";
+
+/// Name of the OS-enforced key in this build's keychain namespace, so a dev or
+/// test-instance build never addresses the installed app's key (#5478).
 #[cfg_attr(
     any(all(test, windows), not(any(target_os = "macos", windows))),
     expect(
@@ -52,7 +56,9 @@ pub type WrappingKey = Zeroizing<[u8; WRAPPING_KEY_LEN]>;
         reason = "only the real macOS and Windows protectors name a key"
     )
 )]
-pub const HW_KEY_NAME: &str = "termiHub-biometric-unlock-v2";
+pub fn hw_key_name() -> String {
+    super::keychain_namespace::KeychainNamespace::current().name(HW_KEY_BASE_NAME)
+}
 
 /// Why an OS-enforced key operation did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

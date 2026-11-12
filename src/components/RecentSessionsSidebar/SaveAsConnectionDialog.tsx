@@ -168,7 +168,7 @@ export function SaveAsConnectionDialog({
     <Modal
       open={entry !== null}
       onOpenChange={onOpenChange}
-      title="Save as Connection"
+      title="Save as connection"
       data-testid="save-as-connection-dialog"
       footer={
         <>
@@ -176,7 +176,7 @@ export function SaveAsConnectionDialog({
             Cancel
           </Button>
           <Button variant="primary" onClick={handleSave} data-testid="save-as-connection-submit">
-            Save Connection
+            Save connection
           </Button>
         </>
       }
@@ -209,7 +209,7 @@ export function SaveAsConnectionDialog({
             onClick={() => setIconPickerOpen(true)}
             data-testid="save-as-connection-icon-picker"
           >
-            {icon ? "Change" : "Set Icon"}
+            {icon ? "Change" : "Set icon"}
           </Button>
           {icon && (
             <Button

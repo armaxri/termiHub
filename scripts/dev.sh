@@ -96,6 +96,11 @@ PYEOF
 if [ -f "dev.local.json" ]; then
     _DEV_AGENT_PORT=$(grep -oE '"dev_agent_port"[[:space:]]*:[[:space:]]*[0-9]+' dev.local.json | grep -oE '[0-9]+$' || true)
     _DEV_NAME=$(grep -oE '"dev_name"[[:space:]]*:[[:space:]]*"[^"]+"' dev.local.json | grep -oE '"[^"]+"$' | tr -d '"' || true)
+    # Per-checkout OS keychain namespace (#5478): a dev build stores its
+    # secrets under "termiHub-dev-<dev_name>", never the installed app's names.
+    if [ -n "${_DEV_NAME:-}" ]; then
+        export TERMIHUB_DEV_NAME="$_DEV_NAME"
+    fi
     if [[ "${_DEV_AGENT_PORT:-}" =~ ^[0-9]+$ ]]; then
         _SSHD=""
         for _p in /usr/sbin/sshd /sbin/sshd; do

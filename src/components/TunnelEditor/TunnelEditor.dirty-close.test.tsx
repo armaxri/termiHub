@@ -96,7 +96,7 @@ describe("TunnelEditor — unsaved changes (UX2-004)", () => {
     expect(byTestId("unsaved-changes-message")!.textContent).toContain("“Dev DB”");
   });
 
-  it("Just Close on the prompt closes the tab without saving", async () => {
+  it("Discard changes on the prompt closes the tab without saving", async () => {
     await render();
     typeInto("tunnel-editor-name", "Dev DB");
     click("tunnel-editor-cancel");
@@ -106,7 +106,7 @@ describe("TunnelEditor — unsaved changes (UX2-004)", () => {
     expect(useAppStore.getState().saveTunnel).not.toHaveBeenCalled();
   });
 
-  it("Save & Close on the prompt saves, then closes", async () => {
+  it("Save and close on the prompt saves, then closes", async () => {
     await render();
     typeInto("tunnel-editor-name", "Dev DB");
     click("tunnel-editor-cancel");

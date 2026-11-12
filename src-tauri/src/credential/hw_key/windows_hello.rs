@@ -34,8 +34,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWind
 use zeroize::Zeroizing;
 
 use super::{
-    derive_wrapping_key, derive_wrapping_key_checked, HardwareKeyProtector, HwKeyError,
-    WrappingKey, HW_KEY_NAME,
+    derive_wrapping_key, derive_wrapping_key_checked, hw_key_name, HardwareKeyProtector,
+    HwKeyError, WrappingKey,
 };
 
 /// The fixed challenge signed to derive the wrapping key.
@@ -109,7 +109,7 @@ fn sign(credential: &KeyCredential) -> Result<Zeroizing<Vec<u8>>, HwKeyError> {
 }
 
 fn name() -> HSTRING {
-    HSTRING::from(HW_KEY_NAME)
+    HSTRING::from(hw_key_name().as_str())
 }
 
 impl HardwareKeyProtector for HelloKeyCredential {

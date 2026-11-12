@@ -396,7 +396,7 @@ class TestNativeDialogs(
         **Save As…** and assert the chosen file holds the buffer + the unsaved
         state clears (MT-TAB-18), and that closing a *second* unsaved capture
         raises the unsaved-changes dialog whose **Cancel** keeps the tab and
-        **Just Close** discards it (MT-TAB-19). The Save dialog is stubbed.
+        **Discard changes** discards it (MT-TAB-19). The Save dialog is stubbed.
         """
         self.close_all_tabs()
         self.ensure_terminal()
@@ -473,7 +473,7 @@ class TestNativeDialogs(
         )
         self.driver.click("unsaved-changes-cancel")
         assert self.find_tab("(output)") is not None, "Cancel should keep the unsaved tab"
-        # Closing again and choosing Just Close discards it.
+        # Closing again and choosing Discard changes discards it.
         self.driver.click(f"tab-close-{unsaved_tab['id']}")
         self.wait(
             lambda: self.driver.exists("unsaved-changes-just-close"),
@@ -482,7 +482,7 @@ class TestNativeDialogs(
         self.driver.click("unsaved-changes-just-close")
         self.wait(
             lambda: not any(t["id"] == unsaved_tab["id"] for t in self._all_tabs()),
-            what="the unsaved capture tab to close after Just Close",
+            what="the unsaved capture tab to close after Discard changes",
         )
 
     # ── Portable config export to a directory (MT-PORT-04) ────────────────────

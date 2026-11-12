@@ -36,7 +36,7 @@ use security_framework_sys::item::{
 use security_framework_sys::keychain_item::{SecItemAdd, SecItemCopyMatching, SecItemDelete};
 use zeroize::Zeroizing;
 
-use super::{HardwareKeyProtector, HwKeyError, WrappingKey, HW_KEY_NAME, WRAPPING_KEY_LEN};
+use super::{hw_key_name, HardwareKeyProtector, HwKeyError, WrappingKey, WRAPPING_KEY_LEN};
 
 const ACCOUNT: &str = "master-password-store";
 /// Account of the throwaway item [`MacKeychainKey::probe`] writes.
@@ -89,7 +89,7 @@ fn item_query(account: &str) -> Vec<(CFString, CFType)> {
             ),
             (
                 CFString::wrap_under_get_rule(kSecAttrService),
-                CFString::new(HW_KEY_NAME).into_CFType(),
+                CFString::new(&hw_key_name()).into_CFType(),
             ),
             (
                 CFString::wrap_under_get_rule(kSecAttrAccount),
