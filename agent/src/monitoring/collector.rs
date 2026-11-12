@@ -26,8 +26,8 @@ pub use termihub_core::monitoring::{LocalCollector, StatsCollector};
 
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
-    parse_stats, CpuDeltaTracker, NetDeltaTracker, PerCoreCpuTracker, SystemStats,
-    HOST_MONITORING_COMMAND,
+    parse_stats, unsupported_host, CpuDeltaTracker, NetDeltaTracker, PerCoreCpuTracker,
+    SystemStats, HOST_MONITORING_COMMAND,
 };
 
 // ── SSH collector ───────────────────────────────────────────────────
@@ -101,25 +101,50 @@ impl StatsCollector for SshCollector {
         let output = self
             .exec(HOST_MONITORING_COMMAND)
             .map_err(|e| CoreError::Other(e.to_string()))?;
-        // A parse failure is typed apart from the exec failure above so the
-        // monitoring loop can bound it separately (#3252/#3300).
-        let (mut stats, counters, per_core_counters, net_counters) =
-            parse_stats(&output).map_err(|e| CoreError::Unparseable(e.to_string()))?;
-
-        // core's Cpu/NetDeltaTracker encapsulate the previous-snapshot state. The
-        // first sample has nothing to diff against and keeps the parsed 0 %. A
-        // macOS sample carries its CPU percentage directly and no counters, so
-        // the tracker returns `None` and the parsed value stays (#5471).
-        if let Some(pct) = self.cpu_tracker.update(counters) {
-            stats.cpu_usage_percent = pct;
-        }
-        stats.per_core_cpu_percent = self.per_core_tracker.update(&per_core_counters);
-        let (net_rx, net_tx) = self.net_tracker.update(net_counters, Instant::now());
-        stats.net_rx_bytes_per_sec = net_rx;
-        stats.net_tx_bytes_per_sec = net_tx;
-
-        Ok(stats)
+        sample_from_output(
+            &output,
+            &mut self.cpu_tracker,
+            &mut self.per_core_tracker,
+            &mut self.net_tracker,
+        )
     }
+}
+
+/// Turn one [`HOST_MONITORING_COMMAND`] stdout into a [`SystemStats`] sample,
+/// diffing against the trackers' previous snapshots.
+///
+/// A host with no stats source (the command's unsupported marker, or an empty
+/// stdout from a host that could not run `sh`) is reported as
+/// [`CoreError::UnsupportedHost`] — detected by core's [`unsupported_host`],
+/// exactly as the desktop's own SSH monitor does — so the monitoring loop
+/// attributes its `Offline` to `Unsupported` rather than `Parse` (#5488).
+pub(crate) fn sample_from_output(
+    output: &str,
+    cpu_tracker: &mut CpuDeltaTracker,
+    per_core_tracker: &mut PerCoreCpuTracker,
+    net_tracker: &mut NetDeltaTracker,
+) -> Result<SystemStats, CoreError> {
+    if let Some(os) = unsupported_host(output) {
+        return Err(CoreError::UnsupportedHost(os));
+    }
+    // A parse failure is typed apart from an exec failure so the monitoring
+    // loop can bound it separately (#3252/#3300).
+    let (mut stats, counters, per_core_counters, net_counters) =
+        parse_stats(output).map_err(|e| CoreError::Unparseable(e.to_string()))?;
+
+    // core's Cpu/NetDeltaTracker encapsulate the previous-snapshot state. The
+    // first sample has nothing to diff against and keeps the parsed 0 %. A
+    // macOS sample carries its CPU percentage directly and no counters, so
+    // the tracker returns `None` and the parsed value stays (#5471).
+    if let Some(pct) = cpu_tracker.update(counters) {
+        stats.cpu_usage_percent = pct;
+    }
+    stats.per_core_cpu_percent = per_core_tracker.update(&per_core_counters);
+    let (net_rx, net_tx) = net_tracker.update(net_counters, Instant::now());
+    stats.net_rx_bytes_per_sec = net_rx;
+    stats.net_tx_bytes_per_sec = net_tx;
+
+    Ok(stats)
 }
 
 /// Reassemble SSH stdout, delivered as a sequence of `ChannelMsg::Data` byte
@@ -141,6 +166,44 @@ fn decode_stdout(frames: &[Vec<u8>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Feed one stdout through [`sample_from_output`] with fresh trackers.
+    fn sample(output: &str) -> Result<SystemStats, CoreError> {
+        sample_from_output(
+            output,
+            &mut CpuDeltaTracker::new(),
+            &mut PerCoreCpuTracker::new(),
+            &mut NetDeltaTracker::new(),
+        )
+    }
+
+    #[test]
+    fn unsupported_marker_is_typed_as_unsupported_host() {
+        let err = sample("termihub-monitoring-unsupported FreeBSD\n").unwrap_err();
+        assert!(
+            matches!(&err, CoreError::UnsupportedHost(os) if os == "FreeBSD"),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn empty_stdout_is_typed_as_unsupported_host() {
+        // A host with no POSIX `sh` (a Windows `cmd.exe` login shell) prints
+        // nothing at all (#5488).
+        for output in ["", "\r\n", "  \n"] {
+            let err = sample(output).unwrap_err();
+            assert!(
+                matches!(err, CoreError::UnsupportedHost(_)),
+                "{output:?} gave {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn garbage_output_stays_unparseable() {
+        let err = sample("not a stats dump\n").unwrap_err();
+        assert!(matches!(err, CoreError::Unparseable(_)), "got {err:?}");
+    }
 
     #[test]
     fn decode_stdout_reassembles_utf8_split_across_frames() {
