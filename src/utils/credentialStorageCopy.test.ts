@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { SettingsField } from "@/types/schema";
 import {
+  CREDENTIAL_STORAGE_CHOICES,
+  CREDENTIAL_STORAGE_CHOOSE_TEXT,
   CREDENTIAL_STORAGE_OFF_TEXT,
   credentialStorageParagraph,
   modeAwareSaveHelpText,
@@ -58,5 +60,27 @@ describe("credentialStorageCopy (#5186)", () => {
     expect(out).not.toBe(save);
     expect(out.helpText).toContain("Credential storage is off");
     expect(save.helpText).toBe(BASE);
+  });
+});
+
+describe("first-use storage chooser copy (#5187)", () => {
+  it("says the first save asks, instead of storage being off, before any choice", () => {
+    const help = modeAwareSaveHelpText(BASE, "none", true)!;
+    expect(help.startsWith(CREDENTIAL_STORAGE_CHOOSE_TEXT)).toBe(true);
+    expect(help).not.toContain(CREDENTIAL_STORAGE_OFF_TEXT);
+    expect(help).toContain(BASE);
+  });
+
+  it("lists the OS keychain first, recommended, with sentence-case explanations", () => {
+    expect(CREDENTIAL_STORAGE_CHOICES.map((c) => c.mode)).toEqual([
+      "os_keychain",
+      "master_password",
+      "none",
+    ]);
+    expect(CREDENTIAL_STORAGE_CHOICES[0].badge).toBe("Recommended");
+    for (const choice of CREDENTIAL_STORAGE_CHOICES) {
+      expect(choice.description[0]).toBe(choice.description[0].toUpperCase());
+      expect(choice.description.endsWith(".")).toBe(true);
+    }
   });
 });

@@ -794,6 +794,85 @@ describe("fitTerminal", () => {
     expect(xterm.scrollToBottom).toHaveBeenCalled();
     expect(xterm.refresh).toHaveBeenCalledWith(0, 23);
   });
+
+  it("skips the deferred scroll of a terminal disposed before the frame (#5464)", () => {
+    // A tab closed or reconnected between the fit and the next frame is
+    // unregistered and its xterm disposed. Scrolling it then threw an uncaught
+    // "reading 'dimensions'" TypeError from xterm's gone renderer.
+    rafSpy.mockRestore();
+    const frames: FrameRequestCallback[] = [];
+    rafSpy = vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((cb) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    const xterm = registerScrolledTerminal("tab-gone", 200, 200);
+
+    act(() => {
+      registryActions.fitTerminal("tab-gone");
+      registryActions.unregister("tab-gone");
+    });
+    frames.forEach((cb) => cb(0));
+
+    expect(frames).toHaveLength(1);
+    expect(xterm.scrollToBottom).not.toHaveBeenCalled();
+    expect(xterm.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearTerminal deferred scroll (#5464)", () => {
+  it("skips the scroll when the terminal is disposed before the frame", () => {
+    const frames: FrameRequestCallback[] = [];
+    const rafSpy = vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((cb) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    try {
+      const xterm = createMockXterm();
+      act(() => {
+        registryActions.register(
+          "tab-clear-gone",
+          document.createElement("div"),
+          xterm,
+          createMockFitAddon()
+        );
+      });
+      act(() => {
+        registryActions.clearTerminal("tab-clear-gone");
+        registryActions.unregister("tab-clear-gone");
+      });
+      frames.forEach((cb) => cb(0));
+      expect(frames).toHaveLength(1);
+      expect(xterm.scrollToBottom).not.toHaveBeenCalled();
+    } finally {
+      rafSpy.mockRestore();
+    }
+  });
+
+  it("still scrolls a live terminal to the bottom after the clear", () => {
+    const frames: FrameRequestCallback[] = [];
+    const rafSpy = vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((cb) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    try {
+      const xterm = createMockXterm();
+      act(() => {
+        registryActions.register(
+          "tab-clear-live",
+          document.createElement("div"),
+          xterm,
+          createMockFitAddon()
+        );
+      });
+      act(() => {
+        registryActions.clearTerminal("tab-clear-live");
+      });
+      frames.forEach((cb) => cb(0));
+      expect(xterm.scrollToBottom).toHaveBeenCalledTimes(1);
+    } finally {
+      rafSpy.mockRestore();
+    }
+  });
 });
 
 describe("sendInputToTerminal", () => {

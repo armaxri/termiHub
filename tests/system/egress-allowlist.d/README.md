@@ -2,9 +2,9 @@
 
 Tests whose app under test legitimately reaches a destination outside the
 harness's fixtures. The system-test egress probe (`termihub_harness/egress.py`,
-`TERMIHUB_EGRESS_GATE`) reports every other non-fixture connection. Loopback,
-private, link-local and carrier-grade-NAT addresses are fixtures already and
-need no entry. Each `*.json` file is one entry, tied to the issue that owns it:
+`TERMIHUB_EGRESS_GATE`, `fail` by default) fails a passing test on every other
+non-fixture connection. Loopback, private, link-local and carrier-grade-NAT
+addresses are fixtures already and need no entry. Each `*.json` file is one entry, tied to the issue that owns it:
 
 ```json
 {

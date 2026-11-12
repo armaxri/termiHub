@@ -1050,6 +1050,9 @@ export function Terminal({
           // their own, so a gap here means the user left the bottom.
           const afterWrite = () => {
             requestAnimationFrame(() => {
+              // Torn down before this frame: the xterm is disposed and its
+              // renderer gone, so scrolling would throw (#5464).
+              if (signal.aborted) return;
               const liveBuf = xterm.buffer.active;
               if (stickToBottom && liveBuf.viewportY >= liveBuf.baseY) {
                 xterm.scrollToBottom();
@@ -1919,7 +1922,10 @@ export function Terminal({
         // viewport dimensions change.  Without this, the first output
         // after terminal creation cannot be scrolled to the bottom.
         if (!userScrolledUpRef.current) {
-          requestAnimationFrame(() => xterm.scrollToBottom());
+          // Skip an xterm torn down before the frame; scrolling it throws (#5464).
+          requestAnimationFrame(() => {
+            if (!connectAbort.signal.aborted) xterm.scrollToBottom();
+          });
         }
         // The gutter height tracks the container, so re-render the thumb.
         scrollbar.update();

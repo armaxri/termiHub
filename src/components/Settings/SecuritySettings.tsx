@@ -11,6 +11,8 @@ import { CredentialVaultBackup } from "./CredentialVaultBackup";
 import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { ImportedWorkspaceConfirmations } from "./ImportedWorkspaceConfirmations";
+import { MasterPasswordSetupFields } from "@/components/CredentialStorage/MasterPasswordSetupFields";
+import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import { errorMessage } from "@/utils/errorMessage";
 import { tf } from "@/i18n/catalog";
 
@@ -218,13 +220,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       // Reject (rather than return) on invalid input so the submit Button's async
       // lifecycle returns to idle instead of flashing success; the inline
       // passwordError is the feedback.
-      const validationError = !newPassword
-        ? "Password is required."
-        : newPassword !== confirmPassword
-          ? "Passwords do not match."
-          : newPassword.length < 8
-            ? "Password must be at least 8 characters."
-            : null;
+      const validationError = validateNewMasterPassword(newPassword, confirmPassword);
       if (validationError) {
         setPasswordError(validationError);
         throw new Error(validationError);
@@ -388,24 +384,15 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               <p className="settings-panel__inline-dialog-text">
                 Choose a strong password to encrypt your credentials.
               </p>
-              <PasswordInput
-                className="settings-panel__inline-dialog-input"
-                placeholder="Master password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoFocus
-                data-testid="master-password-input"
+              <MasterPasswordSetupFields
+                password={newPassword}
+                confirm={confirmPassword}
+                onPasswordChange={setNewPassword}
+                onConfirmChange={setConfirmPassword}
+                error={passwordError}
+                inputClassName="settings-panel__inline-dialog-input"
+                errorClassName="settings-panel__inline-dialog-error"
               />
-              <PasswordInput
-                className="settings-panel__inline-dialog-input"
-                placeholder="Confirm password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                data-testid="master-password-confirm-input"
-              />
-              {passwordError && (
-                <p className="settings-panel__inline-dialog-error">{passwordError}</p>
-              )}
               <div className="settings-panel__inline-dialog-actions">
                 <Button
                   type="submit"
