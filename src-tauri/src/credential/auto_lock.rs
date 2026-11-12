@@ -588,7 +588,12 @@ mod tests {
                 (EVENT_STORE_LOCKED, serde_json::json!({ "auto": true })),
                 (
                     EVENT_STORE_STATUS_CHANGED,
-                    serde_json::json!({ "mode": "master_password", "status": "locked" })
+                    // An active store always counts as a made storage choice (#5187).
+                    serde_json::json!({
+                        "mode": "master_password",
+                        "status": "locked",
+                        "storageChosen": true
+                    })
                 ),
             ]
         );

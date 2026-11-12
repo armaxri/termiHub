@@ -110,6 +110,7 @@ mod io_lanes;
 mod io_task;
 mod reattach;
 mod reconnect;
+mod reconnect_notice;
 mod recovery;
 mod state_events;
 mod stdout_reader;
@@ -130,6 +131,8 @@ use reattach::reattach_after_reconnect;
 #[cfg(test)]
 use reconnect::AGENT_RECONNECT_POLICY;
 use reconnect::{reconnect_agent, ReconnectTuning};
+#[cfg(test)]
+pub(crate) use reconnect_notice::fold_reconnect_hosted_sessions;
 #[cfg(test)]
 pub(crate) use recovery::resolve_agent_hosted_sessions;
 use recovery::{

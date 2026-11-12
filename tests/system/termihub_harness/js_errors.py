@@ -14,9 +14,11 @@ issue-bound allowlist:
 * **Allowlist.** ``js-error-allowlist.d/*.json`` fragments, one per known error:
   ``{"pattern": <regex>, "issue": <n>, "reason": <text>, "nodeid"?: <regex>}``.
   The pattern is searched in the error's key (``<kind>: <first message line>``).
-* **Mode.** ``TERMIHUB_JS_ERROR_GATE=fail|annotate|off`` (default ``annotate``).
+* **Mode.** ``TERMIHUB_JS_ERROR_GATE=fail|annotate|off`` (default ``fail``).
   ``fail`` turns a passing test with a new, un-allowlisted error into a failure;
-  ``annotate`` only reports. Both list every unique error with its tests in the
+  ``annotate`` only reports. The default moved from ``annotate`` to ``fail``
+  (#5464) once the errors the annotate runs reported were fixed (#5383, #5384,
+  and the disposed-xterm scroll). Both list every unique error with its tests in the
   terminal summary and in ``artifacts/js-errors/<lane>.json``.
 
 The pure parts (parsing, diffing, matching, verdicts) take no I/O so the
@@ -36,7 +38,7 @@ SYSTEM_DIR = Path(__file__).resolve().parents[1]
 ALLOWLIST_DIR = SYSTEM_DIR / "js-error-allowlist.d"
 GATE_ENV = "TERMIHUB_JS_ERROR_GATE"
 MODES = ("fail", "annotate", "off")
-DEFAULT_MODE = "annotate"
+DEFAULT_MODE = "fail"
 #: Bridge timeout for the per-test read: a hung webview must not stall teardown.
 BRIDGE_TIMEOUT = 5.0
 #: A ``since`` past any real cursor: asks only for the current cursor.
@@ -61,7 +63,7 @@ class GateConfigError(ValueError):
 
 
 def gate_mode(env: Mapping[str, str] = os.environ) -> str:
-    """The configured mode; ``annotate`` when unset."""
+    """The configured mode; :data:`DEFAULT_MODE` (``fail``) when unset."""
     value = env.get(GATE_ENV, "").strip().lower() or DEFAULT_MODE
     if value not in MODES:
         raise GateConfigError(f"{GATE_ENV}={value!r}: expected one of {', '.join(MODES)}")

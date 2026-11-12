@@ -16,6 +16,7 @@ import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnec
 import { SerialPortField } from "./SerialPortField";
 import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
 import { CREDENTIAL_STORAGE_OFF_TEXT } from "@/utils/credentialStorageCopy";
+import { ensureCredentialStorageForSave } from "@/utils/credentialStorageChoice";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { textFieldsMatchQuery } from "@/utils/searchMatching";
@@ -41,6 +42,12 @@ interface DynamicFieldProps {
    * untouched.
    */
   credentialStorageOff?: boolean;
+  /**
+   * When true, no credential-storage choice exists yet (#5187): a boolean
+   * "save" field renders live but unticked, and turning it on first opens the
+   * one-time storage chooser. It only turns on once a store is set up.
+   */
+  credentialStorageChoose?: boolean;
   /**
    * A schema secret other than `password` that is stored in the credential
    * store for this saved connection (#4431). An empty password field then
@@ -115,6 +122,7 @@ export function DynamicField({
   error,
   credentialSaved,
   credentialStorageOff: credentialStorageOffProp = false,
+  credentialStorageChoose: credentialStorageChooseProp = false,
   storedSecret,
   availablePorts,
   serialPortAgentId,
@@ -152,6 +160,21 @@ export function DynamicField({
   // Only a boolean "save" toggle has a meaningful disabled/unticked state.
   const credentialStorageOff = credentialStorageOffProp && field.fieldType.type === "boolean";
   const storageOffId = credentialStorageOff ? `${controlId}-storage-off` : undefined;
+  const credentialStorageChoose =
+    !credentialStorageOff && credentialStorageChooseProp && field.fieldType.type === "boolean";
+  // Turning the toggle on asks where to store first (#5187); it only turns on
+  // when a store is active afterwards. Turning it off never asks.
+  const handleChange = credentialStorageChoose
+    ? (next: unknown) => {
+        if (next !== true) {
+          onChange(next);
+          return;
+        }
+        void ensureCredentialStorageForSave().then((active) => {
+          if (active) onChange(true);
+        });
+      }
+    : onChange;
   const hasError = Boolean(error);
   const describedBy =
     [hasError ? errorId : null, descriptionId, platformNoteId, storageOffId]
@@ -178,8 +201,8 @@ export function DynamicField({
         {renderFieldInput(
           field,
           field.fieldType,
-          credentialStorageOff ? false : value,
-          onChange,
+          credentialStorageOff || credentialStorageChoose ? false : value,
+          handleChange,
           a11y,
           testIdBase,
           { availablePorts, agentId: serialPortAgentId },
