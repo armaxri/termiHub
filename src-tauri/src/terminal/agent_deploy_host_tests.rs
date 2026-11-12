@@ -17,13 +17,13 @@ use super::fake_host::{self, broken_binary, fake_binary, HostState, DEFAULT_INST
 use super::*;
 
 /// Large enough that the upload spans several SFTP writes.
-const BINARY_SIZE: usize = 200 * 1024;
+pub(super) const BINARY_SIZE: usize = 200 * 1024;
 
 /// Outer watchdog: a regression that hangs fails the test instead of the suite.
 const WATCHDOG: Duration = Duration::from_secs(30);
 
 /// Run a sync deploy helper on a blocking-pool thread (its production context).
-async fn on_blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+pub(super) async fn on_blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     tokio::time::timeout(WATCHDOG, tokio::task::spawn_blocking(f))
         .await
         .expect("deploy helper hung past the watchdog")
@@ -49,7 +49,7 @@ async fn install(
     .await
 }
 
-fn installed(state: &Arc<Mutex<HostState>>) -> Option<Vec<u8>> {
+pub(super) fn installed(state: &Arc<Mutex<HostState>>) -> Option<Vec<u8>> {
     state
         .lock()
         .expect("host")
@@ -584,7 +584,7 @@ async fn install_dir_not_creatable_keeps_the_old_binary() {
 
 /// Write `bytes` as a resolved agent binary in `dir`, with `sig` (if any) as
 /// its `.sig` sidecar.
-fn resolved_binary(dir: &tempfile::TempDir, bytes: &[u8], sig: Option<&str>) -> PathBuf {
+pub(super) fn resolved_binary(dir: &tempfile::TempDir, bytes: &[u8], sig: Option<&str>) -> PathBuf {
     let path = dir.path().join("termihub-agent-linux-x64");
     std::fs::write(&path, bytes).expect("write binary");
     if let Some(sig) = sig {
@@ -597,7 +597,7 @@ fn resolved_binary(dir: &tempfile::TempDir, bytes: &[u8], sig: Option<&str>) -> 
 /// a *missing* signature is tolerated there).
 const BAD_SIGNATURE: &str = "bm90LWEtcmVhbC1zaWduYXR1cmU=";
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(super) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 async fn verify_install(
     session: SshSession,

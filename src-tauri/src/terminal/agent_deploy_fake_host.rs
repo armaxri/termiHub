@@ -9,14 +9,14 @@
 //! The host keeps an in-memory file system ([`HostState::files`]) and runs a
 //! tiny interpreter for exactly the commands the deploy path issues:
 //!
-//! * `uname -s` / `uname -m` → `Linux` / `x86_64`;
+//! * `uname -s` / `uname -m` → `Linux` / `x86_64` (or what [`Faults`] says);
 //! * [`POSIX_PREPARE_UPLOAD_DIR_COMMAND`] → creates
 //!   `~/.config/termihub-agent/updates/upload.<n>` and prints it;
 //! * the POSIX install chain (`mkdir -p … && mv -f … && chmod +x … && rmdir …`),
 //!   step by step with `&&` short-circuiting;
 //! * the previous-binary backup / restore / discard (`cp -pf`, `mv -f`, `rm -f`
 //!   on `<path>.previous`, #5207);
-//! * `<path> --version 2>/dev/null` → runs the "binary": a file whose first line
+//! * `<path> --version 2>/dev/null` (`$HOME/…` paths too) → runs the "binary": a file whose first line
 //!   is `termihub-agent <ver>` prints that line, anything else fails like a
 //!   binary that refuses to start.
 //!
@@ -68,6 +68,10 @@ pub(super) struct Faults {
     pub fail_backup: bool,
     /// Fail moving the backup back into place (`mv -f <path>.previous <path>`).
     pub fail_restore: bool,
+    /// Report this from `uname -s` instead of `Linux` (#5208).
+    pub uname_s: Option<String>,
+    /// Report this from `uname -m` instead of `x86_64` (#5208).
+    pub uname_m: Option<String>,
 }
 
 /// Everything the host holds, shared across every connection.
@@ -115,21 +119,8 @@ pub(super) fn broken_binary(size: usize) -> Vec<u8> {
 /// plus the shared host state. Must run inside a multi-thread Tokio runtime.
 pub(super) async fn connect(seed: &[(&str, Vec<u8>)]) -> (SshSession, Arc<Mutex<HostState>>) {
     trust_test_host_keys();
-    let state = Arc::new(Mutex::new(HostState::default()));
-    {
-        let mut st = state.lock().expect("host state");
-        for (path, content) in seed {
-            st.files.insert((*path).to_string(), content.clone());
-        }
-    }
-    let config = Arc::new(russh::server::Config {
-        keys: vec![russh::keys::PrivateKey::from(
-            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[51u8; 32]),
-        )],
-        auth_rejection_time: Duration::ZERO,
-        auth_rejection_time_initial: Some(Duration::ZERO),
-        ..Default::default()
-    });
+    let state = seeded_state(seed);
+    let config = server_config();
     let handler = HostHandler {
         state: state.clone(),
         pending: HashMap::new(),
@@ -153,6 +144,57 @@ pub(super) async fn connect(seed: &[(&str, Vec<u8>)]) -> (SshSession, Arc<Mutex<
         .expect("password auth");
     assert!(auth.success(), "the fake deploy host accepts any login");
     (session, state)
+}
+
+/// Start a fake host with `seed` files on a loopback TCP port and return the
+/// port plus the shared host state, for code that dials the host itself through
+/// `connect_and_authenticate` (#5208). Every connection shares the one state;
+/// the listener lives as long as the test's Tokio runtime.
+pub(super) async fn listen(seed: &[(&str, Vec<u8>)]) -> (u16, Arc<Mutex<HostState>>) {
+    trust_test_host_keys();
+    let state = seeded_state(seed);
+    let config = server_config();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the fake deploy host");
+    let port = listener.local_addr().expect("local addr").port();
+    let shared = state.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let handler = HostHandler {
+                state: shared.clone(),
+                pending: HashMap::new(),
+            };
+            let config = config.clone();
+            tokio::spawn(async move {
+                if let Ok(running) = russh::server::run_stream(config, stream, handler).await {
+                    let _ = running.await;
+                }
+            });
+        }
+    });
+    (port, state)
+}
+
+/// A fresh host state holding the `seed` files.
+fn seeded_state(seed: &[(&str, Vec<u8>)]) -> Arc<Mutex<HostState>> {
+    let mut st = HostState::default();
+    for (path, content) in seed {
+        st.files.insert((*path).to_string(), content.clone());
+    }
+    Arc::new(Mutex::new(st))
+}
+
+/// The host's russh config: a fixed Ed25519 key and no auth-rejection delay.
+fn server_config() -> Arc<russh::server::Config> {
+    Arc::new(russh::server::Config {
+        keys: vec![russh::keys::PrivateKey::from(
+            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[51u8; 32]),
+        )],
+        auth_rejection_time: Duration::ZERO,
+        auth_rejection_time_initial: Some(Duration::ZERO),
+        ..Default::default()
+    })
 }
 
 /// Trust the in-process host's key (set-once, first registration wins).
@@ -188,6 +230,8 @@ fn fail(stderr: impl Into<String>, status: u32) -> ExecResult {
 fn resolve(path: &str) -> String {
     if path.starts_with('/') {
         path.to_string()
+    } else if let Some(rest) = path.strip_prefix("$HOME/") {
+        format!("{HOME}/{rest}")
     } else {
         format!("{HOME}/{path}")
     }
@@ -197,8 +241,18 @@ fn resolve(path: &str) -> String {
 fn run_exec(st: &mut HostState, command: &str) -> ExecResult {
     st.commands.push(command.to_string());
     match command {
-        "uname -s" => return ok("Linux\n"),
-        "uname -m" => return ok("x86_64\n"),
+        "uname -s" => {
+            return ok(format!(
+                "{}\n",
+                st.faults.uname_s.as_deref().unwrap_or("Linux")
+            ))
+        }
+        "uname -m" => {
+            return ok(format!(
+                "{}\n",
+                st.faults.uname_m.as_deref().unwrap_or("x86_64")
+            ))
+        }
         _ => {}
     }
     if command == POSIX_PREPARE_UPLOAD_DIR_COMMAND {

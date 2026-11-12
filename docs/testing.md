@@ -1411,8 +1411,14 @@ Run it locally the same way:
 scripts/internal/run-native-sshd-deploy-journey.sh
 ```
 
-The line coverage of `agent_deploy.rs` is not measured in this lane (the job
-runs plain `cargo test`). The nightly coverage overlay reports it.
+This lane is not instrumented for coverage (the job runs plain `cargo test`).
+The line coverage of `agent_deploy.rs` comes from the per-PR unit tests
+instead. The in-process host tests (#5162) drive the install half.
+[`agent_deploy_prologue_tests.rs`](../src-tauri/src/terminal/agent_deploy_prologue_tests.rs)
+drives what runs before it in `deploy_agent`, `stage_agent_binary`,
+`update_agent` and `probe_remote_agent`. The fake host listens on a loopback
+port, so the production `connect_and_authenticate` dials it. A local file
+stands in for the `AppHandle`-bound binary resolution.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
