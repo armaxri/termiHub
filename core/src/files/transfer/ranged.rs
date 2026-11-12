@@ -65,6 +65,21 @@ pub trait RangedTransferTarget: RangedFileAccess {
         let _ = path;
         Err(FileError::NotSupported)
     }
+
+    /// The filesystem this end reaches, when it can tell (#5355): see
+    /// [`FileBrowser::filesystem_id`](crate::files::FileBrowser::filesystem_id).
+    /// The default is `None`: the end is never taken for another session's
+    /// filesystem.
+    fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
+        None
+    }
+
+    /// A weaker sign that this end **may** reach another session's
+    /// filesystem (#5430): see
+    /// [`FileBrowser::filesystem_hint`](crate::files::FileBrowser::filesystem_hint).
+    fn filesystem_hint(&self) -> Option<crate::files::shared_fs::FilesystemHint> {
+        None
+    }
 }
 
 /// Core-internal error type for the ranged executor. It never escapes (the

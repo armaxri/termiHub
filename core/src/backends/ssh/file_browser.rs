@@ -3,6 +3,7 @@
 //! Opens a dedicated SSH session for SFTP operations using russh-sftp.
 //! All operations are fully async — no `spawn_blocking` needed.
 
+use crate::files::shared_fs::FilesystemIdentity;
 use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
@@ -82,6 +83,10 @@ struct SftpState {
 pub struct SftpFileBrowser {
     config: SshConfig,
     state: Arc<Mutex<Option<SftpState>>>,
+    /// The filesystem a browser riding a borrowed session reaches (#5439),
+    /// derived from the config its owner dialled; `None` derives it from
+    /// [`config`](Self::config).
+    identity: Option<FilesystemIdentity>,
 }
 
 impl SftpFileBrowser {
@@ -89,6 +94,7 @@ impl SftpFileBrowser {
         Self {
             config,
             state: Arc::new(Mutex::new(None)),
+            identity: None,
         }
     }
 
@@ -99,7 +105,30 @@ impl SftpFileBrowser {
     /// The browser never reconnects on its own — it has no config to dial with —
     /// so once the owner disconnects the session (e.g. the tunnel is torn down),
     /// every operation fails rather than silently logging in again.
+    ///
+    /// It reports no filesystem identity: see
+    /// [`from_session_identified`](Self::from_session_identified).
     pub async fn from_session(session: Arc<SshSession>) -> Result<Self, FileError> {
+        Self::riding(session, None).await
+    }
+
+    /// [`from_session`](Self::from_session) for a session its owner dialled
+    /// to a server of known `identity` (#5439,
+    /// [`FilesystemIdentity::ssh`] of the owner's config): the browser
+    /// reports it, as a browser that dialled the server itself would, so a
+    /// paste between it and another session to the server is guarded. It
+    /// still never dials, and holds no secret.
+    pub async fn from_session_identified(
+        session: Arc<SshSession>,
+        identity: FilesystemIdentity,
+    ) -> Result<Self, FileError> {
+        Self::riding(session, Some(identity)).await
+    }
+
+    async fn riding(
+        session: Arc<SshSession>,
+        identity: Option<FilesystemIdentity>,
+    ) -> Result<Self, FileError> {
         let sftp = sftp::open_sftp_subsystem(&session)
             .await
             .map_err(|e| FileError::OperationFailed(e.to_string()))?;
@@ -110,6 +139,7 @@ impl SftpFileBrowser {
                 _gateway: None,
                 sftp,
             }))),
+            identity: Some(identity.unwrap_or_default()),
         })
     }
 
@@ -660,6 +690,25 @@ impl FileBrowser for SftpFileBrowser {
         Some(self)
     }
 
+    /// The server, user and route of this browser's config (#5355). A
+    /// browser riding a borrowed session ([`from_session`](Self::from_session))
+    /// has no config, so no id.
+    fn filesystem_id(&self) -> Option<crate::files::shared_fs::FilesystemId> {
+        match &self.identity {
+            Some(identity) => identity.id.clone(),
+            None => crate::files::shared_fs::FilesystemId::ssh(&self.config),
+        }
+    }
+
+    /// The server whatever the login, loopback names folded (#5430): another
+    /// login, or `localhost` vs `127.0.0.1`, may see the same files.
+    fn filesystem_hint(&self) -> Option<crate::files::shared_fs::FilesystemHint> {
+        match &self.identity {
+            Some(identity) => identity.hint.clone(),
+            None => crate::files::shared_fs::FilesystemHint::ssh(&self.config),
+        }
+    }
+
     /// SFTP `setstat` / `symlink` back chmod, chown and symlink creation.
     fn attribute_ops(&self) -> crate::files::FileAttributeOps {
         crate::files::FileAttributeOps::ALL
@@ -912,6 +961,10 @@ impl SftpAdvancedOps for SftpFileBrowser {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "file_browser_shared_fs_tests.rs"]
+mod shared_fs_tests;
 
 #[cfg(test)]
 mod tests {
