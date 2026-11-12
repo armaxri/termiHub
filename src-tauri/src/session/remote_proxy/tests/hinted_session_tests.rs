@@ -111,13 +111,10 @@ fn stat_json(disk: &str, path: &str) -> Result<serde_json::Value, String> {
 
 /// An agent-hosted SSH session on `agent-1` with `config`, served from
 /// `root`.
-async fn ssh_session(
-    root: &str,
-    config: serde_json::Value,
-) -> (Arc<MockAgentRpcClient>, RemoteProxy) {
-    let mut mock = MockAgentRpcClient::with_capabilities(types_reply("ssh"));
-    mock.session_files = Some(true);
-    mock.file_ranges = Some(true);
+async fn ssh_session(root: &str, config: serde_json::Value) -> (Arc<FakeAgent>, RemoteProxy) {
+    let mut mock = proxy_agent(types_reply("ssh"));
+    mock.capabilities_mut().session_files = true;
+    mock.capabilities_mut().file_ranges = true;
     mock.responder = Some(serve_view(root.to_string()));
     let mock = Arc::new(mock);
     let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
@@ -267,9 +264,9 @@ async fn sessions_of_one_definition_refuse_a_paste_onto_itself() {
             .await
             .expect_err("one definition, one entry");
 
-        let mut mock = MockAgentRpcClient::with_capabilities(types_reply("ssh"));
-        mock.session_files = Some(true);
-        mock.file_ranges = Some(true);
+        let mut mock = proxy_agent(types_reply("ssh"));
+        mock.capabilities_mut().session_files = true;
+        mock.capabilities_mut().file_ranges = true;
         mock.responder = Some(serve_view(view.root.clone()));
         let mut other = RemoteProxy::new("agent-2".to_string(), Arc::new(mock));
         other
@@ -338,9 +335,9 @@ fn agent_server(host: &str, user: &str) -> termihub_core::config::SshConfig {
 
 /// A local session on an agent dialled to `server`, browsing `root`.
 async fn agent_local_session(root: &str, server: &termihub_core::config::SshConfig) -> RemoteProxy {
-    let mut mock = MockAgentRpcClient::with_capabilities(types_reply("local"));
-    mock.session_files = Some(true);
-    mock.file_ranges = Some(true);
+    let mut mock = proxy_agent(types_reply("local"));
+    mock.capabilities_mut().session_files = true;
+    mock.capabilities_mut().file_ranges = true;
     mock.responder = Some(serve_view(root.to_string()));
     mock.agent_host_hint = FilesystemHint::ssh(server);
     let mut proxy = RemoteProxy::new("agent-1".to_string(), Arc::new(mock));
