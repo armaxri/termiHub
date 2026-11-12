@@ -407,8 +407,8 @@ function Register-SshdTask([hashtable]$Sshd = $MainSshd) {
     # A scheduled task, not a service: it runs sshd.exe in plain foreground
     # mode (-D) as SYSTEM -- SYSTEM is what lets Win32-OpenSSH log another
     # user on -- with no service-control handshake to fail.
-    $sshd = Join-Path $OpenSshDir 'sshd.exe'
-    $action = New-ScheduledTaskAction -Execute $sshd -Argument "-D -f `"$($Sshd.Config)`" -E `"$($Sshd.Log)`""
+    $sshdExe = Join-Path $OpenSshDir 'sshd.exe'
+    $action = New-ScheduledTaskAction -Execute $sshdExe -Argument "-D -f `"$($Sshd.Config)`" -E `"$($Sshd.Log)`""
     $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
