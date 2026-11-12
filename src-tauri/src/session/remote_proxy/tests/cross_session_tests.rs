@@ -28,10 +28,10 @@ use crate::session::manager::SessionManager;
 use termihub_core::connection::ConnectionTypeRegistry;
 
 /// An agent double whose sessions are `session_type`, serving ranged slices.
-fn agent_mock(session_type: &str, responder: Box<Responder>) -> Arc<MockAgentRpcClient> {
-    let mut mock = MockAgentRpcClient::with_capabilities(types_reply(session_type));
-    mock.session_files = Some(true);
-    mock.file_ranges = Some(true);
+fn agent_mock(session_type: &str, responder: Box<Responder>) -> Arc<FakeAgent> {
+    let mut mock = proxy_agent(types_reply(session_type));
+    mock.capabilities_mut().session_files = true;
+    mock.capabilities_mut().file_ranges = true;
     mock.responder = Some(responder);
     Arc::new(mock)
 }
@@ -39,7 +39,7 @@ fn agent_mock(session_type: &str, responder: Box<Responder>) -> Arc<MockAgentRpc
 /// A session of `session_type` with `config` on the agent `agent_id`.
 async fn session(
     agent_id: &str,
-    mock: &Arc<MockAgentRpcClient>,
+    mock: &Arc<FakeAgent>,
     session_type: &str,
     config: serde_json::Value,
 ) -> RemoteProxy {
@@ -52,7 +52,7 @@ async fn session(
 }
 
 /// A local session on the agent `agent_id`: it browses that agent host.
-async fn local_session(agent_id: &str, mock: &Arc<MockAgentRpcClient>) -> RemoteProxy {
+async fn local_session(agent_id: &str, mock: &Arc<FakeAgent>) -> RemoteProxy {
     session(agent_id, mock, "local", json!({})).await
 }
 

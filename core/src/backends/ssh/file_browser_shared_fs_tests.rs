@@ -66,6 +66,18 @@ async fn sftp_end(config: SshConfig) -> RemoteCopyEndpoint {
     RemoteCopyEndpoint::Sftp(Arc::new(browser))
 }
 
+/// The SFTP browser behind an SFTP end.
+#[allow(
+    irrefutable_let_patterns,
+    reason = "built with the `ssh` feature alone, `Sftp` is the only variant"
+)]
+fn sftp_browser(end: &RemoteCopyEndpoint) -> &SftpFileBrowser {
+    let RemoteCopyEndpoint::Sftp(browser) = end else {
+        panic!("an SFTP end")
+    };
+    browser
+}
+
 /// Two sessions with the same server, port and user are one filesystem: a
 /// copy onto the source, however it is spelled on the other session, is
 /// refused, and the source keeps its bytes.
@@ -87,9 +99,7 @@ async fn two_sessions_to_one_server_refuse_a_copy_onto_itself() {
                 )
             );
         }
-        let RemoteCopyEndpoint::Sftp(browser) = &a else {
-            panic!("an SFTP end")
-        };
+        let browser = sftp_browser(&a);
         // The server is read-only and cannot open a file; its size shows the
         // source untouched.
         assert_eq!(
