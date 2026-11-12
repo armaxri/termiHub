@@ -558,7 +558,7 @@ verifies (in _Rust Code Quality_, _Workflow Lint_ and `scripts/check.sh`):
 | Binding                      | Meaning                                                                                                                                                                                                                                              |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lane: <workflow>.yml#<job>` | A CI job that runs it. The lane must be in the script's `LANES` registry, the job must exist, its run steps (or the script it calls) must pass `--ignored`, `--include-ignored` or `--run-ignored`, and must name the test or its `--test <binary>`. |
-| `manual: MT-<AREA>-<n>`      | A manual test defined in this document.                                                                                                                                                                                                              |
+| `manual: MT-<AREA>-<n>`      | A manual test defined in this document and named in a test docstring of a guided-manual (`pytest.mark.manual`) suite in `tests/system/tests/`, so the release-gate manual run walks it (#5415).                                                      |
 | `quarantine: #<n>`           | The open issue tracking a quarantined test (for example a `cfg_attr(windows, ignore = …)` flake).                                                                                                                                                    |
 | `helper: <test fn>`          | Not a test: a child-process helper that the named test in the same file runs with `--ignored`.                                                                                                                                                       |
 
@@ -601,6 +601,10 @@ runners have no Podman machine. On a Mac, run `podman machine start`, then
 `cargo test -p termihub-core --features docker --lib -- --ignored --exact --nocapture backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine`.
 Expected: `test result: ok. 1 passed`, and the output names the machine's
 `…-api.sock` socket. Run it before a release that touches `core/src/backends/docker/`.
+The release-gate manual run walks it as
+[`test_guided_rust_live_smokes.py`](../tests/system/tests/test_guided_rust_live_smokes.py)
+(#5415): the harness runs that command and grades the output; the operator only
+starts the machine if none is running.
 
 **MT-RUST-02 — USB identity of real serial ports (#5394).** CI runners have no USB serial
 adapter. Plug one in, then run
@@ -608,6 +612,8 @@ adapter. Plug one in, then run
 It only enumerates; no port is opened. Expected: `test result: ok. 1 passed`, and the adapter's
 port is printed with its USB identity (not `no USB identity`). Run it before a release that
 touches the serial port identity reader.
+The same guided suite walks it: the operator plugs the adapter in, the harness runs the
+command and grades that a port is listed with a USB identity.
 
 ## 4. Rendered Visual Checks (#4712)
 
@@ -3596,6 +3602,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-51/52 (X11 install on the real desktop per OS; MT-SSH-50 is automated, #4965), MT-NET-21 (latency charts)
+- [ ] `test_guided_rust_live_smokes.py` — MT-RUST-01 (macOS: Podman machine routing; start a Podman machine when asked) and MT-RUST-02 (every OS: USB identity of a plugged-in serial adapter; only lists ports, never opens one). The harness runs each ignored core test and grades its output
 - [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), the same adapter on an agent host (the agent reopens it in place, #5396; a second, different adapter is needed), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_AGENT_SERIAL_DEVICE` (the adapter's path on the `TERMIHUB_REAL_AGENT_HOST` host), `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
@@ -3640,6 +3647,7 @@ Guided-manual suites:
 | [`test_guided_remote_desktop.py`](../tests/system/tests/test_guided_remote_desktop.py)     | MT-RD-01..09/11..13                                                             | connect a real Windows RDP host (`TERMIHUB_RDP_HOST`), judge the session, paste into the OS file manager                                            |
 | [`test_guided_look_and_feel.py`](../tests/system/tests/test_guided_look_and_feel.py)       | MT-UI-40/46/53                                                                  | judge legibility and fonts from the saved native contact sheet                                                                                      |
 | [`test_guided_shells_and_tools.py`](../tests/system/tests/test_guided_shells_and_tools.py) | MT-LOCAL-03/31, MT-SSH-51/52, MT-NET-21                                         | watch the WSL tab open, the X window, the chart                                                                                                     |
+| [`test_guided_rust_live_smokes.py`](../tests/system/tests/test_guided_rust_live_smokes.py) | MT-RUST-01/02                                                                   | start a Podman machine if none is running, plug in a USB serial adapter (harness runs and grades the ignored Rust tests)                            |
 | [`test_real_hardware.py`](../tests/system/tests/test_real_hardware.py)                     | MT-SER-09 (physical), MT-AGENT-26 (Docker half)/28, #470/#473/#474/#477 residue | provide the serial adapter or real host and unplug / look (harness asserts the echo, disconnect, shells, persistent reattach)                       |
 
 ### Output-stream flash and flood grades (#4931)

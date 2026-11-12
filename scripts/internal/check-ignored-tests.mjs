@@ -14,7 +14,11 @@
 //                                steps (or a script it calls, `via`) must pass
 //                                such a flag outside comments, and they must
 //                                name the test (or its `--test <binary>`).
-//   manual: MT-<AREA>-<n>        a manual-test id defined in docs/testing.md.
+//   manual: MT-<AREA>-<n>        a manual-test id defined in docs/testing.md and
+//                                named in the docstring of a test function in a
+//                                guided-manual (`pytest.mark.manual`) suite under
+//                                tests/system/tests/, so the release-gate manual
+//                                run walks it (#5415).
 //   quarantine: #<n>             the open issue tracking a quarantined test.
 //   helper: <test fn>            a child-process helper, not a test: the named
 //                                test in the same file runs it with --ignored.
@@ -27,7 +31,7 @@
 // The pure helpers are exported for unit testing (check-ignored-tests.test.mjs),
 // which also runs the check against the real repo.
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
 import { isMainModule } from "./is-main-module.mjs";
@@ -56,6 +60,7 @@ export const LANES = {
 const IGNORED_FLAG = /--(?:ignored|include-ignored|run-ignored)\b/;
 
 const DOCS = "docs/testing.md";
+const GUIDED_DIR = "tests/system/tests";
 const BEGIN = "<!-- ignored-tests:begin -->";
 const END = "<!-- ignored-tests:end -->";
 
@@ -291,6 +296,38 @@ export function inventoryRows(docsText) {
 }
 
 /**
+ * Manual ids named in test-function docstrings of a guided-manual suite.
+ *
+ * Mirrors `manual_test_ids()` in tests/system/tests/test_manual_corpus.py: a
+ * module counts when it carries `pytest.mark.manual`, and an id counts when it
+ * sits in the docstring of a `def test_…` in that module.
+ *
+ * @param {string} pyText - the Python module source.
+ * @returns {string[]} the ids (empty for a module that is not manual-marked).
+ */
+export function guidedIdsInModule(pyText) {
+  if (!/\bmark\.manual\b/.test(pyText)) return [];
+  const ids = [];
+  const docstring = /\bdef\s+test_\w+\s*\([^)]*\)[^:]*:\s*[rRuU]?("""|''')([\s\S]*?)\1/g;
+  for (const m of pyText.matchAll(docstring)) {
+    ids.push(...(m[2].match(/\bMT-[A-Z]+-\d+\b/g) ?? []));
+  }
+  return ids;
+}
+
+/** Every manual id a guided-manual test under tests/system/tests/ names. */
+export function guidedManualIds(root) {
+  const dir = path.join(root, GUIDED_DIR);
+  const ids = new Set();
+  if (!existsSync(dir)) return ids;
+  for (const name of readdirSync(dir)) {
+    if (!/^test_.*\.py$/.test(name)) continue;
+    for (const id of guidedIdsInModule(readFileSync(path.join(dir, name), "utf8"))) ids.add(id);
+  }
+  return ids;
+}
+
+/**
  * Check every ignore attribute under `root`.
  *
  * @returns {{ problems: string[], ignores: object[] }}
@@ -300,6 +337,7 @@ export function checkRepo(root, lanes = LANES) {
   const ignores = [];
   const docsFile = path.join(root, DOCS);
   const docsText = existsSync(docsFile) ? readFileSync(docsFile, "utf8") : "";
+  const guidedIds = guidedManualIds(root);
   const laneCache = new Map();
   const resolveLane = (lane) => {
     if (!laneCache.has(lane)) laneCache.set(lane, laneText(root, lane, lanes));
@@ -337,6 +375,12 @@ export function checkRepo(root, lanes = LANES) {
       for (const id of b.manual) {
         if (!new RegExp(`\\b${id}\\b`).test(docsText)) {
           problems.push(`${where} (${hit.test}): manual id ${id} is not defined in ${DOCS}`);
+        }
+        if (!guidedIds.has(id)) {
+          problems.push(
+            `${where} (${hit.test}): manual id ${id} is named by no guided-manual test ` +
+              `(a \`pytest.mark.manual\` test docstring in ${GUIDED_DIR}/)`
+          );
         }
       }
       for (const parent of b.helpers) {

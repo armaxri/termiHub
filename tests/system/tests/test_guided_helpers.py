@@ -9,14 +9,22 @@ from __future__ import annotations
 import pytest
 
 from termihub_harness.guided import (
+    PODMAN_MACHINE_SMOKE_TEST,
     REAL_AGENT_HOST_ENV,
+    SERIAL_USB_IDENTITY_TEST,
     HostSpec,
     host_from_env,
     is_termihub_app_name,
     missing_env_reason,
     other_termihub_pids,
     parse_host_spec,
+    podman_machine_smoke_command,
+    podman_machine_smoke_problem,
     running_other_termihub_pids,
+    running_podman_machines,
+    serial_ports_with_usb_identity,
+    serial_usb_identity_command,
+    serial_usb_identity_problem,
 )
 
 
@@ -94,3 +102,118 @@ class TestOtherTermihubInstances:
         import os
 
         assert os.getpid() not in running_other_termihub_pids([os.getpid()])
+
+
+class TestPodmanMachineSmoke:
+    """MT-RUST-01 (#5415): the guided walk's machine probe and output grade."""
+
+    def test_command_runs_the_one_ignored_test_exactly(self):
+        cmd = podman_machine_smoke_command()
+        assert cmd[:6] == ["cargo", "test", "-p", "termihub-core", "--features", "docker"]
+        after = cmd[cmd.index("--") + 1 :]
+        assert {"--ignored", "--exact"} <= set(after)
+        assert after[-1] == PODMAN_MACHINE_SMOKE_TEST
+
+    def test_command_matches_the_ignored_test_and_the_docs(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        module, _, name = PODMAN_MACHINE_SMOKE_TEST.rpartition("::")
+        assert module == "backends::docker::tests"
+        source = (root / "core/src/backends/docker/mod.rs").read_text(encoding="utf-8")
+        assert f"async fn {name}()" in source
+        assert "manual: MT-RUST-01" in source
+        docs = (root / "docs/testing.md").read_text(encoding="utf-8")
+        assert " ".join(podman_machine_smoke_command()) in docs
+
+    def test_running_machines_are_listed(self):
+        out = (
+            '[{"Name": "podman-machine-default*", "Running": true},'
+            ' {"Name": "spare", "Running": false}]'
+        )
+        assert running_podman_machines(out) == ["podman-machine-default*"]
+
+    @pytest.mark.parametrize("out", ["", "  \n", "[]", "{}", '[{"Name": "m", "Running": false}]'])
+    def test_no_running_machine(self, out):
+        assert running_podman_machines(out) == []
+
+    def test_non_json_output_fails_loudly(self):
+        with pytest.raises(ValueError, match="no JSON"):
+            running_podman_machines("NAME  VM TYPE  CREATED")
+
+    def test_passing_output_is_graded_ok(self):
+        out = (
+            "running 1 test\n"
+            "runtime=Podman -> resolved socket "
+            "unix:///Users/me/.local/share/containers/podman/machine/"
+            "podman-machine-default-api.sock\n"
+            "runtime=Podman -> podman=true server=Some(\"5.2.0\")\n"
+            "test backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine ... ok\n"
+            "\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
+        )
+        assert podman_machine_smoke_problem(out) is None
+
+    def test_zero_tests_run_is_not_a_pass(self):
+        out = "resolved socket unix:///x-api.sock\ntest result: ok. 0 passed; 0 failed\n"
+        assert "1 passed" in podman_machine_smoke_problem(out)
+
+    def test_failure_is_not_a_pass(self):
+        out = "test result: FAILED. 0 passed; 1 failed\n"
+        assert "1 passed" in podman_machine_smoke_problem(out)
+
+    def test_a_socket_other_than_the_machine_api_socket_is_not_a_pass(self):
+        out = (
+            "runtime=Podman -> resolved socket unix:///run/podman/podman.sock\n"
+            "test result: ok. 1 passed; 0 failed\n"
+        )
+        assert "-api.sock" in podman_machine_smoke_problem(out)
+
+
+class TestSerialUsbIdentity:
+    """MT-RUST-02 (#5415): the guided walk's command and output grade."""
+
+    def test_command_runs_the_one_ignored_test_exactly(self):
+        cmd = serial_usb_identity_command()
+        assert cmd[:6] == ["cargo", "test", "-p", "termihub-core", "--features", "serial"]
+        after = cmd[cmd.index("--") + 1 :]
+        assert {"--ignored", "--exact"} <= set(after)
+        assert after[-1] == SERIAL_USB_IDENTITY_TEST
+
+    def test_command_matches_the_ignored_test_and_the_docs(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        module, _, name = SERIAL_USB_IDENTITY_TEST.rpartition("::")
+        assert module == "session::serial_reconnect::tests"
+        parent = (root / "core/src/session/serial_reconnect.rs").read_text(encoding="utf-8")
+        assert '#[path = "serial_reconnect_tests.rs"]' in parent
+        source = (root / "core/src/session/serial_reconnect_tests.rs").read_text(
+            encoding="utf-8"
+        )
+        assert f"fn {name}()" in source
+        assert "manual: MT-RUST-02" in source
+        docs = (root / "docs/testing.md").read_text(encoding="utf-8")
+        assert " ".join(serial_usb_identity_command()) in docs
+
+    _PASS = (
+        "running 1 test\n"
+        "/dev/cu.Bluetooth-Incoming-Port: no USB identity\n"
+        "/dev/cu.usbserial-A10K: USB 0403:6001 (serial A10K)\n"
+        "COM3: USB 10c4:ea60\n"
+        "test session::serial_reconnect::tests::list_serial_ports_with_usb_identity ... ok\n"
+        "\ntest result: ok. 1 passed; 0 failed; 0 ignored\n"
+    )
+
+    def test_ports_with_identity_are_listed(self):
+        assert serial_ports_with_usb_identity(self._PASS) == ["/dev/cu.usbserial-A10K", "COM3"]
+
+    def test_passing_output_is_graded_ok(self):
+        assert serial_usb_identity_problem(self._PASS) is None
+
+    def test_only_unidentified_ports_is_not_a_pass(self):
+        out = "/dev/ttyS0: no USB identity\ntest result: ok. 1 passed; 0 failed\n"
+        assert "USB identity" in serial_usb_identity_problem(out)
+
+    def test_zero_tests_run_is_not_a_pass(self):
+        out = "/dev/ttyUSB0: USB 0403:6001\ntest result: ok. 0 passed; 0 failed\n"
+        assert "1 passed" in serial_usb_identity_problem(out)
