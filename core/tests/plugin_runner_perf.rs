@@ -331,7 +331,7 @@ async fn fairness(registry: &Registry, type_id: &str) -> Vec<Option<f64>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "performance gate; run optimised with --ignored --nocapture (nightly lane)"]
+#[ignore = "performance gate, run optimised; lane: plugin-sandbox-nightly.yml#plugin-sandbox-perf"]
 async fn out_of_process_echo_stays_within_the_budget() {
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());

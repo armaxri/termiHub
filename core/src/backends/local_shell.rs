@@ -2666,7 +2666,8 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     #[serial(local_pty)]
-    #[ignore = "needs a profile printing TERMIHUB_TEST_PROFILE_MARKER (dispatched Windows lane)"]
+    #[ignore = "needs a profile printing TERMIHUB_TEST_PROFILE_MARKER; \
+                lane: integration-fixtures.yml#native-sshd"]
     async fn windows_shell_start_keeps_profile_output_and_follows_cd() {
         let marker = std::env::var("TERMIHUB_TEST_PROFILE_MARKER")
             .expect("TERMIHUB_TEST_PROFILE_MARKER names the line the test profile prints");

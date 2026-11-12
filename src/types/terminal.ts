@@ -289,6 +289,12 @@ export interface TerminalAutoReconnectState {
    * "will run `<cmd>` on reconnect" while the loop is active. Absent = nothing runs.
    */
   onReconnectCommand?: string;
+  /**
+   * Why the loop's last attempt failed (#5395), e.g. "A different device (USB
+   * 1a86:7523) is on /dev/ttyUSB0. It was not opened." Absent before the first
+   * attempt fails.
+   */
+  lastAttemptError?: string;
 }
 
 // Per-connection terminal display options.

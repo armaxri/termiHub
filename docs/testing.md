@@ -539,6 +539,67 @@ always stale and would recompile that crate, and every crate above it, on each c
 invocation (#3909). To see why cargo rebuilds a crate, run the same command again with
 `CARGO_LOG=cargo::core::compiler::fingerprint=info`.
 
+#### Ignored tests: every `#[ignore]` is bound (#5177)
+
+An `#[ignore]` is a claim that someone runs the test somewhere. The reason string
+must say who, with at least one binding that
+[`scripts/internal/check-ignored-tests.mjs`](../scripts/internal/check-ignored-tests.mjs)
+verifies (in _Rust Code Quality_, _Workflow Lint_ and `scripts/check.sh`):
+
+| Binding                      | Meaning                                                                                                                                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lane: <workflow>.yml#<job>` | A CI job that runs it. The lane must be in the script's `LANES` registry, the job must exist, its run steps (or the script it calls) must pass `--ignored`, `--include-ignored` or `--run-ignored`, and must name the test or its `--test <binary>`. |
+| `manual: MT-<AREA>-<n>`      | A manual test defined in this document.                                                                                                                                                                                                              |
+| `quarantine: #<n>`           | The open issue tracking a quarantined test (for example a `cfg_attr(windows, ignore = …)` flake).                                                                                                                                                    |
+| `helper: <test fn>`          | Not a test: a child-process helper that the named test in the same file runs with `--ignored`.                                                                                                                                                       |
+
+Example: `#[ignore = "needs a public HTTPS host (#4818); lane: plugin-sandbox-nightly.yml#plugin-tls-handshake"]`.
+
+The check also keeps the inventory below in sync: a new ignored test needs a row, and a
+removed one must lose its row. To add a lane, add the job to `LANES` in the script.
+
+<!-- ignored-tests:begin -->
+
+| File                                                 | Test                                                          | Why it is ignored                                         | Binding                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `agent/tests/docker_deferred_update_integration.rs`  | `deferred_update_applies_on_last_docker_disconnect`           | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_basic`                                   | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_recovery`                                | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_resize`                                          | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_kill`                                            | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_monitoring_distroless_uses_docker_stats` | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_monitoring_proc_container_uses_proc`     | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/docker_integration.rs`                  | `test_docker_session_browses_inside_the_container`            | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/self_update_integration.rs`             | `active_docker_session_is_never_interrupted`                  | real Docker daemon (TIN-008)                              | `system-integration.yml#agent-docker-integration` (nightly)                            |
+| `agent/tests/parent_death_guard.rs`                  | `parent_death_guard_helper`                                   | child-process helper                                      | helper of `killed_harness_parent_takes_its_agent_worker_down`                          |
+| `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_honours_docker_context`                   | live Docker daemon + Podman API socket (#1600)            | `integration-fixtures.yml#core-integration` (Podman step)                              |
+| `core/src/backends/docker/mod.rs`                    | `connect_to_runtime_reaches_macos_podman_machine`             | macOS host with a running Podman machine (#1622)          | manual MT-RUST-01                                                                      |
+| `core/src/backends/local_shell.rs`                   | `windows_shell_start_keeps_profile_output_and_follows_cd`     | needs a profile that prints a marker (#5017)              | `integration-fixtures.yml#native-sshd` (Windows leg)                                   |
+| `core/src/backends/local_shell_side_effect_tests.rs` | `audit_injected_setup_side_effects`                           | audit report, asserts nothing (#5009)                     | `integration-fixtures.yml#native-sshd` (macOS/Linux legs)                              |
+| `core/src/session/serial_reconnect_tests.rs`         | `list_serial_ports_with_usb_identity`                         | lists the machine's real serial ports (#5394)             | manual MT-RUST-02                                                                      |
+| `core/tests/plugin_runner_installed.rs`              | `echo_backend_loads_in_its_lpac_from_a_per_machine_install`   | per-machine MSI install + standard user (#4252)           | `plugin-lpac-per-machine.yml#per-machine-lpac` (called by `release-windows-smoke.yml`) |
+| `core/tests/plugin_runner_perf.rs`                   | `out_of_process_echo_stays_within_the_budget`                 | performance gate, optimised build                         | `plugin-sandbox-nightly.yml#plugin-sandbox-perf`                                       |
+| `core/tests/plugin_runner_tls_handshake.rs`          | `a_sandboxed_plugin_verifies_tls_with_only_the_root_snapshot` | public HTTPS host (#4818)                                 | `plugin-sandbox-nightly.yml#plugin-tls-handshake`                                      |
+| `src-tauri/src/credential/hw_key/macos.rs`           | `unsigned_binary_probe_reports_missing_entitlement`           | real macOS keychain (#5163)                               | `code-quality.yml#tests` via `real-keychain-tests.sh` (macOS leg, per PR)              |
+| `src-tauri/src/credential/os_auth/macos.rs`          | `capability_preflight_does_not_prompt`                        | real macOS LocalAuthentication (#5163)                    | `code-quality.yml#tests` via `real-keychain-tests.sh` (macOS leg, per PR)              |
+| `src-tauri/src/session/agent_port_forward_tests.rs`  | `live_vnc_through_a_real_agent_binary`                        | real agent binary + VNC server, `TERMIHUB_LIVE_*` (#5169) | `integration-fixtures.yml#core-integration`                                            |
+| `src-tauri/src/utils/data_dir_lock_tests.rs`         | `lock_holder_child_process`                                   | child-process helper                                      | helper of `lock_is_released_when_the_holder_crashes`                                   |
+
+<!-- ignored-tests:end -->
+
+**MT-RUST-01 — Podman machine routing on macOS (#1622).** CI cannot run it: the macOS
+runners have no Podman machine. On a Mac, run `podman machine start`, then
+`cargo test -p termihub-core --features docker --lib -- --ignored --exact --nocapture backends::docker::tests::connect_to_runtime_reaches_macos_podman_machine`.
+Expected: `test result: ok. 1 passed`, and the output names the machine's
+`…-api.sock` socket. Run it before a release that touches `core/src/backends/docker/`.
+
+**MT-RUST-02 — USB identity of real serial ports (#5394).** CI runners have no USB serial
+adapter. Plug one in, then run
+`cargo test -p termihub-core --features serial --lib -- --ignored --exact --nocapture session::serial_reconnect::tests::list_serial_ports_with_usb_identity`.
+It only enumerates; no port is opened. Expected: `test result: ok. 1 passed`, and the adapter's
+port is printed with its USB identity (not `no USB identity`). Run it before a release that
+touches the serial port identity reader.
+
 ## 4. Rendered Visual Checks (#4712)
 
 **What it does**: renders the real frontend in headless Chromium at several
@@ -882,6 +943,49 @@ conflict), and keep the `why` specific so two PRs never add byte-identical
 files. `baseline.json` holds the per-lane budgets migrated from the old file;
 lower a number there only when a lane measurably needs fewer skips. On a
 budget overrun the guard lists each contributing fragment and its count.
+
+### Rerun report and rerun budget (#5167)
+
+The bulk and OS-input lanes run `--reruns 2` (#2698), so a test that fails and
+then passes on a retry is green. The rerun count is the lane's flake metric, so
+the harness publishes it and puts a limit on it:
+
+- **Report.** Every run lists the tests that needed a rerun. For each test it
+  gives the node id, the attempts, the final outcome and the first failure's
+  message. The list goes to the terminal summary, to
+  `artifacts/reruns/<lane>.json` (uploaded with the lane's artifacts) and to a
+  "Pytest reruns" table in the GitHub step summary. A lane publishes all three
+  even when nothing reran. A local run without a lane prints the list only when
+  a test reran. The full first-attempt traceback stays in that test's
+  `attempt-1-failure.txt`.
+- **Budget.** A lane that names itself in `TERMIHUB_SKIP_GUARD_LANE` fails when
+  its **absorbed** reruns exceed its budget. A rerun is absorbed when the test
+  then passed. A test that still failed after every retry reds the lane anyway,
+  so its retries appear in the list but do not count. The failure message names
+  every test that passed only on a retry.
+
+Budgets are fragments in
+[`tests/system/rerun-budget.d/`](../tests/system/rerun-budget.d/), in the same
+style as the skip allowlist:
+
+```json
+{
+  "why": "known flake in the jump-host reconnect, tracked in #1234",
+  "max_reruns": { "bulk-linux": 1 }
+}
+```
+
+A lane's budget is the sum of `max_reruns` over every fragment that names it. A
+lane that no fragment names allows no absorbed rerun. The `--reruns 0` display
+lanes therefore need no fragment. Keys that start with `_` are comments. The
+seed fragments are `<lane>.json`, and each one records in `_seed` the nightly
+counts it came from. To raise a budget, **add** a fragment named
+`<issue>-<slug>.json`; do not edit a seed number. Fixing the race is always the
+better change.
+
+Tests that rerun on two consecutive nights get a tracking issue. The coordinator
+files it from the JSON artifact or the step summary. Nothing in the harness files
+issues. The machinery tests are in `tests/system/tests/test_rerun_budget.py`.
 
 ### JS error gate
 
@@ -1520,6 +1624,19 @@ that app and never tore off. The step has its own skip-guard lanes,
 `os-input-macos` and `os-input-windows`, and runs even when the bulk step
 failed. Linux needs no split: its bulk lane already runs one worker.
 
+Two guards keep the grades exclusive (#5467). An OS-input suite fails, never
+skips, in a session with more than one xdist worker. The develop nightly of
+2026-11-11 ran the suites that way: a scheduled run reads the default branch's
+copy of the workflow, and that copy did not have the split yet. Before every
+calibration, the harness also waits up to 10 s for any other termiHub process
+to exit. That covers an app leaked by an earlier session or a crashed worker,
+a parallel worker's app and an installed termiHub. If one is still alive, the
+grade fails with `ForeignAppAlive`, which names each PID, who launched it and
+whether that pytest process still runs. The guard only reads the process
+table: it never signals a foreign process or sends it input. The
+frontmost-window refusal (`GlobalInjectionRefused`) is unchanged, and it now
+also names a foreign termiHub that holds the foreground.
+
 A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
@@ -1541,8 +1658,11 @@ line, and its prompt showed the other app's `echo PERF05-40` (a PSReadLine
 history prediction). Since #5031 the OS-input suites run in
 their own `-n 1` step, and the grade passes there on Windows.
 
-On a missed calibration move, the Windows backend names the window under the
-pointer and lists every window on the desktop. That is how a DevTools window,
+On a missed calibration move, the Windows and macOS backends name the window
+under the pointer and list every window on the desktop. On macOS the active app
+is not what a pointer event hits: another process's always-on-top window can
+sit over the test window while the test app is active, so the macOS listing
+comes from `CGWindowList`, front to back (#5467). That is how a DevTools window,
 opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-16 (OS emoji picker) and the IME candidate window
