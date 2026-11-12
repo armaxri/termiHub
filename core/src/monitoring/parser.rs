@@ -485,6 +485,7 @@ pub fn net_rate_from_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     use crate::monitoring::types::StatsMetric;
 
     /// I18N-005: the monitoring command must pin a stable machine locale for the
