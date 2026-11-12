@@ -443,3 +443,64 @@ describe("connection-failed overlay — credential re-entry", () => {
     expect(q("terminal-credential-reentry-open-btn")).toBeNull();
   });
 });
+
+describe("credential re-entry first-use storage chooser (#5187)", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "none", status: "unavailable", storageChosen: false },
+    });
+  });
+
+  async function openForm(): Promise<string> {
+    const tabId = sshTab(PASSWORD, { connectionId: "conn-1" });
+    await renderAuthFailedOverlay(tabId);
+    click("terminal-credential-reentry-open-btn");
+    typeInto("terminal-credential-reentry-secret", "n3w-pw");
+    return tabId;
+  }
+
+  async function reconnect(tabId: string) {
+    click("terminal-credential-reentry-submit");
+    await flush();
+    harness.transport.setSession(tabId, connected());
+    await flushSessionRegion();
+    await flush();
+  }
+
+  it("offers the save box unticked and asks where to store on the first tick", async () => {
+    await openForm();
+    // The connection's save default never ticks it before a store is chosen.
+    expect(q("terminal-credential-reentry-save")?.getAttribute("data-state")).toBe("unchecked");
+
+    click("terminal-credential-reentry-save");
+    expect(useAppStore.getState().storageChooserOpen).toBe(true);
+  });
+
+  it("saves into the chosen store once the reconnect succeeds", async () => {
+    const tabId = await openForm();
+    click("terminal-credential-reentry-save");
+    // The chooser switched the store before settling.
+    await act(async () => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "os_keychain", status: "unlocked", storageChosen: true },
+      });
+      useAppStore.getState().resolveStorageChoice("os_keychain");
+    });
+    expect(q("terminal-credential-reentry-save")?.getAttribute("data-state")).toBe("checked");
+
+    await reconnect(tabId);
+    expect(storeCredentialMock).toHaveBeenCalledWith("conn-1", "password", "n3w-pw", null);
+  });
+
+  it("saves nothing when the chooser is canceled", async () => {
+    const tabId = await openForm();
+    click("terminal-credential-reentry-save");
+    await act(async () => {
+      useAppStore.getState().resolveStorageChoice("canceled");
+    });
+    expect(q("terminal-credential-reentry-save")?.getAttribute("data-state")).toBe("unchecked");
+
+    await reconnect(tabId);
+    expect(storeCredentialMock).not.toHaveBeenCalled();
+  });
+});
