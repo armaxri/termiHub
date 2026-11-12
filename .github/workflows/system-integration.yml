@@ -514,13 +514,15 @@ jobs:
         if: runner.os == 'Linux'
         run: scripts/internal/build-system-test-agent.sh --install-cross
 
-      - name: Build the deployed-agent test binary (macOS, host)
-        # #5424: on macOS the plain deployed-agent suites run against the native
-        # sshd fixture, with a host-OS `--features test-hooks` agent installed
-        # for its user. The harness builds it itself when missing (a no-op once
-        # this step has built), so this only keeps the build out of a test's
-        # fixture timeout and visible as its own step.
-        if: runner.os == 'macOS'
+      - name: Build the deployed-agent test binary (macOS/Windows, host)
+        # #5424 / #5511: on macOS and Windows the plain deployed-agent suites run
+        # against the native sshd fixture, with a host-OS `--features test-hooks`
+        # agent installed for its user (`termihub-agent.exe` on Windows, built
+        # under Git Bash). The harness builds it itself when missing (a no-op
+        # once this step has built), so this only keeps the build out of a
+        # test's fixture timeout and visible as its own step.
+        if: runner.os == 'macOS' || runner.os == 'Windows'
+        shell: bash
         run: scripts/internal/build-system-test-agent.sh --host
 
       - name: Enable harness coverage (Linux, advisory)
