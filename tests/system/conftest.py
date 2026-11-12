@@ -130,6 +130,14 @@ def pytest_addoption(parser):
         "Without it they skip, so CI / AI-agent / normal runs stay green.",
     )
     parser.addoption(
+        "--product-run",
+        action="store_true",
+        default=False,
+        help="Run the on-demand @pytest.mark.product_run suites (#5518). Without it "
+        "they are deselected, so no CI lane collects them. Use "
+        "scripts/internal/product-run.sh, which also serves the live progress page.",
+    )
+    parser.addoption(
         "--manual-platform",
         action="store",
         default=None,
@@ -179,6 +187,7 @@ def pytest_collection_modifyitems(config, items):
     marker, e.g. ``@pytest.mark.manual(platforms=["macos", "windows"])``; omitting
     ``platforms`` runs it everywhere.
     """
+    _deselect_product_run(config, items)
     enabled = bool(config.getoption("manual"))
     interactive = sys.stdin.isatty()
     selected = config.getoption("manual_platform") or detect_platform()
@@ -196,6 +205,35 @@ def pytest_collection_modifyitems(config, items):
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
     native_ssh.apply_markers(items, NATIVE_SSH_TARGET)
+
+
+# ── On-demand product run (#5518) ─────────────────────────────────────────────
+# A product run is triggered by hand only. Its suites are *deselected* (not
+# skipped) without --product-run, so no lane counts them as skips and the skip
+# guard's budgets stay untouched. See termihub_harness/product_run.
+PRODUCT_RUN_MARKER = "product_run"
+
+
+def _deselect_product_run(config, items):
+    if config.getoption("product_run"):
+        return
+    dropped = [item for item in items if item.get_closest_marker(PRODUCT_RUN_MARKER)]
+    if not dropped:
+        return
+    config.hook.pytest_deselected(items=dropped)
+    items[:] = [item for item in items if not item.get_closest_marker(PRODUCT_RUN_MARKER)]
+
+
+def _finish_product_run(session):
+    config = session.config
+    if not config.getoption("product_run") or hasattr(config, "workerinput"):
+        return
+    from termihub_harness.product_run import recorder_from_env
+
+    recorder = recorder_from_env()
+    if recorder is not None and recorder.status_path.is_file():
+        recorder.finish(exit_status=int(session.exitstatus))
+        print(f"\n[product-run] results: {recorder.run_dir / 'results.json'}")
 
 
 # ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
@@ -563,6 +601,7 @@ def pytest_sessionfinish(session, exitstatus):
     flush the guided-manual report."""
     hang_guard.close()
     _LEAKS.extend(app_leaks.reap_leaks("the session"))
+    _finish_product_run(session)
     _enforce_skip_guard(session)
     _enforce_rerun_budget(session)
     config = session.config

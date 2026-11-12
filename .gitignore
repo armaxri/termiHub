@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 dev.local.json
+# Product-run setup input (#5518); the template is product-run.local.json.example.
+product-run.local.json
 .dev-agent/
 coverage
 coverage-unified

@@ -388,7 +388,8 @@ def lane_for(marks: "list[Mark]") -> str:
     report lie (#2050):
 
     * ``manual`` — an operator-guided test (``@pytest.mark.manual``); skipped
-      unless ``--manual`` + a TTY. Never runs in CI.
+      unless ``--manual`` + a TTY. Never runs in CI. The hand-triggered product
+      run (``@pytest.mark.product_run``, #5518) counts here too.
     * ``integration`` — launches the real built app/agent
       (``@pytest.mark.integration``). **Excluded from the per-PR gate**, which
       runs ``pytest -m "not integration"``; it runs only in the dedicated
@@ -400,7 +401,9 @@ def lane_for(marks: "list[Mark]") -> str:
     selects: a manual test is gated manual even when also integration-marked.
     """
     names = {m.name for m in marks}
-    if "manual" in names:
+    # The on-demand product run (#5518) is hand-triggered like a guided-manual
+    # test and never runs in a CI lane (deselected without --product-run).
+    if "manual" in names or "product_run" in names:
         return "manual"
     if "integration" in names:
         return "integration"
