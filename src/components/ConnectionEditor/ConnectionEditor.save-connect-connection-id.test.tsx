@@ -1,7 +1,7 @@
 /**
- * Save & Connect binds its tab to the saved connection (#5257, #5258).
+ * Save and connect binds its tab to the saved connection (#5257, #5258).
  *
- * The editor's Save & Connect opened its tab without a `connectionId`, while a
+ * The editor's Save and connect opened its tab without a `connectionId`, while a
  * sidebar connect stamps one. Everything that looks up "the open tabs of saved
  * connection X" skipped such a tab: a schedule reported "None of the target
  * connections is connected" (#5257), and the session was never bound to its
@@ -158,7 +158,7 @@ function fire(connectionIds: string[]): ScheduleFire {
   };
 }
 
-describe("ConnectionEditor — Save & Connect binds the tab to its connection (#5257, #5258)", () => {
+describe("ConnectionEditor — Save and connect binds the tab to its connection (#5257, #5258)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);

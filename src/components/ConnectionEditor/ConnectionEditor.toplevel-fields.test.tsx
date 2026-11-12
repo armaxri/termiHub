@@ -391,7 +391,7 @@ describe("ConnectionEditor top-level fields — blank-name validation (#5284)", 
     expect(document.activeElement).toBe(nameInput());
   });
 
-  it("does not save on Save & Connect while blank and focuses Name", async () => {
+  it("does not save on Save and connect while blank and focuses Name", async () => {
     const addConnection = vi.fn();
     useAppStore.setState({ addConnection });
     renderEditor("new");

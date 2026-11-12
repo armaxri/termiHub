@@ -3,7 +3,7 @@
  *
  * Test probes a connection without saving it. When the live form does not carry
  * the secret (a stored-vault password, or a passphrase-protected key), Test must
- * resolve it the same way Save & Connect does — stored credential first, else a
+ * resolve it the same way Save and connect does — stored credential first, else a
  * prompt — but in a non-persisting mode: it never saves the connection, never
  * stores the secret, never opens a tab, and never writes the secret into the
  * form. A dismissed prompt cancels the test cleanly with no auth-failure toast.
@@ -393,10 +393,10 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
 
 /**
  * #3316: Test never persists a prompt-entered secret, so the real prompt it
- * opens must offer no Save control — while Save & Connect's prompt still does.
+ * opens must offer no Save control — while Save and connect's prompt still does.
  * Uses the real store `requestPassword` and the real `PasswordPrompt`.
  */
-/** The tab the mocked `addTab` opens for Save & Connect. */
+/** The tab the mocked `addTab` opens for Save and connect. */
 const SAVE_CONNECT_TAB = "tab-save-connect";
 const sessions = installSessionLifecycleHarness();
 
@@ -445,7 +445,7 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
     expectNothingPersisted();
   });
 
-  it("the prompt opened by Save & Connect still shows the Save control", async () => {
+  it("the prompt opened by Save and connect still shows the Save control", async () => {
     mockBackend({ keyEncrypted: true });
     render(CONN_KEY.id, { withPrompt: true });
     await flush();

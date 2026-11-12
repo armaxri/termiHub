@@ -25,7 +25,7 @@ function setValue(el: HTMLInputElement, value: string) {
 
 function scrollbackInput(): HTMLInputElement {
   const el = Array.from(container.querySelectorAll(".settings-form__label")).find(
-    (l) => l.textContent === "Persistent Scrollback Buffer"
+    (l) => l.textContent === "Persistent scrollback buffer"
   );
   return el?.closest(".settings-form__field")?.querySelector("input") as HTMLInputElement;
 }

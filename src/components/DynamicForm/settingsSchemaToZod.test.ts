@@ -216,7 +216,7 @@ describe("settingsSchemaToZod", () => {
   // value cache cannot leak the previous type's value (#1820). A bare
   // `.optional()` accepts only `undefined`, so those `null`-cleared optional
   // fields (e.g. SSH Advanced `shell` / `connectTimeoutSecs`) failed validation
-  // as "Invalid input", leaving Save & Connect permanently disabled for SSH.
+  // as "Invalid input", leaving Save and connect permanently disabled for SSH.
   // Optional fields must therefore also accept `null`.
   it("a required dockerContainer field rejects an empty value (PROD-017)", () => {
     const zod = settingsSchemaToZod(

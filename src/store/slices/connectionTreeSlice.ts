@@ -67,7 +67,7 @@ export interface ConnectionTreeSlice {
    * Add a connection: optimistic overlay, then persist. Resolves with the id it
    * was stored under (the backend recomputes it from folder + name), or `null`
    * when the persist failed (already toasted). Callers may ignore the promise;
-   * Save & Connect awaits it to bind its tab to the saved connection (#5257).
+   * Save and connect awaits it to bind its tab to the saved connection (#5257).
    */
   addConnection: (connection: SavedConnection) => Promise<string | null>;
   bulkAddConnections: (connections: SavedConnection[]) => void;

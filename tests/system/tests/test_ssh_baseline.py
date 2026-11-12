@@ -79,7 +79,7 @@ class TestSshBaseline(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi
     def test_sidebar_double_click_connects_password(self):
         # Exercises the bridge's doubleClick verb on the real sidebar-connect path
         # (ConnectionList.onDoubleClick → handleConnect), distinct from the editor's
-        # Save & Connect: save a password connection, double-click it in the sidebar
+        # Save and connect: save a password connection, double-click it in the sidebar
         # to connect, answer the prompt it raises, and land in a terminal.
         name = unique_name("ssh-dblclick")
         self.create_ssh_connection(

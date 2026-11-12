@@ -33,7 +33,7 @@ class TestSshEnvVars(ConnectionsUi, PasswordPromptUi, SystemTest):
 
     def _run(self, prefix: str, username: str) -> None:
         name = unique_name(prefix)
-        # Save & Connect: the literal token is saved; expansion happens at connect.
+        # Save and connect: the literal token is saved; expansion happens at connect.
         self.create_ssh_connection(
             name,
             host=HOST,

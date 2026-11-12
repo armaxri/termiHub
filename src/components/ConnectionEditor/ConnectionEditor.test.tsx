@@ -22,7 +22,7 @@ import {
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider, toast } from "@/components/ui";
 
-// Partial-mock the toast surface so Save & Connect feedback can be asserted
+// Partial-mock the toast surface so Save and connect feedback can be asserted
 // without a real Sonner portal. Other ui exports (TooltipProvider, Button, …)
 // keep their real implementations.
 vi.mock("@/components/ui", async () => {
@@ -211,7 +211,7 @@ describe("ConnectionEditor — credential hint", () => {
 
 // ---------------------------------------------------------------------------
 // Realistic SSH type with authMethod selector and conditional password field.
-// Used for Save & Connect credential-store tests.
+// Used for Save and connect credential-store tests.
 // ---------------------------------------------------------------------------
 
 const SSH_TYPE_FULL: ConnectionTypeInfo = {
@@ -282,10 +282,10 @@ const SSH_CONN_KEY: SavedConnection = {
   folderId: null,
 };
 
-describe("ConnectionEditor — Save & Connect credential handling", () => {
+describe("ConnectionEditor — Save and connect credential handling", () => {
   const sessions = installSessionLifecycleHarness();
 
-  /** Report the tab Save & Connect opened as connected (#5156). */
+  /** Report the tab Save and connect opened as connected (#5156). */
   async function connectOpenedTab(): Promise<void> {
     const tab = getAllTabsAcrossGroupTrees().find((t) => t.contentType === "terminal");
     expect(tab).toBeDefined();
@@ -437,7 +437,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
   });
 
   it("prompts to unlock the credential store before resolving when locked (G3, #1144)", async () => {
-    // Regression: Save & Connect was the only connect path missing the
+    // Regression: Save and connect was the only connect path missing the
     // mode===master_password && status===locked unlock gate. With the store
     // locked it silently fell back to an interactive password prompt instead
     // of first offering to unlock and use the saved credential. It must now
@@ -570,7 +570,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
   });
 
   /**
-   * Click Save & Connect, then answer the credential prompt with the given save
+   * Click Save and connect, then answer the credential prompt with the given save
    * flag. Parameterized over the connection (password vs key auth), the id the
    * save backend returns, and the secret typed into the prompt.
    */
@@ -1367,7 +1367,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     ]);
   });
 
-  it("renders the SSH Agent Forwarding toggle, off by default (#1699)", async () => {
+  it("renders the SSH agent forwarding toggle, off by default (#1699)", async () => {
     await renderFor(SSH_CONN_PASSWORD.id);
     expect(query("ssh-agent-forwarding-section")).toBeTruthy();
     expect(query("connection-editor-forward-agent")?.getAttribute("aria-checked")).toBe("false");
@@ -1449,10 +1449,10 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
 });
 
 // ---------------------------------------------------------------------------
-// "Setup SSH Agent" helper button (#955)
+// "Set up SSH agent" helper button (#955)
 //
 // The button must surface in the editor when SSH + agent auth is selected, be
-// hidden for other auth methods, and open a "Setup SSH Agent" local tab that
+// hidden for other auth methods, and open a "Set up SSH agent" local tab that
 // runs the agent-setup helper command.
 // ---------------------------------------------------------------------------
 
@@ -1467,7 +1467,7 @@ const SSH_CONN_AGENT: SavedConnection = {
   folderId: null,
 };
 
-describe("ConnectionEditor — Setup SSH Agent button", () => {
+describe("ConnectionEditor — Set up SSH agent button", () => {
   function query(testId: string): HTMLElement | null {
     return container.querySelector(`[data-testid="${testId}"]`);
   }
@@ -1513,17 +1513,17 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the Setup SSH Agent button for agent auth", async () => {
+  it("shows the Set up SSH agent button for agent auth", async () => {
     await renderFor(SSH_CONN_AGENT.id);
     expect(query("ssh-setup-agent")).toBeTruthy();
   });
 
-  it("hides the Setup SSH Agent button for non-agent auth", async () => {
+  it("hides the Set up SSH agent button for non-agent auth", async () => {
     await renderFor(SSH_CONN_PASSWORD.id);
     expect(query("ssh-setup-agent")).toBeNull();
   });
 
-  it("opens a 'Setup SSH Agent' local tab when clicked", async () => {
+  it("opens a 'Set up SSH agent' local tab when clicked", async () => {
     const addTabSpy = vi.fn();
     useAppStore.setState({ addTab: addTabSpy });
 
@@ -1537,7 +1537,7 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
 
     expect(addTabSpy).toHaveBeenCalledTimes(1);
     const [title, type, payload] = addTabSpy.mock.calls[0];
-    expect(title).toBe("Setup SSH Agent");
+    expect(title).toBe("Set up SSH agent");
     expect(type).toBe("local");
     expect((payload as { config: { initialCommand: string } }).config.initialCommand).toContain(
       "ssh-add"

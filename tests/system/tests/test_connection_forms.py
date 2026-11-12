@@ -16,8 +16,8 @@ Divergences from the original, by design:
   longer renders in the editor, so it is dropped from the common-fields check;
   appearance is now the color/icon pickers in ``ConnectionAppearanceSettings``.
 * **SSH ``agent`` auth warning** (``MT-SSH-08``): the old test checked a warning
-  shown for ``agent`` auth. The editor now shows an "SSH Agent" section with the
-  "Setup SSH Agent" helper instead (``ssh-agent-setup-section``), so the check
+  shown for ``agent`` auth. The editor now shows an "SSH agent" section with the
+  "Set up SSH agent" helper instead (``ssh-agent-setup-section``), so the check
   asserts that section appears for ``agent`` auth and only for it. ``agent`` is
   a selectable ``authMethod`` in the SSH schema (``core/src/backends/ssh/mod.rs``);
   the connect-time error with no agent running is ``test_ssh_agent_error.py``.
@@ -133,13 +133,13 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.driver.select("field-authMethod", "agent")
         self.wait(
             lambda: self.driver.exists("ssh-agent-setup-section"),
-            what="the SSH Agent section for agent auth",
+            what="the SSH agent section for agent auth",
         )
         assert self.driver.exists("ssh-setup-agent")
         self.driver.select("field-authMethod", "password")
         self.wait(
             lambda: not self.driver.exists("ssh-agent-setup-section"),
-            what="the SSH Agent section to go away for password auth",
+            what="the SSH agent section to go away for password auth",
         )
 
     def test_ssh_default_port_is_22(self):

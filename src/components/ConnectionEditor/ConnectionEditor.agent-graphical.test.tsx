@@ -3,7 +3,7 @@
  *
  * The agent does not host graphical types; the editor offers this computer's
  * VNC/RDP types under an agent, marks them as tunnelled through the agent, and
- * Save & Connect opens a remote-desktop tab routed through the agent (its
+ * Save and connect opens a remote-desktop tab routed through the agent (its
  * config carries `agentId`) instead of an agent terminal session.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -200,7 +200,7 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
     expect(byTestId("connection-editor-save-connect")).not.toBeNull();
   });
 
-  it("Save & Connect opens a remote-desktop tab routed through the agent", async () => {
+  it("Save and connect opens a remote-desktop tab routed through the agent", async () => {
     const updateAgentDef = vi.fn(() => Promise.resolve());
     const addTab = vi.fn();
     useAppStore.setState({ updateAgentDef, addTab });
@@ -242,7 +242,7 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
     expect(options.contentType).toBe("remote-desktop");
   });
 
-  it("Save & Connect prompts when no password is stored, and opens nothing on cancel", async () => {
+  it("Save and connect prompts when no password is stored, and opens nothing on cancel", async () => {
     const updateAgentDef = vi.fn(() => Promise.resolve());
     const addTab = vi.fn();
     const requestPassword = vi.fn(() => Promise.resolve(null));

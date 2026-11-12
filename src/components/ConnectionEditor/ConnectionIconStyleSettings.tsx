@@ -52,7 +52,7 @@ export function ConnectionIconStyleSettings({
 
   return (
     <>
-      <Field variant="settings" label="Icon Color" hint={colorHint}>
+      <Field variant="settings" label="Icon color" hint={colorHint}>
         <>
           <div
             className="connection-editor__swatches"
@@ -115,7 +115,7 @@ export function ConnectionIconStyleSettings({
 
       <Field
         variant="settings"
-        label="Emoji Icon"
+        label="Emoji icon"
         htmlFor="connection-editor-icon-emoji"
         error={iconEmojiError ?? undefined}
         hint={emojiHint}
