@@ -185,7 +185,10 @@ fn shared_agent_binary() -> &'static Path {
 /// The copy used to be published with `rename`, which replaces an existing
 /// file: a process that saw no copy yet would rename its own over the one a
 /// sibling test was already running from, and that test saw its binary change
-/// inode mid-run (#5434). The copy is now published with `hard_link`, which
+/// inode mid-run (#5434). Worse, on Linux the agent's `current_exe()` (read
+/// from `/proc/self/exe`) then names an unlinked file, so its daemon spawn
+/// failed with "No such file or directory" and any test opening a session
+/// failed in `create_shell_session`. The copy is now published with `hard_link`, which
 /// fails if the name exists, so the first writer wins and nobody replaces a
 /// published copy. Readers never see a half-written file: the staging file is
 /// complete before it is linked.
