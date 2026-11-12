@@ -72,6 +72,11 @@ pub(super) struct Faults {
     pub uname_s: Option<String>,
     /// Report this from `uname -m` instead of `x86_64` (#5208).
     pub uname_m: Option<String>,
+    /// Git Bash on Windows (#5449): `powershell.exe … -EncodedCommand <b64>`
+    /// decodes the script and prints the reply of the first entry whose key it
+    /// contains (exit 0), or fails with exit 1 when none matches. `None`: no
+    /// `powershell.exe` on the `PATH` (exit 127).
+    pub powershell: Option<Vec<(&'static str, String)>>,
 }
 
 /// Everything the host holds, shared across every connection.
@@ -83,6 +88,8 @@ pub(super) struct HostState {
     pub dirs: Vec<String>,
     /// Every exec command line, in order.
     pub commands: Vec<String>,
+    /// The decoded script of every `powershell.exe -EncodedCommand`, in order.
+    pub powershell_scripts: Vec<String>,
     /// Paths the host was asked to remove over SFTP, in order.
     pub sftp_removes: Vec<String>,
     pub faults: Faults,
@@ -255,6 +262,13 @@ fn run_exec(st: &mut HostState, command: &str) -> ExecResult {
         }
         _ => {}
     }
+    // A POSIX shell expands no `%VAR%` and turns `$env:VAR` into `:VAR`.
+    if let Some(text) = command.strip_prefix("echo ") {
+        return ok(format!("{}\n", text.replace("$env", "")));
+    }
+    if let Some(rest) = command.strip_prefix("powershell.exe ") {
+        return run_powershell(st, rest);
+    }
     if command == POSIX_PREPARE_UPLOAD_DIR_COMMAND {
         if st.faults.fail_prepare {
             return fail("mkdir: cannot create directory: Permission denied\n", 1);
@@ -277,6 +291,37 @@ fn run_exec(st: &mut HostState, command: &str) -> ExecResult {
         return run_chain(st, command);
     }
     fail(format!("sh: {command}: not found\n"), 127)
+}
+
+/// Decode the `-EncodedCommand` script in `args` (base64 of UTF-16LE text).
+pub(super) fn decode_encoded_command(args: &str) -> Option<String> {
+    use base64::Engine;
+    let encoded = args.split_once("-EncodedCommand ")?.1.trim();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
+        .collect();
+    String::from_utf16(&units).ok()
+}
+
+/// "Run" `powershell.exe <args>` per [`Faults::powershell`].
+fn run_powershell(st: &mut HostState, args: &str) -> ExecResult {
+    let Some(replies) = &st.faults.powershell else {
+        return fail("sh: powershell.exe: command not found\n", 127);
+    };
+    let Some(script) = decode_encoded_command(args) else {
+        return fail("powershell: malformed -EncodedCommand\n", 1);
+    };
+    st.powershell_scripts.push(script.clone());
+    match replies.iter().find(|(key, _)| script.contains(key)) {
+        Some((_, reply)) => ok(format!("{reply}\n")),
+        None => fail(format!("unhandled script: {script}\n"), 1),
+    }
 }
 
 /// "Execute" the file at `path` with `--version`.
