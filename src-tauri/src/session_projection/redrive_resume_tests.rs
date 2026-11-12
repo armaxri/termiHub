@@ -1575,3 +1575,7 @@ mod agent_recovery_status;
 /// #4459: a user agent Disconnect/Shutdown ends the hosted tabs at the backend.
 #[path = "agent_user_end_tests.rs"]
 mod agent_user_end;
+
+/// #5396: an agent-hosted serial tab mirrors its agent's in-place reopen.
+#[path = "agent_serial_reconnect_tests.rs"]
+mod agent_serial_reconnect;
