@@ -3076,7 +3076,9 @@ The same suffix applies to the backup-restore seal keys
 (`termiHub-biometric-unlock`) and the OS-enforced biometric key
 (`termiHub-biometric-unlock-v2`). `scripts/dev.sh` / `scripts/dev.cmd` export
 `dev.local.json`'s `dev_name` as `TERMIHUB_DEV_NAME`; release builds ignore that
-variable. A dev or test instance can therefore choose OS keychain storage or
+variable. An already-set, non-empty `TERMIHUB_DEV_NAME` in the environment
+takes precedence over `dev_name`, so a one-off instance can pick its own
+namespace (`TERMIHUB_DEV_NAME=probe ./scripts/dev.sh`). A dev or test instance can therefore choose OS keychain storage or
 enable biometric unlock without reading, overwriting or deleting the installed
 app's entries, and parallel checkouts do not share entries with each other.
 
