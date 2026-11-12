@@ -223,7 +223,7 @@ interface FileEditorProps {
 }
 
 /**
- * Outcome of a save attempt, used to gate "Save & Close" so the tab is only
+ * Outcome of a save attempt, used to gate "Save and close" so the tab is only
  * destroyed once the file was actually written (FEC-010):
  * - `saved` — the write completed; it is safe to close the tab.
  * - `failed` — the save did not happen (a permission/IO error, or a cancelled
@@ -386,7 +386,7 @@ export function FileEditor({
   // impossible for it to be serialized into persisted tab/workspace state.
   const sudoPasswordRef = useRef<string | null>(null);
   // A close request that must fire only once a deferred elevated (sudo) write
-  // actually succeeds (FEC-010). "Save & Close" on the sudo path opens the
+  // actually succeeds (FEC-010). "Save and close" on the sudo path opens the
   // password dialog and returns before the write happens, so the close cannot
   // run synchronously without discarding the buffer. It is stashed here and
   // fired from the sudo completion handler on success; cancelling or failing the
@@ -1228,7 +1228,7 @@ export function FileEditor({
     }
     // No usable cached/stored password — the interactive prompt is opened here
     // and the write only happens when the user authorizes it. The confirmed
-    // success (and any deferred "Save & Close") is therefore handled in
+    // success (and any deferred "Save and close") is therefore handled in
     // handleSudoSubmit, not here (FEC-010).
     setSudoAttempt(1);
     setSudoDialogOpen(true);
@@ -1265,7 +1265,7 @@ export function FileEditor({
         setSudoDialogOpen(false);
         setSudoAttempt(1);
         // The elevated write actually landed — only now honour a deferred
-        // "Save & Close" that opened this prompt (FEC-010).
+        // "Save and close" that opened this prompt (FEC-010).
         const closeReq = pendingSudoCloseRef.current;
         pendingSudoCloseRef.current = null;
         if (closeReq) closeTab(closeReq.tabId, closeReq.panelId);
@@ -1307,7 +1307,7 @@ export function FileEditor({
     setSudoDialogOpen(false);
     setSudoAttempt(1);
     // Cancelling the prompt means no write happened — abandon any deferred
-    // "Save & Close" so the tab (and its unsaved buffer) stays open (FEC-010).
+    // "Save and close" so the tab (and its unsaved buffer) stays open (FEC-010).
     pendingSudoCloseRef.current = null;
   }, []);
 
@@ -1361,7 +1361,7 @@ export function FileEditor({
   }, [advancedOps, meta.filePath, fileName]);
 
   // Save the current buffer. Returns a {@link SaveOutcome} so callers — in
-  // particular "Save & Close" — can tell an actual write (`saved`) apart from a
+  // particular "Save and close" — can tell an actual write (`saved`) apart from a
   // failure/cancel (`failed`) and from a deferred elevated write whose prompt is
   // still open (`prompting`). This is what stops the tab being closed over a
   // save that did not happen (FEC-010).

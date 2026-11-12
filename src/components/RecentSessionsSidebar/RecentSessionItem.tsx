@@ -152,7 +152,7 @@ export function RecentSessionItem({
           onSelect={() => onSaveAsConnection(entry)}
           data-testid={`recent-session-menu-save-${key}`}
         >
-          <Save size={14} /> Save as Connection…
+          <Save size={14} /> Save as connection…
         </MenuItem>
         <MenuSeparator />
         <MenuItem

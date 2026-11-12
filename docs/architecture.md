@@ -1661,7 +1661,7 @@ The choice is persisted as the backend-owned `credentialStorageChosen` setting a
 `storageChosen` on the credential-store status. Any store switch records it, and an install with
 a persisted storage mode or an active store counts as chosen (`storage_choice_made`), so existing
 users are never asked. The frontend's whole-document settings save never changes the storage
-mode or the choice. Both stay changeable under Settings → Security → Credential Storage.
+mode or the choice. Both stay changeable under Settings → Security → Credential storage.
 
 #### Credential vault export / import
 

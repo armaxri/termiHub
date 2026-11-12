@@ -163,10 +163,10 @@ export interface LayoutPersistenceSlice {
   confirmRestorePrompt: (remember: boolean, selectedIndices?: readonly number[]) => Promise<void>;
 
   /**
-   * Resolve the restore prompt with the explicit "Start Fresh" button:
+   * Resolve the restore prompt with the explicit "Start fresh" button:
    * optionally persist `restoreLastSessionMode: "never"` (when `remember`) and
    * close the prompt. The stored session is NOT cleared here — it stays on disk
-   * until the next layout save replaces it, so a crash right after Start Fresh
+   * until the next layout save replaces it, so a crash right after Start fresh
    * does not lose it (#5155).
    */
   dismissRestorePrompt: (remember: boolean) => Promise<void>;

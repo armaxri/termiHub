@@ -98,7 +98,7 @@ export function ShellIntegrationBanner() {
           onClick={handleInstall}
           data-testid="shell-integration-banner-install"
         >
-          Install Now
+          Install now
         </Button>
       </div>
     </div>
