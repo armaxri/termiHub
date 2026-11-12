@@ -72,7 +72,8 @@ fn can_write_dac(path: &Path) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs a per-machine install and a standard user (release-windows-smoke.yml)"]
+#[ignore = "needs a per-machine install and a standard user; \
+           lane: plugin-lpac-per-machine.yml#per-machine-lpac"]
 async fn echo_backend_loads_in_its_lpac_from_a_per_machine_install() {
     let runner = required_path(RUNNER_ENV);
     let echo_lib = required_path(ECHO_LIB_ENV);

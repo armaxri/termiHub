@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
 import {
@@ -58,6 +61,37 @@ const SOLARIZED_PALETTE: Record<string, string> = {
   cyan: "#2aa198",
   green: "#859900",
 };
+
+/** sRGB-composite `fg` at `alpha` over the opaque `bg` (what color-mix + transparent paints). */
+function composite(fg: string, bg: string, alpha: number): string {
+  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return `#${[0, 1, 2]
+    .map((i) =>
+      Math.round(ch(fg, i) * alpha + ch(bg, i) * (1 - alpha))
+        .toString(16)
+        .padStart(2, "0")
+    )
+    .join("")}`;
+}
+
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * The accent share of an accent-tinted surface token in `styles/variables.css`
+ * (`--bg-selected: color-mix(in srgb, var(--accent-color) 18%, transparent)`
+ * yields 0.18), read from the stylesheet so the grade follows the shipped CSS.
+ */
+function accentTintAlpha(cssVar: string): number {
+  const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+  const m = new RegExp(
+    `${cssVar}:\\s*color-mix\\(in srgb, var\\(--accent-color\\) (\\d+(?:\\.\\d+)?)%, transparent\\)`
+  ).exec(css);
+  if (!m) throw new Error(`${cssVar} is not an accent color-mix in variables.css`);
+  return Number(m[1]) / 100;
+}
+
+const BG_SELECTED_ALPHA = accentTintAlpha("--bg-selected");
+const BG_SELECTED_HOVER_ALPHA = accentTintAlpha("--bg-selected-hover");
 
 describe("theme text contrast (WCAG 2.2 AA)", () => {
   const cases = [
@@ -258,6 +292,227 @@ describe("secondary text on hovered/selected rows (WCAG 2.2 AA, #5249)", () => {
     expect(contrastRatio(derived, failing.bgActive)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
     const passing = { textSecondary: "#bbbbbb", bgHover: "#333333", bgActive: "#3a3a3a" };
     expect(deriveTextSecondaryOnSelection(passing)).toBe("#bbbbbb");
+  });
+});
+
+/**
+ * Text on accent-tinted selected rows (#5398). `--bg-selected` is
+ * `color-mix(in srgb, var(--accent-color) 18%, transparent)`, so the row the
+ * user sees is 18% accent composited over whatever sits behind it: the sidebar
+ * (connection tree, file-browser drop targets) or the transfer view
+ * (`bgSecondary` panes on a `bgPrimary` view). Plain `textSecondary` /
+ * `textMuted` fall below AA there; those rows redirect both to the
+ * `*-on-selection` tokens (pinned by src/styles/selectedOnSelection.test.ts),
+ * and this grades the tokens on the blended surface in all four themes.
+ */
+describe("text on accent-tinted --bg-selected rows (WCAG 2.2 AA, #5398)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    for (const base of ["sidebarBg", "bgSecondary", "bgPrimary"] as const) {
+      const bg = composite(theme.colors.accentColor, theme.colors[base], BG_SELECTED_ALPHA);
+      for (const token of ["textSecondaryOnSelection", "textMutedOnSelection"] as const) {
+        const fg = theme.colors[token];
+        it(`${theme.id} ${token} (${fg}) meets AA on --bg-selected over ${base} (${bg})`, () => {
+          expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+        });
+      }
+    }
+  }
+
+  it("documents the gap the redirect closes: plain secondary/muted fail on the sidebar", () => {
+    for (const theme of [darkTheme, lightTheme, solarizedDarkTheme]) {
+      const bg = composite(theme.colors.accentColor, theme.colors.sidebarBg, BG_SELECTED_ALPHA);
+      const worst = Math.min(
+        contrastRatio(theme.colors.textSecondary, bg),
+        contrastRatio(theme.colors.textMuted, bg)
+      );
+      expect(worst).toBeLessThan(AA_NORMAL_TEXT);
+    }
+  });
+});
+
+/**
+ * Text on hovered selected rows (#5406). `.connection-tree__item--selected:hover`
+ * and `.transfer-pane__row--selected:hover` paint `--bg-selected-hover` and keep
+ * the #5398 redirect to the `*-on-selection` tokens. The old 28% tint measured
+ * Dark 4.00:1 and Light 3.95:1 over the sidebar; no tint stronger than 18%
+ * reaches AA there, so hover lightens the tint instead. Graded on the blend read
+ * from `variables.css`, over every base the hovered rows sit on.
+ */
+describe("text on hovered --bg-selected-hover rows (WCAG 2.2 AA, #5406)", () => {
+  const BASES = ["sidebarBg", "bgSecondary", "bgPrimary"] as const;
+  const TOKENS = ["textSecondaryOnSelection", "textMutedOnSelection"] as const;
+
+  for (const theme of BUILT_IN_THEMES) {
+    for (const base of BASES) {
+      const bg = composite(theme.colors.accentColor, theme.colors[base], BG_SELECTED_HOVER_ALPHA);
+      for (const token of TOKENS) {
+        const fg = theme.colors[token];
+        it(`${theme.id} ${token} (${fg}) meets AA on --bg-selected-hover over ${base} (${bg})`, () => {
+          expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+        });
+      }
+    }
+
+    it(`${theme.id} hovered selected row stays visibly distinct from the selected row`, () => {
+      const base = theme.colors.sidebarBg;
+      const selected = composite(theme.colors.accentColor, base, BG_SELECTED_ALPHA);
+      const hovered = composite(theme.colors.accentColor, base, BG_SELECTED_HOVER_ALPHA);
+      expect(contrastRatio(selected, hovered)).toBeGreaterThanOrEqual(1.05);
+    });
+  }
+
+  it("documents the gap: the old 28% tint fails in Dark and Light", () => {
+    for (const theme of [darkTheme, lightTheme]) {
+      const bg = composite(theme.colors.accentColor, theme.colors.sidebarBg, 0.28);
+      const worst = Math.min(...TOKENS.map((token) => contrastRatio(theme.colors[token], bg)));
+      expect(worst).toBeLessThan(AA_NORMAL_TEXT);
+    }
+  });
+});
+
+/**
+ * Network-panel info banner (#5407). `.network-panel__info` paints
+ * `--bg-selected` (18% accent) with an accent left border. Its old
+ * `--text-accent` text measured Light 4.15:1, Solarized Dark 3.35:1 and
+ * Solarized Light 2.73:1 over `bgPrimary`; it now uses `--text-primary`.
+ */
+describe("network-panel info banner text (WCAG 2.2 AA, #5407)", () => {
+  const bannerRule = (): string => {
+    const css = readFileSync(join(SRC_DIR, "components/NetworkTools/NetworkTools.css"), "utf8");
+    const body = /\.network-panel__info\s*\{([^}]*)\}/.exec(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+    if (!body) throw new Error("missing .network-panel__info rule");
+    return body[1];
+  };
+
+  it("paints --bg-selected and colours its text --text-primary", () => {
+    const body = bannerRule();
+    expect(body).toMatch(/background(-color)?:\s*var\(--bg-selected\)/);
+    expect(body).toMatch(/(^|[\s;])color:\s*var\(--text-primary\)/);
+  });
+
+  for (const theme of BUILT_IN_THEMES) {
+    for (const base of ["bgPrimary", "sidebarBg", "bgSecondary"] as const) {
+      const bg = composite(theme.colors.accentColor, theme.colors[base], BG_SELECTED_ALPHA);
+      const fg = theme.colors.textPrimary;
+      it(`${theme.id} textPrimary (${fg}) meets AA on --bg-selected over ${base} (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+  }
+
+  it("documents the gap: textAccent fails on the banner in Light and both Solarized", () => {
+    for (const theme of [lightTheme, solarizedDarkTheme, solarizedLightTheme]) {
+      const bg = composite(theme.colors.accentColor, theme.colors.bgPrimary, BG_SELECTED_ALPHA);
+      expect(contrastRatio(theme.colors.textAccent, bg)).toBeLessThan(AA_NORMAL_TEXT);
+    }
+  });
+});
+
+/**
+ * Solarized link and status colours (#5399). Within the canonical palette no
+ * blue/red/yellow/green reaches AA on the Solarized surfaces (e.g. blue 3.53:1
+ * on the Dark sidebar, 3.00:1 on Light's base2). The maintainer decision was a
+ * minimal off-palette lightness tweak keeping the hue: each token is the
+ * canonical colour mixed towards white (Dark) or black (Light) in 1% steps
+ * until it reaches 4.5:1 on every text surface (3:1 for dots and the focus
+ * ring). Each token is pinned to exactly that derivation, so it stays minimal.
+ */
+describe("solarized link and status colours (WCAG 2.2 AA, #5399)", () => {
+  const TEXT_SURFACES = ["bgPrimary", "bgSecondary", "sidebarBg", "bgDropdown"] as const;
+  const DOT_SURFACES = ["bgPrimary", "bgSecondary", "sidebarBg"] as const;
+  const FOCUS_SURFACES = ["bgPrimary", "bgTertiary"] as const;
+  type Key = keyof typeof solarizedDarkTheme.colors;
+  // [token, canonical hue, minimum ratio, surfaces]
+  const ROLES: [Key, string, number, readonly Key[]][] = [
+    ["textLink", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["textAccent", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["colorInfo", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["colorError", SOLARIZED_PALETTE.red, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["colorWarning", SOLARIZED_PALETTE.yellow, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["colorSuccess", SOLARIZED_PALETTE.green, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["stateConnected", SOLARIZED_PALETTE.green, UI_COMPONENT_MIN, DOT_SURFACES],
+    ["stateConnecting", SOLARIZED_PALETTE.yellow, UI_COMPONENT_MIN, DOT_SURFACES],
+    ["stateDisconnected", SOLARIZED_PALETTE.red, UI_COMPONENT_MIN, DOT_SURFACES],
+    ["focusBorder", SOLARIZED_PALETTE.blue, UI_COMPONENT_MIN, FOCUS_SURFACES],
+  ];
+
+  /** HSL hue in degrees of a `#rrggbb` colour. */
+  const hue = (hex: string): number => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    if (d === 0) return 0;
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return (h * 60 + 360) % 360;
+  };
+
+  for (const theme of SOLARIZED_THEMES) {
+    for (const [token, canonical, min, surfaces] of ROLES) {
+      const fg = theme.colors[token];
+      const bgs = surfaces.map((s) => theme.colors[s]);
+
+      for (const surface of surfaces) {
+        const bg = theme.colors[surface];
+        it(`${theme.id} ${token} (${fg}) reaches ${min}:1 on ${surface} (${bg})`, () => {
+          expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(min);
+        });
+      }
+
+      it(`${theme.id} ${token} is the minimal hue-keeping nudge of ${canonical}`, () => {
+        expect(fg).toBe(adjustForContrast(canonical, bgs, min, 1));
+        expect(Math.abs(hue(fg) - hue(canonical))).toBeLessThanOrEqual(1);
+      });
+    }
+  }
+
+  it("documents the gap: the canonical colours fail on the Solarized surfaces", () => {
+    const worst = (theme: typeof solarizedDarkTheme, canonical: string) =>
+      Math.min(...TEXT_SURFACES.map((s) => contrastRatio(canonical, theme.colors[s])));
+    for (const theme of SOLARIZED_THEMES) {
+      for (const hueName of ["blue", "red", "yellow", "green"]) {
+        expect(worst(theme, SOLARIZED_PALETTE[hueName])).toBeLessThan(AA_NORMAL_TEXT);
+      }
+    }
+  });
+});
+
+/**
+ * Solarized Light sidebar (#5457). On base2 the three text levels had to
+ * collapse to near-black to pass AA; the sidebar now uses base3 like the
+ * editor, stays inside the canonical palette, and its text levels pass AA and
+ * keep their order. The panel border still separates sidebar and editor.
+ */
+describe("solarized light sidebar on base3 (#5457)", () => {
+  const { colors } = solarizedLightTheme;
+
+  it("sidebar and its header are base3", () => {
+    expect(colors.sidebarBg).toBe(SOLARIZED_PALETTE.base3);
+    expect(colors.sidebarHeaderBg).toBe(SOLARIZED_PALETTE.base3);
+  });
+
+  it("primary, secondary and muted text pass AA on the sidebar, in order", () => {
+    const [primary, secondary, muted] = [
+      colors.textPrimary,
+      colors.textSecondary,
+      colors.textMuted,
+    ].map((fg) => contrastRatio(fg, colors.sidebarBg));
+    expect(muted).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(secondary).toBeGreaterThanOrEqual(muted);
+    expect(primary).toBeGreaterThan(secondary);
+  });
+
+  it("selected and hovered rows stay distinct from the sidebar", () => {
+    for (const row of [
+      colors.bgHover,
+      colors.bgActive,
+      composite(colors.accentColor, colors.sidebarBg, BG_SELECTED_ALPHA),
+    ]) {
+      expect(contrastRatio(row, colors.sidebarBg)).toBeGreaterThanOrEqual(1.05);
+    }
+  });
+
+  it("the panel border separates the sidebar from the editor", () => {
+    expect(contrastRatio(colors.borderPrimary, colors.sidebarBg)).toBeGreaterThanOrEqual(1.3);
   });
 });
 

@@ -1,9 +1,9 @@
 {
   "reason": "^SSH suite not ported to the native sshd fixture \\(#5176\\)$",
   "lanes": ["bulk-macos", "bulk-windows"],
-  "why": "SSH suites not (yet) marked native_sshd for this OS: they control the server (SshServerControl), need GNU tools or a POSIX remote shell (Windows' is cmd.exe), or deploy an agent. Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) against the native_sshd markers (#5176). bulk-macos: #5421 ports 15 tests to the native SshServerControl twin; the 12 left are counted from collection with the native target (external SSH spawn 2, remote-to-local 3, remote agent 6, SFTP-orphan-on-quit 1).",
+  "why": "SSH suites not (yet) marked native_sshd for this OS: they control the server (SshServerControl), need GNU tools or a POSIX remote shell (Windows' is cmd.exe), deploy an agent, or need host stats the app only reads from Linux /proc (macOS host monitoring, #5471). Counted from the skips of the 2026-11-11 develop nightly (dispatch 43006910579) against the native_sshd markers (#5176). bulk-macos: #5421 ports 15 tests to the native SshServerControl twin; the 26 left are counted from collection with the native target (external SSH spawn 2, remote-to-local 3, remote agent 6, SFTP-orphan-on-quit 1, host monitoring 14: test_ssh_monitoring.py 8, test_ssh_monitoring_settings.py 5, test_ssh.py 1).",
   "max_skips": {
-    "bulk-macos": 12,
+    "bulk-macos": 26,
     "bulk-windows": 59
   }
 }

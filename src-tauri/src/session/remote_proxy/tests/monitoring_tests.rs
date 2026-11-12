@@ -9,8 +9,8 @@ use super::*;
 
 /// Mock agent whose `connection.types` reply marks `type_id` monitorable and
 /// whose `initialize` capabilities carry `session_monitoring`.
-fn mock_agent(type_id: &str, session_monitoring: bool) -> Arc<MockAgentRpcClient> {
-    let mut mock = MockAgentRpcClient::with_capabilities(json!({
+fn mock_agent(type_id: &str, session_monitoring: bool) -> Arc<FakeAgent> {
+    let mut mock = proxy_agent(json!({
         "types": [{
             "typeId": type_id,
             "displayName": type_id,
@@ -24,11 +24,11 @@ fn mock_agent(type_id: &str, session_monitoring: bool) -> Arc<MockAgentRpcClient
             }
         }]
     }));
-    mock.session_monitoring = Some(session_monitoring);
+    mock.capabilities_mut().session_monitoring = session_monitoring;
     Arc::new(mock)
 }
 
-async fn connected_proxy(mock: &Arc<MockAgentRpcClient>, session_type: &str) -> RemoteProxy {
+async fn connected_proxy(mock: &Arc<FakeAgent>, session_type: &str) -> RemoteProxy {
     let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
     proxy
         .connect(json!({ "type": session_type, "config": {"host": "server"} }))
@@ -37,8 +37,8 @@ async fn connected_proxy(mock: &Arc<MockAgentRpcClient>, session_type: &str) -> 
     proxy
 }
 
-fn monitoring_requests(mock: &MockAgentRpcClient) -> Vec<(String, serde_json::Value)> {
-    mock.sent_requests
+fn monitoring_requests(mock: &FakeAgent) -> Vec<(String, serde_json::Value)> {
+    mock.requests
         .lock()
         .unwrap()
         .iter()
@@ -69,7 +69,7 @@ async fn agent_hosted_sessions_subscribe_under_their_remote_session_id() {
         assert_eq!(sent[1].0, "connection.monitoring.unsubscribe");
         assert_eq!(sent[1].1["host"], "mock-session-1", "{session_type}");
         assert_eq!(
-            mock.registered_monitoring_hosts.lock().unwrap().as_slice(),
+            registered_monitoring_hosts(&mock).as_slice(),
             ["mock-session-1"],
             "{session_type}: samples are routed by the remote session id"
         );
@@ -106,7 +106,7 @@ async fn an_outdated_agent_fails_the_subscribe_as_agent_outdated_without_a_reque
         provider.set_paused(true).await;
         provider.unsubscribe().await.expect("nothing to stop");
         assert!(monitoring_requests(&mock).is_empty(), "{session_type}");
-        assert!(mock.registered_monitoring_hosts.lock().unwrap().is_empty());
+        assert!(registered_monitoring_hosts(&mock).is_empty());
 
         proxy.disconnect().await.ok();
     }
