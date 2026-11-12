@@ -10,19 +10,27 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use ironrdp_core::{decode, encode_vec};
+use ironrdp_pdu::bitmap::{BitmapData, BitmapUpdateData, Compression};
+use ironrdp_pdu::fast_path::{
+    EncryptionFlags, FastPathHeader, FastPathUpdatePdu, Fragmentation, UpdateCode,
+};
 use ironrdp_pdu::gcc::{
     ClientClusterData, ConferenceCreateResponse, RdpVersion, ServerCoreData,
     ServerCoreOptionalData, ServerGccBlocks, ServerNetworkData, ServerSecurityData,
 };
+use ironrdp_pdu::geometry::InclusiveRectangle;
+use ironrdp_pdu::input::fast_path::{FastPathInput, FastPathInputEvent, KeyboardFlags};
+use ironrdp_pdu::input::mouse::PointerFlags;
 use ironrdp_pdu::mcs::{
     AttachUserConfirm, ChannelJoinConfirm, ConnectInitial, ConnectResponse, DomainParameters,
     McsMessage, SendDataIndication,
 };
 use ironrdp_pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
 use ironrdp_pdu::rdp::capability_sets::{
-    Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, ServerDemandActive,
+    Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, Input, InputFlags, ServerDemandActive,
 };
 use ironrdp_pdu::rdp::client_info::CompressionType;
 use ironrdp_pdu::rdp::finalization_messages::{ControlAction, ControlPdu, FontPdu, SynchronizePdu};
@@ -36,6 +44,7 @@ use ironrdp_pdu::rdp::ClientInfoPdu;
 use ironrdp_pdu::x224::{X224Data, X224};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -49,12 +58,29 @@ pub(super) const IO_CHANNEL: u16 = 1003;
 pub(super) const USER_CHANNEL: u16 = 1200;
 pub(super) const SHARE_ID: u32 = 0x0001_03EA;
 
+/// The size of every scripted desktop.
+pub(super) const DESKTOP_WIDTH: u16 = 1024;
+pub(super) const DESKTOP_HEIGHT: u16 = 768;
+/// The colour an activated [`Act::Activate`] session paints (RGB).
+pub(super) const DESKTOP_COLOR: [u8; 3] = [0x00, 0xA0, 0x50];
+/// How often an [`Act::Activate`] session repaints its desktop, so a viewer
+/// that subscribed late still gets a frame.
+pub(super) const REPAINT_EVERY: Duration = Duration::from_secs(2);
+/// The edge of one painted tile: a 64x64 32-bpp tile fits one fast-path PDU.
+const TILE: u16 = 64;
+
 /// What a scripted server does once the Client Info PDU arrived. A
 /// connection that never gets that far (a preflight) needs no act.
 #[derive(Clone)]
 pub(super) enum Act {
     /// Hang up.
     HangUp,
+    /// Activate the session and keep it up until the client hangs up: a
+    /// plain, healthy RDP server (the system lane's scripted server, #5175).
+    /// Once the client finished the finalization, it paints the whole
+    /// desktop [`DESKTOP_COLOR`] and repaints it every [`REPAINT_EVERY`]
+    /// (#5426).
+    Activate,
     /// Send a Server Redirection where the Demand Active belongs.
     Redirect(ServerRedirectionPdu),
     /// Activate the session, then redirect it.
@@ -77,6 +103,9 @@ pub(super) struct Conn {
     pub(super) username: Option<String>,
     /// The Client Info PDU's password cookie.
     pub(super) password_cookie: Option<Vec<u8>>,
+    /// Key and button input received after activation, as
+    /// [`describe_input`] words it (pointer moves are left out).
+    pub(super) input: Vec<String>,
 }
 
 /// The order things happened in, across servers and the host.
@@ -220,13 +249,27 @@ pub(super) fn activation() -> Vec<u8> {
     let mut script = share_control(ShareControlPdu::ServerDemandActive(ServerDemandActive {
         pdu: DemandActive {
             source_descriptor: "RDP".to_string(),
-            capability_sets: vec![CapabilitySet::Bitmap(Bitmap {
-                pref_bits_per_pix: 32,
-                desktop_width: 1024,
-                desktop_height: 768,
-                desktop_resize_flag: true,
-                drawing_flags: BitmapDrawingFlags::empty(),
-            })],
+            capability_sets: vec![
+                CapabilitySet::Bitmap(Bitmap {
+                    pref_bits_per_pix: 32,
+                    desktop_width: DESKTOP_WIDTH,
+                    desktop_height: DESKTOP_HEIGHT,
+                    desktop_resize_flag: true,
+                    drawing_flags: BitmapDrawingFlags::empty(),
+                }),
+                // Fast-path input, so the client's input arrives in the form
+                // `describe_input` reads.
+                CapabilitySet::Input(Input {
+                    input_flags: InputFlags::SCANCODES
+                        | InputFlags::MOUSEX
+                        | InputFlags::FASTPATH_INPUT_2,
+                    keyboard_layout: 0,
+                    keyboard_type: None,
+                    keyboard_subtype: 0,
+                    keyboard_function_key: 0,
+                    keyboard_ime_filename: String::new(),
+                }),
+            ],
         },
     }));
     for pdu in [
@@ -268,6 +311,7 @@ pub(super) fn answer(act: &Act) -> Option<Vec<u8>> {
     let mut reply = io_pdu(encode_vec(&valid_client).unwrap());
     match act {
         Act::HangUp => return None,
+        Act::Activate => reply.extend(activation()),
         Act::Redirect(pdu) => reply.extend(redirection(pdu.clone())),
         Act::RedirectMidSession(pdu) => {
             reply.extend(activation());
@@ -282,6 +326,113 @@ pub(super) fn answer(act: &Act) -> Option<Vec<u8>> {
         }
     }
     Some(reply)
+}
+
+/// The whole desktop in [`DESKTOP_COLOR`]: uncompressed 32-bpp (BGRX) fast-path
+/// bitmap updates, one [`TILE`]-sized tile per PDU.
+pub(super) fn desktop_frames() -> Vec<u8> {
+    let [r, g, b] = DESKTOP_COLOR;
+    let mut frames = Vec::new();
+    for top in (0..DESKTOP_HEIGHT).step_by(usize::from(TILE)) {
+        for left in (0..DESKTOP_WIDTH).step_by(usize::from(TILE)) {
+            let width = TILE.min(DESKTOP_WIDTH - left);
+            let height = TILE.min(DESKTOP_HEIGHT - top);
+            let pixels = [b, g, r, 0xFF].repeat(usize::from(width) * usize::from(height));
+            let update = encode_vec(&BitmapUpdateData {
+                rectangles: vec![BitmapData {
+                    rectangle: InclusiveRectangle {
+                        left,
+                        top,
+                        right: left + width - 1,
+                        bottom: top + height - 1,
+                    },
+                    width,
+                    height,
+                    bits_per_pixel: 32,
+                    compression_flags: Compression::empty(),
+                    compressed_data_header: None,
+                    bitmap_data: &pixels,
+                }],
+            })
+            .unwrap();
+            let pdu = encode_vec(&FastPathUpdatePdu {
+                fragmentation: Fragmentation::Single,
+                update_code: UpdateCode::Bitmap,
+                compression_flags: None,
+                compression_type: None,
+                data: &update,
+            })
+            .unwrap();
+            frames.extend(
+                encode_vec(&FastPathHeader::new(EncryptionFlags::empty(), pdu.len())).unwrap(),
+            );
+            frames.extend(pdu);
+        }
+    }
+    frames
+}
+
+/// The key and button events of one fast-path input PDU, one line each:
+/// `key 0x1e down`, `button left up 512,384`. Pointer moves are left out.
+pub(super) fn describe_input(frame: &[u8]) -> Vec<String> {
+    let Ok(input) = decode::<FastPathInput>(frame) else {
+        return Vec::new();
+    };
+    let state = |down: bool| if down { "down" } else { "up" };
+    input
+        .input_events()
+        .iter()
+        .filter_map(|event| match event {
+            FastPathInputEvent::KeyboardEvent(flags, code) => Some(format!(
+                "key 0x{code:02x} {}",
+                state(!flags.contains(KeyboardFlags::RELEASE))
+            )),
+            FastPathInputEvent::MouseEvent(pdu) => {
+                let button = [
+                    (PointerFlags::LEFT_BUTTON, "left"),
+                    (PointerFlags::RIGHT_BUTTON, "right"),
+                    (PointerFlags::MIDDLE_BUTTON_OR_WHEEL, "middle"),
+                ]
+                .into_iter()
+                .find(|(flag, _)| pdu.flags.contains(*flag))?
+                .1;
+                Some(format!(
+                    "button {button} {} {},{}",
+                    state(pdu.flags.contains(PointerFlags::DOWN)),
+                    pdu.x_position,
+                    pdu.y_position
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Paint the desktop now and every [`REPAINT_EVERY`] until the connection's
+/// writer is gone.
+fn spawn_painter(tx: mpsc::UnboundedSender<Vec<u8>>) {
+    let frames = desktop_frames();
+    tokio::spawn(async move {
+        while tx.send(frames.clone()).is_ok() {
+            tokio::time::sleep(REPAINT_EVERY).await;
+        }
+    });
+}
+
+/// Write everything sent on the returned channel to `writer`, in order.
+fn spawn_writer<W>(mut writer: W) -> mpsc::UnboundedSender<Vec<u8>>
+where
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    tokio::spawn(async move {
+        while let Some(bytes) = rx.recv().await {
+            if writer.write_all(&bytes).await.is_err() {
+                return;
+            }
+        }
+    });
+    tx
 }
 
 pub(super) fn connect_response(initial: &ConnectInitial) -> Vec<u8> {
@@ -345,9 +496,12 @@ pub(super) async fn serve(
     if tcp.write_all(&confirm).await.is_err() {
         return;
     }
-    let Ok(mut tls) = acceptor.accept(tcp).await else {
+    let Ok(tls) = acceptor.accept(tcp).await else {
         return;
     };
+    let (mut tls, writer) = tokio::io::split(tls);
+    let tx = spawn_writer(writer);
+    let mut painting = false;
 
     loop {
         let frame = match read_frame(&mut tls).await {
@@ -374,7 +528,18 @@ pub(super) async fn serve(
                         None => return,
                     }
                 }
-                // Confirm Active, finalization and channel traffic.
+                // The client's Font List ends its finalization: the session
+                // is up, so an activated desktop starts painting.
+                _ if matches!(act, Act::Activate)
+                    && !painting
+                    && data.channel_id == IO_CHANNEL
+                    && is_font_list(&data.user_data) =>
+                {
+                    painting = true;
+                    spawn_painter(tx.clone());
+                    continue;
+                }
+                // Confirm Active, the rest of finalization, channel traffic.
                 _ => continue,
             }
         } else if let Ok(X224(message)) = decode::<X224<McsMessage<'_>>>(&frame) {
@@ -406,12 +571,30 @@ pub(super) async fn serve(
             connect_response(&initial)
         } else {
             // Fast-path input after activation.
+            let input = describe_input(&frame);
+            if !input.is_empty() {
+                record(&|conn| conn.input.extend(input.iter().cloned()));
+            }
             continue;
         };
-        if tls.write_all(&reply).await.is_err() {
+        if tx.send(reply).is_err() {
             return;
         }
     }
+}
+
+/// Whether a Send Data Request's user data is the client's Font List PDU.
+fn is_font_list(user_data: &[u8]) -> bool {
+    matches!(
+        decode::<ShareControlHeader>(user_data),
+        Ok(ShareControlHeader {
+            share_control_pdu: ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::FontList(_),
+                ..
+            }),
+            ..
+        })
+    )
 }
 
 /// A broker on `127.0.0.1:P` and a target on `[::1]:P`: a redirection keeps

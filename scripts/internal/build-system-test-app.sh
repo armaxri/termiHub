@@ -23,15 +23,23 @@
 #   --features mock-remote-desktop (DEAD-001): the mock graphical backend left
 #       the crate's default features. The integration lane uses it to test the
 #       remote-desktop layer without a real VNC/RDP server.
-#   The RDP sidecar (termihub-rdp-helper, Linux only): the RDP suite
-#       (tests/system/tests/test_rdp.py) drives a real xrdp fixture, and the app
-#       decodes RDP in this separately built, workspace-excluded binary. Only
-#       the Linux lane has the Docker fixtures, so only Linux builds it (debug);
-#       the suite's rdp_fixtures points the app at it via $TERMIHUB_RDP_HELPER.
-#       It links ALSA, so it is built only where libasound2-dev is installed
-#       (without it the build only warns and the RDP suite skips). With ALSA
-#       present a failed sidecar build fails this script, so the RDP suite
-#       cannot skip to a false green (#4315). TERMIHUB_SKIP_RDP_HELPER=1 skips it.
+#   The RDP sidecar (termihub-rdp-helper, every OS, #5175): the app decodes
+#       RDP in this separately built, workspace-excluded binary (debug), and
+#       the RDP suites point the app at it via $TERMIHUB_RDP_HELPER. The Linux
+#       xrdp suite (tests/system/tests/test_rdp.py) needs the Docker fixtures;
+#       the sidecar suite (test_rdp_sidecar.py) runs everywhere against the
+#       scripted server built next to it (the rdp_test_server example). On
+#       Linux the sidecar links ALSA, so it is built only where
+#       libasound2-dev is installed (without it the build only warns and the
+#       RDP suites skip). Wherever it can be built, a failed sidecar build
+#       fails this script, so the RDP suites cannot skip to a false green
+#       (#4315). TERMIHUB_SKIP_RDP_HELPER=1 skips it.
+#   The sidecar's SHA-256, embedded into the app: the app is built with
+#       TERMIHUB_RDP_HELPER_SHA256 set to the built helper's digest (core/build.rs
+#       embeds it), as a release build embeds the staged externalBin's. So the
+#       app's pre-spawn integrity check (#1762, #5098) is live in the test app:
+#       a helper resolved without the $TERMIHUB_RDP_HELPER override must match
+#       it, which the sidecar suite grades with a genuine and a tampered copy.
 #   The sideloaded ConPTY host (Windows only, #4121): the inbox ConPTY strips
 #       SIXEL/inline-image sequences, so the app bundles Microsoft's
 #       conpty.dll + OpenConsole.exe (tauri.conpty.conf.json). tauri-build
@@ -63,16 +71,27 @@ done
 cd "$(git rev-parse --show-toplevel)"
 
 set -x
-if [ "$(uname -s)" = "Linux" ] && [ "${TERMIHUB_SKIP_RDP_HELPER:-}" != "1" ]; then
-    if ! pkg-config --exists alsa 2>/dev/null; then
-        echo "::warning::libasound2-dev missing: RDP sidecar not built, the RDP suite will skip"
-    elif ! ./scripts/build-rdp-sidecar.sh; then
-        # With libasound present the build can succeed, so a failure is a real
-        # regression, not a missing dependency: fail instead of letting the
-        # RDP suite skip to a false green (#4315). TERMIHUB_SKIP_RDP_HELPER=1
-        # opts out on a host that does not need the RDP suite.
-        echo "::error::RDP sidecar build failed (libasound2-dev is present); set TERMIHUB_SKIP_RDP_HELPER=1 to skip it"
+RDP_HELPER_SHA256=""
+if [ "${TERMIHUB_SKIP_RDP_HELPER:-}" = "1" ]; then
+    echo "TERMIHUB_SKIP_RDP_HELPER=1: RDP sidecar not built, the RDP suites will skip"
+elif [ "$(uname -s)" = "Linux" ] && ! pkg-config --exists alsa 2>/dev/null; then
+    echo "::warning::libasound2-dev missing: RDP sidecar not built, the RDP suites will skip"
+else
+    # Wherever the sidecar can be built, a failed build is a real regression,
+    # not a missing dependency: fail instead of letting the RDP suites skip to
+    # a false green (#4315). TERMIHUB_SKIP_RDP_HELPER=1 opts out on a host
+    # that does not need the RDP suites.
+    if ! ./scripts/build-rdp-sidecar.sh ||
+        ! cargo build --manifest-path rdp-sidecar/Cargo.toml --example rdp_test_server; then
+        echo "::error::RDP sidecar build failed; set TERMIHUB_SKIP_RDP_HELPER=1 to skip it"
         exit 1
+    fi
+    RDP_HELPER="rdp-sidecar/target/debug/termihub-rdp-helper"
+    [ -f "$RDP_HELPER" ] || RDP_HELPER="$RDP_HELPER.exe"
+    if command -v sha256sum >/dev/null 2>&1; then
+        RDP_HELPER_SHA256="$(sha256sum "$RDP_HELPER" | cut -d' ' -f1)"
+    else
+        RDP_HELPER_SHA256="$(shasum -a 256 "$RDP_HELPER" | cut -d' ' -f1)"
     fi
 fi
 CONFIG_FLAGS=()
@@ -82,5 +101,6 @@ MINGW* | MSYS* | CYGWIN*)
     CONFIG_FLAGS=(--config src-tauri/tauri.conpty.conf.json)
     ;;
 esac
-VITE_TEST_BRIDGE=1 pnpm tauri build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} \
+# An empty digest (no sidecar built) embeds none: core/build.rs ignores it.
+TERMIHUB_RDP_HELPER_SHA256="$RDP_HELPER_SHA256" VITE_TEST_BRIDGE=1 pnpm tauri build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} \
     ${CONFIG_FLAGS[@]+"${CONFIG_FLAGS[@]}"} --features "mock-remote-desktop test-bridge"
