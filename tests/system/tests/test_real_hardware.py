@@ -14,6 +14,7 @@ The real device or host is named through an environment variable, parsed by
 | --- | --- | --- |
 | ``TERMIHUB_SERIAL_DEVICE`` | ``/dev/ttyUSB0``, ``COM3`` | physical serial loopback |
 | ``TERMIHUB_REAL_AGENT_HOST`` | ``pi@raspberrypi.local:22`` | agent deploy + sessions on a real host |
+| ``TERMIHUB_AGENT_SERIAL_DEVICE`` | ``/dev/ttyUSB0``, ``COM3`` | serial adapter on that agent host |
 | ``TERMIHUB_WINDOWS_AGENT_HOST`` | ``me@winbox:22`` | Docker session from a Windows agent |
 
 A test whose variable is unset skips and says what to set.
@@ -50,6 +51,11 @@ What stays here:
   adapter with TX and RX bridged. The harness asserts the echo; the operator
   unplugs and replugs the adapter, and the harness asserts the auto-reconnect
   loop, the reopened port and that Cancel stops a retry (#5390).
+- **Physical serial adapter on an agent host** (#5396): the same adapter on the
+  agent host of ``TERMIHUB_REAL_AGENT_HOST``. The agent reopens the port in
+  place: the harness asserts the strip's countdown and reason, that a different
+  adapter on the same name is not opened, that the original reopens in the same
+  agent session (and echoes again), and that Cancel closes the agent session.
 - **Agent on a real remote host** (release residue of #470/#473/#474/#477): the
   GUI deploys the agent to a real Windows notebook or Raspberry Pi, opens a
   shell session (ConPTY on Windows), and a persistent session survives a
@@ -83,6 +89,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.guided import (
+    AGENT_SERIAL_DEVICE_ENV,
     REAL_AGENT_HOST_ENV,
     SERIAL_DEVICE_ENV,
     WINDOWS_AGENT_HOST_ENV,
@@ -214,6 +221,145 @@ class TestRealHardware(
             what="Cancel to stop the serial retry",
         )
         assert not self.driver.exists("terminal-auto-reconnect-countdown")
+
+    # ── Physical serial adapter on an agent host (#5396) ──────────────────────
+    def test_agent_hosted_serial_unplug_different_device_and_reopen_in_place(self):
+        """A real USB-serial adapter (TX↔RX bridged) on the agent host: unplugging
+        it makes the agent reopen the port in place (#5396). The strip shows the
+        agent's countdown and reason, a different adapter is not opened, the
+        original reopens in the same agent session, and Cancel ends that session."""
+        device = os.environ.get(AGENT_SERIAL_DEVICE_ENV, "").strip()
+        if not device:
+            pytest.skip(
+                missing_env_reason(
+                    AGENT_SERIAL_DEVICE_ENV,
+                    "/dev/ttyUSB0",
+                    f"a USB-serial adapter with TX and RX bridged on the "
+                    f"{REAL_AGENT_HOST_ENV} host, plus a second, different adapter",
+                )
+            )
+        spec = _require_host(
+            REAL_AGENT_HOST_ENV, "pi@raspberrypi.local:22", "the agent host the adapter is on"
+        )
+        self.close_all_tabs()
+        agent = self._connect_real_agent(spec, "agent-serial")
+        name = unique_name("agent-serial-physical")
+        definition = self.create_agent_definition(
+            agent["name"], name, session_type="serial", fields={"port": device}
+        )
+        before = self.tab_count()
+        self.open_persistent_definition(definition["id"])
+        self.wait(lambda: self.tab_count() > before, what="the agent serial tab")
+        tab = self.wait(lambda: self.find_tab(name), what="the agent serial tab")
+        self.wait(self.has_terminal, what="the agent serial session")
+        session_id = self.wait(
+            lambda: self.terminal_session_lifecycle(tab["id"]).get("sessionId"),
+            what="the agent serial tab's session id",
+        )
+
+        # Serial has no local echo: only the adapter's loopback can return it.
+        marker = unique_name("AGENT_SERIAL_LOOP")
+        self.run_command(marker)
+        assert marker in self.wait_for_output(marker, tab_id=tab["id"])
+
+        self.manual_step(
+            f"On the agent host {spec.host}, unplug the adapter at {device} now and keep "
+            "it unplugged. The agent retries for about 3 minutes, so do the next two "
+            "steps without a long pause.",
+            "Within a few seconds the tab shows the reconnect strip with a countdown "
+            "and the reason (the harness checks both next).",
+        )
+        self.wait(
+            lambda: self.terminal_session_status(tab["id"]) == "reconnecting",
+            timeout=30.0,
+            what="the agent serial tab to enter the agent's reconnect loop",
+        )
+        self.wait(
+            lambda: self.driver.exists("terminal-auto-reconnect-countdown")
+            and self.driver.exists("terminal-disconnect-trigger-error-box"),
+            what="the strip's countdown and reason",
+        )
+        reason = self.terminal_session_lifecycle(tab["id"]).get("reconnectError") or ""
+        assert device in reason, f"the reconnect reason does not name {device}: {reason!r}"
+        # The agent keeps the same session alive while it reopens the port.
+        assert self.terminal_session_lifecycle(tab["id"]).get("sessionId") == session_id
+
+        self.manual_step(
+            f"Plug a DIFFERENT USB-serial adapter into the agent host, so that it takes "
+            f"the name {device}. Leave the original unplugged.",
+            "The strip stays up and its reason says a different device is on the port "
+            "and was not opened, or that the device could not be identified yet (the "
+            "harness checks this next).",
+        )
+
+        def refused() -> bool:
+            life = self.terminal_session_lifecycle(tab["id"])
+            text = (life.get("reconnectError") or "").lower()
+            return life.get("status") == "reconnecting" and (
+                "not opened" in text or "could not be identified" in text
+            )
+
+        self.wait(
+            refused,
+            timeout=60.0,
+            what="the agent to see the different adapter and refuse to open it",
+        )
+        assert self.terminal_session_status(tab["id"]) == "reconnecting"
+
+        self.manual_step(
+            f"Unplug the different adapter and plug the original back in (it should "
+            f"come back as {device}).",
+            "Within about 30 seconds the strip disappears and the tab is live again "
+            "(the harness checks the session and the loopback echo next).",
+        )
+        self.wait(
+            lambda: self.terminal_session_status(tab["id"]) == "connected",
+            timeout=60.0,
+            what="the agent to reopen the serial port",
+        )
+        assert self.terminal_session_lifecycle(tab["id"]).get("sessionId") == session_id, (
+            "the agent reopened the port in a new session instead of the same one"
+        )
+        marker = unique_name("AGENT_SERIAL_BACK")
+        self.run_command(marker)
+        assert marker in self.wait_for_output(marker, tab_id=tab["id"])
+
+        self.manual_step(
+            f"Unplug the adapter at {device} again and keep it unplugged.",
+            "The reconnect strip appears again; the harness then presses Cancel.",
+        )
+        self.wait(
+            lambda: self.terminal_session_status(tab["id"]) == "reconnecting",
+            timeout=30.0,
+            what="the agent serial tab to enter the reconnect loop again",
+        )
+        self.wait(
+            lambda: self.driver.exists("terminal-auto-reconnect-cancel-btn"),
+            timeout=30.0,
+            what="the reconnect strip's Cancel button",
+        )
+        self.driver.click("terminal-auto-reconnect-cancel-btn")
+        self.wait(
+            lambda: self.terminal_session_exited(tab["id"]),
+            timeout=15.0,
+            what="Cancel to stop the agent's serial retry",
+        )
+        assert not self.driver.exists("terminal-auto-reconnect-countdown")
+
+        # Cancel closes the agent session itself, not only the tab's view of it.
+        def closed_on_agent() -> bool:
+            self.agent_menu_action(agent["name"], self.CTX_REFRESH)
+            return not any(
+                s.get("sessionId") == session_id for s in self.agent_sessions(agent["id"])
+            )
+
+        self.wait(
+            closed_on_agent,
+            timeout=30.0,
+            interval=2.0,
+            what="the agent to close the serial session after Cancel",
+        )
+        self.disconnect_agent(agent["name"])
 
     # ── Agent on a real host (#470/#473/#474/#477 residue) ───────────────────
     def test_real_host_agent_deploy_shell_and_persistent_reattach(self):

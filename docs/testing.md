@@ -1011,17 +1011,22 @@ harness checks every test for JavaScript errors in the app under test (#5364):
 
 `TERMIHUB_JS_ERROR_GATE` picks what happens next:
 
-| Value                | Effect                                                  |
-| -------------------- | ------------------------------------------------------- |
-| `annotate` (default) | Report every unique error with its tests (see below)    |
-| `fail`               | Report, and fail a passing test with an uncovered error |
-| `off`                | No collection                                           |
+| Value            | Effect                                                  |
+| ---------------- | ------------------------------------------------------- |
+| `fail` (default) | Report, and fail a passing test with an uncovered error |
+| `annotate`       | Report every unique error with its tests (see below)    |
+| `off`            | No collection                                           |
 
 The report goes to the terminal summary, the GitHub step summary and
 `artifacts/js-errors/<lane>.json` (uploaded with the lane's artifacts).
 
-The default is `annotate` while the current offenders are moved into the
-allowlist with tracking issues. A later change switches the nightly to `fail`.
+The gate started in `annotate` mode and moved to `fail` (#5464) once the errors
+the annotate runs reported were fixed: the clipboard rejection (#5383), the
+closed-session rejections (#5384), and the uncaught `reading 'dimensions'`
+TypeError from scrolling an xterm that was disposed before the next frame.
+A new uncaught error now fails the test that caused it, and the failure names
+the error with its first stack frames. Set `TERMIHUB_JS_ERROR_GATE=annotate` to
+only report while you investigate.
 
 An allowlist entry is one JSON file named `<issue>-<slug>.json`, tied to the
 issue that tracks the error:
@@ -1406,8 +1411,14 @@ Run it locally the same way:
 scripts/internal/run-native-sshd-deploy-journey.sh
 ```
 
-The line coverage of `agent_deploy.rs` is not measured in this lane (the job
-runs plain `cargo test`). The nightly coverage overlay reports it.
+This lane is not instrumented for coverage (the job runs plain `cargo test`).
+The line coverage of `agent_deploy.rs` comes from the per-PR unit tests
+instead. The in-process host tests (#5162) drive the install half.
+[`agent_deploy_prologue_tests.rs`](../src-tauri/src/terminal/agent_deploy_prologue_tests.rs)
+drives what runs before it in `deploy_agent`, `stage_agent_binary`,
+`update_agent` and `probe_remote_agent`. The fake host listens on a loopback
+port, so the production `connect_and_authenticate` dials it. A local file
+stands in for the `AppHandle`-bound binary resolution.
 
 ### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
@@ -2002,13 +2013,14 @@ component starts gating once its baseline is recorded.
   because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux` and, in
   the `Unified Coverage (Windows)` job of the same workflow, `win32` (#5160) — Windows holds
   the most platform-only code (ConPTY, named pipes, Credential Manager, LPAC, WSL), which the
-  Linux number never sees. That job runs `./scripts/coverage.sh --split`: the workspace Rust
-  tests in the per-PR Windows leg's partition (`scripts/internal/ci-rust-tests.sh` bulk,
-  heavy and serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
+  Linux number never sees. Both jobs run `./scripts/coverage.sh --split`: the workspace Rust
+  tests in the per-PR legs' partition (`scripts/internal/ci-rust-tests.sh` bulk, heavy and
+  serial phases under `CI_RUST_TESTS_COVERAGE=1`), so the contention-sensitive and
   live-agent-TCP tests keep their thread caps. The phases run under `cargo llvm-cov nextest`
-  with the nextest `ci` profile (#5349), so a hung test fails by name within its per-test
-  timeout and the `#[serial(key)]` test groups hold there too. The heartbeat names the failing job, so a
-  Windows-only drop reads `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
+  with the nextest `ci` profile (#5349, on Linux since #5428), so a hung test fails by name
+  within its per-test timeout and the `#[serial(key)]` test groups hold there too. The
+  heartbeat names the failing job, so a Windows-only drop reads
+  `ratchet drop (Unified Coverage (Windows) / Coverage ratchet)`.
   The release check grades the machine it runs on. A platform with no baseline fails with
   the command that records one.
 - **What `plugin-runner` counts:** its own unit tests (including the session server's
@@ -3507,7 +3519,7 @@ Every item is a guided-manual pytest (`@pytest.mark.manual`): the harness does a
 - [ ] `test_guided_remote_desktop.py` — MT-RD-01 … 09 and 11/12 (real Windows RDP host, local displays, audio, OS clipboard pastes, VNC uploads; MT-RD-10 is automated, #4936) and MT-RD-13 (repaint, against the Docker fixtures)
 - [ ] `test_guided_look_and_feel.py` — MT-UI-40, 46 (legibility and font choice, judged with a native Dark | Light / WebGL | DOM contact sheet attached; the theme, layout and scrollbar items are automated since #4930, the repaint, inline images and startup flash since #4937). MT-UI-53 (sidebar rows: tooltips, hover/focus actions and overflow actions, #4954) and MT-UI-54/55 (Settings layout) are graded by the rendered visual checks and MT-UI-56 (imported workspace confirmations) by unit tests plus a visual surface (#4928)
 - [ ] `test_guided_shells_and_tools.py` — MT-LOCAL-03/31 (WSL flash, Git install; MT-LOCAL-08 key repeat is graded with real HID events, #4980), MT-SSH-51/52 (X11 install on the real desktop per OS; MT-SSH-50 is automated, #4965), MT-NET-21 (latency charts)
-- [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
+- [ ] `test_real_hardware.py` — physical serial adapter (MT-SER-09 physical variant), the same adapter on an agent host (the agent reopens it in place, #5396; a second, different adapter is needed), agent deploy and sessions on a real Windows / arm64 host, MT-AGENT-28 Docker session from a Windows agent. Name the device / hosts with `TERMIHUB_SERIAL_DEVICE`, `TERMIHUB_AGENT_SERIAL_DEVICE` (the adapter's path on the `TERMIHUB_REAL_AGENT_HOST` host), `TERMIHUB_REAL_AGENT_HOST`, `TERMIHUB_WINDOWS_AGENT_HOST` and `TERMIHUB_RDP_HOST` (the RDP suite); a test whose variable is unset skips and says what to set.
 
 The macOS quit paths (Dock Quit, AppleScript `quit`, Log Out) are sent as Apple events to the test instance's PID, never to termiHub by name, so an installed copy running beside it is never touched.
 
