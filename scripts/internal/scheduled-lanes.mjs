@@ -89,6 +89,22 @@ export const LANES = [
     sources: [DEVELOP_DISPATCH],
   },
   {
+    // The nightly full Code Quality grade of develop (#5469). Its develop push
+    // runs cancel each other under steady merging (#4119), and since #5465
+    // the Windows jobs (Run Tests (windows-latest), Rust Code Quality
+    // (Windows), Agent Live Tests (Windows, serial)) run on no PR, so without
+    // this develop is almost never graded on Windows or macOS. A
+    // workflow_dispatch run sits in its own concurrency group and is never
+    // cancelled. Only dispatched runs count: a push run that happened to
+    // finish does not stand in for the nightly.
+    file: "code-quality.yml",
+    cadence: "daily",
+    cron: "17 2 * * *",
+    dispatch: true,
+    ownSchedule: false,
+    sources: [DEVELOP_DISPATCH],
+  },
+  {
     // Dispatched (#4847): its own schedule grades main only (weekly).
     file: "windows-ssh-host.yml",
     cadence: "daily",

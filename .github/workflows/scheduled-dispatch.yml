@@ -42,6 +42,7 @@ name: Scheduled Lanes (dispatch + heartbeat)
 # their first develop push registers them.
 on:
   schedule:
+    - cron: "17 2 * * *" # code-quality (full Windows/macOS grade of develop, #5469)
     - cron: "41 3 * * *" # wsl-live, integration-fixtures (instrumented)
     - cron: "0 4 * * *" # windows-ssh-host, security-audit
     - cron: "5 5 * * *" # system-integration (develop's YAML, #4449)

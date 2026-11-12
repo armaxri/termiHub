@@ -375,8 +375,12 @@ How the lanes that grade `develop` fire anyway:
   `integration-fixtures.yml`, `wsl-live.yml`, `windows-ssh-host.yml`,
   `plugin-sandbox-nightly.yml`) and daily for `security-audit.yml` (advisories
   are time-based). The lanes that only act on `develop` (`dependency-report.yml`,
-  `vendored-forks.yml`, `branch-protection.yml`) and `coverage.yml` have no
-  schedule of their own. Never check out `develop` on `schedule`
+  `vendored-forks.yml`, `branch-protection.yml`), `coverage.yml` and
+  `code-quality.yml` have no schedule of their own. Code Quality is dispatched
+  nightly on `develop` (#5469) because its push runs cancel each other under
+  steady merging (#4119): the dispatched run is never cancelled, so `develop` is
+  graded every night on Windows and macOS, including the Windows jobs no PR
+  runs (#5465). Never check out `develop` on `schedule`
   (`ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}`): that pairs
   main's YAML with develop's tree, and the drift guard rejects it.
 - A manual run of the dispatcher (`gh workflow run scheduled-dispatch.yml --ref
@@ -645,6 +649,17 @@ has that branch as `github.ref`.
 
 `check-cache-save-gates.mjs` (run by the Workflow Lint job and `./scripts/check.sh`) fails on a
 cache save without the gate.
+
+**The Linux Rust test cache is saved by its own workflow (#5469).** Code Quality cancels a
+superseded `develop` push run (#4119), and rust-cache saves only at the end of a job. Under steady
+merging almost no develop run reached that point, so PRs found no Linux `rust-tests` cache and
+compiled cold. [`rust-cache-warm.yml`](../.github/workflows/rust-cache-warm.yml) runs on every push
+to `develop` in a concurrency group that never cancels a running run. It does a compile-only build
+and saves the key the `Run Tests (ubuntu-latest, k/N)` shards restore. Both sides spell the key out
+(`key: tests`, `add-job-id-key: 'false'`) and run only checkout and Setup Rust before the cache
+step, so the rust-cache key (`v0-rust-tests-<OS>-<arch>-<env hash>-<lock hash>`) comes out the
+same. `ci-changes.test.mjs` fails if they drift. On an exact hit the warm job only looks the key
+up and finishes in under a minute.
 
 ### apt download retries
 
