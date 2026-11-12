@@ -39,6 +39,7 @@ export const TAURI_EVENT = {
   connectionIdsChanged: "connection-ids-changed",
   jumpHostHopStatus: "jump-host-hop-status",
   connectProgress: "connect-progress",
+  initialCommandHeld: "initial-command-held",
   jumpHostProbeComplete: "jump-host-probe-complete",
   transferProgress: "transfer-progress",
   xServerProgress: "x-server-progress",
