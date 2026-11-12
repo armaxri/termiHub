@@ -1616,6 +1616,19 @@ that app and never tore off. The step has its own skip-guard lanes,
 `os-input-macos` and `os-input-windows`, and runs even when the bulk step
 failed. Linux needs no split: its bulk lane already runs one worker.
 
+Two guards keep the grades exclusive (#5467). An OS-input suite fails, never
+skips, in a session with more than one xdist worker. The develop nightly of
+2026-11-11 ran the suites that way: a scheduled run reads the default branch's
+copy of the workflow, and that copy did not have the split yet. Before every
+calibration, the harness also waits up to 10 s for any other termiHub process
+to exit. That covers an app leaked by an earlier session or a crashed worker,
+a parallel worker's app and an installed termiHub. If one is still alive, the
+grade fails with `ForeignAppAlive`, which names each PID, who launched it and
+whether that pytest process still runs. The guard only reads the process
+table: it never signals a foreign process or sends it input. The
+frontmost-window refusal (`GlobalInjectionRefused`) is unchanged, and it now
+also names a foreign termiHub that holds the foreground.
+
 A screen point comes
 from the element's DOM rect, calibrated by one trusted `pointermove` the
 `osInputProbe` bridge verb records, so title bars and window-manager offsets
@@ -1637,8 +1650,11 @@ line, and its prompt showed the other app's `echo PERF05-40` (a PSReadLine
 history prediction). Since #5031 the OS-input suites run in
 their own `-n 1` step, and the grade passes there on Windows.
 
-On a missed calibration move, the Windows backend names the window under the
-pointer and lists every window on the desktop. That is how a DevTools window,
+On a missed calibration move, the Windows and macOS backends name the window
+under the pointer and list every window on the desktop. On macOS the active app
+is not what a pointer event hits: another process's always-on-top window can
+sit over the test window while the test app is active, so the macOS listing
+comes from `CGWindowList`, front to back (#5467). That is how a DevTools window,
 opened by an unconsumed Ctrl+Shift+C in the debug test app, was found (#4993).
 
 Still guided: MT-NIN-16 (OS emoji picker) and the IME candidate window
