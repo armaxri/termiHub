@@ -34,7 +34,7 @@ export function OpenSavedFileDialog({
     <Modal
       open={open}
       onOpenChange={(isOpen) => !isOpen && onCancel()}
-      title="Open Saved File in Tab"
+      title="Open saved file in tab"
       data-testid="open-saved-file-dialog"
       footer={
         <>

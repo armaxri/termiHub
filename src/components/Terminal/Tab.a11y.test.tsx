@@ -169,7 +169,7 @@ describe("Tab has no nested interactive controls (A11Y2-011)", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("offers 'Close Tab' and 'Focus <window>' in the context menu as keyboard twins", () => {
+  it("offers 'Close tab' and 'Focus <window>' in the context menu as keyboard twins", () => {
     const onClose = vi.fn();
     const onFocus = vi.fn();
     renderTab({ onClose, onFocusOwningWindow: onFocus });

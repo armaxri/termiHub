@@ -4,7 +4,7 @@
  *
  * Closing a group or panel unmounts every tab in it, so each live terminal
  * session ends and each unsaved editor is discarded. Every user-facing group
- * close path (the chip X, the chip's "Close Group" item, the close-tab-group
+ * close path (the chip X, the chip's "Close group" item, the close-tab-group
  * shortcut) and the panel close button route through here so none of them can
  * skip the confirmation.
  */

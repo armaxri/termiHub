@@ -176,7 +176,7 @@ export function toastRunOutcome(
       { id: toastId, description: `Step ${first.stepIndex + 1}: ${first.error}` }
     );
   } else if (result.status === "cancelled") {
-    toast.info(`Workflow "${workflowName}" cancelled`, {
+    toast.info(`Workflow "${workflowName}" canceled`, {
       id: toastId,
       description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
     });

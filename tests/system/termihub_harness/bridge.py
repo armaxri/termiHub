@@ -242,7 +242,7 @@ class Driver:
         """Wait for a window **other than those already connected** and drive it.
 
         ``predicate`` optionally filters candidate labels. The usual use is right
-        after an action that opens a window (New Window, Move to New Window)::
+        after an action that opens a window (New Window, Move to new window)::
 
             before = driver.windows()
             driver.press_key("N", ctrl=True, shift=True)

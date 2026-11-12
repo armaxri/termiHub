@@ -245,7 +245,7 @@ export async function exportCheatSheet(
   options: CheatSheetOptions = {}
 ): Promise<void> {
   const filePath = await save({
-    title: "Save Keyboard Shortcuts Cheat Sheet",
+    title: "Save keyboard shortcuts cheat sheet",
     defaultPath: CHEAT_SHEET_FILENAME,
     filters: [{ name: "HTML File", extensions: ["html"] }],
   });

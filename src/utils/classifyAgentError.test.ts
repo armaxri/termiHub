@@ -21,37 +21,37 @@ describe("classifyAgentError", () => {
       {
         code: "unreachable",
         category: "unreachable",
-        title: "Could Not Reach Host",
+        title: "Could not reach host",
         localized: "Verbindung fehlgeschlagen: Zeitüberschreitung",
       },
       {
         code: "auth_failed",
         category: "auth-failure",
-        title: "Authentication Failed",
+        title: "Authentication failed",
         localized: "認証に失敗しました",
       },
       {
         code: "second_factor_failed",
         category: "second-factor-failure",
-        title: "Verification Failed",
+        title: "Verification failed",
         localized: "Bestätigungscode abgelehnt",
       },
       {
         code: "agent_missing",
         category: "agent-missing",
-        title: "Agent Not Installed",
+        title: "Agent not installed",
         localized: "Ausführung fehlgeschlagen: Datei nicht gefunden",
       },
       {
         code: "agent_outdated",
         category: "agent-outdated",
-        title: "Agent Version Incompatible",
+        title: "Agent version incompatible",
         localized: "Initialisierung abgelehnt: nicht unterstützte Version",
       },
       {
         code: "already_connected",
         category: "already-connected",
-        title: "Already Connected",
+        title: "Already connected",
         localized: "エージェントは既に接続されています",
       },
     ];
@@ -72,31 +72,31 @@ describe("classifyAgentError", () => {
       {
         code: "unreachable",
         category: "unreachable",
-        title: "Could Not Reach Host",
+        title: "Could not reach host",
         localized: "Verbindung fehlgeschlagen: Zeitüberschreitung",
       },
       {
         code: "auth_failed",
         category: "auth-failure",
-        title: "Authentication Failed",
+        title: "Authentication failed",
         localized: "認証に失敗しました",
       },
       {
         code: "agent_missing",
         category: "agent-missing",
-        title: "Agent Not Installed",
+        title: "Agent not installed",
         localized: "Ausführung fehlgeschlagen: Datei nicht gefunden",
       },
       {
         code: "agent_outdated",
         category: "agent-outdated",
-        title: "Agent Version Incompatible",
+        title: "Agent version incompatible",
         localized: "Initialisierung abgelehnt: nicht unterstützte Version",
       },
       {
         code: "already_connected",
         category: "already-connected",
-        title: "Already Connected",
+        title: "Already connected",
         localized: "エージェントは既に接続されています",
       },
     ];
@@ -126,7 +126,7 @@ describe("classifyAgentError", () => {
   it("classifies a typed auth-failure code regardless of message language (I18N-001)", () => {
     const result = classifyAgentError("[thub-code:auth_failed] Authentifizierung fehlgeschlagen");
     expect(result.category).toBe("auth-failure");
-    expect(result.title).toBe("Authentication Failed");
+    expect(result.title).toBe("Authentication failed");
     // The machine marker is stripped from the raw error shown in the dialog.
     expect(result.rawError).toBe("Authentifizierung fehlgeschlagen");
     expect(result.rawError).not.toContain("thub-code");
@@ -155,7 +155,7 @@ describe("classifyAgentError", () => {
     it("classifies an uncoded plain string as unknown", () => {
       const result = classifyAgentError("Something unexpected");
       expect(result.category).toBe("unknown");
-      expect(result.title).toBe("Connection Failed");
+      expect(result.title).toBe("Connection failed");
       expect(result.message).toBe("Something unexpected");
       expect(result.rawError).toBe("Something unexpected");
     });
@@ -183,7 +183,7 @@ describe("classifyAgentError", () => {
         details: null,
       });
       expect(result.category).toBe("unknown");
-      expect(result.title).toBe("Connection Failed");
+      expect(result.title).toBe("Connection failed");
       expect(result.message).toBe("boom");
     });
 

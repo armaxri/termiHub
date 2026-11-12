@@ -32,7 +32,7 @@ export function LargePasteDialog({
   return (
     <ConfirmDialog
       open={open}
-      title={isBroadcast ? `Paste to ${broadcastTargetCount} terminals?` : "Large Paste"}
+      title={isBroadcast ? `Paste to ${broadcastTargetCount} terminals?` : "Large paste"}
       variant={isBroadcast ? "warn" : "default"}
       message={
         isBroadcast

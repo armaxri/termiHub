@@ -61,7 +61,7 @@ describe("TerminalFilesOnlyPanel (#4078)", () => {
   const openFiles = () =>
     container.querySelector<HTMLButtonElement>("[data-testid='terminal-files-only-open-files']");
 
-  it("shows the no-shell notice with an Open Files button for a files-only tab", async () => {
+  it("shows the no-shell notice with an Open files button for a files-only tab", async () => {
     transport.setSession("tab-1", filesOnly());
     await render("tab-1");
 
@@ -77,7 +77,7 @@ describe("TerminalFilesOnlyPanel (#4078)", () => {
     expect(button).not.toBeNull();
     expect(button?.tagName).toBe("BUTTON");
     expect(button?.disabled).toBe(false);
-    expect(button?.textContent).toContain("Open Files");
+    expect(button?.textContent).toContain("Open files");
   });
 
   it("renders nothing for a normal live session", async () => {
@@ -92,7 +92,7 @@ describe("TerminalFilesOnlyPanel (#4078)", () => {
     expect(panel()).toBeNull();
   });
 
-  it("Open Files focuses the tab and opens the Files sidebar", async () => {
+  it("Open files focuses the tab and opens the Files sidebar", async () => {
     const store = useAppStore.getState();
     const tabId = store.addTab("SFTP host", "ssh");
     const otherId = useAppStore.getState().addTab("Other", "local");
@@ -110,7 +110,7 @@ describe("TerminalFilesOnlyPanel (#4078)", () => {
     expect(state.sidebarCollapsed).toBe(false);
   });
 
-  it("Open Files leaves an already-open Files sidebar open", async () => {
+  it("Open files leaves an already-open Files sidebar open", async () => {
     const tabId = useAppStore.getState().addTab("SFTP host", "ssh");
     useAppStore.setState({ sidebarView: "files", sidebarCollapsed: false });
     transport.setSession(tabId, filesOnly());

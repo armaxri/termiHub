@@ -359,7 +359,7 @@ export const MenuGroup = React.forwardRef<HTMLDivElement, MenuGroupProps>(
 /** Props for {@link MenuSub}. */
 export type MenuSubProps = React.ComponentPropsWithoutRef<typeof RadixDropdownMenu.Sub>;
 
-/** Root of a nested submenu (e.g. "Move to Window ▸"). */
+/** Root of a nested submenu (e.g. "Move to window ▸"). */
 export function MenuSub(props: MenuSubProps): React.ReactElement {
   const kind = useMenuKind("MenuSub");
   return kind === "context" ? (

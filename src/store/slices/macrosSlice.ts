@@ -557,7 +557,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       if (result.status === "completed") {
         toast.success(`Played macro "${macro.name}"`, { id: toastId });
       } else if (result.status === "cancelled") {
-        toast.info(`Playback of "${macro.name}" cancelled`, {
+        toast.info(`Playback of "${macro.name}" canceled`, {
           id: toastId,
           description: `Stopped after ${result.stepsPlayed} of ${total} steps`,
         });

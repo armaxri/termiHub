@@ -3,13 +3,13 @@
 ``ssh-sftp-only`` forces ``internal-sftp`` (``ForceCommand``), so it refuses the
 interactive shell ("This service allows sftp connections only."). The app keeps
 the SSH session up as **files-only**: the terminal tab shows a "no shell" info
-panel with **Open Files**, and the Files sidebar and editor work over SFTP.
+panel with **Open files**, and the Files sidebar and editor work over SFTP.
 
 This drives the user's path end to end:
 
 - connect → the tab shows the no-shell panel (no disconnect overlay, the
   session stays);
-- **Open Files** → the Files sidebar lists the host over SFTP;
+- **Open files** → the Files sidebar lists the host over SFTP;
 - open the root-owned ``/etc/hostname`` → the #1330 SFTP-only read-only fallback:
   the banner offers **Save a copy…** and **Download**, there is no "Edit with
   sudo", and Save is disabled;
@@ -148,7 +148,7 @@ class TestSftpOnlyHostLive(
         )
 
     def _open_files(self) -> str:
-        """Click Open Files on the panel; return the browser path once listed."""
+        """Click Open files on the panel; return the browser path once listed."""
         self.driver.click(FILES_ONLY_OPEN_FILES)
         self.wait(
             lambda: self.driver.get_state("sidebarView") == "files"

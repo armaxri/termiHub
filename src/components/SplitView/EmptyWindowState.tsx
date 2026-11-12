@@ -21,12 +21,12 @@ import "./EmptyWindowState.css";
  * sidebar's exact connect/credential flow); with **zero connections** it routes
  * straight to the new-connection editor rather than dead-ending on a blank
  * Connections panel. The copy likewise speaks to a first-run user, and the
- * power-user "Move to Window" hint is shown only when more than one window is
+ * power-user "Move to window" hint is shown only when more than one window is
  * actually open.
  *
  * Rendered by {@link SplitView} in place of the tab-group/tab-bar tree while the
  * window holds no tabs; both actions run against *this* window's store, so a
- * launched session (or a tab moved in via "Move to Window") replaces the CTA
+ * launched session (or a tab moved in via "Move to window") replaces the CTA
  * with the normal tab UI.
  */
 export function EmptyWindowState() {
@@ -76,7 +76,7 @@ export function EmptyWindowState() {
               <>
                 {" "}
                 You can also move a tab in from another window with{" "}
-                <strong>Tab ▸ Move to Window</strong>.
+                <strong>Tab ▸ Move to window</strong>.
               </>
             )}
           </>

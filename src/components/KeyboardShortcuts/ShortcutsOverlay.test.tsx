@@ -74,9 +74,9 @@ describe("ShortcutsOverlay", () => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
     });
     const content = document.querySelector('[data-testid="shortcuts-overlay"]')?.textContent ?? "";
-    expect(content).toContain("Toggle Sidebar");
-    expect(content).toContain("Close Tab");
-    expect(content).toContain("Copy Selection");
+    expect(content).toContain("Toggle sidebar");
+    expect(content).toContain("Close tab");
+    expect(content).toContain("Copy selection");
     expect(content).toContain("Paste");
   });
 
@@ -132,7 +132,7 @@ describe("ShortcutsOverlay", () => {
     expect(hints).toContain("Yields to editors & inputs");
   });
 
-  it("labels Find in Terminal as a terminal-scoped action", () => {
+  it("labels Find in terminal as a terminal-scoped action", () => {
     act(() => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
     });
@@ -264,7 +264,7 @@ describe("ShortcutsOverlay", () => {
       });
       expect(document.body.textContent).toContain("Remote desktop");
       const r = row();
-      expect(r?.textContent).toContain("Release Remote Desktop Keyboard");
+      expect(r?.textContent).toContain("Release remote desktop keyboard");
       expect(r?.textContent).toContain("Focused remote desktop");
       const keys = Array.from(r?.querySelectorAll("kbd") ?? []).map((k) => k.textContent);
       expect(keys).toEqual(["Ctrl+Shift+Alt"]);
@@ -345,8 +345,8 @@ describe("ShortcutsOverlay", () => {
       });
       const next = document.querySelector('[data-testid="shortcut-row-focus-next-region"]');
       const prev = document.querySelector('[data-testid="shortcut-row-focus-prev-region"]');
-      expect(next?.textContent).toContain("Focus Next Region");
-      expect(prev?.textContent).toContain("Focus Previous Region");
+      expect(next?.textContent).toContain("Focus next region");
+      expect(prev?.textContent).toContain("Focus previous region");
       expect(kbds("focus-next-region")).toEqual(["F6"]);
       expect(kbds("focus-prev-region")).toEqual(["Shift+F6"]);
       expect(kbds("focus-next-region-anywhere")).toEqual(["Ctrl+F6"]);

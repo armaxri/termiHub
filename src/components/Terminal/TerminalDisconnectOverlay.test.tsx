@@ -391,7 +391,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
       "[data-testid='terminal-disconnect-view-btn']"
     ) as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
-    expect(btn!.textContent).toContain("View Scrollback");
+    expect(btn!.textContent).toContain("View scrollback");
     act(() => {
       btn!.click();
     });

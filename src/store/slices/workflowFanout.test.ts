@@ -101,7 +101,7 @@ describe("describeFanoutProgress", () => {
         "cancelled",
         "running",
       ])
-    ).toBe("2 running · 1 queued · 2 done · 1 failed · 1 cancelled");
+    ).toBe("2 running · 1 queued · 2 done · 1 failed · 1 canceled");
     expect(describeFanoutProgress(["queued", "queued"])).toBe("2 queued");
     expect(describeFanoutProgress([])).toBe("");
   });

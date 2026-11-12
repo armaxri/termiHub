@@ -51,7 +51,7 @@ describe("OpenPortsPanel — auto-load", () => {
     expect(networkOpenPorts).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("sshd");
     // The click-to-refresh placeholder is gone once auto-loaded.
-    expect(container.textContent).not.toContain("Click Refresh");
+    expect(container.textContent).not.toContain("Click “Refresh”");
   });
 
   it("Refresh re-fetches after the initial auto-load", async () => {

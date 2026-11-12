@@ -353,7 +353,7 @@ returns both (#4013):
 {
   "commandMarks": {
     "commands": [{ "state": "finished", "exitCode": 0 }], // oldest first
-    "lastCommandOutput": "1\n2\n3", // what "Copy Last Command Output" copies
+    "lastCommandOutput": "1\n2\n3", // what "Copy last command output" copies
   },
   "inlineImages": { "active": true, "storageUsage": 0.0001 }, // MB stored
 }

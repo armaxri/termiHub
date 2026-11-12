@@ -11,7 +11,7 @@ import { errorMessage } from "@/utils/errorMessage";
  * changes (#1910).
  *
  * Tabs live in each window's own JS context, so a window cannot see another
- * window's count. Each window reports its own count here; the "Move to Window ▸"
+ * window's count. Each window reports its own count here; the "Move to window ▸"
  * picker in every *other* window reads the reported counts back (via
  * `list_windows`) to show a "N tabs" / "empty" hint sourced from real state.
  *

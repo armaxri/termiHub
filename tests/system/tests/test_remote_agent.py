@@ -18,7 +18,7 @@ Divergences from the original, by design:
   "remote" connection-editor type — that type was removed, and the dedicated
   button (in the experimental Remote Agents sidebar group) is the only create
   path now.
-* **The "Agent Not Installed" Setup-Agent button** (old MT-AGENT-02) is not
+* **The "Agent not installed" Setup-Agent button** (old MT-AGENT-02) is not
   asserted: the category the password container (no agent binary) lands in is
   not pinned here (the categorization itself is covered by the
   ``classifyAgentError`` / ``ConnectionErrorDialog`` unit tests). This port
@@ -137,7 +137,7 @@ class TestRemoteAgent(
         # The handshake raises the host-key prompt first; the helper accepts it so
         # the connect reaches auth and fails on the password, not the host key.
         title = self.wait_connection_error_title()
-        assert title.strip() == "Authentication Failed", self.connection_error_message()
+        assert title.strip() == "Authentication failed", self.connection_error_message()
         self.dismiss_connection_error()
 
     # Not on the macOS native sshd (no native_sshd marker): its user is also the

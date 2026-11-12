@@ -385,7 +385,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       });
       set({ workflowParamPrompt: null });
       if (collected === null) {
-        toast.info(`Workflow "${workflow.name}" cancelled`);
+        toast.info(`Workflow "${workflow.name}" canceled`);
         return;
       }
       paramValues = collected;

@@ -66,7 +66,7 @@ describe("LargePasteDialog", () => {
   it("keeps the plain large-paste wording for a single target", () => {
     render(<LargePasteDialog {...baseProps} broadcastTargetCount={1} />);
     const dialog = document.querySelector('[data-testid="large-paste-dialog"]');
-    expect(dialog!.textContent).toContain("Large Paste");
+    expect(dialog!.textContent).toContain("Large paste");
   });
 
   it("Paste button fires onConfirm", () => {

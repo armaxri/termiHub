@@ -333,7 +333,7 @@ export function CloseWindowDecisionDialog() {
                   onClick={() => void handleDiscardEditor(editor)}
                   data-testid="close-window-decision-discard-editor"
                 >
-                  Discard
+                  Discard changes
                 </Button>
               </>
             )}

@@ -45,7 +45,7 @@ export interface TerminalInputOptions {
 export interface ReadTerminalOptions {
   /** Read this specific tab instead of the active one. */
   tabId?: string;
-  /** Rejoin hard wraps at the terminal width (matches "Save to File"). */
+  /** Rejoin hard wraps at the terminal width (matches "Save to file"). */
   joinFullWidthRows?: boolean;
 }
 

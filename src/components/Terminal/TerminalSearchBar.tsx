@@ -112,33 +112,33 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
       <span className="terminal-search-bar__count" aria-live="polite" role="status">
         {matchCount}
       </span>
-      <Tooltip content="Match Case" side="bottom">
+      <Tooltip content="Match case" side="bottom">
         <Button
           variant={caseSensitive ? "secondary" : "ghost"}
           size="sm"
           icon={<CaseSensitive size={14} />}
           onClick={() => setCaseSensitive(!caseSensitive)}
-          aria-label="Match Case"
+          aria-label="Match case"
           aria-pressed={caseSensitive}
         />
       </Tooltip>
-      <Tooltip content="Match Whole Word" side="bottom">
+      <Tooltip content="Match whole word" side="bottom">
         <Button
           variant={wholeWord ? "secondary" : "ghost"}
           size="sm"
           icon={<WholeWord size={14} />}
           onClick={() => setWholeWord(!wholeWord)}
-          aria-label="Match Whole Word"
+          aria-label="Match whole word"
           aria-pressed={wholeWord}
         />
       </Tooltip>
-      <Tooltip content="Use Regular Expression" side="bottom">
+      <Tooltip content="Use regular expression" side="bottom">
         <Button
           variant={useRegex ? "secondary" : "ghost"}
           size="sm"
           icon={<Regex size={14} />}
           onClick={() => setUseRegex(!useRegex)}
-          aria-label="Use Regular Expression"
+          aria-label="Use regular expression"
           aria-pressed={useRegex}
         />
       </Tooltip>

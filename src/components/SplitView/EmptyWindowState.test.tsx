@@ -137,13 +137,13 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
 
     // First-run guidance, and no power-user multi-window instruction.
     expect(container.textContent).toContain("create a connection");
-    expect(container.textContent).not.toContain("Move to Window");
+    expect(container.textContent).not.toContain("Move to window");
   });
 
   it("surfaces the multi-window hint only when more than one window is open", () => {
     mockWindowCount = 2;
     act(() => root.render(<EmptyWindowState />));
 
-    expect(container.textContent).toContain("Move to Window");
+    expect(container.textContent).toContain("Move to window");
   });
 });
