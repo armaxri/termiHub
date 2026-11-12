@@ -1,5 +1,5 @@
 /* === Per-connection additional highlight rules (#1744) === */
-/* Header row: field label with the "Add Rule" action pushed to the far end. */
+/* Header row: field label with the "Add rule" action pushed to the far end. */
 .connection-additional-rules .settings-form__label-row {
   display: flex;
   align-items: center;

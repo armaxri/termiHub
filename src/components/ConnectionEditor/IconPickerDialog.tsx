@@ -55,7 +55,7 @@ export function IconPickerDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Choose Icon"
+      title="Choose icon"
       footer={
         <>
           <Button variant="secondary" onClick={handleClear} data-testid="icon-picker-clear">

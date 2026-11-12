@@ -67,7 +67,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         <h3 className="settings-panel__category-title">Features</h3>
 
         <SettingsField
-          label="System Monitoring"
+          label="System monitoring"
           hint="Collect CPU, memory, and disk usage from the remote host."
         >
           <Toggle
@@ -77,7 +77,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         </SettingsField>
 
         <SettingsField
-          label="File Browser (SFTP)"
+          label="File browser (SFTP)"
           hint="Browse and transfer files on the remote host via SFTP."
         >
           <Toggle
@@ -87,7 +87,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         </SettingsField>
 
         <SettingsField
-          label="Docker Sessions"
+          label="Docker sessions"
           hint="Open terminal sessions directly inside Docker containers on the remote host."
         >
           <Toggle
@@ -102,7 +102,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <Field
           variant="settings"
-          label="Default Shell"
+          label="Default shell"
           htmlFor={shellId}
           hint="Shell used for new sessions. Leave empty to auto-detect."
           labelAccessory={
@@ -138,7 +138,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         </Field>
 
         <SettingsField
-          label="Starting Directory"
+          label="Starting directory"
           htmlFor={startDirId}
           hint="Working directory for new sessions. Leave empty for the shell default."
         >
@@ -156,7 +156,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         <h3 className="settings-panel__category-title">Persistent Sessions</h3>
 
         <SettingsField
-          label="Persistent Scrollback Buffer"
+          label="Persistent scrollback buffer"
           htmlFor={scrollbackId}
           hint="Size of the ring buffer kept on the agent for persistent sessions (1–64 MiB). Changes apply to newly started sessions."
         >
@@ -175,7 +175,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         <h3 className="settings-panel__category-title">Diagnostics</h3>
 
         <SettingsField
-          label="Log Level"
+          label="Log level"
           htmlFor={logLevelId}
           hint="Controls the verbosity of agent-side log output."
         >
@@ -191,7 +191,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         </SettingsField>
 
         <SettingsField
-          label="Verbose Protocol Tracing"
+          label="Verbose protocol tracing"
           hint="Log every JSON-RPC message. Useful for debugging connection issues."
         >
           <Toggle

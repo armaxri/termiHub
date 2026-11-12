@@ -43,16 +43,16 @@ export const AGENT_SCHEMA: SettingsSchema = {
       fields: [
         {
           key: "authMethod",
-          label: "Auth Method",
+          label: "Auth method",
           fieldType: {
             type: "select",
             options: [
               { value: "password", label: "Password" },
-              { value: "key", label: "SSH Key" },
-              { value: "agent", label: "SSH Agent" },
+              { value: "key", label: "SSH key" },
+              { value: "agent", label: "SSH agent" },
               // OTP / 2FA / PAM challenges answered in the in-app prompt at
               // connect time (#3377, same method as SSH connections #3371).
-              { value: "keyboard-interactive", label: "Keyboard-Interactive (OTP / 2FA)" },
+              { value: "keyboard-interactive", label: "Keyboard-interactive (OTP / 2FA)" },
             ],
           },
           required: true,
@@ -60,7 +60,7 @@ export const AGENT_SCHEMA: SettingsSchema = {
         },
         {
           key: "keyPath",
-          label: "Key Path",
+          label: "Key path",
           fieldType: { type: "filePath", kind: "file" },
           required: false,
           placeholder: "~/.ssh/id_ed25519",
@@ -93,7 +93,7 @@ export const AGENT_SCHEMA: SettingsSchema = {
       fields: [
         {
           key: "updateStrategy",
-          label: "Update Strategy",
+          label: "Update strategy",
           fieldType: {
             type: "select",
             options: [

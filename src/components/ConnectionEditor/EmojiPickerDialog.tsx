@@ -54,7 +54,7 @@ export function EmojiPickerDialog({ open, onOpenChange, onEmojiSelect }: EmojiPi
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Choose Emoji"
+      title="Choose emoji"
       footer={
         <Button
           variant="secondary"
