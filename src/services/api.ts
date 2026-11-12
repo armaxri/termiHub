@@ -766,6 +766,15 @@ export async function setSessionLineEnding(
 }
 
 /**
+ * **Send now** for an initial command held because the shell never announced
+ * its prompt (#5509). Returns whether a command was held; `false` means it
+ * already went out (or the session is gone), and nothing was typed.
+ */
+export async function sendHeldInitialCommand(sessionId: SessionId): Promise<boolean> {
+  return (await invoke<boolean>("send_held_initial_command", { sessionId })) ?? false;
+}
+
+/**
  * Start writing a session's output to a file (#1960).
  *
  * When `path` is omitted the backend picks a default

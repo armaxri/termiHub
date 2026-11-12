@@ -1,0 +1,35 @@
+/* The "initial command not sent yet" notice (#5509), styled like the imported
+   command banner it sits beside. */
+.initial-command-held-notice {
+  position: absolute;
+  left: var(--spacing-sm);
+  right: var(--spacing-sm);
+  bottom: var(--spacing-sm);
+  z-index: var(--z-float-top);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.initial-command-held-notice__icon {
+  flex-shrink: 0;
+  color: var(--color-warning);
+}
+
+.initial-command-held-notice__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.initial-command-held-notice__actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}

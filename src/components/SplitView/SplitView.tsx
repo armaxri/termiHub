@@ -67,6 +67,7 @@ import { useWindowEviction } from "@/hooks/useWindowEviction";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { ImportedCommandBanner } from "@/components/Terminal/ImportedCommandBanner";
+import { InitialCommandHeldNotice } from "@/components/Terminal/InitialCommandHeldNotice";
 import { ImportedConnectionPrompt } from "@/components/Terminal/ImportedConnectionPrompt";
 import {
   Spinner,
@@ -1153,6 +1154,8 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       {!isEvicted && <TerminalFilesOnlyPanel tabId={tabId} isActive={isVisible} />}
       {isImportedConnectionHeld && <ImportedConnectionPrompt tabId={tabId} isVisible />}
       {!isEvicted && !isImportedConnectionHeld && <ImportedCommandBanner tabId={tabId} />}
+      {/* #5509: the shell never announced its prompt — offer Send now. */}
+      {!isEvicted && <InitialCommandHeldNotice tabId={tabId} />}
       {isExited && isViewMode && (
         <>
           <TerminalViewModeBanner tabId={tabId} />
