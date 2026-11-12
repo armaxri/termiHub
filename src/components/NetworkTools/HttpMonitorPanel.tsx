@@ -540,7 +540,7 @@ export function HttpMonitorPanel() {
       {monitors.length === 0 && !activeMonitorId && (
         <EmptyState
           variant="panel"
-          title="No running monitors. Enter a URL and click Start."
+          title="No running monitors. Enter a URL and click “Start”."
           data-testid="http-monitor-empty"
         />
       )}

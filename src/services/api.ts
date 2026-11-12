@@ -662,7 +662,7 @@ export async function listWindows(): Promise<WindowInfo[]> {
 
 /**
  * Report the *calling* window's current tab count so other windows'
- * "Move to Window ▸" pickers can show a live "N tabs" hint (#1910). Nudges every
+ * "Move to window ▸" pickers can show a live "N tabs" hint (#1910). Nudges every
  * window with `windows-changed` so an open picker refreshes.
  */
 export async function reportWindowTabCount(count: number): Promise<void> {

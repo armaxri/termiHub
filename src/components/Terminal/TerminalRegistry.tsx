@@ -498,7 +498,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
   const openTerminalInEditor = useCallback(
     (tabId: string, tabTitle: string) => {
-      // Capture logical lines (rejoin hard wraps), matching "Save to File".
+      // Capture logical lines (rejoin hard wraps), matching "Save to file".
       const content = getTerminalContent(tabId, true);
       if (!content) return;
 

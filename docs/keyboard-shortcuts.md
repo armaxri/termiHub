@@ -31,14 +31,14 @@ single-modifier readline / tmux range.
 
 | termiHub action    | Default (Win/Linux)  | Was avoided                                                                      |
 | ------------------ | -------------------- | -------------------------------------------------------------------------------- |
-| Toggle Sidebar     | `Ctrl+Shift+B`       | `Ctrl+B` — tmux default prefix                                                   |
-| Close Tab          | `Ctrl+Shift+W`       | `Ctrl+W` — readline `delete-word-backward`, vim `<C-w>` window prefix            |
-| Close Tab Group    | `Ctrl+Shift+F4`      | `Ctrl+Shift+Q` — quits many Linux apps; `Ctrl+Shift+W` is Close Tab              |
-| Split Right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
-| Split Down         | `Alt+Shift+-`        | (paired with Split Right)                                                        |
-| Focus Panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
-| Keyboard Shortcuts | `Ctrl+F1`            | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
-| Jump to Prompt ↑↓  | `Ctrl+Shift+<Up/Dn>` | `Ctrl+<Up/Down>` — word/paragraph movement in shells and editors                 |
+| Toggle sidebar     | `Ctrl+Shift+B`       | `Ctrl+B` — tmux default prefix                                                   |
+| Close tab          | `Ctrl+Shift+W`       | `Ctrl+W` — readline `delete-word-backward`, vim `<C-w>` window prefix            |
+| Close tab group    | `Ctrl+Shift+F4`      | `Ctrl+Shift+Q` — quits many Linux apps; `Ctrl+Shift+W` is Close tab              |
+| Split right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
+| Split down         | `Alt+Shift+-`        | (paired with Split right)                                                        |
+| Focus panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
+| Keyboard shortcuts | `Ctrl+F1`            | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
+| Jump to prompt ↑↓  | `Ctrl+Shift+<Up/Dn>` | `Ctrl+<Up/Down>` — word/paragraph movement in shells and editors                 |
 
 macOS keeps the more conventional single-modifier forms (`Cmd+B`, `Cmd+W`,
 `Cmd+\`, `Cmd+K Cmd+S`, `Cmd+Alt+<Arrow>`) because `Cmd` does not appear in the
@@ -46,11 +46,11 @@ shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
 
 ### Chords termiHub keeps clear of
 
-- **Close Tab Group** moved from `Ctrl+Shift+Q` to `Ctrl+Shift+F4` (#5316).
+- **Close tab group** moved from `Ctrl+Shift+Q` to `Ctrl+Shift+F4` (#5316).
   `Ctrl+Shift+Q` is the usual Linux "quit" chord, so pressing it out of habit
-  closed a whole tab group. If you saved your own binding for Close Tab Group,
+  closed a whole tab group. If you saved your own binding for Close tab group,
   it keeps working; only the default changed. macOS keeps `Cmd+Shift+W`.
-- **`Cmd+W` on macOS is Close Tab only.** The stock macOS menu's
+- **`Cmd+W` on macOS is Close tab only.** The stock macOS menu's
   File ▸ Close Window and Window ▸ Close Window items no longer carry `Cmd+W`.
   Close a window with the red title-bar button or either Close Window menu
   item.
@@ -70,8 +70,8 @@ job from inside the terminal.
 
 | Action                                                          | Bare key (outside terminals) | Also from a terminal (macOS / Win+Linux)        |
 | --------------------------------------------------------------- | ---------------------------- | ----------------------------------------------- |
-| Keyboard Shortcuts                                              | `F1`                         | `Cmd+K Cmd+S` / `Ctrl+F1`                       |
-| Focus Next / Previous Region ([F6](#moving-between-regions-f6)) | `F6` / `Shift+F6`            | `Cmd+F6` / `Ctrl+F6` (add `Shift` for previous) |
+| Keyboard shortcuts                                              | `F1`                         | `Cmd+K Cmd+S` / `Ctrl+F1`                       |
+| Focus next / previous region ([F6](#moving-between-regions-f6)) | `F6` / `Shift+F6`            | `Cmd+F6` / `Ctrl+F6` (add `Shift` for previous) |
 
 The shortcuts overlay marks the bare keys as active "Outside terminals". A
 rebound key on one of these actions still yields while a terminal has focus.
@@ -86,10 +86,10 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
 
 | Action                     | macOS             | Windows / Linux   |
 | -------------------------- | ----------------- | ----------------- |
-| Jump to Previous Prompt    | `Cmd+Up`          | `Ctrl+Shift+Up`   |
-| Jump to Next Prompt        | `Cmd+Down`        | `Ctrl+Shift+Down` |
-| Select Last Command Output | unbound (palette) | unbound (palette) |
-| Copy Last Command Output   | unbound (palette) | unbound (palette) |
+| Jump to previous prompt    | `Cmd+Up`          | `Ctrl+Shift+Up`   |
+| Jump to next prompt        | `Cmd+Down`        | `Ctrl+Shift+Down` |
+| Select last command output | unbound (palette) | unbound (palette) |
+| Copy last command output   | unbound (palette) | unbound (palette) |
 
 - Jumping scrolls the prompt to the top of the viewport and briefly highlights
   its row; repeated presses keep walking from the prompt last jumped to. "Next"
@@ -119,10 +119,10 @@ this order:
 
 | Action                                     | macOS          | Windows / Linux | Works while a terminal has focus |
 | ------------------------------------------ | -------------- | --------------- | -------------------------------- |
-| Focus Next Region                          | `F6`           | `F6`            | No — the key goes to the program |
-| Focus Previous Region                      | `Shift+F6`     | `Shift+F6`      | No — the key goes to the program |
-| Focus Next Region (Also from Terminal)     | `Cmd+F6`       | `Ctrl+F6`       | Yes                              |
-| Focus Previous Region (Also from Terminal) | `Cmd+Shift+F6` | `Ctrl+Shift+F6` | Yes                              |
+| Focus next region                          | `F6`           | `F6`            | No — the key goes to the program |
+| Focus previous region                      | `Shift+F6`     | `Shift+F6`      | No — the key goes to the program |
+| Focus next region (also from terminal)     | `Cmd+F6`       | `Ctrl+F6`       | Yes                              |
+| Focus previous region (also from terminal) | `Cmd+Shift+F6` | `Ctrl+Shift+F6` | Yes                              |
 
 - **A focused terminal keeps F6.** Bare <kbd>F6</kbd> / <kbd>Shift</kbd>+<kbd>F6</kbd>
   are passed through to the program running in the terminal (Midnight
@@ -138,7 +138,7 @@ this order:
 - Focus inside a dialog stays there; the keys do nothing until the dialog
   closes.
 - All four actions can be rebound in **Settings → Keyboard shortcuts**. A
-  rebound **Focus Next Region** / **Focus Previous Region** key still goes to
+  rebound **Focus next region** / **Focus previous region** key still goes to
   the terminal program while a terminal has focus.
 
 ## Moving items without dragging

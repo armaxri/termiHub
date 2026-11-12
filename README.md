@@ -223,7 +223,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 - **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow Experimental Features** on, it also shows SSH tunnels, Services (embedded servers), Network tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
-- **Terminal View** — The main area with a tab bar, terminal content, toolbar (New Terminal, Split, Close Panel), and status bar.
+- **Terminal View** — The main area with a tab bar, terminal content, toolbar (New terminal, Split, Close panel), and status bar.
 
 ### Managing Connections
 
@@ -252,7 +252,7 @@ The import lives under **Settings → Import & migration**. It always shows a pr
 - **Proxy** — An SSH session's SOCKS4, SOCKS5 or HTTP proxy becomes the connection's **Proxy** settings (type, host, port and user); a VNC session's becomes its SSH tunnel's proxy when the session has a single SSH gateway, and the VNC connection's own **Proxy** settings when it has none. Enter the proxy password after import.
 - **Host keys (opt-in)** — The SSH host keys MobaXterm has accepted are listed with their fingerprints. They are trusted only if you tick **Also import N trusted host keys**; a key is never imported when termiHub (or your `~/.ssh/known_hosts`) already trusts a different key for that host.
 - **Appearance** — A session whose font, font size or cursor style differs from MobaXterm's defaults keeps it as a per-connection terminal option (point sizes are converted to termiHub's pixel sizes); sessions at the defaults keep following termiHub's global appearance settings. Telnet sessions also keep their terminal type.
-- **Logging and scrollback** — A session with MobaXterm's **Log terminal output** turned on gets termiHub's **Log Session Output** option, so it is logged on connect. termiHub always writes these logs to its own log folder; a MobaXterm log folder is shown as a note, never used. A custom scrollback size (MobaXterm's expert terminal settings) becomes the connection's scrollback buffer, limited to termiHub's 100–1 000 000 lines; MobaXterm's 360 000-line default keeps termiHub's global setting.
+- **Logging and scrollback** — A session with MobaXterm's **Log terminal output** turned on gets termiHub's **Log session output** option, so it is logged on connect. termiHub always writes these logs to its own log folder; a MobaXterm log folder is shown as a note, never used. A custom scrollback size (MobaXterm's expert terminal settings) becomes the connection's scrollback buffer, limited to termiHub's 100–1 000 000 lines; MobaXterm's 360 000-line default keeps termiHub's global setting.
 - **Global appearance (opt-in)** — MobaXterm's global colours, terminal font and cursor are offered in two separate checkboxes, both off by default. **Create the theme "MobaXterm" from MobaXterm's colours and use it** adds a new custom theme (terminal background, text, cursor and the 16 ANSI colours; everything else comes from termiHub's dark or light theme) — an existing theme is never replaced, a taken name gets a "(2)" suffix. **Use MobaXterm's terminal font and cursor** lists each change as before → after (font, font size in pixels, cursor style, blink) and applies only those. MobaXterm does not document these settings; termiHub follows the layout used by public MobaXterm colour-scheme collections, and values it cannot read are listed as notes.
 - **Preview notes** — Settings termiHub has no counterpart for stay a note under the session, never applied silently: a VNC proxy behind a chain of several SSH gateways or another kind of proxy (Telnet, local or SSH proxy command), an RD Gateway, a multi-hop VNC or RDP gateway, a non-UTF-8 character set, custom session colours, a fixed terminal size, or a terminal type other than xterm on SSH and local sessions. Check serial line settings after import.
 - **Passwords are never imported.** MobaXterm keeps them in its own encrypted vault (in the Windows registry), which termiHub does not read — you are asked for the password on first connect.
@@ -343,7 +343,7 @@ have no entry point.
 Open terminals appear as tabs with type-specific icons and optional colored borders. Actions:
 
 - **Click** to switch, **drag** to reorder or move between panels
-- **Right-click** a tab for: Save to File, Copy All, Clear Terminal, Horizontal Scrolling, Set Color
+- **Right-click** a tab for: Save to file, Copy all, Clear terminal, Horizontal scrolling, Set color
 
 Each connection also has terminal options: **horizontal scrolling** and **tab color**, configurable in the editor or via the tab context menu.
 
@@ -375,7 +375,7 @@ Split the terminal area into multiple panels:
 
 - Click the **Split** button in the toolbar, or **drag a tab** to the edge of a panel
 - **Drag the divider** to resize panels
-- **Close Panel** (X) removes a panel and moves its tabs to an adjacent one
+- **Close panel** (X) removes a panel and moves its tabs to an adjacent one
 - Splits can be nested (horizontal within vertical and vice versa)
 - Drag tabs between panels or to panel edges to create new splits
 

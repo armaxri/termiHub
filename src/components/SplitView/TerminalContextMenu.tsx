@@ -81,8 +81,8 @@ export interface TerminalContextMenuProps {
 
 /**
  * The right-click surface of a terminal (#4915): the terminal context menu
- * (Copy Selection / Paste / Copy All, Rename, Save to File, Clear Terminal,
- * Horizontal Scrolling, Set Color…), or Quick Copy/Paste when that is the
+ * (Copy selection / Paste / Copy all, Rename, Save to file, Clear terminal,
+ * Horizontal scrolling, Set color…), or Quick Copy/Paste when that is the
  * configured behaviour. Used by the in-panel terminal and the zoom overlay so
  * both offer the same menu. With app mouse reporting on, a plain right-click
  * belongs to the app and Shift+right-click to termiHub (#3801).

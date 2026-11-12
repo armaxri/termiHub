@@ -94,7 +94,7 @@ class TestNetworkTools(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
         self.open_tool_panel("open-ports", "open-ports-panel")
         assert self.driver.exists("open-ports-refresh")
 
-        # The panel auto-loads on mount, so the idle "Click Refresh" placeholder
+        # The panel auto-loads on mount, so the idle "Click “Refresh”" placeholder
         # is replaced by a results footer ("N listening port(s)") once the backend
         # responds; that footer is the deterministic "it answered" signal (there
         # is always at least the app's own listening socket, and even 0 answers).

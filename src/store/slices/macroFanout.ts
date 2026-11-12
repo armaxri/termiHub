@@ -111,7 +111,7 @@ export function describeMacroFanoutOutcome(
   if (o.status === "cancelled") {
     return {
       kind: "info",
-      message: `Playback of "${macroName}" cancelled`,
+      message: `Playback of "${macroName}" canceled`,
       description: [
         `Stopped after ${o.stepsPlayed} of ${o.totalSteps} steps on ${plural(o.delivered, "terminal")}`,
         detail,

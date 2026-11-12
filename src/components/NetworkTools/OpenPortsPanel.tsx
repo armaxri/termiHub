@@ -182,7 +182,7 @@ export function OpenPortsPanel() {
         <EmptyState
           variant="panel"
           loading={loading}
-          title={loading ? "Listing listening ports…" : "Click Refresh to list listening ports"}
+          title={loading ? "Listing listening ports…" : "Click “Refresh” to list listening ports"}
           data-testid="open-ports-placeholder"
         />
       )}

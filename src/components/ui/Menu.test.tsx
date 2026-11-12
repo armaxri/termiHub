@@ -248,7 +248,7 @@ describe("ui/Menu", () => {
                 Paste
               </MenuItem>
               <MenuItem data-testid="copy" onSelect={onCopy}>
-                Copy All
+                Copy all
               </MenuItem>
             </ContextMenuContent>
           </ContextMenuRoot>

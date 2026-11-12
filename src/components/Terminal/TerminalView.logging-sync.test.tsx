@@ -1,7 +1,7 @@
 /**
  * Session-logging status sync and per-tab stop (#5172, COV-013).
  *
- * The toolbar's "Log Session Output" toggle mirrors the backend: whenever the
+ * The toolbar's "Log session output" toggle mirrors the backend: whenever the
  * active terminal changes, TerminalView re-queries `sessionLoggingStatus` so the
  * pressed state stays honest even when logging was started elsewhere or ended
  * with the session. These tests drive the real store and the real effect, with
@@ -176,7 +176,7 @@ describe("TerminalView — session logging status sync (#5172)", () => {
 
     expect(sessionLoggingStatus).toHaveBeenCalledWith("sess-t1");
     expect(pressed()).toBe("true");
-    expect(loggingButton().getAttribute("aria-label")).toBe("Stop Logging Output");
+    expect(loggingButton().getAttribute("aria-label")).toBe("Stop logging output");
   });
 
   it("clears the pressed state when a re-sync reports logging has ended", async () => {

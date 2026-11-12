@@ -117,7 +117,7 @@ afterEach(() => {
 describe("CommandPalette", () => {
   it("ranks a fuzzy-matched command to the top", () => {
     typeInto("new term");
-    expect(activeLabel()).toBe("New Terminal");
+    expect(activeLabel()).toBe("New terminal");
   });
 
   it("ranks a fuzzy-matched connection to the top", () => {
@@ -243,9 +243,9 @@ describe("CommandPalette", () => {
   });
 
   it("surfaces a context-bound command disabled when no target applies", () => {
-    // The initial state has an empty active panel, so Close Tab has no target.
+    // The initial state has an empty active panel, so Close tab has no target.
     typeInto("close tab");
-    expect(activeLabel()).toBe("Close Tab");
+    expect(activeLabel()).toBe("Close tab");
     const active = document.querySelector('[role="option"][aria-selected="true"]');
     expect(active?.getAttribute("aria-disabled")).toBe("true");
   });
@@ -257,7 +257,7 @@ describe("CommandPalette", () => {
   });
 
   it("runs an available context command on Enter and closes", () => {
-    // Give the active panel a focused terminal so Find in Terminal has a target.
+    // Give the active panel a focused terminal so Find in terminal has a target.
     act(() => {
       const id = useAppStore
         .getState()
@@ -271,7 +271,7 @@ describe("CommandPalette", () => {
     const toggleSpy = vi.spyOn(useAppStore.getState(), "toggleTerminalSearch");
 
     typeInto("find in terminal");
-    expect(activeLabel()).toBe("Find in Terminal");
+    expect(activeLabel()).toBe("Find in terminal");
     keydown("Enter");
 
     expect(toggleSpy).toHaveBeenCalledTimes(1);

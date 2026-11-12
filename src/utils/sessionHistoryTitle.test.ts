@@ -37,7 +37,7 @@ describe("sessionHistoryTitle", () => {
 
   it("uses the shell basename for local", () => {
     expect(sessionHistoryTitle("local", cfg("local", { shell: "/bin/zsh" }))).toBe("zsh");
-    expect(sessionHistoryTitle("local", cfg("local", {}))).toBe("Local Shell");
+    expect(sessionHistoryTitle("local", cfg("local", {}))).toBe("Local shell");
   });
 
   it("shows the distro for a wsl local shell", () => {

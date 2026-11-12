@@ -43,7 +43,7 @@ The fastest way to confirm everything works is a local terminal:
 1. Open termiHub. You land in the VS Code-inspired three-column layout: **Activity Bar**
    (far left) → **Sidebar** → **Terminal View**.
 2. Press the new-terminal shortcut — **Ctrl+Shift+`** (Win/Linux) or **Cmd+Shift+`**
-   (macOS) — or click **New Terminal** in the toolbar.
+   (macOS) — or click **New terminal** in the toolbar.
 3. A local shell opens as a tab, using your auto-detected shell (zsh/bash on macOS/Linux;
    PowerShell/cmd/Git Bash on Windows). Type a command such as `echo hello` to confirm.
 

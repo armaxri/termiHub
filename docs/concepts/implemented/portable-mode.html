@@ -60,7 +60,7 @@
 │  ┌───────────────────────────────────────────┐      │
 │  │ Credential Storage                        │      │
 │  │                                           │      │
-│  │ ○ Master Password (Recommended)           │      │
+│  │ ○ Master password (Recommended)           │      │
 │  │   Encrypted file stored alongside app     │      │
 │  │                                           │      │
 │  │ ○ None                                    │      │
@@ -71,7 +71,7 @@
 │                                                     │
 └─────────────────────────────────────────────────────┘
 </code></pre>
-<p>In portable mode, the credential storage selector defaults to <strong>Master Password</strong> instead of <strong>None</strong>.</p>
+<p>In portable mode, the credential storage selector defaults to <strong>Master password</strong> instead of <strong>None</strong>.</p>
 <h3 id="status-bar-indicator">Status Bar Indicator</h3>
 <p>A persistent "Portable" badge appears in the status bar (left side), next to existing indicators. Clicking it opens a tooltip showing the data directory path.</p>
 <pre><code>┌─────────────────────────────────────────────────────┐
@@ -92,7 +92,7 @@
 │ │   the data/ directory alongside the app.         │ │
 │ └──────────────────────────────────────────────────┘ │
 │                                                      │
-│ Credential mode: Master Password                     │
+│ Credential mode: Master password                     │
 │ Config files:                                        │
 │   connections.json  ✓ present                        │
 │   settings.json     ✓ present                        │
@@ -185,7 +185,7 @@ data/                              # Next to the .app bundle
   <pre class="mermaid">
 flowchart TD
     A[Portable Mode Active] --&gt; B{Credential mode&lt;br&gt;in settings?}
-    B --&gt;|Master Password| C[Use credentials.enc&lt;br&gt;in data/ directory]
+    B --&gt;|Master password| C[Use credentials.enc&lt;br&gt;in data/ directory]
     B --&gt;|None| D[Prompt for credentials&lt;br&gt;on each connection]
 </pre>
 </div>
@@ -339,7 +339,7 @@ sequenceDiagram
     B-&gt;&gt;FS: Read settings.json from installed dir
     B-&gt;&gt;FS: Read tunnels.json from installed dir
 
-    opt Credential mode is Master Password
+    opt Credential mode is Master password
         B-&gt;&gt;FS: Copy credentials.enc
     end
 

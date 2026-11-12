@@ -94,7 +94,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
   it("lists the release chord with its default in a Remote Desktop group", async () => {
     await renderComponent();
     expect(container.textContent).toContain("Remote desktop");
-    expect(container.textContent).toContain("Release Remote Desktop Keyboard");
+    expect(container.textContent).toContain("Release remote desktop keyboard");
     expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
   });
 
@@ -126,7 +126,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     expect(releaseOverride()).toBe("Ctrl+Alt");
     expect(getReleaseChord()).toEqual({ key: "", ctrl: true, alt: true });
     expect(bindingButton().textContent).toBe("Ctrl+Alt");
-    expect(announcement()).toBe("Release Remote Desktop Keyboard shortcut set to Ctrl+Alt.");
+    expect(announcement()).toBe("Release remote desktop keyboard shortcut set to Ctrl+Alt.");
   });
 
   it("rejects a single modifier and keeps the default chord", async () => {

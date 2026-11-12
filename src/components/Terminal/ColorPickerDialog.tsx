@@ -53,7 +53,7 @@ export function ColorPickerDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Tab Color"
+      title="Tab color"
       footer={
         <>
           <Button variant="secondary" onClick={handleClear} data-testid="color-picker-clear">

@@ -304,7 +304,7 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         # The overlay's controls carry no tab id, and an inactive tab keeps its
         # overlay mounted: a dropped tab left by an earlier test (or a rerun)
         # would take the bare-testid clicks and reads below. On nightly
-        # 2026-10-07 "View Scrollback" dismissed the previous test's overlay
+        # 2026-10-07 "View scrollback" dismissed the previous test's overlay
         # and this tab's never closed. Start from an empty tab strip.
         self.close_all_tabs()
 
@@ -380,7 +380,7 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         marker = "TH_VIEWMODE_SCROLLBACK_4417"
         tab_id = self._connect_and_drop(unique_name("ssh-viewmode"), marker=marker)
 
-        # MT-SSH-24: "View Scrollback" dismisses the overlay into view mode — a
+        # MT-SSH-24: "View scrollback" dismisses the overlay into view mode — a
         # thin "Session ended" banner — and the earlier output is still in the
         # buffer (the drop must not wipe the scrollback).
         self.driver.click("terminal-disconnect-view-btn")
@@ -411,7 +411,7 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         )
         assert self.driver.exists("terminal-reconnect-prompt-reconnect-btn")
 
-        # "Stay in View Mode" closes the prompt and leaves the tab in view mode.
+        # "Stay in view mode" closes the prompt and leaves the tab in view mode.
         self.driver.click("terminal-reconnect-prompt-stay-btn")
         self.wait(
             lambda: not self.driver.exists("terminal-reconnect-prompt"),

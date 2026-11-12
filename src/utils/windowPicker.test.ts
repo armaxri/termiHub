@@ -1,5 +1,5 @@
 /**
- * Tests for the "Move to Window" picker construction (#1901).
+ * Tests for the "Move to window" picker construction (#1901).
  *
  * The picker turns the backend's flat window-label list into the ordered,
  * named, current-flagged entries the tab context menu renders.

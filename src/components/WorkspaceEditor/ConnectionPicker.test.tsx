@@ -120,10 +120,10 @@ describe("ConnectionPicker", () => {
     const h = render();
     const inline = query("connection-picker-inline");
     expect(inline).not.toBeNull();
-    expect(inline!.textContent).toContain("Local Shell");
+    expect(inline!.textContent).toContain("Local shell");
     act(() => inline!.click());
     const tab = h.onSelect.mock.calls[0][0] as WorkspaceTabDef;
-    expect(tab.title).toBe("Local Shell");
+    expect(tab.title).toBe("Local shell");
     expect(tab.inlineConfig).toEqual({ type: "local", config: {} });
   });
 

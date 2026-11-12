@@ -20,7 +20,7 @@ describe("buildCommands", () => {
     const commands = buildCommands();
     const newTerminal = commands.find((c) => c.id === "new-terminal");
     expect(newTerminal).toBeDefined();
-    expect(newTerminal!.label).toBe("New Terminal");
+    expect(newTerminal!.label).toBe("New terminal");
     // Accelerator comes straight from the keybinding service — no duplication.
     expect(newTerminal!.accelerator).toBe(getActionAccelerator("new-terminal"));
   });
@@ -40,7 +40,7 @@ describe("buildCommands", () => {
     expect(ids).toContain("find-in-terminal");
     // …including the multi-window tear-out command (#1901)…
     expect(ids).toContain("move-tab-to-new-window");
-    // …and the top-level New Window command (#1902)…
+    // …and the top-level New window command (#1902)…
     expect(ids).toContain("new-window");
     // …and the tab-group nav/close commands wired for UX-028…
     expect(ids).toContain("new-tab-group");
@@ -63,12 +63,12 @@ describe("buildCommands", () => {
     expect(toggleSidebar).toHaveBeenCalledOnce();
   });
 
-  it("runs openNewWindow for the New Window command (#1902)", () => {
+  it("runs openNewWindow for the New window command (#1902)", () => {
     const openNewWindow = vi.fn();
     useAppStore.setState({ openNewWindow });
     const cmd = buildCommands().find((c) => c.id === "new-window");
     expect(cmd).toBeDefined();
-    expect(cmd!.label).toBe("New Window");
+    expect(cmd!.label).toBe("New window");
     cmd!.run();
     expect(openNewWindow).toHaveBeenCalledOnce();
   });

@@ -149,7 +149,7 @@ describe("BroadcastScopeDialog — named groups (PROD-061)", () => {
       "1 saved connection is not open"
     );
     const start = q('[data-testid="broadcast-scope-confirm"]');
-    expect(start?.textContent).toBe("Start Broadcast (2)");
+    expect(start?.textContent).toBe("Start broadcast (2)");
     click(start);
 
     const v = currentBroadcastView();

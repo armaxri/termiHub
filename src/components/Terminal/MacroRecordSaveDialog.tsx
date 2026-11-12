@@ -78,7 +78,7 @@ export function MacroRecordSaveDialog({
       }}
       dirty={stepCount > 0}
       data-testid="macro-save-dialog"
-      title="Save Recorded Macro"
+      title="Save recorded macro"
       description={`${stepCount} step${stepCount === 1 ? "" : "s"} captured`}
       onKeyDown={(e) => {
         // The discard prompt is a React child of this dialog, so its keys bubble
@@ -101,7 +101,7 @@ export function MacroRecordSaveDialog({
             disabled={!canSave}
             data-testid="macro-save-confirm"
           >
-            Save Macro
+            Save macro
           </Button>
         </>
       }

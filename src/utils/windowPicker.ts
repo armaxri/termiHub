@@ -1,5 +1,5 @@
 /**
- * Window-picker helpers for the "Move to Window" tab command surface (#1901).
+ * Window-picker helpers for the "Move to window" tab command surface (#1901).
  *
  * The backend window registry (`list_windows`, #1900) reports each open window
  * by its runtime label only (`main`, `win-1`, …). These helpers turn that flat
@@ -12,7 +12,7 @@
 
 import { MAIN_WINDOW_LABEL, type WindowInfo } from "@/types/window";
 
-/** A window as presented in the "Move to Window ▸" picker. */
+/** A window as presented in the "Move to window ▸" picker. */
 export interface WindowPickerEntry {
   /** The window's runtime label — the move target address. */
   label: string;
@@ -58,7 +58,7 @@ function labelSortKey(label: string): number {
 }
 
 /**
- * Build the ordered picker entries for the "Move to Window ▸" submenu from the
+ * Build the ordered picker entries for the "Move to window ▸" submenu from the
  * backend window list and the label of the window the menu was opened in. The
  * current window is included but flagged {@link WindowPickerEntry.isCurrent} so
  * the caller can render it disabled; every other window is a live move target.
@@ -79,8 +79,8 @@ export function buildWindowPickerEntries(
 
 /**
  * Whether any window other than the current one is open — i.e. whether moving a
- * tab into an *existing* window is possible. When false the "Move to Window ▸"
- * submenu is redundant with "Move to New Window" and the caller hides it.
+ * tab into an *existing* window is possible. When false the "Move to window ▸"
+ * submenu is redundant with "Move to new window" and the caller hides it.
  */
 export function hasOtherWindows(windows: WindowInfo[], currentWindowLabel: string | null): boolean {
   return windows.some((w) => w.label !== currentWindowLabel);

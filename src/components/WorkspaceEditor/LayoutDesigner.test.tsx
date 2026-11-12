@@ -335,7 +335,7 @@ describe("LayoutDesigner", () => {
       const next = onChange.mock.calls[0][0] as WorkspaceLayoutNode;
       const tabs = getWorkspaceLeaves(next)[0].tabs;
       expect(tabs).toHaveLength(2);
-      expect(tabs[1]).toMatchObject({ title: "Local Shell", inlineConfig: { type: "local" } });
+      expect(tabs[1]).toMatchObject({ title: "Local shell", inlineConfig: { type: "local" } });
       expect(picker()).toBeNull();
     });
   });
