@@ -23,6 +23,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.native_sshd
 class TestSshEnvVars(ConnectionsUi, PasswordPromptUi, SystemTest):
     def test_resolves_env_user_in_username(self):
         self._run("ssh-env-user", "${env:USER}")

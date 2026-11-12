@@ -11,6 +11,7 @@ from termihub_harness import (
     egress,
     hang_guard,
     js_errors,
+    native_ssh,
     rerun_budget,
     skip_guard,
     timing,
@@ -30,6 +31,7 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    NATIVE_SSH_TARGET,
     RDP_HELPER_ENV,
     RDP_HOST,
     RDP_NLA_PORT,
@@ -181,6 +183,7 @@ def pytest_collection_modifyitems(config, items):
         )
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
+    native_ssh.apply_markers(items, NATIVE_SSH_TARGET)
 
 
 # ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
@@ -325,8 +328,8 @@ def _report_leaks(terminalreporter):
 # ── JS error gate (#5364) ────────────────────────────────────────────────────
 # Unhandled rejections and console errors in the app under test used to pass
 # unseen. Each test's new errors (bridge getJsErrors, app.log fallback) are
-# matched against js-error-allowlist.d/; TERMIHUB_JS_ERROR_GATE=fail fails the
-# test on a new one, annotate (default) only reports. See js_errors.py.
+# matched against js-error-allowlist.d/; TERMIHUB_JS_ERROR_GATE=fail (default)
+# fails the test on a new one, annotate only reports. See js_errors.py.
 _JS_ERRORS_KEY = "termihub_js_errors"
 
 
@@ -345,7 +348,7 @@ def _write_step_summary(title, lines):
 # ── Egress probe (#5388) ─────────────────────────────────────────────────────
 # The app under test must not reach the internet. Each test's new non-fixture
 # destinations (psutil, app PID) are matched against egress-allowlist.d/;
-# TERMIHUB_EGRESS_GATE=fail fails the test on a new one, annotate (default)
+# TERMIHUB_EGRESS_GATE=fail (default) fails the test on a new one, annotate
 # only reports. See egress.py.
 _EGRESS_KEY = "termihub_egress"
 
@@ -650,7 +653,10 @@ def _ensure_ssh_services(services_and_ports):
 @pytest.fixture(scope="session")
 @tool_preflight.fixture_needs("docker")
 def ssh_fixtures():
-    """Password- and key-auth SSH containers (ports 2201 / 2203)."""
+    """Password- and key-auth SSH containers (ports 2201 / 2203), or the
+    native sshd on the macOS/Windows lanes (#5176, ``native_ssh``)."""
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     return _ensure_ssh_services(
         [(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
     )
@@ -665,6 +671,8 @@ def ssh_password_fixtures():
     with a key should ask for this instead, so they neither wait for that image
     to build nor skip when only *it* fails to.
     """
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     return _ensure_ssh_services([(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT)])
 
 
@@ -698,6 +706,8 @@ def ssh_bastion_fixtures():
     probed on the bastion's port alone; a connect through the bastion proves the
     target is up (MT-SSH-44, #3688).
     """
+    if NATIVE_SSH_TARGET is not None:
+        return NATIVE_SSH_TARGET
     fixture = ComposeFixture()
     try:
         fixture.ensure(

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
@@ -80,6 +81,10 @@ pub struct CredentialManager {
     os_auth: Box<dyn OsUserVerifier>,
     /// Opt-in biometric unlock of the master-password store (PROD-064).
     biometric: BiometricUnlock,
+    /// Whether the user has made a credential-storage choice (#5187). Seeded
+    /// at boot from the settings, set by every store switch and by the
+    /// first-use chooser's "Don't save".
+    storage_chosen: AtomicBool,
 }
 
 impl CredentialManager {
@@ -98,7 +103,20 @@ impl CredentialManager {
             app_handle: RwLock::new(None),
             os_auth: platform_verifier(),
             biometric,
+            storage_chosen: AtomicBool::new(false),
         }
+    }
+
+    /// Whether a credential-storage choice has been recorded (#5187). See
+    /// [`super::types::storage_choice_made`] for the full rule, which also
+    /// counts any active store as chosen.
+    pub fn storage_choice_recorded(&self) -> bool {
+        self.storage_chosen.load(Ordering::SeqCst)
+    }
+
+    /// Record (or seed at boot) whether a credential-storage choice was made.
+    pub fn set_storage_choice_recorded(&self, chosen: bool) {
+        self.storage_chosen.store(chosen, Ordering::SeqCst);
     }
 
     /// Replace the OS user verifier (tests inject a mock).
