@@ -44,8 +44,9 @@ pub(super) fn load_private_key(
         Err(e) => e,
     };
 
-    // russh 0.61 can't load passphrase-protected legacy-PEM EC keys (its
-    // PKCS#5 path assumes RSA), so those go through our own loader.
+    // russh (re-verified on 0.65.1, #5500) can't load passphrase-protected
+    // legacy-PEM EC keys (its PKCS#5 path assumes RSA and only AES-128), so
+    // those go through our own loader.
     if legacy_pem::is_encrypted_ec_pem(&contents) {
         let Some(passphrase) = passphrase else {
             return Err(missing_passphrase(display, unattended));
@@ -54,6 +55,7 @@ pub(super) fn load_private_key(
             // A wrong passphrase decrypts to garbage: the padding or the SEC1
             // parse of the plaintext fails.
             LegacyPemError::Decrypt | LegacyPemError::UnsupportedCurve => SessionError::AuthFailed,
+            LegacyPemError::UnsupportedCipher(cipher) => unsupported_cipher(display, &cipher),
             other => SessionError::SpawnFailed(format!("Failed to load key {display}: {other}")),
         });
     }
@@ -70,10 +72,7 @@ pub(super) fn load_private_key(
     // would fail as if the passphrase were wrong, and re-entering it would
     // never help, so name the cause instead.
     if let Some(cipher) = unsupported_pem_cipher(&contents) {
-        return Err(SessionError::SpawnFailed(format!(
-            "Failed to load key {display}: the key is encrypted with {cipher}, which is not \
-             supported. Re-encrypt it with `ssh-keygen -p -f <key file>`."
-        )));
+        return Err(unsupported_cipher(display, &cipher));
     }
     if is_structural_error(&original) {
         return Err(SessionError::SpawnFailed(format!(
@@ -83,6 +82,16 @@ pub(super) fn load_private_key(
     // An encrypted key, a passphrase, and a failed decrypt: the passphrase
     // was rejected.
     Err(SessionError::AuthFailed)
+}
+
+/// The failure for a PEM key encrypted with a cipher that cannot be decrypted.
+///
+/// Re-entering the passphrase would never help, so this names the cause.
+fn unsupported_cipher(display: &str, cipher: &str) -> SessionError {
+    SessionError::SpawnFailed(format!(
+        "Failed to load key {display}: the key is encrypted with {cipher}, which is not \
+         supported. Re-encrypt it with `ssh-keygen -p -f <key file>`."
+    ))
 }
 
 /// The failure for an encrypted key that has no passphrase.
@@ -283,3 +292,7 @@ mod tests {
         assert!(!is_encrypted_key("not a key"));
     }
 }
+
+#[cfg(test)]
+#[path = "key_load_legacy_pem_tests.rs"]
+mod legacy_pem_matrix_tests;

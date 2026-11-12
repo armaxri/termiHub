@@ -73,11 +73,12 @@ uuid = { version = "1", features = ["v4"], optional = true }
 # Wipe SSH keyboard-interactive prompt responses (OTP / password answers) from
 # memory once they have been sent (#3371). Already in the tree via russh.
 zeroize = { version = "1", optional = true }
-# Loading legacy PKCS#5-encrypted PEM EC keys that russh can't parse
-# (see backends/ssh/legacy_pem.rs). Versions mirror russh's own crypto stack.
+# Loading legacy PKCS#5-encrypted PEM EC keys that russh can't parse (still
+# true on russh 0.65.1, #5500; see backends/ssh/legacy_pem.rs). Versions mirror
+# russh's own crypto stack, so none of these adds a second copy to the tree.
 aes = { version = "0.9", optional = true }
 cbc = { version = "0.2", optional = true }
-md5 = { version = "0.7", optional = true }
+md5 = { version = "0.8", optional = true }
 sec1 = { version = "0.8", features = ["der"], optional = true }
 data-encoding = { version = "2", optional = true }
 p256 = { version = "0.14", optional = true }
