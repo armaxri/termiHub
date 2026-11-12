@@ -1420,7 +1420,7 @@ async fn wait_for_remote_files(
     files
 }
 
-/// Opted in ("Receive Clipboard Files" with a shared folder), files an X client
+/// Opted in ("Receive clipboard files" with a shared folder), files an X client
 /// copies on the server are surfaced as a sanitized list — same-named files and
 /// a non-ASCII name intact — and each one's bytes are fetched over CLIPRDR only
 /// when pasted (delayed rendering, the path every desktop OS uses). Off by
@@ -1742,7 +1742,7 @@ fn paste_uri_list_on_server(label: &str) -> String {
     )
 }
 
-/// Opted in ("Receive Clipboard Files" with a shared folder, not view-only),
+/// Opted in ("Receive clipboard files" with a shared folder, not view-only),
 /// the folder's contents are offered on the client's clipboard at connect: a
 /// paste on the server lists them under chansrv's `.clipboard` directory and
 /// reading each one streams its bytes from the sidecar over CLIPRDR file

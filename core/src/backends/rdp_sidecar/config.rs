@@ -320,7 +320,7 @@ impl RdpConfig {
 
     /// The initial desktop size to request: the fixed size in the fixed mode,
     /// otherwise the dynamic default (the canvas then drives the size through
-    /// "Match Window" resizes). Stale `width` / `height` values left in a config
+    /// "Match window" resizes). Stale `width` / `height` values left in a config
     /// switched back to dynamic are deliberately ignored.
     ///
     /// A multi-monitor session (#3696) requests the bounding box of its layout.
@@ -495,7 +495,7 @@ fn color_depth_field() -> SettingsField {
         ),
         ..field(
             "colorDepth",
-            "Color Depth",
+            "Color depth",
             FieldType::Select {
                 options: vec![
                     opt("32", "32-bit (true color)"),
@@ -521,7 +521,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
     groups.push(SettingsGroup {
         collapsed: false,
         key: "rdp".to_string(),
-        label: "RDP Options".to_string(),
+        label: "RDP options".to_string(),
         fields: vec![
             SettingsField {
                 supports_env_expansion: true,
@@ -588,7 +588,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                 ),
                 ..field(
                     "driveRedirection",
-                    "Redirect a Local Drive",
+                    "Redirect a local drive",
                     FieldType::Boolean,
                 )
             },
@@ -602,7 +602,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                         .to_string(),
                 ),
                 placeholder: Some("/path/to/shared/folder".to_string()),
-                ..field("sharedFolderPath", "Shared Folder", FieldType::Text)
+                ..field("sharedFolderPath", "Shared folder", FieldType::Text)
             },
             SettingsField {
                 visible_when: when_field_is_true("driveRedirection"),
@@ -612,7 +612,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                         .to_string(),
                 ),
                 placeholder: Some("termiHub".to_string()),
-                ..field("driveName", "Drive Name", FieldType::Text)
+                ..field("driveName", "Drive name", FieldType::Text)
             },
             SettingsField {
                 default: Some(serde_json::json!(false)),
@@ -623,7 +623,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                 ),
                 ..field(
                     "audioRedirection",
-                    "Redirect Audio Output",
+                    "Redirect audio output",
                     FieldType::Boolean,
                 )
             },
@@ -637,7 +637,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                 ),
                 ..field(
                     "clipboardFileTransfer",
-                    "Receive Clipboard Files",
+                    "Receive clipboard files",
                     FieldType::Boolean,
                 )
             },
@@ -651,7 +651,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                 ),
                 ..field(
                     "pasteLocalFiles",
-                    "Paste Local Files into Remote",
+                    "Paste local files into remote",
                     FieldType::Boolean,
                 )
             },
@@ -1283,7 +1283,7 @@ mod tests {
             .find(|f| f.key == crate::connection::CONNECT_TIMEOUT_KEY)
             .expect("RDP schema must expose connectTimeoutSecs");
         assert_eq!(field.key, "connectTimeoutSecs");
-        assert_eq!(field.label, "Connect Timeout (s)");
+        assert_eq!(field.label, "Connect timeout (s)");
         assert!(!field.required);
         assert_eq!(field.default, Some(serde_json::json!(30)));
         match field.field_type {

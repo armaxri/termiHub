@@ -265,7 +265,7 @@ impl HttpMonitorService {
             groups: vec![SettingsGroup {
                 collapsed: false,
                 key: "monitor".to_string(),
-                label: "HTTP Monitor".to_string(),
+                label: "HTTP monitor".to_string(),
                 fields: vec![
                     field("url", "URL", FieldType::Text, true, None),
                     field(

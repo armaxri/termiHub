@@ -1039,7 +1039,7 @@ impl ConnectionType for Wsl {
                     },
                     SettingsField {
                         key: "startingDirectory".to_string(),
-                        label: "Starting Directory".to_string(),
+                        label: "Starting directory".to_string(),
                         description: Some(
                             "Directory to start the shell in (defaults to home)".to_string(),
                         ),
@@ -1061,7 +1061,7 @@ impl ConnectionType for Wsl {
                     },
                     SettingsField {
                         key: "initialCommand".to_string(),
-                        label: "Initial Command".to_string(),
+                        label: "Initial command".to_string(),
                         description: Some("Command to run after the shell starts".to_string()),
                         help_text: None,
                         field_type: FieldType::Text,
@@ -1075,7 +1075,7 @@ impl ConnectionType for Wsl {
                     },
                     SettingsField {
                         key: "shellIntegration".to_string(),
-                        label: "Command Marks (Shell Hook)".to_string(),
+                        label: "Command marks (shell hook)".to_string(),
                         description: Some(
                             "Type a small hook into the distribution's shell for command marks (OSC 133)"
                                 .to_string(),
@@ -1105,7 +1105,7 @@ impl ConnectionType for Wsl {
                     },
                     SettingsField {
                         key: "env".to_string(),
-                        label: "Environment Variables".to_string(),
+                        label: "Environment variables".to_string(),
                         description: Some(
                             "Additional environment variables for the WSL shell".to_string(),
                         ),
@@ -1700,7 +1700,7 @@ mod tests {
             .find(|f| f.key == "shellIntegration")
             .expect("shellIntegration field");
         assert_eq!(hook.default, Some(serde_json::json!(false)));
-        assert_eq!(hook.label, "Command Marks (Shell Hook)");
+        assert_eq!(hook.label, "Command marks (shell hook)");
     }
 
     #[test]

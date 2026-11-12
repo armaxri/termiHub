@@ -125,7 +125,7 @@ describe("RemoteDesktopToolbar", () => {
 
   it("labels the scale button with the active scale mode", () => {
     render({ scaleMode: "pixel" });
-    expect(query("remote-desktop-scale")?.getAttribute("title")).toBe("Scaling: 1:1 Pixel");
+    expect(query("remote-desktop-scale")?.getAttribute("title")).toBe("Scaling: 1:1 pixel");
   });
 
   it("routes each toolbar action to its handler", () => {
@@ -197,11 +197,11 @@ describe("RemoteDesktopToolbar", () => {
 
     it("is disabled with the reason as tooltip when there is no route", () => {
       const onToggleFiles = vi.fn();
-      render({ filesButton: "disabled", filesTitle: "Enable the SSH Tunnel", onToggleFiles });
+      render({ filesButton: "disabled", filesTitle: "Enable the SSH tunnel", onToggleFiles });
       const btn = query("remote-desktop-files-btn") as HTMLButtonElement;
       expect(btn.disabled).toBe(true);
       expect(btn.closest(".rd-toolbar__files")?.getAttribute("title")).toBe(
-        "Enable the SSH Tunnel"
+        "Enable the SSH tunnel"
       );
       act(() => btn.click());
       expect(onToggleFiles).not.toHaveBeenCalled();

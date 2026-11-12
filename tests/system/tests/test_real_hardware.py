@@ -423,7 +423,7 @@ class TestRealHardware(
         agent = self._connect_real_agent(spec, "win-docker-agent")
         self.manual_step(
             f"Under agent {agent['name']!r}, choose New Connection, pick the Docker "
-            "type with image `alpine` and runtime Auto, turn on Remove on Exit, and "
+            "type with image `alpine` and runtime Auto, turn on Remove on exit, and "
             "open it. In the container run `ls /`, resize the pane, and open the "
             "file browser for the tab.",
             "The container shell is interactive, `ls /` lists directories, the resize "
@@ -432,7 +432,7 @@ class TestRealHardware(
         self.close_all_tabs()
         self.manual_step(
             "The harness closed the tab. On the Windows host run `docker ps -a`.",
-            "The alpine container is gone (Remove on Exit) and no session is left "
+            "The alpine container is gone (Remove on exit) and no session is left "
             "running under the agent.",
         )
         self.disconnect_agent(agent["name"])

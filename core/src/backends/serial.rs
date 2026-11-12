@@ -307,12 +307,12 @@ async fn run_serial_writer<W: SerialByteWriter>(
     }
 }
 
-/// The serial "Auto-Reconnect" switch (#5390): **on by default**, like Tera
+/// The serial "Auto-reconnect" switch (#5390): **on by default**, like Tera
 /// Term's COM-port auto-reconnect.
 fn auto_reconnect_field() -> SettingsField {
     SettingsField {
         key: crate::connection::AUTO_RECONNECT_KEY.to_string(),
-        label: "Auto-Reconnect".to_string(),
+        label: "Auto-reconnect".to_string(),
         description: Some("Reopen the port when the device comes back".to_string()),
         help_text: Some(
             concat!(
@@ -354,7 +354,7 @@ impl ConnectionType for Serial {
             groups: vec![SettingsGroup {
                 collapsed: false,
                 key: "serial".to_string(),
-                label: "Serial Port".to_string(),
+                label: "Serial port".to_string(),
                 fields: vec![
                     SettingsField {
                         key: "port".to_string(),
@@ -378,7 +378,7 @@ impl ConnectionType for Serial {
                     },
                     SettingsField {
                         key: "baudRate".to_string(),
-                        label: "Baud Rate".to_string(),
+                        label: "Baud rate".to_string(),
                         description: Some("Communication speed".to_string()),
                         help_text: None,
                         field_type: FieldType::Select {
@@ -393,7 +393,7 @@ impl ConnectionType for Serial {
                     },
                     SettingsField {
                         key: "dataBits".to_string(),
-                        label: "Data Bits".to_string(),
+                        label: "Data bits".to_string(),
                         description: None,
                         help_text: None,
                         field_type: FieldType::Select {
@@ -408,7 +408,7 @@ impl ConnectionType for Serial {
                     },
                     SettingsField {
                         key: "stopBits".to_string(),
-                        label: "Stop Bits".to_string(),
+                        label: "Stop bits".to_string(),
                         description: None,
                         help_text: None,
                         field_type: FieldType::Select {
@@ -438,7 +438,7 @@ impl ConnectionType for Serial {
                     },
                     SettingsField {
                         key: "flowControl".to_string(),
-                        label: "Flow Control".to_string(),
+                        label: "Flow control".to_string(),
                         description: None,
                         help_text: None,
                         field_type: FieldType::Select {

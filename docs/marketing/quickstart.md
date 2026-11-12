@@ -57,9 +57,9 @@ You now have a working terminal. To save it as a reusable connection, use the fl
    - **Type** — **SSH**
    - **Host** and **Port** (default `22`)
    - **Username**
-   - **Method** — **SSH Key** (the default; set **Key Path**, e.g. `~/.ssh/id_ed25519`),
-     **Password** (asked at connect unless saved), **SSH Agent**, or
-     **Keyboard-Interactive (OTP / 2FA)**
+   - **Method** — **SSH key** (the default; set **Key path**, e.g. `~/.ssh/id_ed25519`),
+     **Password** (asked at connect unless saved), **SSH agent**, or
+     **Keyboard-interactive (OTP / 2FA)**
 3. Click **Save**.
 4. **Double-click** the connection (or right-click → **Connect**) to open a session. With
    password auth, termiHub prompts for the password; it is not written to the config file.

@@ -278,10 +278,5 @@
       "Tab Border": 1,
       "Thumb Hover": 1
     }
-  },
-  "src/utils/jumpHost.ts": {
-    "sentence-case": {
-      "Connect Timeout (s)": 1
-    }
   }
 }

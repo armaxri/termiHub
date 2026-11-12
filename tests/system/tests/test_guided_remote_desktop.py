@@ -116,9 +116,9 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
 
     def test_redirected_drive_appears_in_explorer(self):
         """MT-RD-03."""
-        self._rdp_to_real_host("rd-drive", "Redirect a Local Drive with a shared folder")
+        self._rdp_to_real_host("rd-drive", "Redirect a local drive with a shared folder")
         self.manual_step(
-            "In remote File Explorer open '<Drive Name> on termiHub' under This PC; create, "
+            "In remote File Explorer open '<Drive name> on termiHub' under This PC; create, "
             "edit and delete a file.",
             "The drive is listed; changes show in the local folder; nothing above it is "
             "reachable.",
@@ -127,7 +127,7 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
     @pytest.mark.manual(platforms=["macos", "windows"])
     def test_rdp_remote_audio_plays_locally(self):
         """MT-RD-04."""
-        self._rdp_to_real_host("rd-audio", "Redirect Audio Output on")
+        self._rdp_to_real_host("rd-audio", "Redirect audio output on")
         self.manual_step(
             "Play a sound in the session and change the remote volume. Then reconnect with "
             "the option off and play again.",
@@ -139,7 +139,7 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
         """MT-RD-05."""
         self._rdp_to_real_host(
             "rd-clipfiles",
-            "Redirect a Local Drive and Receive Clipboard Files (put a file in the shared "
+            "Redirect a local drive and Receive clipboard files (put a file in the shared "
             "folder first)",
         )
         self.manual_step(
@@ -161,7 +161,7 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
 
     def _delayed_render_paste(self, target: str) -> None:
         self._rdp_to_real_host(
-            "rd-delayed", "a shared folder + Receive Clipboard Files"
+            "rd-delayed", "a shared folder + Receive clipboard files"
         )
         self.manual_step(
             "Copy files (include 'naïve report.txt') in remote Explorer, click Copy to "
@@ -191,7 +191,7 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
         self.close_all_tabs()
         self.manual_step(
             "Save an SSH connection to the VNC host with its password. Create a direct VNC "
-            "connection with File Transfer on; in 'File transfer via' pick another host's "
+            "connection with File transfer on; in 'File transfer via' pick another host's "
             "SSH connection, then the matching one; save, connect, drop a file. Delete the "
             "linked SSH connection, reconnect and open Files.",
             "The picker preselects the matching connection; the other one warns naming both "
@@ -205,7 +205,7 @@ class TestGuidedRemoteDesktop(_GuidedRemoteDesktop):
         self.close_all_tabs()
         self.manual_step(
             "Link an SSH connection (password auth, none saved) under 'File transfer via' "
-            "on a direct VNC connection with File Transfer on and connect. Wait, open "
+            "on a direct VNC connection with File transfer on and connect. Wait, open "
             "Files, cancel the prompt, click Retry and enter the password with Save "
             "checked, then drop a file.",
             "Nothing is asked at start (Files shows a warning dot); Files asks, the cancel "

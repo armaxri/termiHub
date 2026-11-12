@@ -325,7 +325,7 @@ const INLINE_HOP_FIELD_KEYS = [
  */
 const JUMP_HOST_CONNECT_TIMEOUT_FIELD: SettingsField = {
   key: "connectTimeoutSecs",
-  label: "Connect Timeout (s)",
+  label: "Connect timeout (s)",
   fieldType: { type: "number", min: 1, max: 300 },
   required: false,
   placeholder: "Default (45 s)",

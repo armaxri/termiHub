@@ -742,7 +742,7 @@ impl ConnectionType for Docker {
                         },
                         SettingsField {
                             key: "existingContainer".to_string(),
-                            label: "Existing Container".to_string(),
+                            label: "Existing container".to_string(),
                             description: Some(
                                 "Name or ID of the already-running container to open a \
                                  shell in — pick one of the listed containers or type it"
@@ -767,7 +767,7 @@ impl ConnectionType for Docker {
                         },
                         SettingsField {
                             key: "composeService".to_string(),
-                            label: "Compose Service".to_string(),
+                            label: "Compose service".to_string(),
                             description: Some(
                                 "Docker Compose service as project/service. Connects to the \
                                  service's running container, so a recreate or scale change \
@@ -830,7 +830,7 @@ impl ConnectionType for Docker {
                         },
                         SettingsField {
                             key: "workingDirectory".to_string(),
-                            label: "Working Directory".to_string(),
+                            label: "Working directory".to_string(),
                             description: Some(
                                 "Initial working directory inside the container".to_string(),
                             ),
@@ -845,7 +845,7 @@ impl ConnectionType for Docker {
                         },
                         SettingsField {
                             key: "removeOnExit".to_string(),
-                            label: "Remove on Exit".to_string(),
+                            label: "Remove on exit".to_string(),
                             description: Some(
                                 "Remove the container when the session is closed".to_string(),
                             ),
@@ -920,7 +920,7 @@ impl ConnectionType for Docker {
                                 fields: vec![
                                     SettingsField {
                                         key: "hostPath".to_string(),
-                                        label: "Host Path".to_string(),
+                                        label: "Host path".to_string(),
                                         description: Some("Path on the host machine".to_string()),
                                         help_text: None,
                                         field_type: FieldType::Text,
@@ -933,7 +933,7 @@ impl ConnectionType for Docker {
                                     },
                                     SettingsField {
                                         key: "containerPath".to_string(),
-                                        label: "Container Path".to_string(),
+                                        label: "Container path".to_string(),
                                         description: Some("Path inside the container".to_string()),
                                         help_text: None,
                                         field_type: FieldType::Text,
@@ -946,7 +946,7 @@ impl ConnectionType for Docker {
                                     },
                                     SettingsField {
                                         key: "readOnly".to_string(),
-                                        label: "Read Only".to_string(),
+                                        label: "Read only".to_string(),
                                         description: Some(
                                             "Mount the volume as read-only".to_string(),
                                         ),

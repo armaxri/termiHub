@@ -3,7 +3,7 @@
 //!
 //! A graphical connection either follows the window (**dynamic**, the default
 //! and the pre-PROD-026 behavior: the remote starts at the backend's default
-//! size and, in "Match Window" scale mode, is asked to resize as the tab
+//! size and, in "Match window" scale mode, is asked to resize as the tab
 //! resizes) or is pinned to a **fixed** `width × height` chosen in the editor.
 //! A fixed session never requests a desktop-size change — the frontend scales
 //! the canvas locally instead, the desktop's session manager refuses resize
@@ -132,7 +132,7 @@ pub fn fixed_resolution_fields() -> Vec<SettingsField> {
             option(RESOLUTION_MODE_FIXED, "Fixed size"),
         ],
         RESOLUTION_MODE_DYNAMIC,
-        "Dynamic follows the tab (the remote resizes in Match Window scaling). Fixed \
+        "Dynamic follows the tab (the remote resizes in Match window scaling). Fixed \
          pins the remote desktop to the size below and scales it locally.",
     )];
     fields.extend(fixed_size_fields());
@@ -152,7 +152,7 @@ pub fn server_resolution_fields() -> Vec<SettingsField> {
         ],
         RESOLUTION_MODE_SERVER,
         "Server default keeps the size the server chose. Dynamic follows the tab (the \
-         remote resizes in Match Window scaling). Fixed pins the remote desktop to the \
+         remote resizes in Match window scaling). Fixed pins the remote desktop to the \
          size below. Dynamic and Fixed need a server that allows clients to resize the \
          desktop; otherwise the server's size is kept and scaled locally.",
     )];
