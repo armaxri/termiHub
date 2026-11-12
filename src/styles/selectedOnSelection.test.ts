@@ -34,8 +34,8 @@ const SELECTED_REDIRECTS: [string, string][] = [
 const EXEMPT: Record<string, string> = {
   // Breadcrumb drop target: a single label already recoloured to --text-primary.
   ".file-browser__crumb--drop-valid": "text is --text-primary",
-  // Info banner: plain text in --text-accent, no secondary/muted children.
-  ".network-panel__info": "text is --text-accent",
+  // Info banner: plain text in --text-primary (#5407), no secondary/muted children.
+  ".network-panel__info": "text is --text-primary",
   // xterm decoration overlay: no DOM text of its own.
   ".terminal-container .xterm-decoration.terminal-prompt-flash": "no text",
 };

@@ -285,8 +285,8 @@ describe("classify", () => {
 });
 
 describe("agent.yml path filter (#4358, CI2-008)", () => {
-  // No YAML parser is a direct dependency, so read the two `paths:` lists
-  // line-wise: `  <event>:` at indent 2, then `    paths:`, then `      - '…'`
+  // No YAML parser is a direct dependency, so read the `push` `paths:` list
+  // line-wise (the workflow is post-merge only since #5461; no pull_request): `  <event>:` at indent 2, then `    paths:`, then `      - '…'`
   // items (comments skipped) until the first other line.
   const text = readFileSync(path.join(REPO_ROOT, ".github/workflows/agent.yml"), "utf8");
   const pathsOf = (event) => {
@@ -304,28 +304,25 @@ describe("agent.yml path filter (#4358, CI2-008)", () => {
     if (found.length === 0) throw new Error(`agent.yml ${event} has no paths filter`);
     return found;
   };
-  const triggers = {
-    pull_request: { paths: pathsOf("pull_request") },
-    push: { paths: pathsOf("push") },
-  };
+  const triggers = { push: { paths: pathsOf("push") } };
   const toolchain = ["rust-toolchain*", ".github/rust-version", ".github/actions/setup-rust/**"];
 
-  it.each(["pull_request", "push"])("%s paths cover every agent input", (event) => {
-    const paths = triggers[event].paths;
+  it("has no pull_request trigger (post-merge only, #5461)", () => {
+    expect(text.split("\n")).not.toContain("  pull_request:");
+  });
+
+  it("push paths cover every agent input", () => {
+    const paths = triggers.push.paths;
     for (const root of AGENT_ROOTS) expect(paths).toContain(`${root}**`);
     for (const file of AGENT_FILES) expect(paths).toContain(file);
     for (const entry of toolchain) expect(paths).toContain(entry);
-  });
-
-  it("uses the same paths for pull_request and push", () => {
-    expect([...triggers.push.paths].sort()).toEqual([...triggers.pull_request.paths].sort());
   });
 
   it("classifies every agent.yml path pattern as an agent input", () => {
     // The converse direction: nothing in the filter that the job gate would
     // then skip, except the workflow's own plumbing and scripts it runs.
     const own = /^(\.github\/|scripts\/|tests\/release-crash-probe\/)/;
-    for (const pattern of triggers.pull_request.paths) {
+    for (const pattern of triggers.push.paths) {
       if (own.test(pattern)) continue;
       const sample = pattern.replace(/\*\*$/, "x.rs").replace(/\*$/, ".toml");
       expect(classify([sample]).agent, pattern).toBe(true);
@@ -334,10 +331,10 @@ describe("agent.yml path filter (#4358, CI2-008)", () => {
 });
 
 describe("live lane path filters (#4618)", () => {
-  // Per-platform live lanes (Windows SSH host, WSL) run only on PRs whose
-  // files match a hand-written `pull_request.paths` list, not ci-changes.mjs.
-  // A source file the suite exercises but the list omits means a PR changing
-  // it skips the lane (#4609 changed core/src/backends/ssh/remote_shell.rs and
+  // Per-platform live lanes (Windows SSH host, WSL) run post-merge (#5461) only
+  // on develop pushes whose files match a hand-written `push.paths` list, not
+  // ci-changes.mjs. A source file the suite exercises but the list omits means
+  // a merge changing it skips the lane (#4609 changed core/src/backends/ssh/remote_shell.rs and
   // the Windows SSH host lane never ran). Each lane declares here the sources
   // its suite exercises; the workflow must list every one of them verbatim.
   // When a suite starts exercising a new area, add it here and to the
@@ -403,16 +400,19 @@ describe("live lane path filters (#4618)", () => {
     ],
   };
 
-  // Read `pull_request:` -> `paths:` line-wise (no YAML parser dependency),
+  // Read `push:` -> `paths:` line-wise (no YAML parser dependency),
   // accepting single- or double-quoted items and skipping comment lines.
-  const pullRequestPaths = (workflow) => {
+  const pushPaths = (workflow) => {
     const lines = readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8").split(
       "\n"
     );
-    let at = lines.indexOf("  pull_request:");
-    if (at < 0) throw new Error(`${workflow} has no pull_request trigger`);
+    if (lines.includes("  pull_request:")) {
+      throw new Error(`${workflow} must not run on pull_request (#5461)`);
+    }
+    let at = lines.indexOf("  push:");
+    if (at < 0) throw new Error(`${workflow} has no push trigger`);
     for (at += 1; at < lines.length && !/^ {4}paths:\s*$/.test(lines[at]); at += 1) {
-      if (/^ {0,2}\S/.test(lines[at])) throw new Error(`${workflow} pull_request has no paths`);
+      if (/^ {0,2}\S/.test(lines[at])) throw new Error(`${workflow} push has no paths`);
     }
     const found = [];
     for (at += 1; at < lines.length; at += 1) {
@@ -445,16 +445,16 @@ describe("live lane path filters (#4618)", () => {
     .filter(Boolean);
 
   describe.each(Object.entries(LANES))("%s", (workflow, required) => {
-    const paths = pullRequestPaths(workflow);
+    const paths = pushPaths(workflow);
 
     it("lists every source area its suite exercises", () => {
       const missing = required.filter((glob) => !paths.includes(glob));
-      expect(missing, `add these to ${workflow} pull_request.paths`).toEqual([]);
+      expect(missing, `add these to ${workflow} push.paths`).toEqual([]);
     });
 
     it("lists no path that matches nothing (a renamed or deleted file)", () => {
       const stale = paths.filter((glob) => !tracked.some((f) => globRegExp(glob).test(f)));
-      expect(stale, `${workflow} pull_request.paths entries matching no file`).toEqual([]);
+      expect(stale, `${workflow} push.paths entries matching no file`).toEqual([]);
     });
   });
 
