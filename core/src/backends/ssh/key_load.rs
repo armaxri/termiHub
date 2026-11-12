@@ -70,8 +70,9 @@ pub(super) fn load_private_key(
         // load it without one, for the same behaviour across every format.
         if passphrase.is_some() {
             if let Ok(key) = russh::keys::decode_secret_key(&contents, None) {
+                let key_name: &str = display;
                 tracing::debug!(
-                    key = %display,
+                    key = key_name,
                     "ignored the passphrase supplied for an unencrypted key"
                 );
                 return Ok(key);
@@ -312,3 +313,7 @@ mod tests {
 #[cfg(test)]
 #[path = "key_load_legacy_pem_tests.rs"]
 mod legacy_pem_matrix_tests;
+
+#[cfg(test)]
+#[path = "key_load_format_matrix_tests.rs"]
+mod format_matrix_tests;
