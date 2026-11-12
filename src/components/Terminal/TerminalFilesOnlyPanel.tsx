@@ -10,7 +10,7 @@ import "./TerminalDisconnectOverlay.css";
 interface TerminalFilesOnlyPanelProps {
   tabId: string;
   /**
-   * Whether this tab is the active (visible) one. Moves focus to **Open Files**
+   * Whether this tab is the active (visible) one. Moves focus to **Open files**
    * when the panel appears (#4514) — there is no shell to type into; background
    * tabs never steal focus.
    */
@@ -21,7 +21,7 @@ interface TerminalFilesOnlyPanelProps {
  * "No shell" info panel for a files-only SSH session (#4078). The host refused
  * the interactive shell (e.g. `ForceCommand internal-sftp`) but SFTP works, so
  * the backend kept the session up for the Files sidebar and editor. The panel
- * covers the (empty) terminal and offers **Open Files**, which focuses this tab
+ * covers the (empty) terminal and offers **Open files**, which focuses this tab
  * and opens the Files sidebar on its session.
  *
  * Renders nothing unless the tab's projected lifecycle is files-only — the
@@ -71,7 +71,7 @@ export function TerminalFilesOnlyPanel({ tabId, isActive = false }: TerminalFile
             onClick={handleOpenFiles}
             data-testid="terminal-files-only-open-files"
           >
-            Open Files
+            Open files
           </Button>
         }
       />

@@ -49,7 +49,7 @@ const GROUP_PREFIX = "group:";
  * Scope-selection flow shown when the user clicks the broadcast toolbar toggle
  * (#1956). Presents the three scopes — **All terminals**, **All in current
  * panel**, **Custom selection** — each with a live target count; picking
- * "Custom" reveals a per-terminal checkbox picker (Select All / Select None).
+ * "Custom" reveals a per-terminal checkbox picker (Select all / Select none).
  * Non-terminal tabs (editors, SFTP) never appear. On confirm it resolves the
  * chosen scope to a concrete target set, starts broadcast, and persists the
  * scope as `lastBroadcastScope` (via `startBroadcast`).
@@ -199,7 +199,7 @@ export function BroadcastScopeDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Broadcast Input"
+      title="Broadcast input"
       description="Choose which terminals receive broadcast input"
       onKeyDown={(e) => {
         // Enter a focused control already consumed (opening the scope Select,
@@ -223,7 +223,7 @@ export function BroadcastScopeDialog({
             disabled={!canStart}
             data-testid="broadcast-scope-confirm"
           >
-            {`Start Broadcast (${resolvedTargets.length + (sourceTabId && !resolvedTargets.includes(sourceTabId) ? 1 : 0)})`}
+            {`Start broadcast (${resolvedTargets.length + (sourceTabId && !resolvedTargets.includes(sourceTabId) ? 1 : 0)})`}
           </Button>
         </>
       }
@@ -283,7 +283,7 @@ export function BroadcastScopeDialog({
               onClick={() => setCustomSelected(new Set(terminalTabs.map((t) => t.id)))}
               data-testid="broadcast-scope-select-all"
             >
-              Select All
+              Select all
             </Button>
             <Button
               variant="ghost"
@@ -291,7 +291,7 @@ export function BroadcastScopeDialog({
               onClick={() => setCustomSelected(new Set())}
               data-testid="broadcast-scope-select-none"
             >
-              Select None
+              Select none
             </Button>
           </div>
           {terminalTabs.length === 0 ? (

@@ -314,8 +314,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       <ConfirmDialog
         open={unsavedCloseTabId !== null}
         title="Unsaved changes"
-        message="This tab has unsaved changes. Close anyway?"
-        confirmLabel="Close anyway"
+        message="This tab has unsaved changes. Discard them and close the tab?"
+        confirmLabel="Discard changes"
         cancelLabel="Cancel"
         data-testid="unsaved-editor-close-dialog"
         onConfirm={() => {

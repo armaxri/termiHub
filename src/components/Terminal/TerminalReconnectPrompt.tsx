@@ -49,7 +49,7 @@ export function TerminalReconnectPrompt({ tabId }: TerminalReconnectPromptProps)
             onClick={handleStay}
             data-testid="terminal-reconnect-prompt-stay-btn"
           >
-            Stay in View Mode
+            Stay in view mode
           </Button>
         </div>
       </div>
