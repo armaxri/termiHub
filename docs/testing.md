@@ -1695,6 +1695,16 @@ missing entitlement) and `credential::os_auth::macos` (the LocalAuthentication
 preflight returns without prompting), and fails unless both ran (#5163). Neither
 shows UI, so they run headlessly on the runner.
 
+Also on macOS, the wrapper runs the OS keychain store tests in
+[`commands/credential_real_keychain_tests.rs`](../src-tauri/src/commands/credential_real_keychain_tests.rs)
+(#5514) under a per-run keychain namespace (`TERMIHUB_DEV_NAME=ci-<run>`, so the
+service is `termiHub-dev-ci-<run>`; the tests refuse any other namespace): a
+read of a never-written key, set/get/delete, choosing the OS keychain store and
+switching to a master password, back, and to `none`, and a leftover item another
+binary wrote (`/usr/bin/security`, the shape an earlier, differently signed
+build leaves), which must read as absent and not block a switch. They disable
+keychain user interaction, so no access prompt appears.
+
 CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`; the
 `.cmd` twin on Windows) — on every PR touching Rust and every push to `develop`,
 so ubuntu, macOS and Windows grade the real-keychain path continuously,
@@ -1709,12 +1719,23 @@ see [OS credential stores in the harness](#os-credential-stores-in-the-harness-4
 drives the built app through its UI and reads the OS credential store directly
 with [`termihub_harness/os_store.py`](../tests/system/termihub_harness/os_store.py).
 It replaced the guided-manual checks MT-CRED-01/02/03 (a saved password lands in
-the OS store under service `termiHub` and account `<connection-id>:password`)
+the OS store under the app's service and account `<connection-id>:password`)
 and MT-CRED-18 (a backup restore imports its credentials after the startup swap
 and leaves no `termiHub-backup-restore` seal key; a failed swap, forced by
 locking the restored `connections.json`, keeps everything unchanged). A suite
 opts in with `os_credential_store = True`; the harness opens the store before
-the app launches and closes it afterwards.
+the app launches and closes it afterwards. Each store gives the app a fresh
+keychain namespace (`TERMIHUB_DEV_NAME=ci-<hex>`): the test-bridge app is an
+isolated build (#5478), so its items live under `termiHub-dev-ci-<hex>` and
+`termiHub-backup-restore-dev-ci-<hex>`, never under the installed app's names
+or another run's.
+
+[`test_os_credential_store_first_save.py`](../tests/system/tests/test_os_credential_store_first_save.py)
+(#5514) automates the first-save flow on a fresh profile: Save credentials
+opens the storage chooser, **OS Keychain** is chosen, the password lands in the
+OS store and resolves on connect, the store switches to a master password and
+back, then to `none` (which removes the item), and no step may log an OS
+keychain read failure. It runs in the integration lane on all three platforms.
 
 | Platform | Store                                                                                                                                 | Secret value checked                     | Failed-swap lock                    |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------- |
