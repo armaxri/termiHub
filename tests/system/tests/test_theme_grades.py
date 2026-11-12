@@ -119,6 +119,24 @@ class TestThemeGrades(
         assert tab is not None
         return tab["id"]
 
+    def _wait_for_chart_panel_active(self) -> str:
+        """Wait until the split's new (non-Settings) panel is the active one.
+
+        Ping opens in the active panel; in the Settings panel the next theme
+        switch would hide and unmount the chart (#5167). Reads ids only from
+        the settled layout (#2705). Returns the Settings panel's id.
+        """
+        root = self.settled_root_panel()
+        settings = self.find_tab("Settings")
+        assert settings is not None, "set_theme left no Settings tab"
+        settings_panel = self.panel_of_tab(settings["id"], root)
+        self.wait(
+            lambda: self.driver.get_state("activePanelId")
+            in set(self.leaf_ids()) - {settings_panel},
+            what="the new chart panel to be active",
+        )
+        return settings_panel
+
     def _show(self, tab_id: str) -> None:
         self.switch_to_tab(tab_id)
         self.wait(lambda: (self.active_tab() or {}).get("id") == tab_id, what="the tab to show")
@@ -276,12 +294,21 @@ class TestThemeGrades(
         self.set_theme("dark")
         dark_accent, dark_grid = self.root_color("--accent-color"), self.root_color("--border-primary")
         # Settings stays in this panel; the chart gets its own panel, so the
-        # theme switch never hides (and unmounts) it.
+        # theme switch never hides (and unmounts) it. Turn experimental features
+        # on (the Network Tools gate) *before* the split: on a fresh app that
+        # visits Settings, which re-activates the Settings panel, and Ping then
+        # opened beside Settings — a first-attempt failure on every OS (#5167).
+        self.open_network_tools_sidebar()
         self.driver.click(SPLIT_H)
         self.wait(lambda: self.leaf_count() == 2, what="a second panel for the chart")
+        settings_panel = self._wait_for_chart_panel_active()
         self.start_ping("127.0.0.1")
         try:
             self.wait(lambda: self.driver.exists(_LATENCY_CANVAS), what="the latency chart")
+            ping = self.find_tab("Ping")
+            assert ping is not None and self.panel_of_tab(ping["id"]) != settings_panel, (
+                "the Ping tab opened in the Settings panel; the theme switch would hide it"
+            )
             self.wait(
                 lambda: near(self.canvas_pixels(_LATENCY_CANVAS), dark_accent) > 0,
                 what="the chart to draw its trace in the dark accent",

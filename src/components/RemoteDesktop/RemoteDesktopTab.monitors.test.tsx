@@ -58,6 +58,8 @@ function fakeSession(): RemoteDesktopSession {
     state: "active",
     reconnectAttempt: 0,
     message: null,
+    errorKind: "other",
+    aborted: false,
     remoteClipboard: null,
     certPrompt: null,
     respondCert: vi.fn(),

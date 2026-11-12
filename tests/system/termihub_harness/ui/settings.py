@@ -21,6 +21,9 @@ from .base import HarnessMixin
 #: ``settings`` slice).
 SETTINGS_REGION = "settings"
 
+#: Present once the Settings panel has mounted (see ``open_settings_tab``).
+SETTINGS_PANEL_PROBE = "settings-nav-general"
+
 
 class SettingsUi(HarnessMixin):
     """Open the Settings tab, navigate categories, and toggle experimental flags."""
@@ -33,12 +36,22 @@ class SettingsUi(HarnessMixin):
         def config_dir(self) -> Path: ...
 
     def open_settings_tab(self) -> None:
-        """Open the Settings editor tab from the activity-bar gear menu."""
+        """Open the Settings editor tab from the activity-bar gear menu.
+
+        Returns once the Settings panel has mounted its category nav, so a
+        caller can click ``settings-nav-<category>`` at once. Returning right
+        after the menu click raced the mount on every OS (#5167, TST-004).
+        ``settings-nav-general`` is the probe because the connection editor
+        reuses ``SettingsNav`` but has no ``general`` category.
+        """
         self.driver.click("activity-bar-settings")
         self.wait(
             lambda: self.driver.exists("settings-menu-open"), what="the settings menu"
         )
         self.driver.click("settings-menu-open")
+        self.wait(
+            lambda: self.driver.exists(SETTINGS_PANEL_PROBE), what="the settings panel to mount"
+        )
 
     def enable_experimental_features(self) -> None:
         """Turn on experimental features (reveals the Tunnels/Services views)."""
