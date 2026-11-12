@@ -38,6 +38,8 @@ pub mod container_stats;
     feature = "ssh"
 ))]
 pub(crate) mod loop_control;
+// macOS branch of the SSH host stats command (#5471).
+mod darwin_parser;
 pub mod parser;
 pub mod provider;
 pub mod status;
@@ -66,7 +68,8 @@ pub use process::{
 
 pub use parser::{
     cpu_percent_from_delta, net_rate_from_delta, parse_cpu_line, parse_df_output,
-    parse_meminfo_value, parse_net_dev, parse_stats, MONITORING_COMMAND,
+    parse_meminfo_value, parse_net_dev, parse_stats, unsupported_host, DARWIN_STATS_MARKER,
+    HOST_MONITORING_COMMAND, MONITORING_COMMAND, UNSUPPORTED_HOST_MARKER,
 };
 pub use provider::{
     MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
@@ -119,7 +122,15 @@ impl CpuDeltaTracker {
     ///
     /// First call returns `None` (no previous snapshot to compare against).
     /// Subsequent calls return `Some(percentage)` where `0.0 <= percentage <= 100.0`.
+    ///
+    /// All-zero counters mean the sample carried no tick counters at all (a
+    /// macOS host, whose parser reports the CPU percentage directly, #5471).
+    /// They return `None` and are not kept as a baseline, so the caller keeps
+    /// the sample's own `cpu_usage_percent`.
     pub fn update(&mut self, current: CpuCounters) -> Option<f64> {
+        if current.total() == 0 {
+            return None;
+        }
         let result = self
             .previous
             .as_ref()
@@ -316,6 +327,21 @@ mod tests {
         // snap2→snap3: total delta = 2500-2000 = 500, idle delta = (1800+100)-(1600+100) = 200, active = 300
         let pct3 = tracker.update(snap3).expect("should return Some");
         assert!((pct3 - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn cpu_delta_tracker_ignores_all_zero_counters() {
+        // A macOS sample has no tick counters (#5471): the tracker must neither
+        // report a percentage nor keep the zeros as a baseline.
+        let mut tracker = CpuDeltaTracker::new();
+        assert!(tracker.update(CpuCounters::default()).is_none());
+        assert!(tracker.update(CpuCounters::default()).is_none());
+        let first = CpuCounters {
+            user: 10,
+            idle: 90,
+            ..Default::default()
+        };
+        assert!(tracker.update(first).is_none());
     }
 
     #[test]

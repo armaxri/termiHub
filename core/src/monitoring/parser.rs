@@ -1,4 +1,5 @@
-//! Parse system monitoring output from Linux command output.
+//! Parse system monitoring output from Linux (and, for SSH hosts, macOS)
+//! command output.
 //!
 //! This is the canonical implementation of the monitoring parsers,
 //! shared between the desktop and agent crates. Both previously had
@@ -7,6 +8,45 @@
 use crate::errors::CoreError;
 
 use super::types::{CpuCounters, NetCounters, SystemStats};
+
+/// The Linux `/proc` stats chain shared by [`MONITORING_COMMAND`] and the
+/// Linux branch of [`HOST_MONITORING_COMMAND`].
+///
+/// It uses no single quotes (`grep "^cpu"`, not `grep '^cpu'`) so it can sit
+/// inside the single-quoted `sh -c '…'` script of [`HOST_MONITORING_COMMAND`].
+/// A double-quoted `^cpu` is literal in every shell, so the plain
+/// [`MONITORING_COMMAND`] behaves exactly as before.
+macro_rules! linux_stats_script {
+    () => {
+        "hostname && cat /proc/loadavg && grep \"^cpu\" /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr && cat /proc/net/dev"
+    };
+}
+use linux_stats_script;
+
+/// The macOS leg of [`HOST_MONITORING_COMMAND`] (#5471).
+///
+/// No single quotes, for the same reason as `linux_stats_script`. The
+/// `@@<name>` section headers are what the macOS parser (`darwin_parser`)
+/// keys on.
+macro_rules! darwin_stats_script {
+    () => {
+        concat!(
+            "echo termihub-monitoring-os darwin; ",
+            "echo @@hostname; hostname; ",
+            "echo @@loadavg; sysctl -n vm.loadavg; ",
+            "echo @@memsize; sysctl -n hw.memsize; ",
+            "echo @@boottime; sysctl -n kern.boottime; ",
+            "echo @@now; date +%s; ",
+            "echo @@swap; sysctl -n vm.swapusage; ",
+            "echo @@vmstat; vm_stat; ",
+            "echo @@df; df -Pk /; ",
+            "echo @@uname; uname -sr; ",
+            "echo @@cpu; top -l 1 -n 0 | grep \"^CPU usage\"; ",
+            "echo @@net; netstat -ibn"
+        )
+    };
+}
+use darwin_stats_script;
 
 /// The compound command executed on Linux hosts to gather all metrics
 /// in a single round-trip.
@@ -25,13 +65,77 @@ use super::types::{CpuCounters, NetCounters, SystemStats};
 /// still yields every earlier metric; a failure there only drops the network
 /// leg (parsed as `0`), it does not lose the rest of the already-emitted output.
 ///
-/// `grep '^cpu' /proc/stat` (replacing the former `head -1 /proc/stat`) emits the
+/// `grep "^cpu" /proc/stat` (replacing the former `head -1 /proc/stat`) emits the
 /// aggregate `cpu` line **and** every per-core `cpuN` line (#3178). The extra
 /// lines sit directly after the aggregate line; [`parse_stats`] consumes the
 /// whole `cpu*` block, so a host that reports only the aggregate line still
 /// parses correctly (empty per-core list).
-pub const MONITORING_COMMAND: &str =
-    "export LC_ALL=C LANG=C; hostname && cat /proc/loadavg && grep '^cpu' /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr && cat /proc/net/dev";
+pub const MONITORING_COMMAND: &str = concat!("export LC_ALL=C LANG=C; ", linux_stats_script!());
+
+/// First output line of the macOS branch of [`HOST_MONITORING_COMMAND`].
+///
+/// [`parse_stats`] dispatches on it to the macOS parser; the Linux layout never
+/// starts with it.
+pub const DARWIN_STATS_MARKER: &str = "termihub-monitoring-os darwin";
+
+/// Output line [`HOST_MONITORING_COMMAND`] prints, followed by the host's
+/// `uname -s`, when the host has no stats source this app can read.
+///
+/// See [`unsupported_host`].
+pub const UNSUPPORTED_HOST_MARKER: &str = "termihub-monitoring-unsupported";
+
+/// The stats command for a remote host whose OS is not known up front (SSH
+/// remotes, #5471).
+///
+/// [`MONITORING_COMMAND`] is Linux-only: on a macOS host its `&&` chain stops
+/// at `cat /proc/loadavg`, so nothing parses. This command runs one POSIX
+/// `sh` script that checks `uname -s` first:
+///
+/// - **Darwin:** gathers the same metrics from `sysctl`, `vm_stat`, `df`,
+///   `top -l 1` and `netstat -ibn`. Each leg sits in its own `@@<name>`
+///   section and runs on its own (`;`, not `&&`), so a missing tool only makes
+///   that metric unavailable. The output starts with [`DARWIN_STATS_MARKER`].
+/// - **Anything else with a readable `/proc/loadavg`** (Linux, WSL, Git Bash /
+///   MSYS2 on Windows): the unchanged Linux chain.
+/// - **Anything else:** one [`UNSUPPORTED_HOST_MARKER`] line, so the monitor
+///   can say "not supported on this host" instead of "output unreadable".
+///
+/// The script runs under `sh -c '…'` rather than in the login shell, so a
+/// fish or csh login shell does not have to parse `case`/`if`. A host with no
+/// POSIX `sh` at all (a Windows `cmd.exe` / PowerShell login shell) prints
+/// nothing on stdout, which [`unsupported_host`] also reports as unsupported.
+pub const HOST_MONITORING_COMMAND: &str = concat!(
+    "sh -c 'export LC_ALL=C LANG=C; case \"$(uname -s 2>/dev/null)\" in ",
+    "Darwin) ",
+    darwin_stats_script!(),
+    ";; ",
+    "*) if [ -r /proc/loadavg ]; then ",
+    linux_stats_script!(),
+    "; else echo \"termihub-monitoring-unsupported $(uname -s 2>/dev/null)\"; fi;; ",
+    "esac'"
+);
+
+/// Whether `output` (from [`HOST_MONITORING_COMMAND`]) says the host has no
+/// stats source this app can read (#5471).
+///
+/// Returns the host's OS name (`uname -s`, or `"unknown"`) when the output
+/// carries the [`UNSUPPORTED_HOST_MARKER`] line, or when it is empty: an empty
+/// stdout means the host could not even run the POSIX `sh` script, as on a
+/// Windows host whose login shell is `cmd.exe` or PowerShell. Returns `None`
+/// for any other output, which then goes to [`parse_stats`].
+pub fn unsupported_host(output: &str) -> Option<String> {
+    if output.trim().is_empty() {
+        return Some("unknown".to_string());
+    }
+    output.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix(UNSUPPORTED_HOST_MARKER)?;
+        if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let os = rest.trim();
+        Some(if os.is_empty() { "unknown" } else { os }.to_string())
+    })
+}
 
 /// Compute CPU usage percentage from the delta between two counter snapshots.
 /// Returns a value between 0.0 and 100.0.
@@ -82,6 +186,14 @@ pub fn parse_cpu_line(line: &str) -> CpuCounters {
 pub fn parse_stats(
     output: &str,
 ) -> Result<(SystemStats, CpuCounters, Vec<CpuCounters>, NetCounters), CoreError> {
+    // The macOS branch of `HOST_MONITORING_COMMAND` has its own layout (#5471).
+    if output
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| l.trim() == DARWIN_STATS_MARKER)
+    {
+        return super::darwin_parser::parse_darwin_stats(output);
+    }
     let lines: Vec<&str> = output.lines().collect();
     if lines.len() < 6 {
         return Err(CoreError::Other(
@@ -375,6 +487,7 @@ pub fn net_rate_from_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::monitoring::types::StatsMetric;
 
     /// I18N-005: the monitoring command must pin a stable machine locale for the
     /// whole compound command so `df`/`uname` (and any future parsed leg) are not
@@ -386,6 +499,74 @@ mod tests {
             MONITORING_COMMAND.starts_with("export LC_ALL=C LANG=C;"),
             "monitoring command must export a C locale before the first `&&`, got: {MONITORING_COMMAND}"
         );
+    }
+
+    /// The OS-detecting command really runs on this host and parses (#5471).
+    /// On macOS this exercises the Darwin branch end to end (quoting, the
+    /// `@@` sections, `top`/`netstat` output); on Linux the `/proc` branch.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn host_monitoring_command_runs_and_parses_on_this_host() {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(HOST_MONITORING_COMMAND)
+            .output()
+            .expect("run sh");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(unsupported_host(&stdout), None, "output: {stdout}");
+        let (stats, _, per_core, _) = parse_stats(&stdout).expect("parse");
+        assert!(!stats.hostname.is_empty());
+        assert!(stats.memory_total_kb > 0);
+        assert!(stats.disk_total_kb > 0);
+        assert!(stats.uptime_seconds > 0.0);
+        if cfg!(target_os = "macos") {
+            assert!(stdout.starts_with(DARWIN_STATS_MARKER));
+            assert!(stats.os_info.starts_with("Darwin"));
+            assert!(per_core.is_empty());
+            assert!(stats.unavailable_metrics.contains(&StatsMetric::PerCoreCpu));
+            assert!(!stats.unavailable_metrics.contains(&StatsMetric::Memory));
+            assert!(!stats.unavailable_metrics.contains(&StatsMetric::Cpu));
+        } else {
+            assert!(stats.os_info.starts_with("Linux"));
+            assert!(stats.unavailable_metrics.is_empty());
+        }
+    }
+
+    #[test]
+    fn unsupported_host_detects_marker_and_empty_output() {
+        assert_eq!(
+            unsupported_host("termihub-monitoring-unsupported FreeBSD\n"),
+            Some("FreeBSD".to_string())
+        );
+        assert_eq!(
+            unsupported_host("termihub-monitoring-unsupported \n"),
+            Some("unknown".to_string())
+        );
+        assert_eq!(unsupported_host(""), Some("unknown".to_string()));
+        assert_eq!(unsupported_host("  \r\n"), Some("unknown".to_string()));
+        // A Linux sample and a look-alike prefix are not "unsupported".
+        assert_eq!(unsupported_host(&sample_output("cpu 1 2 3 4")), None);
+        assert_eq!(unsupported_host("termihub-monitoring-unsupportedX"), None);
+    }
+
+    /// The Linux leg of the OS-detecting command is the unchanged
+    /// `MONITORING_COMMAND` chain, and neither embeds a single quote that would
+    /// end the `sh -c '…'` script early.
+    #[test]
+    fn host_command_embeds_the_linux_chain_without_single_quotes() {
+        let linux_chain = MONITORING_COMMAND
+            .strip_prefix("export LC_ALL=C LANG=C; ")
+            .expect("locale prefix");
+        assert!(HOST_MONITORING_COMMAND.contains(linux_chain));
+        let script = HOST_MONITORING_COMMAND
+            .strip_prefix("sh -c '")
+            .and_then(|s| s.strip_suffix('\''))
+            .expect("sh -c wrapper");
+        assert!(
+            !script.contains('\''),
+            "inner script must not contain a single quote"
+        );
+        assert!(script.starts_with("export LC_ALL=C LANG=C;"));
     }
 
     /// Helper: build sample output with the given cpu line. Includes swap lines
