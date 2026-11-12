@@ -46,10 +46,10 @@ describe("ConnectionAppearanceSettings", () => {
     container.remove();
   });
 
-  it("shows 'Set Color'/'Set Icon' and no Clear buttons when unset", () => {
+  it("shows 'Set color'/'Set icon' and no Clear buttons when unset", () => {
     render({});
-    expect(query("connection-editor-color-picker")?.textContent).toContain("Set Color");
-    expect(query("connection-editor-icon-picker")?.textContent).toContain("Set Icon");
+    expect(query("connection-editor-color-picker")?.textContent).toContain("Set color");
+    expect(query("connection-editor-icon-picker")?.textContent).toContain("Set icon");
     expect(query("connection-editor-clear-color")).toBeNull();
     expect(query("connection-editor-clear-icon")).toBeNull();
     expect(container.querySelector(".connection-editor__color-preview")).toBeNull();

@@ -210,7 +210,7 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
         self.create_local_connection(conn_name)
         connection_id = self.require_stable_connection(conn_name)["id"]
         # Connect from the sidebar: that tab carries the saved connection's id,
-        # which is what a schedule targets. A Save & Connect tab does not (#5257).
+        # which is what a schedule targets. A Save and connect tab does not (#5257).
         self.connect_connection(conn_name)
         self.wait(
             lambda: (self.find_tab(conn_name) or {}).get("connectionId") == connection_id,

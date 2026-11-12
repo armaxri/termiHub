@@ -103,7 +103,7 @@ class TestGuidedShellsAndTools(
         self.close_all_tabs()
         self.open_wsl_editor()
         self.manual_step(
-            "Pick a distribution in the open WSL editor, click Save & Connect and watch the "
+            "Pick a distribution in the open WSL editor, click Save and connect and watch the "
             "terminal as it opens.",
             "No welcome banner or setup commands flash; a clean prompt appears directly.",
         )

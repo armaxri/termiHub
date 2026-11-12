@@ -199,7 +199,7 @@ class TestConnectionCrud(TabsUi, SidebarUi, SettingsUi, ConnectionsUi, SystemTes
         assert self.find_tab(f"Edit: {name1}") is not None
         assert self.find_tab(f"Edit: {name2}") is not None
 
-    # ── CONN-SAVE-CONNECT: Save & Connect (PR #112) ────────────────────────────
+    # ── CONN-SAVE-CONNECT: Save and connect (PR #112) ────────────────────────────
     def test_save_and_connect_opens_terminal(self):
         name = unique_name("save-conn")
         self.open_new_connection_editor()

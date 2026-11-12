@@ -12,7 +12,7 @@ editor fields (username, security, certificate handling, fixed size, depth).
 
 Graphical connection types ship **experimental** (hidden unless the user enables
 experimental features), so a suite enables them first via
-:class:`~termihub_harness.ui.SettingsUi`, and answers the Save & Connect password
+:class:`~termihub_harness.ui.SettingsUi`, and answers the Save and connect password
 prompt via :class:`~termihub_harness.ui.PasswordPromptUi`; both are borrowed.
 """
 
@@ -149,9 +149,9 @@ class RemoteDesktopUi(HarnessMixin):
         auto_reconnect: bool = True,
         connect: bool = True,
     ) -> None:
-        """Fill the editor for a VNC connection and save (or Save & Connect).
+        """Fill the editor for a VNC connection and save (or Save and connect).
 
-        The password is left empty on purpose: Save & Connect then raises the
+        The password is left empty on purpose: Save and connect then raises the
         password prompt (answer it with ``handle_password_prompt``), exactly as a
         user without a stored credential sees it — and the entered secret rides
         the opened tab's config, so a manual Reconnect re-authenticates too.
@@ -211,7 +211,7 @@ class RemoteDesktopUi(HarnessMixin):
         auto_reconnect: bool = True,
         connect: bool = True,
     ) -> None:
-        """Fill the editor for an RDP connection and save (or Save & Connect).
+        """Fill the editor for an RDP connection and save (or Save and connect).
 
         Like :meth:`create_vnc_connection` the password stays empty, so Save &
         Connect raises the password prompt. ``ignore_cert_errors`` (default on,

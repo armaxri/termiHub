@@ -1,7 +1,7 @@
 /**
  * Shared connect-time secret resolution for the connection editor.
  *
- * Both **Save & Connect** and **Test** (UX-007, #3284) need the same answer to
+ * Both **Save and connect** and **Test** (UX-007, #3284) need the same answer to
  * "does this connection need a password / key passphrase that is not in the
  * live form, and if so, what is it?". The lookup order is:
  *
@@ -16,7 +16,7 @@
  *    replaced by a per-connection secret.
  *
  * This helper **never persists anything**: it does not store a prompt-entered
- * secret (Save & Connect does that itself when the result's `shouldSave` says
+ * secret (Save and connect does that itself when the result's `shouldSave` says
  * the prompt's Save box was checked) and never logs the secret. Callers splice the returned secret into
  * an in-memory connect/probe config only.
  */

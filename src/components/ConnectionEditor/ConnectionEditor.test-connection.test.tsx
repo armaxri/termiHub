@@ -1,7 +1,7 @@
 /**
  * Test Connection button tests for the connection editor (UX-007).
  *
- * The editor exposes a secondary "Test" button beside Save & Connect that
+ * The editor exposes a secondary "Test" button beside Save and connect that
  * validates the current form's connection WITHOUT saving it: it invokes the
  * `test_connection` command, shows a pending state, then a success toast or a
  * classified error toast (auth vs. other). These tests pin that behavior and,
@@ -151,7 +151,7 @@ describe("ConnectionEditor — Test Connection (UX-007)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders a Test button beside Save & Connect", async () => {
+  it("renders a Test button beside Save and connect", async () => {
     mockedInvoke.mockImplementation(() => Promise.resolve(undefined));
     renderNew();
     await flush();

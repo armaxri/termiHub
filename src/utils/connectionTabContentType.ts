@@ -13,7 +13,7 @@ import type { TabContentType } from "@/types/terminal";
  *   `undefined`, so `addTab` keeps its terminal default.
  *
  * Every surface that opens a connection must route through this, so a VNC
- * connection opened from the editor's Save & Connect gets the same canvas tab
+ * connection opened from the editor's Save and connect gets the same canvas tab
  * as one opened from the sidebar (#4017).
  */
 export function connectionTabContentType(
