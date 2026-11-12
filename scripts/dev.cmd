@@ -54,7 +54,8 @@ if exist "src-tauri\binaries\conpty\conpty.dll" if exist "src-tauri\binaries\con
 
 REM Per-checkout OS keychain namespace (#5478): a dev build stores its secrets
 REM under "termiHub-dev-<dev_name>", never the installed app's names.
-if exist dev.local.json (
+REM An already-set, non-empty TERMIHUB_DEV_NAME wins (explicit override, #5499).
+if not defined TERMIHUB_DEV_NAME if exist dev.local.json (
     for /f "tokens=2 delims=:, " %%a in ('findstr /c:"\"dev_name\"" dev.local.json') do (
         set "TERMIHUB_DEV_NAME=%%~a"
     )
