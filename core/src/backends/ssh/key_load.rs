@@ -12,6 +12,9 @@
 //! missing or unreadable, it is not a private key, or its format or cipher is
 //! not supported.
 //!
+//! A passphrase supplied for an **unencrypted** key is ignored, as OpenSSH
+//! does, whatever the key's format (#5503).
+//!
 //! Unattended (#3877), an encrypted key with no passphrase is still the typed
 //! `InteractionRequired` refusal, since nobody is there to type one.
 
@@ -61,6 +64,19 @@ pub(super) fn load_private_key(
     }
 
     if !is_encrypted_key(&contents) {
+        // A passphrase for an unencrypted key is superfluous (#5503): OpenSSH
+        // ignores it, and russh does too for OpenSSH and PKCS#1 keys. For a
+        // PKCS#8 or SEC1 PEM key russh instead tries to decrypt and fails, so
+        // load it without one, for the same behaviour across every format.
+        if passphrase.is_some() {
+            if let Ok(key) = russh::keys::decode_secret_key(&contents, None) {
+                tracing::debug!(
+                    key = %display,
+                    "ignored the passphrase supplied for an unencrypted key"
+                );
+                return Ok(key);
+            }
+        }
         return Err(SessionError::SpawnFailed(format!(
             "Failed to load key {display}: {original}"
         )));
