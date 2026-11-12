@@ -21,6 +21,7 @@ another checkout's test app or another xdist worker's app is never touched.
 from __future__ import annotations
 
 import os
+import time
 import weakref
 from pathlib import Path
 from typing import Iterable, Optional, Protocol
@@ -165,3 +166,127 @@ def reap_leaks(where: str) -> list[str]:
     if leaked:
         reap(leaked)
     return lines
+
+
+# ── Foreign apps on the desktop (#5467) ──────────────────────────────────────
+#: How long (s) the OS-input guard waits for a foreign app to finish exiting
+#: (an app the previous test stopped can still be tearing down).
+FOREIGN_EXIT_WAIT = 10.0
+
+
+def find_foreign_apps(
+    allowed_pids: Iterable[int],
+    processes: Optional[Iterable[psutil.Process]] = None,
+    *,
+    live_pids: Optional[set[int]] = None,
+    live_ports: Optional[set[str]] = None,
+) -> list[psutil.Process]:
+    """Every running app process that is neither allowed nor this process's own.
+
+    Unlike :func:`find_leaked_apps` this matches **any** owner, untagged apps
+    included: it is read-only and only feeds the OS-input grades' refusal to
+    run (#5467). Global OS input goes to whatever window is in front, and every
+    test app is pinned always-on-top at the same spot (#957), so *any* other
+    termiHub on the desktop — a leaked app of an earlier session, a parallel
+    xdist worker's app, an installed termiHub — can take the input. An app of a
+    live instance of this process (or its unadopted relaunch) is the test's own.
+    """
+    allowed = set(allowed_pids)
+    if live_pids is None or live_ports is None:
+        pids, ports = _live()
+        live_pids = pids if live_pids is None else live_pids
+        live_ports = ports if live_ports is None else live_ports
+    candidates = processes if processes is not None else psutil.process_iter()
+    foreign = []
+    for proc in candidates:
+        try:
+            if proc.pid in allowed or proc.pid in live_pids or not _is_app(proc):
+                continue
+        except psutil.Error:
+            continue  # gone, or a protected process whose name is unreadable
+        try:
+            env = proc.environ()
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+        except psutil.AccessDenied:
+            env = {}
+        if env.get(OWNER_ENV) == owner_tag() and env.get(BRIDGE_PORT_ENV) in live_ports:
+            continue  # this process's unadopted self-relaunch
+        foreign.append(proc)
+    return foreign
+
+
+def _owner_state(tag: Optional[str], app_created: Optional[float]) -> str:
+    if tag is None:
+        return "untagged: not launched by the harness (an installed termiHub?)"
+    if tag == owner_tag():
+        return f"owner={tag} (this pytest process; no live instance tracks it)"
+    try:
+        owner = psutil.Process(int(tag))
+        reused = app_created is not None and owner.create_time() > app_created
+    except (ValueError, psutil.Error):
+        owner, reused = None, False
+    if owner is None or reused:
+        return f"owner={tag} (gone: leaked by an earlier pytest session or a crashed worker)"
+    return f"owner={tag} (alive: another pytest process, e.g. a parallel xdist worker)"
+
+
+def describe_foreign(proc: psutil.Process) -> str:
+    """One line naming a foreign app: PID, who launched it and whether they still run."""
+    try:
+        env = proc.environ()
+    except psutil.Error:
+        env = {}
+    try:
+        created: Optional[float] = proc.create_time()
+    except psutil.Error:
+        created = None
+    try:
+        exe = proc.exe()
+    except psutil.Error:
+        exe = "?"
+    owner = _owner_state(env.get(OWNER_ENV), created)
+    port = env.get(BRIDGE_PORT_ENV, "<none>")
+    config = env.get("TERMIHUB_CONFIG_DIR", "?")
+    when = f"{created:.1f}" if created is not None else "?"
+    return (
+        f"pid={proc.pid} exe={exe} created={when} {owner} "
+        f"{BRIDGE_PORT_ENV}={port} config={config}"
+    )
+
+
+def wait_for_foreign_apps(
+    allowed_pids: Iterable[int],
+    timeout: float = FOREIGN_EXIT_WAIT,
+    *,
+    find=find_foreign_apps,
+    poll: float = 0.25,
+) -> list[str]:
+    """Wait up to ``timeout`` for every foreign app to exit; describe the rest.
+
+    Empty when the desktop belongs to the allowed PIDs alone. Read-only: a
+    foreign app is never touched, only named.
+    """
+    allowed = set(allowed_pids)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            foreign = find(allowed)
+        except psutil.Error:
+            foreign = []
+        if not foreign:
+            return []
+        if time.monotonic() >= deadline:
+            return [describe_foreign(proc) for proc in foreign]
+        time.sleep(poll)
+
+
+def describe_app_pid(pid: int) -> str:
+    """:func:`describe_foreign` for ``pid`` when it is a termiHub app; else empty."""
+    try:
+        proc = psutil.Process(pid)
+        if not _is_app(proc):
+            return ""
+    except psutil.Error:
+        return ""
+    return describe_foreign(proc)

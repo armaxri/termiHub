@@ -24,14 +24,16 @@ Typical use from a test::
 from __future__ import annotations
 
 import itertools
+import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from .base import (
     GLOBAL_OPT_IN_ENV,
     ByNameTargetRefused,
+    ForeignAppAlive,
     GlobalInjectionRefused,
     OsInput,
     OsInputUnavailable,
@@ -45,6 +47,7 @@ from .helper import HelperWindow
 __all__ = [
     "GLOBAL_OPT_IN_ENV",
     "ByNameTargetRefused",
+    "ForeignAppAlive",
     "GlobalInjectionRefused",
     "HelperWindow",
     "OsInput",
@@ -56,6 +59,7 @@ __all__ = [
     "parse_combo",
     "primary_modifier",
     "require_pid",
+    "shared_session_reason",
     "unavailable_reason",
 ]
 
@@ -83,6 +87,33 @@ def unavailable_reason() -> Optional[str]:
             f"{GLOBAL_OPT_IN_ENV}=1 (it drives the real keyboard and pointer)"
         )
     return reason
+
+
+#: xdist's worker-count variable, set in every worker of a ``-n N`` session.
+XDIST_WORKER_COUNT_ENV = "PYTEST_XDIST_WORKER_COUNT"
+
+
+def shared_session_reason(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """Why this pytest session cannot give the OS-input grades the desktop, or ``None``.
+
+    Global input goes to whatever is in front, so the grades must run alone:
+    under several xdist workers another worker's app (pinned on top at the same
+    spot) takes the foreground and the calibration moves (#5031, #5467). CI runs
+    them in their own ``-n 1`` step; a session with more workers is a workflow
+    regression — e.g. a scheduled run reading a stale copy of the workflow.
+    """
+    env = os.environ if env is None else env
+    try:
+        workers = int(env.get(XDIST_WORKER_COUNT_ENV, "1"))
+    except ValueError:
+        return None
+    if workers > 1:
+        return (
+            f"the OS-input grades share this pytest session with {workers} xdist "
+            "workers; they inject global input and need the desktop to themselves — "
+            "run them in their own `-n 1` session (#5467)"
+        )
+    return None
 
 
 def for_pid(pid: int, **kwargs: Any) -> OsInput:
@@ -131,7 +162,12 @@ class ScreenMapper:
         reports it as a *trusted* ``pointermove``. On failure the error says
         what was under the pointer each time and lists every window on the
         desktop, so a covering or input-grabbing window is named (#4993).
+
+        Before anything moves, it refuses (:class:`ForeignAppAlive`) while any
+        other termiHub process is alive: a leaked or parallel app pinned on top
+        over the test window would eat the moves, or take the foreground (#5467).
         """
+        os_input.require_exclusive_desktop()
         try:
             windows = os_input._wait(  # noqa: SLF001 — same package
                 lambda: os_input.windows(pid), timeout, "a visible window"
