@@ -4379,17 +4379,17 @@ A monitored host's collect-loop status changed (#3321). The agent sends one on e
 }
 ```
 
-| Param    | Type     | Description                                                                                                                                                              |
-| -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `host`   | `string` | `"self"` or connection ID                                                                                                                                                |
-| `status` | `string` | `"live"`, `"stale"` (collects failing), `"reconnecting"` (re-dialling the monitored host), or `"offline"` (terminal: the agent stopped this monitor's loop)              |
-| `reason` | `string` | Optional; omitted for `"live"`. `"transport"` (collect timed out/errored, or every re-dial failed) or `"parse"` (the host answered with output that could not be parsed) |
+| Param    | Type     | Description                                                                                                                                                                                                                                                                                               |
+| -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`   | `string` | `"self"` or connection ID                                                                                                                                                                                                                                                                                 |
+| `status` | `string` | `"live"`, `"stale"` (collects failing), `"reconnecting"` (re-dialling the monitored host), or `"offline"` (terminal: the agent stopped this monitor's loop)                                                                                                                                               |
+| `reason` | `string` | Optional; omitted for `"live"`. `"transport"` (collect timed out/errored, or every re-dial failed), `"parse"` (the host answered with output that could not be parsed) or `"unsupported"` (the host answered, but has no stats source the app can read: neither Linux nor macOS, or no POSIX `sh`; #5488) |
 
 **Compatibility.** The notification is optional and additive:
 
 - An older desktop ignores it (unknown notification methods are dropped).
 - A newer desktop applies it in preference to inferring status from the sample flow. Against an older agent, which never sends it, the desktop keeps inferring: missed samples mark the monitor `stale`, and a `stale` monitor whose agent transport stays up resolves `offline` once the agent's worst-case recovery budget has passed (277 s at the default 2 s interval: 2 failed collects to `stale` plus 6 failed collects after a re-dial, each up to `interval + 10 s` collect timeout, plus the worst-case 181 s reconnect backoff `1+2+4+8+16+30+30+30+30+30` of the shared reconnect policy; an older agent with the former 8-attempt budget resolves sooner, which only makes this bound more generous). A later sample still recovers the monitor to `live`.
-- A desktop must ignore a `status` or `reason` value it does not recognize rather than fail.
+- A desktop must ignore a `status` or `reason` value it does not recognize rather than fail. Since #5488 the desktop reads an unknown `reason` as absent and still applies the `status`; a desktop built before that drops the whole report and falls back to inference, so an `"unsupported"` host still ends `offline` there.
 
 ---
 

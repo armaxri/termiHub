@@ -1804,10 +1804,31 @@ pub struct MonitoringStatusNotification {
     pub host: String,
     /// The loop's new status.
     pub status: MonitorStatus,
-    /// Why the loop is not `live` (`"transport"` or `"parse"`); absent for
-    /// `live` and when no failure caused the transition.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Why the loop is not `live` (`"transport"`, `"parse"` or, since #5488,
+    /// `"unsupported"`); absent for `live` and when no failure caused the
+    /// transition.
+    ///
+    /// A reason this build does not know (one a newer agent adds) reads as
+    /// absent rather than failing the whole report, so the status itself is
+    /// still applied.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_monitor_status_reason"
+    )]
     pub reason: Option<MonitorStatusReason>,
+}
+
+/// Deserialize an optional [`MonitorStatusReason`], reading an unknown value as
+/// `None` instead of an error (forward compatibility, #5488).
+fn lenient_monitor_status_reason<'de, D>(
+    deserializer: D,
+) -> Result<Option<MonitorStatusReason>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 // ── agent.update_available (notification payload) ───────────────────
@@ -4028,6 +4049,38 @@ mod tests {
             json!({"host": "self", "status": "warpSpeed"})
         )
         .is_err());
+    }
+
+    #[test]
+    fn monitoring_status_notification_carries_unsupported_reason() {
+        let n = MonitoringStatusNotification {
+            host: "conn-1".to_string(),
+            status: MonitorStatus::Offline,
+            reason: Some(MonitorStatusReason::Unsupported),
+        };
+        let wire = serde_json::to_value(&n).unwrap();
+        assert_eq!(
+            wire,
+            json!({"host": "conn-1", "status": "offline", "reason": "unsupported"})
+        );
+        let back: MonitoringStatusNotification = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, n);
+    }
+
+    #[test]
+    fn monitoring_status_notification_reads_unknown_reason_as_absent() {
+        // A reason a newer agent adds must not drop the whole report: the
+        // status is still applied, with no reason (#5488).
+        let back: MonitoringStatusNotification = serde_json::from_value(
+            json!({"host": "self", "status": "offline", "reason": "warpCore"}),
+        )
+        .unwrap();
+        assert_eq!(back.status, MonitorStatus::Offline);
+        assert_eq!(back.reason, None);
+        let null: MonitoringStatusNotification =
+            serde_json::from_value(json!({"host": "self", "status": "stale", "reason": null}))
+                .unwrap();
+        assert_eq!(null.reason, None);
     }
 
     #[test]
