@@ -40,6 +40,7 @@ OVERLAY = "terminal-connection-overlay"
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
+@pytest.mark.native_sshd(platforms=("darwin",))
 class TestSshAgentAuthError(TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-AGENT-ERROR: agent auth with no agent fails gracefully."""
 

@@ -299,10 +299,12 @@ pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings
 /// Update and persist application settings.
 #[tauri::command]
 pub fn save_settings<R: Runtime>(
-    settings: AppSettings,
+    mut settings: AppSettings,
     app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
+    // The storage mode and choice are owned by the credential commands (#5187).
+    settings.keep_credential_storage_keys(&manager.get_settings());
     // The fold reflects the persisted `AppSettings` document into the
     // authoritative `settings` region (#2386). (`AppHandle` is Tauri-injected —
     // no JS invoke change.)

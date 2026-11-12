@@ -15,9 +15,10 @@ Drives the experimental Tunnels view. Three kinds of coverage:
   connection connects, is not restarted by a second terminal, and stays down once
   the flag is turned off.
 
-**Tunnel target** (see :func:`tunnel_target`): on Linux (and Windows, where the
-Docker fixtures exist) the ssh-tunnel-target container (2207, internal HTTP on
-:8080). On **macOS** there is no usable container path — Docker Desktop runs
+**Tunnel target** (see :func:`tunnel_target`): on Linux the ssh-tunnel-target
+container (2207, internal HTTP on :8080). On Windows the provisioned native sshd
+fixture when the lane brought it up (#5176), else that container. On **macOS**
+there is no usable container path — Docker Desktop runs
 containers in a Linux VM without host networking, so the host-native app's
 forward to a published port never comes up (#933), and the hosted macOS runners
 have no container runtime at all — so the suite points at the **native loopback
@@ -61,7 +62,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness import dev_local
-from termihub_harness.local_agent import LocalAgentUnavailable
+from termihub_harness.local_agent import LocalAgentUnavailable, NativeSshdFixture
 
 #: Local-forward listen ports are offset per checkout (parallel isolation).
 _TUNNEL_OFFSET = dev_local.port_offset()
@@ -80,8 +81,12 @@ TUNNEL_OK = "TUNNEL_TEST_OK"
 #: The confirm prompt Stop raises on a connected tunnel (UX-021).
 TUNNEL_STOP_DIALOG = "confirm-tunnel-lifecycle-dialog"
 TUNNEL_STOP_CONFIRM = "confirm-tunnel-lifecycle-confirm"
-#: macOS runs the live tests against the native loopback sshd, not Docker (#933).
-USE_NATIVE_SSHD = sys.platform == "darwin"
+#: macOS runs the live tests against the native loopback sshd, not Docker (#933);
+#: Windows does too when its lane provisioned the native sshd fixture (#5176),
+#: since its Docker daemon runs only Windows containers.
+USE_NATIVE_SSHD = sys.platform == "darwin" or (
+    sys.platform == "win32" and NativeSshdFixture.present()
+)
 
 
 @dataclass(frozen=True)

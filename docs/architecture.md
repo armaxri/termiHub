@@ -1002,6 +1002,38 @@ flowchart TD
     W -->|Cancel| X[Disconnected]
 ```
 
+An **agent-hosted serial** tab (#5396) cannot use that redrive: the port is on the agent
+host. The agent's session daemon wraps the serial backend in `SerialReopen`
+(`agent/src/daemon/serial_reopen.rs`) when the connection's Auto-Reconnect is on. When
+the port drops, the session stays the same session: the wrapper runs the shared policy
+itself, asks the same resolver with the agent host's port probe before every attempt,
+and reports each step (`waiting`, `connecting`, `reconnected`, `gaveUp`) to the worker
+(`MSG_RECONNECT`) and on to the desktop as a `connection.reconnect` notification. The
+desktop folds the steps onto the tab's region entry, so the reconnect strip shows them;
+the timer arms no desktop redrive for such a tab, and Stop closes the agent session. A
+give-up ends the session, as a drop did before. An older agent never sends the steps.
+
+```mermaid
+sequenceDiagram
+    participant P as Serial port (agent host)
+    participant D as Session daemon (SerialReopen)
+    participant W as Agent worker
+    participant T as Desktop store / strip
+    P-->>D: output ends (adapter unplugged)
+    D->>W: MSG_RECONNECT waiting(n, delay, reason)
+    W->>T: connection.reconnect → Reconnecting, attempt n
+    D->>D: resolve_reconnect_port (agent probe)
+    alt original device back
+        D->>P: reopen with saved settings
+        D->>W: MSG_RECONNECT reconnected
+        W->>T: Connected, output continues
+    else limit reached
+        D->>W: MSG_RECONNECT gaveUp(reason), then exit
+        W->>T: Failed with reason
+    end
+    T->>D: Stop → connection.close (cancels the loop)
+```
+
 **Agent tabs: no compounding.** An agent-hosted tab has two loops that could look
 nested. A transient break of the agent's SSH transport is owned by the agent's
 **in-task** loop (10 attempts); while it runs, the hosted tabs show "reconnecting"
@@ -1607,6 +1639,29 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
 - **None** — Passwords are prompted at connection time and never persisted (the default for new installations).
 
 Credential storage is managed through the Security section in Settings.
+
+#### First-use storage chooser
+
+A new installation starts in **None** mode without a storage choice. The first attempt to save
+a secret — ticking "Save password" in the connect-time prompt or in credential re-entry, turning
+on the editor's "Save credentials" toggle, or "Save password to credential store" when saving a
+recent session as a connection — opens a one-time chooser, "Where should termiHub keep
+passwords?", with **OS Keychain** pre-selected, **Master Password** and **Don't save
+passwords** (`src/components/CredentialStorage/CredentialStorageChooser.tsx`).
+
+- Choosing a store switches to it (`switch_credential_store`); Master Password first asks for the
+  new master password with the same setup fields as Settings → Security. Only then does the
+  waiting save write the secret, through its normal path — nothing is written before the choice
+  is confirmed.
+- "Don't save passwords" keeps None mode and records the choice
+  (`mark_credential_storage_chosen`).
+- Cancel records nothing and saves nothing; the next save asks again.
+
+The choice is persisted as the backend-owned `credentialStorageChosen` setting and reported as
+`storageChosen` on the credential-store status. Any store switch records it, and an install with
+a persisted storage mode or an active store counts as chosen (`storage_choice_made`), so existing
+users are never asked. The frontend's whole-document settings save never changes the storage
+mode or the choice. Both stay changeable under Settings → Security → Credential Storage.
 
 #### Credential vault export / import
 

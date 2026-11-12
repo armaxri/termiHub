@@ -1,7 +1,7 @@
 import { StateCreator } from "zustand";
 
 import type { AppState } from "../appStore";
-import { CredentialStoreStatusInfo } from "@/types/credential";
+import type { CredentialStorageMode, CredentialStoreStatusInfo } from "@/types/credential";
 import { getCredentialStoreStatus as apiGetCredentialStoreStatus } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -44,6 +44,13 @@ export interface UnlockRequestOptions {
   connectFallback?: boolean;
 }
 
+/**
+ * How the first-use credential-storage chooser settled (#5187): the store the
+ * user picked (already switched to, or for `"none"` recorded as "Don't save"),
+ * or `"canceled"` — nothing was chosen or saved, and the next save asks again.
+ */
+export type StorageChoiceOutcome = CredentialStorageMode | "canceled";
+
 export interface CredentialStoreSlice {
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -85,6 +92,22 @@ export interface CredentialStoreSlice {
    * `"skipped"` and close the dialog. The store stays locked.
    */
   skipUnlock: () => void;
+  /** Whether the first-use credential-storage chooser is open (#5187). */
+  storageChooserOpen: boolean;
+  /**
+   * Pending resolvers for in-flight {@link CredentialStoreSlice.requestStorageChoice}
+   * calls. Internal — settled by `resolveStorageChoice()`. A list, so two save
+   * flows waiting at once both settle on the single chooser exit.
+   */
+  storageChooserResolvers: ((outcome: StorageChoiceOutcome) => void)[];
+  /**
+   * Open the first-use credential-storage chooser (#5187) and resolve to how
+   * it settled. The chooser itself switches the store (or records "Don't
+   * save") before settling, so a caller that gets a store mode back can save.
+   */
+  requestStorageChoice: () => Promise<StorageChoiceOutcome>;
+  /** Settle (and clear) every pending chooser request and close it. Idempotent. */
+  resolveStorageChoice: (outcome: StorageChoiceOutcome) => void;
 }
 
 export const createCredentialStoreSlice: StateCreator<AppState, [], [], CredentialStoreSlice> = (
@@ -148,5 +171,23 @@ export const createCredentialStoreSlice: StateCreator<AppState, [], [], Credenti
     // Settle first, so the close below finds nothing left to cancel.
     get().resolveUnlock("skipped");
     get().setUnlockDialogOpen(false);
+  },
+  storageChooserOpen: false,
+  storageChooserResolvers: [],
+  requestStorageChoice: () =>
+    new Promise<StorageChoiceOutcome>((resolve) => {
+      set((state) => ({
+        storageChooserOpen: true,
+        storageChooserResolvers: [...state.storageChooserResolvers, resolve],
+      }));
+    }),
+  resolveStorageChoice: (outcome) => {
+    const { storageChooserResolvers } = get();
+    // Clear first so a re-entrant call (a choice and the close both firing)
+    // is a no-op — every promise settles once.
+    set({ storageChooserOpen: false, storageChooserResolvers: [] });
+    for (const resolve of storageChooserResolvers) {
+      resolve(outcome);
+    }
   },
 });
