@@ -38,7 +38,7 @@ SYSTEM_MONITORS_REGION = "system-monitors"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-@pytest.mark.native_sshd
+@pytest.mark.native_sshd(platforms=("win32",))
 class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, MonitoringUi, SettingsUi, SystemTest):
     # ── Auto-connect ──────────────────────────────────────────────────────────
     def test_auto_shows_stats_on_ssh_tab(self):

@@ -59,6 +59,14 @@
   color: var(--color-warning);
 }
 
+/* Why the last attempt failed (#5395): the warning tone, not the error tone —
+   the loop is still running. */
+.terminal-reconnect-strip__reason {
+  display: block;
+  color: var(--color-warning);
+  word-break: break-word;
+}
+
 .terminal-reconnect-strip__error {
   color: var(--color-error);
   word-break: break-word;

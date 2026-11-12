@@ -113,7 +113,9 @@
   border-left: 3px solid var(--accent-color);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
-  color: var(--text-accent);
+  /* #5407: --text-accent fell below AA on the accent tint (Light 4.15:1,
+     Solarized 3.35 / 2.73:1); the left border keeps the accent cue. */
+  color: var(--text-primary);
 }
 
 .network-panel__error {
