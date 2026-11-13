@@ -200,7 +200,8 @@ class TestProductRunAutomations(
         with self.step(
             "automations.workflow.edit",
             "Editing the wait step's delay saves the new value",
-            expect="the Workflows sidebar after the edit",
+            expect="the Workflows sidebar after the edit; the edited workflow's row is tinted "
+            "with an accent bar on its leading edge (#5687, it fades after about 3 s)",
         ):
             self.require("automations.workflow.create")
             self.edit_workflow(self.ids["workflow"], {"workflow-editor-step-delay-1": WAIT_MS})
@@ -670,3 +671,38 @@ class TestProductRunAutomations(
             self.evidence(f"workflow runs before {before}, after cancel {after}")
             assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
             assert self.driver.exists("workflow-history-list"), "the history list disappeared"
+
+    # ── the row saved from the editor is marked briefly (#5687) ──────────────
+    def test_96_workflow_edited_row_marked(self):
+        with self.step(
+            "automations.workflow.edited-row",
+            "Saving an edited workflow marks its row briefly so the change is easy to find",
+            expect="the Workflows sidebar right after a save: the edited workflow's row is "
+            "tinted with the accent colour and a 2px accent bar on its leading edge, the "
+            "other rows are not; the row's name and summary stay readable (#5687)",
+            screenshot=False,
+        ):
+            self.require("automations.workflow.edit")
+            wid = self.ids["workflow"]
+            row = f"workflow-item-{wid}"
+            self.edit_workflow(wid, {"workflow-editor-description": f"edited {self.tag}"})
+            marked = self.driver.get_attribute(row, "data-just-saved")
+            background = self.driver.get_computed_style("background-color", row)
+            self.evidence(f"{row}: data-just-saved={marked!r}, background {background}")
+            assert marked == "true", f"the saved row is not marked: data-just-saved={marked!r}"
+            assert background not in ("", "transparent", "rgba(0, 0, 0, 0)"), (
+                f"the marked row paints no tint: {background}"
+            )
+            self.shot(label="marked")
+            box = self.driver.measure_element(row)["rect"]
+            pane = self.driver.measure_element("workflow-list")["rect"]
+            self.evidence(f"row {box}; list {pane}")
+            assert box["y"] >= pane["y"] - 1 and box["y"] + box["height"] <= (
+                pane["y"] + pane["height"] + 1
+            ), f"the saved row {box} is not scrolled into the list's view {pane}"
+            self.wait(
+                lambda: self.driver.get_attribute(row, "data-just-saved") is None,
+                timeout=10.0,
+                what="the saved-row mark to clear",
+            )
+            self.evidence("the mark cleared on its own")

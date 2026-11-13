@@ -188,4 +188,30 @@ describe("WorkflowListItem", () => {
     render(workflow(), true);
     expect((query("workflow-run-on-w1") as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("marks a just-saved row and leaves other rows unmarked (#5687)", () => {
+    const h = handlers();
+    act(() => {
+      root.render(
+        withTooltip(
+          <>
+            <WorkflowListItem workflow={workflow()} running={false} justSaved {...h} />
+            <WorkflowListItem
+              workflow={workflow({ id: "w2", name: "Other" })}
+              running={false}
+              {...h}
+            />
+          </>
+        )
+      );
+    });
+    const saved = query("workflow-item-w1");
+    expect(saved?.classList.contains("workflow-item--just-saved")).toBe(true);
+    expect(saved?.getAttribute("data-just-saved")).toBe("true");
+    const other = query("workflow-item-w2");
+    expect(other?.classList.contains("workflow-item--just-saved")).toBe(false);
+    expect(other?.hasAttribute("data-just-saved")).toBe(false);
+    // The shared row shell keeps its own class alongside the mark.
+    expect(saved?.classList.contains("sidebar-list-item")).toBe(true);
+  });
 });

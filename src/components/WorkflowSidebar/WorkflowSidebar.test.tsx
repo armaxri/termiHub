@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { WorkflowSidebar } from "./WorkflowSidebar";
+import { WORKFLOW_JUST_SAVED_MS } from "./WorkflowListItem";
 import { withTooltip } from "@/test/tooltip";
 import type { Workflow } from "@/types/workflow";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
@@ -433,5 +434,86 @@ describe("WorkflowSidebar", () => {
     act(() => (query("workflow-edit-workflow-1") as HTMLButtonElement).click());
     expect(query("workflow-editor-dialog")).not.toBeNull();
     expect((query("workflow-editor-name") as HTMLInputElement).value).toBe("Prod login");
+  });
+
+  describe("marks the row saved from the editor (#5687)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    });
+
+    async function editAndSave(id: string) {
+      act(() => (query(`workflow-edit-${id}`) as HTMLButtonElement).click());
+      act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
+      await flush();
+      await flush();
+    }
+
+    it("highlights only the saved row, scrolls it into view, then unmarks it", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const scrolled: Array<{ testId: string | null; opts: unknown }> = [];
+      HTMLElement.prototype.scrollIntoView = function (this: HTMLElement, opts?: unknown) {
+        scrolled.push({ testId: this.getAttribute("data-testid"), opts });
+      } as HTMLElement["scrollIntoView"];
+      useAppStore.setState({ workflows: sampleWorkflows });
+      await render();
+      expect(query("workflow-item-workflow-2")?.hasAttribute("data-just-saved")).toBe(false);
+
+      await editAndSave("workflow-2");
+
+      expect(useAppStore.getState().saveWorkflowToBackend).toHaveBeenCalledTimes(1);
+      expect(query("workflow-editor-dialog")).toBeNull();
+      const row = query("workflow-item-workflow-2");
+      expect(row?.getAttribute("data-just-saved")).toBe("true");
+      expect(row?.classList.contains("workflow-item--just-saved")).toBe(true);
+      expect(query("workflow-item-workflow-1")?.hasAttribute("data-just-saved")).toBe(false);
+      expect(scrolled).toEqual([
+        { testId: "workflow-item-workflow-2", opts: { block: "nearest", behavior: "smooth" } },
+      ]);
+
+      act(() => {
+        vi.advanceTimersByTime(WORKFLOW_JUST_SAVED_MS - 1);
+      });
+      expect(query("workflow-item-workflow-2")?.getAttribute("data-just-saved")).toBe("true");
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(query("workflow-item-workflow-2")?.hasAttribute("data-just-saved")).toBe(false);
+      // The mark adds no toast of its own: the save keeps its single "Saved" toast.
+      expect(toastSuccess).toHaveBeenCalledTimes(1);
+      expect(scrolled).toHaveLength(1);
+    });
+
+    it("scrolls without smooth motion under prefers-reduced-motion", async () => {
+      const scrolled: unknown[] = [];
+      HTMLElement.prototype.scrollIntoView = function (opts?: unknown) {
+        scrolled.push(opts);
+      } as HTMLElement["scrollIntoView"];
+      const original = window.matchMedia;
+      window.matchMedia = ((q: string) => ({
+        matches: q === "(prefers-reduced-motion: reduce)",
+        media: q,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })) as unknown as typeof window.matchMedia;
+      try {
+        useAppStore.setState({ workflows: sampleWorkflows });
+        await render();
+        await editAndSave("workflow-1");
+        expect(query("workflow-item-workflow-1")?.getAttribute("data-just-saved")).toBe("true");
+        expect(scrolled).toEqual([{ block: "nearest", behavior: "auto" }]);
+      } finally {
+        window.matchMedia = original;
+      }
+    });
+
+    it("does not mark the row when the save fails", async () => {
+      const saveWorkflowToBackend = vi.fn().mockRejectedValue(new Error("disk full"));
+      useAppStore.setState({ workflows: sampleWorkflows, saveWorkflowToBackend });
+      await render();
+      await editAndSave("workflow-1");
+      expect(saveWorkflowToBackend).toHaveBeenCalledTimes(1);
+      expect(query("workflow-item-workflow-1")?.hasAttribute("data-just-saved")).toBe(false);
+    });
   });
 });
