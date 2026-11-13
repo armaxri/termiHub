@@ -51,9 +51,11 @@ from termihub_harness import (
 )
 from termihub_harness import timing
 from termihub_harness.git_bash import detect_git_bash
+from termihub_harness.local_agent import NativeSshdFixture
 from termihub_harness.output_stream import (
     describe,
     find_flashes,
+    first_match_offset,
     markers_in,
     prompt_offsets,
 )
@@ -78,6 +80,14 @@ GIT_BASH_SETUP_MARKERS = ("TERMIHUB_SI", "6973;")
 
 #: The OSC 7 cwd report that follows a prompt (#5009).
 OSC7 = "\x1b]7;file://"
+
+#: Windows runs the SSH grades against its native Win32-OpenSSH twin (#5176),
+#: which has no cwd report without the shell hook.
+WINDOWS_SSH_HOST = sys.platform == "win32" and NativeSshdFixture.present()
+
+#: The end of a Windows host's login-shell prompt: Git Bash ``$``, PowerShell
+#: ``PS …>`` or cmd ``…>``.
+WINDOWS_HOST_PROMPT = re.compile(r"(\$|>) ?$", re.MULTILINE)
 
 #: How long the stream must stay quiet before the start of a session counts as
 #: settled (no more setup or prompt bytes in flight).
@@ -258,15 +268,30 @@ class TestSshConnectFlash(
         self.close_all_tabs()
         self.connect_ssh_password(unique_name("ssh-flash"))
         tab_id = self.active_tab_id()
-        # The cwd report (OSC 7) follows the first prompt: termiHub reads the
-        # remote directory over a side channel, nothing is typed (#5009).
-        self.wait(
-            lambda: OSC7 in self.driver.read_terminal_output(tab_id)["output"],
-            timeout=60.0,
-            what="the remote prompt's cwd report (OSC 7)",
-        )
-        raw = self.settled_output(tab_id, what="the SSH session start to settle")
-        first_prompt = raw.index(OSC7)
+        if WINDOWS_SSH_HOST:
+            # A Win32-OpenSSH host reports no cwd without the shell hook (by
+            # design, core/src/backends/ssh/remote_cwd.rs): anchor on the
+            # login shell's prompt instead.
+            self.wait(
+                lambda: first_match_offset(
+                    self.driver.read_terminal_output(tab_id)["output"], WINDOWS_HOST_PROMPT
+                )
+                is not None,
+                timeout=60.0,
+                what="the Windows host's shell prompt",
+            )
+            raw = self.settled_output(tab_id, what="the SSH session start to settle")
+            first_prompt = first_match_offset(raw, WINDOWS_HOST_PROMPT)
+        else:
+            # The cwd report (OSC 7) follows the first prompt: termiHub reads
+            # the remote directory over a side channel, nothing is typed (#5009).
+            self.wait(
+                lambda: OSC7 in self.driver.read_terminal_output(tab_id)["output"],
+                timeout=60.0,
+                what="the remote prompt's cwd report (OSC 7)",
+            )
+            raw = self.settled_output(tab_id, what="the SSH session start to settle")
+            first_prompt = raw.index(OSC7)
         flashes = find_flashes(raw)
         leaked = markers_in(raw, SETUP_MARKERS)
         measure(
