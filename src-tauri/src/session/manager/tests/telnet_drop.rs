@@ -91,7 +91,12 @@ async fn server_close_folds_the_drop_and_a_reconnect_works() {
         "the drop folds the tab to Disconnected (overlay with Reconnect)"
     );
     let deadline = Instant::now() + CEILING;
-    while manager.list_sessions().await.iter().any(|s| s.id == session_id) {
+    while manager
+        .list_sessions()
+        .await
+        .iter()
+        .any(|s| s.id == session_id)
+    {
         assert!(Instant::now() < deadline, "the dead session is removed");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
