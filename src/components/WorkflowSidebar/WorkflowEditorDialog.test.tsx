@@ -85,6 +85,14 @@ const workflow: Workflow = {
   updatedAt: "2026-01-01T00:00:00Z",
 };
 
+/** Expand every collapsed step row (opened steps start collapsed, #5637). */
+function expandAllSteps() {
+  const toggle = document.querySelector<HTMLButtonElement>(
+    '[data-testid="workflow-editor-steps-toggle-all"]'
+  );
+  if (toggle && toggle.textContent === "Expand all") act(() => toggle.click());
+}
+
 describe("WorkflowEditorDialog", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -154,6 +162,7 @@ describe("WorkflowEditorDialog", () => {
   it("edits a send-command step's command before saving", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render({ onSave });
+    expandAllSteps();
 
     setInput("workflow-editor-step-command-0", "whoami");
     act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
@@ -170,6 +179,7 @@ describe("WorkflowEditorDialog", () => {
       steps: [{ kind: "run-local-process", program: "notify-send", args: ["--urgency"] }],
     };
     render({ onSave, workflow: lpWorkflow });
+    expandAllSteps();
 
     // Add a second argument row, then type a value that contains a space.
     act(() => (query("workflow-editor-step-arg-add-0") as HTMLButtonElement).click());
@@ -195,6 +205,7 @@ describe("WorkflowEditorDialog", () => {
       steps: [{ kind: "run-local-process", program: "echo", args: ["a", "b"] }],
     };
     render({ onSave, workflow: lpWorkflow });
+    expandAllSteps();
 
     act(() => (query("workflow-editor-step-arg-remove-0-0") as HTMLButtonElement).click());
     await flush();
