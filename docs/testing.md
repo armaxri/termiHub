@@ -264,7 +264,7 @@ The product run replaces hand-run product tests. It is **triggered by hand only*
 
 ```bash
 ./scripts/internal/product-run.sh            # opens the live progress page
-./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving
+./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving, --real-pointer
 ```
 
 ```mermaid
@@ -284,6 +284,9 @@ flowchart LR
 - **Isolation:** the harness's temporary `TERMIHUB_CONFIG_DIR`/`TERMIHUB_LOG_DIR`, a scratch `HOME`/`XDG_*`/`ZDOTDIR`/`HISTFILE` under the run directory and an own keychain namespace (`TERMIHUB_DEV_NAME=product-run-<run id>`), whose items the script deletes at the end.
 - **Output:** `tests/system/artifacts/product-run/<run id>/` with `index.html` (the page; it also works opened as a file), `status.json`, `results.json` (per step: id, title, status `pass`/`fail`/`not-tested`/`human`, evidence, screenshots), `shots/<step>.png` window captures found by the test app's PID, and `shots/manifest.json` (step, what the screen should show, theme, window size) for the UI-review agents.
 - **Human steps** (OS security sheets, physical actions) pause the run and show a prompt with a **Done** button on the page; `--unattended` records them as not tested.
+- **Hover grades:** `with self.hovered(testid):` renders the hover for real — the OS pointer when global input is allowed (`--real-pointer`; refused while any other termiHub, the installed app included, is running), else the bridge's `forceHover` verb paints the app's own `:hover` rules. The evidence says which.
+- **UI review (#5538):** after every run the script writes `review/` — `review-brief.md` (product context, per surface every screenshot with what it should show and the step's grade), `review-request.json` (one reviewer entry per surface with a self-contained prompt, theme and window size) and `contact/<surface>.png`. The coordinator spawns one read-only reviewer agent per entry; each writes `review/findings/<surface>.json` (schema: `termihub_harness/product_run/review_schema.py`). `scripts/internal/product-run-review.py merge <run>` validates them, dedupes into `review/findings.{md,json}` and the page shows a **UI review** section.
+
 - **Writing a phase:** a `SystemTest` suite with `ProductRunUi` first in its bases (`termihub_harness/product_run`) wraps each check in `with self.step(id, title, expect=...)`. A failed step fails only that step; the test fails at the end of its call phase. See `tests/system/tests/test_product_run.py`.
 
 ## 2. Component Integration Tests
