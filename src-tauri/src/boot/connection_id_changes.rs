@@ -366,6 +366,7 @@ mod tests {
                     connection_ids: vec!["Work/x".to_string()],
                 }],
                 parameters: Vec::new(),
+                triggers_enabled: true,
                 created_at: String::new(),
                 updated_at: String::new(),
             })
