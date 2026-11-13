@@ -209,13 +209,18 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
             ) : (
               <ul className="settings-panel__file-list">
                 {userEntries.map(([pattern, language]) => (
-                  <li key={pattern} className="settings-panel__file-item">
+                  <li
+                    key={pattern}
+                    className="settings-panel__file-item file-type-settings__custom-row"
+                    data-testid={`file-type-custom-row-${pattern}`}
+                  >
                     <span className="settings-panel__file-path" style={{ fontFamily: "monospace" }}>
                       {pattern}
                     </span>
                     <span
-                      className="settings-panel__file-path settings-panel__file-path--disabled"
+                      className="settings-panel__file-path file-type-settings__custom-language"
                       style={{ fontFamily: "monospace" }}
+                      data-testid={`file-type-custom-language-${pattern}`}
                     >
                       → {language}
                     </span>

@@ -61,6 +61,15 @@
   color: var(--text-secondary-on-selection);
 }
 
+/* Custom mappings list (#5722): never the disabled grey (< 4.5:1). Each item
+   sits on the raised --bg-tertiary row (--bg-hover on hover), where plain
+   --text-secondary is only 4.28:1 in Solarized Dark, so it uses the
+   secondary-on-selection variant, which passes AA on both. Compound selector
+   so it outranks .settings-panel__file-path regardless of stylesheet order. */
+.settings-panel__file-path.file-type-settings__custom-language {
+  color: var(--text-secondary-on-selection);
+}
+
 .file-type-settings__badge {
   margin-left: var(--spacing-sm);
   font-family: var(--font-family);
