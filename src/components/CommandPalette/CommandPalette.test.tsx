@@ -226,11 +226,22 @@ describe("CommandPalette", () => {
       workspaces: [{ id: "ws-1", name: "Dev Layout", connectionCount: 2 }],
     });
     typeInto("launch workspace: dev");
-    expect(activeLabel()).toBe("Launch workspace: Dev Layout");
+    expect(activeLabel()).toBe("Dev Layout");
     keydown("Enter");
     expect(launchWorkspace).toHaveBeenCalledWith("ws-1");
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
     expect(connectSpy).not.toHaveBeenCalled();
+  });
+
+  it("lists workspaces by name with a kind tag and still finds them by the verb (#5530)", () => {
+    setStore({ workspaces: [{ id: "ws-1", name: "Dev Layout", connectionCount: 2 }] });
+    typeInto("dev layout");
+    expect(activeLabel()).toBe("Dev Layout");
+    const item = document.querySelector('[data-testid="command-palette-item-workspace:ws-1"]');
+    expect(item?.querySelector(".command-palette__label")?.textContent).toBe("Dev Layout");
+    expect(item?.querySelector(".command-palette__type")?.textContent).toBe("workspace");
+    typeInto("launch workspace");
+    expect(activeLabel()).toBe("Dev Layout");
   });
 
   it("asks to confirm a workspace launch that would end live sessions (UX2-002)", () => {

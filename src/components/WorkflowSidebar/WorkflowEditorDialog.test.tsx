@@ -129,7 +129,7 @@ describe("WorkflowEditorDialog", () => {
     expect(query("workflow-editor-step-0")).not.toBeNull();
     expect(query("workflow-editor-step-1")).not.toBeNull();
     expect(query("workflow-editor-step-2")).not.toBeNull();
-    expect(query("workflow-editor-step-kind-0")?.textContent).toBe("send-command");
+    expect(query("workflow-editor-step-kind-0")?.textContent).toBe("Send command");
   });
 
   it("saves the edited name, description and tags", async () => {
