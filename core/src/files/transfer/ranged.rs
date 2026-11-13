@@ -31,10 +31,10 @@ use crate::errors::FileError;
 use crate::files::{FileEntry, RangedFileAccess};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
+    apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
     local_partial_size, open_local_dest, open_local_read, probe_timed_out, rehydrate_start_offset,
-    settle_attempt, stop_reason, AttemptOutcome, AttemptsResult, Probed, ProgressReporter,
-    ResumeCursor, StopReason, STALL_TIMEOUT,
+    settle_attempt, stop_reason, trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe,
+    Probed, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -53,6 +53,18 @@ pub trait RangedTransferTarget: RangedFileAccess {
 
     /// Remove `path` — the partial upload of a cancelled transfer.
     async fn remove_file(&self, path: &str) -> Result<(), FileError>;
+
+    /// Shorten `path` to `len` bytes — a resumed upload drops the bytes a
+    /// crash left past its last checkpoint (#5611), so it resumes there instead
+    /// of restarting from zero.
+    ///
+    /// The default answers [`FileError::NotSupported`]: the
+    /// [`RangedFileAccess`] protocol has no way to shorten a file, so such an
+    /// upload restarts from zero and the row says why.
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+        let _ = (path, len);
+        Err(FileError::NotSupported)
+    }
 
     /// The real spelling of `path` on this end (#5333): symlinks, `.` and
     /// `..` resolved, a missing final name through its parent folder. The
@@ -256,21 +268,29 @@ async fn gate_resume(
     let offset = cursor.offset;
     let probe = async {
         let current = source_fingerprint(target, direction, remote_path, local_path).await;
-        let present = if offset == 0 {
-            None
+        // A partial past the checkpoint (a crash kept writing after the last
+        // persisted one) is trimmed back to it first (#5609, #5611).
+        let partial = if offset == 0 {
+            PartialProbe::default()
         } else {
             match direction {
-                TransferDirection::Download => local_partial_size(local_path, offset).await,
-                TransferDirection::Upload => remote_fingerprint(target, remote_path)
-                    .await
-                    .map(|fp| fp.size),
+                TransferDirection::Download => {
+                    PartialProbe::measured(local_partial_size(local_path, offset).await)
+                }
+                TransferDirection::Upload => {
+                    let present = remote_fingerprint(target, remote_path)
+                        .await
+                        .map(|fp| fp.size);
+                    trim_remote_partial(present, offset, |len| target.truncate(remote_path, len))
+                        .await
+                }
             }
         };
-        (current, present)
+        (current, partial)
     };
     match guard_probe(probe, handle, STALL_TIMEOUT).await {
-        Probed::Done((current, present)) => {
-            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+        Probed::Done((current, partial)) => {
+            apply_partial_gate(cursor, handle, sink, current, partial, BACKEND);
             Probed::Done(())
         }
         Probed::Cancelled => Probed::Cancelled,

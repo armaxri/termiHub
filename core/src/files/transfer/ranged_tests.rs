@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Mutex;
 
 use super::*;
@@ -40,6 +40,11 @@ struct MemTarget {
     /// Park every `stat` call from this (1-based) index on forever — a dead
     /// connection (#4672). `0` never parks.
     park_stat_from: AtomicUsize,
+    /// Whether `truncate` is supported (#5611); unsupported by default, like
+    /// the trait's default.
+    truncatable: AtomicBool,
+    /// Lengths of every `truncate`, in order.
+    truncates: Mutex<Vec<u64>>,
 }
 
 impl MemTarget {
@@ -132,6 +137,19 @@ impl RangedTransferTarget for MemTarget {
 
     async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         self.files.lock().unwrap().remove(path);
+        Ok(())
+    }
+
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+        if !self.truncatable.load(Ordering::SeqCst) {
+            return Err(FileError::NotSupported);
+        }
+        self.truncates.lock().unwrap().push(len);
+        let mut files = self.files.lock().unwrap();
+        let file = files
+            .get_mut(path)
+            .ok_or_else(|| FileError::NotFound(path.into()))?;
+        file.truncate(len as usize);
         Ok(())
     }
 }
@@ -517,4 +535,146 @@ async fn cancel_during_the_up_front_probe_settles_promptly() {
 #[tokio::test]
 async fn cancel_during_the_per_attempt_resume_probe_settles_promptly() {
     cancel_during_parked_stat(2).await;
+}
+
+// --- Relaunch after a crash (#5611) ---
+
+/// An upload relaunched from checkpoint `start_offset` while the remote holds
+/// `remote_partial` — longer than the checkpoint, as after a crash. Returns
+/// the handle and every emitted row message.
+async fn relaunch_upload_past_checkpoint(
+    target: &Arc<MemTarget>,
+    data: &[u8],
+    remote_partial: &[u8],
+    start_offset: u64,
+) -> (Arc<TransferHandle>, Vec<String>) {
+    target
+        .files
+        .lock()
+        .unwrap()
+        .insert(REMOTE.into(), remote_partial.to_vec());
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("in.bin");
+    std::fs::write(&local, data).unwrap();
+    let reg = TransferRegistry::new();
+    let handle = reg.enqueue(
+        "ul-relaunch",
+        "agent-session",
+        TransferDirection::Upload,
+        "data.bin",
+        REMOTE,
+        data.len() as u64,
+    );
+    let fingerprint = local_fingerprint(&s(&local)).await.expect("source");
+    handle.set_source_mtime(fingerprint.mtime);
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let rec = messages.clone();
+    let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+        if let Some(m) = &p.message {
+            rec.lock().unwrap().push(m.clone());
+        }
+    });
+    run_ranged_transfer(
+        target.clone(),
+        TransferDirection::Upload,
+        REMOTE.into(),
+        s(&local),
+        handle.clone(),
+        reg,
+        sink,
+        start_offset,
+    )
+    .await;
+    let messages = messages.lock().unwrap().clone();
+    (handle, messages)
+}
+
+/// The crash left the remote partial past the checkpoint. A target that can
+/// shorten it is trimmed back, and the upload resumes from the checkpoint.
+#[tokio::test]
+async fn a_relaunched_upload_trims_the_remote_partial_and_resumes() {
+    let data = content(CHUNK_SIZE * 3 + 9);
+    let checkpoint = CHUNK_SIZE as u64;
+    let target = Arc::new(MemTarget::default());
+    target.truncatable.store(true, Ordering::SeqCst);
+    let past = &data[..CHUNK_SIZE * 2 - 7];
+
+    let (handle, messages) =
+        relaunch_upload_past_checkpoint(&target, &data, past, checkpoint).await;
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(target.file().unwrap(), data, "byte-exact");
+    assert_eq!(*target.truncates.lock().unwrap(), vec![checkpoint]);
+    assert_eq!(
+        target.writes.lock().unwrap().first(),
+        Some(&checkpoint),
+        "resumed from the checkpoint, never from zero"
+    );
+    assert!(messages.is_empty(), "{messages:?}");
+}
+
+/// A target that cannot shorten a file (the default — an agent-hosted
+/// session) restarts from zero, and the row says why.
+#[tokio::test]
+async fn a_relaunched_upload_past_the_checkpoint_restarts_when_untrimmable() {
+    let data = content(CHUNK_SIZE * 3 + 9);
+    let checkpoint = CHUNK_SIZE as u64;
+    let target = Arc::new(MemTarget::default());
+    let past = &data[..CHUNK_SIZE * 2 - 7];
+
+    let (handle, messages) =
+        relaunch_upload_past_checkpoint(&target, &data, past, checkpoint).await;
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(target.file().unwrap(), data, "byte-exact");
+    assert!(target.truncates.lock().unwrap().is_empty());
+    assert_eq!(target.writes.lock().unwrap().first(), Some(&0));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == super::super::attempt::UNTRIMMABLE_PARTIAL_NOTE),
+        "{messages:?}"
+    );
+}
+
+/// A relaunched download whose local partial runs past the checkpoint is
+/// trimmed back and resumes from it (#5609).
+#[tokio::test]
+async fn a_relaunched_download_trims_the_local_partial_and_resumes() {
+    let data = content(CHUNK_SIZE * 3 + 9);
+    let checkpoint = CHUNK_SIZE as u64;
+    let target = MemTarget::with_file(data.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("out.bin");
+    std::fs::write(&local, &data[..CHUNK_SIZE * 2 - 7]).unwrap();
+    let reg = TransferRegistry::new();
+    let handle = reg.enqueue(
+        "dl-relaunch",
+        "agent-session",
+        TransferDirection::Download,
+        "data.bin",
+        REMOTE,
+        data.len() as u64,
+    );
+    let fingerprint = remote_fingerprint(target.as_ref(), REMOTE)
+        .await
+        .expect("source");
+    handle.set_source_mtime(fingerprint.mtime);
+    let (sink, _phases) = recording_sink();
+
+    run_ranged_transfer(
+        target.clone(),
+        TransferDirection::Download,
+        REMOTE.into(),
+        s(&local),
+        handle.clone(),
+        reg,
+        sink,
+        checkpoint,
+    )
+    .await;
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(std::fs::read(&local).unwrap(), data);
+    assert_eq!(target.reads.lock().unwrap().first(), Some(&checkpoint));
 }

@@ -1513,6 +1513,104 @@ async fn native_06_sftp_file_journey_is_byte_exact() {
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
+/// #5611: an upload relaunched after a crash finds the remote partial past
+/// its last checkpoint. The SFTP executor trims it back (`setstat` size) and
+/// resumes from the checkpoint instead of restarting from zero.
+///
+/// The remote prefix is seeded with marker bytes the source does not hold, so
+/// the result proves which bytes were sent: a resume keeps the marker and
+/// sends only the tail; a restart would overwrite it with the source.
+#[tokio::test]
+async fn native_06b_sftp_upload_relaunch_trims_the_remote_partial() {
+    use termihub_core::files::transfer::sftp::{run_sftp_transfer, DEFAULT_RESUME_MODE};
+    use termihub_core::files::transfer::{
+        ProgressSink, TransferDirection, TransferProgress, TransferRegistry, TransferStateTag,
+    };
+    use termihub_core::files::FileBrowser;
+
+    let sshd = require_native_sshd!();
+    let browser = Arc::new(SftpFileBrowser::new(sshd.key_config()));
+    browser.connect().await.expect("connect SFTP");
+    let home = browser
+        .realpath(".")
+        .await
+        .expect("realpath of the home dir");
+    let root = sshd.scratch_home.clone().unwrap_or(home);
+    let remote = format!(
+        "{}/termihub-native-resume-{}.bin",
+        root.trim_end_matches('/'),
+        std::process::id()
+    );
+
+    let data: Vec<u8> = (0..600_000u32).map(|i| (i % 251) as u8).collect();
+    let checkpoint = 200_000usize;
+    let crashed_at = 350_000usize;
+    let mut partial = vec![0xEE_u8; checkpoint];
+    partial.extend_from_slice(&data[checkpoint..crashed_at]);
+    browser
+        .write_file(&remote, &partial)
+        .await
+        .expect("seed the remote partial");
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local = dir.path().join("source.bin");
+    std::fs::write(&local, &data).expect("write the source");
+    let mtime = std::fs::metadata(&local)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| u64::try_from(d.as_nanos()).ok());
+
+    let reg = TransferRegistry::new();
+    let handle = reg.enqueue(
+        "native-ul-relaunch",
+        "native-sftp",
+        TransferDirection::Upload,
+        "source.bin",
+        &remote,
+        data.len() as u64,
+    );
+    handle.set_source_mtime(mtime);
+    let messages = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let rec = messages.clone();
+    let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+        if let Some(m) = &p.message {
+            rec.lock().expect("lock").push(m.clone());
+        }
+    });
+
+    run_sftp_transfer(
+        browser.clone(),
+        TransferDirection::Upload,
+        remote.clone(),
+        local.to_string_lossy().into_owned(),
+        handle.clone(),
+        reg,
+        sink,
+        DEFAULT_RESUME_MODE,
+        checkpoint as u64,
+    )
+    .await;
+
+    let landed = browser.read_file(&remote).await.expect("read the upload");
+    browser.delete(&remote).await.expect("delete the upload");
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(landed.len(), data.len(), "trimmed, then completed");
+    assert!(
+        landed[..checkpoint].iter().all(|&b| b == 0xEE),
+        "resumed from the checkpoint: the prefix was not re-sent"
+    );
+    assert!(
+        landed[checkpoint..] == data[checkpoint..],
+        "the tail is exact"
+    );
+    assert!(
+        messages.lock().expect("lock").is_empty(),
+        "no restart: {:?}",
+        messages.lock().expect("lock")
+    );
+}
+
 #[tokio::test]
 async fn native_07_local_forward_relays_tcp_over_ssh() {
     let sshd = require_native_sshd!();

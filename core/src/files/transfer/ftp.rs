@@ -17,7 +17,10 @@
 //!   says whether `REST STREAM` and `MDTM` are supported, `SIZE` + `MDTM` give
 //!   the remote file's fingerprint. The source must still match the fingerprint
 //!   captured when its bytes were read, and the destination must hold a prefix
-//!   we wrote — otherwise the attempt restarts from zero.
+//!   we wrote — otherwise the attempt restarts from zero. A crashed
+//!   download's local partial is first trimmed back to the checkpoint; a
+//!   crashed upload's remote partial past it cannot be trimmed over FTP, so
+//!   that upload restarts from zero and says why (#5611).
 //! - A server that does not advertise `REST STREAM` never gets a `REST`: the
 //!   transfer restarts from zero and says why. A server that does not answer
 //!   `FEAT` at all is tried, and a refused `REST` restarts from zero too.
@@ -37,15 +40,16 @@ use crate::errors::SessionError;
 use tracing::{debug, info};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
-    local_fingerprint, local_size, probe_timed_out, rehydrate_start_offset, settle_attempt,
-    stop_reason, AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor,
-    StopReason, STALL_TIMEOUT,
+    apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
+    local_fingerprint, local_partial_size, probe_timed_out, rehydrate_start_offset, settle_attempt,
+    stop_reason, trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe, Probed,
+    ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::retry::SourceFingerprint;
 use super::state::TransferEvent;
 use super::{ProgressSink, TransferPhase};
+use crate::errors::FileError;
 
 /// Log label for the shared attempt orchestration.
 const BACKEND: &str = "FTP";
@@ -67,31 +71,43 @@ struct Endpoints {
     caps: FtpServerCaps,
     /// Fingerprint of the source (remote for a download, local for an upload).
     source: Option<SourceFingerprint>,
-    /// Bytes present at the destination (local for a download, remote for an
-    /// upload).
-    present: Option<u64>,
+    /// The destination partial (local for a download, remote for an upload).
+    partial: PartialProbe,
 }
 
 /// Probe both ends of the transfer: the server (capabilities, remote size and
 /// mtime) over a throwaway connection, and the local file. Fails only when the
 /// server cannot be reached.
+///
+/// `offset` is the checkpoint the attempt resumes from (`0` = fresh). A
+/// crashed transfer's partial usually runs past it (#5611):
+///
+/// - **download** — the local partial is trimmed back to `offset`, so the gate
+///   resumes from the checkpoint (as the other executors do, #5609);
+/// - **upload** — FTP has no command to shorten a remote file, and whether a
+///   `REST` + `STOR` truncates past the restart point is up to the server. A
+///   remote partial past the checkpoint is therefore never resumed: the gate
+///   restarts from zero (`STOR` without `REST` replaces the file) and the row
+///   says why.
 async fn probe_endpoints(
     config: &FtpConfig,
     direction: FtpDirection,
     remote_path: &str,
     local_path: &str,
+    offset: u64,
 ) -> Result<Endpoints, SessionError> {
     let FtpRemoteFile { caps, size, mtime } = probe_remote_file(config, remote_path).await?;
     Ok(match direction {
         FtpDirection::Download => Endpoints {
             caps,
             source: size.map(|size| SourceFingerprint { size, mtime }),
-            present: local_size(local_path).await,
+            partial: PartialProbe::measured(local_partial_size(local_path, offset).await),
         },
         FtpDirection::Upload => Endpoints {
             caps,
             source: local_fingerprint(local_path).await,
-            present: size,
+            partial: trim_remote_partial(size, offset, |_| async { Err(FileError::NotSupported) })
+                .await,
         },
     })
 }
@@ -174,7 +190,7 @@ async fn run_attempts(
 
         // The probe is cancel-aware and bounded (#4672): a dead server cannot
         // park the attempt outside the stall watchdog.
-        let probe = probe_endpoints(config, direction, remote_path, local_path);
+        let probe = probe_endpoints(config, direction, remote_path, local_path, cursor.offset);
         let probed = match guard_probe(probe, handle, STALL_TIMEOUT).await {
             Probed::Done(probed) => probed.map_err(FtpTransferError::Session),
             Probed::Cancelled => {
@@ -198,12 +214,12 @@ async fn run_attempts(
             }
         };
         drop_unsupported_resume(cursor, endpoints.caps, handle, sink);
-        apply_resume_gate(
+        apply_partial_gate(
             cursor,
             handle,
             sink,
             endpoints.source,
-            endpoints.present,
+            endpoints.partial,
             BACKEND,
         );
 
@@ -292,7 +308,8 @@ pub async fn run_ftp_transfer(
     // The probe is cancel-aware and bounded (#4672): a cancel or a dead server
     // leaves the source unknown and falls through to `drive_transfer`, which
     // settles a cancel exactly once.
-    let probe = probe_endpoints(&config, direction, &remote_path, &local_path);
+    // Offset `0`: only the source is read here, nothing is trimmed.
+    let probe = probe_endpoints(&config, direction, &remote_path, &local_path, 0);
     let baseline = match guard_probe(probe, &handle, STALL_TIMEOUT).await {
         Probed::Done(Ok(endpoints)) => endpoints.source,
         Probed::Done(Err(e)) => {
