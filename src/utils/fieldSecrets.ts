@@ -25,6 +25,7 @@
  */
 import { resolveFieldSecrets as fetchStoredFieldSecrets, storeFieldSecrets } from "@/services/api";
 import type { FieldSecrets } from "@/services/api";
+import { t } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import type { PasswordPromptAnswer, RequestPassword } from "@/store/slices/passwordPromptSlice";
 import type { SettingsField, SettingsSchema } from "@/types/schema";
@@ -284,8 +285,12 @@ async function promptFor(
   const notice = readFailed
     ? `The saved secrets could not be read — enter the ${slotLabel(slot)} for this connection.`
     : `Enter the ${slotLabel(slot)} for this connection.`;
+  // Title the prompt after the secret itself (#5656) — "Proxy password",
+  // "Jump host password" — not the connection's own "SSH password".
+  const secretLabel = slot.kind === "field" ? slot.label : t("passwordPrompt.title.jumpHost");
   return await requestPassword(host, username, notice, "password", {
     allowSave,
+    secretLabel,
     ...(label ? { label } : {}),
   });
 }
