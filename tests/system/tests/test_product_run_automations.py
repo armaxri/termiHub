@@ -335,7 +335,9 @@ class TestProductRunAutomations(
             "automations.schedule",
             "A 1-minute schedule plays the macro on the local connection by itself",
             expect="Settings -> Schedules with the schedule switched off after its run, its "
-            "history showing one completed attempt",
+            "history showing one completed attempt; the row leads with its name, its dot is grey "
+            "(not green) once switched off, 'Disabled' sits on the line under the name in "
+            "sentence case, and the switch and delete are visible without a hover (#5612)",
             screenshot=False,
         ):
             self.require("automations.macro.edit", "automations.targets")
@@ -346,6 +348,7 @@ class TestProductRunAutomations(
             started = time.monotonic()
             self.set_schedule_enabled(sid, True)
             self.shot(label="enabled")
+            self._grade_schedule_row(sid, enabled=True)
             try:
                 attempt = self.wait(
                     lambda: next(iter((self.schedule(sid) or {}).get("history") or []), None),
@@ -359,3 +362,37 @@ class TestProductRunAutomations(
             finally:
                 self.set_schedule_enabled(sid, False)
             self.shot(label="disabled")
+            self._grade_schedule_row(sid, enabled=False)
+
+    def _grade_schedule_row(self, sid: str, *, enabled: bool) -> None:
+        """Grade a Settings -> Schedules row (#5612).
+
+        The leading dot shows whether the schedule is on (the disabled tone
+        when off, never the last run's green); the state line ("Disabled",
+        "Next: …") is sentence case and follows the name; the enable switch
+        and delete are visible without a hover.
+        """
+        dot = self.driver.get_attribute(f"schedule-dot-{sid}", "class") or ""
+        self.evidence(f"row dot (enabled={enabled}): {dot}")
+        if enabled:
+            assert "status-dot--disabled" not in dot, f"an enabled schedule's dot is grey: {dot}"
+        else:
+            assert "status-dot--disabled" in dot, f"a disabled schedule's dot is not grey: {dot}"
+            assert "status-dot--success" not in dot, f"a disabled schedule's dot is green: {dot}"
+        status_id = f"schedule-status-{sid}"
+        text = self.driver.get_text(status_id).strip()
+        transform = self.driver.get_computed_style("text-transform", status_id)
+        self.evidence(f"state line: {text!r} (text-transform {transform})")
+        if not enabled:
+            assert text == "Disabled", f"state line of a disabled schedule: {text!r}"
+        assert transform != "uppercase", f"the state line is rendered uppercase: {text!r}"
+        assert text[:1].isupper() and not text.isupper(), f"not sentence case: {text!r}"
+        name = self.driver.measure_element(f"schedule-name-{sid}")["rect"]
+        state = self.driver.measure_element(status_id)["rect"]
+        below = state["y"] >= name["y"] + name["height"] - 1
+        after = state["x"] >= name["x"] + name["width"] - 1
+        assert below or after, f"the state {state} leads the name {name}"
+        row = self.driver.get_attribute(f"schedule-item-{sid}", "class") or ""
+        assert "sidebar-list-item--actions-visible" in row, f"row actions hidden behind hover: {row}"
+        for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
+            assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
