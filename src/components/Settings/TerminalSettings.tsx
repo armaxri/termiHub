@@ -8,6 +8,7 @@ import { SettingDefaultMarker } from "./SettingDefaultMarker";
 import type { SelectOption } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { SyntaxHighlightingSettings } from "./SyntaxHighlightingSettings";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Sentinel for the "platform default" right-click option (Radix Select forbids empty-string item values). */
 const RIGHT_CLICK_PLATFORM_DEFAULT = "__platform_default__";
@@ -42,7 +43,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
   return (
     <>
       <div className="settings-panel__category">
-        <h3 className="settings-panel__category-title">Terminal</h3>
+        <SettingsSectionHeading>Terminal</SettingsSectionHeading>
         {show("defaultHorizontalScrolling") && (
           <SettingsField
             label="Default horizontal scrolling"

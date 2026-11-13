@@ -788,3 +788,58 @@ class TestProductRunSettingsThemes(
             if self.driver.exists("settings-default-shell-integration"):
                 problems.append("the shell-hook toggle still shows under General")
             assert not problems, "; ".join(problems)
+
+    #: Computed properties every settings section heading shares (#5634).
+    _HEADING_STYLE = (
+        "font-size", "font-weight", "letter-spacing", "line-height", "font-style",
+        "text-transform", "color", "margin-top", "padding-bottom",
+        "border-bottom-width", "border-bottom-style",
+    )
+
+    def test_08_section_heading_style(self):
+        """Every settings category's section headings share one style (#5634)."""
+        with self.step(
+            "settings.section-headings",
+            "Every settings category uses the shared section heading: same size, weight, "
+            "colour and divider spacing on every page (#5634)",
+            expect="Settings ▸ X server with a sentence-case heading over a thin divider, "
+            "styled like every other category's headings",
+        ):
+            styles: dict[str, tuple[str, ...]] = {}
+            missing = []
+            for category in SETTINGS_CATEGORIES:
+                if not self.driver.exists(f"settings-nav-{category}"):
+                    continue
+                self.open_settings_category(category)
+                time.sleep(0.4)  # let the previous category's headings unmount
+                try:
+                    self.wait(
+                        lambda: self.driver.exists("settings-section-heading"),
+                        timeout=5.0, what=f"a section heading under {category}",
+                    )
+                except AssertionError:
+                    missing.append(category)
+                    continue
+                styles[category] = tuple(
+                    self.driver.get_computed_style(prop, "settings-section-heading")
+                    for prop in self._HEADING_STYLE
+                )
+            variants: dict[tuple[str, ...], list[str]] = {}
+            for category, style in styles.items():
+                variants.setdefault(style, []).append(category)
+            for style, categories in variants.items():
+                self.evidence(f"{dict(zip(self._HEADING_STYLE, style))}: {categories}")
+            problems = []
+            if missing:
+                problems.append(f"no shared section heading in {missing}")
+            if len(variants) > 1:
+                problems.append(f"{len(variants)} different heading styles across categories")
+            for style in variants:
+                props = dict(zip(self._HEADING_STYLE, style))
+                if props["text-transform"] not in ("none", ""):
+                    problems.append(f"heading text-transform {props['text-transform']!r}")
+                if props["font-style"] == "italic":
+                    problems.append("italic heading")
+                if props["border-bottom-style"] == "none":
+                    problems.append("heading without a divider")
+            assert not problems, "; ".join(problems)

@@ -11,6 +11,7 @@ import { SettingsField } from "./SettingsField";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -113,7 +114,7 @@ export function ExternalFilesSettings() {
     <div className="settings-panel__category" data-testid="settings-external-files">
       <div className="settings-panel__section">
         <div className="settings-panel__section-header">
-          <h3 className="settings-panel__section-title">External connection files</h3>
+          <SettingsSectionHeading>External connection files</SettingsSectionHeading>
           <div className="settings-panel__section-actions">
             <Button
               variant="secondary"
@@ -218,7 +219,7 @@ export function ExternalFilesSettings() {
 
       <div className="settings-panel__section">
         <div className="settings-panel__section-header">
-          <h3 className="settings-panel__section-title">Advanced</h3>
+          <SettingsSectionHeading>Advanced</SettingsSectionHeading>
         </div>
         <p className="settings-panel__description">
           Default settings for new SSH connections. Individual connections can override these in

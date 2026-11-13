@@ -40,6 +40,7 @@ import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
 import { errorMessage } from "@/utils/errorMessage";
 import { t } from "@/i18n/catalog";
 import "./ShellIntegrationSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** The Linux file managers rendered as install toggles, with their detection id. */
 const LINUX_MANAGERS: {
@@ -191,7 +192,7 @@ export function ShellIntegrationSettings() {
   return (
     <div className="settings-panel__section" data-testid="settings-shell-integration">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">{t("fileManagerIntegration.title")}</h3>
+        <SettingsSectionHeading>{t("fileManagerIntegration.title")}</SettingsSectionHeading>
       </div>
       <p className="settings-panel__description" data-testid="shell-integration-description">
         {t("fileManagerIntegration.description")}

@@ -44,6 +44,7 @@ import { showUndoToast } from "@/utils/undoableDelete";
 import { restoreTheme } from "./restoreTheme";
 import "./AppearanceSettings.css";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Built-in theme options, hoisted so they are not rebuilt on every render. */
 const BUILTIN_THEME_OPTIONS: SelectOption[] = [
@@ -221,7 +222,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">Appearance</h3>
+      <SettingsSectionHeading>Appearance</SettingsSectionHeading>
       {show("theme") && (
         <>
           <WorkspaceOverrideNotice settingKey="theme" label="Theme" />

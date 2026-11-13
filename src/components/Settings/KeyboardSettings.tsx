@@ -49,6 +49,7 @@ import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { isShortcutCategoryVisible } from "@/utils/experimentalTypes";
 import "./KeyboardSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Searchable text of a keybinding: its label, action id, category, and its
@@ -322,7 +323,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">Keyboard shortcuts</h3>
+      <SettingsSectionHeading>Keyboard shortcuts</SettingsSectionHeading>
 
       <div className="keyboard-settings__search">
         <SearchInput
