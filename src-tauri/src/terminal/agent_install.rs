@@ -664,34 +664,113 @@ pub fn is_managed_windows_install_path(path: &str) -> bool {
     is_windows_path(path) && normalized.ends_with(&suffix)
 }
 
-/// The agent path to store after a deploy/setup reported `installed_path`
-/// (#5522), or `None` to keep `current` unchanged.
+/// The agent path to store after a deploy/update reported `installed_path`
+/// (#5522, #5532), or `None` to keep `current` unchanged.
 ///
-/// Only a Windows install is recorded: it always lands at the managed
+/// **Windows:** an install always lands at the managed
 /// `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, never at the POSIX
-/// default the connect would otherwise run. A POSIX install goes to the path
-/// the deploy was asked for, so the stored path is left alone there.
+/// default the connect would otherwise run, so that path is stored.
 ///
-/// A user-set custom path is **not** overwritten: the Windows install location
-/// is fixed rather than chosen per deploy, so a custom path that names some
-/// other binary was set on purpose and is kept. The stored path is replaced
-/// only when it is unset, empty, the POSIX default (`posix_default`), or an
-/// earlier managed install path in another form (e.g. the host's login shell
-/// changed from PowerShell to Git Bash).
+/// **POSIX:** a deploy/update installs to the stored `agentPath` itself when
+/// that is a custom path ([`custom_posix_agent_path`], #5532), so the stored
+/// path already names the new binary and nothing changes. Only an install to
+/// another non-default path (an explicit `remotePath` override) is stored,
+/// and an install to the POSIX default is never stored (it is what an unset
+/// path runs anyway).
+///
+/// A user-set custom path is **not** overwritten: a custom path that names
+/// some other binary was set on purpose and is kept. The stored path is
+/// replaced only when it is unset, empty, the POSIX default (`posix_default`,
+/// or any other form of it), or an earlier managed install path in another
+/// form (e.g. the host's login shell changed from PowerShell to Git Bash).
 pub fn adopted_agent_path(
     current: Option<&str>,
     installed: &str,
     posix_default: &str,
 ) -> Option<String> {
     let installed = installed.trim();
-    if installed.is_empty() || !is_windows_path(installed) {
+    if installed.is_empty()
+        || (!is_windows_path(installed) && is_posix_default_install_path(installed))
+    {
         return None;
     }
     let replaceable = match current.map(str::trim) {
         None | Some("") => true,
-        Some(path) => path == posix_default || is_managed_windows_install_path(path),
+        Some(path) => {
+            path == posix_default
+                || is_posix_default_install_path(path)
+                || is_managed_windows_install_path(path)
+        }
     };
     (replaceable && current != Some(installed)).then(|| installed.to_string())
+}
+
+/// Whether `path` is the POSIX default install path in any of its forms:
+/// relative to the SSH home (`.local/bin/termihub-agent`), `~/…` or
+/// `$HOME/…`.
+pub fn is_posix_default_install_path(path: &str) -> bool {
+    let path = path.trim();
+    let rest = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("$HOME/"))
+        .unwrap_or(path);
+    rest == POSIX_DEFAULT_INSTALL_PATH
+}
+
+/// The stored `agentPath` a POSIX deploy/update installs to (#5532), or `None`
+/// to install to the POSIX default.
+///
+/// `None` for an unset, empty or default path, and for a Windows path (a
+/// managed Windows install path left over from an earlier host): the default is
+/// what such an agent runs, or should run, on a POSIX host. Any other path is a
+/// custom one the user set, and the next connect launches it, so the update
+/// goes there. Otherwise the update would install to the default and the
+/// connect would keep running the old binary at the custom path.
+pub fn custom_posix_agent_path(agent_path: Option<&str>) -> Option<&str> {
+    let path = agent_path?.trim();
+    (!path.is_empty() && !is_posix_default_install_path(path) && !is_windows_path(path))
+        .then_some(path)
+}
+
+/// Check that `path` can be used verbatim as a POSIX install target and launch
+/// command (#5532).
+///
+/// The install plan and the connect's exec command put the path into a shell
+/// command unquoted, so it may only hold characters no shell treats specially:
+/// ASCII letters, digits and `/ . _ - + , @ : =`, after an optional leading
+/// `~/` or `$HOME/`. Spaces, quotes, `$`, globs and the like are refused
+/// before anything touches the host.
+pub fn validate_posix_agent_path(path: &str) -> Result<(), TerminalError> {
+    let rest = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("$HOME/"))
+        .unwrap_or(path);
+    let safe = !rest.is_empty()
+        && !rest.ends_with('/')
+        && !rest.starts_with('-')
+        && !rest.starts_with('~')
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+,@:=".contains(c));
+    if safe {
+        Ok(())
+    } else {
+        Err(TerminalError::RemoteError(format!(
+            "The agent path {path:?} cannot be used to install the agent: it may only \
+             contain letters, digits and / . _ - + , @ : = (optionally starting with ~/). \
+             Nothing was changed on the host."
+        )))
+    }
+}
+
+/// Whether `output` (of `<path> --version`) comes from a termiHub agent: its
+/// first non-empty line is `termihub-agent <version>`.
+pub fn is_termihub_agent_version_output(output: &str) -> bool {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.starts_with("termihub-agent "))
 }
 
 #[cfg(test)]
