@@ -4,6 +4,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
 import type { ConnectionHighlightingOverride, HighlightRule } from "@/types/syntaxHighlighting";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
+import { DEFAULT_FONT_SIZE, DEFAULT_SCROLLBACK } from "@/components/Terminal/terminalDefaults";
 import {
   Button,
   Checkbox,
@@ -228,8 +229,8 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
   const globalSettings = useProjectedSettings();
 
   const globalFontFamily = globalSettings.fontFamily || "MesloLGS Nerd Font Mono, Cascadia Code, …";
-  const globalFontSize = globalSettings.fontSize ?? 14;
-  const globalScrollback = globalSettings.scrollbackBuffer ?? 10000;
+  const globalFontSize = globalSettings.fontSize ?? DEFAULT_FONT_SIZE;
+  const globalScrollback = globalSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK;
   const globalCursorStyle = globalSettings.cursorStyle ?? "block";
   const globalCursorBlink = globalSettings.cursorBlink ?? true;
   const globalHorizontalScrolling = globalSettings.defaultHorizontalScrolling ?? false;
