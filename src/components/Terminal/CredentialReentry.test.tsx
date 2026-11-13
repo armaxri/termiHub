@@ -396,7 +396,7 @@ describe("authFailed overlay — credential re-entry", () => {
         key_type: "ssh-ed25519",
         fingerprint: "SHA256:NEW",
         changed: true,
-        previous_fingerprints: ["SHA256:OLD"],
+        previous_keys: [{ key_type: "ssh-ed25519", fingerprint: "SHA256:OLD" }],
         owner: null,
       })
     );
