@@ -215,9 +215,14 @@ describe("BackupRestoreDialog with credential storage off (#5631)", () => {
     expect(query("backup-restore-credentials-skipped")).not.toBeNull();
   });
 
-  it("shows Restore as a plain filled primary, not the Preview button's success state", async () => {
+  it("shows Restore filled (destructive while replacing), never the Preview success state", async () => {
     await openPreview();
-    const submit = query("backup-restore-submit")!;
+    let submit = query("backup-restore-submit")!;
+    // Settings is replaced by default: the action cannot be undone.
+    expect(submit.className).toMatch(/ui-btn--danger/);
+    expect(submit.className).not.toMatch(/ui-btn--success/);
+    await click("backup-restore-include-settings");
+    submit = query("backup-restore-submit")!;
     expect(submit.className).toMatch(/ui-btn--primary/);
     expect(submit.className).not.toMatch(/ui-btn--success/);
   });

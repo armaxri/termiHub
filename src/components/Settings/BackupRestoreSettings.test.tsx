@@ -438,7 +438,7 @@ describe("BackupRestoreSettings", () => {
 
     // The newer section cannot be chosen; replacing settings is warned about.
     expect((query("backup-restore-include-workflows") as HTMLButtonElement).disabled).toBe(true);
-    expect(query("backup-restore-replace-warning")?.textContent).toMatch(/Settings/);
+    expect(query("backup-restore-replace-warning")?.textContent).toMatch(/current settings:/);
     expect(isChecked("backup-restore-include-credentials")).toBe(true);
 
     // Trust-store conflicts always keep the current keys: no strategy to pick,
