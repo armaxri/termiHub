@@ -67,11 +67,18 @@
   background: var(--bg-hover);
 }
 
-.plugin-row--selected,
-.plugin-row--selected:hover {
-  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+/* #5591: the shared selected-row surfaces, as in the connection tree. */
+.plugin-row--selected {
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected
+     (or a theme's opaque --selected-row-bg). */
   --text-secondary: var(--text-secondary-on-selection);
-  background: var(--bg-hover);
+  --text-muted: var(--text-muted-on-selection);
+  background: var(--selected-row-bg);
+  box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
+}
+
+.plugin-row--selected:hover {
+  background: var(--selected-row-hover-bg);
 }
 
 .plugin-row:focus-visible {

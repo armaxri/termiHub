@@ -104,14 +104,18 @@
   background-color: var(--bg-hover);
 }
 
+/* #5591: the shared selected-row surfaces, as in the connection tree. */
 .file-browser__row-wrapper--selected {
-  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected
+     (or a theme's opaque --selected-row-bg). */
   --text-secondary: var(--text-secondary-on-selection);
-  background-color: var(--bg-active);
+  --text-muted: var(--text-muted-on-selection);
+  background-color: var(--selected-row-bg);
+  box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
 }
 
 .file-browser__row-wrapper--selected:hover {
-  background-color: var(--bg-active);
+  background-color: var(--selected-row-hover-bg);
 }
 
 /* The rename editor overlays its row's virtual slot (the row's option is not
@@ -233,8 +237,19 @@
   opacity: 1;
 }
 
+/* The overlay must hide the name's tail, but the default selection is a
+   translucent tint: an opaque sidebar layer under a tint layer rebuilds the
+   row's own colour, and both fade in from transparent (#5591). */
 .file-browser__row-wrapper--selected .file-browser__meta {
-  background: linear-gradient(to right, transparent, var(--bg-active) var(--spacing-xl));
+  background:
+    linear-gradient(to right, transparent, var(--selected-row-bg) var(--spacing-xl)),
+    linear-gradient(to right, transparent, var(--sidebar-bg) var(--spacing-xl));
+}
+
+.file-browser__row-wrapper--selected:hover .file-browser__meta {
+  background:
+    linear-gradient(to right, transparent, var(--selected-row-hover-bg) var(--spacing-xl)),
+    linear-gradient(to right, transparent, var(--sidebar-bg) var(--spacing-xl));
 }
 
 .file-browser__size,

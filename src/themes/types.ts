@@ -116,23 +116,31 @@ export interface ThemeDefinition {
    */
   baseTheme?: string;
   /**
-   * Optional opaque surfaces for selected rows in the sidebar (#5562), drawn
-   * on `sidebarBg`. Without it, those rows paint the `--bg-selected` /
-   * `--bg-selected-hover` accent tints (see `styles/variables.css`) and carry
-   * no indicator bar. A theme built from a fixed palette (Solarized Light
-   * and Dark) sets palette colours here, so a selection never reads as a blended,
-   * off-palette grey. Built-in themes only: custom and plugin themes always
-   * use the tint defaults.
+   * Optional opaque surfaces for selected rows (#5562, #5591), drawn on
+   * `sidebarBg` (connection tree, file browser, plugin list) and, through
+   * `secondary`, on `bgSecondary` (transfer panes). Without it, those rows
+   * paint the `--bg-selected` / `--bg-selected-hover` accent tints (see
+   * `styles/variables.css`) and carry no indicator bar. A theme built from a
+   * fixed palette (Solarized Light and Dark) sets palette colours here, so a
+   * selection never reads as a blended, off-palette grey. Built-in themes
+   * only: custom and plugin themes always use the tint defaults.
    */
   selection?: ThemeSelection;
 }
 
 /** Opaque selected-row surfaces a theme may supply in place of the accent tints. */
 export interface ThemeSelection {
-  /** Selected row background (`--sidebar-selected-bg`). */
+  /** Selected row background on the sidebar (`--selected-row-bg`). */
   bg: string;
-  /** Hovered selected row background (`--sidebar-selected-hover-bg`). */
+  /** Hovered selected row background on the sidebar (`--selected-row-hover-bg`). */
   bgHover: string;
-  /** The 2px left bar on a selected row (`--sidebar-selected-indicator`). */
+  /** The 2px left bar on a selected row, on every surface (`--selected-row-indicator`). */
   indicator: string;
+  /**
+   * Rows on a `bgSecondary` pane (the transfer view), for a theme whose
+   * `bgSecondary` equals or sits too close to `bg`
+   * (`--selected-row-secondary-bg` / `--selected-row-secondary-hover-bg`).
+   * Omitted, those rows use `bg` / `bgHover`.
+   */
+  secondary?: { bg: string; bgHover: string };
 }

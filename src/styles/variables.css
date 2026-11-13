@@ -15,12 +15,17 @@
      tint stronger than 18% stays below AA, so hover lightens the tint instead.
      Graded by src/themes/contrast.test.ts. */
   --bg-selected-hover: color-mix(in srgb, var(--accent-color) 10%, transparent);
-  /* Selected rows in the sidebar's connection tree (#5562). Default to the
-     accent tints with no indicator bar; a theme with a fixed palette (Solarized
-     Light and Dark, #5582) overrides all three through ThemeDefinition.selection. */
-  --sidebar-selected-bg: var(--bg-selected);
-  --sidebar-selected-hover-bg: var(--bg-selected-hover);
-  --sidebar-selected-indicator: transparent;
+  /* Selected rows in every selectable list (#5562, #5591): the connection
+     tree, file browser, plugin list and transfer panes. Default to the accent
+     tints with no indicator bar; a theme with a fixed palette (Solarized Light
+     and Dark, #5582) overrides them through ThemeDefinition.selection. The
+     plain tokens are drawn on the sidebar; the -secondary pair is for rows on
+     --bg-secondary panes (the transfer view) and falls back to the plain pair. */
+  --selected-row-bg: var(--bg-selected);
+  --selected-row-hover-bg: var(--bg-selected-hover);
+  --selected-row-indicator: transparent;
+  --selected-row-secondary-bg: var(--selected-row-bg);
+  --selected-row-secondary-hover-bg: var(--selected-row-hover-bg);
 
   /* Activity bar */
   --activity-bar-bg: #0b0d12;

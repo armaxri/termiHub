@@ -31,7 +31,6 @@ const ROW_STATE_REDIRECTS: [string, string][] = [
   ["components/MacroSidebar/MacroEditorDialog.css", ".macro-editor__step:hover"],
   ["components/OpenConnections/OpenConnectionsModal.css", ".oc-row:hover"],
   ["components/Plugins/Plugins.css", ".plugin-row:hover"],
-  ["components/Plugins/Plugins.css", ".plugin-row--selected"],
   [
     "components/RecentSessionsSidebar/RecentSessionsSidebar.css",
     ".recent-sessions__autocomplete-item:hover",
@@ -40,7 +39,6 @@ const ROW_STATE_REDIRECTS: [string, string][] = [
   ["components/Sidebar/ConnectionList.css", ".connection-tree__folder:hover"],
   ["components/Sidebar/ConnectionList.css", ".connection-tree__folder--drop-over"],
   ["components/Sidebar/FileBrowser.css", ".file-browser__row-wrapper:hover"],
-  ["components/Sidebar/FileBrowser.css", ".file-browser__row-wrapper--selected"],
   ["components/Sidebar/FileBrowser.css", ".file-bookmarks__row:hover"],
   ["components/SidebarListItem/SidebarListItem.css", ".sidebar-list-item:hover"],
   ["components/StatusBar/StatusBar.css", ".process-table__row:hover"],

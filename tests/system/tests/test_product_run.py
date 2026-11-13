@@ -543,16 +543,16 @@ class TestProductRunChecklist(
             # app's :hover rules) and grade the background the browser rendered.
             with self.hovered(item):
                 hover = composite(self._settled_background(item), sidebar)
-                # #5562: the connection tree paints the sidebar selection tokens.
+                # #5562: the connection tree paints the shared selection tokens.
                 token = composite(
                     mix_with_transparent(
-                        self.driver.get_computed_style("--sidebar-selected-hover-bg"),
+                        self.driver.get_computed_style("--selected-row-hover-bg"),
                         self._resolve,
                     ),
                     sidebar,
                 )
                 self.evidence(
-                    f"rendered hover {hover.hex()}, --sidebar-selected-hover-bg {token.hex()}"
+                    f"rendered hover {hover.hex()}, --selected-row-hover-bg {token.hex()}"
                 )
                 self.shot(label="hovered")
                 assert not same_color(hover, rest), "the row did not change on hover"

@@ -132,15 +132,20 @@
   background-color: var(--bg-hover);
 }
 
+/* #5591: the shared selected-row surfaces; the -secondary pair because the
+   panes paint --bg-secondary (base2 in Solarized Light, where the sidebar
+   selection colour would vanish). */
 .transfer-pane__row--selected {
-  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected
+     (or a theme's opaque --selected-row-secondary-bg). */
   --text-secondary: var(--text-secondary-on-selection);
   --text-muted: var(--text-muted-on-selection);
-  background-color: var(--bg-selected);
+  background-color: var(--selected-row-secondary-bg);
+  box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
 }
 
 .transfer-pane__row--selected:hover {
-  background-color: var(--bg-selected-hover);
+  background-color: var(--selected-row-secondary-hover-bg);
 }
 
 .transfer-pane__list:focus-visible .transfer-pane__row--active {
