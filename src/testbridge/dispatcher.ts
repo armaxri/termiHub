@@ -674,6 +674,9 @@ function measureElement(el: Element, descendants?: "buttons" | "text"): Measured
       rect: boxOf(node),
       visible: isRendered(node),
       overflows: node.scrollWidth > node.clientWidth,
+      // "ellipsis" tells an ellipsized name from a hard cut (#5623).
+      textOverflow:
+        (node.ownerDocument.defaultView ?? window).getComputedStyle(node).textOverflow || "clip",
     }));
   }
   return result;

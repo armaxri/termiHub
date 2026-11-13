@@ -189,6 +189,31 @@ export function formatRelativeTime(dateString: string, options: RelativeTimeOpti
 }
 
 /**
+ * Format a date as a column-width age label for the file list (#5623): `"now"`,
+ * `"5m"`, `"3h"`, `"2d"` within a week, then the localized month + day within
+ * the current year, and only the year before that. Pair it with
+ * {@link formatAbsoluteTime} as the tooltip. Returns an empty string for a
+ * missing or unparseable input; a future time (clock skew) reads `"now"`.
+ */
+export function formatCompactAge(dateString: string, now: number = Date.now()): string {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return "";
+  const mins = Math.floor(Math.max(0, now - date.getTime()) / 60_000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  const locale = resolveUiLocale();
+  if (date.getFullYear() === new Date(now).getFullYear()) {
+    return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
+  }
+  return String(date.getFullYear());
+}
+
+/**
  * Format a date to a full, localized absolute timestamp (date + time), suitable
  * for a hover `title` next to the coarser {@link formatRelativeTime} label
  * (#2798). Returns an empty string for a missing or unparseable input so callers
