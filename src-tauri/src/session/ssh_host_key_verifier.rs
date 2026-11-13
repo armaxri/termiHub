@@ -368,6 +368,15 @@ mod tests {
             key_type: "ssh-ed25519".to_string(),
             fingerprint: fp.to_string(),
             known_hosts,
+            known_hosts_previous: Vec::new(),
+        }
+    }
+
+    /// A previously-trusted key as the prompt carries it.
+    fn prev(key_type: Option<&str>, fp: &str) -> PreviousHostKey {
+        PreviousHostKey {
+            key_type: key_type.map(str::to_string),
+            fingerprint: fp.to_string(),
         }
     }
 
@@ -480,7 +489,7 @@ mod tests {
         assert!(!prompt.changed, "first contact is not a changed-key prompt");
         assert_eq!(prompt.fingerprint, "SHA256:BB");
         assert!(
-            prompt.previous_fingerprints.is_none(),
+            prompt.previous_keys.is_none(),
             "first contact has no previously-trusted fingerprint to show"
         );
         // Remembered: a second verify is silent.
@@ -541,8 +550,8 @@ mod tests {
         let prompt = sink.prompts.lock().unwrap()[0].clone();
         assert!(prompt.changed, "a changed key must flag the MITM warning");
         assert_eq!(
-            prompt.previous_fingerprints,
-            Some(vec!["SHA256:AA".to_string()]),
+            prompt.previous_keys,
+            Some(vec![prev(None, "SHA256:AA")]),
             "a changed key must carry the previously-trusted fingerprint for comparison"
         );
         // The impostor key was not remembered; the original trust stands.
@@ -612,8 +621,67 @@ mod tests {
             "a key changed in ~/.ssh/known_hosts must flag the MITM warning"
         );
         assert!(
-            prompt.previous_fingerprints.is_none(),
-            "a key changed only in ~/.ssh/known_hosts has no termiHub-stored prior to show"
+            prompt.previous_keys.is_none(),
+            "no recorded key was passed in, so there is no prior to show"
+        );
+    }
+
+    /// A key changed in `~/.ssh/known_hosts` carries the key that file had
+    /// recorded — with its key type — so the prompt can show what was trusted
+    /// before beside what is presented now (#5627).
+    #[tokio::test]
+    async fn changed_in_system_known_hosts_carries_the_recorded_key() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let mut presented = info_kh("h", 22, "SHA256:NEW", KnownHostsStatus::Changed);
+        presented.known_hosts_previous = vec![RecordedHostKey {
+            key_type: "ssh-ed25519".to_string(),
+            fingerprint: "SHA256:OLD".to_string(),
+        }];
+        let v = verifier.clone();
+        let handle = tokio::spawn(async move { v.verify(&presented).await });
+        resolve_when_ready(&verifier, &sink, false, false).await;
+
+        assert!(!handle.await.unwrap(), "rejecting the changed key aborts");
+        let prompt = sink.prompts.lock().unwrap()[0].clone();
+        assert!(prompt.changed);
+        assert_eq!(
+            prompt.previous_keys,
+            Some(vec![prev(Some("ssh-ed25519"), "SHA256:OLD")]),
+            "the key recorded in ~/.ssh/known_hosts is shown as previously trusted"
+        );
+    }
+
+    /// When both termiHub's store and `~/.ssh/known_hosts` flag the change, the
+    /// prompt lists each previously-trusted key once, preferring the entry that
+    /// knows the key type (#5627).
+    #[tokio::test]
+    async fn changed_in_both_stores_lists_each_prior_once() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:OLD");
+        store.remember("h:22", "SHA256:OLDER");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let mut presented = info_kh("h", 22, "SHA256:NEW", KnownHostsStatus::Changed);
+        presented.known_hosts_previous = vec![RecordedHostKey {
+            key_type: "ssh-ed25519".to_string(),
+            fingerprint: "SHA256:OLD".to_string(),
+        }];
+        let v = verifier.clone();
+        let handle = tokio::spawn(async move { v.verify(&presented).await });
+        resolve_when_ready(&verifier, &sink, false, false).await;
+
+        assert!(!handle.await.unwrap());
+        let prompt = sink.prompts.lock().unwrap()[0].clone();
+        assert_eq!(
+            prompt.previous_keys,
+            Some(vec![
+                prev(Some("ssh-ed25519"), "SHA256:OLD"),
+                prev(None, "SHA256:OLDER"),
+            ]),
         );
     }
 
@@ -635,8 +703,8 @@ mod tests {
         let prompt = sink.prompts.lock().unwrap()[0].clone();
         assert!(prompt.changed);
         assert_eq!(
-            prompt.previous_fingerprints,
-            Some(vec!["SHA256:AA".to_string(), "SHA256:BB".to_string()]),
+            prompt.previous_keys,
+            Some(vec![prev(None, "SHA256:AA"), prev(None, "SHA256:BB")]),
             "all remembered fingerprints must be shown for a rotated host"
         );
     }
