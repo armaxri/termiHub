@@ -62,6 +62,12 @@ export interface SettingsFieldProps {
    * a `Toggle` or `Button`, stacked for everything else.
    */
   layout?: SettingsFieldLayout;
+  /**
+   * Optional element at the right end of the label row — e.g. a setting's
+   * "Default" tag or "Reset to default" button (`SettingDefaultMarker`),
+   * kept off the control row so every control spans the same width (#5632).
+   */
+  labelAccessory?: ReactNode;
 }
 
 /**
@@ -79,6 +85,7 @@ export function SettingsField({
   error,
   children,
   layout,
+  labelAccessory,
 }: SettingsFieldProps): ReactElement {
   // Lets the panel show its "Saved" tick beside this field's label once an
   // edit made here has been auto-saved (#5562).
@@ -87,7 +94,14 @@ export function SettingsField({
   return (
     <Field
       {...{ [SETTINGS_FIELD_ATTR]: fieldId }}
-      labelAccessory={saved ? <SettingsSavedMark /> : undefined}
+      labelAccessory={
+        saved || labelAccessory ? (
+          <>
+            {saved && <SettingsSavedMark />}
+            {labelAccessory}
+          </>
+        ) : undefined
+      }
       variant="settings"
       layout={layout ?? settingsFieldLayout(children)}
       label={label}
