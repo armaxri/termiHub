@@ -609,7 +609,8 @@ fn bash_on_the_canonical_cue() -> Option<String> {
 }
 
 /// Start `bash` with the integration and an initial command in a scratch
-/// `HOME` whose `.bash_profile` is `profile`.
+/// `HOME` whose `.bash_profile` and `.bashrc` are `profile` (a shell given
+/// as a path starts as an interactive non-login shell).
 #[cfg(unix)]
 async fn start_old_bash(
     bash: &str,
@@ -624,6 +625,7 @@ async fn start_old_bash(
     use super::initial_command::{env_vars, local_shell, recording_manager};
     let home = tempfile::tempdir().expect("temp home");
     std::fs::write(home.path().join(".bash_profile"), profile).expect("profile");
+    std::fs::write(home.path().join(".bashrc"), profile).expect("bashrc");
     for dir in [".config", ".local/share", ".local/state", ".cache"] {
         std::fs::create_dir_all(home.path().join(dir)).expect("scratch dir");
     }
@@ -690,7 +692,8 @@ async fn old_bash_slow_rc_runs_the_initial_command_once_after_the_setup() {
     let out = text();
     let _ = manager.close_session(&sid).await;
     assert!(failed, "the failed command got no error mark: {out:?}");
-    assert!(out.find("RC-DONE") < out.find(RAN), "{out:?}");
+    let rc_done = out.find("RC-DONE").expect("the rc ran");
+    assert!(rc_done < out.find(RAN).expect("ran"), "{out:?}");
     assert_eq!(out.matches(RAN).count(), 1, "ran once: {out:?}");
     assert!(!out.contains("command not found"), "{out:?}");
     assert_eq!(
@@ -734,5 +737,8 @@ async fn old_bash_without_the_setups_mark_holds_the_initial_command() {
         written(&writes).is_empty(),
         "the initial command was typed blind: {out:?}"
     );
-    assert!(!out.contains("RC-DONE"), "{out:?}");
+    assert!(
+        out.contains("RC-START") && !out.contains("RC-DONE"),
+        "{out:?}"
+    );
 }
