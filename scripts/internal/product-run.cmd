@@ -7,7 +7,7 @@ REM Usage: scripts\internal\product-run.cmd [OPTIONS] [-- PYTEST ARGS]
 REM
 REM Options (same as product-run.sh):
 REM   --config FILE    setup input (default: product-run.local.json at the repo root)
-REM   --build          (re)build the test app first
+REM   --build          (re)build the test app first, RDP sidecar included
 REM   --no-open        do not open the progress page in the browser
 REM   --unattended     nobody is watching: human steps become "not tested" at once
 REM   --keep-serving   keep serving the progress page after the run until Ctrl-C

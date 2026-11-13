@@ -7,7 +7,9 @@
 #                   template: product-run.local.json.example). Missing inputs are
 #                   reported as "not tested".
 #   --build         (re)build the test app first (scripts/internal/build-system-test-app.sh
-#                   --debug). Without it the run builds only when no test app exists.
+#                   --debug), the RDP sidecar with its rdp_test_server example included
+#                   (TERMIHUB_SKIP_RDP_HELPER=1 opts out). Without it the run builds only
+#                   when no test app exists, and then skips the RDP sidecar.
 #   --no-open       do not open the progress page in the browser
 #   --unattended    nobody is watching: human steps become "not tested" at once
 #   --keep-serving  keep serving the progress page after the run until Ctrl-C
@@ -83,9 +85,11 @@ have_app() {
     [ -x "target/release/$APP_SUFFIX" ] || [ -x "target/debug/$APP_SUFFIX" ]
 }
 if [ "$BUILD" -eq 1 ] || ! have_app; then
-    echo "building the test app (debug, with the test bridge)..."
-    TERMIHUB_SKIP_RDP_HELPER="${TERMIHUB_SKIP_RDP_HELPER:-1}" \
-        ./scripts/internal/build-system-test-app.sh --debug
+    # --build covers the RDP steps too (sidecar + rdp_test_server); the implicit
+    # first build stays quick and skips them unless asked.
+    SKIP_RDP="${TERMIHUB_SKIP_RDP_HELPER:-$([ "$BUILD" -eq 1 ] && echo 0 || echo 1)}"
+    echo "building the test app (debug, with the test bridge; RDP sidecar skipped=$SKIP_RDP)..."
+    TERMIHUB_SKIP_RDP_HELPER="$SKIP_RDP" ./scripts/internal/build-system-test-app.sh --debug
 fi
 
 # A locked screen stops WKWebView from painting and from answering the test
@@ -201,6 +205,8 @@ import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
 counts = ", ".join(f"{n} {k}" for k, n in doc["summary"].items() if n)
 print(f"\nproduct run {doc['run_id']}: {doc['state']} ({counts})")
+for hint in (doc.get("hints") or {}).values():
+    print(f"  setup hint: {hint}")
 for step in doc["steps"]:
     if step["status"] != "pass":
         print(f"  {step['status']:<10} {step['id']}: {step.get('reason') or ''}")
