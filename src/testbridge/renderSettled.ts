@@ -85,7 +85,7 @@ function insideTerminal(node: Node): boolean {
  */
 export async function renderSettled(
   root: ParentNode,
-  command: RenderSettledCommand
+  command: Omit<RenderSettledCommand, "action">
 ): Promise<RenderSettledResult> {
   const doc = root instanceof Document ? root : ((root as Element).ownerDocument ?? document);
   const view = doc.defaultView ?? window;
