@@ -16,7 +16,8 @@
 //!   prominent possible-MITM warning; never auto-accept.
 //!
 //! "Accept for host" (`accept && remember`) persists the fingerprint so the host
-//! is not prompted again; plain "Accept" is session-scoped; "Reject" (or the
+//! is not prompted again — on a changed key ("Replace trusted key") it replaces
+//! the previously-trusted key(s) for the host (#5627); plain "Accept" is session-scoped; "Reject" (or the
 //! dialog being dismissed / the prompt future being dropped) aborts the connect.
 //!
 //! When the connect gives up while the prompt is open (abort, timeout) the core
@@ -326,7 +327,10 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         if !decision.accept {
             return HostKeyDecision::RejectedByUser;
         }
-        if decision.remember {
+        if decision.remember && changed {
+            // "Replace trusted key": the old key is no longer trusted (#5627).
+            self.trust_store.replace(&host_port, &info.fingerprint);
+        } else if decision.remember {
             self.trust_store.remember(&host_port, &info.fingerprint);
         }
         HostKeyDecision::Accepted
