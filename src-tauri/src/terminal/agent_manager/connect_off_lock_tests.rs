@@ -415,3 +415,30 @@ async fn give_up_clears_alive_before_disconnected_is_observed() {
     );
     assert!(!manager.agents.lock().unwrap().contains_key("agent-a"));
 }
+
+/// #5608: with no agent installed the exec "succeeds" and the channel closes
+/// before `initialize` is answered. The connect fails fast with the
+/// `agent_missing` code, so the error dialog offers "Set up agent".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connect_without_an_installed_agent_reports_agent_missing() {
+    trust_all_host_keys();
+    let server = FakeAgentSshd::serve(InitBehavior::NotInstalled).await;
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(new_manager(&app));
+
+    let outcome = tokio::time::timeout(
+        REACH_HANDSHAKE,
+        spawn_connect(&manager, "agent-missing", &server),
+    )
+    .await
+    .expect("a missing agent fails the connect without waiting out the handshake bound")
+    .expect("connect join");
+    match outcome {
+        Err(e) => assert_eq!(
+            e.code(),
+            crate::utils::errors::IpcErrorCode::AgentMissing,
+            "got: {e}"
+        ),
+        Ok(_) => panic!("a connect with no agent installed must fail"),
+    }
+}

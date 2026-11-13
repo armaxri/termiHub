@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from ..ui.base import HarnessMixin
+from ..window_capture import CaptureUnavailable, macos_window_owner_pids
 from .ui import run_dev_name, run_recorder
 
 #: The namespace tag every run service carries (see ``product-run.sh``'s cleanup).
@@ -56,6 +57,40 @@ def keychain_has(service: str, account: str) -> bool:
     return result.returncode == 0
 
 
+#: How long a store switch may take before it counts as stalled (a keychain
+#: prompt seen in that window turns it into a human step instead).
+SWITCH_WINDOW = 20.0
+
+#: The system processes that draw macOS keychain / authorization prompts.
+KEYCHAIN_PROMPT_PROCESSES = ("SecurityAgent", "coreautha")
+
+
+def keychain_prompt_on_screen() -> bool:
+    """Whether a macOS keychain/authorization prompt is on screen right now.
+
+    True only when a ``SecurityAgent`` (or ``coreautha``) process owns an
+    on-screen window. Those are system processes found by their exact name;
+    the termiHub app is never looked up by name. Always False off macOS.
+    """
+    if sys.platform != "darwin":
+        return False
+    pids: set[int] = set()
+    for name in KEYCHAIN_PROMPT_PROCESSES:
+        try:
+            out = subprocess.run(
+                ["pgrep", "-x", name], capture_output=True, text=True, timeout=10
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        pids.update(int(tok) for tok in out.split() if tok.isdigit())
+    if not pids:
+        return False
+    try:
+        return bool(pids & macos_window_owner_pids())
+    except CaptureUnavailable:
+        return False
+
+
 class CredsPhaseUi(HarnessMixin):
     """Store switching, vault/keychain reads and the backup dialogs."""
 
@@ -79,8 +114,9 @@ class CredsPhaseUi(HarnessMixin):
     def switch_store(self, mode: str, *, shot_label: Optional[str] = "migration") -> str:
         """Pick ``mode`` (``os_keychain`` / ``none``) in Security and confirm the migration.
 
-        Returns the migration result text. A keychain Allow sheet that holds the
-        switch up becomes a human step.
+        Returns the migration result text. Only a keychain prompt that is really
+        on screen (see :func:`keychain_prompt_on_screen`) becomes a human step;
+        a switch that stalls without one fails with what the app reports.
         """
         testid = {"os_keychain": "storage-mode-os-keychain", "none": "storage-mode-none"}[mode]
         self.open_settings_category("security")
@@ -91,18 +127,58 @@ class CredsPhaseUi(HarnessMixin):
         )
         self.shot(label="confirm-switch")
         self.driver.click("confirm-switch-confirm-btn")
-        if not self._within(lambda: self.store_mode() == mode, 20.0):
+
+        def switched() -> bool:
+            return self.store_mode() == mode
+
+        if not self._within(lambda: switched() or keychain_prompt_on_screen(), SWITCH_WINDOW):
+            raise AssertionError(self._switch_stall_reason(mode))
+        if not switched():
+            self.shot(label="keychain-prompt")
             self.human_step(
-                "If macOS asks whether the termiHub dev build may use the keychain, click Allow.",
+                "macOS asks whether the termiHub dev build may use the keychain: click Allow.",
                 f"Settings ▸ Security shows the {mode} store selected",
             )
-            self.wait(lambda: self.store_mode() == mode, timeout=30.0, what=f"the {mode} store")
+            if not self._within(switched, 30.0):
+                raise AssertionError(self._switch_stall_reason(mode))
         result = ""
         if self._within(lambda: self.driver.exists("migration-result"), 10.0):
             result = self.driver.get_text("migration-result").strip()
         if shot_label:
             self.shot(label=shot_label)
         return result
+
+    def _switch_stall_reason(self, mode: str) -> str:
+        """Why a switch to ``mode`` did not finish: store status, page and app log."""
+        parts = [
+            f"the switch to {mode} did not finish within {SWITCH_WINDOW:.0f}s and no "
+            "macOS keychain prompt is on screen",
+            f"store status {self.credential_store_status()!r}",
+        ]
+        for testid in ("migration-result", "migration-warnings", "confirm-switch-dialog"):
+            try:
+                if self.driver.exists(testid):
+                    parts.append(f"{testid}: {self.driver.get_text(testid).strip()[:300]!r}")
+            except Exception:  # noqa: BLE001 - diagnostics only
+                pass
+        log = self._app_log_lines(("credential", "keychain", "migrat"))
+        if log:
+            parts.append("app log: " + " | ".join(log))
+        return "; ".join(parts)
+
+    def _app_log_lines(self, needles: tuple[str, ...], limit: int = 8) -> list[str]:
+        """The app log's last ``limit`` lines mentioning any of ``needles``."""
+        log_dir = getattr(getattr(self, "app", None), "log_dir", None)
+        if log_dir is None:
+            return []
+        lines: list[str] = []
+        for path in sorted(Path(log_dir).glob("*.log")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            lines += [ln.strip() for ln in text.splitlines() if any(n in ln.lower() for n in needles)]
+        return [ln[-240:] for ln in lines[-limit:]]
 
     def _within(self, check: Callable[[], bool], seconds: float) -> bool:
         deadline = time.monotonic() + seconds
@@ -179,10 +255,13 @@ class CredsPhaseUi(HarnessMixin):
             lambda: self.driver.get_text("backup-restore-file-name") == target.name,
             what="the picked backup to be read",
         )
+        # The header ("Created … · encrypted") belongs to the file step; the
+        # preview panel replaces it, so read it before asking for the preview.
+        self.wait(lambda: self.driver.exists("backup-restore-header"), what="the backup header")
+        rows = {"header": self.driver.get_text("backup-restore-header").strip()}
         self.driver.type("backup-restore-passphrase", passphrase)
         self.driver.click("backup-restore-preview")
         self.wait(lambda: self.driver.exists("backup-restore-preview-panel"), what="the restore preview")
-        rows = {"header": self.driver.get_text("backup-restore-header").strip()}
         for testid in ("backup-restore-credentials-detail",):
             if self.driver.exists(testid):
                 rows[testid] = self.driver.get_text(testid).strip()

@@ -235,3 +235,27 @@ async fn steady_state_tears_down_on_an_over_cap_line() {
     );
     let _ = manager.disconnect_agent("agent-a");
 }
+
+/// #5608: a handshake that stops because the agent never started (channel
+/// closed, or the shell's "not found" / "not executable" exit) is reported as
+/// a missing agent; any other exit keeps a plain remote error.
+#[test]
+fn handshake_read_error_maps_a_never_started_agent_to_agent_missing() {
+    use super::handshake_read_error;
+    use crate::utils::errors::IpcErrorCode;
+
+    for err in [
+        AgentReadError::Closed,
+        AgentReadError::Exited(127),
+        AgentReadError::Exited(126),
+    ] {
+        assert_eq!(
+            handshake_read_error(err.clone()).code(),
+            IpcErrorCode::AgentMissing,
+            "{err:?}"
+        );
+    }
+    let crashed = handshake_read_error(AgentReadError::Exited(1));
+    assert_ne!(crashed.code(), IpcErrorCode::AgentMissing);
+    assert!(crashed.to_string().contains("status 1"), "{crashed}");
+}

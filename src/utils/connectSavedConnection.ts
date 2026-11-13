@@ -54,6 +54,7 @@ import {
   storeCredential,
 } from "@/services/api";
 import { currentAgentsView } from "@/store/agentsBridge";
+import { mirrorSessionAlreadyConnected } from "@/store/sessionBridge";
 import { useAppStore, type AddTabOptions } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import type { ConnectionConfig } from "@/types/terminal";
@@ -305,6 +306,13 @@ export async function connectSavedConnection(
       connectionId: connection.id,
       ...opts,
     });
+    // A tab opened on a session that already connected (the saved-credential
+    // pre-connect, an unattended connect) never runs the terminal's own connect,
+    // so the backend lifecycle region would not know it — no live status, no
+    // reconnect on a drop (#5608). Register it there as connected.
+    if (opts.sessionId && (opts.contentType ?? "terminal") === "terminal") {
+      mirrorSessionAlreadyConnected(tabId);
+    }
     return { status: "opened", tabId, sessionId: opts.sessionId ?? null };
   };
 

@@ -253,6 +253,25 @@ export function mirrorSessionIntent(
     .catch((err) => logSessionBridgeFallback(kind, err));
 }
 
+/**
+ * Register a tab that opened on an **already-live** backend session (#5608):
+ * the saved-credential pre-connect or an unattended connect created the session
+ * before the tab existed, so the tab never runs its own `session.connect`, and
+ * the region — the sole live-status and reconnect authority — would never list
+ * it. Dispatches `session.connect`, then (once acknowledged, so the backend
+ * applies them in order) `session.connected`. Never throws; failures are logged.
+ */
+export function mirrorSessionAlreadyConnected(tabId: string): void {
+  void dispatchSessionIntent("session.connect", tabId)
+    .then(() => dispatchSessionIntent("session.connected", tabId))
+    .then((ack) => {
+      if (ack.status === "rejected") {
+        logSessionBridgeFallback("session.connected", new Error(ack.error?.message ?? "rejected"));
+      }
+    })
+    .catch((err) => logSessionBridgeFallback("session.connected", err));
+}
+
 /** Dispatch a `session.exited` intent carrying the exit cause + code, resolving
  * with the ack. An async function, so a synchronous transport-build failure (a
  * non-Tauri env without a socket) surfaces as a rejected promise the caller
