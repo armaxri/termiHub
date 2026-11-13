@@ -743,7 +743,11 @@ export class CommandMarkTracker implements IDisposable {
     const decoration = this.term.registerDecoration({ marker: record.prompt });
     if (!decoration) return;
     const failed = record.exitCode !== 0;
-    const title = failed ? `Command failed (exit code ${record.exitCode})` : "Command succeeded";
+    // Hover text (#5563): the exit code, for success too, so the bar answers
+    // "what did it return?" without re-running the command.
+    const title = failed
+      ? `Command failed (exit code ${record.exitCode})`
+      : "Command succeeded (exit code 0)";
     decoration.onRender((el) => {
       el.classList.add(COMMAND_MARK_CLASS);
       el.classList.toggle(COMMAND_MARK_SUCCESS_CLASS, !failed);

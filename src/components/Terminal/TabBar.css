@@ -12,6 +12,10 @@
 .tab-bar__tabs {
   display: flex;
   height: 100%;
+  /* Let the strip shrink to the bar so tabs compress (down to their
+     min-width) before the bar starts scrolling (#5557). */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .tab {
@@ -20,8 +24,13 @@
   gap: var(--spacing-xs);
   height: 100%;
   padding: 0 var(--spacing-md);
-  min-width: 100px;
-  max-width: 200px;
+  /* Flexible width (#5557): a tab sizes to its title up to --tab-max-width and
+     only shrinks toward --tab-min-width when the strip is actually full, so a
+     name like "Startup question (zsh)" is shown whole while space is free. The
+     full title is always in the tab's tooltip. */
+  flex: 0 1 auto;
+  min-width: var(--tab-min-width);
+  max-width: var(--tab-max-width);
   border-top: 2px solid transparent;
   border-right: 1px solid var(--tab-border);
   color: var(--text-secondary);
@@ -64,7 +73,8 @@
 }
 
 .tab__title {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

@@ -11,12 +11,18 @@
 #   --no-open       do not open the progress page in the browser
 #   --unattended    nobody is watching: human steps become "not tested" at once
 #   --keep-serving  keep serving the progress page after the run until Ctrl-C
+#   --real-pointer  hover grades use the real OS pointer (moves your mouse; sets
+#                   TERMIHUB_OS_INPUT_GLOBAL=1 for the run). Refused - and the bridge
+#                   paints the hover instead - while any other termiHub (the installed
+#                   app included) is running; see termihub_harness/os_input/base.py.
 #
 # Triggered by hand only: never scheduled, never part of per-PR or nightly CI
 # (tests marked product_run are deselected without --product-run).
 #
 # Output: tests/system/artifacts/product-run/<run id>/ with index.html (the page),
-# status.json, results.json, shots/<step>.png and shots/manifest.json.
+# status.json, results.json, shots/<step>.png and shots/manifest.json, and the
+# UI-review hand-off review/ (review-brief.md, review-request.json, contact sheets;
+# scripts/internal/product-run-review.py merges the reviewers' findings).
 #
 # Isolation: the app gets the harness's temporary TERMIHUB_CONFIG_DIR/LOG_DIR, a
 # scratch HOME/XDG_*/ZDOTDIR/HISTFILE under the run dir, and its own OS keychain
@@ -32,6 +38,7 @@ BUILD=0
 OPEN=1
 UNATTENDED=0
 KEEP_SERVING=0
+REAL_POINTER=0
 PYTEST_ARGS=()
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"; }
@@ -47,6 +54,7 @@ while [ "$#" -gt 0 ]; do
     --no-open) OPEN=0 ;;
     --unattended) UNATTENDED=1 ;;
     --keep-serving) KEEP_SERVING=1 ;;
+    --real-pointer) REAL_POINTER=1 ;;
     -h | --help) usage; exit 0 ;;
     --) shift; PYTEST_ARGS=("$@"); break ;;
     *) echo "unknown argument: $1 (see --help)" >&2; exit 2 ;;
@@ -146,6 +154,7 @@ export TERMIHUB_PRODUCT_RUN_DIR="$RUN_DIR"
 export TERMIHUB_PRODUCT_RUN_DEV_NAME="$DEV_NAME"
 export TERMIHUB_PRODUCT_RUN_CONFIG="$CONFIG"
 export TERMIHUB_PRODUCT_RUN_UNATTENDED="$UNATTENDED"
+if [ "$REAL_POINTER" -eq 1 ]; then export TERMIHUB_OS_INPUT_GLOBAL=1; fi
 set +e
 ./tests/system/pytest.sh --product-run -m product_run -p no:cacheprovider -v -rA \
     ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}
@@ -158,6 +167,12 @@ if [ ! -f "$RUN_DIR/results.json" ] && [ -f "$RUN_DIR/status.json" ]; then
         'import sys; from pathlib import Path; from termihub_harness.product_run import Recorder
 Recorder(Path(sys.argv[1])).finish(state="aborted", exit_status=int(sys.argv[2]))' \
         "$RUN_DIR" "$RC") || true
+fi
+
+# --- UI-review hand-off (review/ next to results.json) ----------------------------
+if [ -f "$RUN_DIR/status.json" ]; then
+    ./scripts/internal/product-run-review.py prepare "$RUN_DIR" ||
+        echo "the review hand-off failed (the run's results are unaffected)" >&2
 fi
 
 # --- remove this run's own keychain items (never any other service) ---------------
@@ -193,6 +208,8 @@ PYEOF
 fi
 echo "results: $RUN_DIR/results.json"
 echo "screenshots: $RUN_DIR/shots/ (manifest.json for the UI review)"
+echo "UI review: $RUN_DIR/review/review-request.json; afterwards" \
+    "scripts/internal/product-run-review.py merge $RUN_DIR"
 echo "page: $URL"
 
 if [ "$KEEP_SERVING" -eq 1 ] && [ -n "$SERVER_PID" ]; then

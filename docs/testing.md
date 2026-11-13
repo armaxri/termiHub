@@ -264,7 +264,7 @@ The product run replaces hand-run product tests. It is **triggered by hand only*
 
 ```bash
 ./scripts/internal/product-run.sh            # opens the live progress page
-./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving
+./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving, --real-pointer
 ```
 
 ```mermaid
@@ -288,6 +288,9 @@ flowchart LR
 - **Automations, agent, serial and telnet** (#5536): automations (`test_product_run_automations.py`: a macro created, edited and played on a local shell and over SSH, graded on the `$HOME` it printed; a workflow with a wait and a wait-for-output step run on both terminals at once; an on-output-match trigger; run history; the command palette; a 1-minute schedule), the remote agent (`test_product_run_agent.py`: the dev agent deployed to the run's sshd through the real "Set up agent" wizard and checked on disk, connect, a shell and the file browser through the agent, disconnect/reconnect, the update banner), serial (`test_product_run_serial_telnet.py`: a `socat` virtual port with a small device that answers `ID?`, unplugged and plugged back in at the same path for auto-reconnect; the physical adapter from `serial.device` with unplug/replug human steps) and telnet against the run's own unprivileged server (`termihub_harness/product_run/telnet_server.py`: NAWS and terminal type, manual and auto-login, server-side drop and Reconnect). The runner builds the dev agent when it is missing.
 - **Screen:** macOS must stay unlocked during the run (WKWebView stops painting and answering the bridge when locked). The runner refuses a locked screen and holds a `caffeinate` display assertion while it runs.
 - **Human steps** (OS security sheets, physical actions) pause the run and show a prompt with a **Done** button on the page; `--unattended` records them as not tested.
+- **Hover grades:** `with self.hovered(testid):` renders the hover for real — the OS pointer when global input is allowed (`--real-pointer`; refused while any other termiHub, the installed app included, is running), else the bridge's `forceHover` verb paints the app's own `:hover` rules. The evidence says which.
+- **UI review (#5538):** after every run the script writes `review/` — `review-brief.md` (product context, per surface every screenshot with what it should show and the step's grade), `review-request.json` (one reviewer entry per surface with a self-contained prompt, theme and window size) and `contact/<surface>.png`. The coordinator spawns one read-only reviewer agent per entry; each writes `review/findings/<surface>.json` (schema: `termihub_harness/product_run/review_schema.py`). `scripts/internal/product-run-review.py merge <run>` validates them, dedupes into `review/findings.{md,json}` and the page shows a **UI review** section.
+
 - **Writing a phase:** a `SystemTest` suite with `ProductRunUi` first in its bases (`termihub_harness/product_run`) wraps each check in `with self.step(id, title, expect=...)`. A failed step fails only that step; the test fails at the end of its call phase. See `tests/system/tests/test_product_run.py`.
 
 ## 2. Component Integration Tests

@@ -58,7 +58,7 @@ describe("WorkflowListItem", () => {
     container.remove();
   });
 
-  it("renders the name first with no step-count badge, and a kind-joined preview", () => {
+  it("renders the name first with no step-count badge and no step-kind preview", () => {
     const steps: WorkflowStep[] = [
       { kind: "send-command", command: "a" },
       { kind: "wait", delayMs: 10 },
@@ -69,7 +69,10 @@ describe("WorkflowListItem", () => {
     const header = query("workflow-item-w1")?.querySelector(".sidebar-list-item__header");
     expect(header?.textContent?.startsWith("Bootstrap")).toBe(true);
     expect(query("workflow-item-w1")?.querySelector(".sidebar-list-item__badge")).toBeNull();
-    expect(query("workflow-preview-w1")?.textContent).toBe("send-command → wait");
+    // The generic step-kind chain does not tell workflows apart, so the row
+    // leaves it to the editor and shows no raw kind ids (#5529).
+    expect(query("workflow-preview-w1")).toBeNull();
+    expect(query("workflow-item-w1")?.textContent).not.toContain("send-command");
   });
 
   it("shows the Run action (not Stop) when not running", () => {
@@ -88,7 +91,8 @@ describe("WorkflowListItem", () => {
     const bound: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: ["c1"] }];
     render(workflow({ triggers: bound }));
     expect(query("workflow-on-connect-w1")).not.toBeNull();
-    expect(query("workflow-on-connect-w1")?.textContent).toContain("on-connect");
+    expect(query("workflow-on-connect-w1")?.textContent).toContain("On connect");
+    expect(query("workflow-on-connect-w1")?.textContent).not.toContain("on-connect");
   });
 
   it("does not mark on-connect when the trigger binds no connections", () => {
