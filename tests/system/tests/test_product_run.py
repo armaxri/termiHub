@@ -515,7 +515,8 @@ class TestProductRunChecklist(
             )
             sidebar = self.opaque_background("sidebar", self.root_color("--bg-primary"))
             rest = composite(self._settled_background(item), sidebar)
-            hover_token = self.driver.get_computed_style("--bg-selected-hover")
+            # #5562: the connection tree paints the sidebar selection tokens.
+            hover_token = self.driver.get_computed_style("--sidebar-selected-hover-bg")
             hover = composite(mix_with_transparent(hover_token, self._resolve), sidebar)
             texts = {
                 "primary": self.style_color("color", item),
@@ -526,7 +527,9 @@ class TestProductRunChecklist(
                     ratio = contrast(fg, bg)
                     self.evidence(f"{state} {role}: {fg.hex()} on {bg.hex()} = {ratio:.2f}:1")
                     assert ratio >= AA_TEXT, f"{state} {role} text {ratio:.2f}:1 < AA"
-            self.evidence("hover background computed from --bg-selected-hover (no real pointer)")
+            self.evidence(
+                "hover background computed from --sidebar-selected-hover-bg (no real pointer)"
+            )
 
     def _settled_background(self, testid: str) -> Rgba:
         """The element's background once its colour transition has finished."""

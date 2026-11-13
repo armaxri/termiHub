@@ -173,6 +173,20 @@ export function resolveTheme(
   return darkTheme;
 }
 
+/**
+ * The sidebar selected-row CSS variables a theme sets (#5562), or `null` for
+ * each one that falls back to its `variables.css` default (the accent tint,
+ * no indicator bar).
+ */
+export function selectionVariables(theme: ThemeDefinition): Record<string, string | null> {
+  const sel = theme.selection;
+  return {
+    "--sidebar-selected-bg": sel?.bg ?? null,
+    "--sidebar-selected-hover-bg": sel?.bgHover ?? null,
+    "--sidebar-selected-indicator": sel?.indicator ?? null,
+  };
+}
+
 /** Write all theme colors as CSS custom properties on the document root. */
 function setCssVariables(theme: ThemeDefinition): void {
   if (typeof document === "undefined") return;
@@ -185,6 +199,13 @@ function setCssVariables(theme: ThemeDefinition): void {
   // apply so switching light->dark (or vice versa) restores the correct set.
   for (const [token, value] of Object.entries(ELEVATION_SHADOWS[theme.colorScheme])) {
     root.style.setProperty(token, value);
+  }
+  // Sidebar selected-row surfaces (#5562): a theme's opaque palette colours,
+  // or (removed) the accent-tint defaults from variables.css. Cleared on every
+  // apply so switching away from such a theme restores the tints.
+  for (const [token, value] of Object.entries(selectionVariables(theme))) {
+    if (value === null) root.style.removeProperty(token);
+    else root.style.setProperty(token, value);
   }
   // Tell WebKit which color scheme is active so system UI elements (scrollbars,
   // form controls) render in the matching dark/light style.
