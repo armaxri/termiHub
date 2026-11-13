@@ -1509,6 +1509,9 @@ Before creating a release, run the quality scripts and verify:
       Without it the release PR waits forever on checks the slim lane no longer runs
       (see [Required checks per branch](#required-checks-per-branch))
 - [ ] The [agent update signing key](#agent-update-signing-key) is configured (the release workflow refuses to run otherwise)
+- [ ] The [in-app updater signing key](#updater-signing-key) is set up, or you accept that this
+      release ships without `latest.json` (installed copies then keep "Open downloads page";
+      the Release run logs a notice). Once it is set up, release.yml fails if the secret is missing
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] Every `docs/marketing/*.md` draft you fold into `README.md` / `CHANGELOG.md` was
       re-verified against the app on the release commit first, and its
@@ -1955,6 +1958,10 @@ After the workflow completes:
       plus the `termiHub-X.Y.Z-debug-symbols-*.tar.gz` archives
       ([Symbolizing a Crash Report](#symbolizing-a-crash-report))
 - [ ] Download and smoke-test at least one artifact on your platform
+- [ ] Once the [updater key](#updater-signing-key) is set up: `latest.json` is attached and
+      `https://github.com/armaxri/termiHub/releases/latest/download/latest.json` serves this
+      version (only after `mark-latest`; pre-releases never change it). Then let one installed
+      older copy update itself through **Settings ▸ Updates ▸ Download and install**
 - [ ] Spot-check provenance on the downloaded artifact:
       `gh attestation verify <file> --repo armaxri/termiHub`
 
@@ -2343,6 +2350,93 @@ flowchart LR
 - **Loss or compromise:** re-run the setup script with `--force` and commit the new key file.
   Prefer a rotation (two public-key blocks are accepted) so desktops that still carry only the
   old key keep verifying plugins signed with it until they update.
+
+### In-App Updater
+
+termiHub updates itself in place where it can, with Tauri's updater plugin
+([#5758](https://github.com/armaxri/termiHub/issues/5758)). No paid account is involved: there is
+no Windows Authenticode certificate and no Apple notarization. What makes an update trustworthy
+is a **self-held minisign key**: release CI signs every updater bundle with it, and the app
+verifies the signature against the public key compiled into it before installing anything. The
+approach follows [browsitory](https://github.com/rene-langer/browsitory) (MIT), reimplemented for
+termiHub's release layout.
+
+**Per platform** (the targets in
+[`scripts/internal/updater-platforms.json`](../scripts/internal/updater-platforms.json)):
+
+| Install                                      | Updates in place?                                      | Bundle the updater installs | Warnings that remain                                                                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Windows x64 MSI                              | Yes (installer runs in passive mode, restarts the app) | `…-windows-x64.msi`         | SmartScreen may warn on the first download of an unsigned installer from the browser; the in-app update starts the MSI itself. The installer's UAC prompt stays                                              |
+| macOS `.app` (arm64 and x64)                 | Yes (the `.app` is replaced, then the app relaunches)  | `…-macos-<arch>.app.tar.gz` | Gatekeeper's "unverified developer" step on the first install from the DMG (the steps are in the release notes). The ad-hoc signature changes with every release, so macOS may ask again for keychain access |
+| Linux x64 AppImage                           | Yes (the AppImage file is replaced, then relaunched)   | `…-linux-x64.AppImage`      | None                                                                                                                                                                                                         |
+| Linux `.deb` / `.rpm` (x64, ARM64)           | No: the package manager owns the files                 | —                           | "Open downloads page", with a hint                                                                                                                                                                           |
+| Portable copy, develop build, dev/test build | No                                                     | —                           | "Open downloads page" (today's behaviour)                                                                                                                                                                    |
+
+**How an update runs.** The update check is unchanged (release/develop channels, "Skip this
+version", the explicit check outcome). For an available stable release the check also reports
+how this install can take it (`installMethod`, and `releasePageReason` when it cannot). Where
+the update applies in place, **Settings ▸ Updates** and the update popup offer **Download and
+install**, which reads `latest.json`, downloads this install's bundle and verifies its signature
+(and the version it was signed for, `requireSignedVersion`); then **Restart to update** installs
+it and restarts. Each step is its own click; nothing installs on its own. A manifest offering
+any version other than the newer one the check showed is refused: termiHub never downgrades in
+place. macOS and Linux relaunch through `src-tauri/src/utils/relaunch.rs`, which keeps a dev or
+test instance's `TERMIHUB_*` environment; on Windows the installer restarts the app without it,
+so an isolated instance there keeps the downloads page.
+
+```mermaid
+flowchart LR
+    T[tag push] --> B[build-app]
+    B -->|bundle + .sig per platform| M[updater-manifest: write + check latest.json]
+    M --> U[upload-app: attest + upload]
+    U --> R[(release vX.Y.Z)]
+    R -->|releases/latest/download/latest.json| A[installed termiHub]
+    A -->|verify minisign signature with the compiled-in key| I[install + restart]
+```
+
+**Release mechanics** (`release.yml`): the public key and `createUpdaterArtifacts` live only in
+[`src-tauri/tauri.updater.conf.json`](../src-tauri/tauri.updater.conf.json), which only the
+release workflow merges, so `main`/`develop` builds never try to sign and never offer an
+in-place update. `build-app` stages each bundle's `.sig` next to it (macOS rebuilds the
+`.app.tar.gz` from the ad-hoc re-signed app in the DMG and signs it there); the read-only
+`updater-manifest` job writes `latest.json` with
+[`updater-manifest.mjs`](../scripts/internal/updater-manifest.mjs) and checks every published
+target, every URL and every signature against the configured key and the app version before
+`upload-app` attests and uploads it. Installed copies read it only once the release is
+GitHub's latest. Until the key exists, every step skips with a `::notice::` and the release
+ships as before.
+
+#### Updater Signing Key
+
+The updater key is a minisign key pair in Tauri's format. The public half goes into
+`plugins.updater.pubkey` of `src-tauri/tauri.updater.conf.json`; the private half and its
+password exist as the GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+
+- **One-time setup (maintainer):**
+
+  ```bash
+  pnpm install
+  ./scripts/internal/setup-updater-signing-key.sh --backup-dir ~/updater-key-backup
+  ```
+
+  It generates the key pair with `tauri signer generate` and a random password, self-tests a
+  signature round-trip, writes the public key into the config, and pipes the private key and
+  password to `gh secret set` (never echoed; shredded on exit). Then commit
+  `src-tauri/tauri.updater.conf.json` in a PR into `develop`, as the script prints. The first
+  release built after that ships `latest.json`; copies installed from it update in place from
+  the next release on. `--dry-run` does everything except the `gh` calls and writes to a temp
+  copy (the `Shell Script Quality` job runs it where the Tauri CLI is installed).
+
+- **Keep the backup.** Unlike the agent key, this key cannot be rotated in place: every
+  installed copy trusts exactly one public key. Move the two files from `--backup-dir` into your
+  password manager and delete them from disk. If the key is lost, installed copies can never
+  update in-app again and have to be reinstalled from the downloads page.
+- **Compromise:** re-run with `--force`, commit the new public key and ship a release. Copies
+  built with the old key then fail the signature check on **Download and install** (nothing is
+  installed; "Open downloads page" still works); announce a manual reinstall.
+- **Exposure:** the bundler signs during `tauri build`, so the secret is passed to that one
+  build step (and to the macOS staging step), not to the whole job.
 
 ### Hotfix Process
 
