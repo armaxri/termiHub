@@ -233,24 +233,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         )}
       </div>
 
-      {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
+      {show("defaultX11Forwarding") && (
         <div className="settings-panel__category">
           <h3 className="settings-panel__category-title">New connection defaults</h3>
-
-          {show("defaultShellIntegration") && (
-            <SettingsField
-              label="Command marks by default"
-              hint="Adds a small shell hook to new local, SSH and WSL sessions so each command gets a success/failure mark. Off by default because it sends one line of shell code when a session starts."
-            >
-              <Toggle
-                checked={settings.defaultShellIntegration ?? false}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, defaultShellIntegration: checked }))
-                }
-                data-testid="settings-default-shell-integration"
-              />
-            </SettingsField>
-          )}
 
           {show("defaultX11Forwarding") && (
             <SettingsField

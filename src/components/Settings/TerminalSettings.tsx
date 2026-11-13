@@ -142,20 +142,6 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
           </SettingsField>
         )}
-        {show("terminalCommandDecorations") && (
-          <SettingsField
-            label="Command status marks"
-            hint="Show a thin green (success) or red (failure) mark next to each finished command's prompt. Requires shell integration (OSC 133 command marks); has no effect in shells that do not emit them."
-          >
-            <Toggle
-              data-testid="settings-terminal-command-decorations"
-              checked={settings.terminalCommandDecorations ?? true}
-              onCheckedChange={(checked) =>
-                onChange({ ...settings, terminalCommandDecorations: checked })
-              }
-            />
-          </SettingsField>
-        )}
         {show("terminalInlineImages") && (
           <SettingsField
             label="Inline images"
@@ -196,6 +182,9 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
           </SettingsField>
         )}
+        {(show("terminalCommandDecorations") || show("defaultShellIntegration")) && (
+          <CommandMarksSettings settings={settings} onChange={onChange} show={show} />
+        )}
       </div>
       <SyntaxHighlightingSettings
         settings={settings}
@@ -203,5 +192,54 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         visibleFields={visibleFields}
       />
     </>
+  );
+}
+
+interface CommandMarksSettingsProps {
+  settings: AppSettings;
+  onChange: (settings: AppSettings) => void;
+  show: (field: string) => boolean;
+}
+
+/**
+ * Terminal ▸ Command marks (#5633): the two command-mark settings in one place.
+ * "Show command marks" draws the marks; the nested shell-hook default makes new
+ * sessions' shells emit them in the first place.
+ */
+function CommandMarksSettings({ settings, onChange, show }: CommandMarksSettingsProps) {
+  return (
+    <div className="settings-panel__subsection" data-testid="settings-command-marks">
+      <h4 className="settings-panel__subsection-title">Command marks</h4>
+      {show("terminalCommandDecorations") && (
+        <SettingsField
+          label="Show command marks"
+          hint="Show a thin green (success) or red (failure) mark next to each finished command's prompt. Needs a shell that reports its commands (OSC 133); the shell hook below makes local, SSH and WSL shells do that."
+        >
+          <Toggle
+            data-testid="settings-terminal-command-decorations"
+            checked={settings.terminalCommandDecorations ?? true}
+            onCheckedChange={(checked) =>
+              onChange({ ...settings, terminalCommandDecorations: checked })
+            }
+          />
+        </SettingsField>
+      )}
+      {show("defaultShellIntegration") && (
+        <div className="settings-panel__nested">
+          <SettingsField
+            label="Add shell hook to new sessions automatically"
+            hint="Turns the shell hook on for new local, SSH and WSL connections, so each command gets a mark. Off by default because it sends one line of shell code when a session starts. Each connection can still change it."
+          >
+            <Toggle
+              data-testid="settings-default-shell-integration"
+              checked={settings.defaultShellIntegration ?? false}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, defaultShellIntegration: checked })
+              }
+            />
+          </SettingsField>
+        </div>
+      )}
+    </div>
   );
 }

@@ -96,7 +96,7 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
   past the last prompt returns to the bottom.
 - Each finished command gets a thin green (exit code 0) or red (non-zero) mark
   in the left gutter next to its prompt. Turn it off with **Settings →
-  Terminal → Command status marks**.
+  Terminal → Command marks → Show command marks**.
 - **No marks, no change:** if the shell emits no OSC 133, the palette entries are
   disabled and the prompt-jump keys are passed through to the shell exactly as
   before.
