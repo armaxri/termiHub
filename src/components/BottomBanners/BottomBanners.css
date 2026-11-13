@@ -5,3 +5,77 @@
   flex-direction: column;
   flex-shrink: 0;
 }
+
+/*
+ * Shared bottom-banner shell (#5638): crash notices (warning) and the
+ * file-manager prompt (info) share one layout and one button pattern.
+ */
+.bottom-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  /* #5547: secondary text (subtitle) on the tinted banner uses the
+     on-selection variant, which reaches AA on it in every theme. */
+  --text-secondary: var(--text-secondary-on-selection);
+}
+
+.bottom-banner--info {
+  background: var(--bg-banner-info);
+  border-top: 1px solid var(--border-primary);
+}
+
+/* #5638: the warning surface carries its severity in an amber left accent
+   (plus the amber top border and icon), so it outweighs neutral chrome. */
+.bottom-banner--warning {
+  background: var(--bg-banner-warning);
+  border-top: 1px solid var(--border-banner-warning);
+  box-shadow: inset var(--banner-accent-width) 0 0 var(--color-warning);
+}
+
+.bottom-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.bottom-banner--info .bottom-banner__icon {
+  color: var(--accent-color);
+}
+
+.bottom-banner--warning .bottom-banner__icon {
+  color: var(--color-warning);
+}
+
+.bottom-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+  flex: 1;
+}
+
+.bottom-banner__text strong {
+  font-weight: var(--font-weight-semibold);
+}
+
+.bottom-banner__text span {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.bottom-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+/* #5638: ghost actions ("Close", "Don't show again", "Not now") read as
+   actions, not disabled labels — full-contrast text at the same height and
+   hit area as the main (secondary) action. */
+.bottom-banner__action.ui-btn--ghost {
+  color: var(--text-primary);
+}
