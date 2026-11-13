@@ -543,6 +543,22 @@ class Driver:
             {"action": "getComputedStyle", "testId": test_id, "property": property}
         )
 
+    def measure_element(
+        self, test_id: str, descendants: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Measure an element's box and overflow (#5535).
+
+        Returns ``{rect, scrollWidth, clientWidth, scrollHeight, clientHeight,
+        title, text}``; with ``descendants="buttons"`` or ``"text"`` also
+        ``items``: each descendant button / own-text element with its
+        ``testId``, ``label`` (``aria-label``), ``text``, ``rect``, ``visible``
+        and ``overflows`` (its content is wider than its box: clipped or
+        ellipsized). Boxes are viewport CSS pixels.
+        """
+        return self._call(
+            {"action": "measureElement", "testId": test_id, "descendants": descendants}
+        )
+
     def sample_canvas(
         self, test_id: str, points: Sequence[tuple[int, int]] = ()
     ) -> dict[str, Any]:
