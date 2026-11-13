@@ -57,7 +57,7 @@ MACOS_RAN=""
 # (#5514); macOS only. They refuse to run outside a per-run CI keychain
 # namespace, which TERMIHUB_DEV_NAME=ci-<run> selects (termiHub-dev-ci-<run>).
 MACOS_STORE_FILTER="commands::credential::real_keychain_tests::"
-MACOS_STORE_EXPECTED=3
+MACOS_STORE_EXPECTED=5
 MACOS_STORE_RAN=""
 
 # Linux, inside the private session bus: start a fresh gnome-keyring there,

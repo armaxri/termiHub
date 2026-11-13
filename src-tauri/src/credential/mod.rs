@@ -7,6 +7,7 @@ pub mod hw_key;
 mod keychain_error;
 pub mod keychain_index;
 pub mod keychain_namespace;
+pub(crate) mod keychain_unread;
 mod keyring_thread;
 pub mod manager;
 pub mod master_password;

@@ -175,9 +175,10 @@ pub struct Capabilities {
 /// [`ConnectionType::prompt_probe`].
 pub type PromptProbe = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// A session's typed shell-integration setup that waits, with no cap, for the
-/// line editor to announce a fresh prompt (#5452, #5512). See
-/// [`ConnectionType::gated_setup`].
+/// A session's typed shell-integration setup that waits for the shell's line
+/// editor before it is typed: with no cap, for the line editor to announce a
+/// fresh prompt (#5452, #5512), or up to a cap, for the PTY to leave
+/// canonical mode (#5525). See [`ConnectionType::gated_setup`].
 pub trait GatedSetup: Send + Sync {
     /// Whether the setup still waits to be typed.
     fn is_pending(&self) -> bool;
@@ -185,6 +186,13 @@ pub trait GatedSetup: Send + Sync {
     /// Type the setup now, at the user's word (**Send now**); a no-op once
     /// it was typed.
     fn send_now(&self);
+
+    /// How long after the spawn the setup is typed at the latest, even
+    /// without its cue; `None` (the default): it waits for the line
+    /// editor's mark with no cap.
+    fn cap(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Unified trait for all connection backends.
@@ -418,13 +426,16 @@ pub trait ConnectionType: Send + Sync {
         false
     }
 
-    /// The typed shell-integration setup, when it waits for the line
-    /// editor's own prompt mark without a cap (#5452, #5512). A shell whose
-    /// bracketed paste is off never sends that mark, so the setup would wait
-    /// silently forever: the session owner tells the user after a while and
-    /// offers to type it ([`GatedSetup::send_now`]). While it is pending, a
-    /// connection's initial command waits for the prompt mark the setup
-    /// brings, never for a timeout. `None`, the default: no such setup.
+    /// The typed shell-integration setup, while it waits for the shell's line
+    /// editor: for its own prompt mark without a cap (#5452, #5512), or for
+    /// the PTY to leave canonical mode up to [`GatedSetup::cap`] (#5525). A
+    /// shell whose bracketed paste is off never sends that mark, so the setup
+    /// would wait silently forever: the session owner tells the user after a
+    /// while and offers to type it ([`GatedSetup::send_now`]). While it is
+    /// pending, a connection's initial command waits for the prompt mark the
+    /// setup brings, never for a shorter timeout; past the setup's cap (plus
+    /// a margin) the user is told and offered **Send now** instead. `None`,
+    /// the default: no such setup.
     fn gated_setup(&self) -> Option<std::sync::Arc<dyn GatedSetup>> {
         None
     }

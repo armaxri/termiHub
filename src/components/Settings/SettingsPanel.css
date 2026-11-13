@@ -204,15 +204,6 @@
   margin-bottom: var(--spacing-md);
 }
 
-.settings-panel__radio-option-badge {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--accent-color);
-  padding: 1px var(--spacing-xs-sm);
-  border: 1px solid var(--accent-color);
-  border-radius: var(--radius-sm);
-}
-
 /* === Status indicator === */
 .settings-panel__status-indicator {
   display: flex;

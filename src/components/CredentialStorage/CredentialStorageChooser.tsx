@@ -1,5 +1,4 @@
-import { useCallback, useState } from "react";
-import { Shield } from "lucide-react";
+import { useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode } from "@/types/credential";
 import { markCredentialStorageChosen, switchCredentialStore } from "@/services/api";
@@ -8,10 +7,10 @@ import { errorMessage } from "@/utils/errorMessage";
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import {
   CREDENTIAL_STORAGE_CHANGE_LATER_TEXT,
-  CREDENTIAL_STORAGE_CHOICES,
   CREDENTIAL_STORAGE_CHOOSER_TITLE,
 } from "@/utils/credentialStorageCopy";
 import { MasterPasswordSetupFields } from "./MasterPasswordSetupFields";
+import { credentialStorageRadioOptions } from "./credentialStorageOptions";
 import "./CredentialStorageChooser.css";
 
 /** The chooser opens on the OS keychain: strongest, nothing extra to unlock. */
@@ -29,6 +28,8 @@ type Step = "choose" | "master_password";
  * - "Don't save passwords" records the choice and keeps storage off.
  * - Cancel / Escape / × settle `"canceled"`: nothing is chosen, nothing is
  *   saved, and the next save asks again.
+ * - Focus opens on the selected option, never the × (#5550); Enter on an
+ *   option or a password field presses the primary action.
  *
  * Nothing is written to any store here — the chooser only sets the store up.
  * The waiting save flow writes the secret afterwards through its usual path,
@@ -46,6 +47,7 @@ export function CredentialStorageChooser() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [shownOpen, setShownOpen] = useState(open);
+  const primaryRef = useRef<HTMLButtonElement>(null);
 
   // Reset whenever the chooser opens, during render so a stale choice or a
   // typed master password never shows for a frame.
@@ -62,12 +64,15 @@ export function CredentialStorageChooser() {
 
   const cancel = useCallback(() => resolveStorageChoice("canceled"), [resolveStorageChoice]);
 
+  // Moving on to the vault step is synchronous on purpose: an async click
+  // that resolves would flash the Button's green success state, which then
+  // lingered on "Create vault" and on "Continue" after Back (#5551).
+  const goToVaultStep = useCallback(() => {
+    setError("");
+    setStep("master_password");
+  }, []);
+
   const handleContinue = useCallback(async () => {
-    if (choice === "master_password" && step === "choose") {
-      setError("");
-      setStep("master_password");
-      return;
-    }
     setError("");
     try {
       if (choice === "none") {
@@ -93,7 +98,6 @@ export function CredentialStorageChooser() {
     }
   }, [
     choice,
-    step,
     password,
     confirm,
     loadCredentialStoreStatus,
@@ -102,6 +106,20 @@ export function CredentialStorageChooser() {
   ]);
 
   const settingUpVault = step === "master_password";
+  const advancesToVaultStep = choice === "master_password" && !settingUpVault;
+
+  // Radix radios swallow Enter (WAI-ARIA; they preventDefault it), and a lone
+  // text field has no form to submit, so Enter there would do nothing. Route it to the primary action;
+  // buttons keep their own Enter (Cancel must stay Cancel).
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter") return;
+    const target = e.target as HTMLElement;
+    const isRadio = target.getAttribute("role") === "radio";
+    const isTextField = target instanceof HTMLInputElement;
+    if (!isRadio && !isTextField) return;
+    e.preventDefault();
+    primaryRef.current?.click();
+  }, []);
 
   return (
     <Modal
@@ -111,6 +129,7 @@ export function CredentialStorageChooser() {
       }}
       title={settingUpVault ? "Set a master password" : CREDENTIAL_STORAGE_CHOOSER_TITLE}
       data-testid="credential-storage-chooser"
+      onKeyDown={handleKeyDown}
       footer={
         <>
           <Button
@@ -133,8 +152,11 @@ export function CredentialStorageChooser() {
             </Button>
           )}
           <Button
+            // A fresh Button per step, so no async state carries across (#5551).
+            key={step}
+            ref={primaryRef}
             variant="primary"
-            onClick={handleContinue}
+            onClick={advancesToVaultStep ? goToVaultStep : handleContinue}
             errorToast={false}
             pendingLabel="Setting up…"
             data-testid="credential-storage-chooser-continue"
@@ -179,20 +201,9 @@ export function CredentialStorageChooser() {
               }}
               aria-label="Where to keep passwords"
               data-testid="credential-storage-chooser-options"
-              options={CREDENTIAL_STORAGE_CHOICES.map((option) => ({
-                value: option.mode,
-                label: (
-                  <>
-                    <Shield size={14} aria-hidden="true" />
-                    <span>{option.label}</span>
-                    {option.badge && (
-                      <span className="credential-storage-chooser__badge">{option.badge}</span>
-                    )}
-                  </>
-                ),
-                description: option.description,
-                "data-testid": `credential-storage-chooser-option-${option.mode}`,
-              }))}
+              options={credentialStorageRadioOptions(
+                (mode) => `credential-storage-chooser-option-${mode}`
+              )}
             />
             {error && (
               <p

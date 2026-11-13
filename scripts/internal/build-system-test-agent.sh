@@ -43,12 +43,13 @@
 #
 # Host mode (#5424): `--host` builds the same test-hooks agent for the host's
 # own Rust triple with plain `cargo build` (no container, no cross), into the
-# same target dir. The macOS integration lane installs it for the native sshd
-# fixture's user, as the deployed agent of the remote-agent suites.
+# same target dir. The macOS and Windows (#5511, run under Git Bash; the
+# binary is `termihub-agent.exe`) integration lanes install it for the native
+# sshd fixture's user, as the deployed agent of the remote-agent suites.
 #
 # Usage: scripts/internal/build-system-test-agent.sh [--target <triple> | --host] [--install-cross]
 #   --target <triple>   musl target to build (default: the host arch's musl target)
-#   --host              build for the host's own triple instead (macOS/Linux)
+#   --host              build for the host's own triple instead (macOS/Linux/Windows)
 #   --install-cross     install the pinned cross-rs release if `cross` is missing
 #
 # Prints the built binary's path as its last line. Exit 0 = built and verified.
@@ -102,17 +103,11 @@ if [ "$HOST_BUILD" = true ]; then
         echo "ERROR: --host and --target are mutually exclusive" >&2
         exit 2
     fi
-    TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+    TARGET="$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
     [ -n "$TARGET" ] || {
         echo "ERROR: could not determine the Rust host triple (rustc -vV)" >&2
         exit 1
     }
-    case "$TARGET" in
-    *-windows-*)
-        echo "ERROR: --host does not build the Windows agent ($TARGET)" >&2
-        exit 2
-        ;;
-    esac
 elif [ -z "$TARGET" ]; then
     case "$(uname -m)" in
     x86_64 | amd64) TARGET="x86_64-unknown-linux-musl" ;;
@@ -138,6 +133,9 @@ cd "$REPO_ROOT"
 # Keep in sync with SYSTEM_TEST_AGENT_TARGET_DIR in tests/system/termihub_harness/fixtures.py.
 TARGET_DIR="target/system-test-agent"
 BINARY="$TARGET_DIR/$TARGET/release/termihub-agent"
+case "$TARGET" in
+*-windows-*) BINARY="$BINARY.exe" ;;
+esac
 
 container_cmd() {
     if [ -n "${CROSS_CONTAINER_ENGINE:-}" ]; then

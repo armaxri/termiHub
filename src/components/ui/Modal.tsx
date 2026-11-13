@@ -33,6 +33,33 @@ export function useModalPortalContainer(): HTMLElement | null {
   return React.useContext(ModalPortalContainerContext);
 }
 
+/** Elements that can take keyboard focus, before the disabled/tabindex filter. */
+const TABBABLE_SELECTOR = [
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "a[href]",
+  "[tabindex]",
+  '[contenteditable="true"]',
+].join(",");
+
+/**
+ * The first keyboard-tabbable element inside `root`, or `null`. Skips disabled
+ * controls, `tabindex="-1"` (so a radio group yields its checked item, the one
+ * its roving tabindex leaves tabbable), hidden inputs and `[hidden]` subtrees.
+ */
+function firstTabbable(root: Element | null | undefined): HTMLElement | null {
+  if (!root) return null;
+  for (const el of root.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)) {
+    if (el.tabIndex < 0 || el.closest("[hidden],[inert]")) continue;
+    if ((el as HTMLInputElement).disabled) continue;
+    if (el instanceof HTMLInputElement && el.type === "hidden") continue;
+    return el;
+  }
+  return null;
+}
+
 /**
  * Props for the shared {@link Modal} primitive — a token-styled skin over
  * `@radix-ui/react-dialog`. Focus trap, ESC-to-close, scroll lock, and
@@ -187,7 +214,15 @@ export function Modal({
             back.focus();
           }}
           onOpenAutoFocus={(e) => {
-            const target = initialFocusRef?.current;
+            // Never start on the X (#5550): Enter/Space there dismisses the
+            // dialog instead of accepting it. Prefer the caller's target, then
+            // the first tabbable in the body, then in the footer; only a modal
+            // with nothing else to focus falls back to Radix's default.
+            const content = e.currentTarget as HTMLElement | null;
+            const target =
+              initialFocusRef?.current ??
+              firstTabbable(content?.querySelector(".ui-modal__body")) ??
+              firstTabbable(content?.querySelector(".ui-modal__foot"));
             if (!target) return;
             e.preventDefault();
             target.focus();

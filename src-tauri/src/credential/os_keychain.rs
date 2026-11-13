@@ -9,7 +9,8 @@ use zeroize::Zeroize;
 
 use super::keychain_error;
 use super::keychain_index::KeychainKeyIndex;
-use super::keychain_namespace::KeychainNamespace;
+use super::keychain_namespace::{KeychainNamespace, IS_ISOLATED_BUILD};
+use super::keychain_unread::{PlatformUnreadItems, UnreadItems};
 use super::keyring_thread::off_runtime;
 use super::types::{CredentialKey, CredentialStoreStatus, CredentialType};
 use super::CredentialStore;
@@ -24,6 +25,39 @@ const SERVICE_NAME: &str = "termiHub";
 /// import (#4414). Distinct from [`SERVICE_NAME`], so a seal key is never
 /// mistaken for a credential. Namespaced like [`SERVICE_NAME`].
 const RESTORE_SEAL_SERVICE: &str = "termiHub-backup-restore";
+
+/// How the store treats OS keychain items it has no record of in its key
+/// index (#5527).
+///
+/// It matters only on the macOS keychain (see `keychain_unread`), where an
+/// item trusts only the build that wrote it: anywhere else (and with the
+/// `keyring` mock) both policies behave like [`ItemPolicy::Release`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ItemPolicy {
+    /// The installed app. Items the index does not list may be the user's
+    /// own, written by an older version: they are read (and so can prompt),
+    /// and seeding adopts them. A write that an item this build may not read
+    /// blocks replaces that item with the value being saved.
+    Release,
+    /// A dev or test-instance build (`IS_ISOLATED_BUILD`). Its namespace is
+    /// shared by every build and profile of one checkout, so an item the
+    /// index does not list belongs to another build or profile: it reads as
+    /// absent without a keychain read, is never deleted, and a write
+    /// replaces any item without reading it. So a rebuilt dev build with a
+    /// fresh profile never sees an access prompt for an earlier build's item.
+    Isolated,
+}
+
+impl ItemPolicy {
+    /// The policy of the running build.
+    fn current() -> Self {
+        if IS_ISOLATED_BUILD {
+            Self::Isolated
+        } else {
+            Self::Release
+        }
+    }
+}
 
 /// Credential store backed by the native OS credential store via the
 /// [`keyring`](https://crates.io/crates/keyring) crate.
@@ -65,6 +99,10 @@ pub struct OsKeychainStore {
     /// ([`RESTORE_SEAL_SERVICE`]), or `None` to import a restore right away.
     /// Injected by the constructor (see `with_index_and_seal`).
     seal_service: Option<String>,
+    /// How items the index does not list are treated ([`ItemPolicy`]).
+    policy: ItemPolicy,
+    /// Deletes an item without reading it (the macOS keychain only).
+    unread: Box<dyn UnreadItems>,
     /// Every seal-key id handed out, so the opt-in real-keychain tests can
     /// delete each one they created even when an assertion fails (#4659).
     #[cfg(test)]
@@ -114,9 +152,70 @@ impl OsKeychainStore {
             index,
             service: KeychainNamespace::current().name(SERVICE_NAME),
             seal_service,
+            policy: ItemPolicy::current(),
+            unread: Box::new(PlatformUnreadItems),
             #[cfg(test)]
             issued_seal_ids: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Use `policy` instead of the build's own, so tests cover both arms.
+    // Only the macOS-gated keychain tests use it.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn set_item_policy_for_test(&mut self, policy: ItemPolicy) {
+        self.policy = policy;
+    }
+
+    /// Replace the platform's [`UnreadItems`], so the `keyring` mock tests
+    /// can exercise the paths that need it.
+    // Only the macOS-gated keychain tests use it.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn set_unread_items_for_test(&mut self, unread: Box<dyn UnreadItems>) {
+        self.unread = unread;
+    }
+
+    /// Whether `key` is one the store must leave alone: not in the index, in
+    /// an isolated build, on a keychain whose items trust only their writer
+    /// (see [`ItemPolicy::Isolated`]).
+    fn is_foreign(&self, key: &CredentialKey, entry: &Entry) -> bool {
+        self.policy == ItemPolicy::Isolated
+            && !self.index.contains(key)
+            && self.unread.applies_to(entry)
+    }
+
+    /// Write `value` for `key`, replacing an item this build may not read
+    /// instead of failing on it (#5527). An isolated build replaces any item
+    /// without reading it first, so it never prompts.
+    fn write(&self, key: &CredentialKey, entry: &Entry, value: &str) -> Result<()> {
+        let replaceable = self.unread.applies_to(entry);
+        if replaceable && self.policy == ItemPolicy::Isolated {
+            if let Err(code) = off_runtime(|| self.unread.delete(entry)) {
+                debug!(key = %key, status = %keychain_error::describe_status(code), "Could not clear an OS keychain item before writing it");
+            }
+        }
+        let error = match off_runtime(|| entry.set_password(value)) {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        };
+        if !(replaceable && keychain_error::is_duplicate_item(&error)) {
+            return Err(self.write_error(key, &error));
+        }
+        // An item exists that this build may not read, so `keyring` could
+        // not update it: written by an earlier, differently signed build, or
+        // the user declined the access prompt. The user is saving a new value
+        // for this very key, so replace the item without reading it.
+        if let Err(code) = off_runtime(|| self.unread.delete(entry)) {
+            warn!(key = %key, status = %keychain_error::describe_status(code), "Could not remove an OS keychain item this build may not read");
+            return Err(self.write_error(key, &error));
+        }
+        warn!(key = %key, service = %self.service, "Replaced an OS keychain item this build could not read with the value being saved");
+        off_runtime(|| entry.set_password(value)).map_err(|e| {
+            anyhow!(
+                "Failed to write OS keychain entry for {key}: {}. The earlier item, which this \
+                 build could not read, was removed; save the secret again.",
+                keychain_error::describe(&e)
+            )
+        })
     }
 
     /// A store on the platform keyring under throwaway service names, with
@@ -205,6 +304,10 @@ impl OsKeychainStore {
 impl CredentialStore for OsKeychainStore {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
         let entry = self.entry(key)?;
+        if self.is_foreign(key, &entry) {
+            // Another build's or profile's item: not read, so no prompt (#5527).
+            return Ok(None);
+        }
         match off_runtime(|| entry.get_password()) {
             Ok(value) => Ok(Some(value)),
             Err(KeyringError::NoEntry) => {
@@ -233,6 +336,13 @@ impl CredentialStore for OsKeychainStore {
                 );
                 Ok(None)
             }
+            Err(e) if keychain_error::is_access_denied(&e) => Err(anyhow!(
+                "Failed to read OS keychain entry for {key}: {}. macOS did not let this termiHub \
+                 build read it, usually because an earlier, differently signed build saved it \
+                 (every update of an unsigned build is signed differently). Allow access when \
+                 macOS asks, or enter the secret again and save it to replace the item.",
+                keychain_error::describe(&e)
+            )),
             Err(e) => Err(anyhow!(
                 "Failed to read OS keychain entry for {key}: {}",
                 keychain_error::describe(&e)
@@ -242,7 +352,7 @@ impl CredentialStore for OsKeychainStore {
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
         let entry = self.entry(key)?;
-        off_runtime(|| entry.set_password(value)).map_err(|e| self.write_error(key, &e))?;
+        self.write(key, &entry, value)?;
         // The secret is stored; failing to record its name must not fail the
         // write. The in-memory index keeps it for the next successful persist.
         if let Err(e) = self.index.insert(key) {
@@ -253,6 +363,10 @@ impl CredentialStore for OsKeychainStore {
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
         let entry = self.entry(key)?;
+        if self.is_foreign(key, &entry) {
+            // Not this store's item: leave it, without a read (#5527).
+            return Ok(());
+        }
         match off_runtime(|| entry.delete_credential()) {
             Ok(()) | Err(KeyringError::NoEntry) => {}
             Err(e) if keychain_error::is_access_denied(&e) && !self.index.contains(key) => {
