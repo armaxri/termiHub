@@ -7,7 +7,6 @@ import { useAppStore } from "@/store/appStore";
 import {
   Button,
   Input,
-  NumberInput,
   Select,
   SelectItem,
   SelectGroup,
@@ -18,6 +17,8 @@ import {
   toast,
 } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
+import { DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT } from "@/components/Terminal/terminalDefaults";
+import { DefaultNumberInput } from "./DefaultNumberInput";
 import {
   createCustomTheme,
   customThemeId,
@@ -357,11 +358,13 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       {show("fontSize") && <WorkspaceOverrideNotice settingKey="fontSize" label="Font size" />}
       {show("fontSize") && (
         <SettingsField label="Font size" hint="Terminal font size in pixels (8–32).">
-          <NumberInput
+          <DefaultNumberInput
             min={8}
             max={32}
-            value={settings.fontSize ?? ""}
-            onValueChange={(v) => onChange({ ...settings, fontSize: v === "" ? undefined : v })}
+            value={settings.fontSize}
+            defaultValue={DEFAULT_FONT_SIZE}
+            onChange={(v) => onChange({ ...settings, fontSize: v })}
+            data-testid="settings-font-size"
           />
         </SettingsField>
       )}
@@ -370,12 +373,14 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           label="Line height"
           hint="Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters."
         >
-          <NumberInput
+          <DefaultNumberInput
             min={0.8}
             max={2.0}
             step={0.1}
-            value={settings.lineHeight ?? ""}
-            onValueChange={(v) => onChange({ ...settings, lineHeight: v === "" ? undefined : v })}
+            value={settings.lineHeight}
+            defaultValue={DEFAULT_LINE_HEIGHT}
+            onChange={(v) => onChange({ ...settings, lineHeight: v })}
+            data-testid="settings-line-height"
           />
         </SettingsField>
       )}

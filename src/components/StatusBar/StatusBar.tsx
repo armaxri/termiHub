@@ -76,7 +76,7 @@ import { PerCoreCpuBars } from "./PerCoreCpuBars";
 import { MonitoringHostInfo } from "./MonitoringHostInfo";
 import { UnavailableStat } from "./UnavailableStat";
 import { isMetricUnavailable, unavailableTitle } from "./monitoringAvailability";
-import { severityLevel } from "./monitoringSeverity";
+import { statusStatSeverity } from "./monitoringSeverity";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
@@ -868,10 +868,21 @@ function MonitoringStatus() {
   // neutral badge rather than a warning one (#1233).
   const isPausedBadge = badge === "paused";
   const staleModifier = isFrozenMonitorBadge(badge) ? " monitoring-status__stat--stale" : "";
+  // Name the host the stats describe (#5563): a local shell's monitor label is
+  // otherwise the tab title (e.g. "Startup question (zsh)"), which reads as the
+  // session rather than the machine. Remote tabs keep their hostname.
+  const hostLabel = monitorHostLabel(activeTabConnectionType, monitoringHost);
   return (
-    <>
+    // One labelled, divider-separated group (#5563) so "CPU · Mem · Disk" are
+    // unmistakably *this host's* numbers, not the session's or the app's.
+    <span
+      className="monitoring-status"
+      role="group"
+      aria-label={hostLabel ? `Host stats: ${hostLabel}` : "Host stats"}
+      data-testid="monitoring-group"
+    >
       <MonitoringDetailDropdown
-        host={monitoringHost}
+        host={hostLabel}
         stats={monitoringStats}
         loading={monitoringLoading}
         monitorKey={activeMonitorKey}
@@ -953,9 +964,10 @@ function MonitoringStatus() {
           {/*
             The remote collectors report CPU 0% on the first sample because there
             is no prior delta to compute a rate from (audit gap G10). Until the
-            second sample arrives, show a priming indicator so the placeholder is
-            not mistaken for a real 0% reading. Memory and disk are correct on
-            the first sample and always render numerically.
+            second sample arrives the CPU item is hidden (#5563) — a fake 0% would
+            mislead, and a "CPU —" placeholder read as an error rather than "not
+            yet measured". Memory and disk are correct on the first sample and
+            always render numerically.
           */}
           {isMetricUnavailable(monitoringStats, "cpu") ? (
             <UnavailableStat
@@ -964,17 +976,9 @@ function MonitoringStatus() {
               testId="monitoring-cpu"
               staleModifier={staleModifier}
             />
-          ) : monitoringSampleCount < 2 ? (
+          ) : monitoringSampleCount < 2 ? null : (
             <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--priming${staleModifier}`}
-              title="CPU: priming (waiting for second sample)"
-              data-testid="monitoring-cpu"
-            >
-              CPU —
-            </span>
-          ) : (
-            <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}${staleModifier}`}
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${statusStatSeverity(monitoringStats.cpuUsagePercent)}${staleModifier}`}
               title={`CPU: ${monitoringStats.cpuUsagePercent.toFixed(1)}%`}
               data-testid="monitoring-cpu"
             >
@@ -990,7 +994,7 @@ function MonitoringStatus() {
             />
           ) : (
             <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}${staleModifier}`}
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${statusStatSeverity(monitoringStats.memoryUsedPercent)}${staleModifier}`}
               title={`Memory: ${formatKb(monitoringStats.memoryTotalKb - monitoringStats.memoryAvailableKb)} / ${formatKb(monitoringStats.memoryTotalKb)}`}
               data-testid="monitoring-mem"
             >
@@ -1006,7 +1010,7 @@ function MonitoringStatus() {
             />
           ) : (
             <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}${staleModifier}`}
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${statusStatSeverity(monitoringStats.diskUsedPercent)}${staleModifier}`}
               title={`Disk: ${formatKb(monitoringStats.diskUsedKb)} / ${formatKb(monitoringStats.diskTotalKb)}`}
               data-testid="monitoring-disk"
             >
@@ -1021,7 +1025,7 @@ function MonitoringStatus() {
           */}
           {monitoringStats.swapTotalKb > 0 && !isMetricUnavailable(monitoringStats, "swap") && (
             <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.swapUsedPercent)}${staleModifier}`}
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${statusStatSeverity(monitoringStats.swapUsedPercent)}${staleModifier}`}
               title={`Swap: ${formatKb(monitoringStats.swapUsedKb)} / ${formatKb(monitoringStats.swapTotalKb)}`}
               data-testid="monitoring-swap"
             >
@@ -1054,8 +1058,21 @@ function MonitoringStatus() {
           )}
         </>
       )}
-    </>
+    </span>
   );
+}
+
+/**
+ * The label for the host a monitor describes (#5563). A local shell monitors
+ * the machine termiHub runs on, so it is named "This computer" (the app's term
+ * for it, see `runLocation.ts`) rather than by the tab's title.
+ */
+export function monitorHostLabel(
+  connectionType: string | null,
+  host: string | null
+): string | null {
+  if (connectionType === "local") return "This computer";
+  return host;
 }
 
 /** Props for {@link MonitoringDetailDropdown}. */

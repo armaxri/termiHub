@@ -24,10 +24,10 @@ Divergences from the original, by design:
 * **X11 default** (``MT-SSH-19``) is asserted by saving an SSH connection and
   reading ``enableX11Forwarding`` back from the store (the bridge reads an
   ``<input>``'s ``value`` — ``"on"`` for a checkbox — not its live ``checked``
-  state, whereas the persisted config captures the real value). Note the schema
-  default is **on** (``core/src/backends/ssh/mod.rs``, from
-  ``feat(ui): default SSH shell integration and X11 forwarding to enabled``), and
-  the SSH settings persist nested under ``config.config``.
+  state, whereas the persisted config captures the real value). The default is
+  **off** since #5555 (``core/src/backends/ssh/mod.rs`` and the app setting
+  ``defaultX11Forwarding``, like OpenSSH's ``ForwardX11 no``), and the SSH
+  settings persist nested under ``config.config``.
 """
 
 from __future__ import annotations
@@ -149,10 +149,10 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         assert self.driver.get_value("field-port") == "22"
 
     # ── MT-SSH-19: X11 default + toggle persistence ────────────────────────────
-    def test_ssh_x11_defaults_on(self):
-        # A fresh SSH connection has X11 forwarding ON by default (schema default,
-        # from feat "default SSH shell integration and X11 forwarding to
-        # enabled"). SSH settings persist nested under config.config.
+    def test_ssh_x11_defaults_off(self):
+        # A fresh SSH connection has X11 forwarding OFF by default (#5555: the
+        # app setting and schema default, like OpenSSH's ForwardX11 no). SSH
+        # settings persist nested under config.config.
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
         self.wait(
@@ -171,13 +171,13 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self._click_editor_save(False)
         conn = self.require_connection(name)
         cfg = (conn.get("config") or {}).get("config") or {}
-        assert cfg.get("enableX11Forwarding") is True, (
-            f"X11 should default on; config={conn.get('config')}"
+        assert cfg.get("enableX11Forwarding") is False, (
+            f"X11 should default off; config={conn.get('config')}"
         )
 
-    def test_ssh_x11_toggle_off_persists(self):
-        # X11 defaults on, so a single click turns it OFF; that must persist as
-        # false — the automatable half of the guided-manual X11 test (#957), so
+    def test_ssh_x11_toggle_on_persists(self):
+        # X11 defaults off, so a single click turns it ON; that must persist as
+        # true — the automatable half of the guided-manual X11 test (#957), so
         # the manual test only confirms the forwarded window.
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
@@ -185,19 +185,19 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
             lambda: self.field_visible("enableX11Forwarding"),
             what="the X11-forwarding field",
         )
-        name = unique_name("x11-off")
+        name = unique_name("x11-on")
         self.driver.type(self.EDITOR_NAME, name)
         self.driver.type("field-host", "127.0.0.1")
         self.driver.type("field-username", "tester")
-        self.driver.click("field-enableX11Forwarding")  # on → off
+        self.driver.click("field-enableX11Forwarding")  # off → on
         # Gate on the form reporting itself valid before saving (see the
         # defaults-on test); the aria-disabled Save button would otherwise
         # silently no-op if clicked before validity settles.
         self._click_editor_save(False)
         conn = self.require_connection(name)
         cfg = (conn.get("config") or {}).get("config") or {}
-        assert cfg.get("enableX11Forwarding") is False, (
-            f"toggling X11 off did not persist; config={conn.get('config')}"
+        assert cfg.get("enableX11Forwarding") is True, (
+            f"toggling X11 on did not persist; config={conn.get('config')}"
         )
 
     # ── Serial form fields ─────────────────────────────────────────────────────

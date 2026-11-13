@@ -8,6 +8,7 @@ import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader"
 import type { WorkflowRun, WorkflowRunHistoryStatus } from "@/types/workflow";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { triggerKindLabel } from "./workflowStepMeta";
 
 /** Map a run's terminal status to a {@link StatusDot} tone. */
 function statusTone(status: WorkflowRunHistoryStatus): StatusTone {
@@ -116,7 +117,7 @@ export function WorkflowHistorySection() {
                       {formatRelativeTime(run.endedAt)}
                     </time>
                     {duration ? <span> · {duration}</span> : null}
-                    <span> · {run.triggeredBy}</span>
+                    <span> · {triggerKindLabel(run.triggeredBy)}</span>
                     {run.stepsCompleted < run.total ? (
                       <span data-testid={`workflow-run-progress-${run.id}`}>
                         {" "}

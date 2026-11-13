@@ -264,7 +264,7 @@ The product run replaces hand-run product tests. It is **triggered by hand only*
 
 ```bash
 ./scripts/internal/product-run.sh            # opens the live progress page
-./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving
+./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving, --real-pointer
 ```
 
 ```mermaid
@@ -283,7 +283,12 @@ flowchart LR
 - **Setup input:** optional `product-run.local.json` at the repo root (gitignored; template `product-run.local.json.example`) for a Raspberry Pi SSH host, a serial device and RDP/VNC hosts. No secrets go into it. A step whose input is missing is reported as **not tested** with the reason.
 - **Isolation:** the harness's temporary `TERMIHUB_CONFIG_DIR`/`TERMIHUB_LOG_DIR`, a scratch `HOME`/`XDG_*`/`ZDOTDIR`/`HISTFILE` under the run directory and an own keychain namespace (`TERMIHUB_DEV_NAME=product-run-<run id>`), whose items the script deletes at the end.
 - **Output:** `tests/system/artifacts/product-run/<run id>/` with `index.html` (the page; it also works opened as a file), `status.json`, `results.json` (per step: id, title, status `pass`/`fail`/`not-tested`/`human`, evidence, screenshots), `shots/<step>.png` window captures found by the test app's PID, and `shots/manifest.json` (step, what the screen should show, theme, window size) for the UI-review agents.
+- **Phases:** the 2026-11-12 checklist (`test_product_run.py`), SSH (`test_product_run_ssh.py`: host-key prompt, remembered and changed keys, key / passphrase / agent / password / keyboard-interactive auth, jump host, server-side drop + Reconnect, bastion drop + auto-reconnect, Raspberry Pi) and the SFTP file browser (`test_product_run_files.py`: list, navigate, create, rename, delete, upload, download, drag, long path, remote → local paste) and the maintainer's UI complaints (`test_product_run_complaints.py`: automations listed by name with no step count, #5519; the file browser's one-line action row with a "…" menu, #5520; long paths that keep the leaf folder visible, #5521; graded from the `measureElement` bridge verb at the normal and the minimum sidebar width).
+- **SSH hosts** (`termihub_harness/product_run/hosts.py`): the run starts the native sshd fixture (`native-sshd-fixture.sh up --jump-host --scratch-home`, unprivileged, key auth only, state under the run dir, `down` at the end) and a private `ssh-agent` with the fixture key, which is the app's only `SSH_AUTH_SOCK`. The Docker password and two-factor hosts are used only when a container runtime already works; the run never starts a VM, so without one those two steps are not tested.
 - **Human steps** (OS security sheets, physical actions) pause the run and show a prompt with a **Done** button on the page; `--unattended` records them as not tested.
+- **Hover grades:** `with self.hovered(testid):` renders the hover for real — the OS pointer when global input is allowed (`--real-pointer`; refused while any other termiHub, the installed app included, is running), else the bridge's `forceHover` verb paints the app's own `:hover` rules. The evidence says which.
+- **UI review (#5538):** after every run the script writes `review/` — `review-brief.md` (product context, per surface every screenshot with what it should show and the step's grade), `review-request.json` (one reviewer entry per surface with a self-contained prompt, theme and window size) and `contact/<surface>.png`. The coordinator spawns one read-only reviewer agent per entry; each writes `review/findings/<surface>.json` (schema: `termihub_harness/product_run/review_schema.py`). `scripts/internal/product-run-review.py merge <run>` validates them, dedupes into `review/findings.{md,json}` and the page shows a **UI review** section.
+
 - **Writing a phase:** a `SystemTest` suite with `ProductRunUi` first in its bases (`termihub_harness/product_run`) wraps each check in `with self.step(id, title, expect=...)`. A failed step fails only that step; the test fails at the end of its call phase. See `tests/system/tests/test_product_run.py`.
 
 ## 2. Component Integration Tests

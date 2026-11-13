@@ -2,15 +2,20 @@
  * Presentation helpers for workflow steps in the sidebar and editor UI.
  *
  * A {@link WorkflowStep} is a discriminated union (`kind`), so both the list row
- * and the editor need a per-kind icon, a human label, and a compact preview of
- * the step list. These helpers centralise that mapping
- * so the sidebar and editor stay in sync, mirroring `macroStepFormat` from the
- * shipped macro UI.
+ * and the editor need a per-kind icon and a human label; triggers likewise need
+ * a human label wherever their kind is shown. These helpers centralise that
+ * mapping so the sidebar, history and editor use the same wording (#5529),
+ * mirroring `macroStepFormat` from the shipped macro UI.
  */
 import type { ComponentType } from "react";
 import { Terminal, FileCode, Play, Clock, Cpu, GitBranch, Repeat, Eye } from "lucide-react";
-import type { WorkflowComparisonOp, WorkflowStep, WorkflowStepKind } from "@/types/workflow";
-import { truncate } from "@/utils/formatters";
+import type {
+  WorkflowComparisonOp,
+  WorkflowRunTrigger,
+  WorkflowStep,
+  WorkflowStepKind,
+} from "@/types/workflow";
+import { t } from "@/i18n/catalog";
 
 /** The step kinds, in the order they appear in the "Add step…" menu. */
 export const WORKFLOW_STEP_KINDS: readonly WorkflowStepKind[] = [
@@ -75,9 +80,47 @@ export function stepKindIcon(kind: WorkflowStepKind): ComponentType<{ size?: num
   return STEP_ICONS[kind];
 }
 
+/**
+ * Sentence-case label of each step kind. The kind ids are internal
+ * identifiers (`send-command`); users see these labels instead (#5529).
+ */
+const STEP_LABELS: Record<WorkflowStepKind, string> = {
+  "send-command": "Send command",
+  "run-script": "Run script",
+  "run-macro": "Run macro",
+  wait: "Wait",
+  "run-local-process": "Run local process",
+  conditional: "Condition",
+  loop: "Loop",
+  "wait-for-output": "Wait for output",
+};
+
 /** Human-readable label shown in the "Add step…" menu and each step row. */
 export function stepKindLabel(kind: WorkflowStepKind): string {
-  return kind;
+  return STEP_LABELS[kind];
+}
+
+/**
+ * Human-readable label of a trigger kind, or of what launched a recorded run
+ * (`WorkflowRunTrigger` is the trigger kinds plus `scheduled`). One map so the
+ * trigger chips in the editor, the row's trigger marker and the run history use
+ * the same wording (#5529).
+ */
+export function triggerKindLabel(kind: WorkflowRunTrigger): string {
+  switch (kind) {
+    case "manual":
+      return "Manual";
+    case "on-connect":
+      return "On connect";
+    case "hotkey":
+      return "Hotkey";
+    case "scheduled":
+      return "Scheduled";
+    case "on-disconnect":
+      return t("workflow.trigger.onDisconnect.label");
+    case "on-output-match":
+      return t("workflow.trigger.onOutputMatch.label");
+  }
 }
 
 /**
@@ -111,13 +154,4 @@ export function newWorkflowStep(kind: WorkflowStepKind): WorkflowStep {
       // timeout until the author sets them.
       return { kind, pattern: "" };
   }
-}
-
-/**
- * One-line preview of a whole step list for the collapsed sidebar row — the kind
- * labels joined by arrows, truncated. Gives a hint of the workflow's shape
- * without opening the editor.
- */
-export function summariseWorkflowSteps(steps: WorkflowStep[], maxLength = 80): string {
-  return truncate(steps.map((s) => stepKindLabel(s.kind)).join(" → "), maxLength);
 }

@@ -322,6 +322,17 @@ class Driver:
         """
         return self._call({"action": "osInputProbe", "testId": test_id, "reset": reset or None})
 
+    def force_hover(self, test_id: Optional[str]) -> int:
+        """Render ``test_id`` as hovered without the OS pointer (#5538); ``None`` clears.
+
+        The ``forceHover`` verb clones the app's ``:hover`` rules onto an
+        attribute set on the element and its ancestors, so the browser paints
+        and computes the real hover styles (a synthetic event never sets
+        ``:hover``). Returns how many ``:hover`` rules were cloned.
+        """
+        value = self._call({"action": "forceHover", "testId": test_id})
+        return int((value or {}).get("rules", 0))
+
     def _call(self, command: Command, *, timeout: Optional[float] = None) -> Any:
         # Drop None-valued keys so the wire form matches the in-process client:
         # JSON.stringify omits `undefined`, and the dispatcher distinguishes an
@@ -541,6 +552,22 @@ class Driver:
         """
         return self._call(
             {"action": "getComputedStyle", "testId": test_id, "property": property}
+        )
+
+    def measure_element(
+        self, test_id: str, descendants: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Measure an element's box and overflow (#5535).
+
+        Returns ``{rect, scrollWidth, clientWidth, scrollHeight, clientHeight,
+        title, text}``; with ``descendants="buttons"`` or ``"text"`` also
+        ``items``: each descendant button / own-text element with its
+        ``testId``, ``label`` (``aria-label``), ``text``, ``rect``, ``visible``
+        and ``overflows`` (its content is wider than its box: clipped or
+        ellipsized). Boxes are viewport CSS pixels.
+        """
+        return self._call(
+            {"action": "measureElement", "testId": test_id, "descendants": descendants}
         )
 
     def sample_canvas(

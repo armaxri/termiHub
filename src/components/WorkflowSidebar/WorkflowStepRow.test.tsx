@@ -106,7 +106,8 @@ describe("WorkflowStepRow", () => {
 
   it("shows the 1-based index and the step kind label", () => {
     render({ step: { kind: "send-command", command: "" }, index: 2 });
-    expect(query("workflow-editor-step-kind-2")?.textContent).toBe("send-command");
+    expect(query("workflow-editor-step-kind-2")?.textContent).toBe("Send command");
+    expect(query("workflow-editor-step-kind-2")?.getAttribute("data-kind")).toBe("send-command");
     expect(query("workflow-editor-step-2")?.textContent).toContain("3");
   });
 

@@ -440,6 +440,34 @@ describe("CommandMarkTracker (real xterm)", () => {
       expect(decorations.every((d) => d.isDisposed)).toBe(true);
     });
 
+    it("labels each mark with its exit code for the hover tooltip (#5563)", async () => {
+      const renders: Array<(el: HTMLElement) => void> = [];
+      vi.spyOn(term, "registerDecoration").mockImplementation(
+        () =>
+          ({
+            isDisposed: false,
+            dispose: () => {},
+            onRender: (cb: (el: HTMLElement) => void) => {
+              renders.push(cb);
+              return { dispose: () => {} };
+            },
+          }) as never
+      );
+      await write(term, cycle("ok", "x\r\n", 0));
+      await write(term, cycle("bad", "y\r\n", 2));
+      const [ok, bad] = renders.map((render) => {
+        const el = document.createElement("div");
+        render(el);
+        return el;
+      });
+      expect(ok.title).toBe("Command succeeded (exit code 0)");
+      expect(ok.classList.contains("terminal-command-mark--success")).toBe(true);
+      expect(bad.title).toBe("Command failed (exit code 2)");
+      expect(bad.classList.contains("terminal-command-mark--failure")).toBe(true);
+      // The class the product run grades OSC 133 presence by stays stable.
+      expect(bad.classList.contains("terminal-command-mark")).toBe(true);
+    });
+
     it("honours the decorations option at construction", async () => {
       tracker.dispose();
       tracker = new CommandMarkTracker(term, { decorations: false });

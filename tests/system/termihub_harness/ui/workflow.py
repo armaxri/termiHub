@@ -104,7 +104,15 @@ class WorkflowUi(HarnessMixin):
         return index
 
     def step_kind(self, index: int) -> str:
-        """The kind label shown on the step row at ``index``."""
+        """The kind id (``send-command``) of the step row at ``index``.
+
+        Read from the row's ``data-kind`` attribute: the visible text is the
+        readable label ("Send command", #5529), see :meth:`step_label`.
+        """
+        return self.driver.get_attribute(f"workflow-editor-step-kind-{index}", "data-kind") or ""
+
+    def step_label(self, index: int) -> str:
+        """The readable kind label shown on the step row at ``index``."""
         return self.driver.get_text(f"workflow-editor-step-kind-{index}")
 
     def add_step(self, kind: str) -> None:

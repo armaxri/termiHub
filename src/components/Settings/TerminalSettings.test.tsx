@@ -137,6 +137,24 @@ describe("TerminalSettings", () => {
     expect(scrollbackInput().value).toBe("");
   });
 
+  it("shows the effective default scrollback with a Default marker when unset (#5554)", () => {
+    renderWith(defaultSettings);
+    expect(scrollbackInput().placeholder).toBe("10000");
+    expect(
+      container.querySelector('[data-testid="settings-scrollback-buffer-default"]')?.textContent
+    ).toBe("Default");
+    expect(container.querySelector('[data-testid="settings-scrollback-buffer-reset"]')).toBeNull();
+  });
+
+  it("resets a custom scrollback back to the default (#5554)", () => {
+    const onChange = renderWith({ ...defaultSettings, scrollbackBuffer: 25000 });
+    const reset = container.querySelector(
+      '[data-testid="settings-scrollback-buffer-reset"]'
+    ) as HTMLButtonElement;
+    act(() => reset.click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: undefined }));
+  });
+
   it("renders the scrollback buffer through the shared NumberInput primitive (#1453)", () => {
     renderWith(defaultSettings);
     expect(scrollbackInput().classList.contains("ui-input")).toBe(true);

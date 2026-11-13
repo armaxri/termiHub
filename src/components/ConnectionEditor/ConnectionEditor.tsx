@@ -2099,15 +2099,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       <div className="connection-editor__header">
         {isAgentDefinitionMode
           ? existingAgentDef
-            ? "Edit Agent Connection"
-            : "New Agent Connection"
+            ? "Edit agent connection"
+            : "New agent connection"
           : isAgentTransportMode
             ? existingAgent
-              ? "Edit Remote Agent"
-              : "New Remote Agent"
+              ? "Edit remote agent"
+              : "New remote agent"
             : existingConnection
-              ? "Edit Connection"
-              : "New Connection"}
+              ? "Edit connection"
+              : "New connection"}
       </div>
       <div
         className={`connection-editor__body ${isCompact ? "connection-editor__body--compact" : ""}`}

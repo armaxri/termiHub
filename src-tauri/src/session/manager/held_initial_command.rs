@@ -18,11 +18,12 @@
 //! command once the setup's prompt mark is seen.
 //!
 //! A setup on the canonical-mode cue (macOS `/bin/bash` 3.2, zsh before 5.1)
-//! is typed at the latest at its own cap ([`GatedSetup::cap`], #5525). The
-//! initial command then waits for the setup's prompt mark that long plus
-//! [`SETUP_CAP_MARGIN`], never for the 1 s mark-only timeout, which would type
-//! it into a still-cooked tty ahead of the setup. Past that the tab gets the
-//! same notice; the command is still never typed blind.
+//! waits for the PTY to leave canonical mode; past its cap ([`GatedSetup::cap`])
+//! it counts as held (#5525, #5564). The initial command waits for the setup's
+//! prompt mark, never for the 1 s mark-only timeout, which would type it into a
+//! still-cooked tty ahead of the setup. Past the cap plus [`SETUP_CAP_MARGIN`]
+//! the tab gets the same notice: **Send now** types the setup, then the command;
+//! neither is ever typed blind. A late cue still types the setup as usual.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -43,9 +44,9 @@ use super::{EventEmitter, SessionManager};
 /// held: the cap the wait had before #5455.
 pub const HELD_NOTICE_AFTER: Duration = PROBE_CAP;
 
-/// How long past a capped setup's [`GatedSetup::cap`] the initial command
-/// still waits for the setup's prompt mark before the tab is told it is held
-/// (#5525): the shell runs the setup and prints its prompt in that time.
+/// How long past a capped setup's [`GatedSetup::cap`] the tab waits before it
+/// is told the setup (and the initial command) is held (#5525, #5564): a setup
+/// typed just before the cap runs and prints its prompt in that time.
 pub const SETUP_CAP_MARGIN: Duration = Duration::from_secs(2);
 
 /// Payload of the `initial-command-held` event.

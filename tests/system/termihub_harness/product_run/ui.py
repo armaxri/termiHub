@@ -39,6 +39,7 @@ from ..display_runner import bring_app_foreground
 from ..window_capture import CaptureUnavailable, capture_window, save_png
 from ..ui.base import HarnessMixin
 from .config import ProductRunInputs, load_inputs
+from .hover import Hover, hovered
 from .recorder import Recorder, recorder_from_env, unattended
 
 #: Environment variable the runner sets to the run's keychain namespace tag.
@@ -237,6 +238,17 @@ class ProductRunUi(HarnessMixin):
             return {"window_css": {"width": width, "height": height}}
         except BridgeError:
             return {}
+
+    # ── hover ─────────────────────────────────────────────────────────────────
+    @contextlib.contextmanager
+    def hovered(self, test_id: str) -> Iterator[Hover]:
+        """Hover ``test_id`` for the block (real pointer when allowed, see :mod:`.hover`).
+
+        Adds the evidence line saying how it was hovered.
+        """
+        with hovered(self.driver, getattr(self.app, "pid", None), test_id) as how:
+            self.evidence(how.note)
+            yield how
 
     # ── human steps ───────────────────────────────────────────────────────────
     def human_step(

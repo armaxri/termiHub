@@ -99,15 +99,12 @@ import {
   MAX_AGENT_SPAWN_ATTEMPTS,
 } from "./terminalConnectionPlan";
 import { errorMessage } from "@/utils/errorMessage";
+import { DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, DEFAULT_SCROLLBACK } from "./terminalDefaults";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
 const DEFAULT_FONT_FAMILY =
   "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
-const DEFAULT_FONT_SIZE = 14;
-/** Line height of 1.0 ensures box-drawing characters connect without gaps. */
-export const DEFAULT_LINE_HEIGHT = 1.0;
-const DEFAULT_SCROLLBACK = 10000;
 const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
 

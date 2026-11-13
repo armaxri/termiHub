@@ -7,9 +7,8 @@ import {
   stepKindIcon,
   stepKindLabel,
   newWorkflowStep,
-  summariseWorkflowSteps,
+  triggerKindLabel,
 } from "./workflowStepMeta";
-import type { WorkflowStep } from "@/types/workflow";
 
 describe("workflowStepMeta", () => {
   describe("WORKFLOW_STEP_KINDS", () => {
@@ -58,9 +57,30 @@ describe("workflowStepMeta", () => {
   });
 
   describe("stepKindLabel", () => {
-    it("returns the kind verbatim", () => {
-      expect(stepKindLabel("send-command")).toBe("send-command");
-      expect(stepKindLabel("wait")).toBe("wait");
+    it("maps step kinds to sentence-case labels", () => {
+      expect(stepKindLabel("send-command")).toBe("Send command");
+      expect(stepKindLabel("wait")).toBe("Wait");
+      expect(stepKindLabel("run-local-process")).toBe("Run local process");
+      expect(stepKindLabel("wait-for-output")).toBe("Wait for output");
+    });
+
+    it("never shows a raw kind id", () => {
+      for (const kind of WORKFLOW_STEP_KINDS) {
+        const label = stepKindLabel(kind);
+        expect(label).not.toContain("-");
+        expect(label[0]).toBe(label[0].toUpperCase());
+      }
+    });
+  });
+
+  describe("triggerKindLabel", () => {
+    it("maps trigger and run-trigger kinds to sentence-case labels", () => {
+      expect(triggerKindLabel("manual")).toBe("Manual");
+      expect(triggerKindLabel("on-connect")).toBe("On connect");
+      expect(triggerKindLabel("hotkey")).toBe("Hotkey");
+      expect(triggerKindLabel("scheduled")).toBe("Scheduled");
+      expect(triggerKindLabel("on-disconnect")).toBe("On disconnect");
+      expect(triggerKindLabel("on-output-match")).toBe("On output match");
     });
   });
 
@@ -114,31 +134,6 @@ describe("workflowStepMeta", () => {
       // Substring is the default; isRegex/timeoutMs stay absent to round-trip.
       expect(step).not.toHaveProperty("isRegex");
       expect(step).not.toHaveProperty("timeoutMs");
-    });
-  });
-
-  describe("summariseWorkflowSteps", () => {
-    it("joins step kind labels with arrows", () => {
-      const steps: WorkflowStep[] = [
-        { kind: "send-command", command: "a" },
-        { kind: "wait", delayMs: 100 },
-        { kind: "run-script", script: "b" },
-      ];
-      expect(summariseWorkflowSteps(steps)).toBe("send-command → wait → run-script");
-    });
-
-    it("returns an empty string for no steps", () => {
-      expect(summariseWorkflowSteps([])).toBe("");
-    });
-
-    it("truncates a long chain to the given max length", () => {
-      const steps: WorkflowStep[] = Array.from({ length: 20 }, () => ({
-        kind: "wait" as const,
-        delayMs: 1,
-      }));
-      const summary = summariseWorkflowSteps(steps, 30);
-      expect(summary).toHaveLength(30);
-      expect(summary.endsWith("…")).toBe(true);
     });
   });
 });

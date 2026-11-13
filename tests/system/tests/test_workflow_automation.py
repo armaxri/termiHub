@@ -71,6 +71,9 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         for index, kind in enumerate(STEP_KINDS):
             self.add_step(kind)
             assert self.step_kind(index) == kind
+            # The row shows a readable sentence-case label, not the raw id (#5529).
+            label = self.step_label(index)
+            assert label[:1].isupper() and "-" not in label, label
         assert self.step_count() == len(STEP_KINDS)
 
         # The added steps make the editor dirty, so Cancel raises the shared

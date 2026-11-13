@@ -99,7 +99,10 @@ type PaletteEntry =
   | {
       kind: "workspace";
       key: string;
+      /** The workspace's name — the primary text, never behind a prefix (#5530). */
       label: string;
+      /** Secondary match key ("Launch workspace: <name>") so the verb still finds it. */
+      searchText: string;
       /** The saved workspace to launch, replacing the current layout. */
       workspaceId: string;
     };
@@ -108,13 +111,15 @@ type PaletteEntry =
 type PaletteMode = "root" | "broadcast-workflow";
 
 /**
- * The entry's secondary match key: a connection's host, or a macro/workflow's
- * "Run …: <name>" phrase so typing the verb still finds an automation whose
- * row shows only its name (#5519).
+ * The entry's secondary match key: a connection's host, or a macro/workflow/
+ * workspace's "Run …: <name>" / "Launch workspace: <name>" phrase so typing the
+ * verb still finds an entry whose row shows only its name (#5519, #5530).
  */
 function secondaryMatchKey(entry: PaletteEntry): string {
   if (entry.kind === "connection") return entry.host;
-  if (entry.kind === "macro" || entry.kind === "workflow") return entry.searchText;
+  if (entry.kind === "macro" || entry.kind === "workflow" || entry.kind === "workspace") {
+    return entry.searchText;
+  }
   return "";
 }
 
@@ -222,7 +227,8 @@ export function CommandPalette(): React.ReactElement {
     const workspaceEntries: PaletteEntry[] = workspaces.map((ws) => ({
       kind: "workspace",
       key: `workspace:${ws.id}`,
-      label: `Launch workspace: ${ws.name}`,
+      label: ws.name,
+      searchText: `Launch workspace: ${ws.name}`,
       workspaceId: ws.id,
     }));
     return [

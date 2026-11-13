@@ -12,7 +12,7 @@
  *   printf '┌──────┐\n│ test │\n└──────┘\n'
  */
 import { describe, it, expect } from "vitest";
-import { DEFAULT_LINE_HEIGHT } from "./Terminal";
+import { DEFAULT_LINE_HEIGHT } from "./terminalDefaults";
 
 describe("Terminal line height default", () => {
   it("defaults to 1.0 so box-drawing characters connect without gaps", () => {
