@@ -63,6 +63,7 @@ describe("SettingsSectionHeading", () => {
     expect(h?.className).toBe(SETTINGS_SECTION_HEADING_CLASS);
     expect(h?.id).toBe("x");
     expect(h?.textContent).toBe("Credential storage");
+    expect(h?.getAttribute("data-testid")).toBe("settings-section-heading");
   });
 
   it("renders an h4 for a nested section and keeps extra classes", () => {

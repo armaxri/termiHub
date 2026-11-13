@@ -4,6 +4,9 @@ import "./SettingsSectionHeading.css";
 /** Shared class of every Settings section heading (#5634). */
 export const SETTINGS_SECTION_HEADING_CLASS = "settings-section__heading";
 
+/** Default test id, so the product run can read a category's heading style. */
+export const SETTINGS_SECTION_HEADING_TEST_ID = "settings-section-heading";
+
 /** Props for {@link SettingsSectionHeading}. */
 export interface SettingsSectionHeadingProps {
   /** Heading text, in sentence case. */
@@ -14,7 +17,7 @@ export interface SettingsSectionHeadingProps {
   id?: string;
   /** Extra class names. */
   className?: string;
-  /** Test id. */
+  /** Test id; defaults to {@link SETTINGS_SECTION_HEADING_TEST_ID}. */
   "data-testid"?: string;
 }
 
@@ -29,7 +32,7 @@ export function SettingsSectionHeading({
   level = 3,
   id,
   className,
-  "data-testid": testId,
+  "data-testid": testId = SETTINGS_SECTION_HEADING_TEST_ID,
 }: SettingsSectionHeadingProps) {
   const Tag = level === 4 ? "h4" : "h3";
   const classes = [SETTINGS_SECTION_HEADING_CLASS, className ?? ""].filter(Boolean).join(" ");
