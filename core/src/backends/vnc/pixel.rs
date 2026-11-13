@@ -132,7 +132,10 @@ mod tests {
         // as alpha it made the canvas transparent: nothing painted (#5608).
         let conv = PixelConverter::new(PixelFormat::rgba()).unwrap();
         let data = vec![1, 2, 3, 0, 4, 5, 6, 0x7f];
-        assert_eq!(conv.to_rgba(data, 2), Some(vec![1, 2, 3, 255, 4, 5, 6, 255]));
+        assert_eq!(
+            conv.to_rgba(data, 2),
+            Some(vec![1, 2, 3, 255, 4, 5, 6, 255])
+        );
     }
 
     #[test]
