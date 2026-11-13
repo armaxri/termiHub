@@ -122,7 +122,7 @@ describe("MacroHistorySection (#3543)", () => {
   it("shows the filter as a removable chip apart from the header actions (#5636)", () => {
     render([run()], "m1");
     const chip = query("macro-history-filter")!;
-    const header = query("macro-history")!.querySelector(".sidebar-section-header")!;
+    const header = query("macro-history-header")!;
     // The chip lives on its own row, not beside the destructive Clear action.
     expect(header.contains(chip)).toBe(false);
     expect(header.contains(query("macro-history-show-all"))).toBe(false);

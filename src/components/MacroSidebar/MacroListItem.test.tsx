@@ -79,7 +79,8 @@ describe("MacroListItem", () => {
 
   it("keeps the secondary actions in a labelled hover/focus group (#5636)", () => {
     render(macro());
-    const more = query("macro-item-m1")!.querySelector(".macro-item__more")!;
+    const more = query("macro-more-m1")!;
+    expect(more.classList.contains("macro-item__more")).toBe(true);
     expect(more.getAttribute("role")).toBe("group");
     expect(more.getAttribute("aria-label")).toBe("More actions for Deploy");
     for (const id of ["edit", "duplicate", "export", "delete"]) {

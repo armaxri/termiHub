@@ -75,6 +75,7 @@ export function MacroListItem({
             className="macro-item__more"
             role="group"
             aria-label={`More actions for ${macro.name}`}
+            data-testid={`macro-more-${macro.id}`}
           >
             <Tooltip content="Edit" side="top">
               <Button

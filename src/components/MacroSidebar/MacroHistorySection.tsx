@@ -117,6 +117,7 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
     <section className="macro-history" data-testid="macro-history" aria-label="Macro run history">
       <SidebarSectionHeader
         title="History"
+        data-testid="macro-history-header"
         icon={<History size={12} aria-hidden="true" />}
         actions={
           <Tooltip content="Clear the run history of every macro…" side="top">
