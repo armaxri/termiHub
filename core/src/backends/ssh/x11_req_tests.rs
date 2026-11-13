@@ -61,7 +61,7 @@ fn mit(order: u8, data: &[u8]) -> Vec<u8> {
 
 #[test]
 fn fake_cookie_is_swapped_for_the_real_one_in_both_byte_orders() {
-    for order in [b'B', b'l'] {
+    for order in *b"Bl" {
         let SetupRewrite::Rewritten {
             setup: out,
             consumed,
@@ -90,7 +90,7 @@ fn big_endian_lengths_are_read_big_endian() {
 
 #[test]
 fn a_cookieless_local_server_gets_no_authorization() {
-    for order in [b'B', b'l'] {
+    for order in *b"Bl" {
         let SetupRewrite::Rewritten { setup: out, .. } =
             rewrite_setup(&mit(order, &FAKE), &cookies(None))
         else {
@@ -130,7 +130,7 @@ fn setups_that_do_not_carry_the_fake_cookie_are_rejected() {
         SetupRewrite::Rejected(why) => why,
         other => panic!("expected a rejection, got {other:?}"),
     };
-    for order in [b'B', b'l'] {
+    for order in *b"Bl" {
         // The real cookie itself is not accepted from the remote side.
         assert_eq!(reject(mit(order, &REAL)), SetupRejection::WrongCookie);
         let mut one_off = FAKE;
