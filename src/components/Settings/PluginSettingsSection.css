@@ -19,14 +19,6 @@
   margin-bottom: var(--spacing-xs);
 }
 
-/* The plugin name is the card's title: shared heading type, but the card
-   border already frames it, so no divider of its own (#5634). */
-.plugin-settings__header > .settings-section__heading {
-  margin: 0;
-  padding-bottom: 0;
-  border-bottom: none;
-}
-
 .plugin-settings__icon {
   flex-shrink: 0;
   color: var(--text-secondary);
