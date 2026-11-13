@@ -160,6 +160,21 @@ WA-CI-005).
   budget when running locally — `0.5` makes a suspected hang fail fast, `3` gives
   a slow VM slack. It is **ignored in CI** (`GITHUB_ACTIONS=true`, with a
   warning), so no lane can reintroduce a global multiplier.
+- **Forcing the contended path (#5590).** `TERMIHUB_FORCE_CONTENDED=1` makes
+  `deadlines.contended()` true on any OS and worker count (`0` forces it off; unset
+  = auto-detect; any other value is an error). Unlike `TERMIHUB_WAIT_SCALE` it is
+  honoured in CI: the `System-Test Harness (machinery)` job runs the machinery suite
+  a second time with it set and `-n 4`, so a test that only passes with serial
+  budgets (#5543) fails on every PR instead of only under `pytest -n` on macOS.
+  Reproduce that leg locally:
+
+  ```bash
+  TERMIHUB_FORCE_CONTENDED=1 ./tests/system/pytest.sh -m "not integration" -q -n 4
+  ```
+
+  A test that needs the serial budgets pins them itself
+  (`monkeypatch.setattr(deadlines, "CONTENDED", False)`), as `test_deadlines.py` does.
+
 - **Hang guard (xdist workers).** Deadlines bound the harness's _waits_, not a
   blocking call (a pipe `close()`, a `recv` without timeout). On xdist workers
   each test phase runs under a watchdog — setup 45 min (the deployed-agent
