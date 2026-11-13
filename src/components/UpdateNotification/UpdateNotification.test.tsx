@@ -245,3 +245,36 @@ describe("UpdateNotification (develop build, #5023)", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+describe("UpdateNotification in-app update (#5758)", () => {
+  it("offers 'Download and install' where the signed updater applies", async () => {
+    const downloadAppUpdate = vi.fn(() => Promise.resolve());
+    useAppStore.setState({
+      updateInfo: { ...useAppStore.getState().updateInfo!, installMethod: "inApp" },
+      downloadAppUpdate,
+    });
+    await render();
+    const install = byTestId("update-notification-install-download");
+    expect(install).not.toBeNull();
+    expect(byTestId("update-notification-open-downloads")!.className).toContain(
+      "ui-btn--secondary"
+    );
+    await act(async () => {
+      install!.click();
+    });
+    expect(downloadAppUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps only the downloads page when the update installs from there", async () => {
+    useAppStore.setState({
+      updateInfo: {
+        ...useAppStore.getState().updateInfo!,
+        installMethod: "releasePage",
+        releasePageReason: "packageManager",
+      },
+    });
+    await render();
+    expect(byTestId("update-notification-install-download")).toBeNull();
+    expect(byTestId("update-notification-open-downloads")!.className).toContain("ui-btn--primary");
+  });
+});

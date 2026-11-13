@@ -276,6 +276,108 @@ describe("UpdateSettings", () => {
     expect(clearSkippedUpdateVersion).toHaveBeenCalled();
   });
 
+  describe("in-app update (#5758)", () => {
+    const update = {
+      available: true,
+      latestVersion: "0.2.0",
+      releaseUrl: "https://example.com/release",
+      releaseNotes: "",
+      isSecurity: false,
+      channel: "stable" as const,
+      outcome: "updateAvailable" as const,
+    };
+
+    it("offers 'Download and install' first and keeps the downloads page", async () => {
+      useAppStore.setState({
+        updateCheckState: "available",
+        updateInfo: { ...update, installMethod: "inApp" },
+      });
+      await render();
+      const install = query("update-install-download") as HTMLButtonElement;
+      expect(install.textContent).toContain("Download and install");
+      expect(install.className).toContain("ui-btn--primary");
+      expect(query("update-open-downloads")?.className).toContain("ui-btn--secondary");
+      expect(query("update-install-hint")).toBeNull();
+    });
+
+    it("starts the download only on click", async () => {
+      const downloadAppUpdate = vi.fn().mockResolvedValue(undefined);
+      useAppStore.setState({
+        updateCheckState: "available",
+        updateInfo: { ...update, installMethod: "inApp" },
+        downloadAppUpdate,
+      });
+      await render();
+      expect(downloadAppUpdate).not.toHaveBeenCalled();
+      await act(async () => {
+        (query("update-install-download") as HTMLElement).click();
+      });
+      expect(downloadAppUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the download progress, then 'Restart to update'", async () => {
+      const restartToInstallUpdate = vi.fn().mockResolvedValue(undefined);
+      useAppStore.setState({
+        updateCheckState: "available",
+        updateInfo: { ...update, installMethod: "inApp" },
+        appUpdateInstall: { phase: "downloading", version: "0.2.0", downloaded: 1, total: 4 },
+        restartToInstallUpdate,
+      });
+      await render();
+      expect(query("update-install-progress")?.textContent).toContain("Downloading… 25%");
+      expect(query("update-install-download")).toBeNull();
+
+      await act(async () => {
+        useAppStore.setState({
+          appUpdateInstall: { phase: "ready", version: "0.2.0", downloaded: 4, total: 4 },
+        });
+      });
+      const restart = query("update-install-restart") as HTMLButtonElement;
+      expect(restart.textContent).toContain("Restart to update");
+      expect(restartToInstallUpdate).not.toHaveBeenCalled();
+      await act(async () => {
+        restart.click();
+      });
+      expect(restartToInstallUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the downloads page as the only action for a .deb/.rpm install, with a hint", async () => {
+      useAppStore.setState({
+        updateCheckState: "available",
+        updateInfo: {
+          ...update,
+          installMethod: "releasePage",
+          releasePageReason: "packageManager",
+        },
+      });
+      await render();
+      expect(query("update-install-download")).toBeNull();
+      expect(query("update-open-downloads")?.className).toContain("ui-btn--primary");
+      expect(query("update-install-hint")?.textContent).toMatch(/\.deb or \.rpm/);
+    });
+
+    it("shows no hint while the release has no updater key yet (today's behaviour)", async () => {
+      useAppStore.setState({
+        updateCheckState: "available",
+        updateInfo: { ...update, installMethod: "releasePage", releasePageReason: "noUpdaterKey" },
+      });
+      await render();
+      expect(query("update-install-download")).toBeNull();
+      expect(query("update-install-hint")).toBeNull();
+      expect(query("update-open-downloads")).not.toBeNull();
+    });
+
+    it("has no a11y violations while downloading", async () => {
+      useAppStore.setState({
+        updateCheckState: "available",
+        updateInfo: { ...update, installMethod: "inApp" },
+        appUpdateInstall: { phase: "downloading", version: "0.2.0", downloaded: 1, total: null },
+      });
+      await render();
+      expect(await checkA11y(container)).toHaveNoViolations();
+    });
+  });
+
   describe("auto-check selector semantics (UISF2-002)", () => {
     it("is a radiogroup named by its section heading", async () => {
       await render();
