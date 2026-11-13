@@ -25,7 +25,10 @@ interface MacroListItemProps {
 /**
  * A single macro row in the manager sidebar: the name first (it is what users
  * scan and search for, #5519; no leading step-count badge), a one-line preview of the recorded input, and the Play / Edit / Duplicate /
- * Delete actions. Double-click plays the macro (matching the workspace row's
+ * Delete actions. Play is always visible after the name (#5636: playing is the
+ * panel's main purpose, so it must not depend on hover discovery); the other
+ * actions form a group revealed on hover/focus that overlays the name's tail.
+ * Double-click plays the macro (matching the workspace row's
  * double-click-to-launch affordance). Composed from the shared list-item shell.
  */
 export function MacroListItem({
@@ -49,10 +52,12 @@ export function MacroListItem({
       testId={`macro-item-${macro.id}`}
       nameTestId={`macro-name-${macro.id}`}
       name={macro.name}
+      className="macro-item"
       onDoubleClick={() => onPlay(macro.id)}
+      actionsVisible
       actions={
         <>
-          <Tooltip content="Play" side="top">
+          <Tooltip content="Play in the active terminal" side="top">
             <Button
               variant="ghost"
               size="sm"
@@ -66,94 +71,100 @@ export function MacroListItem({
               }}
             />
           </Tooltip>
-          <Tooltip content="Edit" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Edit"
-              data-testid={`macro-edit-${macro.id}`}
-              icon={<Pencil size={12} />}
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(macro.id);
-              }}
-            />
-          </Tooltip>
-          {onSchedule ? (
-            <Tooltip content="Schedule…" side="top">
+          <span
+            className="macro-item__more"
+            role="group"
+            aria-label={`More actions for ${macro.name}`}
+          >
+            <Tooltip content="Edit" side="top">
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                aria-label="Schedule"
-                data-testid={`macro-schedule-${macro.id}`}
-                icon={<CalendarClock size={12} />}
+                aria-label="Edit"
+                data-testid={`macro-edit-${macro.id}`}
+                icon={<Pencil size={12} />}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onSchedule(macro.id);
+                  onEdit(macro.id);
                 }}
               />
             </Tooltip>
-          ) : null}
-          {onShowHistory ? (
-            <Tooltip content="Recent runs" side="top">
+            {onSchedule ? (
+              <Tooltip content="Schedule…" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Schedule"
+                  data-testid={`macro-schedule-${macro.id}`}
+                  icon={<CalendarClock size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSchedule(macro.id);
+                  }}
+                />
+              </Tooltip>
+            ) : null}
+            {onShowHistory ? (
+              <Tooltip content="Recent runs" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Recent runs"
+                  data-testid={`macro-history-${macro.id}`}
+                  icon={<History size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowHistory(macro.id);
+                  }}
+                />
+              </Tooltip>
+            ) : null}
+            <Tooltip content="Duplicate" side="top">
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                aria-label="Recent runs"
-                data-testid={`macro-history-${macro.id}`}
-                icon={<History size={12} />}
+                aria-label="Duplicate"
+                data-testid={`macro-duplicate-${macro.id}`}
+                icon={<Copy size={12} />}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onShowHistory(macro.id);
+                  onDuplicate(macro.id);
                 }}
               />
             </Tooltip>
-          ) : null}
-          <Tooltip content="Duplicate" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Duplicate"
-              data-testid={`macro-duplicate-${macro.id}`}
-              icon={<Copy size={12} />}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDuplicate(macro.id);
-              }}
-            />
-          </Tooltip>
-          <Tooltip content="Export" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Export"
-              data-testid={`macro-export-${macro.id}`}
-              icon={<Download size={12} />}
-              onClick={(e) => {
-                e.stopPropagation();
-                onExport(macro.id);
-              }}
-            />
-          </Tooltip>
-          <Tooltip content="Delete" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Delete"
-              data-testid={`macro-delete-${macro.id}`}
-              icon={<Trash2 size={12} />}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(macro.id);
-              }}
-            />
-          </Tooltip>
+            <Tooltip content="Export" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Export"
+                data-testid={`macro-export-${macro.id}`}
+                icon={<Download size={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onExport(macro.id);
+                }}
+              />
+            </Tooltip>
+            <Tooltip content="Delete" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Delete"
+                data-testid={`macro-delete-${macro.id}`}
+                icon={<Trash2 size={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(macro.id);
+                }}
+              />
+            </Tooltip>
+          </span>
         </>
       }
       details={

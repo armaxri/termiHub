@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { History, Trash2, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
+import {
+  Button,
+  ConfirmDialog,
+  StatusDot,
+  Tooltip,
+  TruncatedText,
+  toast,
+  EmptyState,
+} from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
@@ -73,7 +81,8 @@ export interface MacroHistorySectionProps {
  * The persisted macro run-history panel (#3543), mirroring the workflow run
  * history: recent playbacks — outcome, when and how long, into which terminals,
  * and what launched each — beneath the macro library, optionally narrowed to
- * one macro, with a single "Clear history" action. Metadata only: the macro's
+ * one macro (shown as a removable chip on its own row, #5636), with a single
+ * labelled "Clear…" action that asks for confirmation. Metadata only: the macro's
  * recorded input is never stored.
  */
 export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionProps) {
@@ -90,7 +99,10 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
     [macroRuns, macroId]
   );
 
+  const [confirmClear, setConfirmClear] = useState(false);
+
   const handleClear = useCallback(async () => {
+    setConfirmClear(false);
     try {
       await clearMacroRunHistory();
       toast.success("Cleared macro run history");
@@ -106,42 +118,58 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
       <SidebarSectionHeader
         title="History"
         icon={<History size={12} aria-hidden="true" />}
-        suffix={
-          macroId ? (
-            <span className="macro-history__filter" data-testid="macro-history-filter">
-              · {filterName ?? "this macro"}
-            </span>
-          ) : undefined
-        }
         actions={
-          <>
-            {macroId ? (
-              <Tooltip content="Show all macros" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="Show all macros"
-                  data-testid="macro-history-show-all"
-                  icon={<X size={12} />}
-                  onClick={onShowAll}
-                />
-              </Tooltip>
-            ) : null}
-            <Tooltip content={macroId ? "Clear history (all macros)" : "Clear history"} side="top">
+          <Tooltip content="Clear the run history of every macro…" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="macro-history__clear"
+              aria-label="Clear history"
+              data-testid="macro-history-clear"
+              icon={<Trash2 size={12} />}
+              disabled={macroRuns.length === 0}
+              onClick={() => setConfirmClear(true)}
+            >
+              Clear…
+            </Button>
+          </Tooltip>
+        }
+      />
+      {macroId ? (
+        <div className="macro-history__filter-bar">
+          <span className="macro-history__filter-label">Showing</span>
+          <span className="macro-history__filter-chip" data-testid="macro-history-filter">
+            <TruncatedText className="macro-history__filter-name">
+              {filterName ?? "this macro"}
+            </TruncatedText>
+            <Tooltip content="Show all macros" side="top">
               <Button
                 variant="ghost"
-                size="sm"
+                size="xs"
                 iconOnly
-                aria-label="Clear history"
-                data-testid="macro-history-clear"
-                icon={<Trash2 size={12} />}
-                disabled={macroRuns.length === 0}
-                onClick={() => void handleClear()}
+                aria-label={`Clear filter: ${filterName ?? "this macro"}`}
+                data-testid="macro-history-show-all"
+                icon={<X size={12} />}
+                onClick={onShowAll}
               />
             </Tooltip>
-          </>
+          </span>
+        </div>
+      ) : null}
+      <ConfirmDialog
+        open={confirmClear}
+        title="Clear macro run history?"
+        variant="danger"
+        message={
+          macroId
+            ? "This removes the recorded runs of every macro, not just the one shown. It cannot be undone."
+            : "This removes the recorded runs of every macro. It cannot be undone."
         }
+        confirmLabel="Clear history"
+        confirmVariant="danger"
+        testIdBase="macro-history-clear-confirm"
+        onConfirm={handleClear}
+        onCancel={() => setConfirmClear(false)}
       />
       {runs.length === 0 ? (
         <EmptyState
